@@ -89,3 +89,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   return forward(request, context);
 }
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}

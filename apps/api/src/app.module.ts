@@ -3,8 +3,6 @@ import { APP_GUARD } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 
-import { QUEUE_NAMES } from "@gfa/shared";
-
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
@@ -31,7 +29,8 @@ import { HealthController } from "./health.controller";
           manualRegistration: true
         },
         connection: {
-          url: configService.get<string>("REDIS_URL", "redis://localhost:6379")
+          url: configService.get<string>("REDIS_URL", "redis://localhost:6379"),
+          maxRetriesPerRequest: null
         }
       })
     }),

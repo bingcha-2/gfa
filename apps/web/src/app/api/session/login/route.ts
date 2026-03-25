@@ -1,7 +1,11 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { CONSOLE_AUTH_COOKIE, CONSOLE_AUTH_MAX_AGE } from "../../../../lib/auth-cookie";
+import {
+  CONSOLE_AUTH_COOKIE,
+  CONSOLE_AUTH_MAX_AGE,
+  shouldUseSecureConsoleCookie
+} from "../../../../lib/auth-cookie";
 import { AuthSession } from "../../../../lib/types";
 
 const BACKEND_BASE_URL =
@@ -33,7 +37,7 @@ export async function POST(request: NextRequest) {
   cookieStore.set(CONSOLE_AUTH_COOKIE, session.accessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureConsoleCookie(request),
     path: "/",
     maxAge: CONSOLE_AUTH_MAX_AGE
   });

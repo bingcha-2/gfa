@@ -87,3 +87,23 @@ Monorepo for the Google One family automation project.
    ```powershell
    ENABLE_DEBUG_QUEUE_ROUTES=true
    ```
+
+## Windows Private Hosting
+
+For customer delivery on a Windows server, use the bundled launchers from the
+repo root instead of manual `pnpm dev:*` commands:
+
+- `Start-GFA.bat`
+- `Stop-GFA.bat`
+- `Status-GFA.bat`
+
+The first start will:
+
+- copy `.env.example` to `.env` when missing
+- install dependencies when `node_modules` is absent
+- start Redis with Docker
+- initialize and seed SQLite
+- build `shared`, `web`, `api`, and `worker`
+- launch the three production services in the background
+
+Detailed handoff notes live in `docs/PRIVATE-HOSTING.md`.

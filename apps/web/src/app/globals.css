@@ -269,6 +269,11 @@ img {
   align-items: flex-start;
 }
 
+.auth-shell {
+  width: min(460px, 100%);
+  margin: 44px auto 0;
+}
+
 .public-side {
   min-height: 100%;
 }

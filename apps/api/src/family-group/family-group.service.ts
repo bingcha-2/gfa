@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { FamilyGroup } from "@prisma/client";
@@ -11,7 +11,9 @@ export class FamilyGroupService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(QUEUE_NAMES.sync)
-    private readonly syncQueue: Queue
+    private readonly syncQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.remove)
+    private readonly removeQueue: Queue
   ) {}
 
   async findAll(accountId?: string) {
@@ -52,8 +54,8 @@ export class FamilyGroupService {
       data: {
         accountId: data.accountId,
         groupName: data.groupName,
-        maxMembers: data.maxMembers ?? 6,
-        availableSlots: data.maxMembers ?? 6
+        maxMembers: data.maxMembers ?? 5,
+        availableSlots: data.maxMembers ?? 5
       }
     });
   }
@@ -74,44 +76,128 @@ export class FamilyGroupService {
       throw new NotFoundException("Account not found for family group");
     }
 
-    const job = await this.syncQueue.add(
-      "sync-family-group",
-      {
+    // Create a Task record first so TaskLogger can write TaskLog rows (avoids P2003)
+    const task = await this.prisma.task.create({
+      data: {
+        type: "SYNC_FAMILY_GROUP",
         familyGroupId: groupId,
-        accountId: group.accountId
-      },
-      { removeOnComplete: 100, removeOnFail: 500 }
-    );
+        accountId: group.accountId,
+        payload: JSON.stringify({ familyGroupId: groupId, accountId: group.accountId })
+      }
+    });
 
-    return { queued: true, jobId: job.id };
+    try {
+      const job = await this.syncQueue.add(
+        "sync-family-group",
+        { taskId: task.id, familyGroupId: groupId, accountId: group.accountId },
+        { removeOnComplete: 100, removeOnFail: 500 }
+      );
+      return { queued: true, jobId: job.id, taskId: task.id };
+    } catch (queueError) {
+      await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+      throw queueError;
+    }
   }
 
+  /**
+   * Remove a member from the family group.
+   * Creates a REMOVE_MEMBER task and enqueues it to the remove queue.
+   */
+  async removeMember(groupId: string, memberEmail: string) {
+    const group = await this.findOne(groupId);
+
+    if (!group.account) {
+      throw new NotFoundException("Account not found for family group");
+    }
+
+    // Use transaction to atomically check + mark member as PENDING
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Verify member exists in the group and is ACTIVE
+      const member = await tx.familyMember.findFirst({
+        where: {
+          familyGroupId: groupId,
+          email: memberEmail,
+          status: "ACTIVE"
+        }
+      });
+
+      if (!member) {
+        return null; // Signal: not found or already in progress
+      }
+
+      // Optimistic lock: mark as PENDING to prevent double-remove race
+      await tx.familyMember.update({
+        where: { id: member.id },
+        data: { status: "PENDING" }
+      });
+
+      const task = await tx.task.create({
+        data: {
+          type: "REMOVE_MEMBER",
+          familyGroupId: groupId,
+          accountId: group.accountId,
+          payload: JSON.stringify({
+            familyGroupId: groupId,
+            accountId: group.accountId,
+            memberEmail
+          })
+        }
+      });
+
+      return task;
+    });
+
+    if (!result) {
+      throw new BadRequestException(
+        `Member ${memberEmail} not found in group or already being removed`
+      );
+    }
+
+    try {
+      await this.removeQueue.add(
+        "remove-member",
+        {
+          taskId: result.id,
+          familyGroupId: groupId,
+          accountId: group.accountId,
+          memberEmail
+        },
+        { removeOnComplete: 100, removeOnFail: 500 }
+      );
+    } catch (queueError) {
+      // Queue add failed (e.g. Redis down) — rollback PENDING to ACTIVE
+      await this.prisma.familyMember.updateMany({
+        where: { familyGroupId: groupId, email: memberEmail, status: "PENDING" },
+        data: { status: "ACTIVE" }
+      }).catch(() => {});
+
+      // Clean up orphaned task
+      await this.prisma.task.delete({ where: { id: result.id } }).catch(() => {});
+
+      throw queueError;
+    }
+
+    return { queued: true, taskId: result.id };
+  }
+
+  /**
+   * Find an available family group for a new member.
+   * Strategy: earliest created group with available slots first.
+   */
   async findAvailableGroup(): Promise<string | null> {
-    // Strategy: available slots > 0, lowest risk score first
+    // Single query with JOIN — no N+1
     const groups = await this.prisma.familyGroup.findMany({
       where: {
         status: "ACTIVE",
-        availableSlots: { gt: 0 }
+        availableSlots: { gt: 0 },
+        account: { status: "HEALTHY" },
       },
-      select: {
-        id: true,
-        accountId: true
-      },
-      orderBy: [{ riskScore: "asc" }, { availableSlots: "desc" }]
+      select: { id: true },
+      orderBy: [{ createdAt: "asc" }],
+      take: 1,
     });
 
-    for (const group of groups) {
-      const account = await this.prisma.account.findUnique({
-        where: { id: group.accountId },
-        select: { id: true }
-      });
-
-      if (account) {
-        return group.id;
-      }
-    }
-
-    return null;
+    return groups[0]?.id ?? null;
   }
 
   private async attachAccounts<T extends Pick<FamilyGroup, "accountId">>(groups: T[]) {

@@ -7,7 +7,7 @@ import {
   Query,
   Request
 } from "@nestjs/common";
-import { IsInt, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsInt, IsOptional, IsString } from "class-validator";
 
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
@@ -23,6 +23,11 @@ class CreateFamilyGroupDto {
   @IsOptional()
   @IsInt()
   maxMembers?: number;
+}
+
+class RemoveMemberDto {
+  @IsEmail()
+  memberEmail!: string;
 }
 
 @Controller("family-groups")
@@ -63,7 +68,31 @@ export class FamilyGroupController {
     return group;
   }
 
+  @Post(":id/remove-member")
+  @Roles("ADMIN", "OPERATIONS")
+  async removeMember(
+    @Param("id") id: string,
+    @Body() dto: RemoveMemberDto,
+    @Request() req: any
+  ) {
+    const result = await this.familyGroupService.removeMember(
+      id,
+      dto.memberEmail
+    );
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "REMOVE_MEMBER",
+      targetType: "FamilyGroup",
+      targetId: id,
+      detail: { memberEmail: dto.memberEmail }
+    });
+
+    return result;
+  }
+
   @Post(":id/sync")
+  @Roles("ADMIN", "OPERATIONS")
   async sync(@Param("id") id: string, @Request() req: any) {
     const result = await this.familyGroupService.triggerSync(id);
 

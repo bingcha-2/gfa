@@ -75,6 +75,7 @@ enum TaskStatus {
 
 enum TaskType {
   INVITE_MEMBER
+  REMOVE_MEMBER
   REPLACE_MEMBER
   SYNC_FAMILY_GROUP
   HEALTH_CHECK_ACCOUNT
@@ -97,6 +98,8 @@ model Account {
   loginEmail          String        @unique
   loginPassword       String?
   totpSecret          String?
+  recoveryEmail       String?
+  appPassword         String?
   adspowerProfileId   String        @unique
   status              AccountStatus @default(HEALTHY)
   riskScore           Int           @default(0)
@@ -135,18 +138,19 @@ model FamilyGroup {
 }
 
 model FamilyMember {
-  id            String       @id @default(cuid())
-  familyGroupId String
-  email         String
-  displayName   String?
-  role          String
-  status        MemberStatus @default(ACTIVE)
-  canAutoRemove Boolean      @default(false)
-  joinedAt      DateTime?
-  removedAt     DateTime?
-  familyGroup   FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  familyGroupId   String
+  email           String
+  displayName     String?
+  role            String
+  status          MemberStatus @default(ACTIVE)
+  googleMemberId  String?      // GAIA member ID from href="/family/member/g/{id}"
+  canAutoRemove   Boolean      @default(false)
+  joinedAt        DateTime?
+  removedAt       DateTime?
+  familyGroup     FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   @@unique([familyGroupId, email])
 }

@@ -6,7 +6,10 @@ import { FamilyGroupController } from "./family-group.controller";
 import { FamilyGroupService } from "./family-group.service";
 
 @Module({
-  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.sync })],
+  imports: [
+    BullModule.registerQueue({ name: QUEUE_NAMES.sync }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.remove })
+  ],
   controllers: [FamilyGroupController],
   providers: [FamilyGroupService],
   exports: [FamilyGroupService]

@@ -1,5 +1,6 @@
 export const QUEUE_NAMES = {
   invite: "family-invite-queue",
+  remove: "family-remove-queue",
   replace: "family-replace-queue",
   sync: "family-sync-queue",
   health: "account-health-queue",
@@ -10,6 +11,7 @@ export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
 export const TASK_TYPES = {
   inviteMember: "INVITE_MEMBER",
+  removeMember: "REMOVE_MEMBER",
   replaceMember: "REPLACE_MEMBER",
   syncFamilyGroup: "SYNC_FAMILY_GROUP",
   healthCheckAccount: "HEALTH_CHECK_ACCOUNT"
@@ -18,6 +20,7 @@ export const TASK_TYPES = {
 export type TaskType = (typeof TASK_TYPES)[keyof typeof TASK_TYPES];
 
 export type InviteMemberPayload = {
+  taskId?: string;
   orderId?: string;
   familyGroupId: string;
   accountId: string;
@@ -25,6 +28,7 @@ export type InviteMemberPayload = {
 };
 
 export type ReplaceMemberPayload = {
+  taskId?: string;
   orderId?: string;
   familyGroupId: string;
   accountId: string;
@@ -32,12 +36,21 @@ export type ReplaceMemberPayload = {
   newUserEmail: string;
 };
 
+export type RemoveMemberPayload = {
+  taskId?: string;
+  familyGroupId: string;
+  accountId: string;
+  memberEmail: string;
+};
+
 export type SyncFamilyGroupPayload = {
+  taskId?: string;
   familyGroupId: string;
   accountId: string;
 };
 
 export type HealthCheckAccountPayload = {
+  taskId?: string;
   accountId: string;
 };
 

@@ -7,6 +7,16 @@ import { canCreateAccount } from "../lib/permissions";
 import { AccountSummary } from "../lib/types";
 import { StatusBadge } from "./status-badge";
 
+type BulkImportResult = {
+  total: number;
+  created: number;
+  skipped: number;
+  errorCount: number;
+  createdEmails: string[];
+  skippedEmails: string[];
+  errors: string[];
+};
+
 type AccountPanelProps = {
   accounts: AccountSummary[];
   role?: string;
@@ -18,12 +28,16 @@ type AccountPanelProps = {
     totpSecret?: string;
     notes?: string;
   }) => Promise<boolean>;
+  onBulkImport: (lines: string[]) => Promise<BulkImportResult | null>;
+  onDelete: (id: string) => Promise<boolean>;
+  onUpdate: (id: string, payload: Record<string, string | undefined>) => Promise<boolean>;
 };
 
-export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
+export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, role }: AccountPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const canManage = canCreateAccount(role);
-  const [activeTab, setActiveTab] = useState<"list" | "create">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "create" | "bulk" | "edit">("list");
   const [form, setForm] = useState({
     name: "",
     loginEmail: "",
@@ -32,6 +46,30 @@ export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
     totpSecret: "",
     notes: ""
   });
+  const [bulkText, setBulkText] = useState("");
+  const [bulkResult, setBulkResult] = useState<BulkImportResult | null>(null);
+  const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    adspowerProfileId: "",
+    loginPassword: "",
+    totpSecret: "",
+    notes: ""
+  });
+  const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+
+  function startEdit(account: AccountSummary) {
+    setEditId(account.id);
+    setEditForm({
+      name: account.name,
+      adspowerProfileId: account.adspowerProfileId,
+      loginPassword: "",
+      totpSecret: "",
+      notes: (account as any).notes ?? ""
+    });
+    setActiveTab("edit");
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -87,9 +125,186 @@ export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
           >
             新增母号
           </button>
+          <button
+            className={`panel-tab${activeTab === "bulk" ? " active" : ""}`}
+            onClick={() => { setActiveTab("bulk"); setBulkResult(null); }}
+            type="button"
+          >
+            批量导入
+          </button>
         </div>
 
-        {activeTab === "create" ? (
+        {activeTab === "bulk" ? (
+          canManage ? (
+            <div className="form-card panel-stack workspace-form">
+              <div className="section-copy">
+                <h3 className="panel-title" style={{ fontSize: '1rem' }}>批量导入母号</h3>
+                <p className="muted">每行一个账号，支持以下两种格式：</p>
+              </div>
+              <div className="bulk-format-hint" style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '12px 16px', fontSize: '0.875rem', fontFamily: 'monospace', lineHeight: 1.8 }}>
+                <div><strong>格式 1：</strong>邮箱----密码----辅助邮箱----2FA密钥</div>
+                <div><strong>格式 2：</strong>邮箱——密码——2FA密钥</div>
+                <div style={{ marginTop: '8px', color: 'var(--text-muted, #888)' }}>示例：</div>
+                <div style={{ color: 'var(--text-muted, #888)', wordBreak: 'break-all' }}>t01094635561@gmail.com----i42V1aLLlb!@#----t01094635561858@oldevlk.com----6eskzcgxbujk</div>
+                <div style={{ color: 'var(--text-muted, #888)', wordBreak: 'break-all' }}>GrobyGilchrest@gmail.com——7pgkuspyhj——aep4yientngz</div>
+              </div>
+              <div className="field">
+                <label htmlFor="bulk-lines">账号数据（每行一个）</label>
+                <textarea
+                  id="bulk-lines"
+                  rows={8}
+                  placeholder={'邮箱----密码----辅助邮箱----2FA密钥\n邮箱——密码——2FA密钥'}
+                  value={bulkText}
+                  onChange={(event) => setBulkText(event.target.value)}
+                  style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}
+                />
+              </div>
+              <div className="inline-actions">
+                <button className="button secondary" onClick={() => { setActiveTab("list"); setBulkResult(null); }} type="button">
+                  返回列表
+                </button>
+                <button
+                  className="button"
+                  disabled={isBulkSubmitting || !bulkText.trim()}
+                  type="button"
+                  onClick={async () => {
+                    setIsBulkSubmitting(true);
+                    setBulkResult(null);
+                    try {
+                      const lines = bulkText.split('\n').map(l => l.trim()).filter(Boolean);
+                      const result = await onBulkImport(lines);
+                      setBulkResult(result);
+                      if (result && result.created > 0) {
+                        setBulkText("");
+                      }
+                    } finally {
+                      setIsBulkSubmitting(false);
+                    }
+                  }}
+                >
+                  {isBulkSubmitting ? "导入中..." : `导入 (${bulkText.split('\n').filter(l => l.trim()).length} 行)`}
+                </button>
+              </div>
+              {bulkResult && (
+                <div className="bulk-result" style={{ marginTop: '12px' }}>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <span>总计: <strong>{bulkResult.total}</strong></span>
+                    <span style={{ color: 'var(--emerald, #059669)' }}>成功: <strong>{bulkResult.created}</strong></span>
+                    <span style={{ color: 'var(--amber, #d97706)' }}>跳过: <strong>{bulkResult.skipped}</strong></span>
+                    <span style={{ color: 'var(--red, #dc2626)' }}>错误: <strong>{bulkResult.errorCount}</strong></span>
+                  </div>
+                  {bulkResult.errors.length > 0 && (
+                    <div style={{ background: 'var(--surface-error, #fef2f2)', borderRadius: '6px', padding: '10px 14px', fontSize: '0.875rem', maxHeight: '160px', overflowY: 'auto' }}>
+                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--red, #dc2626)' }}>错误详情：</div>
+                      {bulkResult.errors.map((err, idx) => (
+                        <div key={idx} style={{ color: '#666', lineHeight: 1.6 }}>{err}</div>
+                      ))}
+                    </div>
+                  )}
+                  {bulkResult.createdEmails.length > 0 && (
+                    <div style={{ background: 'var(--surface-success, #f0fdf4)', borderRadius: '6px', padding: '10px 14px', fontSize: '0.875rem', marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
+                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--emerald, #059669)' }}>成功导入：</div>
+                      {bulkResult.createdEmails.map((email, idx) => (
+                        <div key={idx} style={{ color: '#666', lineHeight: 1.6 }}>{email}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="form-card panel-stack workspace-empty">
+              <div>
+                <p className="label">Read Only</p>
+                <h3 className="panel-title">当前角色没有批量导入权限</h3>
+              </div>
+              <p className="muted">批量导入只对 ADMIN 开放。</p>
+            </div>
+          )
+        ) : activeTab === "edit" && editId ? (
+          <form className="form-card field-grid workspace-form" onSubmit={async (e) => {
+            e.preventDefault();
+            if (!editId) return;
+            setIsEditSubmitting(true);
+            try {
+              const ok = await onUpdate(editId, {
+                name: editForm.name,
+                adspowerProfileId: editForm.adspowerProfileId,
+                loginPassword: editForm.loginPassword || undefined,
+                totpSecret: editForm.totpSecret || undefined,
+                notes: editForm.notes || undefined
+              });
+              if (ok) {
+                setActiveTab("list");
+                setEditId(null);
+              }
+            } finally {
+              setIsEditSubmitting(false);
+            }
+          }}>
+            <div className="section-copy">
+              <h3 className="panel-title" style={{ fontSize: '1rem' }}>编辑母号</h3>
+              <p className="muted">修改后点击保存，密码/TOTP 留空则不更新。</p>
+            </div>
+            <div className="field-grid two-up">
+              <div className="field">
+                <label htmlFor="edit-name">名称</label>
+                <input
+                  id="edit-name"
+                  required
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-profile">AdsPower Profile ID</label>
+                <input
+                  id="edit-profile"
+                  required
+                  value={editForm.adspowerProfileId}
+                  onChange={(e) => setEditForm({ ...editForm, adspowerProfileId: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-password">登录密码 <span className="muted">(留空不修改)</span></label>
+                <input
+                  id="edit-password"
+                  type="password"
+                  placeholder="新密码（可选）"
+                  value={editForm.loginPassword}
+                  onChange={(e) => setEditForm({ ...editForm, loginPassword: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-totp">TOTP 密钥 <span className="muted">(留空不修改)</span></label>
+                <input
+                  id="edit-totp"
+                  type="password"
+                  placeholder="Base32 格式（可选）"
+                  value={editForm.totpSecret}
+                  onChange={(e) => setEditForm({ ...editForm, totpSecret: e.target.value.replace(/\s/g, "").toUpperCase() })}
+                />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="edit-notes">备注</label>
+              <textarea
+                id="edit-notes"
+                rows={3}
+                value={editForm.notes}
+                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+              />
+            </div>
+            <div className="inline-actions">
+              <button className="button secondary" type="button" onClick={() => { setActiveTab("list"); setEditId(null); }}>
+                取消
+              </button>
+              <button className="button" type="submit" disabled={isEditSubmitting}>
+                {isEditSubmitting ? "保存中..." : "保存"}
+              </button>
+            </div>
+          </form>
+        ) : activeTab === "create" ? (
           canManage ? (
             <form className="form-card field-grid workspace-form" onSubmit={submit}>
               <div className="field-grid two-up">
@@ -209,8 +424,8 @@ export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
                   <th>登录邮箱</th>
                   <th>状态</th>
                   <th>凭据</th>
-                  <th>风险</th>
                   <th>统计</th>
+                  {canManage && <th style={{ minWidth: 140 }}>操作</th>}
                 </tr>
               </thead>
               <tbody>
@@ -240,9 +455,6 @@ export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
                         </div>
                       </td>
                       <td>
-                        <div className="account-risk">{account.riskScore}</div>
-                      </td>
-                      <td>
                         <div className="account-stats">
                           <div>{account._count?.familyGroups ?? 0} groups</div>
                           <div className="muted account-meta">
@@ -253,11 +465,48 @@ export function AccountPanel({ accounts, onCreate, role }: AccountPanelProps) {
                           </div>
                         </div>
                       </td>
+                      {canManage && (
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <button
+                              className="button secondary"
+                              style={{ fontSize: '0.875rem', padding: '5px 14px', whiteSpace: 'nowrap' }}
+                              onClick={() => startEdit(account)}
+                              type="button"
+                            >
+                              ✏️ 编辑
+                            </button>
+                            <button
+                              className="button"
+                              style={{
+                                fontSize: '0.875rem',
+                                padding: '5px 14px',
+                                background: 'var(--red, #dc2626)',
+                                color: '#fff',
+                                border: 'none',
+                                whiteSpace: 'nowrap'
+                              }}
+                              disabled={deletingId === account.id}
+                              onClick={async () => {
+                                if (!confirm(`确定删除母号 ${account.loginEmail}？\n该操作会同时删除关联的家庭组和成员记录。`)) return;
+                                setDeletingId(account.id);
+                                try {
+                                  await onDelete(account.id);
+                                } finally {
+                                  setDeletingId(null);
+                                }
+                              }}
+                            >
+                              {deletingId === account.id ? "删除中..." : "🗑 删除"}
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={canManage ? 6 : 5}>
                       <div className="empty-state">还没有录入任何母号。</div>
                     </td>
                   </tr>

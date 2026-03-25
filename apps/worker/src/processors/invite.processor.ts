@@ -36,7 +36,7 @@ export async function processInvite(
 ): Promise<void> {
   const { prisma, adspower, lock, workerId } = deps;
   const { orderId, familyGroupId, accountId, userEmail } = job.data;
-  const taskId = job.id ?? job.name;
+  const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] invite job has no id or name, skipping`);
     return;
@@ -44,6 +44,12 @@ export async function processInvite(
 
   const logger = new TaskLogger(prisma, taskId, workerId);
   const browser = new WorkerBrowser();
+
+  // Guard: stale retry jobs (pre-fix) may have null accountId
+  if (!accountId) {
+    console.error(`[worker:${workerId}] invite job ${taskId} has no accountId — dropping stale job`);
+    return;
+  }
 
   // Resolve the AdsPower profile ID from the account
   const account = await prisma.account.findUnique({
@@ -112,6 +118,17 @@ export async function processInvite(
       );
     }
 
+    // 9. Record the invite in DB (slots already decremented at group assignment time in API)
+    try {
+      await prisma.familyInvite.create({
+        data: { familyGroupId, email: userEmail, status: "SENT" }
+      });
+      await logger.log("INFO", `FamilyInvite created for ${userEmail}`);
+    } catch (dbErr) {
+      // Non-fatal: invite was already sent, just log the DB error
+      await logger.log("WARN", `Failed to record invite in DB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+    }
+
     await logger.log("INFO", "Invite completed successfully");
   } catch (error) {
     const errMsg =
@@ -170,8 +187,23 @@ async function executeInviteOnPage(
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(2000);
 
-  // Email input field: <input class="I4p4db nhiZfc" placeholder="輸入名稱或電子郵件地址">
-  const emailInput = page.locator('input.I4p4db, input[placeholder*="電子郵件"], input[placeholder*="email" i]');
+  // Ensure we are on the invite page before interacting
+  await page.waitForURL(/invitemembers/, { timeout: 10000 }).catch(async () => {
+    // May have been a click instead of direct navigation — wait a bit more
+    await page.waitForLoadState("networkidle");
+    if (!page.url().includes("invitemembers")) {
+      throw new Error(`Expected to be on invitemembers page, but got: ${page.url()}`);
+    }
+  });
+
+  // Email input field: <input class="I4p4db" ...> on the invite page
+  // Strictly match class first; fall back to zh-TW/zh-CN/EN placeholder only on this specific page
+  const emailInput = page.locator([
+    "input.I4p4db",
+    'input[placeholder*="電子郵件"]',
+    'input[placeholder*="电子邮件"]',
+    'input[placeholder*="email" i]',
+  ].join(", "));
 
   if ((await emailInput.count()) === 0) {
     throw new Error("Cannot find email input field on invite page");

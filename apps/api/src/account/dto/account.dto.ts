@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum } from "class-validator";
+import { IsString, IsOptional, IsEnum, IsNotEmpty, IsArray, ArrayNotEmpty } from "class-validator";
 
 export class CreateAccountDto {
   @IsString()
@@ -47,4 +47,11 @@ export class UpdateAccountDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class BulkImportDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  lines!: string[];
 }

@@ -46,7 +46,14 @@ export class OrderService {
   }
 
   async findAll(status?: string) {
-    const where = status ? { status: status as any } : {};
+    const VALID_STATUSES = [
+      "CODE_VERIFIED", "GROUP_ASSIGNED", "TASK_QUEUED", "INVITE_SENT",
+      "COMPLETED", "FAILED", "MANUAL_REVIEW"
+    ];
+
+    const where = (status && VALID_STATUSES.includes(status))
+      ? { status: status as any }
+      : {};
 
     return this.prisma.order.findMany({
       where,

@@ -29,7 +29,7 @@ export async function processHealth(
 ): Promise<void> {
   const { prisma, adspower, lock, workerId } = deps;
   const { accountId } = job.data;
-  const taskId = job.id ?? job.name;
+  const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] health job has no id or name, skipping`);
     return;

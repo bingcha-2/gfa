@@ -9,13 +9,22 @@
     "dev:web": "pnpm --filter @gfa/web dev",
     "dev:api": "pnpm --filter @gfa/api dev",
     "dev:worker": "pnpm --filter @gfa/worker dev",
+    "start": "pnpm --parallel --filter @gfa/web --filter @gfa/api --filter @gfa/worker start",
+    "start:web": "pnpm --filter @gfa/web start",
+    "start:api": "pnpm --filter @gfa/api start",
+    "start:worker": "pnpm --filter @gfa/worker start",
+    "private-hosting:start": "powershell -ExecutionPolicy Bypass -File ./scripts/private-hosting/launcher.ps1 start",
+    "private-hosting:stop": "powershell -ExecutionPolicy Bypass -File ./scripts/private-hosting/launcher.ps1 stop",
+    "private-hosting:status": "powershell -ExecutionPolicy Bypass -File ./scripts/private-hosting/launcher.ps1 status",
     "db:generate": "pnpm prisma generate",
     "db:push": "node scripts/init-sqlite.mjs",
     "db:migrate": "node scripts/init-sqlite.mjs",
     "db:init:sqlite": "node scripts/init-sqlite.mjs",
     "db:reset:sqlite": "node scripts/init-sqlite.mjs --reset",
     "db:seed": "node scripts/seed.mjs",
-    "lint": "pnpm db:generate && pnpm -r lint"
+    "lint": "pnpm db:generate && pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @gfa/api test && pnpm --filter @gfa/worker test"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2"

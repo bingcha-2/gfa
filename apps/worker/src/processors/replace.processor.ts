@@ -38,7 +38,7 @@ export async function processReplace(
   const { prisma, adspower, lock, workerId } = deps;
   const { orderId, familyGroupId, accountId, targetMemberEmail, newUserEmail } =
     job.data;
-  const taskId = job.id ?? job.name;
+  const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] replace job has no id or name, skipping`);
     return;
@@ -84,19 +84,52 @@ export async function processReplace(
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
 
+    // Look up the member's googleMemberId and displayName from DB
+    const memberRecord = await prisma.familyMember.findFirst({
+      where: { familyGroupId, email: targetMemberEmail },
+      select: { displayName: true, googleMemberId: true }
+    });
+    const targetDisplayName = memberRecord?.displayName ?? undefined;
+    const targetGaiaId = memberRecord?.googleMemberId ?? undefined;
+
+    await logger.log("INFO",
+      `Target member: email=${targetMemberEmail}, displayName=${targetDisplayName ?? 'unknown'}, gaiaId=${targetGaiaId ?? 'unknown'}`
+    );
+
     // Step 1: Remove the target member on page
     await removeMemberOnPage(page, targetMemberEmail, logger, {
       password: account.loginPassword ?? undefined,
       totpSecret: account.totpSecret ?? undefined,
+      displayName: targetDisplayName,
+      googleMemberId: targetGaiaId,
     });
 
     // Step 2: Invite the new member on page
     await inviteMemberOnPage(page, newUserEmail, logger);
 
-    // Both page operations succeeded — now update DB
-    await prisma.familyMember.updateMany({
-      where: { familyGroupId, email: targetMemberEmail },
-      data: { status: "REMOVED", removedAt: new Date() },
+    // Both page operations succeeded — now update DB atomically
+    await prisma.$transaction(async (tx) => {
+      // Mark old member as REMOVED
+      await tx.familyMember.updateMany({
+        where: { familyGroupId, email: targetMemberEmail },
+        data: { status: "REMOVED", removedAt: new Date() },
+      });
+
+      // Create placeholder for newly invited member
+      await tx.familyMember.create({
+        data: {
+          familyGroupId,
+          email: newUserEmail,
+          displayName: newUserEmail.split("@")[0],
+          role: "member",
+          status: "PENDING",
+        },
+      });
+
+      // Record invite
+      await tx.familyInvite.create({
+        data: { familyGroupId, email: newUserEmail, status: "SENT" },
+      });
     });
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
@@ -142,53 +175,50 @@ export async function processReplace(
 /**
  * Remove a family member on the Google Family page.
  *
- * Calibrated from real DOM: members are listed as <a class="umngff" href="family/member/...">.
- * Each member card has displayName in div.IlKlLe.
- * Clicking the member navigates to detail page where the remove button is:
- * - "取消邀請" (cancel invite) for pending members
- * - "移除成員" / "從家庭群組中移除" for joined members
+ * Matching strategies (tried in order):
+ *   S0: Direct GAIA URL navigation (fastest, uses googleMemberId from DB)
+ *   S1: Find email text directly on list page (pending invites without Google account)
+ *   S2: Find member by displayName (accepted members show display name, not email)
+ *   S3: Blind iteration — click each card, check body text (last resort)
  */
 async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
-  credentials?: { password?: string; totpSecret?: string }
+  credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string }
 ): Promise<void> {
   await page.waitForLoadState("networkidle");
 
-  // On the family details page, members are listed as <a class="umngff" href="family/member/...">
-  const emailOnPage = page.locator(`text="${email}"`);
+  const displayName = credentials?.displayName;
+  const googleMemberId = credentials?.googleMemberId;
 
-  if ((await emailOnPage.count()) > 0) {
-    await emailOnPage.first().click();
+  if (googleMemberId) {
+    // Strategy 0: Direct navigation using GAIA ID — bypasses all text matching issues
+    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}`;
+    await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
+    await page.goto(directUrl, { waitUntil: "networkidle", timeout: 20000 });
+    await page.waitForLoadState("networkidle");
+
+    // Verify we landed on the right page (check for remove/cancel button)
+    const hasAction = await page.locator(
+      'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove")'
+    ).count();
+
+    if (hasAction > 0) {
+      await logger.log("INFO", `S0 success: on member detail page for gaiaId=${googleMemberId}`);
+      // Already on the detail page — proceed directly to remove button logic below
+    } else {
+      await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+      await fallbackFindMember(page, email, displayName, logger);
+    }
   } else {
-    // Click through each member card to find the matching non-admin member
-    const memberLinks = page.locator('a.umngff[href*="family/member/"]');
-    const count = await memberLinks.count();
-    let found = false;
-
-    for (let i = 0; i < count; i++) {
-      const link = memberLinks.nth(i);
-      const roleText = await link.locator(".ImPZoc").textContent();
-      if (
-        roleText?.includes("管理員") ||
-        roleText?.toLowerCase().includes("manager")
-      ) {
-        continue;
-      }
-
-      await link.click();
-      await page.waitForLoadState("networkidle");
-      found = true;
-      break;
-    }
-
-    if (!found) {
-      throw new Error(`Could not find non-admin member to remove for ${email}`);
-    }
+    // No GAIA ID — fall back to text-based matching
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await fallbackFindMember(page, email, displayName, logger);
   }
 
-  await logger.log("INFO", `Found member ${email} on detail page`);
+  await logger.log("INFO", `On detail page for member ${email}`);
   // Save the member detail URL for potential re-navigation after password auth
   const memberDetailUrl = page.url();
   await page.waitForTimeout(1000);
@@ -197,6 +227,7 @@ async function removeMemberOnPage(
   const removeButton = page.locator([
     'button:has-text("移除")',
     'button:has-text("取消邀請")',
+    'button:has-text("取消邀请")',
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
     'button:has-text("Remove")',
@@ -265,7 +296,7 @@ async function removeMemberOnPage(
       if ((await totpInput.count()) === 0) {
         // May need to select "Google Authenticator" option first
         const authOption = page.locator(
-          'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("Authenticator")'
+          'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("验证器"), div:has-text("Authenticator")'
         );
         if ((await authOption.count()) > 0) {
           await authOption.first().click();
@@ -284,7 +315,7 @@ async function removeMemberOnPage(
 
       await totpInput.first().fill(totpCode);
       const verifyButton = page.locator(
-        'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證")'
+        'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
       );
       await verifyButton.first().click();
       await logger.log("INFO", "TOTP code submitted");
@@ -333,6 +364,8 @@ async function removeMemberOnPage(
     'button:has-text("Yes")',
     'a:has-text("確認")',
     'button:has-text("確認")',
+    'a:has-text("确认")',
+    'button:has-text("确认")',
     'a:has-text("Confirm")',
     'button:has-text("Confirm")',
   ].join(", "));
@@ -351,6 +384,86 @@ async function removeMemberOnPage(
 
   await page.waitForTimeout(3000);
   await page.waitForLoadState("networkidle");
+}
+
+/**
+ * Fallback member finder when GAIA ID is not available.
+ * Tries S1 (email text on page) → S2 (displayName) → S3 (click each card).
+ * After this resolves, the page will be on the member's detail page.
+ */
+async function fallbackFindMember(
+  page: import("playwright").Page,
+  email: string,
+  displayName: string | undefined,
+  logger: TaskLogger
+): Promise<void> {
+  await page.waitForLoadState("networkidle");
+
+  // S1: Email visible directly on list (pending invites without a Google account name)
+  const emailLocator = page.locator(`text="${email}"`);
+  if ((await emailLocator.count()) > 0) {
+    await logger.log("INFO", `S1: Found email text on list page, clicking`);
+    await emailLocator.first().click();
+    await page.waitForLoadState("networkidle");
+    return;
+  }
+
+  // S2: displayName match (accepted members show their Google display name)
+  if (displayName) {
+    await logger.log("INFO", `S2: Email not visible, trying displayName "${displayName}"`);
+    const nameLocator = page.locator(`text="${displayName}"`);
+    if ((await nameLocator.count()) > 0) {
+      await logger.log("INFO", `S2: Found by displayName, clicking`);
+      await nameLocator.first().click();
+      await page.waitForLoadState("networkidle");
+      return;
+    }
+    await logger.log("WARN", `S2: displayName "${displayName}" not found on page either`);
+  }
+
+  // S3: Blind iteration — click each non-admin card and check detail page body
+  await logger.log("INFO", `S3: Iterating all member cards to find "${email}"`);
+  const memberLinks = page.locator('a.umngff[href*="family/member/"]');
+  const count = await memberLinks.count();
+
+  for (let i = 0; i < count; i++) {
+    const links = page.locator('a.umngff[href*="family/member/"]');
+    if (i >= (await links.count())) break;
+    const link = links.nth(i);
+
+    // Skip manager cards
+    const roleText = await link.locator(".ImPZoc").textContent().catch(() => "");
+    if (roleText?.includes("管理") || roleText?.toLowerCase().includes("manager")) continue;
+
+    // Quick card-text check first
+    const cardText = await link.textContent().catch(() => "");
+    if (cardText?.includes(email)) {
+      await logger.log("INFO", `S3: Found email in card #${i} text, clicking`);
+      await link.click();
+      await page.waitForLoadState("networkidle");
+      return;
+    }
+
+    // Navigate into detail page
+    await link.click();
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(800);
+
+    const bodyText = await page.textContent("body").catch(() => "");
+    if (bodyText?.includes(email)) {
+      await logger.log("INFO", `S3: Matched on detail page for card #${i}`);
+      return;
+    }
+
+    await logger.log("DEBUG", `S3: Card #${i} does not match, going back`);
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await page.waitForTimeout(800);
+  }
+
+  throw new Error(
+    `Cannot find member "${email}" on family page. ` +
+    `Checked ${count} cards via S1/S2/S3. Member may have left or DB is out of sync.`
+  );
 }
 
 /**

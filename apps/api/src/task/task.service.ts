@@ -3,12 +3,31 @@ import {
   NotFoundException,
   BadRequestException
 } from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 
 import { PrismaService } from "../prisma/prisma.service";
+import { QUEUE_NAMES, TASK_TYPES } from "@gfa/shared";
 
 @Injectable()
 export class TaskService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(QUEUE_NAMES.invite) private readonly inviteQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.remove) private readonly removeQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.replace) private readonly replaceQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.sync) private readonly syncQueue: Queue
+  ) {}
+
+  private getQueue(taskType: string): Queue | null {
+    switch (taskType) {
+      case TASK_TYPES.inviteMember: return this.inviteQueue;
+      case TASK_TYPES.removeMember: return this.removeQueue;
+      case TASK_TYPES.replaceMember: return this.replaceQueue;
+      case TASK_TYPES.syncFamilyGroup: return this.syncQueue;
+      default: return null;
+    }
+  }
 
   async findAll(params?: { status?: string; type?: string }) {
     const where: Record<string, unknown> = {};
@@ -47,6 +66,7 @@ export class TaskService {
     const task = await this.findOne(id);
 
     if (
+      task.status !== "PENDING" &&
       task.status !== "FAILED_RETRYABLE" &&
       task.status !== "FAILED_FINAL" &&
       task.status !== "MANUAL_REVIEW"
@@ -56,15 +76,41 @@ export class TaskService {
       );
     }
 
-    return this.prisma.task.update({
+    // Reset DB status
+    const updated = await this.prisma.task.update({
       where: { id },
       data: {
         status: "PENDING",
-        retryCount: { increment: 1 },
+        retryCount: { increment: task.status === "PENDING" ? 0 : 1 },
         lastErrorCode: null,
         lastErrorMessage: null
       }
     });
+
+    // Re-enqueue the BullMQ job so the worker picks it up
+    const queue = this.getQueue(task.type);
+    if (queue) {
+      const payload: Record<string, unknown> = {
+        taskId: task.id,
+        familyGroupId: task.familyGroupId,
+        accountId: task.accountId,
+        orderId: task.orderId,
+      };
+
+      // Include order-specific fields stored in task meta if available
+      if ((task as any).meta) {
+        Object.assign(payload, (task as any).meta);
+      }
+
+      await queue.add(task.type, payload, {
+        jobId: `retry-${task.id}-${Date.now()}`,
+        attempts: 1,
+        removeOnComplete: { count: 100 },
+        removeOnFail: false,
+      });
+    }
+
+    return updated;
   }
 
   async manualComplete(id: string, resultMessage?: string) {

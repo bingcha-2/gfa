@@ -1,4 +1,4 @@
-type ApiMethod = "GET" | "POST" | "PATCH";
+type ApiMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 type ApiRequestOptions = {
   method?: ApiMethod;

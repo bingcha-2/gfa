@@ -18,13 +18,16 @@ import { FamilyGroupService } from "./family-group.service";
 describe("FamilyGroupService", () => {
   let service: FamilyGroupService;
 
-  // Mock sync queue since we're testing service logic, not queue integration
+  // Mock queues since we're testing service logic, not queue integration
   const mockSyncQueue = {
     add: async (_name: string, _data: any, _opts: any) => ({ id: "mock-job-1" })
   };
+  const mockRemoveQueue = {
+    add: async (_name: string, _data: any, _opts: any) => ({ id: "mock-remove-1" })
+  };
 
   beforeAll(() => {
-    service = new FamilyGroupService(getPrisma() as any, mockSyncQueue as any);
+    service = new FamilyGroupService(getPrisma() as any, mockSyncQueue as any, mockRemoveQueue as any);
   });
 
   beforeEach(async () => {
@@ -117,7 +120,8 @@ describe("FamilyGroupService", () => {
             findMany: async () => []
           }
         } as any,
-        mockSyncQueue as any
+        mockSyncQueue as any,
+        mockRemoveQueue as any
       );
 
       const all = await mockService.findAll();
@@ -155,34 +159,38 @@ describe("FamilyGroupService", () => {
       expect(result).toBeNull();
     });
 
-    it("should prefer group with lowest risk score", async () => {
+    it("should prefer earliest created group (createdAt ASC)", async () => {
       const account = await createTestAccount();
-      const highRisk = await createTestFamilyGroup(account.id, {
+      // Create groups with a small delay to ensure different createdAt
+      const first = await createTestFamilyGroup(account.id, {
         availableSlots: 5,
         riskScore: 80
       });
-      const lowRisk = await createTestFamilyGroup(account.id, {
+      // Second group created later
+      const second = await createTestFamilyGroup(account.id, {
         availableSlots: 5,
         riskScore: 10
       });
 
       const result = await service.findAvailableGroup();
-      expect(result).toBe(lowRisk.id);
+      // Should return the first created, regardless of riskScore
+      expect(result).toBe(first.id);
     });
 
-    it("should prefer group with more available slots when risk is same", async () => {
+    it("should return earliest created group even with fewer slots", async () => {
       const account = await createTestAccount();
-      const fewer = await createTestFamilyGroup(account.id, {
+      const earlier = await createTestFamilyGroup(account.id, {
         availableSlots: 1,
         riskScore: 0
       });
-      const more = await createTestFamilyGroup(account.id, {
+      const later = await createTestFamilyGroup(account.id, {
         availableSlots: 4,
         riskScore: 0
       });
 
       const result = await service.findAvailableGroup();
-      expect(result).toBe(more.id);
+      // createdAt ASC: earlier group wins
+      expect(result).toBe(earlier.id);
     });
 
     it("should not select DISABLED groups", async () => {
@@ -213,17 +221,18 @@ describe("FamilyGroupService", () => {
               where
             }: {
               where: { id: string };
-              select: { id: true };
+              select: { id: true; status: true };
             }) => {
               if (where.id === "valid-account-id") {
-                return { id: "valid-account-id" };
+                return { id: "valid-account-id", status: "HEALTHY" };
               }
 
               return null;
             }
           }
         } as any,
-        mockSyncQueue as any
+        mockSyncQueue as any,
+        mockRemoveQueue as any
       );
 
       const result = await mockService.findAvailableGroup();

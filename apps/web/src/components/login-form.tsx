@@ -80,8 +80,8 @@ export function LoginForm() {
       <div className="panel-stack">
         <div>
           <p className="label">Credentials</p>
-          <h2 className="panel-title">登录运营账号</h2>
-          <p className="muted">登录成功后会写入 HttpOnly Cookie，控制台刷新后仍保持登录。</p>
+          <h2 className="public-panel-title">后台登录</h2>
+          <p className="muted">输入运营账号和密码。</p>
         </div>
 
         <form className="field-grid" onSubmit={onSubmit}>

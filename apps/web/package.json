@@ -5,6 +5,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev -p 3000",
+    "start": "next start",
     "lint": "tsc -p tsconfig.lint.json --noEmit"
   },
   "dependencies": {

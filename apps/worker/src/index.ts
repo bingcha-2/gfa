@@ -17,6 +17,7 @@ import { PrismaClient } from "@prisma/client";
 
 import {
   InviteMemberPayload,
+  RemoveMemberPayload,
   ReplaceMemberPayload,
   SyncFamilyGroupPayload,
   HealthCheckAccountPayload,
@@ -26,6 +27,7 @@ import {
 import { AdsPowerClient } from "./adspower-client";
 import { ProfileLock } from "./profile-lock";
 import { processInvite } from "./processors/invite.processor";
+import { processRemove } from "./processors/remove.processor";
 import { processReplace } from "./processors/replace.processor";
 import { processSync } from "./processors/sync.processor";
 import { processHealth } from "./processors/health.processor";
@@ -33,7 +35,10 @@ import { processHealth } from "./processors/health.processor";
 // ---- Configuration ----
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-const workerId = process.env.WORKER_NAME ?? `worker-${process.pid}`;
+// Use stable WORKER_NAME — NOT process.pid, which changes on every hot-reload.
+// If pid-based lock was acquired, release would fail after reload (different pid = different token).
+const hostname = (() => { try { return require("os").hostname(); } catch { return "worker"; } })();
+const workerId = process.env.WORKER_NAME ?? `gfa-worker-${hostname}`;
 const adspowerHost =
   process.env.ADSPOWER_HOST ?? "http://localhost:50325";
 const adspowerApiKey = process.env.ADSPOWER_API_KEY ?? "";
@@ -75,6 +80,15 @@ const inviteWorker = new Worker<InviteMemberPayload>(
   }
 );
 
+const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
+  QUEUE_NAMES.remove,
+  (job) => processRemove(job, deps),
+  {
+    connection,
+    concurrency: 1,
+  }
+);
+
 const replaceWorker = new Worker<ReplaceMemberPayload>(
   QUEUE_NAMES.replace,
   (job) => processReplace(job, deps),
@@ -102,7 +116,7 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   }
 );
 
-const workers = [inviteWorker, replaceWorker, syncWorker, healthWorker];
+const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWorker];
 
 // ---- Event Logging ----
 
@@ -111,11 +125,33 @@ for (const worker of workers) {
     console.log(`[${workerId}] ✓ ${worker.name} completed job=${job.id}`);
   });
 
-  worker.on("failed", (job: Job | undefined, error: Error) => {
+  worker.on("failed", async (job: Job | undefined, error: Error) => {
     console.error(
       `[${workerId}] ✗ ${worker.name} failed job=${job?.id}`,
       error.message
     );
+
+    // Best-effort lock cleanup: if job has accountId, look up the adspowerProfileId
+    // and force-release the Redis lock so the next retry isn't blocked.
+    const accountId = (job?.data as any)?.accountId;
+    if (accountId) {
+      try {
+        const account = await prisma.account.findUnique({
+          where: { id: accountId },
+          select: { adspowerProfileId: true },
+        });
+        if (account?.adspowerProfileId) {
+          const key = `gfa:lock:profile:${account.adspowerProfileId}`;
+          const lockHolder = await redis.get(key);
+          if (lockHolder === workerId) {
+            await redis.del(key);
+            console.log(`[${workerId}] Released stale lock: ${key}`);
+          }
+        }
+      } catch {
+        // noop — don't let lock cleanup break anything
+      }
+    }
   });
 
   worker.on("error", (error: Error) => {

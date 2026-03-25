@@ -5,7 +5,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "start": "node dist/index.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@gfa/shared": "workspace:*",
@@ -18,7 +21,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
+    "@vitest/coverage-v8": "^4.1.1",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.1"
   }
 }

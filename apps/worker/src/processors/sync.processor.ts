@@ -27,6 +27,7 @@ interface ScrapedMember {
   email: string;
   displayName: string;
   role: string;
+  googleMemberId: string; // GAIA ID from href="/family/member/g/{id}"
 }
 
 export async function processSync(
@@ -35,7 +36,7 @@ export async function processSync(
 ): Promise<void> {
   const { prisma, adspower, lock, workerId } = deps;
   const { familyGroupId, accountId } = job.data;
-  const taskId = job.id ?? job.name;
+  const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] sync job has no id or name, skipping`);
     return;
@@ -75,11 +76,9 @@ export async function processSync(
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
     await logger.log("INFO", "Navigated to Family page for sync");
 
-    // Scrape current members from the page
-    const members = await scrapeMembersFromPage(page);
-    await logger.log("INFO", `Found ${members.length} members on page`, {
-      members,
-    });
+    // Scrape current members from the page (visits each member detail page for real emails)
+    const { members, availableSlots } = await scrapeMembersFromPage(page);
+    await logger.log("INFO", `Found ${members.length} members on page`, { members });
 
     const afterPath = await browser.takeScreenshot(taskId, "sync");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
@@ -87,18 +86,25 @@ export async function processSync(
     // Reconcile with database
     await reconcileMembers(prisma, familyGroupId, members, logger);
 
-    // Update group counts
+    // Update group counts — use scraped availableSlots (from Google's invite button text)
+    // and DB maxMembers (not hardcoded to 6)
+    const group = await prisma.familyGroup.findUnique({
+      where: { id: familyGroupId },
+      select: { maxMembers: true },
+    });
+    const maxMembers = group?.maxMembers ?? 5;
+
     await prisma.familyGroup.update({
       where: { id: familyGroupId },
       data: {
         memberCount: members.length,
-        availableSlots: Math.max(0, 6 - members.length),
+        availableSlots: Math.min(availableSlots, Math.max(0, maxMembers - members.length)),
         lastSyncedAt: new Date(),
       },
     });
 
     await logger.updateStatus("SUCCESS");
-    await logger.log("INFO", `Sync complete: ${members.length} members, ${Math.max(0, 6 - members.length)} slots available`);
+    await logger.log("INFO", `Sync complete: ${members.length} members, ${availableSlots} slots available`);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
 
@@ -124,64 +130,121 @@ export async function processSync(
 
 /**
  * Scrape family member info from the Google Family page.
- * Returns a list of { email, displayName, role }.
+ * Visits each member's detail page to read the real email address,
+ * since emails are not always shown on the list page.
  *
- * Selectors calibrated from real Google Family UI (myaccount.google.com/family/details).
- * Members are rendered as <a class="umngff" href="family/member/g/..."> inside <div class="N25As">.
- * Each member card: displayName in div.IlKlLe, role in div.ImPZoc.
- * Account email is captured from the top-right avatar button's aria-label.
+ * Returns { members, availableSlots }.
  */
 async function scrapeMembersFromPage(
   page: import("playwright").Page
-): Promise<ScrapedMember[]> {
+): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
   await page.waitForLoadState("networkidle");
 
-  const members = await page.evaluate(() => {
-    const result: { email: string; displayName: string; role: string }[] = [];
-
-    // Member cards: div.N25As > a.umngff[href^="family/member/"]
-    const memberCards = document.querySelectorAll('a.umngff[href*="family/member/"]');
-
-    memberCards.forEach((el) => {
-      const displayName = el.querySelector('.IlKlLe')?.textContent?.trim() ?? '';
-      const role = el.querySelector('.ImPZoc')?.textContent?.trim() ?? 'member';
-
-      // Try to extract email from member detail link or from visible text
-      // On the list page, emails aren't always visible; the displayName is the primary identifier
-      // We'll use the member profile URL segment as a fallback identifier
-      const href = el.getAttribute('href') ?? '';
-      const memberGaiaId = href.match(/member\/g\/(\d+)/)?.[1] ?? '';
-
-      result.push({
-        email: '', // Email not directly visible on list page; will match by displayName
-        displayName,
-        role,
-      });
-    });
-
-    return result;
-  });
-
-  // Also scrape the available slots from the invite button text
-  // "傳送邀請 (還可邀請 5 人)" → 5 slots
+  // Parse available slots from invite button text
   const inviteLinkText = await page
     .locator('a[href*="invitemembers"]')
     .first()
     .textContent()
-    .catch(() => '');
-
-  // Parse the slot count from the link text
+    .catch(() => "");
   const slotMatch = inviteLinkText?.match(/(\d+)/);
-  const availableSlots = slotMatch ? parseInt(slotMatch[1], 10) : 6 - members.length;
 
-  // Attach availableSlots to the result via a custom property on the array
-  (members as any).__availableSlots = availableSlots;
+  // Read BOTH href and display name from the list page in one evaluate call.
+  // This avoids reading the detail page title ("Family member details") as displayName.
+  const cardData: Array<{ href: string; displayName: string }> = await page.evaluate(() => {
+    const cards = document.querySelectorAll('a[href*="family/member/"]');
+    return Array.from(cards).map((el) => {
+      const href = el.getAttribute("href") ?? "";
+      // The visible text in the card is the member's display name.
+      // Exclude the href part and trim whitespace.
+      const rawText = el.textContent?.trim() ?? "";
+      return { href, displayName: rawText };
+    });
+  });
 
-  return members;
+  // Deduplicate by GAIA ID — covers both /family/member/g/12345 and /family/member/12345
+  const seenGaiaIds = new Set<string>();
+  const uniqueCards: Array<{ href: string; displayName: string; gaiaId: string }> = [];
+  for (const card of cardData) {
+    if (!card.href) continue;
+    // Try /g/12345 first, then bare /member/12345
+    const gaiaId =
+      card.href.match(/\/g\/(\d+)/)?.[1] ??
+      card.href.match(/\/member\/(\d+)/)?.[1] ??
+      card.href; // last resort: use full href as key
+    if (!seenGaiaIds.has(gaiaId)) {
+      seenGaiaIds.add(gaiaId);
+      uniqueCards.push({ ...card, gaiaId });
+    }
+  }
+
+  const members: ScrapedMember[] = [];
+  const baseUrl = "https://myaccount.google.com/";
+
+  for (const card of uniqueCards) {
+    const detailUrl = card.href.startsWith("http")
+      ? card.href
+      : `${baseUrl}${card.href}`;
+
+    try {
+      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 20000 });
+      await page.waitForTimeout(500);
+
+      // Read email from detail page only — NOT displayName (page title would give 'Family member details')
+      const email = await page.evaluate(() => {
+        const allText = Array.from(document.querySelectorAll("div, span, p"))
+          .map((el) => el.textContent?.trim() ?? "")
+          .filter((t) => t.includes("@") && t.includes("."));
+        return allText.find((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) ?? "";
+      });
+
+      // Role
+      const role = await page.evaluate(() =>
+        document.querySelector(".ImPZoc, [data-member-role]")?.textContent?.trim() ?? "member"
+      );
+
+      if (email || card.gaiaId) {
+        members.push({
+          email,
+          displayName: card.displayName,
+          role,
+          googleMemberId: card.gaiaId,
+        });
+      }
+    } catch {
+      // Skip unreadable member detail — still record with list-page data
+      if (card.gaiaId) {
+        members.push({
+          email: "",
+          displayName: card.displayName,
+          role: "member",
+          googleMemberId: card.gaiaId,
+        });
+      }
+    }
+
+    // Navigate back to family list
+    await page.goto("https://myaccount.google.com/family/details", {
+      waitUntil: "networkidle",
+      timeout: 20000,
+    }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
+  const finalSlots = slotMatch ? parseInt(slotMatch[1], 10) : Math.max(0, 6 - members.length);
+  return { members, availableSlots: finalSlots };
 }
 
 /**
  * Reconcile scraped members with the database.
+ *
+ * Two categories of scraped members:
+ *   A) emailMembers   — have email (pending invites, or detail page showed email)
+ *   B) gaiaOnlyMembers — no email but have GAIA ID (accepted invite, Google hides email)
+ *
+ * Strategy:
+ *   1. Upsert email members normally.
+ *   2. For REMOVED marking: skip if gaiaOnly members exist (they may correspond to DB records).
+ *   3. For gaiaOnly members: link to existing DB records via gaiaId → displayName → elimination.
  */
 async function reconcileMembers(
   prisma: PrismaClient,
@@ -189,49 +252,130 @@ async function reconcileMembers(
   scrapedMembers: ScrapedMember[],
   logger: TaskLogger
 ): Promise<void> {
-  const existing = await prisma.familyMember.findMany({
-    where: { familyGroupId },
-  });
+  const emailMembers = scrapedMembers.filter((m) => !!m.email);
+  const gaiaOnlyMembers = scrapedMembers.filter((m) => !m.email && !!m.googleMemberId);
 
-  const scrapedEmails = new Set(scrapedMembers.map((m) => m.email));
-  const existingEmails = new Set(existing.map((m) => m.email));
+  if (emailMembers.length === 0 && gaiaOnlyMembers.length === 0) {
+    await logger.log("WARN", "No members scraped — skipping reconciliation");
+    return;
+  }
 
-  // Mark members NOT on page as REMOVED
+  const existing = await prisma.familyMember.findMany({ where: { familyGroupId } });
+  const scrapedEmails = new Set(emailMembers.map((m) => m.email));
+
+  // --- Step 1: Mark members as REMOVED only when we can be sure they left ---
+  // If there are gaiaOnly scraped members, they may correspond to DB records
+  // not in scrapedEmails — be conservative and skip REMOVED marking for those.
   for (const member of existing) {
-    if (!scrapedEmails.has(member.email) && member.status === "ACTIVE") {
-      await prisma.familyMember.update({
-        where: { id: member.id },
-        data: { status: "REMOVED", removedAt: new Date() },
-      });
-      await logger.log("INFO", `Marked ${member.email} as REMOVED (not on page)`);
+    if (!member.email || !scrapedEmails.has(member.email) && member.status === "ACTIVE") {
+      if (gaiaOnlyMembers.length > 0) {
+        // Could correspond to a gaiaOnly scraped member — skip
+        await logger.log("DEBUG", `Skipping REMOVED for ${member.email} — ${gaiaOnlyMembers.length} unidentified scrape member(s) present`);
+      } else if (member.email && !scrapedEmails.has(member.email) && member.status === "ACTIVE") {
+        await prisma.familyMember.update({
+          where: { id: member.id },
+          data: { status: "REMOVED", removedAt: new Date() },
+        });
+        await logger.log("INFO", `Marked ${member.email} as REMOVED (not on page)`);
+      }
     }
   }
 
-  // Upsert members found on page
-  for (const scraped of scrapedMembers) {
-    if (existingEmails.has(scraped.email)) {
-      // Update existing
-      await prisma.familyMember.updateMany({
-        where: { familyGroupId, email: scraped.email },
+  // --- Step 2: Upsert email members ---
+  for (const scraped of emailMembers) {
+    await prisma.familyMember.upsert({
+      where: { familyGroupId_email: { familyGroupId, email: scraped.email } },
+      update: {
+        displayName: scraped.displayName || undefined,
+        role: scraped.role,
+        status: "ACTIVE",
+        googleMemberId: scraped.googleMemberId || undefined,
+      },
+      create: {
+        familyGroupId,
+        email: scraped.email,
+        displayName: scraped.displayName || undefined,
+        role: scraped.role,
+        status: "ACTIVE",
+        googleMemberId: scraped.googleMemberId || undefined,
+        joinedAt: new Date(),
+      },
+    });
+    await logger.log("INFO", `Upserted member: ${scraped.email} (gaia=${scraped.googleMemberId || "unknown"})`);
+  }
+
+  // --- Step 3: Link gaiaOnly members to existing DB records ---
+  // Members with no email on page: try gaiaId → displayName → single-candidate elimination
+  for (const scrape of gaiaOnlyMembers) {
+    await logger.log("INFO", `Linking gaiaOnly member: gaia=${scrape.googleMemberId}, name="${scrape.displayName}"`);
+
+    // Tier 1: Already linked by gaiaId in a previous sync
+    const byGaia = await prisma.familyMember.findFirst({
+      where: { familyGroupId, googleMemberId: scrape.googleMemberId },
+    });
+    if (byGaia) {
+      await prisma.familyMember.update({
+        where: { id: byGaia.id },
+        data: { status: "ACTIVE", displayName: scrape.displayName || byGaia.displayName || undefined },
+      });
+      await logger.log("INFO", `T1 linked: gaia=${scrape.googleMemberId} → ${byGaia.email}`);
+      continue;
+    }
+
+    // Tier 2: Match by displayName
+    if (scrape.displayName) {
+      const byName = await prisma.familyMember.findFirst({
+        where: { familyGroupId, displayName: scrape.displayName },
+      });
+      if (byName) {
+        await prisma.familyMember.update({
+          where: { id: byName.id },
+          data: { googleMemberId: scrape.googleMemberId, status: "ACTIVE" },
+        });
+        await logger.log("INFO", `T2 linked: gaia=${scrape.googleMemberId} → ${byName.email} via displayName`);
+        continue;
+      }
+    }
+
+    // Tier 3: Elimination — single unlinked active/pending member not in scrapedEmails
+    const unlinked = existing.filter(
+      (m) => !m.googleMemberId && !scrapedEmails.has(m.email) && m.status !== "REMOVED"
+    );
+    if (unlinked.length === 1) {
+      await prisma.familyMember.update({
+        where: { id: unlinked[0].id },
         data: {
-          displayName: scraped.displayName,
-          role: scraped.role,
+          googleMemberId: scrape.googleMemberId,
           status: "ACTIVE",
+          displayName: scrape.displayName || unlinked[0].displayName || undefined,
         },
       });
+      await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${unlinked[0].email} by elimination`);
     } else {
-      // Create new
-      await prisma.familyMember.create({
-        data: {
+      // Tier 4: No match found — create as INVITED so the member is not silently dropped
+      // This covers pending invites that are visible on page but have no email in our DB yet
+      const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
+      await prisma.familyMember.upsert({
+        where: { familyGroupId_email: { familyGroupId, email: placeholder } },
+        update: {
+          displayName: scrape.displayName || undefined,
+          googleMemberId: scrape.googleMemberId,
+          status: "PENDING",
+        },
+        create: {
           familyGroupId,
-          email: scraped.email,
-          displayName: scraped.displayName,
-          role: scraped.role,
-          status: "ACTIVE",
+          email: placeholder,
+          displayName: scrape.displayName || undefined,
+          googleMemberId: scrape.googleMemberId,
+          role: scrape.role ?? "member",
+          status: "PENDING",
           joinedAt: new Date(),
         },
       });
-      await logger.log("INFO", `New member discovered: ${scraped.email}`);
+      await logger.log("WARN",
+        `T4 created INVITED placeholder for gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
+        `real email unknown. ${unlinked.length} unmatched candidates.`
+      );
     }
   }
 }

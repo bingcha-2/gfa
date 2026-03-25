@@ -125,6 +125,51 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
+  async function bulkImport(lines: string[]) {
+    try {
+      const result = await apiRequest<{
+        total: number;
+        created: number;
+        skipped: number;
+        errorCount: number;
+        createdEmails: string[];
+        skippedEmails: string[];
+        errors: string[];
+      }>("accounts/bulk-import", {
+        method: "POST",
+        body: { lines }
+      });
+      // Refresh dashboard data after import
+      await loadDashboard();
+      setError(null);
+      return result;
+    } catch (importError) {
+      const message = getErrorMessage(importError);
+      if (isUnauthorized(message)) {
+        router.push("/console/login");
+        router.refresh();
+        return null;
+      }
+      setError(message);
+      return null;
+    }
+  }
+
+  async function deleteAccount(id: string) {
+    return runAction(() =>
+      apiRequest(`accounts/${id}`, { method: "DELETE" })
+    );
+  }
+
+  async function updateAccount(id: string, payload: Record<string, string | undefined>) {
+    return runAction(() =>
+      apiRequest(`accounts/${id}`, {
+        method: "PATCH",
+        body: payload
+      })
+    );
+  }
+
   async function createGroup(payload: {
     accountId: string;
     groupName: string;
@@ -154,6 +199,15 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     return runAction(() =>
       apiRequest(`family-groups/${groupId}/sync`, {
         method: "POST"
+      })
+    );
+  }
+
+  async function removeMember(groupId: string, memberEmail: string) {
+    return runAction(() =>
+      apiRequest(`family-groups/${groupId}/remove-member`, {
+        method: "POST",
+        body: { memberEmail }
       })
     );
   }
@@ -366,6 +420,9 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             <AccountPanel
             accounts={data.accounts}
             onCreate={createAccount}
+            onBulkImport={bulkImport}
+            onDelete={deleteAccount}
+            onUpdate={updateAccount}
             role={data.user.role}
           />
         );
@@ -376,6 +433,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             groups={data.groups}
             onCreate={createGroup}
             onSync={syncGroup}
+            onRemoveMember={removeMember}
             role={data.user.role}
           />
         );

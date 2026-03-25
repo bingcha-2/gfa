@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -12,7 +13,7 @@ import {
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { AccountService } from "./account.service";
-import { CreateAccountDto, UpdateAccountDto } from "./dto/account.dto";
+import { CreateAccountDto, UpdateAccountDto, BulkImportDto } from "./dto/account.dto";
 
 @Controller("accounts")
 export class AccountController {
@@ -47,6 +48,27 @@ export class AccountController {
     return account;
   }
 
+  @Post("bulk-import")
+  @Roles("ADMIN")
+  async bulkImport(@Body() dto: BulkImportDto, @Request() req: any) {
+    const result = await this.accountService.bulkImport(dto);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "BULK_IMPORT_ACCOUNTS",
+      targetType: "Account",
+      targetId: "bulk",
+      detail: {
+        total: result.total,
+        created: result.created,
+        skipped: result.skipped,
+        errorCount: result.errorCount
+      }
+    });
+
+    return result;
+  }
+
   @Patch(":id")
   @Roles("ADMIN")
   async update(
@@ -56,14 +78,36 @@ export class AccountController {
   ) {
     const account = await this.accountService.update(id, dto);
 
+    // Strip sensitive fields from audit log — only record which fields changed
+    const { loginPassword, totpSecret, ...safeFields } = dto;
+    const detail: Record<string, unknown> = { ...safeFields };
+    if (loginPassword !== undefined) detail.loginPasswordChanged = true;
+    if (totpSecret !== undefined) detail.totpSecretChanged = true;
+
     await this.auditLog.log({
       operatorId: req.user.id,
       action: "UPDATE_ACCOUNT",
       targetType: "Account",
       targetId: id,
-      detail: dto as Record<string, unknown>
+      detail
     });
 
     return account;
+  }
+
+  @Delete(":id")
+  @Roles("ADMIN")
+  async remove(@Param("id") id: string, @Request() req: any) {
+    const result = await this.accountService.delete(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "DELETE_ACCOUNT",
+      targetType: "Account",
+      targetId: id,
+      detail: { loginEmail: result.loginEmail }
+    });
+
+    return result;
   }
 }
