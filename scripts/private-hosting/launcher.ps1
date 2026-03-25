@@ -660,7 +660,9 @@ function Start-Launcher {
     }
   }
 
-  if (-not $isBundledMode -and -not (Test-Path (Join-Path $repoRoot "node_modules"))) {
+  # Check for workspace symlinks (@gfa/shared), not just node_modules dir existence.
+  # A fresh git clone or zip extract may have node_modules but missing internal package links.
+  if (-not $isBundledMode -and -not (Test-Path (Join-Path $repoRoot "node_modules\@gfa"))) {
     Write-Section "Installing dependencies"
     Invoke-External $pnpmExe @("install", "--frozen-lockfile") $repoRoot $environmentContext.Map
   }

@@ -4,6 +4,22 @@ Monorepo for the Google One family automation project.
 
 ---
 
+## 快速上手（TL;DR）
+
+> 适用于已安装 Node.js ≥ 18、pnpm 和 Redis 的开发者。
+
+```powershell
+git clone <repo-url>
+cd google-family-automation
+Copy-Item .env.example .env        # 填写 ADSPOWER_API_KEY
+pnpm dev:setup                     # 一键：安装依赖 → 编译 shared → 初始化 DB
+pnpm dev                           # 启动所有服务
+```
+
+访问 http://localhost:3000/console/login，使用 `admin@gfa.local` / `admin123` 登录。
+
+---
+
 ## Apps
 
 | App | Description |
@@ -73,11 +89,12 @@ REDIS_URL="redis://127.0.0.1:6379"
 
 ---
 
-## 快速启动（源码开发模式）
+## 源码开发模式启动
 
-### 第一步：克隆并进入项目目录
+### 第一步：克隆项目
 
 ```powershell
+git clone <repo-url>
 cd google-family-automation
 ```
 
@@ -126,49 +143,49 @@ JWT_SECRET="gfa-dev-secret-change-in-production"
 > **`ADSPOWER_API_KEY` 是唯一必须手动填写的字段。**  
 > 其余字段保持默认值即可启动。
 
-### 第三步：安装依赖
+### 第三步：一键初始化（首次必须）
 
 ```powershell
-pnpm install
+pnpm dev:setup
 ```
 
-### 第四步：初始化数据库
+此命令会依次完成：
 
-```powershell
-# 生成 Prisma Client
-pnpm db:generate
+1. 安装所有 npm 依赖（`pnpm install`）
+2. 编译共享包 `@gfa/shared`（⚠️ 必须先于 API/Worker 构建）
+3. 生成 Prisma Client（`pnpm db:generate`）
+4. 创建并同步 SQLite 数据库（`pnpm db:init:sqlite`）
+5. 写入默认账号（`pnpm db:seed`）
 
-# 创建/同步 SQLite 数据库（文件位于 prisma/dev.db）
-pnpm db:init:sqlite
+> ⚠️ **跳过此步骤直接启动，会报 `Cannot find module '@gfa/shared'` 错误。**
 
-# 写入默认用户（admin / support）
-pnpm db:seed
-```
+### 第四步：启动所有服务
 
-### 第五步：启动所有服务
-
-**方式 A：分终端启动（开发推荐）**
-
-打开三个 PowerShell 窗口，分别执行：
-
-```powershell
-# 窗口 1 - API 服务
-pnpm dev:api
-
-# 窗口 2 - Worker 自动化
-pnpm dev:worker
-
-# 窗口 3 - Web 控制台
-pnpm dev:web
-```
-
-**方式 B：单命令并行启动**
+**方式 A：单命令并行启动（推荐）**
 
 ```powershell
 pnpm dev
 ```
 
-### 第六步：访问控制台
+**方式 B：分终端启动（调试推荐）**
+
+打开四个 PowerShell 窗口，**按顺序**执行：
+
+```powershell
+# 窗口 1 - 监听共享包变更（先启动）
+pnpm dev:shared
+
+# 窗口 2 - API 服务
+pnpm dev:api
+
+# 窗口 3 - Worker 自动化
+pnpm dev:worker
+
+# 窗口 4 - Web 控制台
+pnpm dev:web
+```
+
+### 第五步：访问控制台
 
 | 地址 | 说明 |
 |------|------|
@@ -206,7 +223,7 @@ Status-GFA.bat   ← 查看运行状态
 1. 从 `.env.example` 创建 `.env`（若不存在）
 2. 弹出配置向导填写 AdsPower API Key
 3. 安装依赖（`pnpm install`）
-4. 构建生产包（`pnpm build`）
+4. 构建生产包（`pnpm build`，包含 shared 包）
 5. 启动 Redis（Docker 方式）
 6. 初始化并 seed 数据库
 7. 后台运行 API / Worker / Web 三个服务
@@ -218,6 +235,15 @@ Status-GFA.bat   ← 查看运行状态
 ## 常用命令
 
 ```powershell
+# 首次初始化（clone 后必须执行一次）
+pnpm dev:setup
+
+# 启动所有服务（开发模式）
+pnpm dev
+
+# 构建生产包
+pnpm build
+
 # 重置数据库（⚠️ 会删除所有数据）
 pnpm db:reset:sqlite
 
@@ -232,6 +258,9 @@ pnpm test
 
 ## 常见问题
 
+**Q: 启动 API 或 Worker 报 `Cannot find module '@gfa/shared'`**  
+A: 共享包未编译。执行 `pnpm dev:setup`（首次初始化）或 `pnpm --filter @gfa/shared build` 单独重新编译。
+
 **Q: 启动 API 时报 `ECONNREFUSED 127.0.0.1:6379`**  
 A: Redis 未运行。请参考上方「环境准备 → Redis」章节启动 Redis。
 
@@ -239,7 +268,13 @@ A: Redis 未运行。请参考上方「环境准备 → Redis」章节启动 Red
 A: AdsPower 客户端未启动，或 `ADSPOWER_API_KEY` 未填写。先启动 AdsPower 桌面客户端。
 
 **Q: 登录提示「邮箱或密码错误」**  
-A: 确认已执行 `pnpm db:seed`，使用 `admin@gfa.local` / `admin123` 登录。
+A: 确认已执行 `pnpm dev:setup` 或 `pnpm db:seed`，使用 `admin@gfa.local` / `admin123` 登录。
+
+**Q: `pnpm dev:setup` 卡在安装依赖很久**  
+A: 检查网络连接。若在国内，可配置 npm 镜像：
+```powershell
+pnpm config set registry https://registry.npmmirror.com
+```
 
 ---
 
