@@ -104,7 +104,16 @@ export async function processReplace(
       googleMemberId: targetGaiaId,
     });
 
-    // Step 2: Invite the new member on page
+    await logger.log("INFO", `Remove step complete. Current URL: ${page.url()}`);
+
+    // Step 2: Always navigate back to family details before inviting.
+    // removeMemberOnPage may leave the page on /family/remove/ or /family/member/ path.
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    // Wait a few seconds for Google to reflect the slot becoming available
+    await page.waitForTimeout(3000);
+    await logger.log("INFO", `Back on family details, now inviting ${newUserEmail}`);
+
+    // Step 3: Invite the new member on page
     await inviteMemberOnPage(page, newUserEmail, logger);
 
     // Both page operations succeeded — now update DB atomically
@@ -477,16 +486,16 @@ async function inviteMemberOnPage(
   email: string,
   logger: TaskLogger
 ): Promise<void> {
-  // Navigate back to family details if not already there
-  if (!page.url().includes("/family/details")) {
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
-  }
+  // Always navigate to family details to ensure a clean starting state
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+  await page.waitForTimeout(1000);
 
-  // Click invite link: <a href="family/invitemembers">
+  // Wait for the invite link to appear (confirms the slot opened up)
   const inviteLink = page.locator('a[href*="invitemembers"]');
-
-  if ((await inviteLink.count()) === 0) {
-    throw new Error("Cannot find invite link on family page");
+  try {
+    await inviteLink.waitFor({ state: "visible", timeout: 15000 });
+  } catch {
+    throw new Error("Invite link not found on family page after removal — slot may not be available yet");
   }
 
   await inviteLink.first().click();
