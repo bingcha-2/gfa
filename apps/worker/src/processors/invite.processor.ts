@@ -96,7 +96,8 @@ export async function processInvite(
 
     // 5. Navigate to Google Family page
     await browser.navigateTo(GOOGLE_FAMILY_URL, {
-      waitUntil: "networkidle",
+      waitUntil: "load",
+      timeout: 60000,
     });
     await logger.log("INFO", "Navigated to Google Family page");
 
@@ -171,7 +172,7 @@ async function executeInviteOnPage(
   email: string,
   logger: TaskLogger
 ): Promise<void> {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // The invite link: <a href="family/invitemembers" ...>傳送邀請 (還可邀請 N 人)</a>
   const inviteLink = page.locator('a[href*="invitemembers"]');
@@ -184,13 +185,13 @@ async function executeInviteOnPage(
   await logger.log("INFO", "Clicked invite link");
 
   // Wait for invite page to load (navigates to /family/invitemembers)
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
   // Ensure we are on the invite page before interacting
   await page.waitForURL(/invitemembers/, { timeout: 10000 }).catch(async () => {
     // May have been a click instead of direct navigation — wait a bit more
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load", { timeout: 60000 });
     if (!page.url().includes("invitemembers")) {
       throw new Error(`Expected to be on invitemembers page, but got: ${page.url()}`);
     }
@@ -233,5 +234,5 @@ async function executeInviteOnPage(
 
   // Wait for confirmation / redirect back to family page
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 }

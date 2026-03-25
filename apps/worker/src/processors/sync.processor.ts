@@ -73,7 +73,7 @@ export async function processSync(
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
 
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
     await logger.log("INFO", "Navigated to Family page for sync");
 
     // Scrape current members from the page (visits each member detail page for real emails)
@@ -138,7 +138,7 @@ export async function processSync(
 async function scrapeMembersFromPage(
   page: import("playwright").Page
 ): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // Parse available slots from invite button text
   const inviteLinkText = await page
@@ -212,7 +212,7 @@ async function scrapeMembersFromPage(
       : `${baseUrl}${card.href}`;
 
     try {
-      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 20000 });
+      await page.goto(detailUrl, { waitUntil: "load", timeout: 60000 });
       await page.waitForTimeout(500);
 
       // Read email from detail page only — NOT displayName (page title would give 'Family member details')
@@ -250,8 +250,8 @@ async function scrapeMembersFromPage(
 
     // Navigate back to family list
     await page.goto("https://myaccount.google.com/family/details", {
-      waitUntil: "networkidle",
-      timeout: 20000,
+      waitUntil: "load",
+      timeout: 60000,
     }).catch(() => {});
     await page.waitForTimeout(500);
   }

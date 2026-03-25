@@ -64,12 +64,12 @@ export class WorkerBrowser {
    */
   async navigateTo(
     url: string,
-    options?: { waitUntil?: "load" | "domcontentloaded" | "networkidle" }
+    options?: { waitUntil?: "load" | "domcontentloaded" | "networkidle"; timeout?: number }
   ): Promise<void> {
     const page = this.getPage();
     await page.goto(url, {
       waitUntil: options?.waitUntil ?? "domcontentloaded",
-      timeout: 30_000,
+      timeout: options?.timeout ?? 60_000,
     });
   }
 

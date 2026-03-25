@@ -71,7 +71,8 @@ export async function processHealth(
 
     // Navigate to Google Account page to check login state
     await browser.navigateTo(GOOGLE_ACCOUNT_URL, {
-      waitUntil: "networkidle",
+      waitUntil: "load",
+      timeout: 60000,
     });
 
     const currentUrl = page.url();

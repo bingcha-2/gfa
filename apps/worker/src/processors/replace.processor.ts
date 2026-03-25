@@ -82,7 +82,7 @@ export async function processReplace(
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
 
     // Look up the member's googleMemberId and displayName from DB
     const memberRecord = await prisma.familyMember.findFirst({
@@ -187,7 +187,7 @@ async function removeMemberOnPage(
   logger: TaskLogger,
   credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string }
 ): Promise<void> {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   const displayName = credentials?.displayName;
   const googleMemberId = credentials?.googleMemberId;
@@ -196,8 +196,8 @@ async function removeMemberOnPage(
     // Strategy 0: Direct navigation using GAIA ID — bypasses all text matching issues
     const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
-    await page.goto(directUrl, { waitUntil: "networkidle", timeout: 20000 });
-    await page.waitForLoadState("networkidle");
+    await page.goto(directUrl, { waitUntil: "load", timeout: 60000 });
+    await page.waitForLoadState("load", { timeout: 60000 });
 
     // Verify we landed on the right page (check for remove/cancel button)
     const hasAction = await page.locator(
@@ -209,12 +209,12 @@ async function removeMemberOnPage(
       // Already on the detail page — proceed directly to remove button logic below
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
-      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
       await fallbackFindMember(page, email, displayName, logger);
     }
   } else {
     // No GAIA ID — fall back to text-based matching
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
     await fallbackFindMember(page, email, displayName, logger);
   }
 
@@ -242,7 +242,7 @@ async function removeMemberOnPage(
 
   // Wait for potential password page or confirmation dialog
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // --- Handle Google password re-authentication ---
   const passwordInput = page.locator('input[type="password"]');
@@ -264,7 +264,7 @@ async function removeMemberOnPage(
     await logger.log("INFO", "Password submitted");
 
     await page.waitForTimeout(5000);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load", { timeout: 60000 });
 
     // --- Handle TOTP 2FA challenge ---
     const currentUrl = page.url();
@@ -321,7 +321,7 @@ async function removeMemberOnPage(
       await logger.log("INFO", "TOTP code submitted");
 
       await page.waitForTimeout(5000);
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load", { timeout: 60000 });
     }
 
     // After password/2FA, Google may redirect back to member detail page
@@ -342,7 +342,7 @@ async function removeMemberOnPage(
       // The Remove button is on this page — will be handled below
     } else if (!page.url().includes("family/")) {
       // Redirected elsewhere — navigate back to member detail
-      await page.goto(memberDetailUrl, { waitUntil: "networkidle", timeout: 30000 });
+      await page.goto(memberDetailUrl, { waitUntil: "load", timeout: 60000 });
       const removeBtn3 = page.locator([
         'button:has-text("移除")',
         'button:has-text("Remove")',
@@ -383,7 +383,7 @@ async function removeMemberOnPage(
   }
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 }
 
 /**
@@ -397,14 +397,14 @@ async function fallbackFindMember(
   displayName: string | undefined,
   logger: TaskLogger
 ): Promise<void> {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // S1: Email visible directly on list (pending invites without a Google account name)
   const emailLocator = page.locator(`text="${email}"`);
   if ((await emailLocator.count()) > 0) {
     await logger.log("INFO", `S1: Found email text on list page, clicking`);
     await emailLocator.first().click();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load", { timeout: 60000 });
     return;
   }
 
@@ -415,7 +415,7 @@ async function fallbackFindMember(
     if ((await nameLocator.count()) > 0) {
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load", { timeout: 60000 });
       return;
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found on page either`);
@@ -440,13 +440,13 @@ async function fallbackFindMember(
     if (cardText?.includes(email)) {
       await logger.log("INFO", `S3: Found email in card #${i} text, clicking`);
       await link.click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load", { timeout: 60000 });
       return;
     }
 
     // Navigate into detail page
     await link.click();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load", { timeout: 60000 });
     await page.waitForTimeout(800);
 
     const bodyText = await page.textContent("body").catch(() => "");
@@ -456,7 +456,7 @@ async function fallbackFindMember(
     }
 
     await logger.log("DEBUG", `S3: Card #${i} does not match, going back`);
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
     await page.waitForTimeout(800);
   }
 
@@ -479,7 +479,7 @@ async function inviteMemberOnPage(
 ): Promise<void> {
   // Navigate back to family details if not already there
   if (!page.url().includes("/family/details")) {
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
   }
 
   // Click invite link: <a href="family/invitemembers">
@@ -490,7 +490,7 @@ async function inviteMemberOnPage(
   }
 
   await inviteLink.first().click();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
   // Email input
@@ -517,5 +517,5 @@ async function inviteMemberOnPage(
   await sendButton.first().click();
   await logger.log("INFO", `Sent invite to ${email}`);
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 }

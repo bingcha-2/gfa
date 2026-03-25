@@ -82,7 +82,7 @@ export async function processRemove(
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "networkidle" });
+    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
 
     // Execute remove on page
     await removeMemberOnPage(page, memberEmail, logger, {
@@ -149,7 +149,7 @@ async function removeMemberOnPage(
   logger: TaskLogger,
   credentials?: { password?: string; totpSecret?: string }
 ): Promise<void> {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // Find the member on the family details page by email text
   const emailOnPage = page.locator(`text="${email}"`);
@@ -186,7 +186,7 @@ async function removeMemberOnPage(
   await logger.log("INFO", `Clicked remove/cancel for ${email}`);
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 
   // Handle Google password re-authentication
   const passwordInput = page.locator('input[type="password"]');
@@ -208,7 +208,7 @@ async function removeMemberOnPage(
     await logger.log("INFO", "Password submitted");
 
     await page.waitForTimeout(5000);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load", { timeout: 60000 });
 
     // Handle TOTP 2FA challenge
     const currentUrl = page.url();
@@ -261,7 +261,7 @@ async function removeMemberOnPage(
       await logger.log("INFO", "TOTP code submitted");
 
       await page.waitForTimeout(5000);
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load", { timeout: 60000 });
     }
 
     // After password/2FA, may need to click remove again
@@ -278,7 +278,7 @@ async function removeMemberOnPage(
     } else if (page.url().includes("family/remove/")) {
       await logger.log("INFO", "On /family/remove/ confirmation page");
     } else if (!page.url().includes("family/")) {
-      await page.goto(memberDetailUrl, { waitUntil: "networkidle", timeout: 30000 });
+      await page.goto(memberDetailUrl, { waitUntil: "load", timeout: 60000 });
       const removeBtn3 = page.locator([
         'button:has-text("移除")',
         'button:has-text("Remove")',
@@ -314,5 +314,5 @@ async function removeMemberOnPage(
   }
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load", { timeout: 60000 });
 }
