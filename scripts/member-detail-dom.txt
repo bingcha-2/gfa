@@ -1,0 +1,33 @@
+URL: https://myaccount.google.com/family/member/g/114577441151243550728
+
+BTN[0]: tag=BUTTON text="跳至主要內容" class="mUIrbf-LgbsSe mUIrbf-LgbsSe-OWXEXe-dgl2Hf wMI9H" aria=""
+BTN[1]: tag=DIV text="" class="gb_1c gb_S" aria="主選單"
+BTN[2]: tag=DIV text="" class="gb_1c gb_4c gb_S" aria="返回"
+BTN[3]: tag=DIV text="" class="gb_1c gb_k gb_S" aria="關閉"
+BTN[4]: tag=BUTTON text="" class="gb_Qe" aria="關閉搜尋"
+BTN[5]: tag=BUTTON text="" class="gb_Re" aria="清除搜尋內容"
+BTN[6]: tag=BUTTON text="" class="gb_Oe" aria="搜尋"
+BTN[7]: tag=BUTTON text="" class="pYTkkf-Bz112c-LgbsSe pYTkkf-Bz112c-LgbsSe-OWXEXe-SfQLQb-suEO" aria="說明"
+BTN[8]: tag=A text="" class="gb_B" aria="Google 應用程式"
+BTN[9]: tag=A text="" class="gb_B gb_0a gb_1" aria="Google 帳戶： ss da  
+(dlssnb1@gmail.com)"
+BTN[10]: tag=BUTTON text="" class="pYTkkf-Bz112c-LgbsSe pYTkkf-Bz112c-LgbsSe-OWXEXe-SfQLQb-suEO" aria="返回上一頁"
+BTN[11]: tag=BUTTON text="刪除家庭群組" class="AeBiU-LgbsSe AeBiU-LgbsSe-OWXEXe-Bz112c-M1Soyc AeBiU-LgbsSe-" aria=""
+LINK[0]: href="https://myaccount.google.com/?tab=kk" text="帳戶" class="gb_de gb_Vc"
+LINK[1]: href="https://myaccount.google.com/?tab=kk" text="帳戶" class="gb_de gb_Vc"
+LINK[2]: href="https://www.google.com/intl/zh-TW/about/products?tab=kh" text="" class="gb_B"
+LINK[3]: href="https://accounts.google.com/SignOutOptions?hl=zh-TW&continue=https://myaccount.google.com/family/member/g/114577441151243550728&ec=GBRAwAE" text="" class="gb_B gb_0a gb_1"
+LINK[4]: href="https://support.google.com/families?p=lml_familygroup_manager&hl=zh_TW" text="瞭解詳情" class="RlFDUe AL18ce V7TCuc"
+LINK[5]: href="https://policies.google.com/privacy" text="隱私權設定" class="KlUiRc"
+LINK[6]: href="https://policies.google.com/terms" text="條款" class="KlUiRc"
+LINK[7]: href="https://support.google.com/accounts" text="說明" class="KlUiRc"
+LINK[8]: href="https://www.google.com/account/about" text="關於" class="KlUiRc"
+REMOVE_EL: tag=DIV text="ss dadlssnb1@gmail.com家庭群組管理員如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務刪除家庭群組" class="VfPpkd-WsjYwc VfPpkd-WsjYwc-OWXEXe-INsAgc KC1dQ Usd1Ac AaN0D" parent=DIV
+REMOVE_EL: tag=DIV text="ss dadlssnb1@gmail.com家庭群組管理員如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務刪除家庭群組" class="puK1qb" parent=DIV
+REMOVE_EL: tag=DIV text="ss dadlssnb1@gmail.com家庭群組管理員如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務刪除家庭群組" class="wuxXce" parent=DIV
+REMOVE_EL: tag=SECTION text="如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務刪除家庭群組" class="RTRMs" parent=DIV
+REMOVE_EL: tag=DIV text="如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務刪除家庭群組" class="lY6Rwe " parent=SECTION
+REMOVE_EL: tag=P text="如果您刪除家庭群組，所有成員將無法繼續使用必須透過家庭群組才能使用的 Google 服務" class="LsrEf" parent=DIV
+REMOVE_EL: tag=DIV text="刪除家庭群組" class="qsqhnc" parent=DIV
+REMOVE_EL: tag=DIV text="刪除家庭群組" class="VfPpkd-dgl2Hf-ppHlrf-sM5MNb" parent=DIV
+REMOVE_EL: tag=SPAN text="刪除家庭群組" class="AeBiU-vQzf8d" parent=BUTTON

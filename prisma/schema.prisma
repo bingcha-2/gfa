@@ -1,0 +1,247 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATIONS
+  SUPPORT
+}
+
+enum AccountStatus {
+  HEALTHY
+  LOGIN_REQUIRED
+  VERIFICATION_REQUIRED
+  RISKY
+  DISABLED
+}
+
+enum GroupStatus {
+  ACTIVE
+  MANUAL_ONLY
+  DISABLED
+}
+
+enum MemberStatus {
+  ACTIVE
+  REMOVED
+  PENDING
+}
+
+enum InviteStatus {
+  SENT
+  ACCEPTED
+  EXPIRED
+  FAILED
+}
+
+enum RedeemCodeStatus {
+  UNUSED
+  RESERVED
+  USED
+  DISABLED
+  EXPIRED
+}
+
+enum OrderStatus {
+  CREATED
+  CODE_VERIFIED
+  GROUP_ASSIGNED
+  TASK_QUEUED
+  TASK_RUNNING
+  INVITE_SENT
+  WAIT_USER_ACCEPT
+  MANUAL_REVIEW
+  FAILED
+  COMPLETED
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  INVITE_SENT
+  REPLACED_AND_INVITE_SENT
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  MANUAL_REVIEW
+  CANCELLED
+}
+
+enum TaskType {
+  INVITE_MEMBER
+  REPLACE_MEMBER
+  SYNC_FAMILY_GROUP
+  HEALTH_CHECK_ACCOUNT
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  displayName  String
+  role         UserRole
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+}
+
+model Account {
+  id                  String        @id @default(cuid())
+  name                String
+  loginEmail          String        @unique
+  loginPassword       String?
+  totpSecret          String?
+  adspowerProfileId   String        @unique
+  status              AccountStatus @default(HEALTHY)
+  riskScore           Int           @default(0)
+  dailyOperationCount Int           @default(0)
+  dailyOperationLimit Int           @default(20)
+  lastOperationDate   String?
+  notes               String?
+  lastLoginAt         DateTime?
+  lastHealthCheckAt   DateTime?
+  familyGroups        FamilyGroup[]
+  tasks               Task[]
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+}
+
+model FamilyGroup {
+  id                 String         @id @default(cuid())
+  accountId          String
+  groupName          String
+  maxMembers         Int            @default(6)
+  memberCount        Int            @default(0)
+  availableSlots     Int            @default(0)
+  pendingInviteCount Int            @default(0)
+  yearlyChangeCount  Int            @default(0)
+  yearlyChangeLimit  Int            @default(6)
+  status             GroupStatus    @default(ACTIVE)
+  riskScore          Int            @default(0)
+  lastSyncedAt       DateTime?
+  account            Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  members            FamilyMember[]
+  invites            FamilyInvite[]
+  orders             Order[]
+  tasks              Task[]
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+}
+
+model FamilyMember {
+  id            String       @id @default(cuid())
+  familyGroupId String
+  email         String
+  displayName   String?
+  role          String
+  status        MemberStatus @default(ACTIVE)
+  canAutoRemove Boolean      @default(false)
+  joinedAt      DateTime?
+  removedAt     DateTime?
+  familyGroup   FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([familyGroupId, email])
+}
+
+model FamilyInvite {
+  id            String       @id @default(cuid())
+  familyGroupId String
+  email         String
+  status        InviteStatus @default(SENT)
+  sentAt        DateTime     @default(now())
+  respondedAt   DateTime?
+  expiresAt     DateTime?
+  familyGroup   FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([familyGroupId, email])
+}
+
+model RedeemCode {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  product     String           @default("GOOGLE_ONE")
+  usesAllowed Int              @default(1)
+  status      RedeemCodeStatus @default(UNUSED)
+  expiresAt   DateTime?
+  usedAt      DateTime?
+  order       Order?
+  createdById String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Order {
+  id            String       @id @default(cuid())
+  orderNo       String       @unique
+  redeemCodeId  String?      @unique
+  userEmail     String
+  familyGroupId String?
+  status        OrderStatus  @default(CREATED)
+  resultMessage String?
+  assignedAt    DateTime?
+  redeemCode    RedeemCode?  @relation(fields: [redeemCodeId], references: [id], onDelete: SetNull)
+  familyGroup   FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
+  tasks         Task[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([userEmail])
+}
+
+model Task {
+  id                   String       @id @default(cuid())
+  type                 TaskType
+  orderId              String?
+  familyGroupId        String?
+  accountId            String?
+  workerId             String?
+  status               TaskStatus   @default(PENDING)
+  priority             Int          @default(0)
+  retryCount           Int          @default(0)
+  maxRetryCount        Int          @default(3)
+  payload              String       @default("{}")
+  lastErrorCode        String?
+  lastErrorMessage     String?
+  beforeScreenshotPath String?
+  afterScreenshotPath  String?
+  errorScreenshotPath  String?
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  order                Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  familyGroup          FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
+  account              Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  logs                 TaskLog[]
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model TaskLog {
+  id        String   @id @default(cuid())
+  taskId    String
+  level     String
+  message   String
+  extra     String?
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  operatorId String?
+  action     String
+  targetType String
+  targetId   String
+  detail     String?
+  operator   User?    @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+}

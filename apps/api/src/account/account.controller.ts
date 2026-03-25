@@ -1,0 +1,69 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Request
+} from "@nestjs/common";
+
+import { Roles } from "../auth/roles.decorator";
+import { AuditLogService } from "../audit-log/audit-log.service";
+import { AccountService } from "./account.service";
+import { CreateAccountDto, UpdateAccountDto } from "./dto/account.dto";
+
+@Controller("accounts")
+export class AccountController {
+  constructor(
+    private readonly accountService: AccountService,
+    private readonly auditLog: AuditLogService
+  ) {}
+
+  @Get()
+  findAll(@Query("status") status?: string) {
+    return this.accountService.findAll(status);
+  }
+
+  @Get(":id")
+  findOne(@Param("id") id: string) {
+    return this.accountService.findOne(id);
+  }
+
+  @Post()
+  @Roles("ADMIN")
+  async create(@Body() dto: CreateAccountDto, @Request() req: any) {
+    const account = await this.accountService.create(dto);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "CREATE_ACCOUNT",
+      targetType: "Account",
+      targetId: account.id,
+      detail: { name: dto.name, loginEmail: dto.loginEmail }
+    });
+
+    return account;
+  }
+
+  @Patch(":id")
+  @Roles("ADMIN")
+  async update(
+    @Param("id") id: string,
+    @Body() dto: UpdateAccountDto,
+    @Request() req: any
+  ) {
+    const account = await this.accountService.update(id, dto);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "UPDATE_ACCOUNT",
+      targetType: "Account",
+      targetId: id,
+      detail: dto as Record<string, unknown>
+    });
+
+    return account;
+  }
+}

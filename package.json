@@ -1,0 +1,27 @@
+{
+  "name": "google-family-automation",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "build": "pnpm db:generate && pnpm -r build",
+    "dev": "pnpm --parallel --filter @gfa/web --filter @gfa/api --filter @gfa/worker dev",
+    "dev:web": "pnpm --filter @gfa/web dev",
+    "dev:api": "pnpm --filter @gfa/api dev",
+    "dev:worker": "pnpm --filter @gfa/worker dev",
+    "db:generate": "pnpm prisma generate",
+    "db:push": "node scripts/init-sqlite.mjs",
+    "db:migrate": "node scripts/init-sqlite.mjs",
+    "db:init:sqlite": "node scripts/init-sqlite.mjs",
+    "db:reset:sqlite": "node scripts/init-sqlite.mjs --reset",
+    "db:seed": "node scripts/seed.mjs",
+    "lint": "pnpm db:generate && pnpm -r lint"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.7.0",
+    "typescript": "^5.8.3"
+  }
+}
