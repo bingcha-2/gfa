@@ -240,3 +240,11 @@ A: AdsPower 客户端未启动，或 `ADSPOWER_API_KEY` 未填写。先启动 Ad
 
 **Q: 登录提示「邮箱或密码错误」**  
 A: 确认已执行 `pnpm db:seed`，使用 `admin@gfa.local` / `admin123` 登录。
+
+---
+
+## 运营操作手册
+
+账号导入、AdsPower Profile 绑定、订单管理、人工干预等详细操作，请参阅：
+
+📖 [docs/OPERATIONS.md](./docs/OPERATIONS.md)
