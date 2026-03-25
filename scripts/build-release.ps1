@@ -99,42 +99,100 @@ Get-ChildItem -Path $redisExtDir -Filter "*.dll" -Recurse |
   Copy-Item -Destination $runtimeDir -ErrorAction SilentlyContinue
 Write-Host "  Copied redis-server.exe to runtime/"
 
-# ─── Step 5: Deploy API (pnpm deploy resolves symlinks correctly) ─────────────
-# pnpm deploy resolves workspace: deps and hoists node_modules (no symlinks).
-# IMPORTANT: pnpm deploy copies only node_modules, not dist/ — we copy dist/ separately.
-Write-Step "Deploying API (pnpm deploy --prod)"
+# ─── Step 5: Bundle API with ncc (single-file, no node_modules) ──────────────
+# @vercel/ncc inlines all JS deps into one file. Only native binary files
+# (.prisma/client query engines) need to be copied separately.
+Write-Step "Bundling API with ncc"
 $apiDeployDir = Join-Path $releaseDir "apps\api"
-Invoke-Pnpm @("--filter", "@gfa/api", "deploy", "--prod", "--legacy", $apiDeployDir)
-# Copy compiled output
-robocopy (Join-Path $repoRoot "apps\api\dist") (Join-Path $apiDeployDir "dist") /E /NFL /NDL /NJH /NJS | Out-Null
-# Copy prisma schema (needed by prisma CLI and @prisma/client at runtime)
-robocopy (Join-Path $repoRoot "prisma") (Join-Path $apiDeployDir "prisma") /E /NFL /NDL /NJH /NJS /XF "*.db" "*.db-journal" | Out-Null
-Write-Host "  API deployed: node_modules + dist/ + prisma/"
+New-Item -ItemType Directory -Path $apiDeployDir -Force | Out-Null
 
-Write-Step "Deploying Worker (pnpm deploy --prod)"
-$workerDeployDir = Join-Path $releaseDir "apps\worker"
-Invoke-Pnpm @("--filter", "@gfa/worker", "deploy", "--prod", "--legacy", $workerDeployDir)
-# Copy compiled output
-robocopy (Join-Path $repoRoot "apps\worker\dist") (Join-Path $workerDeployDir "dist") /E /NFL /NDL /NJH /NJS | Out-Null
-Write-Host "  Worker deployed: node_modules + dist/"
+# ncc compiles dist/main.js + all node_modules into a single bundle.js
+# Externalize @prisma/client because it uses native .node binaries ncc can't inline
+$nccApiOut = Join-Path $apiDeployDir "dist"
+& npx --yes @vercel/ncc build (Join-Path $repoRoot "apps\api\dist\main.js") `
+  --out $nccApiOut `
+  --external "@prisma/client" `
+  --external ".prisma" `
+  --no-source-map-register `
+  --quiet
+if ($LASTEXITCODE -ne 0) { throw "ncc bundle of API failed." }
 
-# ─── Step 6: Deploy Web (pnpm deploy + copy .next output) ────────────────────
-# Cannot use Next.js standalone mode on Windows without symlink privileges.
-# Instead: pnpm deploy (resolves node_modules) + copy .next/ build output.
-# The launcher runs: node node_modules/.bin/next start -p <PORT>
-Write-Step "Deploying Web (pnpm deploy --prod)"
-$webDeployDir = Join-Path $releaseDir "apps\web"
-Invoke-Pnpm @("--filter", "@gfa/web", "deploy", "--prod", "--legacy", $webDeployDir)
-
-Write-Step "Copying Next.js build output (.next/)"
-$webNextSrc    = Join-Path $repoRoot "apps\web\.next"
-$webPublicSrc  = Join-Path $repoRoot "apps\web\public"
-robocopy $webNextSrc (Join-Path $webDeployDir ".next") /E /NFL /NDL /NJH /NJS `
-  /XD "cache" | Out-Null
-if (Test-Path $webPublicSrc) {
-  robocopy $webPublicSrc (Join-Path $webDeployDir "public") /E /NFL /NDL /NJH /NJS | Out-Null
+# Copy Prisma native binaries (query engine .dll/.node files)
+$prismaClientSrc = Join-Path $repoRoot "node_modules\.prisma"
+if (Test-Path $prismaClientSrc) {
+  robocopy $prismaClientSrc (Join-Path $apiDeployDir "node_modules\.prisma") /E /NFL /NDL /NJH /NJS | Out-Null
 }
-Write-Host "  Web deployed: node_modules + .next/"
+$prismaClientPkgSrc = Join-Path $repoRoot "node_modules\@prisma\client"
+if (Test-Path $prismaClientPkgSrc) {
+  robocopy $prismaClientPkgSrc (Join-Path $apiDeployDir "node_modules\@prisma\client") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+# Copy prisma schema (needed by @prisma/client to locate the DB)
+robocopy (Join-Path $repoRoot "prisma") (Join-Path $apiDeployDir "prisma") /E /NFL /NDL /NJH /NJS /XF "*.db" "*.db-journal" | Out-Null
+Write-Host "  API bundled: dist/index.js (~5MB) + prisma native binaries"
+
+# ─── Step 6: Bundle Worker with ncc ──────────────────────────────────────────
+Write-Step "Bundling Worker with ncc"
+$workerDeployDir = Join-Path $releaseDir "apps\worker"
+New-Item -ItemType Directory -Path $workerDeployDir -Force | Out-Null
+
+$nccWorkerOut = Join-Path $workerDeployDir "dist"
+& npx --yes @vercel/ncc build (Join-Path $repoRoot "apps\worker\dist\index.js") `
+  --out $nccWorkerOut `
+  --external "@prisma/client" `
+  --external ".prisma" `
+  --external "playwright" `
+  --external "playwright-core" `
+  --no-source-map-register `
+  --quiet
+if ($LASTEXITCODE -ne 0) { throw "ncc bundle of Worker failed." }
+
+# Share prisma native binaries (symlink-free: just reuse api's copy)
+# Worker reads prisma from its own node_modules path
+$workerNmDir = Join-Path $workerDeployDir "node_modules"
+New-Item -ItemType Directory -Path $workerNmDir -Force | Out-Null
+if (Test-Path $prismaClientSrc) {
+  robocopy $prismaClientSrc (Join-Path $workerNmDir ".prisma") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+if (Test-Path $prismaClientPkgSrc) {
+  robocopy $prismaClientPkgSrc (Join-Path $workerNmDir "@prisma\client") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+# Copy playwright-core (needed for CDP browser automation)
+$playwrightCoreSrc = Join-Path $repoRoot "node_modules\playwright-core"
+if (Test-Path $playwrightCoreSrc) {
+  robocopy $playwrightCoreSrc (Join-Path $workerNmDir "playwright-core") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+$playwrightSrc = Join-Path $repoRoot "node_modules\playwright"
+if (Test-Path $playwrightSrc) {
+  robocopy $playwrightSrc (Join-Path $workerNmDir "playwright") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+Write-Host "  Worker bundled: dist/index.js (~5MB) + prisma + playwright-core"
+
+# ─── Step 6: Package Web via Next.js standalone output ───────────────────────
+# output:'standalone' (in next.config.ts) must be built once with admin rights
+# (Windows needs symlink privilege for the first build).
+# Standalone bundles only the minimal required node_modules (~58MB vs ~484MB).
+Write-Step "Packaging Web (Next.js standalone)"
+$webDeployDir      = Join-Path $releaseDir "apps\web"
+$webStandaloneSrc  = Join-Path $repoRoot "apps\web\.next\standalone"
+$webStaticSrc      = Join-Path $repoRoot "apps\web\.next\static"
+$webPublicSrc      = Join-Path $repoRoot "apps\web\public"
+
+if (-not (Test-Path $webStandaloneSrc)) {
+  Write-Host "  WARN: standalone not found, falling back to pnpm deploy" -ForegroundColor Yellow
+  $webDeployDir = Join-Path $releaseDir "apps\web"
+  Invoke-Pnpm @("--filter", "@gfa/web", "deploy", "--prod", "--legacy", $webDeployDir)
+  robocopy (Join-Path $repoRoot "apps\web\.next") (Join-Path $webDeployDir ".next") /E /NFL /NDL /NJH /NJS /XD "cache" | Out-Null
+} else {
+  New-Item -ItemType Directory -Path $webDeployDir -Force | Out-Null
+  # standalone/ contains server.js + minimal node_modules
+  robocopy $webStandaloneSrc $webDeployDir /E /NFL /NDL /NJH /NJS | Out-Null
+  # .next/static must be at <webDir>/.next/static
+  robocopy $webStaticSrc (Join-Path $webDeployDir ".next\static") /E /NFL /NDL /NJH /NJS | Out-Null
+  if (Test-Path $webPublicSrc) {
+    robocopy $webPublicSrc (Join-Path $webDeployDir "public") /E /NFL /NDL /NJH /NJS | Out-Null
+  }
+  Write-Host "  Web packaged via standalone: ~58MB (no full node_modules needed)"
+}
 
 # ─── Step 7: Shared package ──────────────────────────────────────────────────
 Write-Step "Copying shared package"
