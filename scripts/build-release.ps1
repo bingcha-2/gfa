@@ -47,11 +47,12 @@ function Expand-ToDir([string]$ZipPath, [string]$OutDir) {
   Expand-Archive -Path $ZipPath -DestinationPath $OutDir
 }
 
-function Invoke-Pnpm([string[]]$Args) {
-  $pnpm = (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) ?? (Get-Command pnpm -ErrorAction SilentlyContinue)
+function Invoke-Pnpm([string[]]$PnpmArgs) {
+  $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
+  if (-not $pnpm) { $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue }
   if (-not $pnpm) { throw "pnpm not found - install it first." }
-  & $pnpm.Source @Args
-  if ($LASTEXITCODE -ne 0) { throw "pnpm $($Args -join ' ') failed." }
+  & $pnpm.Source @PnpmArgs
+  if ($LASTEXITCODE -ne 0) { throw "pnpm $($PnpmArgs -join ' ') failed." }
 }
 
 # ─── Step 1: Build ───────────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ Write-Host "  Copied redis-server.exe to runtime/"
 # IMPORTANT: pnpm deploy copies only node_modules, not dist/ — we copy dist/ separately.
 Write-Step "Deploying API (pnpm deploy --prod)"
 $apiDeployDir = Join-Path $releaseDir "apps\api"
-Invoke-Pnpm @("--filter", "@gfa/api", "deploy", "--prod", $apiDeployDir)
+Invoke-Pnpm @("--filter", "@gfa/api", "deploy", "--prod", "--legacy", $apiDeployDir)
 # Copy compiled output
 robocopy (Join-Path $repoRoot "apps\api\dist") (Join-Path $apiDeployDir "dist") /E /NFL /NDL /NJH /NJS | Out-Null
 # Copy prisma schema (needed by prisma CLI and @prisma/client at runtime)
@@ -112,37 +113,28 @@ Write-Host "  API deployed: node_modules + dist/ + prisma/"
 
 Write-Step "Deploying Worker (pnpm deploy --prod)"
 $workerDeployDir = Join-Path $releaseDir "apps\worker"
-Invoke-Pnpm @("--filter", "@gfa/worker", "deploy", "--prod", $workerDeployDir)
+Invoke-Pnpm @("--filter", "@gfa/worker", "deploy", "--prod", "--legacy", $workerDeployDir)
 # Copy compiled output
 robocopy (Join-Path $repoRoot "apps\worker\dist") (Join-Path $workerDeployDir "dist") /E /NFL /NDL /NJH /NJS | Out-Null
 Write-Host "  Worker deployed: node_modules + dist/"
 
-# ─── Step 6: Next.js standalone output ───────────────────────────────────────
-# next build with output:'standalone' produces .next/standalone/ — a self-contained
-# server that bundles its own minimal node_modules (no symlinks, no pnpm needed).
-Write-Step "Copying Next.js standalone output"
-$webStandaloneSrc = Join-Path $repoRoot "apps\web\.next\standalone"
-$webStaticSrc     = Join-Path $repoRoot "apps\web\.next\static"
-$webPublicSrc     = Join-Path $repoRoot "apps\web\public"
-$webDestDir       = Join-Path $releaseDir "apps\web"
+# ─── Step 6: Deploy Web (pnpm deploy + copy .next output) ────────────────────
+# Cannot use Next.js standalone mode on Windows without symlink privileges.
+# Instead: pnpm deploy (resolves node_modules) + copy .next/ build output.
+# The launcher runs: node node_modules/.bin/next start -p <PORT>
+Write-Step "Deploying Web (pnpm deploy --prod)"
+$webDeployDir = Join-Path $releaseDir "apps\web"
+Invoke-Pnpm @("--filter", "@gfa/web", "deploy", "--prod", "--legacy", $webDeployDir)
 
-if (-not (Test-Path $webStandaloneSrc)) {
-  throw "apps/web/.next/standalone not found. Did you enable output:'standalone' in next.config.ts and run pnpm build?"
-}
-
-New-Item -ItemType Directory -Path $webDestDir -Force | Out-Null
-
-# Copy standalone server + bundled node_modules
-$roboCopyArgs = @($webStandaloneSrc, $webDestDir, "/E", "/NFL", "/NDL", "/NJH", "/NJS")
-robocopy @roboCopyArgs | Out-Null
-
-# Copy static assets and public folder (Next.js requires these alongside standalone)
-$webStaticDest  = Join-Path $webDestDir ".next\static"
-$webPublicDest  = Join-Path $webDestDir "public"
-robocopy $webStaticSrc $webStaticDest /E /NFL /NDL /NJH /NJS | Out-Null
+Write-Step "Copying Next.js build output (.next/)"
+$webNextSrc    = Join-Path $repoRoot "apps\web\.next"
+$webPublicSrc  = Join-Path $repoRoot "apps\web\public"
+robocopy $webNextSrc (Join-Path $webDeployDir ".next") /E /NFL /NDL /NJH /NJS `
+  /XD "cache" | Out-Null
 if (Test-Path $webPublicSrc) {
-  robocopy $webPublicSrc $webPublicDest /E /NFL /NDL /NJH /NJS | Out-Null
+  robocopy $webPublicSrc (Join-Path $webDeployDir "public") /E /NFL /NDL /NJH /NJS | Out-Null
 }
+Write-Host "  Web deployed: node_modules + .next/"
 
 # ─── Step 7: Shared package ──────────────────────────────────────────────────
 Write-Step "Copying shared package"
@@ -188,3 +180,4 @@ Write-Host "  Total size:    $sizeMb MB"
 Write-Host ""
 Write-Host "Next: compile installer (requires Inno Setup 6):" -ForegroundColor Cyan
 Write-Host "  iscc scripts\installer.iss" -ForegroundColor White
+

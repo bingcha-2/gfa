@@ -403,18 +403,9 @@ function Get-ServiceDefinitions([hashtable]$EnvironmentContext, [string]$NodeExe
   $envMap    = $EnvironmentContext.Map
   $apiPort   = $EnvironmentContext.ApiPort
   $webPort   = $EnvironmentContext.WebPort
+  # In bundled mode, next CLI is in apps/web/node_modules (installed by pnpm deploy)
   $nextCli   = Join-Path $repoRoot "apps\web\node_modules\next\dist\bin\next"
-
-  # Standalone mode: next build output=standalone emits server.js directly in apps/web/
-  $standaloneServer = Join-Path $repoRoot "apps\web\server.js"
-  $useStandalone    = $isBundledMode -and [System.IO.File]::Exists($standaloneServer)
-
-  $webArgs = @()
-  if ($useStandalone) {
-    $webArgs = @("server.js")
-  } else {
-    $webArgs = @($nextCli, "start", "-p", [string]$webPort)
-  }
+  $webArgs   = @($nextCli, "start", "-p", [string]$webPort)
 
   $apiDef = @{
     Name             = "api"

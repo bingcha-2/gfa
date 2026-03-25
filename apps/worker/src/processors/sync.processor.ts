@@ -148,20 +148,46 @@ async function scrapeMembersFromPage(
     .catch(() => "");
   const slotMatch = inviteLinkText?.match(/(\d+)/);
 
-  // Read BOTH href and display name from the list page in one evaluate call.
-  // This avoids reading the detail page title ("Family member details") as displayName.
-  const cardData: Array<{ href: string; displayName: string }> = await page.evaluate(() => {
-    const cards = document.querySelectorAll('a[href*="family/member/"]');
-    return Array.from(cards).map((el) => {
-      const href = el.getAttribute("href") ?? "";
-      // The visible text in the card is the member's display name.
-      // Exclude the href part and trim whitespace.
-      const rawText = el.textContent?.trim() ?? "";
-      return { href, displayName: rawText };
+  // KEY INSIGHT: a[href*="family/member/"] IS the "Family member details" link.
+  // The member's display name lives in SIBLING elements inside the parent card container,
+  // NOT inside the <a> element itself.
+  const cardDebug = await page.evaluate(() => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    return Array.from(links).map((link) => {
+      const href = link.getAttribute("href") ?? "";
+
+      // Walk up to find the card container (li, or a div that wraps both name + link)
+      const card = link.closest("li, [data-member], .member-card") ?? link.parentElement;
+
+      // Collect leaf-node texts from the CARD, excluding any text from inside the <a>
+      const cardDescendants = card ? Array.from(card.querySelectorAll("*")) : [];
+      const leafTexts = cardDescendants
+        .filter((c) => c.children.length === 0 && !link.contains(c))
+        .map((c) => c.textContent?.trim() ?? "")
+        .filter((t) => t.length > 0)
+        .slice(0, 10);
+
+      // Best name: not an email, not purely numeric, not too short (avatar letter)
+      const nameEl = cardDescendants.find((child) => {
+        if (link.contains(child)) return false; // skip anything inside the <a>
+        if (child.children.length > 0) return false; // leaf nodes only
+        const text = child.textContent?.trim() ?? "";
+        return (
+          text.length > 1 && // exclude single avatar letters
+          text.length < 80 &&
+          !text.includes("@") &&
+          !text.toLowerCase().includes("family member") &&
+          !/^\d+$/.test(text) // exclude pure numbers
+        );
+      });
+
+      const displayName = nameEl?.textContent?.trim() ?? "";
+      return { href, displayName, leafTexts };
     });
   });
 
-  // Deduplicate by GAIA ID — covers both /family/member/g/12345 and /family/member/12345
+  console.log("[sync] card debug:", JSON.stringify(cardDebug, null, 2));
+  const cardData = cardDebug.map(({ href, displayName }) => ({ href, displayName }));
   const seenGaiaIds = new Set<string>();
   const uniqueCards: Array<{ href: string; displayName: string; gaiaId: string }> = [];
   for (const card of cardData) {
