@@ -5,6 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import { apiRequest } from "../lib/client-api";
 import { canCreateGroup } from "../lib/permissions";
 import { AccountSummary, FamilyGroupSummary } from "../lib/types";
+import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 
 type MemberInfo = {
@@ -13,6 +14,7 @@ type MemberInfo = {
   displayName?: string | null;
   role: string;
   status: string;
+  isInGroup?: boolean;
   joinedAt?: string | null;
 };
 
@@ -155,21 +157,7 @@ export function GroupPanel({
     <section id="groups" className="glass-panel">
       {/* Toast */}
       {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '24px',
-            right: '24px',
-            zIndex: 9999,
-            background: toast.type === 'success' ? 'var(--green, #16a34a)' : 'var(--red, #dc2626)',
-            color: '#fff',
-            padding: '10px 20px',
-            borderRadius: '8px',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-          }}
-        >
+        <div className={`gfa-toast ${toast.type}`} style={{ bottom: '72px' }}>
           {toast.type === 'success' ? '✅' : '❌'} {toast.msg}
         </div>
       )}
@@ -322,8 +310,11 @@ export function GroupPanel({
                               disabled={syncingGroupId === group.id}
                               onClick={() => void handleSync(group.id)}
                               type="button"
+                              style={{ gap: 6 }}
                             >
-                              {syncingGroupId === group.id ? '⏳ 同步中...' : '同步'}
+                              {syncingGroupId === group.id
+                                ? <><Spinner size={12} color="currentColor" /> 同步中...</>
+                                : '同步'}
                             </button>
                           </div>
                         </td>
@@ -359,7 +350,11 @@ export function GroupPanel({
                                                <td style={{ fontFamily: 'monospace' }}>{m.email}</td>
                                                <td>{m.displayName ?? "-"}</td>
                                                <td><StatusBadge value={m.role} tone={m.role === "OWNER" ? "sky" : undefined} /></td>
-                                               <td><StatusBadge value={m.status} /></td>
+                                               <td>
+                                                 {m.isInGroup
+                                                   ? <StatusBadge value="已在组" tone="emerald" />
+                                                   : <StatusBadge value={m.status} />}
+                                               </td>
                                                <td className="muted">{formatDate(m.joinedAt)}</td>
                                                {canManage && (
                                                  <td>

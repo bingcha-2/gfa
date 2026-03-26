@@ -8,11 +8,14 @@ import {
   Query,
   Request
 } from "@nestjs/common";
-import { IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { RedeemCodeService } from "./redeem-code.service";
+
+const VALID_CODE_TYPES = ["JOIN_GROUP", "ACCOUNT_SWAP"] as const;
+type CodeType = typeof VALID_CODE_TYPES[number];
 
 class BatchCreateDto {
   @IsInt()
@@ -23,6 +26,10 @@ class BatchCreateDto {
   @IsOptional()
   @IsString()
   product?: string;
+
+  @IsOptional()
+  @IsEnum(VALID_CODE_TYPES)
+  codeType?: CodeType;
 }
 
 @Controller("redeem-codes")
@@ -33,6 +40,7 @@ export class RedeemCodeController {
   ) {}
 
   @Get()
+  @Roles("ADMIN", "OPERATIONS")
   findAll(@Query("status") status?: string) {
     return this.redeemCodeService.findAll(status);
   }
@@ -43,6 +51,7 @@ export class RedeemCodeController {
     const codes = await this.redeemCodeService.batchCreate({
       count: dto.count,
       product: dto.product,
+      codeType: dto.codeType,
       createdById: req.user.id
     });
 
@@ -51,7 +60,7 @@ export class RedeemCodeController {
       action: "BATCH_CREATE_CODES",
       targetType: "RedeemCode",
       targetId: "batch",
-      detail: { count: dto.count, product: dto.product ?? "GOOGLE_ONE" }
+      detail: { count: dto.count, product: dto.product ?? "GOOGLE_ONE", codeType: dto.codeType ?? "JOIN_GROUP" }
     });
 
     return codes;

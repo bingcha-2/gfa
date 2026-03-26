@@ -4,6 +4,7 @@ import { IsEmail, IsString } from "class-validator";
 import { Queue } from "bullmq";
 
 import { QUEUE_NAMES } from "@gfa/shared";
+import { Roles } from "./auth/roles.decorator";
 
 class EnqueueInviteDto {
   @IsString()
@@ -20,6 +21,7 @@ class EnqueueInviteDto {
 }
 
 @Controller("debug")
+@Roles("ADMIN")
 export class QueueController {
   constructor(
     @InjectQueue(QUEUE_NAMES.invite)

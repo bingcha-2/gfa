@@ -7,7 +7,8 @@ import {
   Query,
   Request
 } from "@nestjs/common";
-import { IsEmail, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsOptional, IsString, MinLength } from "class-validator";
+import { Throttle } from "@nestjs/throttler";
 
 import { Roles } from "../auth/roles.decorator";
 import { Public } from "../auth/public.decorator";
@@ -20,6 +21,30 @@ class RedeemDto {
 
   @IsEmail()
   email!: string;
+}
+
+class SwapAccountDto {
+  @IsString()
+  @MinLength(6)
+  swapCode!: string;
+
+  @IsString()
+  orderNo!: string;
+
+  @IsEmail()
+  newEmail!: string;
+}
+
+class SwapByEmailDto {
+  @IsEmail()
+  originalEmail!: string;
+
+  @IsString()
+  @MinLength(6)
+  swapCode!: string;
+
+  @IsEmail()
+  newEmail!: string;
 }
 
 class ReplaceMemberDto {
@@ -43,32 +68,73 @@ export class OrderController {
 
   // ---- Public endpoints (no auth) ----
 
+  // S-03: Limit redeem attempts — 10 per 60 seconds
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Post("public/redeem")
   redeem(@Body() dto: RedeemDto) {
     return this.orderService.redeem(dto.code, dto.email);
   }
 
+  // S-03: Limit order lookup — 20 per 60 seconds (prevents order-no enumeration)
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @Get("public/orders/:orderNo")
   findByOrderNo(@Param("orderNo") orderNo: string) {
     return this.orderService.findByOrderNo(orderNo);
   }
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @Get("public/orders/by-code/:code")
   findByRedeemCode(@Param("code") code: string) {
     return this.orderService.findByRedeemCode(code);
   }
 
+  /** Customer self-service account swap (legacy — accepts orderNo) */
+  // S-03: Limit swap attempts — 10 per 60 seconds
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post("public/swap-account")
+  swapAccount(@Body() dto: SwapAccountDto) {
+    return this.orderService.swapAccount({
+      swapCode: dto.swapCode,
+      orderNo: dto.orderNo,
+      newEmail: dto.newEmail
+    });
+  }
+
+  /** Customer self-service account swap — by original email (no order number needed) */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post("public/swap-by-email")
+  swapByEmail(@Body() dto: SwapByEmailDto) {
+    return this.orderService.swapAccountByEmail({
+      swapCode: dto.swapCode,
+      originalEmail: dto.originalEmail,
+      newEmail: dto.newEmail
+    });
+  }
+
+  /** Customer query swap task progress */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
+  @Get("public/swap-status/:orderNo")
+  findSwapStatus(@Param("orderNo") orderNo: string) {
+    return this.orderService.findSwapStatus(orderNo);
+  }
+
+
   // ---- Admin endpoints ----
 
   @Get("orders")
+  @Roles("ADMIN", "OPERATIONS")
   findAll(@Query("status") status?: string) {
     return this.orderService.findAll(status);
   }
 
   @Get("orders/:id")
+  @Roles("ADMIN", "OPERATIONS")
   findOne(@Param("id") id: string) {
     return this.orderService.findOne(id);
   }

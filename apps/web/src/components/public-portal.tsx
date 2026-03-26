@@ -14,9 +14,10 @@ import { PublicOrder } from "../lib/types";
 import { OrderStatusPanel } from "./order-status-panel";
 import { RedeemForm, type RedeemSuccessPayload } from "./redeem-form";
 import { StatusLookupForm } from "./status-lookup-form";
+import { SwapAccountForm, type SwapSuccessPayload } from "./swap-account-form";
 
 type PublicPortalProps = {
-  defaultTab?: "submit" | "track";
+  defaultTab?: "submit" | "track" | "swap";
 };
 
 const submitChecklist = [
@@ -34,8 +35,23 @@ const submitChecklist = [
   }
 ];
 
+const swapChecklist = [
+  {
+    title: "换号卡密",
+    detail: "使用专属 ACCOUNT_SWAP 类型卡密，普通邀请卡密无法用于此功能。"
+  },
+  {
+    title: "原账号邮箱",
+    detail: "填写当初兑换进组时使用的 Google 账号邮箱，系统会自动找到对应订单。"
+  },
+  {
+    title: "新邮箱",
+    detail: "填写要切换到的新 Gmail 地址，系统会自动移除旧号并重新邀请。"
+  }
+];
+
 export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
-  const [activeTab, setActiveTab] = useState<"submit" | "track">(defaultTab);
+  const [activeTab, setActiveTab] = useState<"submit" | "track" | "swap">(defaultTab);
   const [recentOrders, setRecentOrders] = useState<PublicOrderRecord[]>([]);
   const [trackedOrderNo, setTrackedOrderNo] = useState<string | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -43,15 +59,12 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
   function syncRecentOrders() {
     const records = getStoredPublicOrders();
     setRecentOrders(records);
-
     return records;
   }
 
   useEffect(() => {
     setActiveTab(defaultTab);
-
     const records = syncRecentOrders();
-
     if (defaultTab === "track" && records.length > 0) {
       setTrackedOrderNo(records[0].orderNo);
       setLookupError(null);
@@ -60,7 +73,6 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
 
   function handleSubmitSuccess(payload: RedeemSuccessPayload) {
     const now = new Date().toISOString();
-
     upsertStoredPublicOrder({
       code: payload.code,
       email: payload.email,
@@ -69,7 +81,22 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
       createdAt: now,
       updatedAt: now
     });
+    syncRecentOrders();
+    setTrackedOrderNo(payload.orderNo);
+    setLookupError(null);
+    setActiveTab("track");
+  }
 
+  function handleSwapSuccess(payload: SwapSuccessPayload) {
+    const now = new Date().toISOString();
+    upsertStoredPublicOrder({
+      code: payload.swapCode,
+      email: payload.newEmail,
+      orderNo: payload.orderNo,
+      status: payload.status,
+      createdAt: now,
+      updatedAt: now
+    });
     syncRecentOrders();
     setTrackedOrderNo(payload.orderNo);
     setLookupError(null);
@@ -118,6 +145,21 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
   const activeRecord =
     recentOrders.find((item) => item.orderNo === trackedOrderNo) ?? null;
 
+  const sideLabel =
+    activeTab === "submit" ? "提交说明" : activeTab === "swap" ? "换号说明" : "最近记录";
+  const sideTitle =
+    activeTab === "submit"
+      ? "提交前确认这三项"
+      : activeTab === "swap"
+      ? "换号前确认这三项"
+      : "最近查询过的订单";
+  const sideNotice =
+    activeTab === "submit"
+      ? "提交成功后会自动切到「查询进度」，并开始刷新订单状态。"
+      : activeTab === "swap"
+      ? "换号成功后会跳到「查询进度」，追踪换号任务执行情况。"
+      : "最近记录会留在当前浏览器里，但按卡密查询本身已经支持跨设备。";
+
   return (
     <main className="page-shell compact public-shell">
       <section className="public-frame">
@@ -133,9 +175,6 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
           <div className="nav-links">
             <Link className="pill-link" href="/status">
               查询页
-            </Link>
-            <Link className="button secondary" href="/console/login">
-              运营登录
             </Link>
           </div>
         </div>
@@ -155,6 +194,15 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
             提交邀请
           </button>
           <button
+            aria-selected={activeTab === "swap"}
+            className={`tab-chip${activeTab === "swap" ? " active" : ""}`}
+            onClick={() => setActiveTab("swap")}
+            role="tab"
+            type="button"
+          >
+            换号申请
+          </button>
+          <button
             aria-selected={activeTab === "track"}
             className={`tab-chip${activeTab === "track" ? " active" : ""}`}
             onClick={() => setActiveTab("track")}
@@ -169,15 +217,25 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
           <aside className="glass-panel public-side">
             <div className="panel-stack">
               <div>
-                <p className="label">{activeTab === "submit" ? "提交说明" : "最近记录"}</p>
-                <h2 className="public-panel-title">
-                  {activeTab === "submit" ? "提交前确认这三项" : "最近查询过的订单"}
-                </h2>
+                <p className="label">{sideLabel}</p>
+                <h2 className="public-panel-title">{sideTitle}</h2>
               </div>
 
               {activeTab === "submit" ? (
                 <div className="plain-list">
                   {submitChecklist.map((item, index) => (
+                    <div className="plain-item" key={item.title}>
+                      <div className="plain-index">0{index + 1}</div>
+                      <div>
+                        <h3>{item.title}</h3>
+                        <p>{item.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeTab === "swap" ? (
+                <div className="plain-list">
+                  {swapChecklist.map((item, index) => (
                     <div className="plain-item" key={item.title}>
                       <div className="plain-index">0{index + 1}</div>
                       <div>
@@ -213,11 +271,7 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
                 </div>
               )}
 
-              <div className="notice subtle">
-                {activeTab === "submit"
-                  ? "提交成功后会自动切到“查询进度”，并开始刷新订单状态。"
-                  : "最近记录会留在当前浏览器里，但按卡密查询本身已经支持跨设备。"}
-              </div>
+              <div className="notice subtle">{sideNotice}</div>
             </div>
           </aside>
 
@@ -228,6 +282,8 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
                 secondaryHref="/status"
                 secondaryLabel="切到查询"
               />
+            ) : activeTab === "swap" ? (
+              <SwapAccountForm onSuccess={handleSwapSuccess} />
             ) : (
               <section className="form-card">
                 <div className="panel-stack">

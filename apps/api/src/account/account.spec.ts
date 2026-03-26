@@ -34,7 +34,8 @@ describe("AccountService", () => {
       const account = await service.create({
         name: "Test Account",
         loginEmail: "test@gmail.com",
-        adspowerProfileId: "profile-1"
+        adspowerProfileId: "profile-1",
+        loginPassword: "test-password-123",
       });
 
       expect(account.id).toBeDefined();
@@ -47,14 +48,16 @@ describe("AccountService", () => {
       await service.create({
         name: "First",
         loginEmail: "dup@gmail.com",
-        adspowerProfileId: "p-1"
+        adspowerProfileId: "p-1",
+        loginPassword: "first-password",
       });
 
       await expect(
         service.create({
           name: "Second",
           loginEmail: "dup@gmail.com",
-          adspowerProfileId: "p-2"
+          adspowerProfileId: "p-2",
+          loginPassword: "second-password",
         })
       ).rejects.toThrow();
     });
@@ -63,16 +66,28 @@ describe("AccountService", () => {
       await service.create({
         name: "First",
         loginEmail: "a1@gmail.com",
-        adspowerProfileId: "same-profile"
+        adspowerProfileId: "same-profile",
+        loginPassword: "first-password",
       });
 
       await expect(
         service.create({
           name: "Second",
           loginEmail: "a2@gmail.com",
-          adspowerProfileId: "same-profile"
+          adspowerProfileId: "same-profile",
+          loginPassword: "second-password",
         })
       ).rejects.toThrow();
+    });
+
+    it("should reject create when loginPassword is missing", async () => {
+      await expect(
+        service.create({
+          name: "Missing Password",
+          loginEmail: "missing-password@gmail.com",
+          adspowerProfileId: "profile-missing-password",
+        } as any)
+      ).rejects.toThrow("loginPassword is required for automated account operations");
     });
   });
 
@@ -132,6 +147,13 @@ describe("AccountService", () => {
         status: "RISKY"
       });
       expect(updated.status).toBe("RISKY");
+    });
+
+    it("should reject empty loginPassword on update", async () => {
+      const account = await createTestAccount();
+      await expect(
+        service.update(account.id, { loginPassword: "   " })
+      ).rejects.toThrow("loginPassword cannot be empty");
     });
 
     it("should throw for nonexistent account", async () => {

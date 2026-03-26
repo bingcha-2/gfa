@@ -45,17 +45,16 @@ SolidCompression=yes
 WizardStyle=modern
 ; Minimum Windows 10
 MinVersion=10.0.17763
-; Allow running after install
-DisableRunPage=no
+; Always use the script defaults instead of inheriting a previous install's task choices
+UsePreviousTasks=no
 ; Show license
 ; LicenseFile=..\LICENSE
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "在桌面创建快捷方式（{#MyAppShortName}）"; GroupDescription: "其他任务："; Flags: checked
+Name: "desktopicon"; Description: "在桌面创建快捷方式（{#MyAppShortName}）"; GroupDescription: "其他任务："; Flags: checkedonce
 Name: "autostart"; Description: "Windows 启动时自动运行 {#MyAppName}"; GroupDescription: "其他任务："; Flags: unchecked
 
 [Files]
@@ -84,9 +83,6 @@ Filename: "{app}\Stop-GFA.bat"; RunOnceId: "StopGFA"; Flags: shellexec waituntil
 ; Auto-start entry (only if task selected)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppShortName}"; ValueData: """{app}\Start-GFA.bat"""; Flags: uninsdeletevalue; Tasks: autostart
 
-[Messages]
-; Chinese override via ChineseSimplified.isl is automatic
-
 [Code]
 // ── Pre-install: check for AdsPower ──────────────────────────────────────────
 function AdsPowerInstalled(): Boolean;
@@ -104,6 +100,9 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   if not AdsPowerInstalled() then begin
+    if WizardSilent then
+      exit;
+
     if MsgBox('安装程序未检测到 AdsPower。' + #13#10 +
               'Google Family Automation 需要 AdsPower 才能工作。' + #13#10#13#10 +
               '是否继续安装？（你可以稍后再安装 AdsPower）', mbConfirmation, MB_YESNO) = IDNO then

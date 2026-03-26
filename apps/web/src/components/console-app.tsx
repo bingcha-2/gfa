@@ -18,8 +18,11 @@ import { GroupPanel } from "./group-panel";
 import { MetricTile } from "./metric-tile";
 import { OrdersPanel } from "./orders-panel";
 import { RedeemCodesPanel } from "./redeem-codes-panel";
+import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 import { TasksPanel } from "./tasks-panel";
+import { ExpireScanPanel } from "./expire-scan-panel";
+import { MemberLookupPanel } from "./member-lookup-panel";
 
 type ConsoleData = {
   user: SessionUser;
@@ -30,7 +33,7 @@ type ConsoleData = {
   redeemCodes: RedeemCodeSummary[];
 };
 
-type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes";
+type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "lookup";
 
 const orderTerminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
@@ -53,6 +56,13 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<ConsoleSection>("overview");
   const [isLoading, startTransition] = useTransition();
+  const [isActioning, setIsActioning] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
+
+  function showToast(type: "success" | "error" | "info", msg: string) {
+    setToast({ type, msg });
+    setTimeout(() => setToast(null), 3800);
+  }
 
   async function loadDashboard() {
     try {
@@ -71,7 +81,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       const message = getErrorMessage(requestError);
 
       if (isUnauthorized(message)) {
-        router.push("/console/login");
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
         router.refresh();
         return;
       }
@@ -81,22 +92,30 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   }
 
   async function runAction(action: () => Promise<unknown>) {
+    setIsActioning(true);
+    const minDelay = new Promise<void>((res) => setTimeout(res, 600));
     try {
-      await action();
+      const [result] = await Promise.allSettled([action(), minDelay]);
+      if (result.status === "rejected") throw result.reason;
       await loadDashboard();
       setError(null);
       return true;
     } catch (actionError) {
+      await minDelay;
       const message = getErrorMessage(actionError);
 
       if (isUnauthorized(message)) {
-        router.push("/console/login");
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
         router.refresh();
         return false;
       }
 
       setError(message);
+      showToast("error", message);
       return false;
+    } finally {
+      setIsActioning(false);
     }
   }
 
@@ -105,7 +124,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       method: "POST",
       cache: "no-store"
     });
-    router.push("/console/login");
+    const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+    router.push(`/${prefix}/login`);
     router.refresh();
   }
 
@@ -113,7 +133,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     name: string;
     loginEmail: string;
     adspowerProfileId: string;
-    loginPassword?: string;
+    loginPassword: string;
     totpSecret?: string;
     notes?: string;
   }) {
@@ -146,7 +166,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     } catch (importError) {
       const message = getErrorMessage(importError);
       if (isUnauthorized(message)) {
-        router.push("/console/login");
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
         router.refresh();
         return null;
       }
@@ -170,6 +191,12 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
+  async function confirmLogin(id: string) {
+    return runAction(() =>
+      apiRequest(`accounts/${id}/confirm-login`, { method: "POST" })
+    );
+  }
+
   async function createGroup(payload: {
     accountId: string;
     groupName: string;
@@ -186,6 +213,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   async function createCodes(payload: {
     count: number;
     product: string;
+    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
   }) {
     return runAction(() =>
       apiRequest("redeem-codes/batch-create", {
@@ -313,6 +341,18 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       label: "卡密",
       caption: "Codes",
       metric: `${unusedCodes} unused`
+    },
+    {
+      id: "expire" as const,
+      label: "到期扫描",
+      caption: "Expire Scan",
+      metric: `${data.orders.filter((o) => o.status === "EXPIRED").length} expired`
+    },
+    {
+      id: "lookup" as const,
+      label: "邮箱查询",
+      caption: "Member Lookup",
+      metric: "按邮箱搜索"
     }
   ];
 
@@ -423,6 +463,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onBulkImport={bulkImport}
             onDelete={deleteAccount}
             onUpdate={updateAccount}
+            onConfirmLogin={confirmLogin}
             role={data.user.role}
           />
         );
@@ -464,6 +505,14 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             role={data.user.role}
           />
         );
+      case "expire":
+        return (
+          <ExpireScanPanel
+            expiredOrders={data.orders.filter((o) => o.status === "EXPIRED")}
+          />
+        );
+      case "lookup":
+        return <MemberLookupPanel />;
       default:
         return null;
     }
@@ -471,6 +520,16 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
   return (
     <>
+      {/* Global loading bar */}
+      {(isLoading || isActioning) && <div className="gfa-loading-bar" />}
+
+      {/* Global toast */}
+      {toast && (
+        <div className={`gfa-toast ${toast.type}`}>
+          {toast.type === "success" ? "✅" : toast.type === "error" ? "❌" : "ℹ️"} {toast.msg}
+        </div>
+      )}
+
       <nav className="nav-strip">
         <div className="nav-brand">
           <div className="nav-mark">GO</div>
@@ -480,10 +539,14 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         <div className="nav-links">
           <button
             className="button secondary"
+            disabled={isLoading || isActioning}
             onClick={() => startTransition(() => void loadDashboard())}
             type="button"
+            style={{ gap: 8 }}
           >
-            {isLoading ? "刷新中..." : "刷新数据"}
+            {isLoading ? (
+              <><Spinner size={14} color="currentColor" /> 刷新中...</>
+            ) : "刷新数据"}
           </button>
           <Link className="pill-link" href="/redeem">
             公共提交页

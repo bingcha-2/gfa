@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ScheduleModule } from "@nestjs/schedule";
+import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
@@ -13,6 +15,7 @@ import { FamilyGroupModule } from "./family-group/family-group.module";
 import { RedeemCodeModule } from "./redeem-code/redeem-code.module";
 import { OrderModule } from "./order/order.module";
 import { TaskModule } from "./task/task.module";
+import { ExpireScanModule } from "./expire-scan/expire-scan.module";
 import { HealthController } from "./health.controller";
 
 @Module({
@@ -21,6 +24,14 @@ import { HealthController } from "./health.controller";
       isGlobal: true,
       envFilePath: [".env.local", ".env", "../../.env.local", "../../.env"]
     }),
+    // S-03: Global rate limiting — 60 req per 60 seconds by default
+    ThrottlerModule.forRoot([
+      {
+        name: "default",
+        ttl: 60000, // 60 seconds window
+        limit: 60   // 60 requests per window
+      }
+    ]),
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -34,6 +45,7 @@ import { HealthController } from "./health.controller";
         }
       })
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     AuditLogModule,
@@ -41,10 +53,13 @@ import { HealthController } from "./health.controller";
     FamilyGroupModule,
     RedeemCodeModule,
     OrderModule,
-    TaskModule
+    TaskModule,
+    ExpireScanModule
   ],
   controllers: [HealthController],
   providers: [
+    // ThrottlerGuard must be first so rate-limit is checked before auth
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard }
   ]

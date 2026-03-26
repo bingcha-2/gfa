@@ -12,7 +12,8 @@ export default async function ConsoleLoginPage() {
   if (token) {
     try {
       await serverApiRequest("auth/me", token);
-      redirect("/console");
+      const prefix = (process.env.ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+      redirect(`/${prefix}`);
     } catch {
       // Ignore invalid cookie and continue rendering login page.
     }

@@ -8,6 +8,7 @@ import {
   canRetryTask
 } from "../lib/permissions";
 import { TaskSummary } from "../lib/types";
+import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 
 type TasksPanelProps = {
@@ -114,25 +115,7 @@ export function TasksPanel({
     <section id="tasks" className="glass-panel">
       {/* Toast notification */}
       {toast && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "24px",
-            right: "24px",
-            zIndex: 9999,
-            background: toast.type === "success" ? "var(--green, #16a34a)" : "var(--red, #dc2626)",
-            color: "#fff",
-            padding: "10px 20px",
-            borderRadius: "8px",
-            fontSize: "0.875rem",
-            fontWeight: 500,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            animation: "fadeInUp 0.2s ease"
-          }}
-        >
+        <div className={`gfa-toast ${toast.type}`}>
           {toast.type === "success" ? "✅" : "❌"} {toast.msg}
         </div>
       )}
@@ -221,8 +204,11 @@ export function TasksPanel({
                               disabled={isActioning}
                               onClick={() => void handleRetry(task.id)}
                               type="button"
+                              style={{ gap: 6 }}
                             >
-                              {isActioning && actioning?.action === "retry" ? "⏳ 重试中..." : "重试"}
+                              {isActioning && actioning?.action === "retry"
+                                ? <><Spinner size={12} color="currentColor" /> 重试中...</>
+                                : "重试"}
                             </button>
                           ) : null}
                           {canManualCompleteTask(role, task.status) ? (
@@ -231,8 +217,11 @@ export function TasksPanel({
                               disabled={isActioning}
                               onClick={() => void handleManualComplete(task.id)}
                               type="button"
+                              style={{ gap: 6 }}
                             >
-                              {isActioning && actioning?.action === "complete" ? "⏳ 处理中..." : "手动完成"}
+                              {isActioning && actioning?.action === "complete"
+                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
+                                : "手动完成"}
                             </button>
                           ) : null}
                           {canManualFailTask(role, task.status) ? (
@@ -241,8 +230,11 @@ export function TasksPanel({
                               disabled={isActioning}
                               onClick={() => void handleManualFail(task.id)}
                               type="button"
+                              style={{ gap: 6 }}
                             >
-                              {isActioning && actioning?.action === "fail" ? "⏳ 处理中..." : "手动失败"}
+                              {isActioning && actioning?.action === "fail"
+                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
+                                : "手动失败"}
                             </button>
                           ) : null}
                           {!canRetryTask(role, task.status) &&

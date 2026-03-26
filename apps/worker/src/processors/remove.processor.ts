@@ -18,9 +18,10 @@ import { PrismaClient } from "@prisma/client";
 import type { RemoveMemberPayload } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
-import { ProfileLock } from "../profile-lock";
+import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
+import { gmailLogin } from "../gmail-login";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
@@ -28,7 +29,7 @@ const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
 export interface RemoveProcessorDeps {
   prisma: PrismaClient;
   adspower: AdsPowerClient;
-  lock: ProfileLock;
+  pool: BrowserPool;
   workerId: string;
 }
 
@@ -36,8 +37,8 @@ export async function processRemove(
   job: Job<RemoveMemberPayload & { taskId: string }>,
   deps: RemoveProcessorDeps
 ): Promise<void> {
-  const { prisma, adspower, lock, workerId } = deps;
-  const { familyGroupId, accountId, memberEmail } = job.data;
+  const { prisma, adspower, pool, workerId } = deps;
+  const { familyGroupId, memberEmail } = job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] remove job has no id, skipping`);
@@ -47,37 +48,30 @@ export async function processRemove(
   const logger = new TaskLogger(prisma, taskId, workerId);
   const browser = new WorkerBrowser();
 
-  const account = await prisma.account.findUnique({
-    where: { id: accountId },
-  });
+  const account = await prisma.account.findUnique({ where: { id: job.data.accountId } });
   if (!account) {
-    await logger.updateStatus("FAILED_FINAL", {
-      code: "ACCOUNT_NOT_FOUND",
-      message: `Account ${accountId} not found`,
-    });
+    await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Account not found` });
     return;
   }
 
-  const profileId = account.adspowerProfileId;
-
-  const locked = await lock.acquire(profileId, workerId);
-  if (!locked) {
-    await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "PROFILE_LOCKED",
-      message: `Profile ${profileId} is locked by another worker`,
-    });
-    throw new Error(`Profile ${profileId} locked — will retry`);
-  }
+  let profileId: string | null = null;
 
   try {
+    profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Removing member ${memberEmail}`, {
-      profileId,
-      familyGroupId,
-    });
+    await logger.log("INFO", `Removing member ${memberEmail}`, { profileId, familyGroupId });
 
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
+
+    // Gmail auto-login (required every time — browser clears cache on start)
+    const loginResult = await gmailLogin(page, account, logger);
+    if (!loginResult.success) {
+      await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
+      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+      // Throw to exit try so finally releases pool; caller should NOT retry this task
+      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+    }
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
@@ -96,10 +90,18 @@ export async function processRemove(
       data: { status: "REMOVED", removedAt: new Date() },
     });
 
-    // Increment available slots
+    // Release the slot back to the group and fix pendingInviteCount drift.
+    // pendingInviteCount is incremented at GROUP_ASSIGNED time and never decremented
+    // by any removal path. Use $executeRaw-style guard via a separate conditional update
+    // so the counter never goes below 0.
     await prisma.familyGroup.update({
       where: { id: familyGroupId },
       data: { availableSlots: { increment: 1 } },
+    });
+    // Decrement pendingInviteCount only when it is currently > 0 (prevents underflow)
+    await prisma.familyGroup.updateMany({
+      where: { id: familyGroupId, pendingInviteCount: { gt: 0 } },
+      data: { pendingInviteCount: { decrement: 1 } },
     });
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
@@ -108,6 +110,9 @@ export async function processRemove(
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Member ${memberEmail} removed successfully`);
   } catch (error) {
+    // Don't overwrite MANUAL_REVIEW status and don't rollback member status
+    if ((error as any).__manualReview) throw error;
+
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
@@ -124,7 +129,7 @@ export async function processRemove(
     }).catch(() => {});
 
     await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "REMOVE_ERROR",
+      code: profileId ? "REMOVE_ERROR" : "PROFILE_ACQUIRE_FAILED",
       message: errMsg,
     });
 
@@ -132,8 +137,10 @@ export async function processRemove(
     throw error;
   } finally {
     await browser.disconnect().catch(() => {});
-    await adspower.closeProfile(profileId).catch(() => {});
-    await lock.release(profileId, workerId).catch(() => {});
+    if (profileId) {
+      await adspower.closeProfile(profileId).catch(() => {});
+      await pool.release(profileId, workerId).catch(() => {});
+    }
   }
 }
 

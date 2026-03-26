@@ -24,6 +24,8 @@ export type AccountSummary = {
   notes?: string | null;
   lastLoginAt?: string | null;
   lastHealthCheckAt?: string | null;
+  subscriptionExpiresAt?: string | null;
+  subscriptionStatus?: string | null;
   createdAt: string;
   updatedAt: string;
   _count?: {
@@ -61,6 +63,7 @@ export type OrderSummary = {
   status: string;
   resultMessage?: string | null;
   createdAt: string;
+  updatedAt: string;
   familyGroup?: {
     id: string;
     groupName: string;

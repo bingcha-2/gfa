@@ -23,11 +23,13 @@ export class AccountController {
   ) {}
 
   @Get()
+  @Roles("ADMIN", "OPERATIONS")
   findAll(@Query("status") status?: string) {
     return this.accountService.findAll(status);
   }
 
   @Get(":id")
+  @Roles("ADMIN", "OPERATIONS")
   findOne(@Param("id") id: string) {
     return this.accountService.findOne(id);
   }
@@ -93,6 +95,22 @@ export class AccountController {
     });
 
     return account;
+  }
+
+  @Post(":id/confirm-login")
+  @Roles("ADMIN")
+  async confirmLogin(@Param("id") id: string, @Request() req: any) {
+    const result = await this.accountService.confirmLogin(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "CONFIRM_LOGIN",
+      targetType: "Account",
+      targetId: id,
+      detail: { previousStatus: result.previousStatus, tasksRequeued: result.tasksRequeued }
+    });
+
+    return result;
   }
 
   @Delete(":id")

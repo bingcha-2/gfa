@@ -15,6 +15,7 @@ export function createMockPage() {
   const page: any = {
     goto: vi.fn().mockResolvedValue(undefined),
     waitForLoadState: vi.fn().mockResolvedValue(undefined),
+    waitForURL: vi.fn().mockResolvedValue(undefined),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockReturnValue("https://myaccount.google.com/family/details"),
     locator: vi.fn().mockImplementation(() => createMockLocator()),
@@ -30,6 +31,7 @@ function createMockLocator() {
     first: vi.fn().mockImplementation(() => locator),
     last: vi.fn().mockImplementation(() => locator),
     nth: vi.fn().mockImplementation(() => locator),
+    waitFor: vi.fn().mockResolvedValue(undefined),
     click: vi.fn().mockResolvedValue(undefined),
     fill: vi.fn().mockResolvedValue(undefined),
     press: vi.fn().mockResolvedValue(undefined),

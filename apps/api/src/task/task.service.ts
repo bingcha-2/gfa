@@ -16,7 +16,8 @@ export class TaskService {
     @InjectQueue(QUEUE_NAMES.invite) private readonly inviteQueue: Queue,
     @InjectQueue(QUEUE_NAMES.remove) private readonly removeQueue: Queue,
     @InjectQueue(QUEUE_NAMES.replace) private readonly replaceQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.sync) private readonly syncQueue: Queue
+    @InjectQueue(QUEUE_NAMES.sync) private readonly syncQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.health) private readonly healthQueue: Queue
   ) {}
 
   private getQueue(taskType: string): Queue | null {
@@ -25,6 +26,7 @@ export class TaskService {
       case TASK_TYPES.removeMember: return this.removeQueue;
       case TASK_TYPES.replaceMember: return this.replaceQueue;
       case TASK_TYPES.syncFamilyGroup: return this.syncQueue;
+      case TASK_TYPES.healthCheckAccount: return this.healthQueue;
       default: return null;
     }
   }
@@ -66,7 +68,6 @@ export class TaskService {
     const task = await this.findOne(id);
 
     if (
-      task.status !== "PENDING" &&
       task.status !== "FAILED_RETRYABLE" &&
       task.status !== "FAILED_FINAL" &&
       task.status !== "MANUAL_REVIEW"
@@ -81,7 +82,7 @@ export class TaskService {
       where: { id },
       data: {
         status: "PENDING",
-        retryCount: { increment: task.status === "PENDING" ? 0 : 1 },
+        retryCount: { increment: 1 },
         lastErrorCode: null,
         lastErrorMessage: null
       }
@@ -90,17 +91,24 @@ export class TaskService {
     // Re-enqueue the BullMQ job so the worker picks it up
     const queue = this.getQueue(task.type);
     if (queue) {
+      // Parse the original payload stored at task creation time
+      // This contains task-specific fields like targetMemberEmail, newUserEmail, userEmail, etc.
+      let storedPayload: Record<string, unknown> = {};
+      try {
+        storedPayload = JSON.parse((task as any).payload ?? "{}");
+      } catch {
+        // Non-fatal: if payload is malformed, fall back to base fields only
+      }
+
       const payload: Record<string, unknown> = {
+        // Merge stored payload fields (e.g. targetMemberEmail, newUserEmail, userEmail)
+        ...storedPayload,
+        // Base fields always override stored payload to ensure consistency
         taskId: task.id,
         familyGroupId: task.familyGroupId,
         accountId: task.accountId,
         orderId: task.orderId,
       };
-
-      // Include order-specific fields stored in task meta if available
-      if ((task as any).meta) {
-        Object.assign(payload, (task as any).meta);
-      }
 
       await queue.add(task.type, payload, {
         jobId: `retry-${task.id}-${Date.now()}`,

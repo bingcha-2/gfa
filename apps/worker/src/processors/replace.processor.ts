@@ -17,9 +17,10 @@ import { PrismaClient } from "@prisma/client";
 import type { ReplaceMemberPayload } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
-import { ProfileLock } from "../profile-lock";
+import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
+import { gmailLogin } from "../gmail-login";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
@@ -27,7 +28,7 @@ const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
 export interface ReplaceProcessorDeps {
   prisma: PrismaClient;
   adspower: AdsPowerClient;
-  lock: ProfileLock;
+  pool: BrowserPool;
   workerId: string;
 }
 
@@ -35,7 +36,7 @@ export async function processReplace(
   job: Job<ReplaceMemberPayload>,
   deps: ReplaceProcessorDeps
 ): Promise<void> {
-  const { prisma, adspower, lock, workerId } = deps;
+  const { prisma, adspower, pool, workerId } = deps;
   const { orderId, familyGroupId, accountId, targetMemberEmail, newUserEmail } =
     job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
@@ -58,18 +59,10 @@ export async function processReplace(
     return;
   }
 
-  const profileId = account.adspowerProfileId;
-
-  const locked = await lock.acquire(profileId, workerId);
-  if (!locked) {
-    await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "PROFILE_LOCKED",
-      message: `Profile ${profileId} is locked by another worker`,
-    });
-    throw new Error(`Profile ${profileId} locked — will retry`);
-  }
+  let profileId: string | null = null;
 
   try {
+    profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
     await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail}`, {
       profileId,
@@ -79,6 +72,13 @@ export async function processReplace(
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
 
+    // Gmail auto-login (required every time — browser clears cache on start)
+    const loginResult = await gmailLogin(page, account, logger);
+    if (!loginResult.success) {
+      await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
+      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+    }
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
@@ -156,6 +156,9 @@ export async function processReplace(
 
     await logger.log("INFO", "Replace completed successfully");
   } catch (error) {
+    // Don't overwrite MANUAL_REVIEW status if login challenge was detected
+    if ((error as any).__manualReview) throw error;
+
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
@@ -165,8 +168,9 @@ export async function processReplace(
       // noop
     }
 
+
     await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "REPLACE_ERROR",
+      code: profileId ? "REPLACE_ERROR" : "PROFILE_ACQUIRE_FAILED",
       message: errMsg,
     });
 
@@ -176,8 +180,10 @@ export async function processReplace(
     throw error;
   } finally {
     await browser.disconnect().catch(() => {});
-    await adspower.closeProfile(profileId).catch(() => {});
-    await lock.release(profileId, workerId).catch(() => {});
+    if (profileId) {
+      await adspower.closeProfile(profileId).catch(() => {});
+      await pool.release(profileId, workerId).catch(() => {});
+    }
   }
 }
 
@@ -233,16 +239,31 @@ async function removeMemberOnPage(
   await page.waitForTimeout(1000);
 
   // Look for remove/cancel-invite button on the member detail page
+  // Covers both joined members (Remove) and pending invites (Cancel/Revoke)
   const removeButton = page.locator([
     'button:has-text("移除")',
     'button:has-text("取消邀請")',
     'button:has-text("取消邀请")',
+    'button:has-text("取消")',           // Google may show just "取消" for pending invite
+    'button:has-text("撤銷")',           // Revoke (Traditional Chinese)
+    'button:has-text("撤销")',           // Revoke (Simplified Chinese)
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
+    'button:has-text("Revoke")',         // EN: revoke pending invite
+    'button:has-text("Cancel")',         // EN: cancel invite
     'button:has-text("Remove")',
   ].join(", "));
 
   if ((await removeButton.count()) === 0) {
+    // Dump all visible buttons for debugging
+    const allButtons = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("button")).map((b) => ({
+        text: b.textContent?.trim(),
+        cls: b.className,
+        visible: b.offsetParent !== null,
+      }))
+    );
+    await logger.log("WARN", `No remove button found. All buttons on page: ${JSON.stringify(allButtons)}`);
     throw new Error(`Cannot find remove/cancel button for member ${email}`);
   }
 
@@ -491,11 +512,12 @@ async function inviteMemberOnPage(
   await page.waitForTimeout(1000);
 
   // Wait for the invite link to appear (confirms the slot opened up)
+  // After a removal, Google may take up to 30s to release the slot
   const inviteLink = page.locator('a[href*="invitemembers"]');
   try {
-    await inviteLink.waitFor({ state: "visible", timeout: 15000 });
+    await inviteLink.waitFor({ state: "visible", timeout: 30_000 });
   } catch {
-    throw new Error("Invite link not found on family page after removal — slot may not be available yet");
+    throw new Error("Invite link not found on family page after removal — slot may not be available yet (waited 30s)");
   }
 
   await inviteLink.first().click();

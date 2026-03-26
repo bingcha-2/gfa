@@ -47,12 +47,23 @@ function Expand-ToDir([string]$ZipPath, [string]$OutDir) {
   Expand-Archive -Path $ZipPath -DestinationPath $OutDir
 }
 
-function Invoke-Pnpm([string[]]$PnpmArgs) {
+function Invoke-Pnpm([string[]]$PnpmArgs, [string]$WorkingDirectory = $repoRoot) {
   $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
   if (-not $pnpm) { $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue }
   if (-not $pnpm) { throw "pnpm not found - install it first." }
-  & $pnpm.Source @PnpmArgs
-  if ($LASTEXITCODE -ne 0) { throw "pnpm $($PnpmArgs -join ' ') failed." }
+
+  $previousLocation = Get-Location
+  $previousCi = [Environment]::GetEnvironmentVariable("CI", "Process")
+
+  try {
+    Set-Location $WorkingDirectory
+    [Environment]::SetEnvironmentVariable("CI", "true", "Process")
+    & $pnpm.Source @PnpmArgs
+    if ($LASTEXITCODE -ne 0) { throw "pnpm $($PnpmArgs -join ' ') failed." }
+  } finally {
+    [Environment]::SetEnvironmentVariable("CI", $previousCi, "Process")
+    Set-Location $previousLocation
+  }
 }
 
 # ─── Step 1: Build ───────────────────────────────────────────────────────────
@@ -113,22 +124,57 @@ $nccApiOut = Join-Path $apiDeployDir "dist"
   --out $nccApiOut `
   --external "@prisma/client" `
   --external ".prisma" `
+  --external "bcrypt" `
   --no-source-map-register `
   --quiet
 if ($LASTEXITCODE -ne 0) { throw "ncc bundle of API failed." }
 
-# Copy Prisma native binaries (query engine .dll/.node files)
-$prismaClientSrc = Join-Path $repoRoot "node_modules\.prisma"
-if (Test-Path $prismaClientSrc) {
-  robocopy $prismaClientSrc (Join-Path $apiDeployDir "node_modules\.prisma") /E /NFL /NDL /NJH /NJS | Out-Null
+$apiBundlePath = Join-Path $nccApiOut "index.js"
+$apiMainPath = Join-Path $nccApiOut "main.js"
+if (Test-Path $apiBundlePath) {
+  if (Test-Path $apiMainPath) {
+    Remove-Item $apiMainPath -Force
+  }
+  Move-Item $apiBundlePath $apiMainPath
 }
+
+$prismaRuntimeSrc = Get-ChildItem -Path (Join-Path $repoRoot "node_modules\.pnpm") -Recurse -Directory -Filter ".prisma" |
+  Select-Object -First 1 -ExpandProperty FullName
 $prismaClientPkgSrc = Join-Path $repoRoot "node_modules\@prisma\client"
-if (Test-Path $prismaClientPkgSrc) {
-  robocopy $prismaClientPkgSrc (Join-Path $apiDeployDir "node_modules\@prisma\client") /E /NFL /NDL /NJH /NJS | Out-Null
+$prismaClientVersion = (Get-Content -Raw (Join-Path $prismaClientPkgSrc "package.json") | ConvertFrom-Json).version
+$prismaCliVersion = (Get-Content -Raw (Join-Path $repoRoot "node_modules\prisma\package.json") | ConvertFrom-Json).version
+$bcryptVersion = (Get-Content -Raw (Join-Path $repoRoot "apps\api\node_modules\bcrypt\package.json") | ConvertFrom-Json).version
+
+$apiRuntimeInstallTemp = Join-Path $tmpDir "api-runtime-install"
+if (Test-Path $apiRuntimeInstallTemp) {
+  Remove-Item $apiRuntimeInstallTemp -Recurse -Force
 }
+New-Item -ItemType Directory -Path $apiRuntimeInstallTemp -Force | Out-Null
+$apiRuntimePackage = @{
+  name = "@gfa/api-runtime"
+  private = $true
+  version = "0.1.0"
+  packageManager = "pnpm@10.27.0"
+  dependencies = @{
+    "@prisma/client" = $prismaClientVersion
+    prisma = $prismaCliVersion
+    bcrypt = $bcryptVersion
+  }
+}
+$apiRuntimePackage |
+  ConvertTo-Json -Depth 10 |
+  Set-Content (Join-Path $apiRuntimeInstallTemp "package.json") -Encoding utf8
+Invoke-Pnpm @("install", "--prod", "--ignore-scripts", "--config.node-linker=hoisted") $apiRuntimeInstallTemp
+robocopy (Join-Path $apiRuntimeInstallTemp "node_modules") (Join-Path $apiDeployDir "node_modules") /E /NFL /NDL /NJH /NJS | Out-Null
+
+# Copy Prisma runtime + CLI files needed for bundled DB init/seed
+if ($prismaRuntimeSrc) {
+  robocopy $prismaRuntimeSrc (Join-Path $apiDeployDir "node_modules\.prisma") /E /NFL /NDL /NJH /NJS | Out-Null
+}
+robocopy $prismaClientPkgSrc (Join-Path $apiDeployDir "node_modules\@prisma\client") /E /NFL /NDL /NJH /NJS | Out-Null
 # Copy prisma schema (needed by @prisma/client to locate the DB)
 robocopy (Join-Path $repoRoot "prisma") (Join-Path $apiDeployDir "prisma") /E /NFL /NDL /NJH /NJS /XF "*.db" "*.db-journal" | Out-Null
-Write-Host "  API bundled: dist/index.js (~5MB) + prisma native binaries"
+Write-Host "  API bundled: dist/main.js (~5MB) + prisma runtime + bcrypt"
 
 # ─── Step 6: Bundle Worker with ncc ──────────────────────────────────────────
 Write-Step "Bundling Worker with ncc"
@@ -150,48 +196,94 @@ if ($LASTEXITCODE -ne 0) { throw "ncc bundle of Worker failed." }
 # Worker reads prisma from its own node_modules path
 $workerNmDir = Join-Path $workerDeployDir "node_modules"
 New-Item -ItemType Directory -Path $workerNmDir -Force | Out-Null
-if (Test-Path $prismaClientSrc) {
-  robocopy $prismaClientSrc (Join-Path $workerNmDir ".prisma") /E /NFL /NDL /NJH /NJS | Out-Null
+
+$playwrightVersion = (Get-Content -Raw (Join-Path $repoRoot "apps\worker\node_modules\playwright\package.json") | ConvertFrom-Json).version
+$workerRuntimeInstallTemp = Join-Path $tmpDir "worker-runtime-install"
+if (Test-Path $workerRuntimeInstallTemp) {
+  Remove-Item $workerRuntimeInstallTemp -Recurse -Force
+}
+New-Item -ItemType Directory -Path $workerRuntimeInstallTemp -Force | Out-Null
+$workerRuntimePackage = @{
+  name = "@gfa/worker-runtime"
+  private = $true
+  version = "0.1.0"
+  packageManager = "pnpm@10.27.0"
+  dependencies = @{
+    playwright = $playwrightVersion
+  }
+}
+$workerRuntimePackage |
+  ConvertTo-Json -Depth 10 |
+  Set-Content (Join-Path $workerRuntimeInstallTemp "package.json") -Encoding utf8
+Invoke-Pnpm @("install", "--prod", "--ignore-scripts", "--config.node-linker=hoisted") $workerRuntimeInstallTemp
+robocopy (Join-Path $workerRuntimeInstallTemp "node_modules") $workerNmDir /E /NFL /NDL /NJH /NJS | Out-Null
+
+if ($prismaRuntimeSrc) {
+  robocopy $prismaRuntimeSrc (Join-Path $workerNmDir ".prisma") /E /NFL /NDL /NJH /NJS | Out-Null
 }
 if (Test-Path $prismaClientPkgSrc) {
   robocopy $prismaClientPkgSrc (Join-Path $workerNmDir "@prisma\client") /E /NFL /NDL /NJH /NJS | Out-Null
 }
-# Copy playwright-core (needed for CDP browser automation)
-$playwrightCoreSrc = Join-Path $repoRoot "node_modules\playwright-core"
-if (Test-Path $playwrightCoreSrc) {
-  robocopy $playwrightCoreSrc (Join-Path $workerNmDir "playwright-core") /E /NFL /NDL /NJH /NJS | Out-Null
-}
-$playwrightSrc = Join-Path $repoRoot "node_modules\playwright"
-if (Test-Path $playwrightSrc) {
-  robocopy $playwrightSrc (Join-Path $workerNmDir "playwright") /E /NFL /NDL /NJH /NJS | Out-Null
-}
 Write-Host "  Worker bundled: dist/index.js (~5MB) + prisma + playwright-core"
 
-# ─── Step 6: Package Web via Next.js standalone output ───────────────────────
-# output:'standalone' (in next.config.ts) must be built once with admin rights
-# (Windows needs symlink privilege for the first build).
-# Standalone bundles only the minimal required node_modules (~58MB vs ~484MB).
-Write-Step "Packaging Web (Next.js standalone)"
+# ─── Step 7: Package Web via standalone when available, otherwise pnpm deploy ─
+Write-Step "Packaging Web"
 $webDeployDir      = Join-Path $releaseDir "apps\web"
 $webStandaloneSrc  = Join-Path $repoRoot "apps\web\.next\standalone"
 $webStaticSrc      = Join-Path $repoRoot "apps\web\.next\static"
 $webPublicSrc      = Join-Path $repoRoot "apps\web\public"
+$webLaunchMode     = "next-start"
+$webStandaloneServer = Join-Path $webStandaloneSrc "apps\web\server.js"
 
-if (-not (Test-Path $webStandaloneSrc)) {
-  Write-Host "  WARN: standalone not found, falling back to pnpm deploy" -ForegroundColor Yellow
-  $webDeployDir = Join-Path $releaseDir "apps\web"
-  Invoke-Pnpm @("--filter", "@gfa/web", "deploy", "--prod", "--legacy", $webDeployDir)
-  robocopy (Join-Path $repoRoot "apps\web\.next") (Join-Path $webDeployDir ".next") /E /NFL /NDL /NJH /NJS /XD "cache" | Out-Null
-} else {
+if ((Test-Path $webStandaloneSrc) -and (Test-Path $webStandaloneServer)) {
+  $webLaunchMode = "standalone"
   New-Item -ItemType Directory -Path $webDeployDir -Force | Out-Null
-  # standalone/ contains server.js + minimal node_modules
+  # standalone/ contains the traced runtime tree for the web app
   robocopy $webStandaloneSrc $webDeployDir /E /NFL /NDL /NJH /NJS | Out-Null
   # .next/static must be at <webDir>/.next/static
   robocopy $webStaticSrc (Join-Path $webDeployDir ".next\static") /E /NFL /NDL /NJH /NJS | Out-Null
   if (Test-Path $webPublicSrc) {
     robocopy $webPublicSrc (Join-Path $webDeployDir "public") /E /NFL /NDL /NJH /NJS | Out-Null
   }
-  Write-Host "  Web packaged via standalone: ~58MB (no full node_modules needed)"
+  Write-Host "  Web packaged via standalone runtime"
+} else {
+  Write-Host "  Standalone runtime unavailable, installing runtime dependencies directly" -ForegroundColor Yellow
+  New-Item -ItemType Directory -Path $webDeployDir -Force | Out-Null
+  $webSourcePackage = Get-Content -Raw (Join-Path $repoRoot "apps\web\package.json") | ConvertFrom-Json
+  $webNextVersion = $webSourcePackage.dependencies.next
+  $webReactVersion = $webSourcePackage.dependencies.react
+  $webReactDomVersion = $webSourcePackage.dependencies."react-dom"
+  $webInstallTemp = Join-Path $tmpDir "web-runtime-install"
+
+  if (Test-Path $webInstallTemp) {
+    Remove-Item $webInstallTemp -Recurse -Force
+  }
+
+  New-Item -ItemType Directory -Path $webInstallTemp -Force | Out-Null
+
+  $webRuntimePackage = @{
+    name = "@gfa/web-runtime"
+    private = $true
+    version = "0.1.0"
+    packageManager = "pnpm@10.27.0"
+    dependencies = @{
+      next = $webNextVersion
+      react = $webReactVersion
+      "react-dom" = $webReactDomVersion
+    }
+  }
+
+  $webRuntimePackage |
+    ConvertTo-Json -Depth 10 |
+    Set-Content (Join-Path $webInstallTemp "package.json") -Encoding utf8
+
+  Invoke-Pnpm @("install", "--prod", "--ignore-scripts", "--config.node-linker=hoisted") $webInstallTemp
+  robocopy $webInstallTemp $webDeployDir /E /NFL /NDL /NJH /NJS | Out-Null
+  robocopy (Join-Path $repoRoot "apps\web\.next") (Join-Path $webDeployDir ".next") /E /NFL /NDL /NJH /NJS /XD "cache" | Out-Null
+  if (Test-Path $webPublicSrc) {
+    robocopy $webPublicSrc (Join-Path $webDeployDir "public") /E /NFL /NDL /NJH /NJS | Out-Null
+  }
+  Write-Host "  Web packaged via runtime dependency install"
 }
 
 # ─── Step 7: Shared package ──────────────────────────────────────────────────
@@ -211,12 +303,10 @@ foreach ($f in @("Start-GFA.bat", "Stop-GFA.bat", "Status-GFA.bat", ".env.exampl
   Copy-Item (Join-Path $repoRoot $f) (Join-Path $releaseDir $f)
 }
 
-# ─── Step 10: Update Get-ServiceDefinitions for standalone web ────────────────
-# The standalone Next.js server entry is at: apps/web/server.js (not next start)
-# We write a small shim that overrides the web service args in the release.
+# ─── Step 10: Record web launch mode for the bundled launcher ─────────────────
 $shimPath = Join-Path $releaseDir "scripts\private-hosting\web-server-args.txt"
 New-Item -ItemType File -Path $shimPath -Force | Out-Null
-"standalone" | Set-Content $shimPath -Encoding utf8
+$webLaunchMode | Set-Content $shimPath -Encoding utf8
 
 # ─── Step 11: Version file ───────────────────────────────────────────────────
 Write-Step "Writing version info"

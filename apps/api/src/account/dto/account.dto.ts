@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNotEmpty, IsArray, ArrayNotEmpty } from "class-validator";
+import { IsString, IsOptional, IsNotEmpty, IsArray, ArrayNotEmpty } from "class-validator";
 
 export class CreateAccountDto {
   @IsString()
@@ -7,12 +7,14 @@ export class CreateAccountDto {
   @IsString()
   loginEmail!: string;
 
-  @IsString()
-  adspowerProfileId!: string;
-
   @IsOptional()
   @IsString()
-  loginPassword?: string;
+  adspowerProfileId?: string;
+
+
+  @IsString()
+  @IsNotEmpty()
+  loginPassword!: string;
 
   @IsOptional()
   @IsString()
@@ -38,6 +40,7 @@ export class UpdateAccountDto {
 
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   loginPassword?: string;
 
   @IsOptional()

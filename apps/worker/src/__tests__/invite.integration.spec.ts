@@ -1,10 +1,11 @@
 /**
  * Integration tests for the invite processor.
  *
- * Uses MockAdsPowerClient / MockWorkerBrowser / MockProfileLock
+ * Uses MockAdsPowerClient / MockWorkerBrowser / MockBrowserPool
  * with a real SQLite PrismaClient to verify the full processor flow:
  * Task creation → processInvite() → Task/Order status update.
  */
+
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,7 +21,7 @@ import {
 } from "./helpers";
 import { MockAdsPowerClient } from "./mock-adspower";
 import { MockWorkerBrowser } from "./mock-browser";
-import { MockProfileLock } from "./mock-profile-lock";
+import { MockBrowserPool } from "./mock-browser-pool";
 
 // Mock the browser-context module so WorkerBrowser is replaced
 vi.mock("../browser-context", () => {
@@ -37,6 +38,7 @@ vi.mock("../browser-context", () => {
       first: () => mkLoc(),
       last: () => mkLoc(),
       nth: () => mkLoc(),
+      waitFor: async () => {},
       click: async () => {},
       fill: async () => {},
       press: async () => {},
@@ -46,6 +48,7 @@ vi.mock("../browser-context", () => {
     return {
       goto: async () => {},
       waitForLoadState: async () => {},
+      waitForURL: async () => {},
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
@@ -61,7 +64,7 @@ import { processInvite } from "../processors/invite.processor";
 describe("Invite Processor Integration", () => {
   const db = getPrisma();
   const mockAdspower = new MockAdsPowerClient();
-  const mockLock = new MockProfileLock();
+  const mockPool = new MockBrowserPool();
   const workerId = "test-worker-1";
 
   beforeAll(async () => {
@@ -69,8 +72,9 @@ describe("Invite Processor Integration", () => {
   });
 
   beforeEach(async () => {
+    await cleanDb();
     mockAdspower.reset();
-    mockLock.reset();
+    mockPool.reset();
   });
 
   afterEach(async () => {
@@ -119,7 +123,7 @@ describe("Invite Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -140,12 +144,12 @@ describe("Invite Processor Integration", () => {
     expect(updatedOrder!.status).toBe("INVITE_SENT");
 
     // Assert: AdsPower was called
-    expect(mockAdspower.openCalls).toContain("profile-invite-001");
-    expect(mockAdspower.closeCalls).toContain("profile-invite-001");
+    expect(mockAdspower.openCalls).toContain(mockPool.profileId);
+    expect(mockAdspower.closeCalls).toContain(mockPool.profileId);
 
-    // Assert: Lock was acquired and released
-    expect(mockLock.acquireCalls).toContain("profile-invite-001");
-    expect(mockLock.releaseCalls).toContain("profile-invite-001");
+    // Assert: Pool was acquired and released
+    expect(mockPool.acquireCalls.length).toBeGreaterThan(0);
+    expect(mockPool.releaseCalls.length).toBeGreaterThan(0);
 
     // Assert: TaskLogs were written
     const logs = await db.taskLog.findMany({
@@ -172,7 +176,7 @@ describe("Invite Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -183,16 +187,16 @@ describe("Invite Processor Integration", () => {
     expect(updatedTask!.lastErrorCode).toBe("ACCOUNT_NOT_FOUND");
   });
 
-  it("should set Task to FAILED_RETRYABLE when profile is locked", async () => {
+  it("should throw when pool is exhausted", async () => {
     const account = await createTestAccount({
-      adspowerProfileId: "profile-locked-001",
+      adspowerProfileId: "profile-pool-test",
     });
     const task = await createTestTask("INVITE_MEMBER", {
       accountId: account.id,
     });
 
-    // Simulate lock contention
-    mockLock.locked = true;
+    // Simulate pool exhaustion
+    mockPool.exhausted = true;
 
     const job = createMockJob(
       {
@@ -207,16 +211,16 @@ describe("Invite Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
     // Should throw to trigger BullMQ retry
-    await expect(processInvite(job, deps)).rejects.toThrow("locked");
+    await expect(processInvite(job, deps)).rejects.toThrow("No free profile available");
 
     const updatedTask = await db.task.findUnique({ where: { id: task.id } });
     expect(updatedTask!.status).toBe("FAILED_RETRYABLE");
-    expect(updatedTask!.lastErrorCode).toBe("PROFILE_LOCKED");
+    expect(updatedTask!.lastErrorCode).toBe("PROFILE_ACQUIRE_FAILED");
   });
 
   it("should set Task to FAILED_RETRYABLE when AdsPower fails", async () => {
@@ -243,7 +247,7 @@ describe("Invite Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 

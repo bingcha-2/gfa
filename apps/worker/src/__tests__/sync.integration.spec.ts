@@ -18,7 +18,7 @@ import {
 } from "./helpers";
 import { MockAdsPowerClient } from "./mock-adspower";
 import { MockWorkerBrowser, createMockPage } from "./mock-browser";
-import { MockProfileLock } from "./mock-profile-lock";
+import { MockBrowserPool } from "./mock-browser-pool";
 
 // Mock the browser-context module
 vi.mock("../browser-context", () => {
@@ -35,6 +35,7 @@ vi.mock("../browser-context", () => {
       first: () => mkLoc(),
       last: () => mkLoc(),
       nth: () => mkLoc(),
+      waitFor: async () => {},
       click: async () => {},
       fill: async () => {},
       press: async () => {},
@@ -44,6 +45,7 @@ vi.mock("../browser-context", () => {
     return {
       goto: async () => {},
       waitForLoadState: async () => {},
+      waitForURL: async () => {},
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
@@ -54,21 +56,29 @@ vi.mock("../browser-context", () => {
   return { WorkerBrowser: InlineMockWorkerBrowser };
 });
 
+vi.mock("../scrape-subscription", () => ({
+  scrapeSubscriptionInfo: vi.fn(async () => ({
+    expiresAt: null,
+    status: "SUSPENDED" as const,
+  })),
+}));
+
 import { processSync } from "../processors/sync.processor";
 
 describe("Sync Processor Integration", () => {
   const db = getPrisma();
   const mockAdspower = new MockAdsPowerClient();
-  const mockLock = new MockProfileLock();
+  const mockPool = new MockBrowserPool();
   const workerId = "test-worker-3";
 
   beforeAll(async () => {
     await cleanDb();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await cleanDb();
     mockAdspower.reset();
-    mockLock.reset();
+    mockPool.reset();
   });
 
   afterEach(async () => {
@@ -82,6 +92,13 @@ describe("Sync Processor Integration", () => {
   it("should update Task to SUCCESS and update FamilyGroup counts", async () => {
     const account = await createTestAccount({
       adspowerProfileId: "profile-sync-001",
+    });
+    await db.account.update({
+      where: { id: account.id },
+      data: {
+        subscriptionExpiresAt: new Date("2027-01-01T00:00:00.000Z"),
+        subscriptionStatus: "ACTIVE",
+      },
     });
     const group = await createTestFamilyGroup(account.id, {
       availableSlots: 5,
@@ -102,7 +119,7 @@ describe("Sync Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -120,6 +137,16 @@ describe("Sync Processor Integration", () => {
     expect(updatedGroup!.memberCount).toBe(0);
     expect(updatedGroup!.availableSlots).toBe(6);
     expect(updatedGroup!.lastSyncedAt).not.toBeNull();
+
+    const updatedAccount = await db.account.findUnique({
+      where: { id: account.id },
+      select: {
+        subscriptionExpiresAt: true,
+        subscriptionStatus: true,
+      },
+    });
+    expect(updatedAccount!.subscriptionStatus).toBe("SUSPENDED");
+    expect(updatedAccount!.subscriptionExpiresAt).toBeNull();
   });
 
   it("should set Task to FAILED_FINAL when Account is not found", async () => {
@@ -136,7 +163,7 @@ describe("Sync Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -147,15 +174,15 @@ describe("Sync Processor Integration", () => {
     expect(updatedTask!.lastErrorCode).toBe("ACCOUNT_NOT_FOUND");
   });
 
-  it("should set Task to FAILED_RETRYABLE when profile is locked", async () => {
+  it("should throw when pool is exhausted", async () => {
     const account = await createTestAccount({
-      adspowerProfileId: "profile-sync-locked",
+      adspowerProfileId: "profile-sync-pool-test",
     });
     const task = await createTestTask("SYNC_FAMILY_GROUP", {
       accountId: account.id,
     });
 
-    mockLock.locked = true;
+    mockPool.exhausted = true;
 
     const job = createMockJob(
       {
@@ -168,14 +195,10 @@ describe("Sync Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
-    await expect(processSync(job, deps)).rejects.toThrow("locked");
-
-    const updatedTask = await db.task.findUnique({ where: { id: task.id } });
-    expect(updatedTask!.status).toBe("FAILED_RETRYABLE");
-    expect(updatedTask!.lastErrorCode).toBe("PROFILE_LOCKED");
+    await expect(processSync(job, deps)).rejects.toThrow("No free profile available");
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,6 +13,19 @@ function stripSensitive<T extends Record<string, unknown>>(account: T): Omit<T, 
 @Injectable()
 export class AccountService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private validateLoginPassword(loginPassword: string | undefined, action: "create" | "update") {
+    if (loginPassword === undefined) {
+      if (action === "create") {
+        throw new BadRequestException("loginPassword is required for automated account operations");
+      }
+      return;
+    }
+
+    if (!loginPassword.trim()) {
+      throw new BadRequestException("loginPassword cannot be empty");
+    }
+  }
 
   async findAll(status?: string) {
     const where = status ? { status: status as any } : {};
@@ -52,11 +65,15 @@ export class AccountService {
   }
 
   async create(dto: CreateAccountDto) {
+    this.validateLoginPassword(dto.loginPassword, "create");
+
     const account = await this.prisma.account.create({
       data: {
         name: dto.name,
         loginEmail: dto.loginEmail,
-        adspowerProfileId: dto.adspowerProfileId,
+        // Browser pool architecture: adspowerProfileId is no longer bound to a specific account.
+        // Use a unique placeholder; the pool selects a free profile dynamically at task time.
+        adspowerProfileId: dto.adspowerProfileId || `pending-${randomUUID()}`,
         loginPassword: dto.loginPassword,
         totpSecret: dto.totpSecret,
         notes: dto.notes
@@ -66,8 +83,10 @@ export class AccountService {
     return stripSensitive(account);
   }
 
+
   async update(id: string, dto: UpdateAccountDto) {
     await this.findOne(id);
+    this.validateLoginPassword(dto.loginPassword, "update");
 
     const account = await this.prisma.account.update({
       where: { id },
@@ -116,64 +135,93 @@ export class AccountService {
     const skipped: string[] = [];
     const errors: string[] = [];
 
+    // Pre-parse all valid lines before hitting the DB
+    type ParsedLine = {
+      lineIndex: number;
+      loginEmail: string;
+      loginPassword: string;
+      totpSecret?: string;
+      recoveryEmail?: string;
+      appPassword?: string;
+      notes?: string;
+    };
+
+    const parsed: ParsedLine[] = [];
+
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i];
 
+      let loginEmail: string;
+      let loginPassword: string;
+      let totpSecret: string | undefined;
+      let recoveryEmail: string | undefined;
+      let appPassword: string | undefined;
+      let notes: string | undefined;
+
+      if (line.includes("----")) {
+        // Format A: email----password----recoveryEmail----totpSecret
+        const parts = line.split("----").map((p) => p.trim());
+        if (parts.length < 2) {
+          errors.push(`Line ${i + 1}: not enough fields (need at least email----password)`);
+          continue;
+        }
+        loginEmail = parts[0];
+        loginPassword = parts[1];
+        recoveryEmail = parts[2] || undefined;
+        totpSecret = parts[3] || undefined;
+        // parts[4]: optional region/country — stored in notes
+        notes = parts[4]?.trim() || undefined;
+      } else if (line.includes("——")) {
+        // Format B: email——password——totpSecret
+        const parts = line.split("——").map((p) => p.trim());
+        if (parts.length < 2) {
+          errors.push(`Line ${i + 1}: not enough fields (need at least email——password)`);
+          continue;
+        }
+        loginEmail = parts[0];
+        loginPassword = parts[1];
+        totpSecret = parts[2] || undefined;
+      } else {
+        errors.push(`Line ${i + 1}: unrecognized format (expected ---- or —— separator)`);
+        continue;
+      }
+
+      if (!loginEmail.includes("@")) {
+        errors.push(`Line ${i + 1}: invalid email "${loginEmail}"`);
+        continue;
+      }
+
+      if (!loginPassword.trim()) {
+        errors.push(`Line ${i + 1}: password cannot be empty`);
+        continue;
+      }
+
+      parsed.push({ lineIndex: i, loginEmail, loginPassword, totpSecret, recoveryEmail, appPassword, notes });
+    }
+
+    // Batch-check duplicates: one query instead of N queries
+    const candidateEmails = parsed.map((p) => p.loginEmail);
+    const existingAccounts = await this.prisma.account.findMany({
+      where: { loginEmail: { in: candidateEmails } },
+      select: { loginEmail: true }
+    });
+    const existingEmailSet = new Set(existingAccounts.map((a) => a.loginEmail));
+
+    for (const item of parsed) {
+      const { lineIndex, loginEmail, loginPassword, totpSecret, recoveryEmail, appPassword, notes } = item;
+
+      if (existingEmailSet.has(loginEmail)) {
+        skipped.push(loginEmail);
+        continue;
+      }
+
       try {
-        let loginEmail: string;
-        let loginPassword: string;
-        let totpSecret: string | undefined;
-        let recoveryEmail: string | undefined;
-        let appPassword: string | undefined;
-
-        if (line.includes("----")) {
-          // Format A: email----password----recoveryEmail----totpSecret
-          const parts = line.split("----").map((p) => p.trim());
-          if (parts.length < 2) {
-            errors.push(`Line ${i + 1}: not enough fields (need at least email----password)`);
-            continue;
-          }
-          loginEmail = parts[0];
-          loginPassword = parts[1];
-          recoveryEmail = parts[2] || undefined;
-          totpSecret = parts[3] || undefined;
-        } else if (line.includes("——")) {
-          // Format B: email——password——totpSecret
-          const parts = line.split("——").map((p) => p.trim());
-          if (parts.length < 2) {
-            errors.push(`Line ${i + 1}: not enough fields (need at least email——password)`);
-            continue;
-          }
-          loginEmail = parts[0];
-          loginPassword = parts[1];
-          totpSecret = parts[2] || undefined;
-        } else {
-          errors.push(`Line ${i + 1}: unrecognized format (expected ---- or —— separator)`);
-          continue;
-        }
-
-        // Validate email-like format
-        if (!loginEmail.includes("@")) {
-          errors.push(`Line ${i + 1}: invalid email "${loginEmail}"`);
-          continue;
-        }
-
-        // Check duplicate
-        const existing = await this.prisma.account.findUnique({
-          where: { loginEmail },
-          select: { id: true }
-        });
-
-        if (existing) {
-          skipped.push(loginEmail);
-          continue;
-        }
-
-        // Generate unique placeholder AdsPower profile ID
         const placeholderProfileId = `pending-${randomUUID()}`;
 
+        let newAccount: { id: string };
         try {
-          await this.prisma.account.create({
+          // Use select to get id back — avoids a second findUnique call
+          newAccount = await this.prisma.account.create({
             data: {
               name: loginEmail.split("@")[0],
               loginEmail,
@@ -181,8 +229,10 @@ export class AccountService {
               totpSecret,
               recoveryEmail,
               appPassword,
-              adspowerProfileId: placeholderProfileId
-            }
+              adspowerProfileId: placeholderProfileId,
+              notes
+            },
+            select: { id: true }
           });
         } catch (createErr: any) {
           // Handle race condition: another import created the same email concurrently
@@ -195,37 +245,30 @@ export class AccountService {
 
         created.push(loginEmail);
 
-        // Auto-create a default family group for this account
+        // Auto-create a default family group — use id from create() directly, no extra query
         try {
-          const newAccount = await this.prisma.account.findUnique({
-            where: { loginEmail },
-            select: { id: true }
+          await this.prisma.familyGroup.create({
+            data: {
+              groupName: loginEmail.split("@")[0],
+              accountId: newAccount.id,
+              maxMembers: 5,
+              memberCount: 0,
+              availableSlots: 5
+            }
           });
-          if (newAccount) {
-            await this.prisma.familyGroup.create({
-              data: {
-                groupName: loginEmail.split("@")[0],
-                accountId: newAccount.id,
-                maxMembers: 5,
-                memberCount: 0,
-                availableSlots: 5
-              }
-            });
-          }
-        } catch (groupErr) {
+        } catch {
           // Non-fatal: account was created, group creation failed
-          errors.push(`Line ${i + 1}: account created but group creation failed`);
+          errors.push(`Line ${lineIndex + 1}: account created but group creation failed`);
         }
       } catch (err) {
         // Sanitize error messages to prevent credential leakage
         let msg: string;
-        if (err instanceof Error && 'code' in err) {
-          // Prisma error — don't expose full message which may contain field values
+        if (err instanceof Error && "code" in err) {
           msg = `database error (code: ${(err as any).code})`;
         } else {
           msg = err instanceof Error ? err.message : String(err);
         }
-        errors.push(`Line ${i + 1}: ${msg}`);
+        errors.push(`Line ${lineIndex + 1}: ${msg}`);
       }
     }
 
@@ -238,6 +281,40 @@ export class AccountService {
       skippedEmails: skipped,
       errors
     };
+  }
+
+  /**
+   * Operator confirms manual login has been completed for MANUAL_REVIEW account.
+   * Resets account status to HEALTHY and re-queues stuck MANUAL_REVIEW tasks to PENDING
+   * so BullMQ will pick them up again on next poll.
+   */
+  async confirmLogin(id: string): Promise<{ previousStatus: string; tasksRequeued: number }> {
+    const account = await this.prisma.account.findUnique({ where: { id } });
+    if (!account) throw new NotFoundException("Account not found");
+
+    const previousStatus = account.status;
+
+    // 1. Reset account to HEALTHY
+    await this.prisma.account.update({
+      where: { id },
+      data: { status: "HEALTHY", lastHealthCheckAt: new Date() }
+    });
+
+    // 2. Reset any stuck tasks for this account back to PENDING
+    // Includes: MANUAL_REVIEW (login challenge), RUNNING (worker crash), FAILED_RETRYABLE (transient error)
+    const { count } = await this.prisma.task.updateMany({
+      where: {
+        accountId: id,
+        status: { in: ["MANUAL_REVIEW", "RUNNING", "FAILED_RETRYABLE"] }
+      },
+      data: {
+        status: "PENDING",
+        lastErrorCode: null,
+        lastErrorMessage: null
+      }
+    });
+
+    return { previousStatus, tasksRequeued: count };
   }
 }
 

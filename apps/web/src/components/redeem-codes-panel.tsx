@@ -13,6 +13,7 @@ type RedeemCodesPanelProps = {
   onCreate: (payload: {
     count: number;
     product: string;
+    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
   }) => Promise<boolean>;
   onDisable: (codeId: string) => Promise<boolean>;
 };
@@ -29,7 +30,8 @@ export function RedeemCodesPanel({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [form, setForm] = useState({
     count: "10",
-    product: "GOOGLE_ONE"
+    product: "GOOGLE_ONE",
+    codeType: "JOIN_GROUP" as "JOIN_GROUP" | "ACCOUNT_SWAP"
   });
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -45,13 +47,15 @@ export function RedeemCodesPanel({
     try {
       const created = await onCreate({
         count: Number(form.count),
-        product: form.product
+        product: form.product,
+        codeType: form.codeType
       });
 
       if (created) {
         setForm({
           count: "10",
-          product: form.product || "GOOGLE_ONE"
+          product: form.product || "GOOGLE_ONE",
+          codeType: form.codeType
         });
         setActiveTab("inventory");
       }
@@ -128,6 +132,22 @@ export function RedeemCodesPanel({
                   }
                 />
               </div>
+              <div className="field">
+                <label htmlFor="code-codeType">卡密类型</label>
+                <select
+                  id="code-codeType"
+                  value={form.codeType}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      codeType: event.target.value as "JOIN_GROUP" | "ACCOUNT_SWAP"
+                    }))
+                  }
+                >
+                  <option value="JOIN_GROUP">进组卡密（JOIN_GROUP）</option>
+                  <option value="ACCOUNT_SWAP">换号卡密（ACCOUNT_SWAP）</option>
+                </select>
+              </div>
               <div className="field field-span-2">
                 <p className="muted">
                   新生成的卡密默认不带过期时间。只有用户提交卡密、订单真正完成后，才会记录实际生效时间。
@@ -155,6 +175,7 @@ export function RedeemCodesPanel({
               <thead>
                 <tr>
                   <th>卡密</th>
+                  <th>类型</th>
                   <th>状态</th>
                   <th>产品</th>
                   <th>订单</th>
@@ -168,6 +189,11 @@ export function RedeemCodesPanel({
                       <td>
                         <div className="strong mono">{code.code}</div>
                         <div className="muted">created {formatDateTime(code.createdAt)}</div>
+                      </td>
+                      <td>
+                        <span className={`badge ${(code as any).codeType === "ACCOUNT_SWAP" ? "badge-orange" : "badge-sky"}`}>
+                          {(code as any).codeType === "ACCOUNT_SWAP" ? "换号" : "进组"}
+                        </span>
                       </td>
                       <td>
                         <StatusBadge value={code.status} />
@@ -203,9 +229,9 @@ export function RedeemCodesPanel({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5}>
-                      <div className="empty-state">还没有卡密库存。</div>
-                    </td>
+                      <td colSpan={6}>
+                        <div className="empty-state">还没有卡密库存。</div>
+                      </td>
                   </tr>
                 )}
               </tbody>

@@ -11,7 +11,7 @@
  * Located in Worker test directory for correct vi.mock resolution.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock browser-context (same pattern as other Worker specs)
 vi.mock("../browser-context", () => {
@@ -28,6 +28,7 @@ vi.mock("../browser-context", () => {
       first: () => mkLoc(),
       last: () => mkLoc(),
       nth: () => mkLoc(),
+      waitFor: async () => {},
       click: async () => {},
       fill: async () => {},
       press: async () => {},
@@ -37,6 +38,7 @@ vi.mock("../browser-context", () => {
     return {
       goto: async () => {},
       waitForLoadState: async () => {},
+      waitForURL: async () => {},
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
@@ -57,17 +59,23 @@ import {
   createMockJob,
 } from "./helpers";
 import { MockAdsPowerClient } from "./mock-adspower";
-import { MockProfileLock } from "./mock-profile-lock";
+import { MockBrowserPool } from "./mock-browser-pool";
 
 describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
   const db = getPrisma();
   const mockAdspower = new MockAdsPowerClient();
-  const mockLock = new MockProfileLock();
+  const mockPool = new MockBrowserPool();
   const workerId = "e2e-lifecycle-worker";
+
+  beforeEach(async () => {
+    mockAdspower.reset();
+    mockPool.reset();
+    await cleanDb();
+  });
 
   afterEach(async () => {
     mockAdspower.reset();
-    mockLock.reset();
+    mockPool.reset();
     await cleanDb();
   });
 
@@ -201,7 +209,7 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
     await processInvite(mockJob, {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     });
 
@@ -239,8 +247,8 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
     expect(messages.some((m) => m.includes("INVITE_SENT"))).toBe(true);
 
     // AdsPower lifecycle
-    expect(mockAdspower.openCalls).toContain("profile-customer-001");
-    expect(mockAdspower.closeCalls).toContain("profile-customer-001");
+    expect(mockAdspower.openCalls).toContain(mockPool.profileId);
+    expect(mockAdspower.closeCalls).toContain(mockPool.profileId);
   });
 
   it("Group selection: picks earliest group with slots, skips full and unhealthy groups", async () => {
@@ -323,7 +331,7 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
     await processInvite(mockJob, {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     });
 
@@ -363,7 +371,7 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
         },
         { id: c1.queuePayload.taskId }
       ),
-      { prisma: db, adspower: mockAdspower as any, lock: mockLock as any, workerId }
+      { prisma: db, adspower: mockAdspower as any, pool: mockPool as any, workerId }
     );
 
     // After customer 1: slots 2 → 1
@@ -371,7 +379,7 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
     expect(afterC1!.availableSlots).toBe(1);
 
     mockAdspower.reset();
-    mockLock.reset();
+    mockPool.reset();
 
     // ========================
     // Customer 2: redeem + invite
@@ -388,7 +396,7 @@ describe("Customer Lifecycle: Redeem Code → Invite to Family Group", () => {
         },
         { id: c2.queuePayload.taskId }
       ),
-      { prisma: db, adspower: mockAdspower as any, lock: mockLock as any, workerId }
+      { prisma: db, adspower: mockAdspower as any, pool: mockPool as any, workerId }
     );
 
     // After customer 2: slots 1 → 0

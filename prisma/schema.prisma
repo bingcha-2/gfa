@@ -48,6 +48,11 @@ enum RedeemCodeStatus {
   EXPIRED
 }
 
+enum RedeemCodeType {
+  JOIN_GROUP    // Standard: customer joins a family group
+  ACCOUNT_SWAP  // Customer self-service account replacement
+}
+
 enum OrderStatus {
   CREATED
   CODE_VERIFIED
@@ -59,6 +64,7 @@ enum OrderStatus {
   MANUAL_REVIEW
   FAILED
   COMPLETED
+  EXPIRED
 }
 
 enum TaskStatus {
@@ -107,9 +113,11 @@ model Account {
   dailyOperationLimit Int           @default(20)
   lastOperationDate   String?
   notes               String?
-  lastLoginAt         DateTime?
-  lastHealthCheckAt   DateTime?
-  familyGroups        FamilyGroup[]
+  lastLoginAt              DateTime?
+  lastHealthCheckAt        DateTime?
+  subscriptionExpiresAt    DateTime?
+  subscriptionStatus       String?   // "ACTIVE" | "EXPIRED" | "SUSPENDED"
+  familyGroups             FamilyGroup[]
   tasks               Task[]
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
@@ -174,6 +182,7 @@ model RedeemCode {
   id          String           @id @default(cuid())
   code        String           @unique
   product     String           @default("GOOGLE_ONE")
+  codeType    RedeemCodeType   @default(JOIN_GROUP)
   usesAllowed Int              @default(1)
   status      RedeemCodeStatus @default(UNUSED)
   expiresAt   DateTime?
@@ -193,6 +202,8 @@ model Order {
   status        OrderStatus  @default(CREATED)
   resultMessage String?
   assignedAt    DateTime?
+  expiresAt     DateTime?  // membership expiry (set at redeem time)
+  expiredAt     DateTime?  // actual auto-removal timestamp (audit)
   redeemCode    RedeemCode?  @relation(fields: [redeemCodeId], references: [id], onDelete: SetNull)
   familyGroup   FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
   tasks         Task[]

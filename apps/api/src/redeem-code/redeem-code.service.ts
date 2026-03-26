@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { randomInt } from "node:crypto";
+import { RedeemCodeType } from "@prisma/client";
 
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -30,6 +31,7 @@ export class RedeemCodeService {
   async batchCreate(params: {
     count: number;
     product?: string;
+    codeType?: string;
     createdById?: string;
   }) {
     const seenCodes = new Set<string>();
@@ -45,6 +47,7 @@ export class RedeemCodeService {
       return {
         code,
         product: params.product ?? "GOOGLE_ONE",
+        codeType: (params.codeType as RedeemCodeType) ?? RedeemCodeType.JOIN_GROUP,
         createdById: params.createdById
       };
     });

@@ -20,6 +20,7 @@ $bundledNodeExe     = Join-Path $bundledRuntimeDir "node.exe"
 $bundledRedisExe    = Join-Path $bundledRuntimeDir "redis-server.exe"
 $isBundledMode      = (Test-Path $bundledNodeExe) -and (Test-Path $bundledRedisExe)
 $wizardScript       = Join-Path $scriptDir "setup-wizard.ps1"
+$bundledWebModePath = Join-Path $scriptDir "web-server-args.txt"
 $redisStatePath     = Join-Path $runtimeDir "redis-state.json"
 $dataDir            = Join-Path $repoRoot "data"
 $dbPath             = Join-Path $dataDir "gfa.db"
@@ -291,6 +292,30 @@ function Test-TcpEndpoint([string]$TargetHost, [int]$Port, [int]$TimeoutMs = 200
   }
 }
 
+function Get-BundledWebLaunchMode {
+  if (-not $isBundledMode -or -not (Test-Path $bundledWebModePath)) {
+    return "legacy"
+  }
+
+  $mode = (Get-Content -Raw $bundledWebModePath).Trim()
+
+  if (-not $mode) {
+    return "legacy"
+  }
+
+  return $mode
+}
+
+function Test-CommandLineMatches([string]$CommandLine, [string[]]$Patterns) {
+  foreach ($pattern in $Patterns) {
+    if ($CommandLine -like $pattern) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
 function Get-DiscoveredServiceProcessIds($Service) {
   $allNodeProcesses = Get-CimInstance Win32_Process | Where-Object Name -eq "node.exe"
 
@@ -306,14 +331,24 @@ function Get-DiscoveredServiceProcessIds($Service) {
         Select-Object -ExpandProperty ProcessId
     }
     "web" {
+      $patterns = @("*next start*")
+
+      if ($service.port) {
+        $patterns = @("*next start -p $($service.port)*")
+      }
+
+      if ((Get-BundledWebLaunchMode) -eq "standalone") {
+        $patterns += "*apps\web\server.js*"
+      }
+
       if ($service.port) {
         return $allNodeProcesses |
-          Where-Object { $_.CommandLine -like "*next start -p $($service.port)*" } |
+          Where-Object { Test-CommandLineMatches $_.CommandLine $patterns } |
           Select-Object -ExpandProperty ProcessId
       }
 
       return $allNodeProcesses |
-        Where-Object { $_.CommandLine -like "*next start*" } |
+        Where-Object { Test-CommandLineMatches $_.CommandLine $patterns } |
           Select-Object -ExpandProperty ProcessId
     }
     default {
@@ -330,6 +365,28 @@ function Get-RedisEndpoint([hashtable]$EnvironmentContext) {
     Host = $redisUri.Host
     Port = $redisUri.Port
   }
+}
+
+function Test-BundledSetupRequired([hashtable]$Settings) {
+  if (-not $Settings.ContainsKey("ADSPOWER_API_KEY") -or -not $Settings["ADSPOWER_API_KEY"]) {
+    return $true
+  }
+
+  if (-not $Settings.ContainsKey("ADSPOWER_POOL_IDS") -or -not $Settings["ADSPOWER_POOL_IDS"]) {
+    return $true
+  }
+
+  if (-not $Settings.ContainsKey("JWT_SECRET")) {
+    return $true
+  }
+
+  $jwtSecret = [string]$Settings["JWT_SECRET"]
+
+  if (-not $jwtSecret -or $jwtSecret.StartsWith("REPLACE_WITH_")) {
+    return $true
+  }
+
+  return $false
 }
 
 function Initialize-EnvFile {
@@ -350,10 +407,10 @@ function Initialize-EnvFile {
     $needsSetup = $true
   } else {
     $parsed = Read-DotEnv $envFilePath
-    if ($parsed.ContainsKey("ADSPOWER_API_KEY") -and $parsed["ADSPOWER_API_KEY"]) {
-      $needsSetup = $false
-    } else {
+    if (Test-BundledSetupRequired $parsed) {
       $needsSetup = $true
+    } else {
+      $needsSetup = $false
     }
   }
 
@@ -403,9 +460,19 @@ function Get-ServiceDefinitions([hashtable]$EnvironmentContext, [string]$NodeExe
   $envMap    = $EnvironmentContext.Map
   $apiPort   = $EnvironmentContext.ApiPort
   $webPort   = $EnvironmentContext.WebPort
-  # In bundled mode, next CLI is in apps/web/node_modules (installed by pnpm deploy)
   $nextCli   = Join-Path $repoRoot "apps\web\node_modules\next\dist\bin\next"
   $webArgs   = @($nextCli, "start", "-p", [string]$webPort)
+  $webWorkingDirectory = Join-Path $repoRoot "apps\web"
+
+  if ($isBundledMode -and ((Get-BundledWebLaunchMode) -eq "standalone")) {
+    $standaloneServer = Join-Path $webWorkingDirectory "apps\web\server.js"
+
+    if (-not (Test-Path $standaloneServer)) {
+      throw "Bundled web server entry not found: $standaloneServer"
+    }
+
+    $webArgs = @("apps\web\server.js")
+  }
 
   $apiDef = @{
     Name             = "api"
@@ -435,7 +502,7 @@ function Get-ServiceDefinitions([hashtable]$EnvironmentContext, [string]$NodeExe
     Name             = "web"
     FilePath         = $NodeExe
     Arguments        = $webArgs
-    WorkingDirectory = (Join-Path $repoRoot "apps\web")
+    WorkingDirectory = $webWorkingDirectory
     Environment      = Merge-Maps $envMap @{ PORT = [string]$webPort; HOSTNAME = "0.0.0.0" }
     HealthUrl        = "http://127.0.0.1:$webPort/"
     Port             = $webPort
@@ -783,8 +850,9 @@ function Start-Launcher {
   }
 
   Write-Section "Done"
+  $adminPrefix = Get-Setting $environmentContext.Map "ADMIN_PATH_PREFIX" "console"
   Write-Host ("Public portal:  http://localhost:{0}/" -f $environmentContext.WebPort) -ForegroundColor Green
-  Write-Host ("Console login:  http://localhost:{0}/console/login" -f $environmentContext.WebPort) -ForegroundColor Green
+  Write-Host ("Console login:  http://localhost:{0}/{1}/login" -f $environmentContext.WebPort, $adminPrefix) -ForegroundColor Green
   Write-Host ("Logs folder:    {0}" -f $logsDir)
 
   if ($isBundledMode) {

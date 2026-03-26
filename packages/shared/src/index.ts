@@ -34,6 +34,8 @@ export type ReplaceMemberPayload = {
   accountId: string;
   targetMemberEmail: string;
   newUserEmail: string;
+  /** Audit trail: 'ADMIN_REPLACE' | 'SWAP_REQUEST' */
+  reason?: string;
 };
 
 export type RemoveMemberPayload = {
@@ -58,7 +60,9 @@ export type HealthCheckAccountPayload = {
 export const REDIS_KEYS = {
   profileLock: "gfa:lock:profile:",
   workerHeartbeat: "gfa:heartbeat:",
+  browserPool: "gfa:pool:profile:",
 } as const;
+
 
 // Task status values matching Prisma TaskStatus enum
 export type TaskStatusValue =

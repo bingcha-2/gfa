@@ -63,7 +63,8 @@ export function LoginForm() {
       }
 
       startTransition(() => {
-        router.push("/console");
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}`);
         router.refresh();
       });
     } catch (loginError) {

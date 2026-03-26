@@ -24,16 +24,17 @@ type AccountPanelProps = {
     name: string;
     loginEmail: string;
     adspowerProfileId: string;
-    loginPassword?: string;
+    loginPassword: string;
     totpSecret?: string;
     notes?: string;
   }) => Promise<boolean>;
   onBulkImport: (lines: string[]) => Promise<BulkImportResult | null>;
   onDelete: (id: string) => Promise<boolean>;
   onUpdate: (id: string, payload: Record<string, string | undefined>) => Promise<boolean>;
+  onConfirmLogin?: (id: string) => Promise<boolean>;
 };
 
-export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, role }: AccountPanelProps) {
+export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, onConfirmLogin, role }: AccountPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const canManage = canCreateAccount(role);
@@ -58,6 +59,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
     notes: ""
   });
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   function startEdit(account: AccountSummary) {
     setEditId(account.id);
@@ -355,8 +357,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   <label htmlFor="account-password">登录密码</label>
                   <input
                     id="account-password"
+                    required
                     type="password"
-                    placeholder="Google 账号密码（用于移除成员验证）"
+                    placeholder="Google 账号密码（必填）"
                     value={form.loginPassword}
                     onChange={(event) =>
                       setForm((current) => ({
@@ -463,6 +466,23 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                           <div className="muted account-meta">
                             last login {formatDateTime(account.lastLoginAt)}
                           </div>
+                          {account.subscriptionExpiresAt && (
+                            <div className="muted account-meta">
+                              订阅至 {formatDateTime(account.subscriptionExpiresAt)}
+                            </div>
+                          )}
+                          {account.subscriptionStatus && (
+                            <StatusBadge
+                              value={account.subscriptionStatus}
+                              tone={
+                                account.subscriptionStatus === "ACTIVE"
+                                  ? "emerald"
+                                  : account.subscriptionStatus === "EXPIRED"
+                                  ? "crimson"
+                                  : "amber"
+                              }
+                            />
+                          )}
                         </div>
                       </td>
                       {canManage && (
@@ -499,6 +519,37 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                             >
                               {deletingId === account.id ? "删除中..." : "🗑 删除"}
                             </button>
+                            {/* Confirm Login: show only for accounts needing manual intervention */}
+                            {onConfirmLogin && (
+                              account.status === "MANUAL_REVIEW" ||
+                              account.status === "VERIFICATION_REQUIRED" ||
+                              account.status === "LOGIN_REQUIRED"
+                            ) && (
+                              <button
+                                className="button"
+                                style={{
+                                  fontSize: "0.875rem",
+                                  padding: "5px 14px",
+                                  background: "var(--amber, #d97706)",
+                                  color: "#fff",
+                                  border: "none",
+                                  whiteSpace: "nowrap"
+                                }}
+                                disabled={confirmingId === account.id}
+                                title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
+                                onClick={async () => {
+                                  setConfirmingId(account.id);
+                                  try {
+                                    await onConfirmLogin!(account.id);
+                                  } finally {
+                                    setConfirmingId(null);
+                                  }
+                                }}
+                              >
+                                {confirmingId === account.id ? "确认中..." : "✅ 确认已登录"}
+                              </button>
+                            )}
+
                           </div>
                         </td>
                       )}

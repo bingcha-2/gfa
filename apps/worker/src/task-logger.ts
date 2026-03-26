@@ -28,9 +28,12 @@ export class TaskLogger {
 
     if (level === "ERROR") {
       console.error(consoleMsg);
+    } else if (level === "DEBUG") {
+      console.debug(consoleMsg);
     } else {
       console.log(consoleMsg);
     }
+
 
     try {
       await this.prisma.taskLog.create({

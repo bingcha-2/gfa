@@ -1,7 +1,7 @@
 /**
  * Worker entry point.
  *
- * Initializes infrastructure (Prisma, Redis, AdsPower client, ProfileLock)
+ * Initializes infrastructure (Prisma, Redis, AdsPower client, BrowserPool)
  * and registers BullMQ workers for each task queue.
  */
 
@@ -25,7 +25,7 @@ import {
 } from "@gfa/shared";
 
 import { AdsPowerClient } from "./adspower-client";
-import { ProfileLock } from "./profile-lock";
+import { BrowserPool } from "./browser-pool";
 import { processInvite } from "./processors/invite.processor";
 import { processRemove } from "./processors/remove.processor";
 import { processReplace } from "./processors/replace.processor";
@@ -51,9 +51,9 @@ const adspower = new AdsPowerClient({
   baseUrl: adspowerHost,
   apiKey: adspowerApiKey || undefined,
 });
-const lock = new ProfileLock(redis);
+const pool = new BrowserPool(redis);
 
-const deps = { prisma, adspower, lock, workerId };
+const deps = { prisma, adspower, pool, workerId };
 
 // BullMQ needs explicit connection options (not the ioredis instance).
 // Parse the URL to extract host/port/password/db for BullMQ's own connections.
@@ -125,33 +125,13 @@ for (const worker of workers) {
     console.log(`[${workerId}] ✓ ${worker.name} completed job=${job.id}`);
   });
 
-  worker.on("failed", async (job: Job | undefined, error: Error) => {
+  worker.on("failed", (job: Job | undefined, error: Error) => {
+    // pool.release() is guaranteed by the finally block in each processor;
+    // no secondary cleanup needed here.
     console.error(
       `[${workerId}] ✗ ${worker.name} failed job=${job?.id}`,
       error.message
     );
-
-    // Best-effort lock cleanup: if job has accountId, look up the adspowerProfileId
-    // and force-release the Redis lock so the next retry isn't blocked.
-    const accountId = (job?.data as any)?.accountId;
-    if (accountId) {
-      try {
-        const account = await prisma.account.findUnique({
-          where: { id: accountId },
-          select: { adspowerProfileId: true },
-        });
-        if (account?.adspowerProfileId) {
-          const key = `gfa:lock:profile:${account.adspowerProfileId}`;
-          const lockHolder = await redis.get(key);
-          if (lockHolder === workerId) {
-            await redis.del(key);
-            console.log(`[${workerId}] Released stale lock: ${key}`);
-          }
-        }
-      } catch {
-        // noop — don't let lock cleanup break anything
-      }
-    }
   });
 
   worker.on("error", (error: Error) => {

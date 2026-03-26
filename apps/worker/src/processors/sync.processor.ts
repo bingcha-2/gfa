@@ -10,16 +10,19 @@ import { PrismaClient } from "@prisma/client";
 import type { SyncFamilyGroupPayload } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
-import { ProfileLock } from "../profile-lock";
+import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
+import { gmailLogin } from "../gmail-login";
+import { ensureFamilyGroup } from "../ensure-family-group";
+import { scrapeSubscriptionInfo } from "../scrape-subscription";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
 
 export interface SyncProcessorDeps {
   prisma: PrismaClient;
   adspower: AdsPowerClient;
-  lock: ProfileLock;
+  pool: BrowserPool;
   workerId: string;
 }
 
@@ -34,7 +37,7 @@ export async function processSync(
   job: Job<SyncFamilyGroupPayload>,
   deps: SyncProcessorDeps
 ): Promise<void> {
-  const { prisma, adspower, lock, workerId } = deps;
+  const { prisma, adspower, pool, workerId } = deps;
   const { familyGroupId, accountId } = job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
@@ -56,24 +59,27 @@ export async function processSync(
     return;
   }
 
-  const profileId = account.adspowerProfileId;
-
-  const locked = await lock.acquire(profileId, workerId);
-  if (!locked) {
-    await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "PROFILE_LOCKED",
-      message: `Profile ${profileId} locked`,
-    });
-    throw new Error(`Profile ${profileId} locked — will retry`);
-  }
+  let profileId: string | null = null;
 
   try {
+    profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
 
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
 
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    // Gmail auto-login (required every time — browser clears cache on start)
+    const loginResult = await gmailLogin(page, account, logger);
+    if (!loginResult.success) {
+      await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
+      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+    }
+
+    // Ensure family group exists (also creates DB record if first run)
+    await ensureFamilyGroup(page, account, prisma, logger);
+
+    await browser.safeGoto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60_000 });
     await logger.log("INFO", "Navigated to Family page for sync");
 
     // Scrape current members from the page (visits each member detail page for real emails)
@@ -105,7 +111,28 @@ export async function processSync(
 
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Sync complete: ${members.length} members, ${availableSlots} slots available`);
+
+    // Non-fatal: update subscription info while we still have an active session
+    try {
+      const subInfo = await scrapeSubscriptionInfo(page);
+      if (subInfo) {
+        await prisma.account.update({
+          where: { id: accountId },
+          data: {
+            subscriptionExpiresAt: subInfo.expiresAt,
+            subscriptionStatus: subInfo.status,
+          },
+        });
+        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+      }
+    } catch {
+      // Fully silent: even the WARN log failing must not bubble to the outer catch
+      await logger.log("WARN", "Subscription refresh failed during sync — skipping").catch(() => {});
+    }
   } catch (error) {
+    // Don't overwrite MANUAL_REVIEW status if login challenge was detected
+    if ((error as any).__manualReview) throw error;
+
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
@@ -116,15 +143,17 @@ export async function processSync(
     }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "SYNC_ERROR",
+      code: profileId ? "SYNC_ERROR" : "PROFILE_ACQUIRE_FAILED",
       message: errMsg,
     });
 
     throw error;
   } finally {
     await browser.disconnect().catch(() => {});
-    await adspower.closeProfile(profileId).catch(() => {});
-    await lock.release(profileId, workerId).catch(() => {});
+    if (profileId) {
+      await adspower.closeProfile(profileId).catch(() => {});
+      await pool.release(profileId, workerId).catch(() => {});
+    }
   }
 }
 
@@ -186,7 +215,7 @@ async function scrapeMembersFromPage(
     });
   });
 
-  console.log("[sync] card debug:", JSON.stringify(cardDebug, null, 2));
+  console.debug("[sync] card raw count:", cardDebug.length);
   const cardData = cardDebug.map(({ href, displayName }) => ({ href, displayName }));
   const seenGaiaIds = new Set<string>();
   const uniqueCards: Array<{ href: string; displayName: string; gaiaId: string }> = [];
@@ -293,11 +322,20 @@ async function reconcileMembers(
   // If there are gaiaOnly scraped members, they may correspond to DB records
   // not in scrapedEmails — be conservative and skip REMOVED marking for those.
   for (const member of existing) {
-    if (!member.email || !scrapedEmails.has(member.email) && member.status === "ACTIVE") {
+    // Bug fix: use explicit parentheses to avoid && vs || precedence issue.
+    // We only want to consider marking as REMOVED if:
+    //   (a) member has an email AND
+    //   (b) that email is NOT in the scraped set AND
+    //   (c) member is currently ACTIVE
+    if (
+      member.email &&
+      !scrapedEmails.has(member.email) &&
+      member.status === "ACTIVE"
+    ) {
       if (gaiaOnlyMembers.length > 0) {
-        // Could correspond to a gaiaOnly scraped member — skip
+        // Could correspond to a gaiaOnly scraped member — skip removal
         await logger.log("DEBUG", `Skipping REMOVED for ${member.email} — ${gaiaOnlyMembers.length} unidentified scrape member(s) present`);
-      } else if (member.email && !scrapedEmails.has(member.email) && member.status === "ACTIVE") {
+      } else {
         await prisma.familyMember.update({
           where: { id: member.id },
           data: { status: "REMOVED", removedAt: new Date() },

@@ -1,6 +1,27 @@
 # Google Family Automation
 
-Monorepo for the Google One family automation project.
+Google One Family 自动化管理系统，提供成员邀请、到期移除、账号换绑等全流程自动化。
+
+---
+
+## 系统架构
+
+```
+公开页（客户使用）          管理后台（运营使用）
+──────────────────         ──────────────────────
+/redeem    兑换码激活        /console/login  登录
+/status    订单进度查询      /console        控制台（账号、订单、任务管理）
+/swap      账号换绑申请
+```
+
+| App | 说明 |
+|-----|------|
+| `apps/web` | 控制台 & 公开兑换/状态页 (Next.js) |
+| `apps/api` | 业务 API、队列编排、持久层 (NestJS) |
+| `apps/worker` | AdsPower + Playwright 自动化 Worker |
+| `packages/shared` | 共享枚举、队列名称、任务类型 |
+
+**技术栈**: Next.js · NestJS · SQLite · Prisma · Redis · BullMQ · AdsPower · Playwright
 
 ---
 
@@ -11,29 +32,14 @@ Monorepo for the Google One family automation project.
 ```powershell
 git clone <repo-url>
 cd google-family-automation
-Copy-Item .env.example .env        # 填写 ADSPOWER_API_KEY
+Copy-Item .env.example .env        # 必填：ADSPOWER_API_KEY、JWT_SECRET
 pnpm dev:setup                     # 一键：安装依赖 → 编译 shared → 初始化 DB
 pnpm dev                           # 启动所有服务
 ```
 
+> ⚠️ **`JWT_SECRET` 必须设置（32位以上随机字符串），否则 API 拒绝启动。**
+
 访问 http://localhost:3000/console/login，使用 `admin@gfa.local` / `admin123` 登录。
-
----
-
-## Apps
-
-| App | Description |
-|-----|-------------|
-| `apps/web` | 控制台 & 公开兑换/状态页 (Next.js) |
-| `apps/api` | 业务 API、队列编排、持久层 (NestJS) |
-| `apps/worker` | AdsPower + Playwright 自动化 Worker |
-| `packages/shared` | 共享枚举、队列名称、任务类型 |
-
----
-
-## 技术栈
-
-- Next.js · NestJS · SQLite · Prisma · Redis · BullMQ · AdsPower · Playwright
 
 ---
 
@@ -100,8 +106,6 @@ cd google-family-automation
 
 ### 第二步：配置 `.env` 文件
 
-复制示例配置：
-
 ```powershell
 Copy-Item .env.example .env
 ```
@@ -109,39 +113,41 @@ Copy-Item .env.example .env
 用文本编辑器打开 `.env`，按下方说明填写：
 
 ```dotenv
-# SQLite 数据库路径，无需修改
-DATABASE_URL="file:./dev.db"
-
-# Redis 连接地址，本机默认不用改
-REDIS_URL="redis://localhost:6379"
-
-# Web 控制台端口（访问地址: http://localhost:3000）
-WEB_PORT="3000"
-
-# API 服务端口
-API_PORT="3001"
-
-# Worker 实例名称（多 Worker 时区分用）
-WORKER_NAME="worker-1"
-
-# API 内部地址（Web 与 Worker 用来调用 API）
+# ── 基础配置 ──────────────────────────────────────────────────────────────
+DATABASE_URL="file:./dev.db"          # SQLite 路径，无需修改
+REDIS_URL="redis://localhost:6379"    # Redis 地址
+WEB_PORT="3000"                       # Web 控制台端口
+API_PORT="3001"                       # API 端口
+WORKER_NAME="worker-1"                # Worker 实例名称
 API_BASE_URL="http://127.0.0.1:3001/api"
 
-# AdsPower 本地 API 地址（保持默认即可）
+# ── AdsPower ──────────────────────────────────────────────────────────────
 ADSPOWER_HOST="http://127.0.0.1:50325"
+ADSPOWER_POOL_IDS="profile-id-1,profile-id-2"  # AdsPower 浏览器池 Profile ID
 
-# AdsPower API Key（必填，在 AdsPower 客户端设置中获取）
+# ⚠️ 必填：在 AdsPower → 设置 → API Key 中获取
 ADSPOWER_API_KEY="your_adspower_api_key_here"
 
-# 留空即可（由框架自动判断 http/https）
-CONSOLE_COOKIE_SECURE=""
+# ── 安全配置（生产必改）───────────────────────────────────────────────────
+# ⚠️ 必填，留空则 API 启动失败。生成命令：
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET="REPLACE_WITH_A_STRONG_RANDOM_SECRET_AT_LEAST_32_CHARS"
 
-# JWT 签名密钥（生产环境务必改成随机字符串）
-JWT_SECRET="gfa-dev-secret-change-in-production"
+# CORS 允许的前端来源，留空则拒绝所有跨域（开发: http://localhost:3000）
+CORS_ALLOWED_ORIGINS="http://localhost:3000"
+
+# 管理后台 URL 前缀。生产改为随机字符串可隐藏登录入口，防自动化扫描。
+# 生成：node -e "console.log(require('crypto').randomBytes(5).toString('hex'))"
+ADMIN_PATH_PREFIX="console"
+
+# 允许访问后台的 IP，逗号分隔（留空则不限制，适合动态 IP 场景）
+ADMIN_IP_ALLOWLIST=""
+
+# Session Cookie HTTPS 强制（生产 HTTPS 部署改为 true）
+CONSOLE_COOKIE_SECURE=""
 ```
 
-> **`ADSPOWER_API_KEY` 是唯一必须手动填写的字段。**  
-> 其余字段保持默认值即可启动。
+> **开发环境必填**：`ADSPOWER_API_KEY` + `JWT_SECRET`。其余字段保持默认值即可启动。
 
 ### 第三步：一键初始化（首次必须）
 
@@ -189,8 +195,8 @@ pnpm dev:web
 
 | 地址 | 说明 |
 |------|------|
-| http://localhost:3000/console/login | 管理员登录页 |
-| http://localhost:3000/ | 公开兑换/状态页 |
+| http://localhost:3000/console/login | 管理员登录（若自定义前缀请替换 `console`） |
+| http://localhost:3000/ | 公开兑换/状态页（客户使用） |
 | http://localhost:3001/api/health | API 健康检查 |
 
 ---
@@ -204,7 +210,12 @@ pnpm dev:web
 | `admin@gfa.local` | `admin123` | ADMIN（完全权限） |
 | `support@gfa.local` | `admin123` | SUPPORT（只读/客服） |
 
-> ⚠️ **生产环境请登录后立即修改密码，并将 `.env` 中的 `JWT_SECRET` 替换为随机强密码。**
+> ⚠️ **生产部署前必须完成以下各项：**
+> 1. 生成并设置 `JWT_SECRET`（≥32位随机字符串）
+> 2. 设置 `CORS_ALLOWED_ORIGINS` 为实际管理域名
+> 3. 将 `ADMIN_PATH_PREFIX` 改为随机字符串（隐藏登录入口）
+> 4. 可选：配置 `ADMIN_IP_ALLOWLIST` 为运营 IP（双重防护）
+> 5. 登录后立即修改默认密码
 
 ---
 
@@ -221,7 +232,7 @@ Status-GFA.bat   ← 查看运行状态
 首次 `Start-GFA.bat` 会自动完成：
 
 1. 从 `.env.example` 创建 `.env`（若不存在）
-2. 弹出配置向导填写 AdsPower API Key
+2. 弹出配置向导填写 AdsPower API Key 和 JWT Secret
 3. 安装依赖（`pnpm install`）
 4. 构建生产包（`pnpm build`，包含 shared 包）
 5. 启动 Redis（Docker 方式）
@@ -247,7 +258,7 @@ pnpm build
 # 重置数据库（⚠️ 会删除所有数据）
 pnpm db:reset:sqlite
 
-# 重新生成 Prisma Client（修改 schema 后执行）
+# 重新生成 Prisma Client（修改 schema 后执行，不影响数据）
 pnpm db:generate
 
 # 运行测试
@@ -270,11 +281,23 @@ A: AdsPower 客户端未启动，或 `ADSPOWER_API_KEY` 未填写。先启动 Ad
 **Q: 登录提示「邮箱或密码错误」**  
 A: 确认已执行 `pnpm dev:setup` 或 `pnpm db:seed`，使用 `admin@gfa.local` / `admin123` 登录。
 
+**Q: 访问 `/console/login` 返回 404**  
+A: 已配置了自定义 `ADMIN_PATH_PREFIX`。请使用 `http://localhost:3000/{你的前缀}/login` 访问。
+
 **Q: `pnpm dev:setup` 卡在安装依赖很久**  
 A: 检查网络连接。若在国内，可配置 npm 镜像：
 ```powershell
 pnpm config set registry https://registry.npmmirror.com
 ```
+
+**Q: 启动 API 时报 `[FATAL] JWT_SECRET is not set`**  
+A: `.env` 中 `JWT_SECRET` 未配置或使用了示例占位值。运行以下命令生成并填入：
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**Q: `pnpm db:generate` 会清空数据库数据吗？**  
+A: **不会**。该命令只重新生成 Prisma Client 类型代码，完全不操作数据库文件。能清空数据的是 `pnpm db:reset:sqlite`。
 
 ---
 

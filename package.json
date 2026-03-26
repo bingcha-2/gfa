@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.27.0",
   "scripts": {
     "build": "pnpm db:generate && pnpm -r build",
-    "dev": "pnpm --parallel --filter @gfa/shared --filter @gfa/web --filter @gfa/api --filter @gfa/worker dev",
+    "dev": "node scripts/dev.mjs",
     "dev:shared": "pnpm --filter @gfa/shared dev",
     "dev:web": "pnpm --filter @gfa/web dev",
     "dev:api": "pnpm --filter @gfa/api dev",

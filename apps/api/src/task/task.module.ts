@@ -11,7 +11,8 @@ import { TaskService } from "./task.service";
       { name: QUEUE_NAMES.invite },
       { name: QUEUE_NAMES.remove },
       { name: QUEUE_NAMES.replace },
-      { name: QUEUE_NAMES.sync }
+      { name: QUEUE_NAMES.sync },
+      { name: QUEUE_NAMES.health }
     )
   ],
   controllers: [TaskController],

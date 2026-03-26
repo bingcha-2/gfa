@@ -13,10 +13,20 @@ import { JwtStrategy } from "./jwt.strategy";
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>("JWT_SECRET", "gfa-dev-secret"),
-        signOptions: { expiresIn: "24h" }
-      })
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>("JWT_SECRET");
+
+        if (!secret) {
+          throw new Error(
+            "[FATAL] JWT_SECRET is not configured. Cannot initialize JwtModule."
+          );
+        }
+
+        return {
+          secret,
+          signOptions: { expiresIn: "24h" }
+        };
+      }
     })
   ],
   controllers: [AuthController],
@@ -24,3 +34,4 @@ import { JwtStrategy } from "./jwt.strategy";
   exports: [AuthService]
 })
 export class AuthModule {}
+

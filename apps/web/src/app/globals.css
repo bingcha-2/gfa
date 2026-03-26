@@ -1281,6 +1281,7 @@ img {
   }
 }
 
+
 @media (max-width: 1180px) {
   .account-grid {
     grid-template-columns: 1fr;
@@ -1289,4 +1290,75 @@ img {
   .data-table-accounts {
     min-width: 680px;
   }
+}
+
+/* ── Animations ──────────────────────────────────────────────── */
+@keyframes gfa-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes gfa-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Global toast ────────────────────────────────────────────── */
+.gfa-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 240px;
+  max-width: 380px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  animation: gfa-toast-in 0.22s ease both;
+  pointer-events: none;
+}
+
+.gfa-toast.success { background: #0f766e; }
+.gfa-toast.error   { background: #dc2626; }
+.gfa-toast.info    { background: #374151; }
+
+/* ── Global action overlay (used by console-app during runAction) ── */
+.gfa-loading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), rgba(15,118,110,0.4), var(--accent));
+  background-size: 200% 100%;
+  animation: gfa-loading-bar 1.4s linear infinite;
+  z-index: 10000;
+  pointer-events: none;
+}
+
+@keyframes gfa-loading-bar {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

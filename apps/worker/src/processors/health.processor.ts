@@ -10,16 +10,18 @@ import { PrismaClient } from "@prisma/client";
 import type { HealthCheckAccountPayload } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
-import { ProfileLock } from "../profile-lock";
+import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
+import { gmailLogin } from "../gmail-login";
+import { scrapeSubscriptionInfo } from "../scrape-subscription";
 
 const GOOGLE_ACCOUNT_URL = "https://myaccount.google.com/";
 
 export interface HealthProcessorDeps {
   prisma: PrismaClient;
   adspower: AdsPowerClient;
-  lock: ProfileLock;
+  pool: BrowserPool;
   workerId: string;
 }
 
@@ -27,7 +29,7 @@ export async function processHealth(
   job: Job<HealthCheckAccountPayload>,
   deps: HealthProcessorDeps
 ): Promise<void> {
-  const { prisma, adspower, lock, workerId } = deps;
+  const { prisma, adspower, pool, workerId } = deps;
   const { accountId } = job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
@@ -49,32 +51,35 @@ export async function processHealth(
     return;
   }
 
-  const profileId = account.adspowerProfileId;
-
-  const locked = await lock.acquire(profileId, workerId);
-  if (!locked) {
-    await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "PROFILE_LOCKED",
-      message: `Profile ${profileId} locked`,
-    });
-    throw new Error(`Profile ${profileId} locked — will retry`);
-  }
+  let profileId: string | null = null;
 
   try {
+    profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Health check for account ${account.name}`, {
-      profileId,
-    });
+    await logger.log("INFO", `Health check for account ${account.name}`, { profileId });
 
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
 
-    // Navigate to Google Account page to check login state
-    await browser.navigateTo(GOOGLE_ACCOUNT_URL, {
-      waitUntil: "load",
-      timeout: 60000,
-    });
+    // Attempt Gmail auto-login to verify account health
+    const loginResult = await gmailLogin(page, account, logger);
+    if (!loginResult.success) {
+      // Both VERIFICATION_REQUIRED and UNKNOWN reasons require manual intervention
+      const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
+        ? "VERIFICATION_REQUIRED"
+        : "LOGIN_REQUIRED";
+      await prisma.account.update({
+        where: { id: accountId },
+        data: { status: newAccountStatus as any, lastHealthCheckAt: new Date() },
+      });
+      // Always record as MANUAL_REVIEW so operators see it in the review queue
+      await logger.updateStatus("MANUAL_REVIEW",
+        { code: loginResult.reason, message: loginResult.detail });
+      return;
+    }
 
+    // Navigate to Google Account page to determine final health status
+    await browser.navigateTo(GOOGLE_ACCOUNT_URL, { waitUntil: "load", timeout: 60000 });
     const currentUrl = page.url();
     await logger.log("INFO", `Page URL after navigation: ${currentUrl}`);
 
@@ -85,18 +90,37 @@ export async function processHealth(
     const healthStatus = await determineHealth(page, currentUrl);
     await logger.log("INFO", `Health status: ${healthStatus}`, { currentUrl });
 
-    // Update account status
+    // Attempt to scrape subscription info from Google One page (non-fatal)
+    let subUpdate: { subscriptionExpiresAt?: Date | null; subscriptionStatus?: string } = {};
+    if (healthStatus === "HEALTHY") {
+      const subInfo = await scrapeSubscriptionInfo(page).catch(() => null);
+      if (subInfo) {
+        subUpdate = {
+          subscriptionExpiresAt: subInfo.expiresAt,
+          subscriptionStatus: subInfo.status,
+        };
+        await logger.log("INFO", `Subscription: ${subInfo.status}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+      } else {
+        await logger.log("WARN", "Could not scrape subscription info — skipping");
+      }
+    }
+
+    // Update account status + subscription fields
     await prisma.account.update({
       where: { id: accountId },
       data: {
         status: healthStatus,
         lastHealthCheckAt: new Date(),
+        ...subUpdate,
       },
     });
 
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Health check complete: ${healthStatus}`);
   } catch (error) {
+    // Don't overwrite MANUAL_REVIEW status if login challenge was detected
+    if ((error as any).__manualReview) throw error;
+
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
@@ -107,15 +131,17 @@ export async function processHealth(
     }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "HEALTH_CHECK_ERROR",
+      code: profileId ? "HEALTH_CHECK_ERROR" : "PROFILE_ACQUIRE_FAILED",
       message: errMsg,
     });
 
     throw error;
   } finally {
     await browser.disconnect().catch(() => {});
-    await adspower.closeProfile(profileId).catch(() => {});
-    await lock.release(profileId, workerId).catch(() => {});
+    if (profileId) {
+      await adspower.closeProfile(profileId).catch(() => {});
+      await pool.release(profileId, workerId).catch(() => {});
+    }
   }
 }
 

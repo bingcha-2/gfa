@@ -19,7 +19,7 @@ import {
 } from "./helpers";
 import { MockAdsPowerClient } from "./mock-adspower";
 import { MockWorkerBrowser } from "./mock-browser";
-import { MockProfileLock } from "./mock-profile-lock";
+import { MockBrowserPool } from "./mock-browser-pool";
 
 // Mock the browser-context module
 vi.mock("../browser-context", () => {
@@ -36,6 +36,7 @@ vi.mock("../browser-context", () => {
       first: () => mkLoc(),
       last: () => mkLoc(),
       nth: () => mkLoc(),
+      waitFor: async () => {},
       click: async () => {},
       fill: async () => {},
       press: async () => {},
@@ -45,6 +46,7 @@ vi.mock("../browser-context", () => {
     return {
       goto: async () => {},
       waitForLoadState: async () => {},
+      waitForURL: async () => {},
       waitForTimeout: async () => {},
       url: () => "https://myaccount.google.com/family/details",
       locator: () => mkLoc(),
@@ -60,16 +62,17 @@ import { processReplace } from "../processors/replace.processor";
 describe("Replace Processor Integration", () => {
   const db = getPrisma();
   const mockAdspower = new MockAdsPowerClient();
-  const mockLock = new MockProfileLock();
+  const mockPool = new MockBrowserPool();
   const workerId = "test-worker-2";
 
   beforeAll(async () => {
     await cleanDb();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await cleanDb();
     mockAdspower.reset();
-    mockLock.reset();
+    mockPool.reset();
   });
 
   afterEach(async () => {
@@ -132,7 +135,7 @@ describe("Replace Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -156,8 +159,8 @@ describe("Replace Processor Integration", () => {
     expect(members[0].removedAt).not.toBeNull();
 
     // Assert: AdsPower interactions
-    expect(mockAdspower.openCalls).toContain("profile-replace-001");
-    expect(mockAdspower.closeCalls).toContain("profile-replace-001");
+    expect(mockAdspower.openCalls).toContain(mockPool.profileId);
+    expect(mockAdspower.closeCalls).toContain(mockPool.profileId);
   });
 
   it("should set Task to FAILED_FINAL when Account is not found", async () => {
@@ -177,7 +180,7 @@ describe("Replace Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
@@ -188,15 +191,16 @@ describe("Replace Processor Integration", () => {
     expect(updatedTask!.lastErrorCode).toBe("ACCOUNT_NOT_FOUND");
   });
 
-  it("should set Task to FAILED_RETRYABLE when profile is locked", async () => {
+  it("should throw when pool is exhausted", async () => {
     const account = await createTestAccount({
-      adspowerProfileId: "profile-replace-locked",
+      adspowerProfileId: "profile-replace-pool-test",
     });
     const task = await createTestTask("REPLACE_MEMBER", {
       accountId: account.id,
     });
 
-    mockLock.locked = true;
+    // Simulate pool exhaustion
+    mockPool.exhausted = true;
 
     const job = createMockJob(
       {
@@ -212,14 +216,14 @@ describe("Replace Processor Integration", () => {
     const deps = {
       prisma: db,
       adspower: mockAdspower as any,
-      lock: mockLock as any,
+      pool: mockPool as any,
       workerId,
     };
 
-    await expect(processReplace(job, deps)).rejects.toThrow("locked");
+    await expect(processReplace(job, deps)).rejects.toThrow("No free profile available");
 
     const updatedTask = await db.task.findUnique({ where: { id: task.id } });
     expect(updatedTask!.status).toBe("FAILED_RETRYABLE");
-    expect(updatedTask!.lastErrorCode).toBe("PROFILE_LOCKED");
+    expect(updatedTask!.lastErrorCode).toBe("PROFILE_ACQUIRE_FAILED");
   });
 });
