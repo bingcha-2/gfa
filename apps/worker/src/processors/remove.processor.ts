@@ -14,7 +14,7 @@
  */
 
 import { Job } from "bullmq";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, MemberStatus } from "@prisma/client";
 import type { RemoveMemberPayload } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
@@ -55,11 +55,22 @@ export async function processRemove(
   }
 
   let profileId: string | null = null;
+  let originalMemberStatus: MemberStatus = MemberStatus.ACTIVE; // track for rollback
 
   try {
+    // Look up member DB record before acquiring browser resource
+    const memberRecord = await prisma.familyMember.findFirst({
+      where: { familyGroupId, email: memberEmail },
+      select: { googleMemberId: true, displayName: true, status: true },
+    });
+    if (memberRecord?.status) originalMemberStatus = memberRecord.status as MemberStatus;
+
     profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Removing member ${memberEmail}`, { profileId, familyGroupId });
+    await logger.log("INFO", `Removing member ${memberEmail}`, {
+      profileId, familyGroupId,
+      gaiaId: memberRecord?.googleMemberId ?? "unknown",
+    });
 
     const { debugUrl } = await adspower.openProfile(profileId);
     const page = await browser.connect(debugUrl);
@@ -78,10 +89,12 @@ export async function processRemove(
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
 
-    // Execute remove on page
+    // Execute remove on page using gaiaId (S0) when available, falling back to S1/S2/S3
     await removeMemberOnPage(page, memberEmail, logger, {
       password: account.loginPassword ?? undefined,
       totpSecret: account.totpSecret ?? undefined,
+      googleMemberId: memberRecord?.googleMemberId ?? undefined,
+      displayName: memberRecord?.displayName ?? undefined,
     });
 
     // Update DB: mark member as removed
@@ -97,6 +110,11 @@ export async function processRemove(
     await prisma.familyGroup.update({
       where: { id: familyGroupId },
       data: { availableSlots: { increment: 1 } },
+    });
+    // Decrement memberCount (guard: never below 0)
+    await prisma.familyGroup.updateMany({
+      where: { id: familyGroupId, memberCount: { gt: 0 } },
+      data: { memberCount: { decrement: 1 } },
     });
     // Decrement pendingInviteCount only when it is currently > 0 (prevents underflow)
     await prisma.familyGroup.updateMany({
@@ -122,10 +140,10 @@ export async function processRemove(
       // noop
     }
 
-    // Rollback member status from PENDING to ACTIVE so removal can be retried
+    // Rollback member status to original (ACTIVE or PENDING) so removal can be retried
     await prisma.familyMember.updateMany({
       where: { familyGroupId, email: memberEmail, status: "PENDING" },
-      data: { status: "ACTIVE" },
+      data: { status: originalMemberStatus },
     }).catch(() => {});
 
     await logger.updateStatus("FAILED_RETRYABLE", {
@@ -147,49 +165,77 @@ export async function processRemove(
 /**
  * Remove a family member on the Google Family page.
  *
+ * Strategy (tried in order):
+ *   S0: Direct GAIA URL navigation (uses googleMemberId from DB)
+ *   S1: Find email text directly on list page (pending invites)
+ *   S2: Find member by displayName (accepted members show display name)
+ *   S3: Iterate all member hrefs from DOM and check detail page body
+ *
  * Handles password re-authentication and TOTP 2FA if triggered by Google.
- * Selectors calibrated from real Google Family UI (EN + ZH-TW).
  */
 async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
-  credentials?: { password?: string; totpSecret?: string }
+  credentials?: { password?: string; totpSecret?: string; googleMemberId?: string; displayName?: string }
 ): Promise<void> {
   await page.waitForLoadState("load", { timeout: 60000 });
 
-  // Find the member on the family details page by email text
-  const emailOnPage = page.locator(`text="${email}"`);
+  const googleMemberId = credentials?.googleMemberId;
+  const displayName = credentials?.displayName;
 
-  if ((await emailOnPage.count()) > 0) {
-    await emailOnPage.first().click();
+  if (googleMemberId) {
+    // S0: Direct GAIA navigation
+    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}`;
+    await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
+    await page.goto(directUrl, { waitUntil: "load", timeout: 60000 });
+    await page.waitForLoadState("load", { timeout: 60000 });
   } else {
-    // Email text not found — do NOT fall back to clicking other members.
-    // This prevents accidentally removing the wrong person.
-    throw new Error(
-      `Target member email "${email}" not found on family details page. ` +
-      `The member may have already been removed, or the page structure has changed.`
-    );
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await fallbackFindMember(page, email, displayName, logger);
   }
 
-  await logger.log("INFO", `Found member ${email} on detail page`);
+  await logger.log("INFO", `On detail page for member ${email}`);
   const memberDetailUrl = page.url();
-  await page.waitForTimeout(1000);
 
-  // Click remove/cancel-invite button
-  const removeButton = page.locator([
+  // Wait for Angular to render the action button (lazy-loaded)
+  const actionButton = page.locator([
     'button:has-text("移除")',
     'button:has-text("取消邀請")',
+    'button:has-text("取消邀请")',
+    'button:has-text("撤銷")',
+    'button:has-text("撤销")',
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
+    'button:has-text("Revoke")',
     'button:has-text("Remove")',
   ].join(", "));
 
-  if ((await removeButton.count()) === 0) {
+  try {
+    await actionButton.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    // Try S0 fallback if direct nav failed to show button, or continue to throw
+    if (googleMemberId) {
+      await logger.log("WARN", `S0 page has no action button, falling back to list-page matching`);
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+      await fallbackFindMember(page, email, displayName, logger);
+      // Re-wait after fallback
+      try { await actionButton.first().waitFor({ state: "visible", timeout: 10_000 }); } catch { /* fall through */ }
+    }
+  }
+
+  if ((await actionButton.count()) === 0) {
+    const allButtons = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("button")).map((b) => ({
+        text: b.textContent?.trim(),
+        visible: b.offsetParent !== null,
+      }))
+    );
+    await logger.log("WARN", `No action button found. Buttons: ${JSON.stringify(allButtons)}`);
     throw new Error(`Cannot find remove/cancel button for member ${email}`);
   }
 
-  await removeButton.first().click();
+  await actionButton.first().click();
   await logger.log("INFO", `Clicked remove/cancel for ${email}`);
 
   await page.waitForTimeout(3000);
@@ -322,4 +368,69 @@ async function removeMemberOnPage(
 
   await page.waitForTimeout(3000);
   await page.waitForLoadState("load", { timeout: 60000 });
+}
+
+/**
+ * Fallback member finder when GAIA ID is not available.
+ * Tries S1 (email text) → S2 (displayName) → S3 (iterate all member hrefs).
+ */
+async function fallbackFindMember(
+  page: import("playwright").Page,
+  email: string,
+  displayName: string | undefined,
+  logger: TaskLogger
+): Promise<void> {
+  await page.waitForLoadState("load", { timeout: 60000 });
+
+  // S1: email visible directly on list page (pending invites)
+  const emailLocator = page.locator(`text="${email}"`);
+  if ((await emailLocator.count()) > 0) {
+    await logger.log("INFO", `S1: Found email text on list page, clicking`);
+    await emailLocator.first().click();
+    await page.waitForLoadState("load", { timeout: 60000 });
+    return;
+  }
+
+  // S2: displayName match (accepted members show display name)
+  if (displayName) {
+    await logger.log("INFO", `S2: Trying displayName "${displayName}"`);
+    const nameLocator = page.locator(`text="${displayName}"`);
+    if ((await nameLocator.count()) > 0) {
+      await logger.log("INFO", `S2: Found by displayName, clicking`);
+      await nameLocator.first().click();
+      await page.waitForLoadState("load", { timeout: 60000 });
+      return;
+    }
+    await logger.log("WARN", `S2: displayName "${displayName}" not found`);
+  }
+
+  // S3: iterate all member hrefs
+  await logger.log("INFO", `S3: Iterating all member links to find "${email}"`);
+  const memberHrefs: string[] = await page.evaluate(() => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    return Array.from(links).map((a) => (a as HTMLAnchorElement).href).filter(Boolean);
+  });
+  await logger.log("INFO", `S3: Found ${memberHrefs.length} member links`);
+
+  for (let i = 0; i < memberHrefs.length; i++) {
+    try {
+      await page.goto(memberHrefs[i], { waitUntil: "load", timeout: 60000 });
+      await page.waitForTimeout(500);
+      const bodyText = await page.textContent("body").catch(() => "");
+      const isManager = bodyText?.includes("管理") || bodyText?.toLowerCase().includes("manager");
+      if (isManager && !bodyText?.includes(email)) continue;
+      if (bodyText?.includes(email)) {
+        await logger.log("INFO", `S3: Matched on detail page for card #${i}`);
+        return;
+      }
+    } catch (err) {
+      await logger.log("WARN", `S3: Card #${i} error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 }).catch(() => {});
+  throw new Error(
+    `Cannot find member "${email}" on family page. ` +
+    `Checked ${memberHrefs.length} cards via S1/S2/S3.`
+  );
 }

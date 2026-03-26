@@ -116,6 +116,31 @@ export class BrowserPool {
   }
 
   /**
+   * Force-release ALL profiles held by this workerId.
+   * Called on stalled job detection or startup cleanup to prevent 20-min lock leak.
+   */
+  async releaseAllByWorker(workerId: string): Promise<void> {
+    const luaScript = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+
+    let released = 0;
+    for (const profileId of this.profileIds) {
+      const key = `${POOL_KEY_PREFIX}${profileId}`;
+      const result = await this.redis.eval(luaScript, 1, key, workerId);
+      if (result === 1) released++;
+    }
+
+    if (released > 0) {
+      console.log(`[BrowserPool] Force-released ${released} profile lock(s) held by ${workerId}`);
+    }
+  }
+
+  /**
    * Check how many profiles are currently free.
    * Useful for health checks / status endpoints.
    */

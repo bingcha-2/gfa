@@ -87,7 +87,7 @@ export async function processReplace(
     // Look up the member's googleMemberId and displayName from DB
     const memberRecord = await prisma.familyMember.findFirst({
       where: { familyGroupId, email: targetMemberEmail },
-      select: { displayName: true, googleMemberId: true }
+      select: { id: true, displayName: true, googleMemberId: true }
     });
     const targetDisplayName = memberRecord?.displayName ?? undefined;
     const targetGaiaId = memberRecord?.googleMemberId ?? undefined;
@@ -97,12 +97,21 @@ export async function processReplace(
     );
 
     // Step 1: Remove the target member on page
-    await removeMemberOnPage(page, targetMemberEmail, logger, {
+    const discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
       password: account.loginPassword ?? undefined,
       totpSecret: account.totpSecret ?? undefined,
       displayName: targetDisplayName,
       googleMemberId: targetGaiaId,
     });
+
+    // Back-fill gaiaId into DB if we discovered it via fallback during this remove step
+    if (discoveredGaiaId && !targetGaiaId && memberRecord) {
+      await prisma.familyMember.update({
+        where: { id: memberRecord.id },
+        data: { googleMemberId: discoveredGaiaId },
+      }).catch(() => {}); // non-fatal
+      await logger.log("INFO", `Back-filled gaiaId=${discoveredGaiaId} for ${targetMemberEmail}`);
+    }
 
     await logger.log("INFO", `Remove step complete. Current URL: ${page.url()}`);
 
@@ -196,12 +205,17 @@ export async function processReplace(
  *   S2: Find member by displayName (accepted members show display name, not email)
  *   S3: Blind iteration — click each card, check body text (last resort)
  */
+/**
+ * Returns the GAIA ID discovered from the member detail page URL
+ * (may be undefined if S0 was used with a pre-known gaiaId).
+ */
 async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
   credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string }
-): Promise<void> {
+): Promise<string | undefined> {
+  let discoveredGaiaId: string | undefined;
   await page.waitForLoadState("load", { timeout: 60000 });
 
   const displayName = credentials?.displayName;
@@ -225,34 +239,54 @@ async function removeMemberOnPage(
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
-      await fallbackFindMember(page, email, displayName, logger);
+      discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
     }
   } else {
     // No GAIA ID — fall back to text-based matching
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
-    await fallbackFindMember(page, email, displayName, logger);
+    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
   }
 
   await logger.log("INFO", `On detail page for member ${email}`);
   // Save the member detail URL for potential re-navigation after password auth
   const memberDetailUrl = page.url();
-  await page.waitForTimeout(1000);
 
-  // Look for remove/cancel-invite button on the member detail page
-  // Covers both joined members (Remove) and pending invites (Cancel/Revoke)
-  const removeButton = page.locator([
+  // Look for remove/cancel-invite button on the member detail page.
+  // Use precise selectors first, fall back to broader ones only if needed.
+  // Covers both joined members (Remove) and pending invites (Cancel/Revoke).
+  const preciseButton = page.locator([
     'button:has-text("移除")',
     'button:has-text("取消邀請")',
     'button:has-text("取消邀请")',
-    'button:has-text("取消")',           // Google may show just "取消" for pending invite
     'button:has-text("撤銷")',           // Revoke (Traditional Chinese)
     'button:has-text("撤销")',           // Revoke (Simplified Chinese)
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
-    'button:has-text("Revoke")',         // EN: revoke pending invite
-    'button:has-text("Cancel")',         // EN: cancel invite
+    'button:has-text("Revoke")',
     'button:has-text("Remove")',
   ].join(", "));
+
+  // Broad fallback: Google may show just "取消"/"Cancel" for pending invites.
+  // Place AFTER precise selectors to avoid clicking unrelated cancel buttons
+  // (e.g., form cancel, navigation cancel) on joined-member detail pages.
+  const broadButton = page.locator([
+    'button:has-text("取消")',
+    'button:has-text("Cancel")',
+  ].join(", "));
+
+  // Wait for Angular to render the action button (lazy-loaded component).
+  // Try precise buttons first; fall back to broad buttons; hard-fail after 15s total.
+  try {
+    await preciseButton.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    try {
+      await broadButton.first().waitFor({ state: "visible", timeout: 3_000 });
+    } catch {
+      // Button still not found — fall through to dump+throw below
+    }
+  }
+
+  let removeButton = (await preciseButton.count()) > 0 ? preciseButton : broadButton;
 
   if ((await removeButton.count()) === 0) {
     // Dump all visible buttons for debugging
@@ -414,6 +448,8 @@ async function removeMemberOnPage(
 
   await page.waitForTimeout(3000);
   await page.waitForLoadState("load", { timeout: 60000 });
+
+  return discoveredGaiaId;
 }
 
 /**
@@ -421,12 +457,20 @@ async function removeMemberOnPage(
  * Tries S1 (email text on page) → S2 (displayName) → S3 (click each card).
  * After this resolves, the page will be on the member's detail page.
  */
+/**
+ * Extracts the GAIA ID from the current member detail page URL.
+ * e.g. /family/member/g/123456  →  "123456"
+ */
+function extractGaiaIdFromUrl(url: string): string | undefined {
+  return url.match(/\/g\/(\d+)/)?.[1] ?? url.match(/\/member\/(\d+)/)?.[1];
+}
+
 async function fallbackFindMember(
   page: import("playwright").Page,
   email: string,
   displayName: string | undefined,
   logger: TaskLogger
-): Promise<void> {
+): Promise<string | undefined> {
   await page.waitForLoadState("load", { timeout: 60000 });
 
   // S1: Email visible directly on list (pending invites without a Google account name)
@@ -435,7 +479,7 @@ async function fallbackFindMember(
     await logger.log("INFO", `S1: Found email text on list page, clicking`);
     await emailLocator.first().click();
     await page.waitForLoadState("load", { timeout: 60000 });
-    return;
+    return extractGaiaIdFromUrl(page.url());
   }
 
   // S2: displayName match (accepted members show their Google display name)
@@ -446,53 +490,66 @@ async function fallbackFindMember(
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
       await page.waitForLoadState("load", { timeout: 60000 });
-      return;
+      return extractGaiaIdFromUrl(page.url());
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found on page either`);
   }
 
-  // S3: Blind iteration — click each non-admin card and check detail page body
+  // S3: Blind iteration — click each non-admin card and check detail page body.
+  // NOTE: Do NOT use obfuscated Google CSS classes (e.g. .umngff) — they change with deployments.
+  // Use only stable structural selectors.
   await logger.log("INFO", `S3: Iterating all member cards to find "${email}"`);
-  const memberLinks = page.locator('a.umngff[href*="family/member/"]');
-  const count = await memberLinks.count();
 
-  for (let i = 0; i < count; i++) {
-    const links = page.locator('a.umngff[href*="family/member/"]');
-    if (i >= (await links.count())) break;
-    const link = links.nth(i);
+  // Collect all member href links from the page DOM directly
+  const memberHrefs: string[] = await page.evaluate(() => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    return Array.from(links)
+      .map((a) => (a as HTMLAnchorElement).href)
+      .filter((h) => !!h);
+  });
 
-    // Skip manager cards
-    const roleText = await link.locator(".ImPZoc").textContent().catch(() => "");
-    if (roleText?.includes("管理") || roleText?.toLowerCase().includes("manager")) continue;
+  await logger.log("INFO", `S3: Found ${memberHrefs.length} member links on family page`);
 
-    // Quick card-text check first
-    const cardText = await link.textContent().catch(() => "");
-    if (cardText?.includes(email)) {
-      await logger.log("INFO", `S3: Found email in card #${i} text, clicking`);
-      await link.click();
-      await page.waitForLoadState("load", { timeout: 60000 });
-      return;
-    }
-
-    // Navigate into detail page
-    await link.click();
-    await page.waitForLoadState("load", { timeout: 60000 });
-    await page.waitForTimeout(800);
-
-    const bodyText = await page.textContent("body").catch(() => "");
-    if (bodyText?.includes(email)) {
-      await logger.log("INFO", `S3: Matched on detail page for card #${i}`);
-      return;
-    }
-
-    await logger.log("DEBUG", `S3: Card #${i} does not match, going back`);
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
-    await page.waitForTimeout(800);
+  if (memberHrefs.length === 0) {
+    // Dump page content for diagnostics
+    const pageSnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 800) ?? "").catch(() => "?");
+    await logger.log("WARN", `S3: No member links found. Page snippet: ${pageSnippet}`);
   }
+
+  for (let i = 0; i < memberHrefs.length; i++) {
+    const href = memberHrefs[i];
+
+    // Quick text check: if the full href text includes the email, navigate there directly
+    try {
+      await page.goto(href, { waitUntil: "load", timeout: 60000 });
+      await page.waitForTimeout(500);
+
+      const bodyText = await page.textContent("body").catch(() => "");
+
+      // Skip the account owner (family manager)
+      const isManager = bodyText?.includes("管理") || bodyText?.toLowerCase().includes("manager");
+      if (isManager && !bodyText?.includes(email)) {
+        await logger.log("DEBUG", `S3: Card #${i} is manager, skipping`);
+        continue;
+      }
+
+      if (bodyText?.includes(email)) {
+        await logger.log("INFO", `S3: Matched on detail page for card #${i} (href=${href})`);
+        return extractGaiaIdFromUrl(page.url());
+      }
+
+      await logger.log("DEBUG", `S3: Card #${i} does not match email, continuing`);
+    } catch (err) {
+      await logger.log("WARN", `S3: Failed to navigate to card #${i}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Navigate back to family page for error screenshot
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 }).catch(() => {});
 
   throw new Error(
     `Cannot find member "${email}" on family page. ` +
-    `Checked ${count} cards via S1/S2/S3. Member may have left or DB is out of sync.`
+    `Checked ${memberHrefs.length} cards via S1/S2/S3. Member may have left or DB is out of sync.`
   );
 }
 

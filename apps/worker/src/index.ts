@@ -76,7 +76,8 @@ const inviteWorker = new Worker<InviteMemberPayload>(
   (job) => processInvite(job, deps),
   {
     connection,
-    concurrency: 1, // one profile at a time per worker instance
+    concurrency: 1,
+    lockDuration: 300_000, // 5 min — browser ops can take 1-2 min
   }
 );
 
@@ -86,6 +87,7 @@ const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
   {
     connection,
     concurrency: 1,
+    lockDuration: 300_000,
   }
 );
 
@@ -95,6 +97,7 @@ const replaceWorker = new Worker<ReplaceMemberPayload>(
   {
     connection,
     concurrency: 1,
+    lockDuration: 300_000,
   }
 );
 
@@ -104,6 +107,7 @@ const syncWorker = new Worker<SyncFamilyGroupPayload>(
   {
     connection,
     concurrency: 1,
+    lockDuration: 300_000,
   }
 );
 
@@ -113,10 +117,38 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   {
     connection,
     concurrency: 1,
+    lockDuration: 300_000,
   }
 );
 
 const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWorker];
+
+// ---- Startup: clean up orphaned RUNNING tasks from previous crash ----
+// If the worker crashed mid-task, the DB task stays in RUNNING forever.
+// On restart, reset any RUNNING tasks to FAILED_RETRYABLE so they can be retried.
+async function cleanupStalledTasks(): Promise<void> {
+  const result = await prisma.task.updateMany({
+    where: { status: { in: ["RUNNING", "PENDING"] } },
+    data: {
+      status: "FAILED_RETRYABLE",
+      lastErrorCode: "WORKER_RESTART",
+      lastErrorMessage: `Worker ${workerId} restarted — task may have been in progress`,
+    },
+  });
+  if (result.count > 0) {
+    console.log(`[${workerId}] Cleaned up ${result.count} orphaned RUNNING/PENDING task(s) → FAILED_RETRYABLE`);
+  }
+}
+
+// Run cleanup before accepting jobs
+cleanupStalledTasks().catch((err) =>
+  console.error(`[${workerId}] Failed to cleanup stalled tasks:`, err)
+);
+
+// Also force-release any Redis profile locks this worker left behind on crash
+pool.releaseAllByWorker(workerId).catch((err: Error) =>
+  console.error(`[${workerId}] Failed to release pool locks on startup:`, err.message)
+);
 
 // ---- Event Logging ----
 
@@ -131,6 +163,29 @@ for (const worker of workers) {
     console.error(
       `[${workerId}] ✗ ${worker.name} failed job=${job?.id}`,
       error.message
+    );
+  });
+
+  // BullMQ stalled event: job was active but worker stopped renewing the lock.
+  // The DB task is still RUNNING — update it so the admin console shows correct state.
+  // Also force-release any Redis pool locks held by this worker instance.
+  worker.on("stalled", (jobId: string) => {
+    console.warn(`[${workerId}] ⚠ stalled job=${jobId} on ${worker.name} — releasing pool locks & updating DB`);
+
+    // Force-release pool locks so the next job doesn't have to wait 20 min
+    pool.releaseAllByWorker(workerId).catch((err: Error) =>
+      console.error(`[${workerId}] Failed to release pool locks on stall:`, err.message)
+    );
+
+    prisma.task.updateMany({
+      where: { status: { in: ["RUNNING", "PENDING"] } },
+      data: {
+        status: "FAILED_RETRYABLE",
+        lastErrorCode: "STALLED",
+        lastErrorMessage: `BullMQ job ${jobId} stalled — worker lock expired (worker may have been overloaded or crashed)`,
+      },
+    }).catch((err: Error) =>
+      console.error(`[${workerId}] Failed to update stalled task in DB:`, err.message)
     );
   });
 

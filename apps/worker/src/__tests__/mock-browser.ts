@@ -64,6 +64,10 @@ export class MockWorkerBrowser {
     // no-op
   }
 
+  async safeGoto(_url: string, _options?: any): Promise<void> {
+    // no-op
+  }
+
   async disconnect(): Promise<void> {
     // no-op
   }

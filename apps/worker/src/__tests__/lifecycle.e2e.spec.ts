@@ -20,6 +20,7 @@ vi.mock("../browser-context", () => {
     getPage() { return createFakePage(); }
     async takeScreenshot() { return "/tmp/fake-screenshot.png"; }
     async navigateTo() {}
+    async safeGoto() {}
     async disconnect() {}
   }
   function createFakePage(): any {

@@ -10,7 +10,7 @@ export default defineConfig({
     hookTimeout: 30000,
     fileParallelism: false,
     env: {
-      DATABASE_URL: `file:${resolve(__dirname, "../../prisma/dev.db")}`
+      DATABASE_URL: `file:${resolve(__dirname, "../../prisma/test.db")}`
     }
   },
   resolve: {

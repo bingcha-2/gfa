@@ -31,6 +31,7 @@ interface ScrapedMember {
   displayName: string;
   role: string;
   googleMemberId: string; // GAIA ID from href="/family/member/g/{id}"
+  isPending: boolean;     // true = invite sent but not yet accepted
 }
 
 export async function processSync(
@@ -257,12 +258,22 @@ async function scrapeMembersFromPage(
         document.querySelector(".ImPZoc, [data-member-role]")?.textContent?.trim() ?? "member"
       );
 
+      // Detect pending invite: Google shows cancel/revoke button instead of remove button.
+      // Check all button texts on the page for cancel-invite indicators.
+      const isPending = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll("button, a"))
+          .map((el) => el.textContent?.trim() ?? "");
+        const cancelKw = ["取消邀請", "取消邀请", "撤銷", "撤销", "Cancel invitation", "Revoke"];
+        return btns.some((t) => cancelKw.some((kw) => t.includes(kw)));
+      });
+
       if (email || card.gaiaId) {
         members.push({
           email,
           displayName: card.displayName,
           role,
           googleMemberId: card.gaiaId,
+          isPending,
         });
       }
     } catch {
@@ -273,6 +284,7 @@ async function scrapeMembersFromPage(
           displayName: card.displayName,
           role: "member",
           googleMemberId: card.gaiaId,
+          isPending: false,
         });
       }
     }
@@ -346,26 +358,32 @@ async function reconcileMembers(
   }
 
   // --- Step 2: Upsert email members ---
+  // isPending = Google shows cancel-invite button → member has not accepted yet → keep PENDING.
+  // isPending = false → member has joined → set ACTIVE.
   for (const scraped of emailMembers) {
+    const newStatus = scraped.isPending ? "PENDING" : "ACTIVE";
     await prisma.familyMember.upsert({
       where: { familyGroupId_email: { familyGroupId, email: scraped.email } },
       update: {
         displayName: scraped.displayName || undefined,
         role: scraped.role,
-        status: "ACTIVE",
+        status: newStatus,
         googleMemberId: scraped.googleMemberId || undefined,
+        // Only set joinedAt when transitioning to ACTIVE for the first time
+        ...(newStatus === "ACTIVE" ? { joinedAt: new Date() } : {}),
       },
       create: {
         familyGroupId,
         email: scraped.email,
         displayName: scraped.displayName || undefined,
         role: scraped.role,
-        status: "ACTIVE",
+        status: newStatus,
         googleMemberId: scraped.googleMemberId || undefined,
-        joinedAt: new Date(),
+        joinedAt: newStatus === "ACTIVE" ? new Date() : undefined,
       },
     });
-    await logger.log("INFO", `Upserted member: ${scraped.email} (gaia=${scraped.googleMemberId || "unknown"})`);
+    await logger.log("INFO",
+      `Upserted member: ${scraped.email} status=${newStatus} (gaia=${scraped.googleMemberId || "unknown"})`);
   }
 
   // --- Step 3: Link gaiaOnly members to existing DB records ---

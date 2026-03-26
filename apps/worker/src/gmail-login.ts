@@ -82,10 +82,39 @@ export async function gmailLogin(
     await page.waitForTimeout(2000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
-    // Step 3: Fill password
-    const passwordInput = page.locator('input[type="password"]');
-    if ((await passwordInput.count()) === 0) {
-      return { success: false, reason: "UNKNOWN", detail: "Cannot find password input field after email step" };
+    // Handle "Something went wrong" error popup (up to 2 rounds — it can appear multiple times).
+    // If Restart was clicked, the page resets to the email input — re-fill email then continue.
+    for (let dismissRound = 0; dismissRound < 2; dismissRound++) {
+      const dismissed = await dismissErrorPopup(page, logger);
+      if (!dismissed) break;
+
+      await logger.log("INFO", `[gmail-login] Re-filling email after Restart (round ${dismissRound + 1})`);
+      const emailRetry = page.locator('input[type="email"], input[id="identifierId"]');
+      if ((await emailRetry.count()) > 0) {
+        await emailRetry.first().fill(loginEmail);
+        await clickNext(page);
+        await page.waitForTimeout(2000);
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
+    }
+
+    // Step 3: Fill password — explicitly exclude aria-hidden backup fields.
+    // Google has a hidden `name="hiddenPassword"` input that must never be targeted.
+    // Use waitFor instead of count() to handle Angular's lazy rendering of the password step.
+    const passwordInput = page.locator(
+      'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
+    );
+    try {
+      await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
+    } catch {
+      // Password field never appeared — dump page state for debugging
+      const allPwd = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
+          name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
+        }))
+      );
+      const url = page.url();
+      return { success: false, reason: "UNKNOWN", detail: `Password input never became visible (15s). URL: ${url} | pwd fields: ${JSON.stringify(allPwd)}` };
     }
 
     await passwordInput.first().fill(loginPassword);
@@ -95,8 +124,12 @@ export async function gmailLogin(
 
     // Step 4: Handle post-login challenges (up to 4 rounds)
     for (let round = 0; round < 4; round++) {
+      await logger.log("INFO", `[gmail-login] Round ${round + 1}, URL: ${page.url()}`);
+
+      // Dismiss any error popup before checking success/challenges.
+      // Must re-read URL after dismiss, as Restart may navigate the page.
+      await dismissErrorPopup(page, logger);
       const roundUrl = page.url();
-      await logger.log("INFO", `[gmail-login] Round ${round + 1}, URL: ${roundUrl}`);
 
       // Success: landed on myaccount.google.com
       if (roundUrl.includes(SUCCESS_DOMAIN) || roundUrl.includes("mail.google.com")) {
@@ -191,6 +224,24 @@ async function clickNext(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Detect and dismiss Google's "Something went wrong / Restart" error popup.
+ * Returns true if the popup was found and Restart was clicked (caller should retry the step).
+ */
+async function dismissErrorPopup(page: Page, logger: TaskLogger): Promise<boolean> {
+  const restartBtn = page.locator(
+    'button:has-text("Restart"), button:has-text("重新開始"), button:has-text("重新启动"), ' +
+    'button:has-text("重试"), button:has-text("重試")'
+  );
+  if ((await restartBtn.count()) === 0) return false;
+
+  await logger.log("WARN", "[gmail-login] 'Something went wrong' popup detected — clicking Restart");
+  await restartBtn.first().click();
+  await page.waitForTimeout(3000);
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  return true;
+}
+
 /** Handle TOTP 2FA challenge */
 async function handleTotp(
   page: Page,
@@ -220,15 +271,9 @@ async function handleTotp(
 
   await input.fill(code);
 
-  const verifyBtn = page.locator(
-    'button:has-text("Next"), button:has-text("下一步"), ' +
-    'button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
-  );
-  if ((await verifyBtn.count()) > 0) {
-    await verifyBtn.first().click();
-  } else {
-    await page.keyboard.press("Enter");
-  }
+  // Submit via Enter key — more reliable than clicking the Verify button,
+  // because Google's kPY6ve overlay div intercepts pointer events during processing.
+  await page.keyboard.press("Enter");
 
   await logger.log("INFO", "[gmail-login] TOTP submitted");
   return { success: true }; // Provisional — outer loop will verify URL

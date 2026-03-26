@@ -158,8 +158,18 @@ async function executeInviteOnPage(
     'input[placeholder*="電子郵件"]',
     'input[placeholder*="电子邮件"]',
     'input[placeholder*="email" i]',
+    'input[type="email"]',
   ].join(", "));
-  if ((await emailInput.count()) === 0) throw new Error("Cannot find email input on invite page");
+
+  // Wait up to 15s for the input to appear (Angular renders lazily)
+  try {
+    await emailInput.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    // Dump page content for debugging
+    const url = page.url();
+    const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+    throw new Error(`Cannot find email input on invite page. URL: ${url}, body: ${bodySnippet}`);
+  }
 
   await emailInput.first().fill(email);
   await logger.log("INFO", `Filled email: ${email}`);

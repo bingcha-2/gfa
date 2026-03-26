@@ -42,7 +42,7 @@ function buildMockPage(opts: {
   let gotoCallCount = 0;
 
   const page: any = {
-    url: vi.fn().mockReturnValue(opts.currentUrl ?? "https://accounts.google.com"),
+    url: vi.fn().mockReturnValue(opts.currentUrl ?? "https://myaccount.google.com/family/details"),
     goto: vi.fn().mockImplementation(async () => {
       gotoCallCount++;
     }),

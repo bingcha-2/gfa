@@ -36,7 +36,11 @@ export class FamilyGroupService {
     const group = await this.prisma.familyGroup.findUnique({
       where: { id },
       include: {
-        members: { orderBy: { createdAt: "desc" } },
+        // Exclude REMOVED members from the list — they are audit records, not active slots
+        members: {
+          where: { status: { not: "REMOVED" } },
+          orderBy: { createdAt: "desc" }
+        },
         invites: { orderBy: { createdAt: "desc" }, take: 20 }
       }
     });
@@ -74,7 +78,10 @@ export class FamilyGroupService {
     await this.findOne(groupId);
 
     const members = await this.prisma.familyMember.findMany({
-      where: { familyGroupId: groupId },
+      where: {
+        familyGroupId: groupId,
+        status: { not: "REMOVED" }, // REMOVED = audit history, not shown in active list
+      },
       orderBy: { createdAt: "desc" }
     });
 
@@ -123,14 +130,14 @@ export class FamilyGroupService {
       throw new NotFoundException("Account not found for family group");
     }
 
-    // Use transaction to atomically check + mark member as PENDING
+    // Use transaction to atomically check + mark member as removing
     const result = await this.prisma.$transaction(async (tx) => {
-      // Verify member exists in the group and is ACTIVE
+      // Verify member exists in the group and is removable (ACTIVE or PENDING invite)
       const member = await tx.familyMember.findFirst({
         where: {
           familyGroupId: groupId,
           email: memberEmail,
-          status: "ACTIVE"
+          status: { in: ["ACTIVE", "PENDING"] }
         }
       });
 
@@ -138,7 +145,10 @@ export class FamilyGroupService {
         return null; // Signal: not found or already in progress
       }
 
-      // Optimistic lock: mark as PENDING to prevent double-remove race
+      // Remember original status for potential rollback
+      const originalStatus = member.status;
+
+      // Optimistic lock: mark as REMOVING to prevent double-remove race
       await tx.familyMember.update({
         where: { id: member.id },
         data: { status: "PENDING" }
@@ -157,7 +167,7 @@ export class FamilyGroupService {
         }
       });
 
-      return task;
+      return { task, originalStatus, memberId: member.id };
     });
 
     if (!result) {
@@ -170,7 +180,7 @@ export class FamilyGroupService {
       await this.removeQueue.add(
         "remove-member",
         {
-          taskId: result.id,
+          taskId: result.task.id,
           familyGroupId: groupId,
           accountId: group.accountId,
           memberEmail
@@ -178,19 +188,19 @@ export class FamilyGroupService {
         { removeOnComplete: 100, removeOnFail: 500 }
       );
     } catch (queueError) {
-      // Queue add failed (e.g. Redis down) — rollback PENDING to ACTIVE
+      // Queue add failed — rollback to original status
       await this.prisma.familyMember.updateMany({
         where: { familyGroupId: groupId, email: memberEmail, status: "PENDING" },
-        data: { status: "ACTIVE" }
+        data: { status: result.originalStatus }
       }).catch(() => {});
 
       // Clean up orphaned task
-      await this.prisma.task.delete({ where: { id: result.id } }).catch(() => {});
+      await this.prisma.task.delete({ where: { id: result.task.id } }).catch(() => {});
 
       throw queueError;
     }
 
-    return { queued: true, taskId: result.id };
+    return { queued: true, taskId: result.task.id };
   }
 
   /**
@@ -227,7 +237,8 @@ export class FamilyGroupService {
         });
 
         if (!member) return "notFound" as const;
-        if (member.status !== "ACTIVE") return "alreadyRemoved" as const;
+        // Only ACTIVE and PENDING (invited-not-yet-accepted) can be removed
+        if (member.status !== "ACTIVE" && member.status !== "PENDING") return "alreadyRemoved" as const;
 
         // Optimistic lock: mark PENDING to prevent concurrent double-remove
         await tx.familyMember.update({ where: { id: member.id }, data: { status: "PENDING" } });

@@ -8,7 +8,7 @@ import { PrismaClient } from "@prisma/client";
 import { resolve } from "node:path";
 
 let prisma: PrismaClient | null = null;
-const databaseUrl = `file:${resolve(__dirname, "../../../../prisma/dev.db").replace(/\\/g, "/")}`;
+const databaseUrl = `file:${resolve(__dirname, "../../../../prisma/test.db").replace(/\\/g, "/")}`;
 
 export function getPrisma(): PrismaClient {
   if (!prisma) {
