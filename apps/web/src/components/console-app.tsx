@@ -35,6 +35,34 @@ type ConsoleData = {
 
 type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "lookup";
 
+// --- Bulk operation result types ---
+export type CrossInviteResult = {
+  allocated: { groupId: string; accountId: string; queued: string[] }[];
+  unplaceable: string[];
+  alreadyActive: string[];
+  reason?: string;
+};
+
+export type CrossRemoveResult = {
+  queued: string[];
+  notFound: string[];
+  alreadyRemoved: string[];
+  failed: string[];
+};
+
+export type BulkGroupInviteResult = {
+  queued: string[];
+  rejected: string[];
+  reason?: string;
+};
+
+export type BulkGroupRemoveResult = {
+  queued: string[];
+  notFound: string[];
+  alreadyRemoved: string[];
+  failed: string[];
+};
+
 const orderTerminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
 type ConsoleAppProps = {
@@ -214,13 +242,30 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     count: number;
     product: string;
     codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
-  }) {
-    return runAction(() =>
-      apiRequest("redeem-codes/batch-create", {
+  }): Promise<string[] | null> {
+    setIsActioning(true);
+    try {
+      // Returns the created RedeemCode records; we extract the code strings
+      const created = await apiRequest<{ code: string }[]>("redeem-codes/batch-create", {
         method: "POST",
         body: payload
-      })
-    );
+      });
+      await loadDashboard();
+      return created.map((c) => c.code);
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (isUnauthorized(message)) {
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
+        router.refresh();
+        return null;
+      }
+      setError(message);
+      showToast("error", message);
+      return null;
+    } finally {
+      setIsActioning(false);
+    }
   }
 
   async function syncGroup(groupId: string) {
@@ -238,6 +283,78 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         body: { memberEmail }
       })
     );
+  }
+
+  async function crossInvite(emails: string[]): Promise<CrossInviteResult | null> {
+    try {
+      const result = await apiRequest<CrossInviteResult>("family-groups/cross-invite", {
+        method: "POST",
+        body: { emails }
+      });
+      await loadDashboard();
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
+  async function crossRemove(memberEmails: string[]): Promise<CrossRemoveResult | null> {
+    try {
+      const result = await apiRequest<CrossRemoveResult>("family-groups/cross-remove", {
+        method: "POST",
+        body: { memberEmails }
+      });
+      await loadDashboard();
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
+  async function bulkInviteGroup(groupId: string, emails: string[]): Promise<BulkGroupInviteResult | null> {
+    try {
+      const result = await apiRequest<BulkGroupInviteResult>(`family-groups/${groupId}/bulk-invite`, {
+        method: "POST",
+        body: { emails }
+      });
+      await loadDashboard();
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
+  async function bulkRemoveGroup(groupId: string, memberEmails: string[]): Promise<BulkGroupRemoveResult | null> {
+    try {
+      const result = await apiRequest<BulkGroupRemoveResult>(`family-groups/${groupId}/bulk-remove`, {
+        method: "POST",
+        body: { memberEmails }
+      });
+      await loadDashboard();
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
+  async function toggleAutoAssign(groupId: string): Promise<boolean> {
+    try {
+      await apiRequest(`family-groups/${groupId}/toggle-auto-assign`, { method: "POST" });
+      await loadDashboard();
+      return true;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return false;
+    }
   }
 
   async function retryTask(taskId: string) {
@@ -475,6 +592,11 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onCreate={createGroup}
             onSync={syncGroup}
             onRemoveMember={removeMember}
+            onCrossInvite={crossInvite}
+            onCrossRemove={crossRemove}
+            onBulkInviteGroup={bulkInviteGroup}
+            onBulkRemoveGroup={bulkRemoveGroup}
+            onToggleAutoAssign={toggleAutoAssign}
             role={data.user.role}
           />
         );

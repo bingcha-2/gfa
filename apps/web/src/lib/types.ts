@@ -105,6 +105,7 @@ export type RedeemCodeSummary = {
   id: string;
   code: string;
   product: string;
+  codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
   status: string;
   usedAt?: string | null;
   createdAt: string;

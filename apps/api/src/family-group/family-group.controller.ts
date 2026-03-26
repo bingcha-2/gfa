@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Request
@@ -213,6 +214,22 @@ export class FamilyGroupController {
         rejected: result.rejected.length,
         reason: result.reason
       }
+    });
+
+    return result;
+  }
+
+  @Post(":id/toggle-auto-assign")
+  @Roles("ADMIN", "OPERATIONS")
+  async toggleAutoAssign(@Param("id") id: string, @Request() req: any) {
+    const result = await this.familyGroupService.toggleAutoAssign(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "TOGGLE_AUTO_ASSIGN",
+      targetType: "FamilyGroup",
+      targetId: id,
+      detail: { newStatus: result.status }
     });
 
     return result;

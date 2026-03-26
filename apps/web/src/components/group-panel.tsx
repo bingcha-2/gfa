@@ -7,6 +7,12 @@ import { canCreateGroup } from "../lib/permissions";
 import { AccountSummary, FamilyGroupSummary } from "../lib/types";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
+import type {
+  BulkGroupInviteResult,
+  BulkGroupRemoveResult,
+  CrossInviteResult,
+  CrossRemoveResult
+} from "./console-app";
 
 type MemberInfo = {
   id: string;
@@ -34,11 +40,21 @@ type GroupPanelProps = {
   }) => Promise<boolean>;
   onSync: (groupId: string) => Promise<boolean>;
   onRemoveMember: (groupId: string, memberEmail: string) => Promise<boolean>;
+  onCrossInvite: (emails: string[]) => Promise<CrossInviteResult | null>;
+  onCrossRemove: (memberEmails: string[]) => Promise<CrossRemoveResult | null>;
+  onBulkInviteGroup: (groupId: string, emails: string[]) => Promise<BulkGroupInviteResult | null>;
+  onBulkRemoveGroup: (groupId: string, memberEmails: string[]) => Promise<BulkGroupRemoveResult | null>;
+  onToggleAutoAssign: (groupId: string) => Promise<boolean>;
 };
 
 function formatDate(dateStr?: string | null) {
   if (!dateStr) return "-";
   return new Date(dateStr).toLocaleDateString("zh-CN");
+}
+
+// Parse a newline-separated textarea into a trimmed, non-empty email array
+function parseEmails(text: string): string[] {
+  return text.split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 export function GroupPanel({
@@ -47,14 +63,38 @@ export function GroupPanel({
   role,
   onCreate,
   onSync,
-  onRemoveMember
+  onRemoveMember,
+  onCrossInvite,
+  onCrossRemove,
+  onBulkInviteGroup,
+  onBulkRemoveGroup,
+  onToggleAutoAssign
 }: GroupPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
   const [syncingGroupId, setSyncingGroupId] = useState<string | null>(null);
+  const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const canManage = canCreateGroup(role);
-  const [activeTab, setActiveTab] = useState<"inventory" | "create">("inventory");
+  const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch">("inventory");
+
+  // --- Batch tab state ---
+  const [batchSubTab, setBatchSubTab] = useState<"cross-invite" | "cross-remove" | "group-invite" | "group-remove">("cross-invite");
+  const [batchText, setBatchText] = useState("");
+  const [batchGroupId, setBatchGroupId] = useState("");
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null>(null);
+
+  // Reset result when switching tabs or subtabs
+  function switchBatchSubTab(tab: typeof batchSubTab) {
+    setBatchSubTab(tab);
+    setBatchResult(null);
+    setBatchText("");
+    // Reset group selector when switching to cross-group ops (no group needed)
+    if (tab === "cross-invite" || tab === "cross-remove") {
+      setBatchGroupId("");
+    }
+  }
   const [form, setForm] = useState({
     accountId: accounts[0]?.id ?? "",
     groupName: "",
@@ -100,6 +140,22 @@ export function GroupPanel({
       showToast('error', '同步请求异常');
     } finally {
       setSyncingGroupId(null);
+    }
+  }
+
+  async function handleToggleAutoAssign(groupId: string) {
+    setTogglingGroupId(groupId);
+    try {
+      const ok = await onToggleAutoAssign(groupId);
+      if (ok) {
+        showToast('success', '自动分配开关已切换');
+      } else {
+        showToast('error', '切换失败');
+      }
+    } catch {
+      showToast('error', '切换请求异常');
+    } finally {
+      setTogglingGroupId(null);
     }
   }
 
@@ -185,9 +241,165 @@ export function GroupPanel({
           >
             新增家庭组
           </button>
+          <button
+            className={`panel-tab${activeTab === "batch" ? " active" : ""}`}
+            onClick={() => { setActiveTab("batch"); setBatchResult(null); }}
+            type="button"
+          >
+            批量操作
+          </button>
         </div>
 
-        {activeTab === "create" ? (
+        {activeTab === "batch" ? (
+          <div className="panel-stack">
+            {/* Batch sub-tab bar */}
+            <div className="panel-tabs" style={{ gap: '4px' }}>
+              {([
+                { id: "cross-invite" as const, label: "跨组邀请" },
+                { id: "cross-remove" as const, label: "跨组踢人" },
+                { id: "group-invite" as const, label: "指定组邀请" },
+                { id: "group-remove" as const, label: "指定组踢人" }
+              ]).map(t => (
+                <button
+                  key={t.id}
+                  className={`panel-tab${batchSubTab === t.id ? " active" : ""}`}
+                  onClick={() => switchBatchSubTab(t.id)}
+                  type="button"
+                  style={{ fontSize: '0.875rem' }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="form-card field-grid workspace-form">
+              {/* Description */}
+              <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
+                {batchSubTab === "cross-invite" && <><strong>跨组批量邀请</strong>：自动分配到可用槽位，先填满第一组再溢出到下一组。</>}
+                {batchSubTab === "cross-remove" && <><strong>跨组批量踢人</strong>：自动查找每个邮箱所在组并入队移除任务。</>}
+                {batchSubTab === "group-invite" && <><strong>指定组批量邀请</strong>：选择目标家庭组，一次最多 5 个。超出 availableSlots 时拒绝。</>}
+                {batchSubTab === "group-remove" && <><strong>指定组批量踢人</strong>：选择目标家庭组，批量移除指定邮箱成员。</>}
+              </div>
+
+              {/* Group selector for single-group ops */}
+              {(batchSubTab === "group-invite" || batchSubTab === "group-remove") && (
+                <div className="field">
+                  <label htmlFor="batch-group-select">目标家庭组</label>
+                  <select
+                    id="batch-group-select"
+                    value={batchGroupId}
+                    onChange={e => { setBatchGroupId(e.target.value); setBatchResult(null); }}
+                  >
+                    <option value="">-- 请选择家庭组 --</option>
+                    {groups.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.groupName} · {g.availableSlots} slots · {g.account?.name ?? '-'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Email textarea */}
+              <div className="field">
+                <label htmlFor="batch-emails">
+                  邮箱列表（每行一个，共 {parseEmails(batchText).length} 个）
+                </label>
+                <textarea
+                  id="batch-emails"
+                  rows={6}
+                  placeholder={`user1@gmail.com
+user2@gmail.com`}
+                  value={batchText}
+                  onChange={e => { setBatchText(e.target.value); setBatchResult(null); }}
+                  style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }}
+                />
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="button"
+                  type="button"
+                  disabled={batchLoading || !parseEmails(batchText).length || ((batchSubTab === "group-invite" || batchSubTab === "group-remove") && !batchGroupId)}
+                  onClick={async () => {
+                    const emails = parseEmails(batchText);
+                    setBatchLoading(true);
+                    setBatchResult(null);
+                    try {
+                      let result: CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null = null;
+                      if (batchSubTab === "cross-invite") result = await onCrossInvite(emails);
+                      else if (batchSubTab === "cross-remove") result = await onCrossRemove(emails);
+                      else if (batchSubTab === "group-invite") result = await onBulkInviteGroup(batchGroupId, emails);
+                      else if (batchSubTab === "group-remove") result = await onBulkRemoveGroup(batchGroupId, emails);
+                      if (result) { setBatchResult(result); setBatchText(""); }
+                    } finally {
+                      setBatchLoading(false);
+                    }
+                  }}
+                >
+                  {batchLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '提交任务'}
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={batchLoading}
+                  onClick={() => { setBatchText(""); setBatchResult(null); }}
+                >
+                  清空
+                </button>
+              </div>
+
+              {/* Result display */}
+              {batchResult && (
+                <div style={{ marginTop: '4px' }}>
+                  {batchSubTab === "cross-invite" && (() => {
+                    const r = batchResult as CrossInviteResult;
+                    const allocated = r.allocated ?? [];
+                    const unplaceable = r.unplaceable ?? [];
+                    const alreadyActive = r.alreadyActive ?? [];
+                    return (
+                      <div className="panel-stack" style={{ gap: '8px' }}>
+                        {allocated.length === 0 && unplaceable.length === 0 && alreadyActive.length === 0 && (
+                          <div className="muted" style={{ fontSize: '0.875rem' }}>无操作结果</div>
+                        )}
+                        {allocated.map((alloc, i) => {
+                          const groupName = groups.find(g => g.id === alloc.groupId)?.groupName ?? alloc.groupId.slice(0, 8) + '…';
+                          return (
+                            <div key={i} style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                              <div style={{ fontWeight: 600, marginBottom: '4px' }}>✅ 已分配到 <strong>{groupName}</strong>（{alloc.queued.length} 个）</div>
+                              <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{alloc.queued.join(', ')}</div>
+                            </div>
+                          );
+                        })}
+                        {unplaceable.length > 0 && (
+                          <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                            <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: '4px' }}>⚠️ 无法分配（槽位不足，{unplaceable.length} 个）</div>
+                            <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{unplaceable.join(', ')}</div>
+                          </div>
+                        )}
+                        {alreadyActive.length > 0 && (
+                          <div style={{ background: '#eff6ff', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                            <div style={{ fontWeight: 600, color: '#2563eb', marginBottom: '4px' }}>ℹ️ 已是活跃成员（跳过，{alreadyActive.length} 个）</div>
+                            <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all', color: '#1d4ed8' }}>{alreadyActive.join(', ')}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {(batchSubTab === "cross-remove" || batchSubTab === "group-remove") && (
+                    <BatchResultTable result={batchResult as CrossRemoveResult | BulkGroupRemoveResult} />
+                  )}
+
+                  {batchSubTab === "group-invite" && (
+                    <BatchInviteResultTable result={batchResult as BulkGroupInviteResult} />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : activeTab === "create" ? (
           canManage ? (
             <form className="form-card field-grid workspace-form" onSubmit={submit}>
               <div className="field">
@@ -297,7 +509,7 @@ export function GroupPanel({
                         </td>
                         <td>{group.account?.name ?? "-"}</td>
                         <td>
-                          <div style={{ display: 'flex', gap: '6px' }}>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button
                               className="button secondary small"
                               onClick={() => void toggleMembers(group.id)}
@@ -315,6 +527,24 @@ export function GroupPanel({
                               {syncingGroupId === group.id
                                 ? <><Spinner size={12} color="currentColor" /> 同步中...</>
                                 : '同步'}
+                            </button>
+                            <button
+                              className="button secondary small"
+                              disabled={togglingGroupId === group.id || group.status === 'DISABLED'}
+                              onClick={() => void handleToggleAutoAssign(group.id)}
+                              type="button"
+                              title={group.status === 'DISABLED' ? '组已停用，无法切换' : (group.status === 'ACTIVE' ? '点击关闭自动分配' : '点击开启自动分配')}
+                              style={{
+                                color: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#92400e' : undefined,
+                                borderColor: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#d97706' : undefined,
+                                opacity: group.status === 'DISABLED' ? 0.5 : 1
+                              }}
+                            >
+                              {togglingGroupId === group.id
+                                ? <><Spinner size={12} color="currentColor" /> 切换中...</>
+                                : group.status === 'ACTIVE' ? '🟢 自动 ON'
+                                : group.status === 'MANUAL_ONLY' ? '⏸ 自动 OFF'
+                                : '🚫 已停用'}
                             </button>
                           </div>
                         </td>
@@ -437,5 +667,40 @@ export function GroupPanel({
         )}
       </div>
     </section>
+  );
+}
+
+// --- Helper sub-components for batch result display ---
+
+function ResultRow({ label, items, color }: { label: string; items: string[]; color?: string }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '0.875rem', padding: '6px 0', borderBottom: '1px solid var(--border, #e5e5e5)' }}>
+      <span style={{ minWidth: 120, fontWeight: 600, color: color ?? 'inherit', flexShrink: 0 }}>{label} ({items.length})</span>
+      <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--foreground-muted, #737373)', wordBreak: 'break-all' }}>{items.join(', ')}</span>
+    </div>
+  );
+}
+
+function BatchResultTable({ result }: { result: CrossRemoveResult | BulkGroupRemoveResult }) {
+  return (
+    <div style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px' }}>
+      <ResultRow label="✅ 已入队" items={result.queued ?? []} color="#059669" />
+      <ResultRow label="⚠️ 未找到" items={result.notFound ?? []} color="#d97706" />
+      <ResultRow label="ℹ️ 已移除" items={result.alreadyRemoved ?? []} />
+      <ResultRow label="❌ 入队失败" items={result.failed ?? []} color="#dc2626" />
+    </div>
+  );
+}
+
+function BatchInviteResultTable({ result }: { result: BulkGroupInviteResult }) {
+  return (
+    <div style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px' }}>
+      <ResultRow label="✅ 已入队" items={result.queued ?? []} color="#059669" />
+      <ResultRow label="❌ 被拒绝" items={result.rejected ?? []} color="#dc2626" />
+      {result.reason && (
+        <div style={{ fontSize: '0.875rem', color: '#dc2626', marginTop: '6px' }}>原因：{result.reason}</div>
+      )}
+    </div>
   );
 }

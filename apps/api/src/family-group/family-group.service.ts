@@ -715,6 +715,35 @@ export class FamilyGroupService {
     };
   }
 
+  /**
+   * Toggle auto-assign for a family group.
+   * ACTIVE → MANUAL_ONLY (skipped by all auto-assign paths)
+   * MANUAL_ONLY → ACTIVE (re-enables auto-assign)
+   * DISABLED → throws 400 (cannot toggle a fully disabled group)
+   */
+  async toggleAutoAssign(groupId: string): Promise<{ id: string; status: string }> {
+    const group = await this.prisma.familyGroup.findUnique({
+      where: { id: groupId },
+      select: { id: true, status: true }
+    });
+
+    if (!group) throw new NotFoundException("Family group not found");
+
+    if (group.status === "DISABLED") {
+      throw new BadRequestException("Cannot toggle auto-assign on a DISABLED group");
+    }
+
+    const nextStatus = group.status === "ACTIVE" ? "MANUAL_ONLY" : "ACTIVE";
+
+    const updated = await this.prisma.familyGroup.update({
+      where: { id: groupId },
+      data: { status: nextStatus },
+      select: { id: true, status: true }
+    });
+
+    return updated;
+  }
+
   private async attachAccounts<T extends Pick<FamilyGroup, "accountId">>(groups: T[]) {
     if (!groups.length) {
       return groups.map((group) => ({ ...group, account: null }));
