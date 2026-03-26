@@ -178,6 +178,23 @@ export async function gmailLogin(
         continue;
       }
 
+      // Account recovery options page (gds.google.com/web/recoveryoptions)
+      // Google shows this when it detects unusual login activity.
+      // Try to dismiss it by clicking "Skip" / "Not now" variants.
+      if (roundUrl.includes("recoveryoptions") || roundUrl.includes("gds.google.com")) {
+        const skipResult = await handleRecoveryOptions(page, logger);
+        if (!skipResult) {
+          return {
+            success: false,
+            reason: "VERIFICATION_REQUIRED",
+            detail: `Account recovery verification required (could not skip). URL: ${roundUrl}`,
+          };
+        }
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        continue;
+      }
+
       // Phone / SMS / push notification challenge (unhandled)
       const phoneChallenge = page.locator(
         'div[data-challengetype="12"], div[data-challengetype="9"], ' +
@@ -313,6 +330,38 @@ async function handleAgVerification(page: Page, logger: TaskLogger): Promise<voi
   }
 
   await logger.log("INFO", "[gmail-login] Birthday submitted");
+}
+
+/**
+ * Handle Google's account recovery options page (gds.google.com/web/recoveryoptions).
+ * Attempts to dismiss it by clicking "Skip" / "Not now" variants.
+ * Returns true if successfully dismissed, false if no skip button found.
+ */
+async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<boolean> {
+  await logger.log("INFO", "[gmail-login] Account recovery options page detected — trying to skip");
+
+  const skipBtn = page.locator([
+    'button:has-text("Skip")',
+    'button:has-text("Not now")',
+    'button:has-text("以后再说")',
+    'button:has-text("以後再說")',
+    'button:has-text("稍後")',
+    'button:has-text("稍后")',
+    'button:has-text("取消")',
+    'a:has-text("Skip")',
+    'a:has-text("Not now")',
+  ].join(", "));
+
+  if ((await skipBtn.count()) > 0) {
+    await skipBtn.first().click();
+    await logger.log("INFO", "[gmail-login] Clicked skip on recovery options page");
+    return true;
+  }
+
+  // Dump page text to help debug what buttons are present
+  const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 400) ?? "").catch(() => "?");
+  await logger.log("WARN", `[gmail-login] No skip button found on recovery page. Body: ${bodySnippet}`);
+  return false;
 }
 
 /** Detect phone/push/SMS challenge pages heuristically */

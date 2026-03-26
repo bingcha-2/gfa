@@ -110,9 +110,15 @@ export class WorkerBrowser {
       await page.goto(url, { waitUntil, timeout });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("ERR_ABORTED") || msg.includes("net::ERR")) {
-        // Wait for the browser to settle, then retry once
+      if (
+        msg.includes("ERR_ABORTED") ||
+        msg.includes("net::ERR") ||
+        msg.includes("interrupted by another navigation")
+      ) {
+        // Browser is mid-redirect (e.g. Google One intercept) — wait for it to settle,
+        // then navigate to the intended destination again.
         await page.waitForTimeout(3_000);
+        await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => {});
         await page.goto(url, { waitUntil, timeout });
       } else {
         throw err;
