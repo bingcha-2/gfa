@@ -230,6 +230,9 @@ export class OrderService {
       );
     }
 
+    // Normalize email to lowercase for consistent storage and lookup
+    const normalizedEmail = email.trim().toLowerCase();
+
     // 2. Create order
     const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
 
@@ -237,7 +240,7 @@ export class OrderService {
       data: {
         orderNo,
         redeemCodeId: redeemCode.id,
-        userEmail: email,
+        userEmail: normalizedEmail,
         status: "CODE_VERIFIED"
       }
     });
@@ -296,7 +299,7 @@ export class OrderService {
           orderId: order.id,
           familyGroupId: groupId,
           accountId: group!.accountId,
-          userEmail: email
+          userEmail: normalizedEmail
         })
       }
     });
@@ -313,7 +316,7 @@ export class OrderService {
         orderId: order.id,
         familyGroupId: groupId,
         accountId: group!.accountId,
-        userEmail: email
+        userEmail: normalizedEmail
       },
       { removeOnComplete: 100, removeOnFail: 500 }
     );
@@ -611,15 +614,38 @@ export class OrderService {
       throw new BadRequestException("Original email cannot be empty");
     }
 
-    // Find the most recent swappable JOIN_GROUP order for this email
-    const order = await this.prisma.order.findFirst({
+    // Find the most recent swappable order for this email.
+    // We do NOT filter by redeemCode.codeType here because the order may have been
+    // created from any code type (including ACCOUNT_SWAP from a prior swap operation).
+    // Eligibility is determined by order status and group assignment, not code type.
+    // Email is normalized to lowercase for consistent lookup (and stored lowercase since this fix).
+    let order = await this.prisma.order.findFirst({
       where: {
         userEmail: normalized,
         status: { in: SWAPPABLE_ORDER_STATUSES },
-        redeemCode: { codeType: "JOIN_GROUP" }
+        familyGroupId: { not: null }
       },
       orderBy: { createdAt: "desc" }
     });
+
+    if (!order) {
+      // Fallback: case-insensitive lookup for legacy records stored with mixed-case email.
+      // statusList is a compile-time constant (not user input) so $queryRawUnsafe is safe here.
+      const statusList = SWAPPABLE_ORDER_STATUSES.map((s) => `'${s}'`).join(",");
+      const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT o.id
+         FROM "Order" o
+         WHERE LOWER(o.userEmail) = ?
+           AND o.status IN (${statusList})
+           AND o.familyGroupId IS NOT NULL
+         ORDER BY o.createdAt DESC
+         LIMIT 1`,
+        normalized
+      );
+      if (rows.length > 0) {
+        order = await this.prisma.order.findUnique({ where: { id: rows[0].id } });
+      }
+    }
 
     if (!order) {
       throw new NotFoundException(
