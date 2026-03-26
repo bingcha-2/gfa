@@ -93,25 +93,33 @@ export async function processSync(
     // Reconcile with database
     await reconcileMembers(prisma, familyGroupId, members, logger);
 
-    // Update group counts — use scraped availableSlots (from Google's invite button text)
-    // and DB maxMembers (not hardcoded to 6)
-    const group = await prisma.familyGroup.findUnique({
-      where: { id: familyGroupId },
-      select: { maxMembers: true },
-    });
-    const maxMembers = group?.maxMembers ?? 5;
+    // Update group counts.
+    // Google family groups: 1 manager (admin) + up to 5 non-admin members = 6 total.
+    // We only count non-admin members against the slot limit.
+    const nonAdminMembers = members.filter(
+      (m) => !m.role.toLowerCase().includes("manager")
+    );
+    const NON_ADMIN_CAPACITY = 5; // Google always allows 5 non-admin seats
+
+    // Prefer the slot count scraped from Google's invite button (most accurate);
+    // fall back to computing from non-admin member count.
+    const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - nonAdminMembers.length);
+    const finalAvailableSlots = Math.min(availableSlots, computedSlots);
 
     await prisma.familyGroup.update({
       where: { id: familyGroupId },
       data: {
-        memberCount: members.length,
-        availableSlots: Math.min(availableSlots, Math.max(0, maxMembers - members.length)),
+        memberCount: nonAdminMembers.length,
+        availableSlots: finalAvailableSlots,
         lastSyncedAt: new Date(),
       },
     });
 
     await logger.updateStatus("SUCCESS");
-    await logger.log("INFO", `Sync complete: ${members.length} members, ${availableSlots} slots available`);
+    await logger.log(
+      "INFO",
+      `Sync complete: ${nonAdminMembers.length} non-admin members (${members.length} total incl. manager), ${finalAvailableSlots} slots available`
+    );
 
     // Non-fatal: update subscription info while we still have an active session
     try {

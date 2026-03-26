@@ -74,7 +74,7 @@ export class WorkerBrowser {
     const filename = `${label}-${Date.now()}.png`;
     const filepath = path.join(dir, filename);
 
-    await page.screenshot({ path: filepath, fullPage: true });
+    await page.screenshot({ path: filepath, fullPage: false, timeout: 10_000 });
     return filepath;
   }
 

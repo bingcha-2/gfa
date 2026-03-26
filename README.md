@@ -243,6 +243,18 @@ Status-GFA.bat   ← 查看运行状态
 
 ---
 
+## 更新到最新版本
+
+```powershell
+git pull origin master   # 拉取最新代码
+pnpm install             # 安装/更新依赖（不会清除数据库）
+pnpm dev                 # 启动服务
+```
+
+> ✅ 无需任何数据库迁移操作，直接启动即可。
+
+---
+
 ## 常用命令
 
 ```powershell

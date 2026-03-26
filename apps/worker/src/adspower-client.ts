@@ -56,8 +56,21 @@ export class AdsPowerClient {
   /**
    * Start a browser profile.
    * Returns the CDP debug URL for Playwright connection.
+   *
+   * If the profile is already open (e.g. stale from a previous crash),
+   * it is force-closed first so AdsPower will accept a fresh open request.
    */
   async openProfile(profileId: string): Promise<OpenProfileResult> {
+    // Guard: close stale profile before attempting to open
+    const { active } = await this.checkProfile(profileId);
+    if (active) {
+      console.warn(
+        `[adspower] Profile ${profileId} is already active — force-closing before reopen`
+      );
+      await this.closeProfile(profileId);
+      await sleep(1500); // brief pause so AdsPower releases the process
+    }
+
     const url = this.buildUrl("/api/v1/browser/start", { serial_number: profileId });
 
     for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {

@@ -61,13 +61,35 @@ export async function processInvite(
   let profileId: string | null = null;
 
   try {
-    profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Starting invite for ${userEmail}`, { profileId });
 
-    // Start AdsPower profile + connect
-    const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl);
+    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
+    // release it and immediately acquire the next free profile.
+    // failedProfiles tracks IDs that already failed so we don't re-acquire the same broken profile.
+    let debugUrl: string | undefined;
+    const maxProfileAttempts = pool.poolSize;
+    const failedProfiles = new Set<string>();
+    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
+      profileId = await pool.acquireExcluding(workerId, failedProfiles);
+      await logger.log("INFO", `Starting invite for ${userEmail} (profile attempt ${profileAttempt}/${maxProfileAttempts})`, { profileId });
+      try {
+        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
+        break; // success — stop trying profiles
+      } catch (profileErr) {
+        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
+        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
+        // Release this profile and mark it as failed before trying another
+        failedProfiles.add(profileId!);
+        await adspower.closeProfile(profileId!).catch(() => {});
+        await pool.release(profileId!, workerId).catch(() => {});
+        profileId = null;
+        if (profileAttempt === maxProfileAttempts) {
+          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
+        }
+      }
+    }
+
+    const page = await browser.connect(debugUrl!);
     await logger.log("INFO", "Browser connected via CDP");
 
     // Gmail auto-login (required every time — browser clears cache on start)

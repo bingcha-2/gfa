@@ -85,9 +85,38 @@ export class BrowserPool {
   }
 
   /**
-   * Release a profile back to the pool.
-   * Always call this in the finally block to avoid leaking profiles.
+   * Acquire a free profile from the pool, skipping any profile in the excluded set.
+   * Used for retry loops where certain profiles are known to be broken.
    */
+  async acquireExcluding(workerId: string, excluded: Set<string>, timeoutMs = 120_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      for (const profileId of this.profileIds) {
+        if (excluded.has(profileId)) continue; // skip known-bad profiles
+        const key = `${POOL_KEY_PREFIX}${profileId}`;
+        const result = await this.redis.set(key, workerId, "PX", LOCK_TTL_MS, "NX");
+
+        if (result === "OK") {
+          console.log(
+            `[BrowserPool] Profile ${profileId} acquired by worker ${workerId} (excluding: ${[...excluded].join(", ") || "none"})`
+          );
+          return profileId;
+        }
+      }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+
+      await sleep(Math.min(POLL_INTERVAL_MS, remaining));
+    }
+
+    throw new Error(
+      `[BrowserPool] No free profile available (excluding: ${[...excluded].join(", ")}) after ${timeoutMs}ms`
+    );
+  }
+
+
   async release(profileId: string, workerId: string): Promise<void> {
     const key = `${POOL_KEY_PREFIX}${profileId}`;
 
