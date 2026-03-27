@@ -209,6 +209,26 @@ export async function processReplace(
       // noop
     }
 
+    // "Cannot find member" — member is not on the page, retrying is pointless
+    const isMemberNotFound = errMsg.includes("Cannot find member");
+
+    // After max retries (attemptsMade is 0-indexed, attempts=3 means 0,1,2),
+    // stop retrying for any error
+    const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
+
+    if (isMemberNotFound || isLastAttempt) {
+      await logger.updateStatus("FAILED_FINAL", {
+        code: isMemberNotFound ? "MEMBER_NOT_FOUND" : "MAX_RETRIES_EXCEEDED",
+        message: errMsg,
+      });
+
+      if (orderId) {
+        await logger.updateOrderStatus(orderId, "FAILED", errMsg);
+      }
+
+      await logger.log("ERROR", `Replace failed permanently: ${errMsg}`);
+      throw new UnrecoverableError(errMsg);
+    }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
       code: profileId ? "REPLACE_ERROR" : "PROFILE_ACQUIRE_FAILED",
