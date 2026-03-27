@@ -16,9 +16,10 @@ type OrdersPanelProps = {
     targetMemberEmail: string;
     newUserEmail: string;
   }) => Promise<boolean>;
+  onRetry?: (orderId: string) => Promise<boolean>;
 };
 
-export function OrdersPanel({ orders, onReplace, role }: OrdersPanelProps) {
+export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelProps) {
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "active" | "manual">("all");
   const deferredFilter = useDeferredValue(filter);
@@ -146,6 +147,16 @@ export function OrdersPanel({ orders, onReplace, role }: OrdersPanelProps) {
                           </button>
                         ) : (
                           <span className="muted">只读</span>
+                        )}
+                        {onRetry && (order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
+                          <button
+                            className="button small"
+                            style={{ background: "var(--accent)", color: "#fff" }}
+                            onClick={() => void onRetry(order.id)}
+                            type="button"
+                          >
+                            重试
+                          </button>
                         )}
                       </div>
                     </td>

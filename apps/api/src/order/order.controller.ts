@@ -166,4 +166,23 @@ export class OrderController {
 
     return result;
   }
+
+  @Post("orders/:id/retry")
+  @Roles("ADMIN", "OPERATIONS")
+  async retryOrder(
+    @Param("id") id: string,
+    @Request() req: any
+  ) {
+    const result = await this.orderService.retryOrder(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "RETRY_ORDER",
+      targetType: "Order",
+      targetId: id,
+      detail: { result }
+    });
+
+    return result;
+  }
 }

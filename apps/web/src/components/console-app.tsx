@@ -407,6 +407,14 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
+  async function retryOrder(orderId: string) {
+    return runAction(() =>
+      apiRequest(`orders/${orderId}/retry`, {
+        method: "POST"
+      })
+    );
+  }
+
   const availableSlots =
     data.groups.reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
   const activeOrders =
@@ -605,6 +613,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           <OrdersPanel
             orders={data.orders}
             onReplace={replaceMember}
+            onRetry={retryOrder}
             role={data.user.role}
           />
         );

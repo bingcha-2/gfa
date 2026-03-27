@@ -328,6 +328,97 @@ export class OrderService {
     };
   }
 
+  /**
+   * Retry a MANUAL_REVIEW order: re-attempt group assignment + create invite task.
+   * Also supports FAILED orders.
+   */
+  async retryOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException("Order not found");
+    }
+
+    if (order.status !== "MANUAL_REVIEW" && order.status !== "FAILED") {
+      throw new BadRequestException(
+        `Order status is ${order.status}, only MANUAL_REVIEW or FAILED orders can be retried`
+      );
+    }
+
+    // Try to find an available group
+    const groupId = await this.familyGroupService.findAvailableGroup();
+
+    if (!groupId) {
+      throw new BadRequestException("Still no available family group");
+    }
+
+    const group = await this.prisma.familyGroup.findUnique({
+      where: { id: groupId },
+    });
+
+    const assignedAt = new Date();
+    const expiresAt = new Date(assignedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        familyGroupId: groupId,
+        status: "GROUP_ASSIGNED",
+        assignedAt,
+        expiresAt,
+        resultMessage: null,
+      },
+    });
+
+    await this.prisma.familyGroup.update({
+      where: { id: groupId },
+      data: {
+        availableSlots: { decrement: 1 },
+        pendingInviteCount: { increment: 1 },
+      },
+    });
+
+    const task = await this.prisma.task.create({
+      data: {
+        type: "INVITE_MEMBER",
+        orderId: order.id,
+        familyGroupId: groupId,
+        accountId: group!.accountId,
+        payload: JSON.stringify({
+          orderId: order.id,
+          familyGroupId: groupId,
+          accountId: group!.accountId,
+          userEmail: order.userEmail,
+        }),
+      },
+    });
+
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: "TASK_QUEUED" },
+    });
+
+    await this.inviteQueue.add(
+      "invite-member",
+      {
+        taskId: task.id,
+        orderId: order.id,
+        familyGroupId: groupId,
+        accountId: group!.accountId,
+        userEmail: order.userEmail,
+      },
+      { ...JOB_DEFAULTS }
+    );
+
+    return {
+      orderNo: order.orderNo,
+      status: "TASK_QUEUED",
+      message: `Assigned to group ${group!.groupName}, invite task queued`,
+    };
+  }
+
   async replaceMember(
     orderId: string,
     targetMemberEmail: string,
