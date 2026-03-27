@@ -126,7 +126,7 @@ export async function gmailLogin(
     await clickNext(page, logger, 0, "identifier");
     // Wait for page to advance past identifier step (smart wait, up to 4s)
     await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 4000 }).catch(() => {});
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
 
     // Verify the page actually advanced past the email step.
     // If still on identifier page, retry with escalating click methods.
@@ -165,7 +165,7 @@ export async function gmailLogin(
       'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
     );
     try {
-      await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
+      await passwordInput.first().waitFor({ state: "visible", timeout: 8_000 });
     } catch {
       // Password field never appeared — dump page state for debugging
       const allPwd = await page.evaluate(() =>
