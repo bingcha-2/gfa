@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.27.0",
   "scripts": {
-    "build": "pnpm db:generate && pnpm -r build",
+    "build": "pnpm -r build",
     "dev": "node scripts/dev.mjs",
     "dev:shared": "pnpm --filter @gfa/shared dev",
     "dev:web": "pnpm --filter @gfa/web dev",
@@ -12,6 +12,8 @@
     "dev:worker": "pnpm --filter @gfa/worker dev",
     "dev:setup": "pnpm install && pnpm --filter @gfa/shared build && pnpm db:generate && pnpm db:init:sqlite && pnpm db:seed",
     "start": "node scripts/start.mjs",
+    "start:daemon": "node scripts/start.mjs --daemon",
+    "start:stop": "node scripts/start.mjs --stop",
     "start:web": "pnpm --filter @gfa/web start",
     "start:api": "pnpm --filter @gfa/api start",
     "start:worker": "pnpm --filter @gfa/worker start",

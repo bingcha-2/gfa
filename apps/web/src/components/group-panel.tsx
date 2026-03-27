@@ -641,44 +641,64 @@ user2@gmail.com`}
                                                </tr>
                                              </thead>
                                              <tbody>
-                                               {groupDetail.members.map((m) => (
-                                                 <tr key={m.id}>
-                                                   <td style={{ fontFamily: 'monospace' }}>{m.email}</td>
-                                                   <td>{m.displayName ?? "-"}</td>
-                                                   <td><StatusBadge value={m.role} tone={m.role === "OWNER" ? "sky" : undefined} /></td>
-                                                   <td>
-                                                     {m.isInGroup
-                                                       ? <StatusBadge value="已在组" tone="emerald" />
-                                                       : <StatusBadge value={m.status} />}
-                                                   </td>
-                                                   <td className="muted">{formatDate(m.joinedAt)}</td>
-                                                   {canManage && (
-                                                     <td>
-                                                       {m.role !== "OWNER" && (
-                                                         <button
-                                                           className="button"
-                                                           style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                           disabled={removingMemberId === m.id}
-                                                           onClick={async () => {
-                                                             if (!confirm(`确定移除成员 ${m.email}？`)) return;
-                                                             setRemovingMemberId(m.id);
-                                                             try {
-                                                               await onRemoveMember(group.id, m.email);
-                                                               const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
-                                                               setGroupDetail(detail);
-                                                             } finally {
-                                                               setRemovingMemberId(null);
-                                                             }
-                                                           }}
-                                                           type="button"
-                                                         >
-                                                           {removingMemberId === m.id ? "移除中..." : "🗑 移除"}
-                                                         </button>
+                                                {groupDetail.members.map((m) => {
+                                                  const ownerEmail = group.account?.loginEmail?.toLowerCase() ?? "";
+                                                  const isOwner = m.role === "OWNER" || (ownerEmail !== "" && m.email.toLowerCase() === ownerEmail);
+                                                  return (
+                                                   <tr key={m.id} style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : undefined}>
+                                                     <td style={{ fontFamily: 'monospace' }}>
+                                                       {m.email}
+                                                       {isOwner && (
+                                                         <span style={{
+                                                           marginLeft: '6px',
+                                                           fontSize: '0.75rem',
+                                                           padding: '1px 6px',
+                                                           borderRadius: '4px',
+                                                           background: 'rgba(56,189,248,0.15)',
+                                                           color: '#0284c7',
+                                                           fontWeight: 600,
+                                                           fontFamily: 'inherit'
+                                                         }}>
+                                                           👑 母号
+                                                         </span>
                                                        )}
                                                      </td>
-                                                   )}
-                                                 </tr>
-                                               ))}
+                                                     <td>{m.displayName ?? "-"}</td>
+                                                     <td><StatusBadge value={isOwner ? "OWNER" : m.role} tone={isOwner ? "sky" : undefined} /></td>
+                                                     <td>
+                                                       {m.isInGroup
+                                                         ? <StatusBadge value="已在组" tone="emerald" />
+                                                         : <StatusBadge value={m.status} />}
+                                                     </td>
+                                                     <td className="muted">{formatDate(m.joinedAt)}</td>
+                                                     {canManage && (
+                                                       <td>
+                                                         {!isOwner && (
+                                                           <button
+                                                             className="button"
+                                                             style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                             disabled={removingMemberId === m.id}
+                                                             onClick={async () => {
+                                                               if (!confirm(`确定移除成员 ${m.email}？`)) return;
+                                                               setRemovingMemberId(m.id);
+                                                               try {
+                                                                 await onRemoveMember(group.id, m.email);
+                                                                 const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
+                                                                 setGroupDetail(detail);
+                                                               } finally {
+                                                                 setRemovingMemberId(null);
+                                                               }
+                                                             }}
+                                                             type="button"
+                                                           >
+                                                             {removingMemberId === m.id ? "移除中..." : "🗑 移除"}
+                                                           </button>
+                                                         )}
+                                                       </td>
+                                                     )}
+                                                   </tr>
+                                                  );
+                                                })}
                                              </tbody>
                                           </table>
                                         ) : (

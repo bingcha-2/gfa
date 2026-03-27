@@ -477,9 +477,9 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     },
     {
       id: "lookup" as const,
-      label: "邮箱查询",
-      caption: "Member Lookup",
-      metric: "按邮箱搜索"
+      label: "成员管理",
+      caption: "Member Management",
+      metric: "查询 & 操作"
     },
     {
       id: "settings" as const,
@@ -651,7 +651,14 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           />
         );
       case "lookup":
-        return <MemberLookupPanel />;
+        return (
+          <MemberLookupPanel
+            onRemoveMember={removeMember}
+            onRetryOrder={retryOrder}
+            onSyncGroup={syncGroup}
+            showToast={showToast}
+          />
+        );
       case "settings":
         return (
           <div className="panel-stack">

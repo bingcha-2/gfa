@@ -609,16 +609,27 @@ export class FamilyGroupService {
   async lookupByMemberEmail(email: string): Promise<{
     found: boolean;
     memberStatus?: string;
+    member?: {
+      id: string;
+      displayName: string | null;
+      joinedAt: string | null;
+    };
     familyGroup?: {
       id: string;
       groupName: string;
       accountEmail: string | null;
+      status: string;
+      memberCount: number;
+      maxMembers: number;
     };
     order?: {
+      id: string;
       orderNo: string;
       status: string;
       code: string | null;
+      codeType: string | null;
       expiresAt: string | null;
+      createdAt: string;
     };
   }> {
     const normalizedEmail = email.trim().toLowerCase();
@@ -670,7 +681,7 @@ export class FamilyGroupService {
           userEmail: normalizedEmail,
           ...(fg ? { familyGroupId: fg.id } : {})
         },
-        include: { redeemCode: { select: { code: true } } },
+        include: { redeemCode: { select: { code: true, codeType: true } } },
         orderBy: { createdAt: "desc" }
       });
 
@@ -684,7 +695,7 @@ export class FamilyGroupService {
         if (orderRows.length > 0) {
           order = await this.prisma.order.findFirst({
             where: { id: orderRows[0].id },
-            include: { redeemCode: { select: { code: true } } }
+            include: { redeemCode: { select: { code: true, codeType: true } } }
           });
         }
       }
@@ -692,19 +703,30 @@ export class FamilyGroupService {
       return {
         found: true,
         memberStatus: member.status,
+        member: {
+          id: member.id,
+          displayName: member.displayName,
+          joinedAt: member.joinedAt?.toISOString() ?? null,
+        },
         familyGroup: fg
           ? {
               id: fg.id,
               groupName: fg.groupName,
-              accountEmail: fg.account?.loginEmail ?? null
+              accountEmail: fg.account?.loginEmail ?? null,
+              status: fg.status,
+              memberCount: fg.memberCount,
+              maxMembers: fg.maxMembers,
             }
           : undefined,
         order: order
           ? {
+              id: order.id,
               orderNo: order.orderNo,
               status: order.status,
               code: order.redeemCode?.code ?? null,
-              expiresAt: order.expiresAt?.toISOString() ?? null
+              codeType: order.redeemCode?.codeType ?? null,
+              expiresAt: order.expiresAt?.toISOString() ?? null,
+              createdAt: order.createdAt.toISOString(),
             }
           : undefined
       };
@@ -718,7 +740,7 @@ export class FamilyGroupService {
         userEmail: normalizedEmail,
       },
       include: {
-        redeemCode: { select: { code: true } },
+        redeemCode: { select: { code: true, codeType: true } },
         familyGroup: {
           include: { account: { select: { loginEmail: true } } }
         }
@@ -736,7 +758,7 @@ export class FamilyGroupService {
         order = await this.prisma.order.findFirst({
           where: { id: rows[0].id },
           include: {
-            redeemCode: { select: { code: true } },
+            redeemCode: { select: { code: true, codeType: true } },
             familyGroup: {
               include: { account: { select: { loginEmail: true } } }
             }
@@ -757,14 +779,20 @@ export class FamilyGroupService {
         ? {
             id: fg.id,
             groupName: fg.groupName,
-            accountEmail: fg.account?.loginEmail ?? null
+            accountEmail: fg.account?.loginEmail ?? null,
+            status: fg.status,
+            memberCount: fg.memberCount,
+            maxMembers: fg.maxMembers,
           }
         : undefined,
       order: {
+        id: order.id,
         orderNo: order.orderNo,
         status: order.status,
         code: order.redeemCode?.code ?? null,
-        expiresAt: order.expiresAt?.toISOString() ?? null
+        codeType: order.redeemCode?.codeType ?? null,
+        expiresAt: order.expiresAt?.toISOString() ?? null,
+        createdAt: order.createdAt.toISOString(),
       }
     };
   }

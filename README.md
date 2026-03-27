@@ -229,19 +229,25 @@ pnpm dev:web
 # 1. 首次初始化
 pnpm dev:setup
 
-# 2. 启动生产模式（自动检测 build 产物，缺失则自动构建）
+# 2. 前台启动（关闭终端则服务停止）
 pnpm start
 
-或者跳过编译，直接启动（要求 artifacts 已存在） 
-pnpm start --no-build
+# 3. 后台启动（可关闭终端，服务持续运行）
+pnpm start:daemon
+
+# 4. 停止后台服务
+pnpm start:stop
 ```
+
+> 💡 `--no-build` 跳过编译（要求已 build）：`pnpm start --no-build` 或 `pnpm start:daemon -- --no-build`
 
 **特性**：
 - 自动编译：首次启动检测到未 build 会自动运行 `pnpm build`
 - 持久化日志：输出同时写入终端和 `logs/<服务名>-YYYY-MM-DD.log`
 - 按天轮转：日志文件按日期自动分割，带时间戳
 - 端口清理：启动前自动释放被占用的端口
-- 优雅退出：Ctrl+C 安全停止所有服务
+- 优雅退出：前台 Ctrl+C / 后台 `pnpm start:stop` 安全停止
+- **后台模式**：`start:daemon` 以脱离终端的后台进程运行，日志写入 `logs/daemon.log`，PID 记录在 `gfa.pid`
 - **不操作数据库**：直接使用现有 `dev.db`，不会删库或重置
 
 **日志位置**：
@@ -250,7 +256,8 @@ pnpm start --no-build
 logs/
 ├── api-2026-03-27.log       # API 日志
 ├── web-2026-03-27.log       # Web 日志
-└── worker-2026-03-27.log    # Worker 日志
+├── worker-2026-03-27.log    # Worker 日志
+└── daemon.log               # 后台模式综合日志
 ```
 
 ### 方式 B：`Start-GFA.bat`（安装包模式）
@@ -342,8 +349,14 @@ pnpm dev:setup
 # 启动所有服务（开发模式，带热更新）
 pnpm dev
 
-# 启动所有服务（生产模式，带持久化日志）
+# 启动所有服务（生产模式，前台运行）
 pnpm start
+
+# 启动所有服务（生产模式，后台运行，可关闭终端）
+pnpm start:daemon
+
+# 停止后台服务
+pnpm start:stop
 
 # 单独构建生产包
 pnpm build

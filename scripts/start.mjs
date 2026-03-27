@@ -12,13 +12,125 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, createWriteStream } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, createWriteStream, writeFileSync, unlinkSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const LOGS_DIR = join(ROOT, "logs");
+const PID_FILE = join(ROOT, "gfa.pid");
+
+// ── Daemon mode: --daemon re-launches as detached background process ─────────
+if (process.argv.includes("--stop")) {
+  if (existsSync(PID_FILE)) {
+    const pid = readFileSync(PID_FILE, "utf8").trim();
+    try {
+      process.kill(Number(pid), "SIGTERM");
+      console.log(`[stop] Sent SIGTERM to PID ${pid}`);
+    } catch (e) {
+      console.log(`[stop] Process ${pid} not running (${e.code})`);
+    }
+    try { unlinkSync(PID_FILE); } catch {}
+  } else {
+    console.log("[stop] No PID file found — is the daemon running?");
+  }
+  process.exit(0);
+}
+
+if (process.argv.includes("--daemon")) {
+  const env = readEnv();
+  const apiPort = env.API_PORT || "3001";
+
+  // ── Auto-stop old daemon if running ──────────────────────────────────────
+  if (existsSync(PID_FILE)) {
+    const oldPid = readFileSync(PID_FILE, "utf8").trim();
+    let isAlive = false;
+    try { process.kill(Number(oldPid), 0); isAlive = true; } catch {}
+
+    if (isAlive) {
+      console.log(`[daemon] Stopping old instance (PID: ${oldPid})...`);
+      // Use taskkill /T to kill entire process tree (api/web/worker children)
+      // SIGTERM alone only hits parent; children hold Prisma DLL locks
+      spawnSync("taskkill", ["/T", "/F", "/PID", oldPid], { shell: false, stdio: "ignore" });
+      // Wait for ports and file locks to release
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    try { unlinkSync(PID_FILE); } catch {}
+  }
+  // ── Launch detached child ────────────────────────────────────────────────
+  // Safety net: also kill any processes on our ports (handles stale PID / manual kills)
+  const webPort = env.WEB_PORT || "3000";
+  killPort(apiPort);
+  killPort(webPort);
+  await new Promise((r) => setTimeout(r, 1000));
+
+  const args = process.argv.slice(1).filter((a) => a !== "--daemon");
+  const logPath = join(LOGS_DIR, "daemon.log");
+  mkdirSync(LOGS_DIR, { recursive: true });
+
+  const { openSync } = await import("node:fs");
+  const outFd = openSync(logPath, "a");
+
+  const child = spawn(process.execPath, args, {
+    detached: true,
+    windowsHide: true,
+    stdio: ["ignore", outFd, outFd],
+    cwd: ROOT,
+    env: { ...process.env, GFA_DAEMON: "1" },
+  });
+  child.unref();
+
+  writeFileSync(PID_FILE, String(child.pid), "utf8");
+  console.log(`[daemon] Launching in background (PID: ${child.pid})...`);
+
+  // ── Health check: poll API until ready or timeout ────────────────────────
+  const healthUrl = `http://127.0.0.1:${apiPort}/api/health`;
+  const maxWaitMs = 90_000;
+  const pollMs = 2_000;
+  const start = Date.now();
+  let ready = false;
+
+  // Wait a bit for build + boot
+  await new Promise((r) => setTimeout(r, 3000));
+
+  while (Date.now() - start < maxWaitMs) {
+    // Check if child died
+    try { process.kill(child.pid, 0); } catch {
+      console.log(`\n[daemon] ❌ Process exited unexpectedly.`);
+      console.log(`[daemon] Check logs: ${logPath}`);
+      try { unlinkSync(PID_FILE); } catch {}
+      process.exit(1);
+    }
+
+    // Poll health
+    try {
+      const http = await import("node:http");
+      const ok = await new Promise((resolve) => {
+        const req = http.get(healthUrl, { timeout: 2000 }, (res) => {
+          resolve(res.statusCode === 200);
+        });
+        req.on("error", () => resolve(false));
+        req.on("timeout", () => { req.destroy(); resolve(false); });
+      });
+      if (ok) { ready = true; break; }
+    } catch { /* retry */ }
+
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    process.stdout.write(`\r[daemon] Waiting for services... ${elapsed}s`);
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+
+  if (ready) {
+    console.log(`\n[daemon] ✅ All services started successfully (PID: ${child.pid})`);
+    console.log(`[daemon] Logs: ${logPath}`);
+    console.log(`[daemon] Stop: pnpm start:stop`);
+  } else {
+    console.log(`\n[daemon] ⚠️  Timed out waiting for health check (${maxWaitMs / 1000}s)`);
+    console.log(`[daemon] Services may still be starting. Check logs: ${logPath}`);
+  }
+  process.exit(0);
+}
 
 // ── Read .env ─────────────────────────────────────────────────────────────────
 function readEnv() {
@@ -268,18 +380,24 @@ function getServices(env) {
   const env = readEnv();
   const webPort = env.WEB_PORT || "3000";
   const apiPort = env.API_PORT || "3001";
+  const isDaemon = process.env.GFA_DAEMON === "1";
 
-  console.log(`${c.cyan}${c.bold}[start] GFA Production Launcher${c.reset}`);
+  console.log(`${c.cyan}${c.bold}[start] GFA Production Launcher${isDaemon ? " (daemon)" : ""}${c.reset}`);
   console.log(`${c.gray}[start] ${timestamp()}${c.reset}\n`);
 
-  // Preflight
-  checkBuildArtifacts();
+  // Write PID file for the main process (if launched as daemon, parent already wrote it)
+  if (!isDaemon) {
+    writeFileSync(PID_FILE, String(process.pid), "utf8");
+  }
 
   // Prepare logs directory
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  // Kill occupied ports
+  // Kill occupied ports FIRST — old node processes lock Prisma DLL files
   await killOccupiedPorts([webPort, apiPort]);
+
+  // Preflight (build if needed — must run AFTER port cleanup to avoid DLL locks)
+  checkBuildArtifacts();
 
   // Merge .env into child env
   const childEnv = { ...process.env, ...env, NODE_ENV: "production" };
@@ -311,6 +429,7 @@ function getServices(env) {
     const proc = spawn(svc.command, svc.args, {
       cwd: svc.cwd,
       shell: process.platform === "win32",
+      windowsHide: true,
       env: childEnv,
     });
 
@@ -388,10 +507,11 @@ function getServices(env) {
   process.on("SIGTERM", shutdown);
 
   // On Windows, handle Ctrl+C via SIGINT (already covered above)
-  // Also handle process exit to clean up log writers
+  // Also handle process exit to clean up log writers and PID file
   process.on("exit", () => {
     for (const lw of logWriters) {
       lw.close();
     }
+    try { unlinkSync(PID_FILE); } catch {}
   });
 })();
