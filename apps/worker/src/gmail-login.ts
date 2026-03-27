@@ -471,14 +471,21 @@ async function handleAgVerification(page: Page, logger: TaskLogger): Promise<voi
 }
 
 /**
- * Handle Google's account recovery options page (gds.google.com/web/recoveryoptions).
- * Attempts to dismiss it by clicking "Skip" / "Not now" variants.
- * Returns true if successfully dismissed, false if no skip button found.
+ * Handle Google's account recovery / device security pages.
+ * Covers both gds.google.com/web/recoveryoptions and gds.google.com/web/landing.
+ * Attempts to dismiss by clicking skip/confirm/done variants.
+ * Returns true if successfully dismissed, false if no actionable button found.
  */
 async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<boolean> {
-  await logger.log("INFO", "[gmail-login] Account recovery options page detected — trying to skip");
+  await logger.log("INFO", "[gmail-login] Account recovery/GDS page detected — trying to skip");
 
-  const skipBtn = page.locator([
+  // GDS pages are SPAs — wait for content to render
+  await page.waitForTimeout(3000);
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+
+  // Broad set of buttons that can dismiss GDS / recovery pages
+  const dismissBtn = page.locator([
+    // Skip / Not now variants
     'button:has-text("Skip")',
     'button:has-text("Not now")',
     'button:has-text("以后再说")',
@@ -488,17 +495,42 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
     'button:has-text("取消")',
     'a:has-text("Skip")',
     'a:has-text("Not now")',
+    // GDS landing page — confirm / done variants
+    'button:has-text("Yes, it was me")',
+    'button:has-text("Yes")',
+    'button:has-text("Done")',
+    'button:has-text("Continue")',
+    'button:has-text("Confirm")',
+    'button:has-text("完成")',
+    'button:has-text("继续")',
+    'button:has-text("繼續")',
+    'button:has-text("確認")',
+    'button:has-text("确认")',
+    'button:has-text("是的")',
+    'button:has-text("是，是我本人")',
+    'a:has-text("Done")',
+    'a:has-text("Continue")',
+    'a:has-text("完成")',
+    'a:has-text("继续")',
+    // Material design raised buttons (GDS uses these)
+    'div[role="button"]:has-text("Yes")',
+    'div[role="button"]:has-text("Done")',
+    'div[role="button"]:has-text("Continue")',
+    'div[role="button"]:has-text("Skip")',
   ].join(", "));
 
-  if ((await skipBtn.count()) > 0) {
-    await skipBtn.first().click();
-    await logger.log("INFO", "[gmail-login] Clicked skip on recovery options page");
+  if ((await dismissBtn.count()) > 0) {
+    const btnText = await dismissBtn.first().textContent().catch(() => "?");
+    await dismissBtn.first().click();
+    await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on recovery/GDS page`);
+    await page.waitForTimeout(3000);
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
     return true;
   }
 
   // Dump page text to help debug what buttons are present
-  const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 400) ?? "").catch(() => "?");
-  await logger.log("WARN", `[gmail-login] No skip button found on recovery page. Body: ${bodySnippet}`);
+  const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+  await logger.log("WARN", `[gmail-login] No dismiss button found on recovery/GDS page. Body: ${bodySnippet}`);
   return false;
 }
 
