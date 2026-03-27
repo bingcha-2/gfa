@@ -130,6 +130,7 @@ export async function processReplace(
     await inviteMemberOnPage(page, newUserEmail, logger);
 
     // Both page operations succeeded — now update DB atomically
+    let usedCaseInsensitive = false;
     await prisma.$transaction(async (tx) => {
       // Mark old member as REMOVED (case-insensitive match for safety)
       const updated = await tx.familyMember.updateMany({
@@ -144,7 +145,7 @@ export async function processReplace(
           familyGroupId,
           targetMemberEmail
         );
-        await logger.log("INFO", `Used case-insensitive update for ${targetMemberEmail}`);
+        usedCaseInsensitive = true;
       }
 
       // Upsert placeholder for newly invited member (sync may have already created a PENDING record)
@@ -165,10 +166,7 @@ export async function processReplace(
         data: { familyGroupId, email: newUserEmail, status: "SENT" },
       });
 
-      // Update FamilyGroup counters:
-      // - memberCount: -1 (removed old), net effect depends on PENDING counting
-      // - pendingInviteCount: +1 (new invite)
-      // - yearlyChangeCount: +1 (consumed one swap slot)
+      // Update FamilyGroup counters
       await tx.familyGroup.updateMany({
         where: { id: familyGroupId, memberCount: { gt: 0 } },
         data: { memberCount: { decrement: 1 } },
@@ -181,6 +179,11 @@ export async function processReplace(
         },
       });
     }, { timeout: 15000 });
+
+    // Log outside transaction to avoid SQLite write-lock contention
+    if (usedCaseInsensitive) {
+      await logger.log("INFO", `Used case-insensitive update for ${targetMemberEmail}`);
+    }
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
