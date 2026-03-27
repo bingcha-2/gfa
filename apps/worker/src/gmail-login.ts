@@ -124,7 +124,8 @@ export async function gmailLogin(
 
     await emailInput.first().fill(loginEmail);
     await clickNext(page, logger, 0, "identifier");
-    await page.waitForTimeout(4000);
+    // Wait for page to advance past identifier step (smart wait, up to 4s)
+    await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 4000 }).catch(() => {});
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
     // Verify the page actually advanced past the email step.
