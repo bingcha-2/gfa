@@ -219,9 +219,43 @@ pnpm dev:web
 
 ---
 
-## Windows 生产部署（私有托管）
+## 生产部署
 
-如果你是在 Windows 服务器上为客户交付，请使用项目根目录下的一键启动脚本，**无需手动执行上述步骤**：
+### 方式 A：`pnpm start`（云服务器推荐）
+
+适用于 Windows 云服务器（腾讯云、阿里云等），**带持久化日志**。
+
+```powershell
+# 1. 首次初始化
+pnpm dev:setup
+
+# 2. 启动生产模式（自动检测 build 产物，缺失则自动构建）
+pnpm start
+
+或者跳过编译，直接启动（要求 artifacts 已存在） 
+pnpm start --no-build
+```
+
+**特性**：
+- 自动编译：首次启动检测到未 build 会自动运行 `pnpm build`
+- 持久化日志：输出同时写入终端和 `logs/<服务名>-YYYY-MM-DD.log`
+- 按天轮转：日志文件按日期自动分割，带时间戳
+- 端口清理：启动前自动释放被占用的端口
+- 优雅退出：Ctrl+C 安全停止所有服务
+- **不操作数据库**：直接使用现有 `dev.db`，不会删库或重置
+
+**日志位置**：
+
+```
+logs/
+├── api-2026-03-27.log       # API 日志
+├── web-2026-03-27.log       # Web 日志
+└── worker-2026-03-27.log    # Worker 日志
+```
+
+### 方式 B：`Start-GFA.bat`（安装包模式）
+
+适用于通过安装包交付的场景，使用项目根目录下的一键启动脚本：
 
 ```
 Start-GFA.bat    ← 首次运行会自动完成所有初始化
@@ -229,17 +263,61 @@ Stop-GFA.bat     ← 停止所有服务
 Status-GFA.bat   ← 查看运行状态
 ```
 
-首次 `Start-GFA.bat` 会自动完成：
-
-1. 从 `.env.example` 创建 `.env`（若不存在）
-2. 弹出配置向导填写 AdsPower API Key 和 JWT Secret
-3. 安装依赖（`pnpm install`）
-4. 构建生产包（`pnpm build`，包含 shared 包）
-5. 启动 Redis（Docker 方式）
-6. 初始化并 seed 数据库
-7. 后台运行 API / Worker / Web 三个服务
-
 > 详细交付说明见 `docs/PRIVATE-HOSTING.md`。
+
+---
+
+## 域名 & HTTPS 配置（可选）
+
+若需要通过域名访问（如 `https://gfa.example.com`），推荐使用 Caddy 反向代理。
+
+### 1. 安装 Caddy
+
+从 [caddyserver.com/download](https://caddyserver.com/download) 下载 Windows amd64 版本，放到 `C:\caddy\caddy.exe`。
+
+### 2. 创建 Caddyfile
+
+新建 `C:\caddy\Caddyfile`：
+
+```caddyfile
+your-domain.com {
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}
+```
+
+### 3. 安全组放行端口
+
+在云服务商控制台的安全组入站规则中放行 **TCP 80** 和 **TCP 443**。
+
+### 4. 启动 Caddy
+
+```powershell
+# 测试运行
+cd C:\caddy
+.\caddy.exe run --config Caddyfile
+
+# 注册为 Windows 服务（开机自启）
+.\caddy.exe install
+.\caddy.exe start
+```
+
+### 5. 修改 `.env`
+
+```dotenv
+API_BASE_URL="https://your-domain.com/api"
+NEXT_PUBLIC_API_BASE_URL="https://your-domain.com/api"
+CORS_ALLOWED_ORIGINS="https://your-domain.com"
+CONSOLE_COOKIE_SECURE="true"
+```
+
+修改后重新 `pnpm start`。
+
+> 💡 Caddy 会自动申请 Let's Encrypt 免费 HTTPS 证书，无需手动配置。
 
 ---
 
@@ -248,7 +326,7 @@ Status-GFA.bat   ← 查看运行状态
 ```powershell
 git pull origin master   # 拉取最新代码
 pnpm install             # 安装/更新依赖（不会清除数据库）
-pnpm dev                 # 启动服务
+pnpm start               # 重新启动（自动重新构建）
 ```
 
 > ✅ 无需任何数据库迁移操作，直接启动即可。
@@ -261,10 +339,13 @@ pnpm dev                 # 启动服务
 # 首次初始化（clone 后必须执行一次）
 pnpm dev:setup
 
-# 启动所有服务（开发模式）
+# 启动所有服务（开发模式，带热更新）
 pnpm dev
 
-# 构建生产包
+# 启动所有服务（生产模式，带持久化日志）
+pnpm start
+
+# 单独构建生产包
 pnpm build
 
 # 重置数据库（⚠️ 会删除所有数据）

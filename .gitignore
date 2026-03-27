@@ -14,6 +14,7 @@ tmp
 playwright-report
 test-results
 artifacts
+logs/
 
 # Playwright screenshot outputs
 apps/worker/screenshots/

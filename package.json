@@ -11,7 +11,7 @@
     "dev:api": "pnpm --filter @gfa/api dev",
     "dev:worker": "pnpm --filter @gfa/worker dev",
     "dev:setup": "pnpm install && pnpm --filter @gfa/shared build && pnpm db:generate && pnpm db:init:sqlite && pnpm db:seed",
-    "start": "pnpm --parallel --filter @gfa/web --filter @gfa/api --filter @gfa/worker start",
+    "start": "node scripts/start.mjs",
     "start:web": "pnpm --filter @gfa/web start",
     "start:api": "pnpm --filter @gfa/api start",
     "start:worker": "pnpm --filter @gfa/worker start",
