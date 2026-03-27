@@ -107,10 +107,19 @@ export class AdsPowerClient {
 
       // Profile might still be launching — retry
       if (attempt < this.config.maxRetries) {
-        console.warn(
-          `[adspower] openProfile attempt ${attempt} failed: ${json.msg}, retrying in ${this.config.retryDelayMs}ms`
-        );
-        await sleep(this.config.retryDelayMs);
+        // Auto force-close if AdsPower says profile is in use
+        if (json.msg && (json.msg.includes("is being used") || json.msg.includes("not allowed to open"))) {
+          console.warn(
+            `[adspower] openProfile attempt ${attempt}: profile in use — force-closing before retry`
+          );
+          await this.closeProfile(profileId);
+          await sleep(2000);
+        } else {
+          console.warn(
+            `[adspower] openProfile attempt ${attempt} failed: ${json.msg}, retrying in ${this.config.retryDelayMs}ms`
+          );
+          await sleep(this.config.retryDelayMs);
+        }
         continue;
       }
 
