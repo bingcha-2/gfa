@@ -244,10 +244,14 @@ async function scrapeMembersFromPage(
   const uniqueCards: Array<{ href: string; displayName: string; gaiaId: string }> = [];
   for (const card of cardData) {
     if (!card.href) continue;
-    // Try /g/12345 first, then bare /member/12345
+
+    // Skip Family Manager card: their href uses /g/<id> (Google account page)
+    // while regular members use /member/i/<id> or /member/<id>
+    if (/\/g\/\d+/.test(card.href)) continue;
+
     const gaiaId =
-      card.href.match(/\/g\/(\d+)/)?.[1] ??
-      card.href.match(/\/member\/(\d+)/)?.[1] ??
+      card.href.match(/\/member\/i\/([-\d]+)/)?.[1] ??
+      card.href.match(/\/member\/([-\d]+)/)?.[1] ??
       card.href; // last resort: use full href as key
     if (!seenGaiaIds.has(gaiaId)) {
       seenGaiaIds.add(gaiaId);
@@ -267,18 +271,23 @@ async function scrapeMembersFromPage(
       await page.goto(detailUrl, { waitUntil: "load", timeout: 60000 });
       await page.waitForTimeout(500);
 
-      // Read email from detail page only — NOT displayName (page title would give 'Family member details')
-      // Extract email from detail page, excluding the admin/manager's own email
-      // (Google sometimes shows the admin email on pending invite detail pages)
-      const email = await page.evaluate((excludeEmail) => {
+      // Read ALL emails from detail page (raw, no exclusion)
+      const rawEmails: string[] = await page.evaluate(() => {
         const allText = Array.from(document.querySelectorAll("div, span, p"))
           .map((el) => el.textContent?.trim() ?? "")
           .filter((t) => t.includes("@") && t.includes("."));
-        return allText.find((t) =>
-          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) &&
-          t.toLowerCase() !== excludeEmail
-        ) ?? "";
-      }, adminEmail);
+        return allText.filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t));
+      });
+
+      // If the ONLY email on the page is the admin's, this is the manager's own card → skip
+      const nonAdminEmails = rawEmails.filter((e) => e.toLowerCase() !== adminEmail);
+      if (rawEmails.length > 0 && nonAdminEmails.length === 0) {
+        // Manager detail page — only admin email found, skip entirely
+        continue;
+      }
+
+      // Use the first non-admin email as the member's email
+      const email = nonAdminEmails[0]?.trim().toLowerCase() ?? "";
 
       // Role
       const role = await page.evaluate(() =>
@@ -296,8 +305,7 @@ async function scrapeMembersFromPage(
 
       if (email || card.gaiaId) {
         members.push({
-          // Normalize to lowercase for consistent lookup (Google pages may show mixed case)
-          email: email ? email.trim().toLowerCase() : "",
+          email,
           displayName: card.displayName,
           role,
           googleMemberId: card.gaiaId,
