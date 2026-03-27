@@ -344,36 +344,10 @@ async function reconcileMembers(
   const existing = await prisma.familyMember.findMany({ where: { familyGroupId } });
   const scrapedEmails = new Set(emailMembers.map((m) => m.email));
 
-  // --- Step 1: Mark members as REMOVED only when we can be sure they left ---
-  // If there are gaiaOnly scraped members, they may correspond to DB records
-  // not in scrapedEmails — be conservative and skip REMOVED marking for those.
-  for (const member of existing) {
-    // Bug fix: use explicit parentheses to avoid && vs || precedence issue.
-    // We only want to consider marking as REMOVED if:
-    //   (a) member has an email AND
-    //   (b) that email is NOT in the scraped set AND
-    //   (c) member is currently ACTIVE
-    if (
-      member.email &&
-      !scrapedEmails.has(member.email) &&
-      member.status === "ACTIVE"
-    ) {
-      if (gaiaOnlyMembers.length > 0) {
-        // Could correspond to a gaiaOnly scraped member — skip removal
-        await logger.log("DEBUG", `Skipping REMOVED for ${member.email} — ${gaiaOnlyMembers.length} unidentified scrape member(s) present`);
-      } else {
-        await prisma.familyMember.update({
-          where: { id: member.id },
-          data: { status: "REMOVED", removedAt: new Date() },
-        });
-        await logger.log("INFO", `Marked ${member.email} as REMOVED (not on page)`);
-      }
-    }
-  }
+  // Track which DB member IDs were claimed by gaiaOnly linking (Step 2)
+  const claimedIds = new Set<string>();
 
-  // --- Step 2: Upsert email members ---
-  // isPending = Google shows cancel-invite button → member has not accepted yet → keep PENDING.
-  // isPending = false → member has joined → set ACTIVE.
+  // --- Step 1: Upsert email members ---
   for (const scraped of emailMembers) {
     const newStatus = scraped.isPending ? "PENDING" : "ACTIVE";
     await prisma.familyMember.upsert({
@@ -383,7 +357,6 @@ async function reconcileMembers(
         role: scraped.role,
         status: newStatus,
         googleMemberId: scraped.googleMemberId || undefined,
-        // Only set joinedAt when transitioning to ACTIVE for the first time
         ...(newStatus === "ACTIVE" ? { joinedAt: new Date() } : {}),
       },
       create: {
@@ -400,10 +373,12 @@ async function reconcileMembers(
       `Upserted member: ${scraped.email} status=${newStatus} (gaia=${scraped.googleMemberId || "unknown"})`);
   }
 
-  // --- Step 3: Link gaiaOnly members to existing DB records ---
-  // Members with no email on page: try gaiaId → displayName → single-candidate elimination
+  // --- Step 2: Link gaiaOnly members to existing DB records ---
+  // These are members whose email Google hides (e.g. accepted invite shows display name only).
+  // Also match REMOVED records — they may have been re-invited.
   for (const scrape of gaiaOnlyMembers) {
-    await logger.log("INFO", `Linking gaiaOnly member: gaia=${scrape.googleMemberId}, name="${scrape.displayName}"`);
+    const newStatus = scrape.isPending ? "PENDING" : "ACTIVE";
+    await logger.log("INFO", `Linking gaiaOnly member: gaia=${scrape.googleMemberId}, name="${scrape.displayName}", pending=${scrape.isPending}`);
 
     // Tier 1: Already linked by gaiaId in a previous sync
     const byGaia = await prisma.familyMember.findFirst({
@@ -412,13 +387,17 @@ async function reconcileMembers(
     if (byGaia) {
       await prisma.familyMember.update({
         where: { id: byGaia.id },
-        data: { status: "ACTIVE", displayName: scrape.displayName || byGaia.displayName || undefined },
+        data: {
+          status: newStatus,
+          displayName: scrape.displayName || byGaia.displayName || undefined,
+        },
       });
-      await logger.log("INFO", `T1 linked: gaia=${scrape.googleMemberId} → ${byGaia.email}`);
+      claimedIds.add(byGaia.id);
+      await logger.log("INFO", `T1 linked: gaia=${scrape.googleMemberId} → ${byGaia.email} (status=${newStatus})`);
       continue;
     }
 
-    // Tier 2: Match by displayName
+    // Tier 2: Match by displayName (include REMOVED records — may be re-invited)
     if (scrape.displayName) {
       const byName = await prisma.familyMember.findFirst({
         where: { familyGroupId, displayName: scrape.displayName },
@@ -426,37 +405,44 @@ async function reconcileMembers(
       if (byName) {
         await prisma.familyMember.update({
           where: { id: byName.id },
-          data: { googleMemberId: scrape.googleMemberId, status: "ACTIVE" },
+          data: {
+            googleMemberId: scrape.googleMemberId,
+            status: newStatus,
+          },
         });
-        await logger.log("INFO", `T2 linked: gaia=${scrape.googleMemberId} → ${byName.email} via displayName`);
+        claimedIds.add(byName.id);
+        await logger.log("INFO", `T2 linked: gaia=${scrape.googleMemberId} → ${byName.email} via displayName (status=${newStatus})`);
         continue;
       }
     }
 
-    // Tier 3: Elimination — single unlinked active/pending member not in scrapedEmails
+    // Tier 3: Elimination — single unlinked non-scraped member (any status except already-claimed)
     const unlinked = existing.filter(
-      (m) => !m.googleMemberId && !scrapedEmails.has(m.email) && m.status !== "REMOVED"
+      (m) =>
+        !m.googleMemberId &&
+        !scrapedEmails.has(m.email) &&
+        !claimedIds.has(m.id)
     );
     if (unlinked.length === 1) {
       await prisma.familyMember.update({
         where: { id: unlinked[0].id },
         data: {
           googleMemberId: scrape.googleMemberId,
-          status: "ACTIVE",
+          status: newStatus,
           displayName: scrape.displayName || unlinked[0].displayName || undefined,
         },
       });
-      await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${unlinked[0].email} by elimination`);
+      claimedIds.add(unlinked[0].id);
+      await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${unlinked[0].email} by elimination (status=${newStatus})`);
     } else {
-      // Tier 4: No match found — create as INVITED so the member is not silently dropped
-      // This covers pending invites that are visible on page but have no email in our DB yet
+      // Tier 4: No match found — create placeholder
       const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
       await prisma.familyMember.upsert({
         where: { familyGroupId_email: { familyGroupId, email: placeholder } },
         update: {
           displayName: scrape.displayName || undefined,
           googleMemberId: scrape.googleMemberId,
-          status: "PENDING",
+          status: newStatus,
         },
         create: {
           familyGroupId,
@@ -464,14 +450,36 @@ async function reconcileMembers(
           displayName: scrape.displayName || undefined,
           googleMemberId: scrape.googleMemberId,
           role: scrape.role ?? "member",
-          status: "PENDING",
+          status: newStatus,
           joinedAt: new Date(),
         },
       });
       await logger.log("WARN",
-        `T4 created INVITED placeholder for gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
+        `T4 created placeholder for gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
         `real email unknown. ${unlinked.length} unmatched candidates.`
       );
     }
+  }
+
+  // --- Step 3: Mark stale members as REMOVED ---
+  // After gaiaOnly linking is complete, check which DB members are NOT represented
+  // on the scraped page. A member is stale if:
+  //   (a) its email is NOT in scrapedEmails (not an email-visible member)
+  //   (b) it was NOT claimed by gaiaOnly linking (not a gaia-linked member)
+  //   (c) its gaiaId is NOT in the scraped gaiaOnly set (not already matched by gaia)
+  //   (d) its status is ACTIVE or PENDING (not already REMOVED)
+  const scrapedGaiaIds = new Set(scrapedMembers.filter((m) => m.googleMemberId).map((m) => m.googleMemberId));
+
+  for (const member of existing) {
+    if (member.status === "REMOVED") continue;
+    if (scrapedEmails.has(member.email)) continue;
+    if (claimedIds.has(member.id)) continue;
+    if (member.googleMemberId && scrapedGaiaIds.has(member.googleMemberId)) continue;
+
+    await prisma.familyMember.update({
+      where: { id: member.id },
+      data: { status: "REMOVED", removedAt: new Date() },
+    });
+    await logger.log("INFO", `Marked ${member.email} as REMOVED (not on page, not linked by gaia)`);
   }
 }
