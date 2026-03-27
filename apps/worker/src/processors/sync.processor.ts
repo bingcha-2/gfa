@@ -89,7 +89,8 @@ export async function processSync(
     await logger.log("INFO", "Navigated to Family page for sync");
 
     // Scrape current members from the page (visits each member detail page for real emails)
-    const { members, availableSlots } = await scrapeMembersFromPage(page);
+    const adminEmail = (account.loginEmail ?? "").trim().toLowerCase();
+    const { members, availableSlots } = await scrapeMembersFromPage(page, adminEmail);
     await logger.log("INFO", `Found ${members.length} members on page`, { members });
 
     const afterPath = await browser.takeScreenshot(taskId, "sync");
@@ -179,7 +180,8 @@ export async function processSync(
  * Returns { members, availableSlots }.
  */
 async function scrapeMembersFromPage(
-  page: import("playwright").Page
+  page: import("playwright").Page,
+  adminEmail: string = ""
 ): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
   await page.waitForLoadState("load", { timeout: 60000 });
 
@@ -259,12 +261,17 @@ async function scrapeMembersFromPage(
       await page.waitForTimeout(500);
 
       // Read email from detail page only — NOT displayName (page title would give 'Family member details')
-      const email = await page.evaluate(() => {
+      // Extract email from detail page, excluding the admin/manager's own email
+      // (Google sometimes shows the admin email on pending invite detail pages)
+      const email = await page.evaluate((excludeEmail) => {
         const allText = Array.from(document.querySelectorAll("div, span, p"))
           .map((el) => el.textContent?.trim() ?? "")
           .filter((t) => t.includes("@") && t.includes("."));
-        return allText.find((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) ?? "";
-      });
+        return allText.find((t) =>
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) &&
+          t.toLowerCase() !== excludeEmail
+        ) ?? "";
+      }, adminEmail);
 
       // Role
       const role = await page.evaluate(() =>
