@@ -146,9 +146,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               <div className="bulk-format-hint" style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '12px 16px', fontSize: '0.875rem', fontFamily: 'monospace', lineHeight: 1.8 }}>
                 <div><strong>格式 1：</strong>邮箱----密码----辅助邮箱----2FA密钥</div>
                 <div><strong>格式 2：</strong>邮箱——密码——2FA密钥</div>
-                <div style={{ marginTop: '8px', color: 'var(--text-muted, #888)' }}>示例：</div>
-                <div style={{ color: 'var(--text-muted, #888)', wordBreak: 'break-all' }}>t01094635561@gmail.com----i42V1aLLlb!@#----t01094635561858@oldevlk.com----6eskzcgxbujk</div>
-                <div style={{ color: 'var(--text-muted, #888)', wordBreak: 'break-all' }}>GrobyGilchrest@gmail.com——7pgkuspyhj——aep4yientngz</div>
+                <div><strong>格式 3：</strong>邮箱----密码----辅助邮箱----2FA链接</div>
+                <div><strong>格式 4：</strong>邮箱----密码----2FA密钥----辅助邮箱</div>
+                <div style={{ marginTop: '8px', color: 'var(--text-muted, #888)' }}>字段 3、4 自动识别（含 @ 为辅助邮箱，否则为 2FA 密钥/链接）</div>
               </div>
               <div className="field">
                 <label htmlFor="bulk-lines">账号数据（每行一个）</label>

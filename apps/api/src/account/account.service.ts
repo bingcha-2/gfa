@@ -120,11 +120,40 @@ export class AccountService {
   }
 
   /**
+   * Extract TOTP secret from a value that might be a raw key or a 2fa.live URL.
+   * - https://2fa.live/tok/fg5nxcsrruy4pser6gidnmuhlqkw2uga → fg5nxcsrruy4pser6gidnmuhlqkw2uga
+   * - "2syt gltv 4kxh l37f" → "2SYTGLTV4KXHL37F" (strip spaces, uppercase)
+   * - raw key → strip spaces, uppercase
+   */
+  private extractTotp(raw: string): string {
+    const trimmed = raw.trim();
+    // Handle 2fa.live URL format
+    const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9]+)/i);
+    if (urlMatch) return urlMatch[1].toUpperCase();
+    // Strip spaces and uppercase for raw TOTP secrets
+    return trimmed.replace(/\s+/g, "").toUpperCase();
+  }
+
+  /**
+   * Classify a field as recovery email or TOTP secret based on content heuristics.
+   */
+  private classifyField(value: string): "email" | "totp" {
+    const trimmed = value.trim();
+    if (trimmed.includes("@")) return "email";
+    return "totp";
+  }
+
+  /**
    * Bulk import accounts from multi-line text.
    *
    * Supported formats (auto-detected per line):
-   *   Format A (---- separator): loginEmail----password----recoveryEmail----appPassword
-   *   Format B (—— separator):   loginEmail——password——totpSecret
+   *   ---- separator (fields 3+4 auto-detected by content):
+   *     email----password----recoveryEmail----totpSecret
+   *     email----password----totpSecret----recoveryEmail
+   *     email----password----recoveryEmail----https://2fa.live/tok/XXXXX
+   *     email----password----recoveryEmail  (no TOTP)
+   *   —— separator:
+   *     email——password——totpSecret
    *
    * Generates placeholder adspowerProfileId for each account.
    */
@@ -159,7 +188,7 @@ export class AccountService {
       let notes: string | undefined;
 
       if (line.includes("----")) {
-        // Format A: email----password----recoveryEmail----totpSecret
+        // Format A: ---- separator, fields 3+4 auto-detected
         const parts = line.split("----").map((p) => p.trim());
         if (parts.length < 2) {
           errors.push(`Line ${i + 1}: not enough fields (need at least email----password)`);
@@ -167,10 +196,20 @@ export class AccountService {
         }
         loginEmail = parts[0];
         loginPassword = parts[1];
-        recoveryEmail = parts[2] || undefined;
-        totpSecret = parts[3] || undefined;
-        // parts[4]: optional region/country — stored in notes
-        notes = parts[4]?.trim() || undefined;
+
+        // Auto-detect fields 3 and 4 by content (email vs totp/url)
+        const extra = parts.slice(2).filter(Boolean);
+        for (const field of extra) {
+          const kind = this.classifyField(field);
+          if (kind === "email" && !recoveryEmail) {
+            recoveryEmail = field;
+          } else if (kind === "totp" && !totpSecret) {
+            totpSecret = this.extractTotp(field);
+          } else {
+            // Fallback: store extra unclassified field in notes
+            notes = notes ? `${notes}; ${field}` : field;
+          }
+        }
       } else if (line.includes("——")) {
         // Format B: email——password——totpSecret
         const parts = line.split("——").map((p) => p.trim());
@@ -180,7 +219,7 @@ export class AccountService {
         }
         loginEmail = parts[0];
         loginPassword = parts[1];
-        totpSecret = parts[2] || undefined;
+        totpSecret = parts[2] ? this.extractTotp(parts[2]) : undefined;
       } else {
         errors.push(`Line ${i + 1}: unrecognized format (expected ---- or —— separator)`);
         continue;

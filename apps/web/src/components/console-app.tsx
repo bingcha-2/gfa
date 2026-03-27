@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
@@ -83,7 +83,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const [data, setData] = useState<ConsoleData>(initialData);
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<ConsoleSection>("overview");
-  const [isLoading, startTransition] = useTransition();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
   const [pwForm, setPwForm] = useState({ current: "", newPw: "", confirm: "" });
@@ -747,7 +747,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   return (
     <>
       {/* Global loading bar */}
-      {(isLoading || isActioning) && <div className="gfa-loading-bar" />}
+      {(isRefreshing || isActioning) && <div className="gfa-loading-bar" />}
 
       {/* Global toast */}
       {toast && (
@@ -765,12 +765,19 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         <div className="nav-links">
           <button
             className="button secondary"
-            disabled={isLoading || isActioning}
-            onClick={() => startTransition(() => void loadDashboard())}
+            disabled={isRefreshing || isActioning}
+            onClick={async () => {
+              setIsRefreshing(true);
+              try {
+                await loadDashboard();
+              } finally {
+                setIsRefreshing(false);
+              }
+            }}
             type="button"
             style={{ gap: 8 }}
           >
-            {isLoading ? (
+            {isRefreshing ? (
               <><Spinner size={14} color="currentColor" /> 刷新中...</>
             ) : "刷新数据"}
           </button>
