@@ -137,8 +137,8 @@ export async function gmailLogin(
     await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
-    // Step 4: Handle post-login challenges (up to 4 rounds)
-    for (let round = 0; round < 4; round++) {
+    // Step 4: Handle post-login challenges (up to 8 rounds)
+    for (let round = 0; round < 8; round++) {
       await logger.log("INFO", `[gmail-login] Round ${round + 1}, URL: ${page.url()}`);
 
       // Dismiss any error popup before checking success/challenges.
@@ -153,6 +153,24 @@ export async function gmailLogin(
       }
 
       // --- Challenge detection ---
+
+      // Password page still showing (e.g. Google needed extra time to process)
+      // Re-click Next to submit and avoid wasting a round
+      if (roundUrl.includes("/challenge/pwd")) {
+        const pwdInput = page.locator(
+          'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
+        );
+        if ((await pwdInput.count()) > 0 && await pwdInput.first().isVisible()) {
+          await logger.log("WARN", "[gmail-login] Still on password page — re-submitting");
+          await pwdInput.first().fill(loginPassword);
+          await clickNext(page, logger);
+        } else {
+          await logger.log("WARN", "[gmail-login] On pwd URL but no visible input — waiting");
+        }
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        continue;
+      }
 
       // TOTP 2FA
       const totpInput = page.locator(
