@@ -147,9 +147,11 @@ export async function processReplace(
         await logger.log("INFO", `Used case-insensitive update for ${targetMemberEmail}`);
       }
 
-      // Create placeholder for newly invited member
-      await tx.familyMember.create({
-        data: {
+      // Upsert placeholder for newly invited member (sync may have already created a PENDING record)
+      await tx.familyMember.upsert({
+        where: { familyGroupId_email: { familyGroupId, email: newUserEmail } },
+        update: { status: "PENDING", displayName: newUserEmail.split("@")[0] },
+        create: {
           familyGroupId,
           email: newUserEmail,
           displayName: newUserEmail.split("@")[0],
