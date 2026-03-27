@@ -24,7 +24,7 @@ const LOGIN_TIMEOUT_MS = 60_000;
 
 export type GmailLoginResult =
   | { success: true }
-  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT"; detail: string };
+  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT" | "PHONE_CHALLENGE"; detail: string };
 
 export interface LoginCredentials {
   loginEmail: string;
@@ -219,7 +219,7 @@ export async function gmailLogin(
       if ((await phoneChallenge.count()) > 0 || await isPhoneChallengePage(page)) {
         const detail = `Phone/SMS verification required at ${roundUrl}`;
         await logger.log("WARN", `[gmail-login] Unhandled phone challenge: ${detail}`);
-        return { success: false, reason: "VERIFICATION_REQUIRED", detail };
+        return { success: false, reason: "PHONE_CHALLENGE", detail };
       }
 
       // Unknown state — wait briefly before next round

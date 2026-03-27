@@ -68,6 +68,10 @@ export async function processHealth(
       if (loginResult.reason === "TRANSIENT") {
         throw new Error(`Login transient failure: ${loginResult.detail}`);
       }
+      // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
+      if (loginResult.reason === "PHONE_CHALLENGE") {
+        throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
+      }
       // Both VERIFICATION_REQUIRED and UNKNOWN reasons require manual intervention
       const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
         ? "VERIFICATION_REQUIRED"

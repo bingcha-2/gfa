@@ -82,6 +82,10 @@ export async function processRemove(
       if (loginResult.reason === "TRANSIENT") {
         throw new Error(`Login transient failure: ${loginResult.detail}`);
       }
+      // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
+      if (loginResult.reason === "PHONE_CHALLENGE") {
+        throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
+      }
       await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       // Throw to exit try so finally releases pool; caller should NOT retry this task
