@@ -245,14 +245,14 @@ async function scrapeMembersFromPage(
   for (const card of cardData) {
     if (!card.href) continue;
 
-    // Skip Family Manager card: their href uses /g/<id> (Google account page)
-    // while regular members use /member/i/<id> or /member/<id>
-    if (/\/g\/\d+/.test(card.href)) continue;
-
+    // Extract gaiaId from href:
+    //   /g/<id> = Google account (manager or accepted member)
+    //   /member/i/<id> or /member/<id> = pending invite
     const gaiaId =
+      card.href.match(/\/g\/([\d]+)/)?.[1] ??
       card.href.match(/\/member\/i\/([-\d]+)/)?.[1] ??
       card.href.match(/\/member\/([-\d]+)/)?.[1] ??
-      card.href; // last resort: use full href as key
+      card.href;
     if (!seenGaiaIds.has(gaiaId)) {
       seenGaiaIds.add(gaiaId);
       uniqueCards.push({ ...card, gaiaId });
@@ -279,14 +279,17 @@ async function scrapeMembersFromPage(
         return allText.filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t));
       });
 
-      // If the ONLY email on the page is the admin's, this is the manager's own card → skip
+      // If the ONLY email on the page is the admin's AND this is a /g/ card (Google account page),
+      // this is the manager's own card → skip entirely.
+      // For /member/i/ cards (pending invites) showing admin email, keep as gaiaOnly.
       const nonAdminEmails = rawEmails.filter((e) => e.toLowerCase() !== adminEmail);
-      if (rawEmails.length > 0 && nonAdminEmails.length === 0) {
-        // Manager detail page — only admin email found, skip entirely
+      const isGoogleAccountCard = /\/g\/\d+/.test(card.href);
+      if (rawEmails.length > 0 && nonAdminEmails.length === 0 && isGoogleAccountCard) {
+        // Manager detail page — only admin email found on /g/ card, skip entirely
         continue;
       }
 
-      // Use the first non-admin email as the member's email
+      // Use the first non-admin email as the member's email (empty → becomes gaiaOnly)
       const email = nonAdminEmails[0]?.trim().toLowerCase() ?? "";
 
       // Role
