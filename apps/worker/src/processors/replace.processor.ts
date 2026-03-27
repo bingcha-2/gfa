@@ -154,21 +154,27 @@ export async function processReplace(
     // Step 3: Invite the new member on page
     await inviteMemberOnPage(page, newUserEmail, logger);
 
-    // --- Capture gaiaId for newly invited member ---
+    // --- Verify invite by checking new member appears on family page ---
     let newMemberGaiaId: string | undefined;
     try {
       if (!page.url().includes("family/details")) {
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
       }
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(2000);
       newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
       if (newMemberGaiaId) {
-        await logger.log("INFO", `Captured gaiaId=${newMemberGaiaId} for new member ${newUserEmail}`);
+        await logger.log("INFO", `Verified invite: found ${newUserEmail} on family page (gaiaId=${newMemberGaiaId})`);
       } else {
-        await logger.log("WARN", `Could not capture gaiaId for ${newUserEmail} — will be filled on next sync`);
+        // New member not found — invite may have silently failed
+        await logger.log("ERROR", `Post-invite verification failed: ${newUserEmail} not found on family page`);
+        throw new Error(
+          `Invite verification failed: ${newUserEmail} not found on family page after invite — ` +
+          `Google may have rejected the invite silently`
+        );
       }
-    } catch {
-      await logger.log("WARN", "gaiaId capture failed for new member — will be filled on next sync");
+    } catch (err: any) {
+      if (err.message?.includes("Invite verification failed")) throw err;
+      await logger.log("WARN", `gaiaId capture error for new member (non-fatal): ${err.message}`);
     }
 
     // Both page operations succeeded — now update DB atomically
@@ -554,6 +560,49 @@ async function removeMemberOnPage(
 
       await page.waitForTimeout(5000);
       await page.waitForLoadState("load", { timeout: 60000 });
+
+      // Verify we actually left the TOTP challenge page
+      // If still stuck, retry with a fresh TOTP code (first one may have expired)
+      for (let totpRetry = 0; totpRetry < 2; totpRetry++) {
+        const postTotpUrl = page.url();
+        const stillOnChallenge = postTotpUrl.includes("challenge/totp") ||
+          postTotpUrl.includes("challenge/az") ||
+          (postTotpUrl.includes("accounts.google.com") && postTotpUrl.includes("challenge"));
+
+        if (!stillOnChallenge) break; // Successfully passed TOTP
+
+        if (totpRetry === 0) {
+          await logger.log("WARN", `Still on TOTP page after submission, retrying with fresh code. URL: ${postTotpUrl}`);
+          // Wait for a fresh TOTP window
+          const retryRemaining = totpSecondsRemaining();
+          if (retryRemaining < 8) {
+            await page.waitForTimeout((retryRemaining + 1) * 1000);
+          }
+          const freshCode = generateTOTP(credentials!.totpSecret!);
+          await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
+
+          const retryInput = page.locator(
+            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+          );
+          if ((await retryInput.count()) > 0) {
+            await retryInput.first().fill("");
+            await page.waitForTimeout(300);
+            await retryInput.first().fill(freshCode);
+            const retryBtn = page.locator(
+              'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
+            );
+            if ((await retryBtn.count()) > 0) {
+              await retryBtn.first().click();
+              await page.waitForTimeout(5000);
+              await page.waitForLoadState("load", { timeout: 60000 });
+            }
+          }
+        } else {
+          throw new Error(
+            `TOTP verification failed after retry — still on challenge page. URL: ${postTotpUrl}`
+          );
+        }
+      }
     }
 
     // Step 4: After auth, Google redirects back — may need to click remove again
@@ -769,9 +818,44 @@ async function inviteMemberOnPage(
   }
 
   await sendButton.first().click();
-  await logger.log("INFO", `Sent invite to ${email}`);
+  await logger.log("INFO", `Clicked send for ${email}`);
   await page.waitForTimeout(3000);
   await page.waitForLoadState("load", { timeout: 60000 });
+
+  // Check for Google error messages after sending
+  // Google shows inline errors like "can't be invited", "already a member", etc.
+  const errorSelectors = [
+    'div[role="alert"]',
+    'div.GQ8Pzc',  // Google's error message container
+    'div.o6cuMc',  // Another error container
+    'span.k1V3Ic',  // Error text span
+    'div[aria-live="assertive"]',
+  ];
+  for (const sel of errorSelectors) {
+    const errEl = page.locator(sel);
+    if ((await errEl.count()) > 0) {
+      const errText = (await errEl.first().textContent())?.trim();
+      if (errText && errText.length > 3) {
+        // Only treat as error if it looks like an actual error message
+        const isError = /can'?t|error|fail|unable|already|invalid|不能|无法|已经|錯誤|错误/i.test(errText);
+        if (isError) {
+          throw new Error(`Google invite error for ${email}: "${errText}"`);
+        }
+      }
+    }
+  }
+
+  // Verify we navigated away from the invite page
+  // If still on invitemembers page, the invite likely failed silently
+  const postSendUrl = page.url();
+  if (postSendUrl.includes("invitemembers")) {
+    // Still on invite page — try to capture any visible error text
+    const bodyText = await page.locator("body").textContent().catch(() => "");
+    const snippet = bodyText?.substring(0, 500) || "";
+    throw new Error(`Invite may have failed — still on invite page after send. URL: ${postSendUrl}. Page snippet: ${snippet.substring(0, 200)}`);
+  }
+
+  await logger.log("INFO", `Sent invite to ${email}`);
 }
 
 /**

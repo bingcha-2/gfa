@@ -120,6 +120,18 @@ export function GroupPanel({
     }
   }, [accounts, form.accountId]);
 
+  // When parent refreshes inventory (groups array changes),
+  // also re-fetch the expanded group's member detail
+  useEffect(() => {
+    if (!expandedGroupId) return;
+    let cancelled = false;
+    apiRequest<GroupDetail>(`family-groups/${expandedGroupId}`)
+      .then((detail) => { if (!cancelled) setGroupDetail(detail); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
+
   function showToast(type: 'success' | 'error', msg: string) {
     setToast({ type, msg });
     setTimeout(() => setToast(null), 3500);
@@ -556,8 +568,8 @@ user2@gmail.com`}
                             <td>
                               <div className="strong">{group.groupName}</div>
                               <div className="muted">
-                                {group._count?.members ?? group.memberCount} members ·{" "}
-                                {group._count?.invites ?? group.pendingInviteCount} invites
+                                {group.memberCount ?? group._count?.members ?? 0} members ·{" "}
+                                {group.pendingInviteCount ?? group._count?.invites ?? 0} invites
                               </div>
                             </td>
                             <td>

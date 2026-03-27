@@ -122,26 +122,46 @@ export async function processSync(
     const afterPath = await browser.takeScreenshot(taskId, "sync");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
+    // Deduplicate members by email (same email invited twice → count as one slot).
+    // First occurrence wins for gaiaId, displayName etc.
+    const seenEmails = new Set<string>();
+    const dedupedMembers = members.filter((m) => {
+      const key = m.email?.toLowerCase();
+      if (!key) return true; // gaiaOnly members always kept
+      if (seenEmails.has(key)) return false;
+      seenEmails.add(key);
+      return true;
+    });
+
+    if (dedupedMembers.length < members.length) {
+      await logger.log("WARN",
+        `Deduped ${members.length - dedupedMembers.length} duplicate email(s) from scrape result (${members.length} → ${dedupedMembers.length})`);
+    }
+
     // Reconcile with database
-    await reconcileMembers(prisma, familyGroupId, members, logger);
+    await reconcileMembers(prisma, familyGroupId, dedupedMembers, logger);
 
     // Update group counts.
     // Google family groups: 1 manager (admin) + up to 5 non-admin members = 6 total.
     // We only count non-admin members against the slot limit.
-    const nonAdminMembers = members.filter(
+    const dedupedNonAdmin = dedupedMembers.filter(
       (m) => !m.role.toLowerCase().includes("manager")
     );
     const NON_ADMIN_CAPACITY = 5; // Google always allows 5 non-admin seats
 
-    // Prefer the slot count scraped from Google's invite button (most accurate);
-    // fall back to computing from non-admin member count.
-    const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - nonAdminMembers.length);
+    // IMPORTANT: For slot calculation, use the RAW (non-deduped) member count,
+    // because Google counts duplicate invitations as separate slots.
+    // Deduped count is only used for DB storage (memberCount).
+    const rawNonAdmin = members.filter(
+      (m) => !m.role.toLowerCase().includes("manager")
+    );
+    const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - rawNonAdmin.length);
     const finalAvailableSlots = Math.min(availableSlots, computedSlots);
 
     await prisma.familyGroup.update({
       where: { id: familyGroupId },
       data: {
-        memberCount: nonAdminMembers.length,
+        memberCount: dedupedNonAdmin.length,
         availableSlots: finalAvailableSlots,
         lastSyncedAt: new Date(),
       },
@@ -150,7 +170,7 @@ export async function processSync(
     await logger.updateStatus("SUCCESS");
     await logger.log(
       "INFO",
-      `Sync complete: ${nonAdminMembers.length} non-admin members (${members.length} total incl. manager), ${finalAvailableSlots} slots available`
+      `Sync complete: ${dedupedNonAdmin.length} non-admin members (deduped), ${rawNonAdmin.length} raw slots used (Google view), ${finalAvailableSlots} slots available`
     );
 
     // Non-fatal: update subscription info while we still have an active session
@@ -366,7 +386,8 @@ async function scrapeMembersFromPage(
     await page.waitForTimeout(500);
   }
 
-  const finalSlots = slotMatch ? parseInt(slotMatch[1], 10) : Math.max(0, 6 - members.length);
+  // members array already excludes the Family Manager, so capacity is 5 (not 6)
+  const finalSlots = slotMatch ? parseInt(slotMatch[1], 10) : Math.max(0, 5 - members.length);
   return { members, availableSlots: finalSlots };
 }
 

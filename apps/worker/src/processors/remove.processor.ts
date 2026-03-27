@@ -404,6 +404,49 @@ async function removeMemberOnPage(
 
       await page.waitForTimeout(5000);
       await page.waitForLoadState("load", { timeout: 60000 });
+
+      // Verify we actually left the TOTP challenge page
+      // If still stuck, retry with a fresh TOTP code (first one may have expired)
+      for (let totpRetry = 0; totpRetry < 2; totpRetry++) {
+        const postTotpUrl = page.url();
+        const stillOnChallenge = postTotpUrl.includes("challenge/totp") ||
+          postTotpUrl.includes("challenge/az") ||
+          (postTotpUrl.includes("accounts.google.com") && postTotpUrl.includes("challenge"));
+
+        if (!stillOnChallenge) break; // Successfully passed TOTP
+
+        if (totpRetry === 0) {
+          await logger.log("WARN", `Still on TOTP page after submission, retrying with fresh code. URL: ${postTotpUrl}`);
+          // Wait for a fresh TOTP window
+          const retryRemaining = totpSecondsRemaining();
+          if (retryRemaining < 8) {
+            await page.waitForTimeout((retryRemaining + 1) * 1000);
+          }
+          const freshCode = generateTOTP(credentials!.totpSecret!);
+          await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
+
+          const retryInput = page.locator(
+            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+          );
+          if ((await retryInput.count()) > 0) {
+            await retryInput.first().fill("");
+            await page.waitForTimeout(300);
+            await retryInput.first().fill(freshCode);
+            const retryBtn = page.locator(
+              'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
+            );
+            if ((await retryBtn.count()) > 0) {
+              await retryBtn.first().click();
+              await page.waitForTimeout(5000);
+              await page.waitForLoadState("load", { timeout: 60000 });
+            }
+          }
+        } else {
+          throw new Error(
+            `TOTP verification failed after retry — still on challenge page. URL: ${postTotpUrl}`
+          );
+        }
+      }
     }
 
     // Step 4: After auth, may need to click remove again
