@@ -11,7 +11,7 @@
  * 7. Release profile back to pool
  */
 
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { InviteMemberPayload } from "@gfa/shared";
 
@@ -103,7 +103,7 @@ export async function processInvite(
       await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       // Throw to ensure finally block runs (pool.release); catch block must not overwrite MANUAL_REVIEW status
-      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+      throw new UnrecoverableError("MANUAL_REVIEW");
     }
 
     // Ensure family group exists
@@ -135,7 +135,7 @@ export async function processInvite(
     await logger.log("INFO", "Invite completed successfully");
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
-    if ((error as any).__manualReview) throw error;
+    if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
     try {

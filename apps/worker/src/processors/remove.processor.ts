@@ -13,7 +13,7 @@
  * Reuses removeMemberOnPage logic from replace.processor.
  */
 
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient, MemberStatus } from "@prisma/client";
 import type { RemoveMemberPayload } from "@gfa/shared";
 
@@ -85,7 +85,7 @@ export async function processRemove(
       await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       // Throw to exit try so finally releases pool; caller should NOT retry this task
-      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+      throw new UnrecoverableError("MANUAL_REVIEW");
     }
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
@@ -133,7 +133,7 @@ export async function processRemove(
     await logger.log("INFO", `Member ${memberEmail} removed successfully`);
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status and don't rollback member status
-    if ((error as any).__manualReview) throw error;
+    if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
 

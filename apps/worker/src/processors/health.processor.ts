@@ -5,7 +5,7 @@
  * and updates Account.status accordingly.
  */
 
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { HealthCheckAccountPayload } from "@gfa/shared";
 
@@ -123,7 +123,7 @@ export async function processHealth(
     await logger.log("INFO", `Health check complete: ${healthStatus}`);
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
-    if ((error as any).__manualReview) throw error;
+    if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
 

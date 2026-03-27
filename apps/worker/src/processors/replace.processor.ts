@@ -12,7 +12,7 @@
  * 8. Release lock, close profile
  */
 
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { ReplaceMemberPayload } from "@gfa/shared";
 
@@ -81,7 +81,7 @@ export async function processReplace(
       }
       await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
-      throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
+      throw new UnrecoverableError("MANUAL_REVIEW");
     }
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
@@ -170,7 +170,7 @@ export async function processReplace(
     await logger.log("INFO", "Replace completed successfully");
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
-    if ((error as any).__manualReview) throw error;
+    if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
 
