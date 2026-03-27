@@ -180,7 +180,7 @@ export async function processReplace(
           yearlyChangeCount: { increment: 1 },
         },
       });
-    });
+    }, { timeout: 15000 });
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
