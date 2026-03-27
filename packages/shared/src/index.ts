@@ -75,3 +75,17 @@ export type TaskStatusValue =
   | "FAILED_FINAL"
   | "MANUAL_REVIEW"
   | "CANCELLED";
+
+/**
+ * Default BullMQ job options for all task queues.
+ * Spread into every queue.add() call so TRANSIENT failures auto-retry.
+ *
+ * - attempts: 3 total tries (1 initial + 2 retries)
+ * - backoff: exponential, 30s → 60s → 120s
+ */
+export const JOB_DEFAULTS = {
+  attempts: 3,
+  backoff: { type: "exponential" as const, delay: 30_000 },
+  removeOnComplete: { count: 100 },
+  removeOnFail: { count: 500 },
+} as const;

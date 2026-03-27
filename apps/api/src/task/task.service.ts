@@ -7,7 +7,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 
 import { PrismaService } from "../prisma/prisma.service";
-import { QUEUE_NAMES, TASK_TYPES } from "@gfa/shared";
+import { QUEUE_NAMES, TASK_TYPES, JOB_DEFAULTS } from "@gfa/shared";
 
 @Injectable()
 export class TaskService {
@@ -111,10 +111,8 @@ export class TaskService {
       };
 
       await queue.add(task.type, payload, {
+        ...JOB_DEFAULTS,
         jobId: `retry-${task.id}-${Date.now()}`,
-        attempts: 1,
-        removeOnComplete: { count: 100 },
-        removeOnFail: false,
       });
     }
 

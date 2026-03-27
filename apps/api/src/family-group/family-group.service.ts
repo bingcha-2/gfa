@@ -4,7 +4,7 @@ import { Queue } from "bullmq";
 import { FamilyGroup } from "@prisma/client";
 
 import { PrismaService } from "../prisma/prisma.service";
-import { QUEUE_NAMES, TASK_TYPES } from "@gfa/shared";
+import { QUEUE_NAMES, TASK_TYPES, JOB_DEFAULTS } from "@gfa/shared";
 
 
 @Injectable()
@@ -110,7 +110,7 @@ export class FamilyGroupService {
       const job = await this.syncQueue.add(
         "sync-family-group",
         { taskId: task.id, familyGroupId: groupId, accountId: group.accountId },
-        { removeOnComplete: 100, removeOnFail: 500 }
+        { ...JOB_DEFAULTS }
       );
       return { queued: true, jobId: job.id, taskId: task.id };
     } catch (queueError) {
@@ -185,7 +185,7 @@ export class FamilyGroupService {
           accountId: group.accountId,
           memberEmail
         },
-        { removeOnComplete: 100, removeOnFail: 500 }
+        { ...JOB_DEFAULTS }
       );
     } catch (queueError) {
       // Queue add failed — rollback to original status
@@ -266,8 +266,7 @@ export class FamilyGroupService {
             "remove-member",
             { taskId: outcome.taskId, familyGroupId: groupId, accountId: group.accountId, memberEmail: normEmail },
             {
-              removeOnComplete: 100,
-              removeOnFail: 500,
+              ...JOB_DEFAULTS,
               jobId: `remove:${groupId}:${normEmail}` // deduplication key
             }
           );
@@ -366,8 +365,7 @@ export class FamilyGroupService {
           "invite-member",
           { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email },
           {
-            removeOnComplete: 100,
-            removeOnFail: 500,
+            ...JOB_DEFAULTS,
             jobId: `invite:${groupId}:${email}` // deduplication key
           }
         );
@@ -626,7 +624,8 @@ export class FamilyGroupService {
     const normalizedEmail = email.trim().toLowerCase();
 
     // --- Step 1: find FamilyMember records (prefer ACTIVE) ---
-    const members = await this.prisma.familyMember.findMany({
+    // Try exact match first; fall back to case-insensitive raw SQL for SQLite
+    let members = await this.prisma.familyMember.findMany({
       where: { email: normalizedEmail },
       include: {
         familyGroup: {
@@ -638,22 +637,57 @@ export class FamilyGroupService {
       orderBy: { createdAt: "desc" }
     });
 
+    // Fallback: case-insensitive lookup for records stored with mixed-case email
+    if (members.length === 0) {
+      const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT id FROM FamilyMember WHERE LOWER(email) = ? ORDER BY createdAt DESC`,
+        normalizedEmail
+      );
+      if (rows.length > 0) {
+        members = await this.prisma.familyMember.findMany({
+          where: { id: { in: rows.map((r) => r.id) } },
+          include: {
+            familyGroup: {
+              include: {
+                account: { select: { loginEmail: true } }
+              }
+            }
+          },
+          orderBy: { createdAt: "desc" }
+        });
+      }
+    }
+
     if (members.length > 0) {
       // Pick ACTIVE first, fallback to latest record
       const member = members.find((m) => m.status === "ACTIVE") ?? members[0];
       const fg = member.familyGroup;
 
-      // Find the most recent JOIN_GROUP order tied to this email & group
-      const order = await this.prisma.order.findFirst({
+      // Find the most recent order tied to this email & group
+      // Try exact match first, then case-insensitive fallback
+      let order = await this.prisma.order.findFirst({
         where: {
           userEmail: normalizedEmail,
-          // Only match JOIN_GROUP orders; exclude ACCOUNT_SWAP orders to avoid false positives
-          redeemCode: { codeType: "JOIN_GROUP" },
           ...(fg ? { familyGroupId: fg.id } : {})
         },
         include: { redeemCode: { select: { code: true } } },
         orderBy: { createdAt: "desc" }
       });
+
+      // Fallback: case-insensitive order lookup
+      if (!order && fg) {
+        const orderRows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+          `SELECT id FROM "Order" WHERE LOWER(userEmail) = ? AND familyGroupId = ? ORDER BY createdAt DESC LIMIT 1`,
+          normalizedEmail,
+          fg.id
+        );
+        if (orderRows.length > 0) {
+          order = await this.prisma.order.findFirst({
+            where: { id: orderRows[0].id },
+            include: { redeemCode: { select: { code: true } } }
+          });
+        }
+      }
 
       return {
         found: true,
@@ -676,11 +710,12 @@ export class FamilyGroupService {
       };
     }
 
-    // --- Step 2: no FamilyMember — fallback to Order table (JOIN_GROUP only) ---
-    const order = await this.prisma.order.findFirst({
+    // --- Step 2: no FamilyMember — fallback to Order table ---
+    // Removed codeType filter: order may have been created from any code type,
+    // and the filter was causing valid orders to be missed.
+    let order = await this.prisma.order.findFirst({
       where: {
         userEmail: normalizedEmail,
-        redeemCode: { codeType: "JOIN_GROUP" }
       },
       include: {
         redeemCode: { select: { code: true } },
@@ -690,6 +725,25 @@ export class FamilyGroupService {
       },
       orderBy: { createdAt: "desc" }
     });
+
+    // Fallback: case-insensitive order lookup for legacy/mixed-case records
+    if (!order) {
+      const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT id FROM "Order" WHERE LOWER(userEmail) = ? ORDER BY createdAt DESC LIMIT 1`,
+        normalizedEmail
+      );
+      if (rows.length > 0) {
+        order = await this.prisma.order.findFirst({
+          where: { id: rows[0].id },
+          include: {
+            redeemCode: { select: { code: true } },
+            familyGroup: {
+              include: { account: { select: { loginEmail: true } } }
+            }
+          }
+        });
+      }
+    }
 
     if (!order) {
       return { found: false };

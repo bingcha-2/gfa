@@ -3,7 +3,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { IsEmail, IsString } from "class-validator";
 import { Queue } from "bullmq";
 
-import { QUEUE_NAMES } from "@gfa/shared";
+import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
 import { Roles } from "./auth/roles.decorator";
 
 class EnqueueInviteDto {
@@ -31,8 +31,7 @@ export class QueueController {
   @Post("enqueue-invite")
   async enqueueInvite(@Body() body: EnqueueInviteDto) {
     const job = await this.inviteQueue.add("invite-member", body, {
-      removeOnComplete: 100,
-      removeOnFail: 1000
+      ...JOB_DEFAULTS,
     });
 
     return {

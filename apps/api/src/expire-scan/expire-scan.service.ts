@@ -5,7 +5,7 @@ import { Queue } from "bullmq";
 import { OrderStatus } from "@prisma/client";
 
 import { PrismaService } from "../prisma/prisma.service";
-import { QUEUE_NAMES } from "@gfa/shared";
+import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
 
 export type ExpiredOrderResult = {
   orderId: string;
@@ -147,10 +147,9 @@ export class ExpireScanService {
                 reason: "EXPIRED"
               },
               {
+                ...JOB_DEFAULTS,
                 // Secondary deduplication guard
                 jobId: `expire-${order.id}`,
-                removeOnComplete: 100,
-                removeOnFail: 500
               }
             );
           }

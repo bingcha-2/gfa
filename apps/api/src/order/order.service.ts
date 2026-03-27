@@ -12,7 +12,7 @@ import { nanoid } from "nanoid";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedeemCodeService } from "../redeem-code/redeem-code.service";
 import { FamilyGroupService } from "../family-group/family-group.service";
-import { QUEUE_NAMES } from "@gfa/shared";
+import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
 
 type PublicOrderPayload = {
   orderNo: string;
@@ -318,7 +318,7 @@ export class OrderService {
         accountId: group!.accountId,
         userEmail: normalizedEmail
       },
-      { removeOnComplete: 100, removeOnFail: 500 }
+      { ...JOB_DEFAULTS }
     );
 
     return {
@@ -375,7 +375,7 @@ export class OrderService {
         targetMemberEmail,
         newUserEmail
       },
-      { removeOnComplete: 100, removeOnFail: 500 }
+      { ...JOB_DEFAULTS }
     );
 
     return { queued: true, taskId: task.id };
@@ -507,9 +507,8 @@ export class OrderService {
           reason: "SWAP_REQUEST"
         },
         {
+          ...JOB_DEFAULTS,
           jobId: task.id,
-          removeOnComplete: 100,
-          removeOnFail: 500
         }
       );
     } catch (error) {
