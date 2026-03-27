@@ -131,11 +131,21 @@ export async function processReplace(
 
     // Both page operations succeeded — now update DB atomically
     await prisma.$transaction(async (tx) => {
-      // Mark old member as REMOVED
-      await tx.familyMember.updateMany({
+      // Mark old member as REMOVED (case-insensitive match for safety)
+      const updated = await tx.familyMember.updateMany({
         where: { familyGroupId, email: targetMemberEmail },
         data: { status: "REMOVED", removedAt: new Date() },
       });
+
+      // If exact-case didn't match, try case-insensitive via raw query
+      if (updated.count === 0) {
+        await tx.$executeRawUnsafe(
+          `UPDATE FamilyMember SET status = 'REMOVED', removedAt = datetime('now'), updatedAt = datetime('now') WHERE familyGroupId = ? AND LOWER(email) = LOWER(?)`,
+          familyGroupId,
+          targetMemberEmail
+        );
+        await logger.log("INFO", `Used case-insensitive update for ${targetMemberEmail}`);
+      }
 
       // Create placeholder for newly invited member
       await tx.familyMember.create({
@@ -151,6 +161,22 @@ export async function processReplace(
       // Record invite
       await tx.familyInvite.create({
         data: { familyGroupId, email: newUserEmail, status: "SENT" },
+      });
+
+      // Update FamilyGroup counters:
+      // - memberCount: -1 (removed old), net effect depends on PENDING counting
+      // - pendingInviteCount: +1 (new invite)
+      // - yearlyChangeCount: +1 (consumed one swap slot)
+      await tx.familyGroup.updateMany({
+        where: { id: familyGroupId, memberCount: { gt: 0 } },
+        data: { memberCount: { decrement: 1 } },
+      });
+      await tx.familyGroup.update({
+        where: { id: familyGroupId },
+        data: {
+          pendingInviteCount: { increment: 1 },
+          yearlyChangeCount: { increment: 1 },
+        },
       });
     });
 
