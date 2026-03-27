@@ -213,6 +213,26 @@ async function executeInviteOnPage(
 
   await sendButton.first().click();
   await logger.log("INFO", "Clicked send invite button");
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+
+  // Wait for Google to process the invite.
+  // After a successful invite, Google either:
+  //   (a) redirects back to family/details page, or
+  //   (b) shows a success toast/snackbar, or
+  //   (c) the invite URL changes
+  // We wait up to 15s for the page to leave the invite page.
+  try {
+    await page.waitForURL(
+      (url) => !url.toString().includes("invitemembers"),
+      { timeout: 15_000 }
+    );
+    await logger.log("INFO", "Invite page navigated away — invite confirmed");
+  } catch {
+    // If URL didn't change, check if we're still on invite page (could be an error)
+    const currentUrl = page.url();
+    if (currentUrl.includes("invitemembers")) {
+      await logger.log("WARN", "Still on invite page after 15s — invite may not have been sent");
+    }
+  }
+  // Extra buffer for any async processing
+  await page.waitForTimeout(2000);
 }
