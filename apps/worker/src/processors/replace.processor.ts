@@ -252,6 +252,19 @@ async function removeMemberOnPage(
   }
 
   await logger.log("INFO", `On detail page for member ${email}`);
+
+  // Safety net: detect if we accidentally landed on the family manager's page.
+  // The manager page shows "Delete Family Group" instead of "Remove member".
+  const deleteGroupBtn = page.locator(
+    'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組")'
+  );
+  if ((await deleteGroupBtn.count()) > 0) {
+    await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+    await logger.log("INFO", `After fallback, now on: ${page.url()}`);
+  }
+
   // Save the member detail URL for potential re-navigation after password auth
   const memberDetailUrl = page.url();
 
@@ -523,19 +536,21 @@ async function fallbackFindMember(
   for (let i = 0; i < memberHrefs.length; i++) {
     const href = memberHrefs[i];
 
-    // Quick text check: if the full href text includes the email, navigate there directly
     try {
       await page.goto(href, { waitUntil: "load", timeout: 60000 });
       await page.waitForTimeout(500);
 
-      const bodyText = await page.textContent("body").catch(() => "");
-
-      // Skip the account owner (family manager)
-      const isManager = bodyText?.includes("管理") || bodyText?.toLowerCase().includes("manager");
-      if (isManager && !bodyText?.includes(email)) {
-        await logger.log("DEBUG", `S3: Card #${i} is manager, skipping`);
+      // Definitive manager detection: "Delete Family Group" button only appears on the manager's own page.
+      // Always skip regardless of whether the email appears in body text (it often does on the manager page).
+      const deleteGroupBtn = await page.locator(
+        'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組")'
+      ).count();
+      if (deleteGroupBtn > 0) {
+        await logger.log("DEBUG", `S3: Card #${i} is manager page (Delete Family Group button), skipping`);
         continue;
       }
+
+      const bodyText = await page.textContent("body").catch(() => "");
 
       if (bodyText?.includes(email)) {
         await logger.log("INFO", `S3: Matched on detail page for card #${i} (href=${href})`);
