@@ -321,17 +321,16 @@ async function removeMemberOnPage(
   await removeButton.first().click();
   await logger.log("INFO", `Clicked remove/cancel for ${email}`);
 
-  // Wait for potential password page or confirmation dialog
+  // Wait for potential redirect to re-auth page or confirmation dialog
   await page.waitForTimeout(3000);
   await page.waitForLoadState("load", { timeout: 60000 });
 
-  // --- Handle Google re-authentication (password + TOTP) ---
+  // --- Handle Google re-authentication (password and/or TOTP) ---
   // After clicking Remove for an ACTIVE member, Google may redirect to
-  // accounts.google.com for full re-authentication. This can land on:
+  // accounts.google.com for re-authentication. Possible landing pages:
   //   a) Identifier page (email pre-filled, need to click Next)
   //   b) Password page directly
-  //   c) TOTP/2FA challenge page
-  // Detection: check URL instead of instant password-input count().
+  //   c) TOTP challenge page directly (Google may skip password if recently verified)
   const postClickUrl = page.url();
   const needsReAuth = postClickUrl.includes("accounts.google.com") ||
                        postClickUrl.includes("signin") ||
@@ -340,17 +339,10 @@ async function removeMemberOnPage(
   if (needsReAuth) {
     await logger.log("INFO", `Re-auth required. URL: ${postClickUrl}`);
 
-    if (!credentials?.password) {
-      throw new Error(
-        `Google requires password to remove joined member ${email}, ` +
-        `but Account.loginPassword is not set`
-      );
-    }
-
     // Step 1: Handle identifier page (email pre-filled, click Next)
     const identifierInput = page.locator('input[type="email"]');
     if ((await identifierInput.count()) > 0) {
-      await logger.log("INFO", "On identifier page, clicking Next to proceed to password");
+      await logger.log("INFO", "On identifier page, clicking Next");
       const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步"), button:has-text("繼續"), button:has-text("继续")');
       if ((await nextBtn.count()) > 0) {
         await nextBtn.first().click();
@@ -359,36 +351,55 @@ async function removeMemberOnPage(
       }
     }
 
-    // Step 2: Wait for password input to appear (up to 15s)
-    const passwordInput = page.locator('input[type="password"]');
-    try {
-      await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
-    } catch {
-      // Password might already be on page as hidden; check for any password field
-      const anyPwd = page.locator('input[name="Passwd"], input[name="password"]');
-      if ((await anyPwd.count()) > 0) {
-        await logger.log("INFO", "Found hidden password field, attempting fill");
-      } else {
-        const curUrl = page.url();
-        await logger.log("WARN", `No password input found after 15s. URL: ${curUrl}`);
-        throw new Error(`Password page not found during remove re-auth. URL: ${curUrl}`);
+    // Step 2: Detect if we're already on TOTP page (Google skipped password)
+    const currentReAuthUrl = page.url();
+    const isDirectTotp = currentReAuthUrl.includes("challenge/totp") || currentReAuthUrl.includes("challenge/az");
+
+    if (!isDirectTotp) {
+      // Need password first
+      if (!credentials?.password) {
+        throw new Error(
+          `Google requires password to remove joined member ${email}, ` +
+          `but Account.loginPassword is not set`
+        );
       }
+
+      const passwordInput = page.locator('input[type="password"]');
+      try {
+        await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
+      } catch {
+        const anyPwd = page.locator('input[name="Passwd"], input[name="password"]');
+        if ((await anyPwd.count()) === 0) {
+          // Maybe Google jumped to TOTP during our wait — re-check URL
+          const nowUrl = page.url();
+          if (!nowUrl.includes("challenge")) {
+            await logger.log("WARN", `No password input found. URL: ${nowUrl}`);
+            throw new Error(`Password page not found during remove re-auth. URL: ${nowUrl}`);
+          }
+          // URL changed to challenge — fall through to TOTP handling below
+          await logger.log("INFO", "URL changed to challenge during password wait, proceeding to TOTP");
+        }
+      }
+
+      // Fill password if input is visible
+      const pwdField = page.locator('input[type="password"]:visible, input[name="Passwd"]:visible');
+      if ((await pwdField.count()) > 0) {
+        await pwdField.first().fill(credentials!.password!);
+        const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
+        await nextButton.first().click();
+        await logger.log("INFO", "Password submitted for re-auth");
+
+        await page.waitForTimeout(5000);
+        await page.waitForLoadState("load", { timeout: 60000 });
+      }
+    } else {
+      await logger.log("INFO", "Google skipped password, directly on TOTP challenge");
     }
 
-    // Fill password
-    const pwdField = page.locator('input[type="password"]:visible, input[name="Passwd"]:visible');
-    await pwdField.first().fill(credentials.password);
-    const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
-    await nextButton.first().click();
-    await logger.log("INFO", "Password submitted for re-auth");
-
-    await page.waitForTimeout(5000);
-    await page.waitForLoadState("load", { timeout: 60000 });
-
-    // Step 3: Handle TOTP 2FA challenge
-    const afterPwdUrl = page.url();
-    if (afterPwdUrl.includes("challenge") || afterPwdUrl.includes("signin")) {
-      await logger.log("INFO", "2FA challenge detected after password");
+    // Step 3: Handle TOTP 2FA challenge (after password OR direct)
+    const afterAuthUrl = page.url();
+    if (afterAuthUrl.includes("challenge") || afterAuthUrl.includes("signin/v2")) {
+      await logger.log("INFO", `TOTP challenge page. URL: ${afterAuthUrl}`);
 
       if (!credentials?.totpSecret) {
         throw new Error(
@@ -407,12 +418,10 @@ async function removeMemberOnPage(
       const totpCode = generateTOTP(credentials.totpSecret);
       await logger.log("INFO", `Generated TOTP code: ${totpCode.slice(0, 2)}****`);
 
-      // Google TOTP input field
       let totpInput = page.locator(
         'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
       );
 
-      // May need to wait for TOTP input to render
       try {
         await totpInput.first().waitFor({ state: "visible", timeout: 10_000 });
       } catch {
@@ -424,8 +433,6 @@ async function removeMemberOnPage(
           await authOption.first().click();
           await page.waitForTimeout(3000);
         }
-
-        // Retry finding input
         totpInput = page.locator(
           'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
         );
@@ -458,10 +465,8 @@ async function removeMemberOnPage(
         await page.waitForTimeout(2000);
       }
     } else if (page.url().includes("family/remove/")) {
-      // Redirected to /family/remove/ confirmation page after auth
       await logger.log("INFO", "On /family/remove/ confirmation page");
     } else if (!page.url().includes("family/")) {
-      // Redirected elsewhere — navigate back to member detail
       await page.goto(memberDetailUrl, { waitUntil: "load", timeout: 60000 });
       const removeBtn3 = page.locator([
         'button:has-text("移除")',
