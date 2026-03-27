@@ -78,21 +78,21 @@ export async function gmailLogin(
     }
 
     await emailInput.first().fill(loginEmail);
-    await clickNext(page);
-    await page.waitForTimeout(3000);
+    await clickNext(page, logger);
+    await page.waitForTimeout(4000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
     // Verify the page actually advanced past the email step.
-    // If still on identifier page, click Next again (Google sometimes ignores the first click).
-    for (let nextRetry = 0; nextRetry < 2; nextRetry++) {
+    // If still on identifier page, retry with escalating click methods.
+    for (let nextRetry = 0; nextRetry < 3; nextRetry++) {
       if (!page.url().includes("/identifier")) break;
       await logger.log("WARN", `[gmail-login] Still on identifier page after Next click — retry ${nextRetry + 1}`);
       const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
       if ((await retryEmailInput.count()) > 0) {
         await retryEmailInput.first().fill(loginEmail);
       }
-      await clickNext(page);
-      await page.waitForTimeout(3000);
+      await clickNext(page, logger, nextRetry);
+      await page.waitForTimeout(5000);
       await page.waitForLoadState("domcontentloaded").catch(() => {});
     }
 
@@ -106,7 +106,7 @@ export async function gmailLogin(
       const emailRetry = page.locator('input[type="email"], input[id="identifierId"]');
       if ((await emailRetry.count()) > 0) {
         await emailRetry.first().fill(loginEmail);
-        await clickNext(page);
+        await clickNext(page, logger);
         await page.waitForTimeout(2000);
         await page.waitForLoadState("domcontentloaded").catch(() => {});
       }
@@ -133,7 +133,7 @@ export async function gmailLogin(
     }
 
     await passwordInput.first().fill(loginPassword);
-    await clickNext(page);
+    await clickNext(page, logger);
     await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
@@ -243,14 +243,37 @@ export async function gmailLogin(
 }
 
 /** Click the "Next" button (multiple language variants) */
-async function clickNext(page: Page): Promise<void> {
+async function clickNext(page: Page, logger: TaskLogger, retryRound = 0): Promise<void> {
   const nextButton = page.locator(
     'button:has-text("Next"), button:has-text("下一步"), ' +
     'button:has-text("繼續"), button:has-text("继续"), ' +
     '#identifierNext, #passwordNext'
   );
   if ((await nextButton.count()) > 0) {
-    await nextButton.first().click();
+    const btn = nextButton.first();
+    if (retryRound >= 2) {
+      // Escalation: use JavaScript click to bypass any overlay
+      try {
+        await btn.evaluate((el: HTMLElement) => el.click());
+        await logger.log("INFO", "[gmail-login] Used JS click for Next button");
+      } catch {
+        // Element may have been removed — fall back to Enter key
+        await page.keyboard.press("Enter");
+      }
+    } else {
+      try {
+        await btn.click({ timeout: 5000 });
+      } catch {
+        // Playwright click failed (intercepted/timeout) — try JS click, then Enter
+        try {
+          await btn.evaluate((el: HTMLElement) => el.click());
+          await logger.log("WARN", "[gmail-login] Playwright click failed, used JS click fallback");
+        } catch {
+          await page.keyboard.press("Enter");
+          await logger.log("WARN", "[gmail-login] Both click methods failed, used Enter key");
+        }
+      }
+    }
   } else {
     await page.keyboard.press("Enter");
   }
