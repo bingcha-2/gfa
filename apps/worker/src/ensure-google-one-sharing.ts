@@ -15,7 +15,7 @@
 import type { Page } from "playwright";
 import type { TaskLogger } from "./task-logger";
 
-const GOOGLE_ONE_SETTINGS_URL = "https://one.google.com/u/0/settings";
+const GOOGLE_ONE_SETTINGS_URL = "https://one.google.com/u/0/settings?hl=en";
 
 // Multi-locale aria-label values for the sharing toggle
 const SHARING_TOGGLE_LABELS = [

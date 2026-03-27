@@ -22,6 +22,7 @@ type MemberInfo = {
   status: string;
   isInGroup?: boolean;
   joinedAt?: string | null;
+  googleMemberId?: string | null;
 };
 
 type GroupDetail = {
@@ -226,7 +227,7 @@ export function GroupPanel({
       <div className="panel-stack">
         <div className="section-head">
           <div className="section-copy">
-            <p className="label">Family Groups</p>
+            <p className="label">家庭组列表</p>
             <h2 className="panel-title">家庭组库存</h2>
             <p className="muted">保留可用空位、待邀请数、组状态和同步入口。</p>
           </div>
@@ -474,7 +475,7 @@ user2@gmail.com`}
           ) : (
             <div className="form-card panel-stack workspace-empty">
               <div>
-                <p className="label">Read Only</p>
+                <p className="label">只读模式</p>
                 <h3 className="panel-title">当前角色没有新增家庭组权限</h3>
               </div>
               <p className="muted">
@@ -573,6 +574,30 @@ user2@gmail.com`}
                                   {group.account.loginEmail}
                                 </div>
                               )}
+                              {group.account?.subscriptionStatus && (
+                                <div style={{ marginTop: '2px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                  <span style={{
+                                    padding: '1px 6px',
+                                    borderRadius: '4px',
+                                    fontWeight: 600,
+                                    fontSize: '0.75rem',
+                                    background: group.account.subscriptionStatus === 'ACTIVE' ? 'rgba(16,185,129,0.12)' : group.account.subscriptionStatus === 'EXPIRED' ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)',
+                                    color: group.account.subscriptionStatus === 'ACTIVE' ? '#059669' : group.account.subscriptionStatus === 'EXPIRED' ? '#dc2626' : '#d97706',
+                                  }}>
+                                    {group.account.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : '⚠️ 已暂停'}
+                                  </span>
+                                  {group.account.subscriptionPlan && (
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      {group.account.subscriptionPlan}
+                                    </span>
+                                  )}
+                                  {group.account.subscriptionExpiresAt && (
+                                    <span className="muted" style={{ fontSize: '0.75rem' }}>
+                                      · {formatDate(group.account.subscriptionExpiresAt)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </td>
                             <td>
                               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -662,6 +687,17 @@ user2@gmail.com`}
                                                            👑 母号
                                                          </span>
                                                        )}
+                                                       <span
+                                                         title={m.googleMemberId ? `GaiaID: ${m.googleMemberId}` : '未同步 GaiaID'}
+                                                         style={{
+                                                           marginLeft: '4px',
+                                                           fontSize: '0.7rem',
+                                                           cursor: 'help',
+                                                           opacity: m.googleMemberId ? 0.6 : 0.4,
+                                                         }}
+                                                       >
+                                                         {m.googleMemberId ? '🔗' : '⚠️'}
+                                                       </span>
                                                      </td>
                                                      <td>{m.displayName ?? "-"}</td>
                                                      <td><StatusBadge value={isOwner ? "OWNER" : m.role} tone={isOwner ? "sky" : undefined} /></td>

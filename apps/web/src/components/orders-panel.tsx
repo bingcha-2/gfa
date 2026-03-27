@@ -67,7 +67,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
       <div className="panel-stack">
         <div className="section-head">
           <div className="section-copy">
-            <p className="label">Orders</p>
+            <p className="label">订单列表</p>
             <h2 className="panel-title">订单流水</h2>
             <p className="muted">按订单号、邮箱、状态和归属家庭组快速检索。</p>
           </div>
@@ -124,7 +124,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                   <tr key={order.id}>
                     <td>
                       <div className="strong mono">{order.orderNo}</div>
-                      <div className="muted">{order._count?.tasks ?? 0} linked tasks</div>
+                      <div className="muted">{order._count?.tasks ?? 0} 个关联任务</div>
                     </td>
                     <td>{order.userEmail}</td>
                     <td>

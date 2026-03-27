@@ -106,7 +106,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
       <div className="panel-stack">
         <div className="section-head">
           <div className="section-copy">
-            <p className="label">Accounts</p>
+            <p className="label">账号列表</p>
             <h2 className="panel-title">母号池</h2>
             <p className="muted">记录登录邮箱、AdsPower profile 和当前健康状态。</p>
           </div>
@@ -217,7 +217,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
           ) : (
             <div className="form-card panel-stack workspace-empty">
               <div>
-                <p className="label">Read Only</p>
+                <p className="label">只读模式</p>
                 <h3 className="panel-title">当前角色没有批量导入权限</h3>
               </div>
               <p className="muted">批量导入只对 ADMIN 开放。</p>
@@ -410,7 +410,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
           ) : (
             <div className="form-card panel-stack workspace-empty">
               <div>
-                <p className="label">Read Only</p>
+                <p className="label">只读模式</p>
                 <h3 className="panel-title">当前角色没有新增母号权限</h3>
               </div>
               <p className="muted">
@@ -459,30 +459,26 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                       </td>
                       <td>
                         <div className="account-stats">
-                          <div>{account._count?.familyGroups ?? 0} groups</div>
+                          <div>{account._count?.familyGroups ?? 0} 个家庭组</div>
                           <div className="muted account-meta">
-                            {account._count?.tasks ?? 0} tasks
+                            {account._count?.tasks ?? 0} 个任务
                           </div>
                           <div className="muted account-meta">
-                            last login {formatDateTime(account.lastLoginAt)}
+                            最后登录 {formatDateTime(account.lastLoginAt)}
                           </div>
-                          {account.subscriptionExpiresAt && (
-                            <div className="muted account-meta">
-                              订阅至 {formatDateTime(account.subscriptionExpiresAt)}
-                            </div>
-                          )}
-                          {account.subscriptionStatus && (
-                            <StatusBadge
-                              value={account.subscriptionStatus}
-                              tone={
-                                account.subscriptionStatus === "ACTIVE"
-                                  ? "emerald"
-                                  : account.subscriptionStatus === "EXPIRED"
-                                  ? "crimson"
-                                  : "amber"
-                              }
-                            />
-                          )}
+                          <div className="muted account-meta">
+                            订阅到期 {account.subscriptionExpiresAt ? formatDateTime(account.subscriptionExpiresAt) : "未知"}
+                          </div>
+                          <StatusBadge
+                            value={account.subscriptionStatus ?? "未知"}
+                            tone={
+                              account.subscriptionStatus === "ACTIVE"
+                                ? "emerald"
+                                : account.subscriptionStatus === "EXPIRED" || account.subscriptionStatus === "SUSPENDED"
+                                ? "crimson"
+                                : "amber"
+                            }
+                          />
                         </div>
                       </td>
                       {canManage && (

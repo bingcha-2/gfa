@@ -837,7 +837,10 @@ export class FamilyGroupService {
       select: {
         id: true,
         name: true,
-        loginEmail: true
+        loginEmail: true,
+        subscriptionExpiresAt: true,
+        subscriptionStatus: true,
+        subscriptionPlan: true
       }
     });
     const accountMap = new Map(accounts.map((account) => [account.id, account]));

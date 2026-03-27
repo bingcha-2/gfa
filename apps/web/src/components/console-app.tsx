@@ -436,55 +436,55 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     {
       id: "overview" as const,
       label: "总览",
-      caption: "Summary",
-      metric: `${activeOrders} active`
+      caption: "运营概览",
+      metric: `${activeOrders} 处理中`
     },
     {
       id: "accounts" as const,
       label: "母号池",
-      caption: "Accounts",
-      metric: `${data.accounts.length} total`
+      caption: "账号管理",
+      metric: `${data.accounts.length} 个`
     },
     {
       id: "groups" as const,
       label: "家庭组",
-      caption: "Groups",
-      metric: `${availableSlots} slots`
+      caption: "家庭组管理",
+      metric: `${availableSlots} 空位`
     },
     {
       id: "orders" as const,
       label: "订单",
-      caption: "Orders",
-      metric: `${data.orders.length} total`
+      caption: "订单管理",
+      metric: `${data.orders.length} 条`
     },
     {
       id: "tasks" as const,
       label: "任务",
-      caption: "Tasks",
-      metric: `${manualReviewTasks} review`
+      caption: "自动化任务",
+      metric: `${manualReviewTasks} 待处理`
     },
     {
       id: "codes" as const,
       label: "卡密",
-      caption: "Codes",
-      metric: `${unusedCodes} unused`
+      caption: "卡密管理",
+      metric: `${unusedCodes} 未使用`
     },
     {
       id: "expire" as const,
       label: "到期扫描",
-      caption: "Expire Scan",
-      metric: `${data.orders.filter((o) => o.status === "EXPIRED").length} expired`
+      caption: "过期订单",
+      metric: `${data.orders.filter((o) => o.status === "EXPIRED").length} 已过期`
     },
     {
       id: "lookup" as const,
       label: "成员管理",
-      caption: "Member Management",
-      metric: "查询 & 操作"
+      caption: "查询 & 操作",
+      metric: ""
     },
     {
       id: "settings" as const,
       label: "修改密码",
-      caption: "Settings",
+      caption: "安全设置",
       metric: ""
     }
   ];
@@ -496,32 +496,32 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           <div className="panel-stack">
             <section className="surface-grid three-up">
               <MetricTile
-                title="Available Slots"
+                title="可用空位"
                 value={String(availableSlots)}
                 description="当前所有家庭组剩余可发邀请空位。"
               />
               <MetricTile
-                title="Pending Invites"
+                title="待接受邀请"
                 value={String(pendingInvites)}
                 description="已发出但还没完成接受的邀请数量。"
               />
               <MetricTile
-                title="Manual Review"
+                title="待人工处理"
                 value={String(manualReviewTasks)}
                 description="已经进入人工处理队列的任务数量。"
               />
               <MetricTile
-                title="Account Alerts"
+                title="异常母号"
                 value={String(disabledAccounts)}
-                description="非 HEALTHY 母号数量，用于快速发现异常。"
+                description="非正常状态的母号数量，用于快速发现异常。"
               />
               <MetricTile
-                title="Unused Codes"
+                title="可用卡密"
                 value={String(unusedCodes)}
                 description="当前仍可兑换、未被消耗的卡密库存。"
               />
               <MetricTile
-                title="Open Orders"
+                title="进行中订单"
                 value={String(activeOrders)}
                 description="仍在排队、执行或等待用户接受邀请的订单。"
               />
@@ -531,7 +531,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               <article className="glass-panel">
                 <div className="panel-stack">
                   <div className="section-copy">
-                    <p className="label">Recent Orders</p>
+                    <p className="label">最近订单</p>
                     <h2 className="panel-title">最近订单</h2>
                     <p className="muted">优先看最新提交是否已经进入正确状态。</p>
                   </div>
@@ -559,7 +559,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               <article className="glass-panel">
                 <div className="panel-stack">
                   <div className="section-copy">
-                    <p className="label">Review Queue</p>
+                    <p className="label">待处理队列</p>
                     <h2 className="panel-title">人工接管队列</h2>
                     <p className="muted">这里保留最近需要人处理的任务，先处理最紧急的。</p>
                   </div>
@@ -795,7 +795,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           <div className="glass-panel">
             <div className="panel-stack">
               <div>
-                <p className="label">Session</p>
+                <p className="label">当前会话</p>
                 <h2 className="panel-title">{data.user.displayName}</h2>
                 <p className="muted">{data.user.email}</p>
               </div>
@@ -805,7 +805,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
           <div className="glass-panel">
             <div className="panel-stack">
-              <p className="label">Navigation</p>
+              <p className="label">导航菜单</p>
               <div className="console-menu">
                 {navigation.map((item) => (
                   <button
@@ -832,7 +832,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             <div className="panel-stack">
               <div className="workspace-head">
                 <div className="section-copy">
-                  <p className="label">Workspace</p>
+                  <p className="label">工作区</p>
                   <h2 className="panel-title">
                     {navigation.find((item) => item.id === activeSection)?.label ?? "控制台"}
                   </h2>

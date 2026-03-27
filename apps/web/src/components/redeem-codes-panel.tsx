@@ -128,7 +128,7 @@ export function RedeemCodesPanel({
       <div className="panel-stack">
         <div className="section-head">
           <div className="section-copy">
-            <p className="label">Redeem Codes</p>
+            <p className="label">卡密列表</p>
             <h2 className="panel-title">卡密库存</h2>
             <p className="muted">批量生成、状态查看和手动禁用都放在一个区块里。</p>
           </div>
@@ -270,7 +270,7 @@ export function RedeemCodesPanel({
           ) : (
             <div className="form-card panel-stack workspace-empty">
               <div>
-                <p className="label">Read Only</p>
+                <p className="label">只读模式</p>
                 <h3 className="panel-title">当前角色只能查看卡密库存</h3>
               </div>
               <p className="muted">

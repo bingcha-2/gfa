@@ -85,6 +85,53 @@ export class BrowserPool {
   }
 
   /**
+   * Check which accountId last logged into a given profile.
+   * Returns the accountId if found, or null if no record exists.
+   * Used to decide whether existing browser session can be reused.
+   */
+  async getLastAccount(profileId: string): Promise<string | null> {
+    return this.redis.get(`${POOL_KEY_PREFIX}${profileId}:lastAccount`);
+  }
+
+  /**
+   * Record which accountId just logged into a given profile.
+   * TTL = 24 hours (must outlive the profile lock so the next job can detect reuse).
+   */
+  async setLastAccount(profileId: string, accountId: string): Promise<void> {
+    const LAST_ACCOUNT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    await this.redis.set(
+      `${POOL_KEY_PREFIX}${profileId}:lastAccount`,
+      accountId,
+      "PX",
+      LAST_ACCOUNT_TTL_MS
+    );
+  }
+
+  /**
+   * Record a login failure for an account. After this, subsequent jobs for
+   * the same account will be rejected for COOLDOWN_TTL_MS to avoid repeated
+   * browser opens that escalate Google risk detection.
+   */
+  async recordLoginFailure(accountId: string): Promise<void> {
+    const COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+    await this.redis.set(
+      `gfa:login-cooldown:${accountId}`,
+      Date.now().toString(),
+      "PX",
+      COOLDOWN_TTL_MS
+    );
+  }
+
+  /**
+   * Check if an account is in login-failure cooldown.
+   * Returns remaining seconds if cooling down, or 0 if safe to proceed.
+   */
+  async isLoginCoolingDown(accountId: string): Promise<number> {
+    const ttl = await this.redis.pttl(`gfa:login-cooldown:${accountId}`);
+    return ttl > 0 ? Math.ceil(ttl / 1000) : 0;
+  }
+
+  /**
    * Acquire a free profile from the pool, skipping any profile in the excluded set.
    * Used for retry loops where certain profiles are known to be broken.
    */

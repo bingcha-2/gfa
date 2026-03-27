@@ -71,12 +71,15 @@ const connection = parseRedisUrl(redisUrl);
 
 // ---- Workers ----
 
+// Derive concurrency from the number of browser profiles available
+const poolSize = (process.env.ADSPOWER_POOL_IDS ?? "").split(",").filter(s => s.trim()).length || 1;
+
 const inviteWorker = new Worker<InviteMemberPayload>(
   QUEUE_NAMES.invite,
   (job) => processInvite(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: poolSize,
     lockDuration: 300_000, // 5 min — browser ops can take 1-2 min
   }
 );
@@ -86,7 +89,7 @@ const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
   (job) => processRemove(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: poolSize,
     lockDuration: 300_000,
   }
 );
@@ -96,7 +99,7 @@ const replaceWorker = new Worker<ReplaceMemberPayload>(
   (job) => processReplace(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: poolSize,
     lockDuration: 300_000,
   }
 );
@@ -106,7 +109,7 @@ const syncWorker = new Worker<SyncFamilyGroupPayload>(
   (job) => processSync(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: poolSize,
     lockDuration: 300_000,
   }
 );
@@ -116,7 +119,7 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   (job) => processHealth(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: poolSize,
     lockDuration: 300_000,
   }
 );

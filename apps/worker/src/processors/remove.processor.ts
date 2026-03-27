@@ -24,7 +24,7 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 
-const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
+const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
 export interface RemoveProcessorDeps {
   prisma: PrismaClient;
@@ -56,6 +56,7 @@ export async function processRemove(
 
   let profileId: string | null = null;
   let originalMemberStatus: MemberStatus = MemberStatus.ACTIVE; // track for rollback
+  let reuseSession = false;
 
   try {
     // Look up member DB record before acquiring browser resource
@@ -65,7 +66,18 @@ export async function processRemove(
     });
     if (memberRecord?.status) originalMemberStatus = memberRecord.status as MemberStatus;
 
+    // Cooldown guard: skip immediately if this account recently failed login
+    const cooldownSecs = await pool.isLoginCoolingDown(account.id);
+    if (cooldownSecs > 0) {
+      await logger.log("WARN", `[remove] Account ${account.id} in login cooldown (${cooldownSecs}s remaining), skipping`);
+      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+      throw new UnrecoverableError("LOGIN_COOLDOWN");
+    }
+
     profileId = await pool.acquire(workerId);
+    // Check if the same account last used this profile — if so, reuse its session
+    const lastAccount = await pool.getLastAccount(profileId);
+    reuseSession = lastAccount === account.id;
     await logger.updateStatus("RUNNING");
     await logger.log("INFO", `Removing member ${memberEmail}`, {
       profileId, familyGroupId,
@@ -73,7 +85,7 @@ export async function processRemove(
     });
 
     const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl);
+    const page = await browser.connect(debugUrl, reuseSession);
 
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
@@ -84,13 +96,21 @@ export async function processRemove(
       }
       // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
       if (loginResult.reason === "PHONE_CHALLENGE") {
+        await pool.recordLoginFailure(account.id);
         throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
       }
-      await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
-      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
-      // Throw to exit try so finally releases pool; caller should NOT retry this task
-      throw new UnrecoverableError("MANUAL_REVIEW");
+      // VERIFICATION_REQUIRED or UNKNOWN → only mark account on LAST attempt
+      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
+      if (isLastAttempt) {
+        await pool.recordLoginFailure(account.id);
+        await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
+        await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+        throw new UnrecoverableError("MANUAL_REVIEW");
+      }
+      throw new Error(`Login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
     }
+    // Record which account is now logged into this profile
+    await pool.setLastAccount(profileId, account.id);
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
@@ -194,7 +214,7 @@ async function removeMemberOnPage(
 
   if (googleMemberId) {
     // S0: Direct GAIA navigation
-    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}`;
+    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
     await page.goto(directUrl, { waitUntil: "load", timeout: 60000 });
     await page.waitForLoadState("load", { timeout: 60000 });

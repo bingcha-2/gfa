@@ -16,7 +16,7 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { scrapeSubscriptionInfo } from "../scrape-subscription";
 
-const GOOGLE_ACCOUNT_URL = "https://myaccount.google.com/";
+const GOOGLE_ACCOUNT_URL = "https://myaccount.google.com/?hl=en";
 
 export interface HealthProcessorDeps {
   prisma: PrismaClient;
@@ -54,6 +54,14 @@ export async function processHealth(
   let profileId: string | null = null;
 
   try {
+    // Cooldown guard: skip immediately if this account recently failed login
+    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+    if (cooldownSecs > 0) {
+      await logger.log("WARN", `[health] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
+      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+      throw new UnrecoverableError("LOGIN_COOLDOWN");
+    }
+
     profileId = await pool.acquire(workerId);
     await logger.updateStatus("RUNNING");
     await logger.log("INFO", `Health check for account ${account.name}`, { profileId });
@@ -70,20 +78,27 @@ export async function processHealth(
       }
       // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
       if (loginResult.reason === "PHONE_CHALLENGE") {
+        await pool.recordLoginFailure(accountId);
         throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
       }
-      // Both VERIFICATION_REQUIRED and UNKNOWN reasons require manual intervention
-      const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
-        ? "VERIFICATION_REQUIRED"
-        : "LOGIN_REQUIRED";
-      await prisma.account.update({
-        where: { id: accountId },
-        data: { status: newAccountStatus as any, lastHealthCheckAt: new Date() },
-      });
-      // Always record as MANUAL_REVIEW so operators see it in the review queue
-      await logger.updateStatus("MANUAL_REVIEW",
-        { code: loginResult.reason, message: loginResult.detail });
-      return;
+      // Both VERIFICATION_REQUIRED and UNKNOWN reasons — only mark on LAST attempt
+      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
+      if (isLastAttempt) {
+        await pool.recordLoginFailure(accountId);
+        const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
+          ? "VERIFICATION_REQUIRED"
+          : "LOGIN_REQUIRED";
+        await prisma.account.update({
+          where: { id: accountId },
+          data: { status: newAccountStatus as any, lastHealthCheckAt: new Date() },
+        });
+        // Always record as MANUAL_REVIEW so operators see it in the review queue
+        await logger.updateStatus("MANUAL_REVIEW",
+          { code: loginResult.reason, message: loginResult.detail });
+        return;
+      }
+      // Not last attempt — let BullMQ retry
+      throw new Error(`Health login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
     }
 
     // Navigate to Google Account page to determine final health status
@@ -99,15 +114,16 @@ export async function processHealth(
     await logger.log("INFO", `Health status: ${healthStatus}`, { currentUrl });
 
     // Attempt to scrape subscription info from Google One page (non-fatal)
-    let subUpdate: { subscriptionExpiresAt?: Date | null; subscriptionStatus?: string } = {};
+    let subUpdate: { subscriptionExpiresAt?: Date | null; subscriptionStatus?: string; subscriptionPlan?: string | null } = {};
     if (healthStatus === "HEALTHY") {
       const subInfo = await scrapeSubscriptionInfo(page).catch(() => null);
       if (subInfo) {
         subUpdate = {
           subscriptionExpiresAt: subInfo.expiresAt,
           subscriptionStatus: subInfo.status,
+          subscriptionPlan: subInfo.planName,
         };
-        await logger.log("INFO", `Subscription: ${subInfo.status}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+        await logger.log("INFO", `Subscription: ${subInfo.status}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
       } else {
         await logger.log("WARN", "Could not scrape subscription info — skipping");
       }

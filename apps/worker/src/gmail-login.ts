@@ -18,7 +18,7 @@ import type { Page } from "playwright";
 import { generateTOTP, totpSecondsRemaining } from "./totp";
 import type { TaskLogger } from "./task-logger";
 
-const GOOGLE_LOGIN_URL = "https://accounts.google.com";
+const GOOGLE_LOGIN_URL = "https://accounts.google.com?hl=en";
 const SUCCESS_DOMAIN = "myaccount.google.com";
 const LOGIN_TIMEOUT_MS = 60_000;
 
@@ -32,6 +32,30 @@ export interface LoginCredentials {
   totpSecret?: string | null;
 }
 
+/**
+ * Verify that the currently logged-in Google account matches the target email.
+ * Checks the page body text on myaccount.google.com for the expected email.
+ * Returns false on any error (safe fallback: will trigger fresh login).
+ */
+async function verifyLoggedInAccount(
+  page: Page,
+  targetEmail: string,
+  logger: TaskLogger
+): Promise<boolean> {
+  try {
+    // myaccount.google.com shows the logged-in user's email in the page
+    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
+    const bodyText = await page.textContent("body", { timeout: 5_000 }).catch(() => "") ?? "";
+    const match = bodyText.toLowerCase().includes(targetEmail.toLowerCase());
+    if (!match) {
+      await logger.log("WARN", `[gmail-login] Session email mismatch: expected ${targetEmail}, not found in page`);
+    }
+    return match;
+  } catch {
+    // On any error, return false to safely trigger fresh login
+    return false;
+  }
+}
 
 export async function gmailLogin(
   page: Page,
@@ -42,11 +66,18 @@ export async function gmailLogin(
 
   await logger.log("INFO", `[gmail-login] Starting login for ${loginEmail}`);
 
-  // Preserve compatibility for accounts that rely on an already-authenticated session.
+  // --- Session reuse: check if browser already has a valid session ---
   const currentUrl = page.url();
   if (currentUrl.includes(SUCCESS_DOMAIN) || currentUrl.includes("mail.google.com")) {
-    await logger.log("INFO", "[gmail-login] Existing logged-in session detected");
-    return { success: true };
+    // Verify the session belongs to the correct account
+    const isCorrect = await verifyLoggedInAccount(page, loginEmail, logger);
+    if (isCorrect) {
+      await logger.log("INFO", "[gmail-login] Existing session verified — correct account, skipping login");
+      return { success: true };
+    }
+    // Wrong account — clear cookies and proceed with fresh login
+    await logger.log("WARN", `[gmail-login] Session exists but for WRONG account, clearing cookies`);
+    await page.context().clearCookies();
   }
 
   // Guard: password is required for automated login
@@ -69,16 +100,30 @@ export async function gmailLogin(
       'input[type="email"], input[id="identifierId"]'
     );
     if ((await emailInput.count()) === 0) {
-      // Already logged in?
+      // Already logged in? (redirect after navigation)
       if (page.url().includes(SUCCESS_DOMAIN)) {
-        await logger.log("INFO", "[gmail-login] Already logged in, skipping login");
-        return { success: true };
+        const isCorrect = await verifyLoggedInAccount(page, loginEmail, logger);
+        if (isCorrect) {
+          await logger.log("INFO", "[gmail-login] Already logged in (correct account), skipping login");
+          return { success: true };
+        }
+        // Wrong account — clear and restart login
+        await logger.log("WARN", "[gmail-login] Redirected to myaccount but wrong account, clearing cookies");
+        await page.context().clearCookies();
+        await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
+        await page.waitForTimeout(2000);
+        // Re-check for email input after fresh navigation
+        const emailInput2 = page.locator('input[type="email"], input[id="identifierId"]');
+        if ((await emailInput2.count()) === 0) {
+          return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field after cookie clear" };
+        }
+      } else {
+        return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field" };
       }
-      return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field" };
     }
 
     await emailInput.first().fill(loginEmail);
-    await clickNext(page, logger);
+    await clickNext(page, logger, 0, "identifier");
     await page.waitForTimeout(4000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
@@ -91,7 +136,7 @@ export async function gmailLogin(
       if ((await retryEmailInput.count()) > 0) {
         await retryEmailInput.first().fill(loginEmail);
       }
-      await clickNext(page, logger, nextRetry);
+      await clickNext(page, logger, nextRetry, "identifier");
       await page.waitForTimeout(5000);
       await page.waitForLoadState("domcontentloaded").catch(() => {});
     }
@@ -106,7 +151,7 @@ export async function gmailLogin(
       const emailRetry = page.locator('input[type="email"], input[id="identifierId"]');
       if ((await emailRetry.count()) > 0) {
         await emailRetry.first().fill(loginEmail);
-        await clickNext(page, logger);
+        await clickNext(page, logger, 0, "identifier");
         await page.waitForTimeout(2000);
         await page.waitForLoadState("domcontentloaded").catch(() => {});
       }
@@ -133,7 +178,7 @@ export async function gmailLogin(
     }
 
     await passwordInput.first().fill(loginPassword);
-    await clickNext(page, logger);
+    await clickNext(page, logger, 0, "password");
     await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
@@ -269,15 +314,42 @@ export async function gmailLogin(
   }
 }
 
-/** Click the "Next" button (multiple language variants) */
-async function clickNext(page: Page, logger: TaskLogger, retryRound = 0): Promise<void> {
-  const nextButton = page.locator(
-    'button:has-text("Next"), button:has-text("下一步"), ' +
-    'button:has-text("繼續"), button:has-text("继续"), ' +
-    '#identifierNext, #passwordNext'
-  );
+/**
+ * Click the "Next" button with step-aware selectors.
+ * @param step  "identifier" → only #identifierNext; "password" → only #passwordNext;
+ *              omitted → generic selector for TOTP/other steps.
+ */
+async function clickNext(
+  page: Page,
+  logger: TaskLogger,
+  retryRound = 0,
+  step?: "identifier" | "password"
+): Promise<void> {
+  let selector: string;
+  if (step === "identifier") {
+    // Only match the email-step Next button — never the password-step one
+    selector = '#identifierNext';
+  } else if (step === "password") {
+    // Only match the password-step Next button — never the email-step one
+    selector = '#passwordNext';
+  } else {
+    // Generic: TOTP verify, age confirm, etc. — no #identifierNext/#passwordNext
+    selector =
+      'button:has-text("Next"), button:has-text("下一步"), ' +
+      'button:has-text("繼續"), button:has-text("继续")';
+  }
+
+  const nextButton = page.locator(selector);
   if ((await nextButton.count()) > 0) {
-    const btn = nextButton.first();
+    // Find the first VISIBLE button to avoid clicking hidden step buttons
+    let btn = nextButton.first();
+    for (let i = 0; i < await nextButton.count(); i++) {
+      if (await nextButton.nth(i).isVisible().catch(() => false)) {
+        btn = nextButton.nth(i);
+        break;
+      }
+    }
+
     if (retryRound >= 2) {
       // Escalation: use JavaScript click to bypass any overlay
       try {

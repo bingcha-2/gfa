@@ -15,10 +15,16 @@ export class WorkerBrowser {
   private browser: Browser | null = null;
   private page: Page | null = null;
 
+
   /**
    * Connect to a running Chrome instance via CDP websocket URL.
+   *
+   * @param cdpUrl  Chromium CDP debug websocket URL from AdsPower
+   * @param reuseSession  When true, keep existing cookies/storage so that a
+   *                      previously authenticated Google session survives across
+   *                      jobs for the same account.  Default: false (clean slate).
    */
-  async connect(cdpUrl: string): Promise<Page> {
+  async connect(cdpUrl: string, reuseSession = false): Promise<Page> {
     this.browser = await chromium.connectOverCDP(cdpUrl);
 
     // AdsPower always has at least one context with one page
@@ -27,26 +33,37 @@ export class WorkerBrowser {
       throw new Error("[browser] No browser contexts found after CDP connect");
     }
 
-    // Clear cookies on every task start to ensure a clean login state.
-    // This prevents stale sessions from a previous task (or a different account)
-    // from causing gmailLogin to skip re-authentication silently.
-    await contexts[0].clearCookies();
-
-    // Also clear localStorage / sessionStorage to invalidate any in-memory auth tokens
-    // (AdsPower keeps Chromium alive between tasks, so web storage persists)
     const pages0 = contexts[0].pages();
     const existingPage = pages0.length > 0 ? pages0[0] : await contexts[0].newPage();
-    try {
-      await existingPage.goto("https://accounts.google.com", { waitUntil: "domcontentloaded", timeout: 10_000 });
-      await existingPage.evaluate(() => {
-        try { localStorage.clear(); } catch { /* cross-origin guard */ }
-        try { sessionStorage.clear(); } catch { /* cross-origin guard */ }
-      });
-    } catch {
-      // Non-fatal — if navigate fails, cookies are still cleared
+
+    if (reuseSession) {
+      // Session reuse mode: preserve cookies & storage from the previous task.
+      // gmailLogin will still verify if the session is valid before proceeding.
+      try {
+        await existingPage.goto("https://accounts.google.com?hl=en", { waitUntil: "domcontentloaded", timeout: 10_000 });
+      } catch {
+        // Non-fatal — navigation may fail on network blip
+      }
+    } else {
+      // Clean-slate mode (default): clear everything for a fresh login.
+      // This prevents stale sessions from a previous task (or a different account)
+      // from causing gmailLogin to skip re-authentication silently.
+      await contexts[0].clearCookies();
+
+      // Also clear localStorage / sessionStorage to invalidate any in-memory auth tokens
+      // (AdsPower keeps Chromium alive between tasks, so web storage persists)
+      try {
+        await existingPage.goto("https://accounts.google.com?hl=en", { waitUntil: "domcontentloaded", timeout: 10_000 });
+        await existingPage.evaluate(() => {
+          try { localStorage.clear(); } catch { /* cross-origin guard */ }
+          try { sessionStorage.clear(); } catch { /* cross-origin guard */ }
+        });
+      } catch {
+        // Non-fatal — if navigate fails, cookies are still cleared
+      }
     }
 
-    // Reuse the same page that was used for cleanup
+    // Reuse the same page that was used for cleanup / session check
     this.page = existingPage;
 
     return this.page;

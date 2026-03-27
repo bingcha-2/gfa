@@ -23,7 +23,7 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 
-const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
+const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
 export interface ReplaceProcessorDeps {
   prisma: PrismaClient;
@@ -60,9 +60,21 @@ export async function processReplace(
   }
 
   let profileId: string | null = null;
+  let reuseSession = false;
 
   try {
+    // Cooldown guard: skip immediately if this account recently failed login
+    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+    if (cooldownSecs > 0) {
+      await logger.log("WARN", `[replace] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
+      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+      throw new UnrecoverableError("LOGIN_COOLDOWN");
+    }
+
     profileId = await pool.acquire(workerId);
+    // Check if the same account last used this profile — if so, reuse its session
+    const lastAccount = await pool.getLastAccount(profileId);
+    reuseSession = lastAccount === accountId;
     await logger.updateStatus("RUNNING");
     await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail}`, {
       profileId,
@@ -70,7 +82,7 @@ export async function processReplace(
     });
 
     const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl);
+    const page = await browser.connect(debugUrl, reuseSession);
 
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
@@ -81,12 +93,21 @@ export async function processReplace(
       }
       // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
       if (loginResult.reason === "PHONE_CHALLENGE") {
+        await pool.recordLoginFailure(accountId);
         throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
       }
-      await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
-      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
-      throw new UnrecoverableError("MANUAL_REVIEW");
+      // VERIFICATION_REQUIRED or UNKNOWN → only mark account on LAST attempt
+      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
+      if (isLastAttempt) {
+        await pool.recordLoginFailure(accountId);
+        await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
+        await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+        throw new UnrecoverableError("MANUAL_REVIEW");
+      }
+      throw new Error(`Login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
     }
+    // Record which account is now logged into this profile
+    await pool.setLastAccount(profileId, accountId);
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
@@ -133,6 +154,23 @@ export async function processReplace(
     // Step 3: Invite the new member on page
     await inviteMemberOnPage(page, newUserEmail, logger);
 
+    // --- Capture gaiaId for newly invited member ---
+    let newMemberGaiaId: string | undefined;
+    try {
+      if (!page.url().includes("family/details")) {
+        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+      }
+      await page.waitForTimeout(1500);
+      newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
+      if (newMemberGaiaId) {
+        await logger.log("INFO", `Captured gaiaId=${newMemberGaiaId} for new member ${newUserEmail}`);
+      } else {
+        await logger.log("WARN", `Could not capture gaiaId for ${newUserEmail} — will be filled on next sync`);
+      }
+    } catch {
+      await logger.log("WARN", "gaiaId capture failed for new member — will be filled on next sync");
+    }
+
     // Both page operations succeeded — now update DB atomically
     let usedCaseInsensitive = false;
     await prisma.$transaction(async (tx) => {
@@ -155,20 +193,30 @@ export async function processReplace(
       // Upsert placeholder for newly invited member (sync may have already created a PENDING record)
       await tx.familyMember.upsert({
         where: { familyGroupId_email: { familyGroupId, email: newUserEmail } },
-        update: { status: "PENDING", displayName: newUserEmail.split("@")[0] },
+        update: {
+          status: "PENDING",
+          displayName: newUserEmail.split("@")[0],
+          ...(newMemberGaiaId ? { googleMemberId: newMemberGaiaId } : {}),
+        },
         create: {
           familyGroupId,
           email: newUserEmail,
           displayName: newUserEmail.split("@")[0],
           role: "member",
           status: "PENDING",
+          googleMemberId: newMemberGaiaId ?? undefined,
         },
       });
 
-      // Record invite
-      await tx.familyInvite.create({
-        data: { familyGroupId, email: newUserEmail, status: "SENT" },
+      // Record invite (idempotent: skip if a SENT invite already exists for this email)
+      const existingInvite = await tx.familyInvite.findFirst({
+        where: { familyGroupId, email: newUserEmail, status: "SENT" },
       });
+      if (!existingInvite) {
+        await tx.familyInvite.create({
+          data: { familyGroupId, email: newUserEmail, status: "SENT" },
+        });
+      }
 
       // Update FamilyGroup counters
       await tx.familyGroup.updateMany({
@@ -182,7 +230,7 @@ export async function processReplace(
           yearlyChangeCount: { increment: 1 },
         },
       });
-    }, { timeout: 15000 });
+    }, { timeout: 30000, maxWait: 10000 });
 
     // Log outside transaction to avoid SQLite write-lock contention
     if (usedCaseInsensitive) {
@@ -282,7 +330,7 @@ async function removeMemberOnPage(
 
   if (googleMemberId) {
     // Strategy 0: Direct navigation using GAIA ID — bypasses all text matching issues
-    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}`;
+    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
     await page.goto(directUrl, { waitUntil: "load", timeout: 60000 });
     await page.waitForLoadState("load", { timeout: 60000 });
@@ -724,4 +772,32 @@ async function inviteMemberOnPage(
   await logger.log("INFO", `Sent invite to ${email}`);
   await page.waitForTimeout(3000);
   await page.waitForLoadState("load", { timeout: 60000 });
+}
+
+/**
+ * Scan the family details page for a member card matching the given email.
+ * Returns the gaiaId extracted from the card's href, or undefined.
+ */
+async function scanPageForMemberGaiaId(
+  page: import("playwright").Page,
+  email: string
+): Promise<string | undefined> {
+  const result = await page.evaluate((targetEmail: string) => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    const lowerTarget = targetEmail.toLowerCase();
+    for (const link of Array.from(links)) {
+      const card = link.closest("li") ?? link.parentElement;
+      const cardText = card?.textContent?.toLowerCase() ?? "";
+      if (cardText.includes(lowerTarget)) {
+        const href = link.getAttribute("href") ?? "";
+        const match =
+          href.match(/\/g\/(\d+)/) ??
+          href.match(/\/member\/i\/([-\d]+)/) ??
+          href.match(/\/member\/([-\d]+)/);
+        return match?.[1] ?? null;
+      }
+    }
+    return null;
+  }, email);
+  return result ?? undefined;
 }

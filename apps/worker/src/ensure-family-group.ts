@@ -13,7 +13,7 @@ import { PrismaClient } from "@prisma/client";
 import type { TaskLogger } from "./task-logger";
 import { ensureGoogleOneSharing } from "./ensure-google-one-sharing";
 
-const FAMILY_URL = "https://myaccount.google.com/family/details";
+const FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
 export async function ensureFamilyGroup(
   page: Page,
@@ -37,16 +37,18 @@ export async function ensureFamilyGroup(
     );
   }
 
-  // Case 1: Family group already exists (invite link present)
-  const inviteLink = page.locator('a[href*="invitemembers"]');
-  if ((await inviteLink.count()) > 0) {
+  // Case 1: Family group already exists (invite link or member cards present)
+  const hasInviteLink = (await page.locator('a[href*="invitemembers"]').count()) > 0;
+  const hasMemberCards = (await page.locator('a[href*="family/member"]').count()) > 0;
+  if (hasInviteLink || hasMemberCards) {
     await logger.log("INFO", "[ensure-family-group] Family group already exists");
     await ensureGoogleOneSharing(page, logger);
     return findOrCreateDbRecord(prisma, account, logger);
   }
 
   // Case 2: "Get started" link present → start creation wizard
-  const getStartedBtn = page.locator('a.umngff, a[href*="family/create"]').first();
+  // NOTE: do NOT use generic class selectors like `a.umngff` — they match member cards too
+  const getStartedBtn = page.locator('a[href*="family/create"]').first();
   if ((await getStartedBtn.count()) > 0) {
     await logger.log("INFO", "[ensure-family-group] No family group found — starting creation wizard");
     await getStartedBtn.click();

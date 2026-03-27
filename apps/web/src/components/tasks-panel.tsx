@@ -123,7 +123,7 @@ export function TasksPanel({
       <div className="panel-stack">
         <div className="section-head">
           <div className="section-copy">
-            <p className="label">Tasks</p>
+            <p className="label">任务列表</p>
             <h2 className="panel-title">自动化任务</h2>
             <p className="muted">支持重试、手动完成和手动失败，先把人工兜底能力做出来。</p>
           </div>

@@ -117,6 +117,7 @@ model Account {
   lastHealthCheckAt        DateTime?
   subscriptionExpiresAt    DateTime?
   subscriptionStatus       String?   // "ACTIVE" | "EXPIRED" | "SUSPENDED"
+  subscriptionPlan         String?   // e.g. "Google AI Ultra 30 TB"
   familyGroups             FamilyGroup[]
   tasks               Task[]
   createdAt           DateTime      @default(now())

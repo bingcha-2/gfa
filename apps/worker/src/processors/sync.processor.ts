@@ -17,7 +17,7 @@ import { gmailLogin } from "../gmail-login";
 import { ensureFamilyGroup } from "../ensure-family-group";
 import { scrapeSubscriptionInfo } from "../scrape-subscription";
 
-const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details";
+const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
 export interface SyncProcessorDeps {
   prisma: PrismaClient;
@@ -61,26 +61,52 @@ export async function processSync(
   }
 
   let profileId: string | null = null;
+  let reuseSession = false;
 
   try {
+    // Cooldown guard: skip immediately if this account recently failed login
+    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+    if (cooldownSecs > 0) {
+      await logger.log("WARN", `[sync] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
+      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+      throw new UnrecoverableError("LOGIN_COOLDOWN");
+    }
+
     profileId = await pool.acquire(workerId);
+    // Check if the same account last used this profile — if so, reuse its session
+    const lastAccount = await pool.getLastAccount(profileId);
+    reuseSession = lastAccount === accountId;
     await logger.updateStatus("RUNNING");
 
     const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl);
+    const page = await browser.connect(debugUrl, reuseSession);
 
-    // Gmail auto-login (required every time — browser clears cache on start)
+    // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
       // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
       if (loginResult.reason === "TRANSIENT") {
         throw new Error(`Login transient failure: ${loginResult.detail}`);
       }
-      // VERIFICATION_REQUIRED or UNKNOWN → needs human intervention
-      await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
-      await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
-      throw new UnrecoverableError("MANUAL_REVIEW");
+      // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
+      if (loginResult.reason === "PHONE_CHALLENGE") {
+        await pool.recordLoginFailure(accountId);
+        throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
+      }
+      // VERIFICATION_REQUIRED or UNKNOWN → only mark account on LAST attempt
+      // Earlier attempts: just retry (transient Google challenges often resolve)
+      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
+      if (isLastAttempt) {
+        await pool.recordLoginFailure(accountId);
+        await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
+        await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
+        throw new UnrecoverableError("MANUAL_REVIEW");
+      }
+      // Not last attempt — let BullMQ retry
+      throw new Error(`Login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
     }
+    // Record which account is now logged into this profile
+    await pool.setLastAccount(profileId, accountId);
 
     // Ensure family group exists (also creates DB record if first run)
     await ensureFamilyGroup(page, account, prisma, logger);
@@ -136,9 +162,10 @@ export async function processSync(
           data: {
             subscriptionExpiresAt: subInfo.expiresAt,
             subscriptionStatus: subInfo.status,
+            subscriptionPlan: subInfo.planName,
           },
         });
-        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
       }
     } catch {
       // Fully silent: even the WARN log failing must not bubble to the outer catch
@@ -271,12 +298,15 @@ async function scrapeMembersFromPage(
       await page.goto(detailUrl, { waitUntil: "load", timeout: 60000 });
       await page.waitForTimeout(500);
 
-      // Read ALL emails from detail page (raw, no exclusion)
+      // Read emails from leaf-node elements only to avoid concatenated parent text
       const rawEmails: string[] = await page.evaluate(() => {
-        const allText = Array.from(document.querySelectorAll("div, span, p"))
+        const leafEls = Array.from(document.querySelectorAll("*"))
+          .filter((el) => el.children.length === 0); // leaf nodes only
+        const texts = leafEls
           .map((el) => el.textContent?.trim() ?? "")
           .filter((t) => t.includes("@") && t.includes("."));
-        return allText.filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t));
+        // Strict ASCII-only email regex to reject concatenated name+email+role strings
+        return texts.filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
       });
 
       // If the ONLY email on the page is the admin's AND this is a /g/ card (Google account page),
@@ -329,7 +359,7 @@ async function scrapeMembersFromPage(
     }
 
     // Navigate back to family list
-    await page.goto("https://myaccount.google.com/family/details", {
+    await page.goto("https://myaccount.google.com/family/details?hl=en", {
       waitUntil: "load",
       timeout: 60000,
     }).catch(() => {});
@@ -396,6 +426,24 @@ async function reconcileMembers(
     });
     await logger.log("INFO",
       `Upserted member: ${scraped.email} status=${newStatus} (gaia=${scraped.googleMemberId || "unknown"})`);
+
+    // Cleanup: if this member has a gaiaId, delete any OTHER records in the same group
+    // with the same gaiaId but a DIFFERENT email (fixes previously scraped corrupted emails
+    // like "송지연user@gmail.com구성원" that were stored due to textContent concatenation)
+    if (scraped.googleMemberId) {
+      const dupes = await prisma.familyMember.findMany({
+        where: {
+          familyGroupId,
+          googleMemberId: scraped.googleMemberId,
+          email: { not: scraped.email },
+        },
+        select: { id: true, email: true },
+      });
+      for (const dupe of dupes) {
+        await prisma.familyMember.delete({ where: { id: dupe.id } });
+        await logger.log("INFO", `Deleted duplicate member record: ${dupe.email} (same gaiaId=${scraped.googleMemberId})`);
+      }
+    }
   }
 
   // --- Step 2: Link gaiaOnly members to existing DB records ---
