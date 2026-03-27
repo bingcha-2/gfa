@@ -278,6 +278,12 @@ async function scrapeMembersFromPage(
         document.querySelector(".ImPZoc, [data-member-role]")?.textContent?.trim() ?? "member"
       );
 
+      // Skip the Family Manager (admin account) — not a regular member
+      const managerKw = ["family manager", "家庭群组管理员", "家庭群組管理員", "管理者"];
+      if (managerKw.some((kw) => role.toLowerCase().includes(kw))) {
+        continue;
+      }
+
       // Detect pending invite: Google shows cancel/revoke button instead of remove button.
       // Check all button texts on the page for cancel-invite indicators.
       const isPending = await page.evaluate(() => {
