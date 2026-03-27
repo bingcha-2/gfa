@@ -138,6 +138,7 @@ export async function gmailLogin(
     await page.waitForLoadState("domcontentloaded").catch(() => {});
 
     // Step 4: Handle post-login challenges (up to 8 rounds)
+    let totpSubmitted = false;
     for (let round = 0; round < 8; round++) {
       await logger.log("INFO", `[gmail-login] Round ${round + 1}, URL: ${page.url()}`);
 
@@ -177,8 +178,16 @@ export async function gmailLogin(
         'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
       );
       if ((await totpInput.count()) > 0) {
+        // If TOTP was already submitted in a previous round, the code was rejected.
+        // Wait for the next 30s TOTP window to get a fresh code.
+        if (totpSubmitted) {
+          const waitSecs = totpSecondsRemaining() + 2;
+          await logger.log("WARN", `[gmail-login] TOTP rejected — waiting ${waitSecs}s for next code window`);
+          await page.waitForTimeout(waitSecs * 1000);
+        }
         const result = await handleTotp(page, totpInput.first(), totpSecret, logger);
         if (!result.success) return result;
+        totpSubmitted = true;
         await page.waitForTimeout(3000);
         await page.waitForLoadState("domcontentloaded").catch(() => {});
         continue;
