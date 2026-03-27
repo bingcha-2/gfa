@@ -23,10 +23,12 @@ const GOOGLE_ONE_URL = "https://one.google.com/about/plans?hl=en";
  * renewal / expiry date and plan name from the page text.
  *
  * Detection strategy:
- *   1. If we see "Current plan" text → subscription is ACTIVE,
- *      even if no expiry date is found (monthly plans don't show one).
- *   2. Try to parse expiry/renewal dates in multiple formats.
- *   3. Extract plan name from the card that has "Current plan" label.
+ *   1. Find "Current plan" / "Your current plan" section.
+ *   2. Extract plan name and storage from the NEARBY text only (not the
+ *      entire page, which also lists other purchasable plans).
+ *   3. If the current plan is the free 15 GB tier → SUSPENDED.
+ *   4. If the current plan is a paid tier → ACTIVE.
+ *   5. Try to parse expiry/renewal dates in multiple formats.
  */
 export async function scrapeSubscriptionInfo(
   page: Page
@@ -37,34 +39,100 @@ export async function scrapeSubscriptionInfo(
 
     const pageText = await page.evaluate(() => document.body.innerText);
 
-    // Detect active subscription by "Current plan" label
-    const hasCurrentPlan =
-      /current\s*plan/i.test(pageText) ||
-      /当前方案|当前套餐|目前方案/i.test(pageText);
-
+    // Find the "Current plan" section and extract nearby text
+    const currentPlanInfo = extractCurrentPlanSection(pageText);
     const expiresAt = parseExpiryDate(pageText);
-    const planName = parsePlanName(pageText);
 
+    if (!currentPlanInfo) {
+      // No "Current plan" found at all
+      return { expiresAt: null, status: "SUSPENDED", planName: null };
+    }
+
+    // Free tier detection: "15 GB" with "$0" / "¥0" / "included with your Google Account"
+    if (currentPlanInfo.isFreeTier) {
+      return { expiresAt: null, status: "SUSPENDED", planName: null };
+    }
+
+    // Paid tier detected
     if (expiresAt) {
       const now = new Date();
       return {
         expiresAt,
         status: expiresAt > now ? "ACTIVE" : "EXPIRED",
-        planName,
+        planName: currentPlanInfo.planName,
       };
     }
 
-    if (hasCurrentPlan) {
-      // Page shows "Current plan" but no date — e.g. monthly subscriptions
-      return { expiresAt: null, status: "ACTIVE", planName };
-    }
-
-    // No date and no "Current plan" → likely no active subscription
-    return { expiresAt: null, status: "SUSPENDED", planName: null };
+    // Paid tier but no expiry date (monthly subscriptions)
+    return { expiresAt: null, status: "ACTIVE", planName: currentPlanInfo.planName };
   } catch {
     // Navigation failure, timeout, etc. — non-fatal
     return null;
   }
+}
+
+/**
+ * Represents the parsed "Current plan" section from the page.
+ */
+interface CurrentPlanSection {
+  /** Extracted plan name, e.g. "Google AI Ultra 30 TB" */
+  planName: string | null;
+  /** Whether this is the free 15 GB tier (no paid subscription) */
+  isFreeTier: boolean;
+}
+
+/**
+ * Find the "Current plan" section in the page text and extract
+ * the plan name from ONLY the nearby text (next ~300 chars).
+ *
+ * This prevents matching plan names from other plan cards further
+ * down the page (e.g. "Google AI Plus 200 GB" on a free-tier page).
+ */
+function extractCurrentPlanSection(text: string): CurrentPlanSection | null {
+  // Find the first occurrence of "Current plan" / "Your current plan"
+  const cpMatch = text.match(/(?:your\s+)?current\s*plan|当前方案|当前套餐|目前方案/i);
+  if (!cpMatch || cpMatch.index === undefined) return null;
+
+  // Extract the next 300 chars after the label
+  const afterLabel = text.slice(cpMatch.index + cpMatch[0].length, cpMatch.index + cpMatch[0].length + 300);
+
+  // Free tier detection: "15 GB" near "$0" / "¥0" / "included with your Google Account"
+  const hasFreeTierIndicator =
+    /(?:\$0|¥0|￥0|included\s+with\s+your\s+Google)/i.test(afterLabel) ||
+    (/15\s*GB/i.test(afterLabel) && !/Google\s+(One|AI)/i.test(afterLabel));
+
+  if (hasFreeTierIndicator) {
+    return { planName: null, isFreeTier: true };
+  }
+
+  // Extract plan name from the nearby text only
+  // Pattern 1: "Google AI Ultra\n30 TB" or "Google One AI Premium\n2 TB"
+  const googlePlanMatch = afterLabel.match(
+    /(?:Google\s+(?:One\s+)?(?:AI\s+)?(?:Premium|Ultra|Plus|Basic|Standard)[\s\S]{0,15}?\d+\s*(?:TB|GB))/i
+  );
+  if (googlePlanMatch) {
+    return {
+      planName: googlePlanMatch[0].replace(/\s+/g, " ").trim(),
+      isFreeTier: false,
+    };
+  }
+
+  // Pattern 2: Just a storage amount near "Current plan" (e.g. "2 TB", "100 GB")
+  const storageMatch = afterLabel.match(/(\d+)\s*(TB|GB)/i);
+  if (storageMatch) {
+    const storageStr = `${storageMatch[1]} ${storageMatch[2].toUpperCase()}`;
+    // Double-check it's not the free tier
+    if (storageStr === "15 GB") {
+      return { planName: null, isFreeTier: true };
+    }
+    return {
+      planName: `Google One ${storageStr}`,
+      isFreeTier: false,
+    };
+  }
+
+  // "Current plan" found but no storage info — probably a paid plan
+  return { planName: null, isFreeTier: false };
 }
 
 /**
@@ -101,37 +169,6 @@ function parseExpiryDate(text: string): Date | null {
       parseInt(isoMatch[3], 10)
     );
     if (!isNaN(d.getTime())) return d;
-  }
-
-  return null;
-}
-
-/**
- * Extract the plan name from the page text around "Current plan" label.
- * Looks for common Google One plan names:
- *   - "Google One AI Premium 2 TB"
- *   - "Google AI Ultra 30 TB"
- *   - "Google One 100 GB" / "2 TB"
- */
-function parsePlanName(text: string): string | null {
-  // Look for "Google ..." plan name patterns
-  const planMatch = text.match(
-    /(?:Google\s+(?:One\s+)?(?:AI\s+)?(?:Premium|Ultra|Basic|Standard)?[\s\S]{0,10}?\d+\s*(?:TB|GB))/i
-  );
-  if (planMatch) {
-    // Clean up whitespace
-    return planMatch[0].replace(/\s+/g, " ").trim();
-  }
-
-  // Fallback: look for standalone storage amounts near "Current plan"
-  const currentPlanIdx = text.search(/current\s*plan|当前方案|当前套餐/i);
-  if (currentPlanIdx >= 0) {
-    // Check the 200 chars after "Current plan" for a storage amount
-    const nearby = text.slice(currentPlanIdx, currentPlanIdx + 200);
-    const storageMatch = nearby.match(/(\d+)\s*(TB|GB)/i);
-    if (storageMatch) {
-      return `Google One ${storageMatch[1]} ${storageMatch[2].toUpperCase()}`;
-    }
   }
 
   return null;

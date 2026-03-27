@@ -704,7 +704,9 @@ user2@gmail.com`}
                                                      <td>
                                                        {m.isInGroup
                                                          ? <StatusBadge value="已在组" tone="emerald" />
-                                                         : <StatusBadge value={m.status} />}
+                                                         : m.status === "PENDING"
+                                                           ? <StatusBadge value="待接受" tone="amber" />
+                                                           : <StatusBadge value={m.status} />}
                                                      </td>
                                                      <td className="muted">{formatDate(m.joinedAt)}</td>
                                                      {canManage && (

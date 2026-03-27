@@ -45,9 +45,9 @@ const labelMap: Record<string, string> = {
   ACTIVE: "活跃",
   MANUAL_ONLY: "仅手动",
   // Order status
-  PENDING: "排队中",
+  PENDING: "待处理",
   RUNNING: "执行中",
-  TASK_QUEUED: "任务排队",
+  TASK_QUEUED: "处理中",
   TASK_RUNNING: "任务执行中",
   CODE_VERIFIED: "卡密已验证",
   GROUP_ASSIGNED: "已分组",
