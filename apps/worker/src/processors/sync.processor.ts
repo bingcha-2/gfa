@@ -72,6 +72,11 @@ export async function processSync(
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
+      if (loginResult.reason === "TRANSIENT") {
+        throw new Error(`Login transient failure: ${loginResult.detail}`);
+      }
+      // VERIFICATION_REQUIRED or UNKNOWN → needs human intervention
       await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });
@@ -277,7 +282,8 @@ async function scrapeMembersFromPage(
 
       if (email || card.gaiaId) {
         members.push({
-          email,
+          // Normalize to lowercase for consistent lookup (Google pages may show mixed case)
+          email: email ? email.trim().toLowerCase() : "",
           displayName: card.displayName,
           role,
           googleMemberId: card.gaiaId,

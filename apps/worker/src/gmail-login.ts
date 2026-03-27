@@ -24,7 +24,7 @@ const LOGIN_TIMEOUT_MS = 60_000;
 
 export type GmailLoginResult =
   | { success: true }
-  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN"; detail: string };
+  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT"; detail: string };
 
 export interface LoginCredentials {
   loginEmail: string;
@@ -79,8 +79,22 @@ export async function gmailLogin(
 
     await emailInput.first().fill(loginEmail);
     await clickNext(page);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
+
+    // Verify the page actually advanced past the email step.
+    // If still on identifier page, click Next again (Google sometimes ignores the first click).
+    for (let nextRetry = 0; nextRetry < 2; nextRetry++) {
+      if (!page.url().includes("/identifier")) break;
+      await logger.log("WARN", `[gmail-login] Still on identifier page after Next click — retry ${nextRetry + 1}`);
+      const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
+      if ((await retryEmailInput.count()) > 0) {
+        await retryEmailInput.first().fill(loginEmail);
+      }
+      await clickNext(page);
+      await page.waitForTimeout(3000);
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+    }
 
     // Handle "Something went wrong" error popup (up to 2 rounds — it can appear multiple times).
     // If Restart was clicked, the page resets to the email input — re-fill email then continue.
@@ -114,7 +128,8 @@ export async function gmailLogin(
         }))
       );
       const url = page.url();
-      return { success: false, reason: "UNKNOWN", detail: `Password input never became visible (15s). URL: ${url} | pwd fields: ${JSON.stringify(allPwd)}` };
+      // TRANSIENT: page may not have advanced past email step; safe to retry
+      return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible (15s). URL: ${url} | pwd fields: ${JSON.stringify(allPwd)}` };
     }
 
     await passwordInput.first().fill(loginPassword);

@@ -95,6 +95,11 @@ export async function processInvite(
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
+      if (loginResult.reason === "TRANSIENT") {
+        throw new Error(`Login transient failure: ${loginResult.detail}`);
+      }
+      // VERIFICATION_REQUIRED or UNKNOWN → needs human intervention
       await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       // Throw to ensure finally block runs (pool.release); catch block must not overwrite MANUAL_REVIEW status

@@ -75,6 +75,10 @@ export async function processReplace(
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
+      if (loginResult.reason === "TRANSIENT") {
+        throw new Error(`Login transient failure: ${loginResult.detail}`);
+      }
       await prisma.account.update({ where: { id: accountId }, data: { status: "VERIFICATION_REQUIRED" } });
       await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
       throw Object.assign(new Error("MANUAL_REVIEW"), { __manualReview: true });

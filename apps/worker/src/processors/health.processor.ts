@@ -64,6 +64,10 @@ export async function processHealth(
     // Attempt Gmail auto-login to verify account health
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
+      if (loginResult.reason === "TRANSIENT") {
+        throw new Error(`Login transient failure: ${loginResult.detail}`);
+      }
       // Both VERIFICATION_REQUIRED and UNKNOWN reasons require manual intervention
       const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
         ? "VERIFICATION_REQUIRED"
