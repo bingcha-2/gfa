@@ -33,7 +33,7 @@ type ConsoleData = {
   redeemCodes: RedeemCodeSummary[];
 };
 
-type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "lookup";
+type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "lookup" | "settings";
 
 // --- Bulk operation result types ---
 export type CrossInviteResult = {
@@ -86,6 +86,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const [isLoading, startTransition] = useTransition();
   const [isActioning, setIsActioning] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
+  const [pwForm, setPwForm] = useState({ current: "", newPw: "", confirm: "" });
+  const [pwLoading, setPwLoading] = useState(false);
 
   function showToast(type: "success" | "error" | "info", msg: string) {
     setToast({ type, msg });
@@ -478,6 +480,12 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       label: "邮箱查询",
       caption: "Member Lookup",
       metric: "按邮箱搜索"
+    },
+    {
+      id: "settings" as const,
+      label: "修改密码",
+      caption: "Settings",
+      metric: ""
     }
   ];
 
@@ -644,6 +652,86 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         );
       case "lookup":
         return <MemberLookupPanel />;
+      case "settings":
+        return (
+          <div className="panel-stack">
+            <div className="section-copy">
+              <p className="label">Security</p>
+              <h2 className="panel-title">修改登录密码</h2>
+              <p className="muted">修改当前账号 ({data.user.email}) 的登录密码。</p>
+            </div>
+            <form
+              className="form-stack"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (pwForm.newPw !== pwForm.confirm) {
+                  showToast("error", "两次输入的新密码不一致");
+                  return;
+                }
+                if (pwForm.newPw.length < 6) {
+                  showToast("error", "新密码至少 6 个字符");
+                  return;
+                }
+                setPwLoading(true);
+                try {
+                  await apiRequest("auth/change-password", {
+                    method: "PATCH",
+                    body: {
+                      currentPassword: pwForm.current,
+                      newPassword: pwForm.newPw
+                    }
+                  });
+                  showToast("success", "密码修改成功，下次登录请使用新密码");
+                  setPwForm({ current: "", newPw: "", confirm: "" });
+                } catch (err) {
+                  const msg = getErrorMessage(err);
+                  showToast("error", msg.includes("incorrect") ? "当前密码错误" : msg);
+                } finally {
+                  setPwLoading(false);
+                }
+              }}
+            >
+              <label className="field-label">
+                当前密码
+                <input
+                  type="password"
+                  className="field-input"
+                  value={pwForm.current}
+                  onChange={(e) => setPwForm((p) => ({ ...p, current: e.target.value }))}
+                  required
+                  autoComplete="current-password"
+                />
+              </label>
+              <label className="field-label">
+                新密码（至少 6 位）
+                <input
+                  type="password"
+                  className="field-input"
+                  value={pwForm.newPw}
+                  onChange={(e) => setPwForm((p) => ({ ...p, newPw: e.target.value }))}
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </label>
+              <label className="field-label">
+                确认新密码
+                <input
+                  type="password"
+                  className="field-input"
+                  value={pwForm.confirm}
+                  onChange={(e) => setPwForm((p) => ({ ...p, confirm: e.target.value }))}
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </label>
+              <button className="button primary" type="submit" disabled={pwLoading}>
+                {pwLoading ? "修改中..." : "确认修改"}
+              </button>
+            </form>
+          </div>
+        );
       default:
         return null;
     }
