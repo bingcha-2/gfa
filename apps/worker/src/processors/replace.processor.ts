@@ -332,7 +332,7 @@ async function removeMemberOnPage(
   credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string }
 ): Promise<string | undefined> {
   let discoveredGaiaId: string | undefined;
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   const displayName = credentials?.displayName;
   const googleMemberId = credentials?.googleMemberId;
@@ -342,7 +342,7 @@ async function removeMemberOnPage(
     const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
     await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
     // Verify we landed on the right page (check for remove/cancel button)
     const hasAction = await page.locator(
@@ -435,7 +435,7 @@ async function removeMemberOnPage(
 
   // Wait for potential redirect to re-auth page or confirmation dialog
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // --- Handle Google re-authentication (password and/or TOTP) ---
   // After clicking Remove for an ACTIVE member, Google may redirect to
@@ -459,7 +459,7 @@ async function removeMemberOnPage(
       if ((await nextBtn.count()) > 0) {
         await nextBtn.first().click();
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("load", { timeout: 30000 });
+        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
       }
     }
 
@@ -502,7 +502,7 @@ async function removeMemberOnPage(
         await logger.log("INFO", "Password submitted for re-auth");
 
         await page.waitForTimeout(5000);
-        await page.waitForLoadState("load", { timeout: 60000 });
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
       }
     } else {
       await logger.log("INFO", "Google skipped password, directly on TOTP challenge");
@@ -562,7 +562,7 @@ async function removeMemberOnPage(
       await logger.log("INFO", "TOTP code submitted");
 
       await page.waitForTimeout(5000);
-      await page.waitForLoadState("load", { timeout: 60000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
       // Verify we actually left the TOTP challenge page
       // If still stuck, retry with a fresh TOTP code (first one may have expired)
@@ -597,7 +597,7 @@ async function removeMemberOnPage(
             if ((await retryBtn.count()) > 0) {
               await retryBtn.first().click();
               await page.waitForTimeout(5000);
-              await page.waitForLoadState("load", { timeout: 60000 });
+              await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
             }
           }
         } else {
@@ -663,7 +663,7 @@ async function removeMemberOnPage(
   }
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   return discoveredGaiaId;
 }
@@ -687,14 +687,14 @@ async function fallbackFindMember(
   displayName: string | undefined,
   logger: TaskLogger
 ): Promise<string | undefined> {
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // S1: Email visible directly on list (pending invites without a Google account name)
   const emailLocator = page.locator(`text="${email}"`);
   if ((await emailLocator.count()) > 0) {
     await logger.log("INFO", `S1: Found email text on list page, clicking`);
     await emailLocator.first().click();
-    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
     return extractGaiaIdFromUrl(page.url());
   }
 
@@ -705,7 +705,7 @@ async function fallbackFindMember(
     if ((await nameLocator.count()) > 0) {
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
-      await page.waitForLoadState("load", { timeout: 60000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
       return extractGaiaIdFromUrl(page.url());
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found on page either`);
@@ -796,7 +796,7 @@ async function inviteMemberOnPage(
   }
 
   await inviteLink.first().click();
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
   // Email input
@@ -823,7 +823,7 @@ async function inviteMemberOnPage(
   await sendButton.first().click();
   await logger.log("INFO", `Clicked send for ${email}`);
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // Check for Google error messages after sending
   // Google shows inline errors like "can't be invited", "already a member", etc.

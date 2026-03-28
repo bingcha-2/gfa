@@ -232,7 +232,7 @@ async function scrapeMembersFromPage(
   page: import("playwright").Page,
   adminEmail: string = ""
 ): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // Parse available slots from invite button text
   const inviteLinkText = await page

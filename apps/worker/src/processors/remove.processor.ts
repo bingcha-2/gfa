@@ -212,7 +212,7 @@ async function removeMemberOnPage(
   logger: TaskLogger,
   credentials?: { password?: string; totpSecret?: string; googleMemberId?: string; displayName?: string }
 ): Promise<void> {
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   const googleMemberId = credentials?.googleMemberId;
   const displayName = credentials?.displayName;
@@ -222,7 +222,7 @@ async function removeMemberOnPage(
     const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
     await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   } else {
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await fallbackFindMember(page, email, displayName, logger);
@@ -285,7 +285,7 @@ async function removeMemberOnPage(
   await logger.log("INFO", `Clicked remove/cancel for ${email}`);
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // --- Handle Google re-authentication (password and/or TOTP) ---
   // After clicking Remove for an ACTIVE member, Google may redirect to
@@ -309,7 +309,7 @@ async function removeMemberOnPage(
       if ((await nextBtn.count()) > 0) {
         await nextBtn.first().click();
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("load", { timeout: 30000 });
+        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
       }
     }
 
@@ -350,7 +350,7 @@ async function removeMemberOnPage(
         await logger.log("INFO", "Password submitted for re-auth");
 
         await page.waitForTimeout(5000);
-        await page.waitForLoadState("load", { timeout: 60000 });
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
       }
     } else {
       await logger.log("INFO", "Google skipped password, directly on TOTP challenge");
@@ -408,7 +408,7 @@ async function removeMemberOnPage(
       await logger.log("INFO", "TOTP code submitted");
 
       await page.waitForTimeout(5000);
-      await page.waitForLoadState("load", { timeout: 60000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
       // Verify we actually left the TOTP challenge page
       // If still stuck, retry with a fresh TOTP code (first one may have expired)
@@ -443,7 +443,7 @@ async function removeMemberOnPage(
             if ((await retryBtn.count()) > 0) {
               await retryBtn.first().click();
               await page.waitForTimeout(5000);
-              await page.waitForLoadState("load", { timeout: 60000 });
+              await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
             }
           }
         } else {
@@ -504,7 +504,7 @@ async function removeMemberOnPage(
   }
 
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 }
 
 /**
@@ -517,14 +517,14 @@ async function fallbackFindMember(
   displayName: string | undefined,
   logger: TaskLogger
 ): Promise<void> {
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // S1: email visible directly on list page (pending invites)
   const emailLocator = page.locator(`text="${email}"`);
   if ((await emailLocator.count()) > 0) {
     await logger.log("INFO", `S1: Found email text on list page, clicking`);
     await emailLocator.first().click();
-    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
     return;
   }
 
@@ -535,7 +535,7 @@ async function fallbackFindMember(
     if ((await nameLocator.count()) > 0) {
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
-      await page.waitForLoadState("load", { timeout: 60000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
       return;
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found`);
