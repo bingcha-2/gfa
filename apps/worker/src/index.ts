@@ -71,15 +71,19 @@ const connection = parseRedisUrl(redisUrl);
 
 // ---- Workers ----
 
-// Derive concurrency from the number of browser profiles available
-const poolSize = (process.env.ADSPOWER_POOL_IDS ?? "").split(",").filter(s => s.trim()).length || 1;
+// Each queue runs at most 1 concurrent job.
+// With 5 queues, max 5 jobs can be active — but only `poolSize` profiles exist,
+// so the Redis-backed BrowserPool.acquire() naturally throttles to `poolSize` active.
+// Previously: concurrency = poolSize (3) × 5 queues = 15 concurrent jobs racing
+// for 3 profiles → PROFILE_ACQUIRE_FAILED after 120s.
+const WORKER_CONCURRENCY = 1;
 
 const inviteWorker = new Worker<InviteMemberPayload>(
   QUEUE_NAMES.invite,
   (job) => processInvite(job, deps),
   {
     connection,
-    concurrency: poolSize,
+    concurrency: WORKER_CONCURRENCY,
     lockDuration: 300_000, // 5 min — browser ops can take 1-2 min
   }
 );
@@ -89,7 +93,7 @@ const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
   (job) => processRemove(job, deps),
   {
     connection,
-    concurrency: poolSize,
+    concurrency: WORKER_CONCURRENCY,
     lockDuration: 300_000,
   }
 );
@@ -99,7 +103,7 @@ const replaceWorker = new Worker<ReplaceMemberPayload>(
   (job) => processReplace(job, deps),
   {
     connection,
-    concurrency: poolSize,
+    concurrency: WORKER_CONCURRENCY,
     lockDuration: 300_000,
   }
 );
@@ -109,7 +113,7 @@ const syncWorker = new Worker<SyncFamilyGroupPayload>(
   (job) => processSync(job, deps),
   {
     connection,
-    concurrency: poolSize,
+    concurrency: WORKER_CONCURRENCY,
     lockDuration: 300_000,
   }
 );
@@ -119,7 +123,7 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   (job) => processHealth(job, deps),
   {
     connection,
-    concurrency: poolSize,
+    concurrency: WORKER_CONCURRENCY,
     lockDuration: 300_000,
   }
 );

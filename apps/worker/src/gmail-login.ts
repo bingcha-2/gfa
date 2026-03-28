@@ -167,13 +167,36 @@ export async function gmailLogin(
     try {
       await passwordInput.first().waitFor({ state: "visible", timeout: 8_000 });
     } catch {
-      // Password field never appeared — dump page state for debugging
+      // Password field never appeared — check if page redirected to a known challenge
+      const url = page.url();
+
+      // CAPTCHA triggered before password step
+      if (await isCaptchaPage(page, url)) {
+        const detail = `CAPTCHA challenge before password step at ${url}`;
+        await logger.log("WARN", `[gmail-login] Pre-password CAPTCHA: ${detail}`);
+        return { success: false, reason: "CAPTCHA", detail };
+      }
+
+      // Account locked/disabled before password step
+      if (await isAccountLockedPage(page, url)) {
+        const detail = `Account locked/disabled before password step at ${url}`;
+        await logger.log("WARN", `[gmail-login] Pre-password account lock: ${detail}`);
+        return { success: false, reason: "ACCOUNT_LOCKED", detail };
+      }
+
+      // Phone challenge before password step
+      if (await isPhoneChallengePage(page)) {
+        const detail = `Phone challenge before password step at ${url}`;
+        await logger.log("WARN", `[gmail-login] Pre-password phone challenge: ${detail}`);
+        return { success: false, reason: "PHONE_CHALLENGE", detail };
+      }
+
+      // Dump page state for debugging unknown cases
       const allPwd = await page.evaluate(() =>
         Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
           name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
         }))
       );
-      const url = page.url();
       // TRANSIENT: page may not have advanced past email step; safe to retry
       return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible (15s). URL: ${url} | pwd fields: ${JSON.stringify(allPwd)}` };
     }
@@ -266,20 +289,12 @@ export async function gmailLogin(
         continue;
       }
 
-      // Account recovery options page (gds.google.com/web/recoveryoptions)
-      // Google shows this when it detects unusual login activity.
-      // Try to dismiss it by clicking "Skip" / "Not now" variants.
-      if (roundUrl.includes("recoveryoptions") || roundUrl.includes("gds.google.com")) {
-        const skipResult = await handleRecoveryOptions(page, logger);
-        if (!skipResult) {
-          return {
-            success: false,
-            reason: "VERIFICATION_REQUIRED",
-            detail: `Account recovery verification required (could not skip). URL: ${roundUrl}`,
-          };
-        }
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      // GDS setup pages (gds.google.com): recovery options, welcome, home address.
+      // Google shows these on first login for new accounts.
+      // handleRecoveryOptions clicks through dismiss buttons and falls back to
+      // direct myaccount navigation if no dismiss button is found.
+      if (roundUrl.includes("gds.google.com")) {
+        await handleRecoveryOptions(page, logger);
         continue;
       }
 
@@ -497,55 +512,88 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
   await page.waitForTimeout(3000);
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
 
-  // Broad set of buttons that can dismiss GDS / recovery pages
-  const dismissBtn = page.locator([
-    // Skip / Not now variants
-    'button:has-text("Skip")',
-    'button:has-text("Not now")',
-    'button:has-text("以后再说")',
-    'button:has-text("以後再說")',
-    'button:has-text("稍後")',
-    'button:has-text("稍后")',
-    'button:has-text("取消")',
-    'a:has-text("Skip")',
-    'a:has-text("Not now")',
-    // GDS landing page — confirm / done variants
-    'button:has-text("Yes, it was me")',
-    'button:has-text("Yes")',
-    'button:has-text("Done")',
-    'button:has-text("Continue")',
-    'button:has-text("Confirm")',
-    'button:has-text("完成")',
-    'button:has-text("继续")',
-    'button:has-text("繼續")',
-    'button:has-text("確認")',
-    'button:has-text("确认")',
-    'button:has-text("是的")',
-    'button:has-text("是，是我本人")',
-    'a:has-text("Done")',
-    'a:has-text("Continue")',
-    'a:has-text("完成")',
-    'a:has-text("继续")',
-    // Material design raised buttons (GDS uses these)
-    'div[role="button"]:has-text("Yes")',
-    'div[role="button"]:has-text("Done")',
-    'div[role="button"]:has-text("Continue")',
-    'div[role="button"]:has-text("Skip")',
-  ].join(", "));
+  // Broad set of buttons that can dismiss GDS / recovery pages.
+  // GDS is a multi-card flow: recoveryoptions → welcome → homeaddress.
+  // Try up to 3 rounds to click through all cards.
+  for (let cardRound = 0; cardRound < 3; cardRound++) {
+    // Check if we already left GDS
+    const currentUrl = page.url();
+    if (!currentUrl.includes("gds.google.com")) {
+      await logger.log("INFO", `[gmail-login] Left GDS flow after ${cardRound} card(s)`);
+      return true;
+    }
 
-  if ((await dismissBtn.count()) > 0) {
-    const btnText = await dismissBtn.first().textContent().catch(() => "?");
-    await dismissBtn.first().click();
-    await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on recovery/GDS page`);
-    await page.waitForTimeout(3000);
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
-    return true;
+    const dismissBtn = page.locator([
+      // Cancel variants (recoveryoptions page)
+      'button:has-text("Cancel")',
+      'a:has-text("Cancel")',
+      'button:has-text("取消")',
+      // Skip / Not now variants
+      'button:has-text("Skip")',
+      'button:has-text("Not now")',
+      'button:has-text("No thanks")',
+      'button:has-text("以后再说")',
+      'button:has-text("以後再說")',
+      'button:has-text("稍後")',
+      'button:has-text("稍后")',
+      'button:has-text("不用了")',
+      'a:has-text("Skip")',
+      'a:has-text("Not now")',
+      'a:has-text("No thanks")',
+      'a:has-text("不用了")',
+      // GDS landing page — confirm / done variants
+      'button:has-text("Yes, it was me")',
+      'button:has-text("Yes")',
+      'button:has-text("Done")',
+      'button:has-text("Continue")',
+      'button:has-text("Confirm")',
+      'button:has-text("完成")',
+      'button:has-text("继续")',
+      'button:has-text("繼續")',
+      'button:has-text("確認")',
+      'button:has-text("确认")',
+      'button:has-text("是的")',
+      'button:has-text("是，是我本人")',
+      'a:has-text("Done")',
+      'a:has-text("Continue")',
+      'a:has-text("完成")',
+      'a:has-text("继续")',
+      // Material design raised buttons (GDS uses these)
+      'div[role="button"]:has-text("Yes")',
+      'div[role="button"]:has-text("Done")',
+      'div[role="button"]:has-text("Continue")',
+      'div[role="button"]:has-text("Skip")',
+      'div[role="button"]:has-text("No thanks")',
+      'div[role="button"]:has-text("Cancel")',
+    ].join(", "));
+
+    if ((await dismissBtn.count()) > 0) {
+      const btnText = await dismissBtn.first().textContent().catch(() => "?");
+      await dismissBtn.first().click();
+      await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on GDS card ${cardRound + 1}`);
+      await page.waitForTimeout(3000);
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      continue;
+    }
+
+    // No dismiss button found on this card (e.g. homeaddress has only ← and Save)
+    await logger.log("WARN", `[gmail-login] No dismiss button on GDS card ${cardRound + 1} — breaking to fallback`);
+    break;
   }
 
-  // Dump page text to help debug what buttons are present
-  const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
-  await logger.log("WARN", `[gmail-login] No dismiss button found on recovery/GDS page. Body: ${bodySnippet}`);
-  return false;
+  // Fallback: if still on gds.google.com, navigate directly to myaccount.
+  // This reliably exits any GDS setup flow while preserving the login session.
+  const afterUrl = page.url();
+  if (afterUrl.includes("gds.google.com")) {
+    await logger.log("INFO", "[gmail-login] GDS flow still active — navigating directly to myaccount");
+    await page.goto("https://myaccount.google.com/?hl=en", {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(2000);
+  }
+
+  return true;
 }
 
 /** Detect phone/push/SMS challenge pages heuristically */

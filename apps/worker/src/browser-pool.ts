@@ -12,7 +12,7 @@
 import type { Redis } from "ioredis";
 
 const POOL_KEY_PREFIX = "gfa:pool:profile:";
-const LOCK_TTL_MS = 20 * 60 * 1000; // 20 min — covers worst-case Google login + task execution
+const LOCK_TTL_MS = 5 * 60 * 1000; // 5 min — normal task takes 1-2 min; 5 min covers slow Google pages
 const POLL_INTERVAL_MS = 3_000;
 
 
@@ -50,7 +50,7 @@ export class BrowserPool {
    * Blocks (polls) until a profile is available or timeoutMs is reached.
    * @throws Error if no profile becomes available within timeoutMs
    */
-  async acquire(workerId: string, timeoutMs = 120_000): Promise<string> {
+  async acquire(workerId: string, timeoutMs = 180_000): Promise<string> {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -67,13 +67,26 @@ export class BrowserPool {
         }
       }
 
-      // All profiles busy — wait before next poll
+      // All profiles busy — log who holds each lock for diagnosis
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
 
+      // Diagnostic: show which worker holds each profile and remaining TTL
+      const lockInfo: string[] = [];
+      for (const pid of this.profileIds) {
+        const holder = await this.redis.get(`${POOL_KEY_PREFIX}${pid}`);
+        const ttl = await this.redis.pttl(`${POOL_KEY_PREFIX}${pid}`);
+        if (holder) {
+          lockInfo.push(`${pid}→${holder}(${Math.round(ttl / 1000)}s)`);
+        } else {
+          lockInfo.push(`${pid}→FREE`);
+        }
+      }
+
       await sleep(Math.min(POLL_INTERVAL_MS, remaining));
       console.log(
-        `[BrowserPool] All profiles busy, worker ${workerId} waiting... (${Math.round(remaining / 1000)}s left)`
+        `[BrowserPool] All profiles busy, worker ${workerId} waiting... ` +
+        `(${Math.round(remaining / 1000)}s left) locks: [${lockInfo.join(", ")}]`
       );
     }
 
@@ -135,7 +148,7 @@ export class BrowserPool {
    * Acquire a free profile from the pool, skipping any profile in the excluded set.
    * Used for retry loops where certain profiles are known to be broken.
    */
-  async acquireExcluding(workerId: string, excluded: Set<string>, timeoutMs = 120_000): Promise<string> {
+  async acquireExcluding(workerId: string, excluded: Set<string>, timeoutMs = 180_000): Promise<string> {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {

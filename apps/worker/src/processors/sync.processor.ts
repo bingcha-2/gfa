@@ -93,7 +93,7 @@ export async function processSync(
     // Ensure family group exists (also creates DB record if first run)
     await ensureFamilyGroup(page, account, prisma, logger);
 
-    await browser.safeGoto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60_000 });
+    await browser.safeGoto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await logger.log("INFO", "Navigated to Family page for sync");
 
     // Scrape current members from the page (visits each member detail page for real emails)
@@ -297,7 +297,7 @@ async function scrapeMembersFromPage(
       : `${baseUrl}${card.href}`;
 
     try {
-      await page.goto(detailUrl, { waitUntil: "load", timeout: 60000 });
+      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForTimeout(500);
 
       // Read emails from leaf-node elements only to avoid concatenated parent text
@@ -362,7 +362,7 @@ async function scrapeMembersFromPage(
 
     // Navigate back to family list
     await page.goto("https://myaccount.google.com/family/details?hl=en", {
-      waitUntil: "load",
+      waitUntil: "domcontentloaded",
       timeout: 60000,
     }).catch(() => {});
     await page.waitForTimeout(500);

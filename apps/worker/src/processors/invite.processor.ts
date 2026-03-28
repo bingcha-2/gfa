@@ -120,7 +120,7 @@ export async function processInvite(
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     // Navigate to Google Family page, execute invite
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await logger.log("INFO", "Navigated to Google Family page");
     await executeInviteOnPage(page, userEmail, logger);
 
@@ -141,7 +141,7 @@ export async function processInvite(
       // After invite, Google usually redirects back to family details.
       // Ensure we're on that page.
       if (!page.url().includes("family/details")) {
-        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       }
       await page.waitForTimeout(1500);
       capturedGaiaId = await scanPageForMemberGaiaId(page, userEmail);
@@ -216,18 +216,26 @@ async function executeInviteOnPage(
   email: string,
   logger: TaskLogger
 ): Promise<void> {
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  await page.waitForTimeout(2000); // Angular SPA needs time to render
 
   const inviteLink = page.locator('a[href*="invitemembers"]');
-  if ((await inviteLink.count()) === 0) throw new Error("Cannot find invite link on family page");
+  // Wait up to 15s for the invite link to render (Angular lazy-loads family member UI)
+  try {
+    await inviteLink.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    const url = page.url();
+    const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+    throw new Error(`Cannot find invite link on family page. URL: ${url}, body: ${bodySnippet}`);
+  }
 
   await inviteLink.first().click();
   await logger.log("INFO", "Clicked invite link");
-  await page.waitForLoadState("load", { timeout: 60000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
   await page.waitForURL(/invitemembers/, { timeout: 10000 }).catch(async () => {
-    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
     if (!page.url().includes("invitemembers")) {
       throw new Error(`Expected invitemembers page, got: ${page.url()}`);
     }

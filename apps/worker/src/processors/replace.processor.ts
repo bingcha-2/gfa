@@ -95,7 +95,7 @@ export async function processReplace(
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
-    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     // Look up the member's googleMemberId and displayName from DB
     const memberRecord = await prisma.familyMember.findFirst({
@@ -130,7 +130,7 @@ export async function processReplace(
 
     // Step 2: Always navigate back to family details before inviting.
     // removeMemberOnPage may leave the page on /family/remove/ or /family/member/ path.
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     // Wait a few seconds for Google to reflect the slot becoming available
     await page.waitForTimeout(3000);
     await logger.log("INFO", `Back on family details, now inviting ${newUserEmail}`);
@@ -142,7 +142,7 @@ export async function processReplace(
     let newMemberGaiaId: string | undefined;
     try {
       if (!page.url().includes("family/details")) {
-        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       }
       await page.waitForTimeout(2000);
       newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
@@ -322,7 +322,7 @@ async function removeMemberOnPage(
     // Strategy 0: Direct navigation using GAIA ID — bypasses all text matching issues
     const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
-    await page.goto(directUrl, { waitUntil: "load", timeout: 60000 });
+    await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForLoadState("load", { timeout: 60000 });
 
     // Verify we landed on the right page (check for remove/cancel button)
@@ -335,12 +335,12 @@ async function removeMemberOnPage(
       // Already on the detail page — proceed directly to remove button logic below
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
-      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
     }
   } else {
     // No GAIA ID — fall back to text-based matching
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
   }
 
@@ -353,7 +353,7 @@ async function removeMemberOnPage(
   );
   if ((await deleteGroupBtn.count()) > 0) {
     await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
-    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
     await logger.log("INFO", `After fallback, now on: ${page.url()}`);
   }
@@ -603,7 +603,7 @@ async function removeMemberOnPage(
     } else if (page.url().includes("family/remove/")) {
       await logger.log("INFO", "On /family/remove/ confirmation page");
     } else if (!page.url().includes("family/")) {
-      await page.goto(memberDetailUrl, { waitUntil: "load", timeout: 60000 });
+      await page.goto(memberDetailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       const removeBtn3 = page.locator([
         'button:has-text("移除")',
         'button:has-text("Remove")',
@@ -717,7 +717,7 @@ async function fallbackFindMember(
     const href = memberHrefs[i];
 
     try {
-      await page.goto(href, { waitUntil: "load", timeout: 60000 });
+      await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForTimeout(500);
 
       // Definitive manager detection: "Delete Family Group" button only appears on the manager's own page.
@@ -744,7 +744,7 @@ async function fallbackFindMember(
   }
 
   // Navigate back to family page for error screenshot
-  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 }).catch(() => {});
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 
   throw new Error(
     `Cannot find member "${email}" on family page. ` +
@@ -764,7 +764,7 @@ async function inviteMemberOnPage(
   logger: TaskLogger
 ): Promise<void> {
   // Always navigate to family details to ensure a clean starting state
-  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "load", timeout: 60000 });
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForTimeout(1000);
 
   // Wait for the invite link to appear (confirms the slot opened up)

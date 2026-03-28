@@ -84,7 +84,7 @@ export async function processHealth(
     }
 
     // Navigate to Google Account page to determine final health status
-    await browser.navigateTo(GOOGLE_ACCOUNT_URL, { waitUntil: "load", timeout: 60000 });
+    await browser.navigateTo(GOOGLE_ACCOUNT_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     const currentUrl = page.url();
     await logger.log("INFO", `Page URL after navigation: ${currentUrl}`);
 
