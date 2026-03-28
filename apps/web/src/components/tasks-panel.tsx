@@ -210,9 +210,12 @@ export function TasksPanel({
                   return (
                     <tr key={task.id}>
                       <td>
-                        <div className="strong mono">{task.id.slice(0, 12)}</div>
-                        <div className="muted">
-                          {task.type} · retry {task.retryCount}/{task.maxRetryCount}
+                        <div className="strong">{task.type}</div>
+                        {task.order?.userEmail && (
+                          <div style={{ fontSize: '0.85rem' }}>{task.order.userEmail}</div>
+                        )}
+                        <div className="muted mono" style={{ fontSize: '0.75rem' }}>
+                          {task.id.slice(0, 12)} · retry {task.retryCount}/{task.maxRetryCount}
                         </div>
                       </td>
                       <td>
