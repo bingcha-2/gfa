@@ -71,7 +71,9 @@ export function TasksPanel({
       task.type.toLowerCase().includes(query) ||
       task.status.toLowerCase().includes(query) ||
       task.order?.orderNo?.toLowerCase().includes(query) ||
-      task.familyGroup?.groupName?.toLowerCase().includes(query)
+      task.order?.userEmail?.toLowerCase().includes(query) ||
+      task.familyGroup?.groupName?.toLowerCase().includes(query) ||
+      task.account?.name?.toLowerCase().includes(query)
     );
   });
   const paginated = filteredTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -154,7 +156,7 @@ export function TasksPanel({
           <div className="filter-row">
             <input
               className="search-field"
-              placeholder="筛选任务号 / 类型 / 状态"
+              placeholder="筛选邮箱 / 任务号 / 类型 / 状态"
               value={filter}
               onChange={(event) => { setFilter(event.target.value); setCurrentPage(1); }}
             />
