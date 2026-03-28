@@ -98,7 +98,15 @@ export class AccountService {
         ...(dto.status !== undefined && { status: dto.status as any }),
         ...(dto.loginPassword !== undefined && { loginPassword: dto.loginPassword }),
         ...(dto.totpSecret !== undefined && { totpSecret: dto.totpSecret }),
-        ...(dto.notes !== undefined && { notes: dto.notes })
+        ...(dto.notes !== undefined && { notes: dto.notes }),
+        ...(dto.subscriptionExpiresAt !== undefined && {
+          subscriptionExpiresAt: dto.subscriptionExpiresAt
+            ? new Date(dto.subscriptionExpiresAt)
+            : null
+        }),
+        ...(dto.subscriptionPlan !== undefined && {
+          subscriptionPlan: dto.subscriptionPlan || null
+        })
       }
     });
 

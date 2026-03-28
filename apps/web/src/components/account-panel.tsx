@@ -56,19 +56,28 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
     adspowerProfileId: "",
     loginPassword: "",
     totpSecret: "",
-    notes: ""
+    notes: "",
+    subscriptionExpiresAt: "",
+    subscriptionPlan: ""
   });
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   function startEdit(account: AccountSummary) {
     setEditId(account.id);
+    // Convert ISO datetime to YYYY-MM-DD for date input
+    let expiresDate = "";
+    if (account.subscriptionExpiresAt) {
+      try { expiresDate = new Date(account.subscriptionExpiresAt).toISOString().split("T")[0]; } catch { /* noop */ }
+    }
     setEditForm({
       name: account.name,
       adspowerProfileId: account.adspowerProfileId,
       loginPassword: "",
       totpSecret: "",
-      notes: (account as any).notes ?? ""
+      notes: (account as any).notes ?? "",
+      subscriptionExpiresAt: expiresDate,
+      subscriptionPlan: (account as any).subscriptionPlan ?? ""
     });
     setActiveTab("edit");
   }
@@ -234,7 +243,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 adspowerProfileId: editForm.adspowerProfileId,
                 loginPassword: editForm.loginPassword || undefined,
                 totpSecret: editForm.totpSecret || undefined,
-                notes: editForm.notes || undefined
+                notes: editForm.notes || undefined,
+                subscriptionExpiresAt: editForm.subscriptionExpiresAt || "",
+                subscriptionPlan: editForm.subscriptionPlan || ""
               });
               if (ok) {
                 setActiveTab("list");
@@ -285,6 +296,26 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   placeholder="Base32 格式（可选）"
                   value={editForm.totpSecret}
                   onChange={(e) => setEditForm({ ...editForm, totpSecret: e.target.value.replace(/\s/g, "").toUpperCase() })}
+                />
+              </div>
+            </div>
+            <div className="field-grid two-up">
+              <div className="field">
+                <label htmlFor="edit-sub-expires">订阅到期时间 <span className="muted">(手动填写)</span></label>
+                <input
+                  id="edit-sub-expires"
+                  type="date"
+                  value={editForm.subscriptionExpiresAt}
+                  onChange={(e) => setEditForm({ ...editForm, subscriptionExpiresAt: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-sub-plan">订阅计划 <span className="muted">(如 Google AI Ultra 30 TB)</span></label>
+                <input
+                  id="edit-sub-plan"
+                  placeholder="订阅计划名称（可选）"
+                  value={editForm.subscriptionPlan}
+                  onChange={(e) => setEditForm({ ...editForm, subscriptionPlan: e.target.value })}
                 />
               </div>
             </div>

@@ -50,6 +50,14 @@ export class UpdateAccountDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  subscriptionExpiresAt?: string;
+
+  @IsOptional()
+  @IsString()
+  subscriptionPlan?: string;
 }
 
 export class BulkImportDto {

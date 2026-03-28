@@ -586,28 +586,26 @@ user2@gmail.com`}
                                   {group.account.loginEmail}
                                 </div>
                               )}
-                              {group.account?.subscriptionStatus && (
+                              {(
                                 <div style={{ marginTop: '2px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
                                   <span style={{
                                     padding: '1px 6px',
                                     borderRadius: '4px',
                                     fontWeight: 600,
                                     fontSize: '0.75rem',
-                                    background: group.account.subscriptionStatus === 'ACTIVE' ? 'rgba(16,185,129,0.12)' : group.account.subscriptionStatus === 'EXPIRED' ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)',
-                                    color: group.account.subscriptionStatus === 'ACTIVE' ? '#059669' : group.account.subscriptionStatus === 'EXPIRED' ? '#dc2626' : '#d97706',
+                                    background: group.account?.subscriptionStatus === 'ACTIVE' ? 'rgba(16,185,129,0.12)' : group.account?.subscriptionStatus === 'EXPIRED' ? 'rgba(239,68,68,0.12)' : group.account?.subscriptionStatus === 'SUSPENDED' ? 'rgba(245,158,11,0.12)' : 'rgba(156,163,175,0.12)',
+                                    color: group.account?.subscriptionStatus === 'ACTIVE' ? '#059669' : group.account?.subscriptionStatus === 'EXPIRED' ? '#dc2626' : group.account?.subscriptionStatus === 'SUSPENDED' ? '#d97706' : '#6b7280',
                                   }}>
-                                    {group.account.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : '⚠️ 已暂停'}
+                                    {group.account?.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account?.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : group.account?.subscriptionStatus === 'SUSPENDED' ? '⚠️ 已暂停' : '❓ 未知'}
                                   </span>
-                                  {group.account.subscriptionPlan && (
+                                  {group.account?.subscriptionPlan && (
                                     <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                       {group.account.subscriptionPlan}
                                     </span>
                                   )}
-                                  {group.account.subscriptionExpiresAt && (
-                                    <span className="muted" style={{ fontSize: '0.75rem' }}>
-                                      · {formatDate(group.account.subscriptionExpiresAt)}
-                                    </span>
-                                  )}
+                                  <span className="muted" style={{ fontSize: '0.75rem' }}>
+                                    · 到期 {group.account?.subscriptionExpiresAt ? formatDate(group.account.subscriptionExpiresAt) : '未设置'}
+                                  </span>
                                 </div>
                               )}
                             </td>
