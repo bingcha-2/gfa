@@ -197,4 +197,65 @@ export class TaskService {
 
     return updated;
   }
+
+  /**
+   * Cancel a task that is stuck retrying or waiting.
+   * Marks DB status as CANCELLED and attempts to remove pending BullMQ jobs.
+   */
+  async cancel(id: string, reason?: string) {
+    const task = await this.findOne(id);
+
+    // Allow cancelling tasks that are still active (not yet succeeded or already cancelled)
+    const cancellableStatuses = [
+      "PENDING", "RUNNING", "FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW",
+    ];
+    if (!cancellableStatuses.includes(task.status)) {
+      throw new BadRequestException(
+        `Cannot cancel task in status: ${task.status}`
+      );
+    }
+
+    const updated = await this.prisma.task.update({
+      where: { id },
+      data: {
+        status: "CANCELLED",
+        lastErrorCode: "CANCELLED",
+        lastErrorMessage: reason ?? "Cancelled by operator",
+        finishedAt: new Date(),
+      },
+    });
+
+    // Mark linked order as FAILED so it doesn't remain stuck
+    if (task.orderId) {
+      await this.prisma.order.update({
+        where: { id: task.orderId },
+        data: {
+          status: "FAILED",
+          resultMessage: reason ?? "Task cancelled by operator",
+        },
+      });
+    }
+
+    // Best-effort: remove any pending/delayed BullMQ jobs for this task
+    const queue = this.getQueue(task.type);
+    if (queue) {
+      try {
+        // Check waiting and delayed jobs for any that reference this taskId
+        const [waiting, delayed] = await Promise.all([
+          queue.getJobs(["waiting", "wait"]),
+          queue.getJobs(["delayed"]),
+        ]);
+        const allJobs = [...waiting, ...delayed].filter(Boolean);
+        for (const job of allJobs) {
+          if (job.data?.taskId === id) {
+            await job.remove().catch(() => {});
+          }
+        }
+      } catch {
+        // Non-fatal: if BullMQ cleanup fails, DB status is already CANCELLED
+      }
+    }
+
+    return updated;
+  }
 }

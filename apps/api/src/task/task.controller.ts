@@ -96,4 +96,24 @@ export class TaskController {
 
     return task;
   }
+
+  @Post(":id/cancel")
+  @Roles("ADMIN", "OPERATIONS")
+  async cancel(
+    @Param("id") id: string,
+    @Body() dto: ManualFailDto,
+    @Request() req: any
+  ) {
+    const task = await this.taskService.cancel(id, dto.reason);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "CANCEL_TASK",
+      targetType: "Task",
+      targetId: id,
+      detail: { reason: dto.reason }
+    });
+
+    return task;
+  }
 }

@@ -36,3 +36,10 @@ export function canManualFailTask(role?: string | null, status?: string | null) 
   return supportRoles.has(role ?? "") && status === "MANUAL_REVIEW";
 }
 
+export function canCancelTask(role?: string | null, status?: string | null) {
+  return (
+    operatorRoles.has(role ?? "") &&
+    ["PENDING", "RUNNING", "FAILED_RETRYABLE", "MANUAL_REVIEW"].includes(status ?? "")
+  );
+}
+

@@ -3,6 +3,7 @@
 import { useDeferredValue, useState } from "react";
 
 import {
+  canCancelTask,
   canManualCompleteTask,
   canManualFailTask,
   canRetryTask
@@ -17,11 +18,12 @@ type TasksPanelProps = {
   onRetry: (taskId: string) => Promise<boolean>;
   onManualComplete: (taskId: string, resultMessage: string) => Promise<boolean>;
   onManualFail: (taskId: string, reason: string) => Promise<boolean>;
+  onCancel: (taskId: string, reason: string) => Promise<boolean>;
 };
 
 type ActioningState = {
   taskId: string;
-  action: "retry" | "complete" | "fail";
+  action: "retry" | "complete" | "fail" | "cancel";
 } | null;
 
 export function TasksPanel({
@@ -29,12 +31,14 @@ export function TasksPanel({
   role,
   onRetry,
   onManualComplete,
-  onManualFail
+  onManualFail,
+  onCancel
 }: TasksPanelProps) {
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "manual" | "retryable">("all");
   const [actioning, setActioning] = useState<ActioningState>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [expandedErrors, setExpandedErrors] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 20;
   const deferredFilter = useDeferredValue(filter);
@@ -110,6 +114,22 @@ export function TasksPanel({
       else showToast("error", "操作失败");
     } catch {
       showToast("error", "请求失败");
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function handleCancel(taskId: string) {
+    const reason =
+      window.prompt("填写终止原因（可选）", "Cancelled by operator") ?? "";
+    if (reason === "") return; // user pressed Cancel on prompt
+    setActioning({ taskId, action: "cancel" });
+    try {
+      const ok = await onCancel(taskId, reason);
+      if (ok) showToast("success", "任务已终止");
+      else showToast("error", "终止失败");
+    } catch {
+      showToast("error", "终止请求失败");
     } finally {
       setActioning(null);
     }
@@ -203,18 +223,36 @@ export function TasksPanel({
                         <div>{task.order?.orderNo ?? "-"}</div>
                         <div className="muted">{task.familyGroup?.groupName ?? "-"}</div>
                       </td>
-                      <td title={[task.lastErrorCode, task.lastErrorMessage].filter(Boolean).join(': ')}>
+                      <td
+                        style={{ cursor: task.lastErrorMessage ? 'pointer' : 'default' }}
+                        onClick={() => {
+                          if (!task.lastErrorMessage) return;
+                          setExpandedErrors(prev => {
+                            const next = new Set(prev);
+                            if (next.has(task.id)) next.delete(task.id);
+                            else next.add(task.id);
+                            return next;
+                          });
+                        }}
+                      >
                         <div style={{ fontWeight: 500 }}>{task.lastErrorCode ?? "-"}</div>
                         <div className="muted" style={{
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
+                          ...(!expandedErrors.has(task.id) ? {
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical' as const,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxHeight: '2.8em',
+                          } : {}),
                           wordBreak: 'break-word',
                           lineHeight: '1.4',
-                          maxHeight: '2.8em'
                         }}>{task.lastErrorMessage ?? "No error"}</div>
+                        {task.lastErrorMessage && task.lastErrorMessage.length > 60 && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent, #0d9488)', marginTop: 2 }}>
+                            {expandedErrors.has(task.id) ? '▲ 收起' : '▼ 展开'}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div className="inline-actions">
@@ -257,9 +295,23 @@ export function TasksPanel({
                                 : "手动失败"}
                             </button>
                           ) : null}
+                          {canCancelTask(role, task.status) ? (
+                            <button
+                              className="button secondary small"
+                              disabled={isActioning}
+                              onClick={() => void handleCancel(task.id)}
+                              type="button"
+                              style={{ gap: 6, color: 'var(--clr-error, #ef4444)' }}
+                            >
+                              {isActioning && actioning?.action === "cancel"
+                                ? <><Spinner size={12} color="currentColor" /> 终止中...</>
+                                : "终止"}
+                            </button>
+                          ) : null}
                           {!canRetryTask(role, task.status) &&
                           !canManualCompleteTask(role, task.status) &&
-                          !canManualFailTask(role, task.status) ? (
+                          !canManualFailTask(role, task.status) &&
+                          !canCancelTask(role, task.status) ? (
                             <span className="muted">无可用动作</span>
                           ) : null}
                         </div>

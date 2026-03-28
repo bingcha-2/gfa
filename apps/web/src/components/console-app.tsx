@@ -394,6 +394,15 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
+  async function cancelTask(taskId: string, reason: string) {
+    return runAction(() =>
+      apiRequest(`tasks/${taskId}/cancel`, {
+        method: "POST",
+        body: { reason }
+      })
+    );
+  }
+
   async function disableCode(codeId: string) {
     return runAction(() =>
       apiRequest(`redeem-codes/${codeId}/disable`, {
@@ -641,6 +650,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             tasks={data.tasks}
             onManualComplete={manualComplete}
             onManualFail={manualFail}
+            onCancel={cancelTask}
             onRetry={retryTask}
             role={data.user.role}
           />
