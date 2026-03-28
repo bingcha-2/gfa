@@ -22,6 +22,8 @@ type OrdersPanelProps = {
 export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelProps) {
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "active" | "manual">("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
   const deferredFilter = useDeferredValue(filter);
 
   async function handleReplace(orderId: string) {
@@ -61,6 +63,8 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
       order.familyGroup?.groupName?.toLowerCase().includes(query)
     );
   });
+  const paginated = filteredOrders.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = Math.ceil(filteredOrders.length / PAGE_SIZE);
 
   return (
     <section id="orders" className="glass-panel">
@@ -77,7 +81,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
               className="search-field"
               placeholder="筛选订单号 / 邮箱 / 状态"
               value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+              onChange={(event) => { setFilter(event.target.value); setCurrentPage(1); }}
             />
           </div>
         </div>
@@ -85,21 +89,21 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
         <div className="panel-tabs">
           <button
             className={`panel-tab${activeTab === "all" ? " active" : ""}`}
-            onClick={() => setActiveTab("all")}
+            onClick={() => { setActiveTab("all"); setCurrentPage(1); }}
             type="button"
           >
             全部订单
           </button>
           <button
             className={`panel-tab${activeTab === "active" ? " active" : ""}`}
-            onClick={() => setActiveTab("active")}
+            onClick={() => { setActiveTab("active"); setCurrentPage(1); }}
             type="button"
           >
             处理中
           </button>
           <button
             className={`panel-tab${activeTab === "manual" ? " active" : ""}`}
-            onClick={() => setActiveTab("manual")}
+            onClick={() => { setActiveTab("manual"); setCurrentPage(1); }}
             type="button"
           >
             待人工
@@ -119,8 +123,8 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
               </tr>
             </thead>
             <tbody>
-              {filteredOrders.length ? (
-                filteredOrders.map((order) => (
+              {paginated.length ? (<>
+                {paginated.map((order) => (
                   <tr key={order.id}>
                     <td>
                       <div className="strong mono">{order.orderNo}</div>
@@ -161,8 +165,20 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                       </div>
                     </td>
                   </tr>
-                ))
-              ) : (
+                ))}
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <tr>
+                  <td colSpan={6}>
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                    <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                    <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
+                    <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                  </div>
+                  </td>
+                </tr>
+              )}
+              </>) : (
                 <tr>
                   <td colSpan={6}>
                     <div className="empty-state">没有匹配的订单。</div>

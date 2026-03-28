@@ -35,6 +35,8 @@ export function TasksPanel({
   const [activeTab, setActiveTab] = useState<"all" | "manual" | "retryable">("all");
   const [actioning, setActioning] = useState<ActioningState>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
   const deferredFilter = useDeferredValue(filter);
 
   function showToast(type: "success" | "error", msg: string) {
@@ -68,6 +70,8 @@ export function TasksPanel({
       task.familyGroup?.groupName?.toLowerCase().includes(query)
     );
   });
+  const paginated = filteredTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = Math.ceil(filteredTasks.length / PAGE_SIZE);
 
   async function handleRetry(taskId: string) {
     setActioning({ taskId, action: "retry" });
@@ -133,7 +137,7 @@ export function TasksPanel({
               className="search-field"
               placeholder="筛选任务号 / 类型 / 状态"
               value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+              onChange={(event) => { setFilter(event.target.value); setCurrentPage(1); }}
             />
           </div>
         </div>
@@ -141,21 +145,21 @@ export function TasksPanel({
         <div className="panel-tabs">
           <button
             className={`panel-tab${activeTab === "all" ? " active" : ""}`}
-            onClick={() => setActiveTab("all")}
+            onClick={() => { setActiveTab("all"); setCurrentPage(1); }}
             type="button"
           >
             全部任务
           </button>
           <button
             className={`panel-tab${activeTab === "manual" ? " active" : ""}`}
-            onClick={() => setActiveTab("manual")}
+            onClick={() => { setActiveTab("manual"); setCurrentPage(1); }}
             type="button"
           >
             人工处理
           </button>
           <button
             className={`panel-tab${activeTab === "retryable" ? " active" : ""}`}
-            onClick={() => setActiveTab("retryable")}
+            onClick={() => { setActiveTab("retryable"); setCurrentPage(1); }}
             type="button"
           >
             可重试
@@ -174,8 +178,8 @@ export function TasksPanel({
               </tr>
             </thead>
             <tbody>
-              {filteredTasks.length ? (
-                filteredTasks.map((task) => {
+              {paginated.length ? (<>
+                {paginated.map((task) => {
                   const isActioning = actioning?.taskId === task.id;
                   return (
                     <tr key={task.id}>
@@ -246,8 +250,20 @@ export function TasksPanel({
                       </td>
                     </tr>
                   );
-                })
-              ) : (
+                })}
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <tr>
+                  <td colSpan={5}>
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                    <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                    <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
+                    <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                  </div>
+                  </td>
+                </tr>
+              )}
+              </>) : (
                 <tr>
                   <td colSpan={5}>
                     <div className="empty-state">没有匹配的任务。</div>
