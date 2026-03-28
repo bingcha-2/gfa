@@ -278,7 +278,7 @@ export function MemberLookupPanel({
                 borderTop: "1px solid rgba(255,255,255,0.06)",
                 borderBottom: "1px solid rgba(255,255,255,0.06)"
               }}>
-                {result.familyGroup && result.memberStatus === "ACTIVE" && onRemoveMember && (
+                {result.familyGroup && (result.memberStatus === "ACTIVE" || result.memberStatus === "PENDING") && onRemoveMember && (
                   <button
                     className="button"
                     onClick={handleRemoveMember}
