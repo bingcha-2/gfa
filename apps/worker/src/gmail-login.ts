@@ -340,6 +340,33 @@ export async function gmailLogin(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     await logger.log("ERROR", `[gmail-login] Error during login: ${detail}`);
+
+    // Network errors are transient — BullMQ should retry, never MANUAL_REVIEW
+    const NETWORK_ERROR_PATTERNS = [
+      "ERR_CONNECTION_RESET",
+      "ERR_CONNECTION_REFUSED",
+      "ERR_CONNECTION_CLOSED",
+      "ERR_TIMED_OUT",
+      "ERR_NAME_NOT_RESOLVED",
+      "ERR_INTERNET_DISCONNECTED",
+      "ERR_NETWORK_CHANGED",
+      "ERR_PROXY_CONNECTION_FAILED",
+      "ERR_EMPTY_RESPONSE",
+      "ERR_SSL",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "Target closed",
+      "Browser closed",
+      "Session closed",
+      "browser has been closed",
+      "Execution context was destroyed",
+    ];
+    const isNetworkError = NETWORK_ERROR_PATTERNS.some((p) => detail.includes(p));
+    if (isNetworkError) {
+      return { success: false, reason: "TRANSIENT" as const, detail };
+    }
+
     return { success: false, reason: "UNKNOWN", detail };
   }
 }
