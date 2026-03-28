@@ -7,6 +7,7 @@ import { canCreateGroup } from "../lib/permissions";
 import { AccountSummary, FamilyGroupSummary } from "../lib/types";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
+import { SearchableSelect } from "./searchable-select";
 import type {
   BulkGroupInviteResult,
   BulkGroupRemoveResult,
@@ -308,18 +309,16 @@ export function GroupPanel({
               {(batchSubTab === "group-invite" || batchSubTab === "group-remove") && (
                 <div className="field">
                   <label htmlFor="batch-group-select">目标家庭组</label>
-                  <select
+                  <SearchableSelect
                     id="batch-group-select"
                     value={batchGroupId}
-                    onChange={e => { setBatchGroupId(e.target.value); setBatchResult(null); }}
-                  >
-                    <option value="">-- 请选择家庭组 --</option>
-                    {groups.map(g => (
-                      <option key={g.id} value={g.id}>
-                        {g.groupName} · {g.availableSlots} slots · {g.account?.name ?? '-'}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => { setBatchGroupId(val); setBatchResult(null); }}
+                    placeholder="-- 请选择家庭组 --"
+                    options={groups.map(g => ({
+                      value: g.id,
+                      label: `${g.groupName} · ${g.availableSlots} slots · ${g.account?.name ?? '-'}`
+                    }))}
+                  />
                 </div>
               )}
 
