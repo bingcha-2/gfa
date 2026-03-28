@@ -95,11 +95,11 @@ export function SearchableSelect({
             margin: 0,
             padding: 0,
             listStyle: "none",
-            background: "var(--bg-panel, #1e1e1e)",
-            border: "1px solid rgba(255,255,255,0.12)",
+            background: "var(--bg-panel, #fff)",
+            border: "1px solid var(--border, rgba(0,0,0,0.12))",
             borderRadius: "0.375rem",
             zIndex: 50,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
           }}
         >
           {/* Clear option */}
@@ -118,7 +118,7 @@ export function SearchableSelect({
               fontStyle: "italic",
             }}
             onMouseEnter={(e) => {
-              (e.currentTarget as HTMLLIElement).style.background = "rgba(255,255,255,0.06)";
+              (e.currentTarget as HTMLLIElement).style.background = "rgba(0,0,0,0.04)";
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLLIElement).style.background = "transparent";
@@ -151,19 +151,19 @@ export function SearchableSelect({
                   padding: "0.5rem 0.75rem",
                   fontSize: "0.85rem",
                   cursor: "pointer",
-                  background: opt.value === value ? "rgba(139,92,246,0.15)" : "transparent",
-                  color: opt.value === value ? "#a78bfa" : "inherit",
+                  background: opt.value === value ? "rgba(13,148,136,0.1)" : "transparent",
+                  color: opt.value === value ? "var(--accent, #0d9488)" : "inherit",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                 }}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLLIElement).style.background =
-                    opt.value === value ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.06)";
+                    opt.value === value ? "rgba(13,148,136,0.15)" : "rgba(0,0,0,0.04)";
                 }}
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLLIElement).style.background =
-                    opt.value === value ? "rgba(139,92,246,0.15)" : "transparent";
+                    opt.value === value ? "rgba(13,148,136,0.1)" : "transparent";
                 }}
               >
                 {opt.label}
