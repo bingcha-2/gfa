@@ -138,8 +138,8 @@ export class AccountService {
     // Handle 2fa.live URL format
     const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9]+)/i);
     if (urlMatch) return urlMatch[1].toUpperCase();
-    // Strip spaces and uppercase for raw TOTP secrets
-    return trimmed.replace(/\s+/g, "").toUpperCase();
+    // Strip spaces, hyphens, and padding chars; uppercase for raw TOTP secrets
+    return trimmed.replace(/[\s\-=]/g, "").toUpperCase();
   }
 
   /**
