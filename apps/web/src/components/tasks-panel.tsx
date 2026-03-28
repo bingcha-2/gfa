@@ -120,9 +120,8 @@ export function TasksPanel({
   }
 
   async function handleCancel(taskId: string) {
-    const reason =
-      window.prompt("填写终止原因（可选）", "Cancelled by operator") ?? "";
-    if (reason === "") return; // user pressed Cancel on prompt
+    const reason = window.prompt("填写终止原因（可选）", "Cancelled by operator");
+    if (reason === null) return; // user pressed browser Cancel
     setActioning({ taskId, action: "cancel" });
     try {
       const ok = await onCancel(taskId, reason);
