@@ -63,12 +63,32 @@ export async function processHealth(
       throw new UnrecoverableError("LOGIN_COOLDOWN");
     }
 
-    profileId = await pool.acquire(workerId);
-    await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Health check for account ${account.name}`, { profileId });
+    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
+    // release it and immediately acquire the next free profile.
+    let debugUrl: string | undefined;
+    const maxProfileAttempts = pool.poolSize;
+    const failedProfiles = new Set<string>();
+    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
+      profileId = await pool.acquireExcluding(workerId, failedProfiles);
+      await logger.log("INFO", `Health check for account ${account.name} (profile attempt ${profileAttempt}/${maxProfileAttempts})`, { profileId });
+      try {
+        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
+        break;
+      } catch (profileErr) {
+        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
+        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
+        failedProfiles.add(profileId!);
+        await adspower.closeProfile(profileId!).catch(() => {});
+        await pool.release(profileId!, workerId).catch(() => {});
+        profileId = null;
+        if (profileAttempt === maxProfileAttempts) {
+          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
+        }
+      }
+    }
 
-    const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl);
+    await logger.updateStatus("RUNNING");
+    const page = await browser.connect(debugUrl!);
 
     // Attempt Gmail auto-login to verify account health
     const loginResult = await gmailLogin(page, account, logger);

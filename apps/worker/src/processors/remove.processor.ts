@@ -75,18 +75,39 @@ export async function processRemove(
       throw new UnrecoverableError("LOGIN_COOLDOWN");
     }
 
-    profileId = await pool.acquire(workerId);
+    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
+    // release it and immediately acquire the next free profile.
+    let debugUrl: string | undefined;
+    const maxProfileAttempts = pool.poolSize;
+    const failedProfiles = new Set<string>();
+    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
+      profileId = await pool.acquireExcluding(workerId, failedProfiles);
+      await logger.log("INFO", `Removing member ${memberEmail} (profile attempt ${profileAttempt}/${maxProfileAttempts})`, {
+        profileId, familyGroupId,
+        gaiaId: memberRecord?.googleMemberId ?? "unknown",
+      });
+      try {
+        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
+        break; // success
+      } catch (profileErr) {
+        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
+        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
+        failedProfiles.add(profileId!);
+        await adspower.closeProfile(profileId!).catch(() => {});
+        await pool.release(profileId!, workerId).catch(() => {});
+        profileId = null;
+        if (profileAttempt === maxProfileAttempts) {
+          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
+        }
+      }
+    }
+
     // Check if the same account last used this profile — if so, reuse its session
-    const lastAccount = await pool.getLastAccount(profileId);
+    const lastAccount = await pool.getLastAccount(profileId!);
     reuseSession = lastAccount === account.id;
     await logger.updateStatus("RUNNING");
-    await logger.log("INFO", `Removing member ${memberEmail}`, {
-      profileId, familyGroupId,
-      gaiaId: memberRecord?.googleMemberId ?? "unknown",
-    });
 
-    const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl, reuseSession);
+    const page = await browser.connect(debugUrl!, reuseSession);
 
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
@@ -94,7 +115,7 @@ export async function processRemove(
       await handleLoginResult(loginResult, { job, pool, prisma, logger, accountId: account.id });
     }
     // Record which account is now logged into this profile
-    await pool.setLastAccount(profileId, account.id);
+    await pool.setLastAccount(profileId!, account.id);
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);

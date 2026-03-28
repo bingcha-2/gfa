@@ -73,14 +73,34 @@ export async function processSync(
       throw new UnrecoverableError("LOGIN_COOLDOWN");
     }
 
-    profileId = await pool.acquire(workerId);
-    // Check if the same account last used this profile — if so, reuse its session
-    const lastAccount = await pool.getLastAccount(profileId);
+    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
+    // release it and immediately acquire the next free profile.
+    let debugUrl: string | undefined;
+    const maxProfileAttempts = pool.poolSize;
+    const failedProfiles = new Set<string>();
+    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
+      profileId = await pool.acquireExcluding(workerId, failedProfiles);
+      try {
+        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
+        break;
+      } catch (profileErr) {
+        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
+        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
+        failedProfiles.add(profileId!);
+        await adspower.closeProfile(profileId!).catch(() => {});
+        await pool.release(profileId!, workerId).catch(() => {});
+        profileId = null;
+        if (profileAttempt === maxProfileAttempts) {
+          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
+        }
+      }
+    }
+
+    const lastAccount = await pool.getLastAccount(profileId!);
     reuseSession = lastAccount === accountId;
     await logger.updateStatus("RUNNING");
 
-    const { debugUrl } = await adspower.openProfile(profileId);
-    const page = await browser.connect(debugUrl, reuseSession);
+    const page = await browser.connect(debugUrl!, reuseSession);
 
     // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
@@ -88,7 +108,7 @@ export async function processSync(
       await handleLoginResult(loginResult, { job, pool, prisma, logger, accountId });
     }
     // Record which account is now logged into this profile
-    await pool.setLastAccount(profileId, accountId);
+    await pool.setLastAccount(profileId!, accountId);
 
     // Ensure family group exists (also creates DB record if first run)
     await ensureFamilyGroup(page, account, prisma, logger);
