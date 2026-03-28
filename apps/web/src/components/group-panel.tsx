@@ -114,7 +114,7 @@ export function GroupPanel({
   const [searchEmail, setSearchEmail] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const PAGE_SIZE = 20;
-  const [showAll, setShowAll] = useState(false);
+  const [currentGroupPage, setCurrentGroupPage] = useState(1);
 
   useEffect(() => {
     if (!form.accountId && accounts[0]?.id) {
@@ -509,14 +509,14 @@ user2@gmail.com`}
                 type="text"
                 placeholder="搜索母号邮箱…"
                 value={searchEmail}
-                onChange={(e) => { setSearchEmail(e.target.value); setShowAll(false); }}
+                onChange={(e) => { setSearchEmail(e.target.value); setCurrentGroupPage(1); }}
                 style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
               />
             </div>
             <select
               id="group-filter-status"
               value={filterStatus}
-              onChange={(e) => { setFilterStatus(e.target.value); setShowAll(false); }}
+              onChange={(e) => { setFilterStatus(e.target.value); setCurrentGroupPage(1); }}
               style={{ flex: '0 0 auto', minWidth: 120 }}
             >
               <option value="ALL">全部状态</option>
@@ -528,7 +528,7 @@ user2@gmail.com`}
               <button
                 className="button secondary small"
                 type="button"
-                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setShowAll(false); }}
+                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); }}
                 style={{ whiteSpace: 'nowrap' }}
               >
                 清除筛选
@@ -543,14 +543,14 @@ user2@gmail.com`}
               const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
               return matchEmail && matchStatus;
             });
-            const displayed = showAll ? filtered : filtered.slice(0, PAGE_SIZE);
-            const hasMore = !showAll && filtered.length > PAGE_SIZE;
+            const totalGroupPages = Math.ceil(filtered.length / PAGE_SIZE);
+            const displayed = filtered.slice((currentGroupPage - 1) * PAGE_SIZE, currentGroupPage * PAGE_SIZE);
 
             return (
               <>
                 {/* Stats bar */}
                 <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '6px' }}>
-                  共 {groups.length} 组 · 显示 {displayed.length}{filtered.length < groups.length ? `/${filtered.length} 筛选结果` : ''}
+                  共 {groups.length} 组{filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''} · 第 {currentGroupPage}/{totalGroupPages} 页
                 </div>
 
                 <table className="data-table">
@@ -860,16 +860,12 @@ user2@gmail.com`}
                   </tbody>
                 </table>
 
-                {/* Pagination footer */}
-                {hasMore && (
-                  <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
-                    <button
-                      className="button secondary small"
-                      type="button"
-                      onClick={() => setShowAll(true)}
-                    >
-                      显示全部 {filtered.length} 条
-                    </button>
+                {/* Pagination */}
+                {totalGroupPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px 0 4px' }}>
+                    <button className="button secondary small" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                    <span style={{ fontSize: '0.85rem' }}>{currentGroupPage} / {totalGroupPages}</span>
+                    <button className="button secondary small" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
                   </div>
                 )}
               </>
