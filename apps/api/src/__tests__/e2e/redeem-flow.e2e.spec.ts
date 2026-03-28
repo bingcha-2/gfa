@@ -190,4 +190,21 @@ describe("E2E: Redeem Flow", () => {
     });
     expect(order!.familyGroupId).toBe(availableGroup.id);
   });
+
+  it("should reject ACCOUNT_SWAP code in redeem flow and rollback status", async () => {
+    await createTestRedeemCode(undefined, {
+      code: "E2E-SWAP-BLOCK",
+      codeType: "ACCOUNT_SWAP",
+    });
+
+    await expect(
+      orderService.redeem("E2E-SWAP-BLOCK", "swap-into-join@gmail.com")
+    ).rejects.toThrow("This code cannot be used for joining a group");
+
+    // Verify code is rolled back to UNUSED (not stuck in RESERVED)
+    const code = await db.redeemCode.findUnique({
+      where: { code: "E2E-SWAP-BLOCK" },
+    });
+    expect(code!.status).toBe("UNUSED");
+  });
 });

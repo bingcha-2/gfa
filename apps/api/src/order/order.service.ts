@@ -230,6 +230,18 @@ export class OrderService {
       );
     }
 
+    // Guard: only JOIN_GROUP codes can be used in the redeem (join) flow
+    if (redeemCode.codeType !== "JOIN_GROUP") {
+      // Roll back the reservation — code is not meant for joining groups
+      await this.prisma.redeemCode.updateMany({
+        where: { id: redeemCode.id, status: "RESERVED" },
+        data: { status: "UNUSED" }
+      });
+      throw new BadRequestException(
+        "This code cannot be used for joining a group"
+      );
+    }
+
     // Normalize email to lowercase for consistent storage and lookup
     const normalizedEmail = email.trim().toLowerCase();
 

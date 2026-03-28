@@ -107,6 +107,7 @@ export async function createTestRedeemCode(
   overrides: Partial<{
     code: string;
     status: string;
+    codeType: string;
     expiresAt: Date;
   }> = {}
 ) {
@@ -117,6 +118,7 @@ export async function createTestRedeemCode(
       code: overrides.code ?? `CODE-${Date.now()}`,
       product: "GOOGLE_ONE",
       status: (overrides.status as any) ?? "UNUSED",
+      codeType: (overrides.codeType as any) ?? "JOIN_GROUP",
       expiresAt: overrides.expiresAt,
       createdById
     }
