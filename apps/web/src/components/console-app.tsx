@@ -287,6 +287,15 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
+  async function replaceGroupMember(groupId: string, targetEmail: string, newEmail: string) {
+    return runAction(() =>
+      apiRequest(`family-groups/${groupId}/replace-member`, {
+        method: "POST",
+        body: { targetMemberEmail: targetEmail, newUserEmail: newEmail }
+      })
+    );
+  }
+
   async function crossInvite(emails: string[]): Promise<CrossInviteResult | null> {
     try {
       const result = await apiRequest<CrossInviteResult>("family-groups/cross-invite", {
@@ -608,6 +617,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onCreate={createGroup}
             onSync={syncGroup}
             onRemoveMember={removeMember}
+            onReplaceMember={replaceGroupMember}
             onCrossInvite={crossInvite}
             onCrossRemove={crossRemove}
             onBulkInviteGroup={bulkInviteGroup}

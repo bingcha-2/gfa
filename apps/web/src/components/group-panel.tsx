@@ -41,6 +41,7 @@ type GroupPanelProps = {
   }) => Promise<boolean>;
   onSync: (groupId: string) => Promise<boolean>;
   onRemoveMember: (groupId: string, memberEmail: string) => Promise<boolean>;
+  onReplaceMember: (groupId: string, targetEmail: string, newEmail: string) => Promise<boolean>;
   onCrossInvite: (emails: string[]) => Promise<CrossInviteResult | null>;
   onCrossRemove: (memberEmails: string[]) => Promise<CrossRemoveResult | null>;
   onBulkInviteGroup: (groupId: string, emails: string[]) => Promise<BulkGroupInviteResult | null>;
@@ -65,6 +66,7 @@ export function GroupPanel({
   onCreate,
   onSync,
   onRemoveMember,
+  onReplaceMember,
   onCrossInvite,
   onCrossRemove,
   onBulkInviteGroup,
@@ -73,6 +75,8 @@ export function GroupPanel({
 }: GroupPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [replacingMemberId, setReplacingMemberId] = useState<string | null>(null);
+  const [replaceEmail, setReplaceEmail] = useState("");
   const [syncingGroupId, setSyncingGroupId] = useState<string | null>(null);
   const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -721,27 +725,82 @@ user2@gmail.com`}
                                                      <td className="muted">{formatDate(m.joinedAt)}</td>
                                                      {canManage && (
                                                        <td>
-                                                         {!isOwner && (
-                                                           <button
-                                                             className="button"
-                                                             style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                             disabled={removingMemberId === m.id}
-                                                             onClick={async () => {
-                                                               if (!confirm(`确定移除成员 ${m.email}？`)) return;
-                                                               setRemovingMemberId(m.id);
-                                                               try {
-                                                                 await onRemoveMember(group.id, m.email);
-                                                                 const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
-                                                                 setGroupDetail(detail);
-                                                               } finally {
-                                                                 setRemovingMemberId(null);
-                                                               }
-                                                             }}
-                                                             type="button"
-                                                           >
-                                                             {removingMemberId === m.id ? "移除中..." : "🗑 移除"}
-                                                           </button>
-                                                         )}
+                                                         {!isOwner && (<>
+                                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                             <button
+                                                               className="button"
+                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                               disabled={removingMemberId === m.id || replacingMemberId !== null}
+                                                               onClick={async () => {
+                                                                 if (!confirm(`确定移除成员 ${m.email}？`)) return;
+                                                                 setRemovingMemberId(m.id);
+                                                                 try {
+                                                                   await onRemoveMember(group.id, m.email);
+                                                                   const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
+                                                                   setGroupDetail(detail);
+                                                                 } finally {
+                                                                   setRemovingMemberId(null);
+                                                                 }
+                                                               }}
+                                                               type="button"
+                                                             >
+                                                               {removingMemberId === m.id ? "移除中..." : "🗑 移除"}
+                                                             </button>
+                                                             <button
+                                                               className="button"
+                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                               disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id)}
+                                                               onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
+                                                               type="button"
+                                                             >
+                                                               🔀 替换
+                                                             </button>
+                                                           </div>
+                                                           {replacingMemberId === m.id && (
+                                                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
+                                                               <input
+                                                                 type="email"
+                                                                 placeholder="新邮箱"
+                                                                 value={replaceEmail}
+                                                                 onChange={(e) => setReplaceEmail(e.target.value)}
+                                                                 style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }}
+                                                                 autoFocus
+                                                               />
+                                                               <button
+                                                                 className="button"
+                                                                 style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                                                 disabled={!replaceEmail.trim() || removingMemberId !== null}
+                                                                 onClick={async () => {
+                                                                   const newE = replaceEmail.trim().toLowerCase();
+                                                                   if (!newE) return;
+                                                                   if (newE === m.email.toLowerCase()) { alert('新邮箱不能与原邮箱相同'); return; }
+                                                                   if (!confirm(`确认将 ${m.email} 替换为 ${newE}？\n将自动踢出旧成员并邀请新成员。`)) return;
+                                                                   setRemovingMemberId(m.id);
+                                                                   try {
+                                                                     await onReplaceMember(group.id, m.email, newE);
+                                                                     setReplacingMemberId(null);
+                                                                     setReplaceEmail('');
+                                                                     const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
+                                                                     setGroupDetail(detail);
+                                                                   } finally {
+                                                                     setRemovingMemberId(null);
+                                                                   }
+                                                                 }}
+                                                                 type="button"
+                                                               >
+                                                                 确认
+                                                               </button>
+                                                               <button
+                                                                 className="button secondary"
+                                                                 style={{ fontSize: '0.75rem', padding: '3px 6px', borderRadius: '4px', cursor: 'pointer' }}
+                                                                 onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }}
+                                                                 type="button"
+                                                               >
+                                                                 取消
+                                                               </button>
+                                                             </div>
+                                                           )}
+                                                         </>)}
                                                        </td>
                                                      )}
                                                    </tr>

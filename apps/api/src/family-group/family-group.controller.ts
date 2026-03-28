@@ -35,6 +35,14 @@ class RemoveMemberDto {
   memberEmail!: string;
 }
 
+class ReplaceMemberDto {
+  @IsEmail()
+  targetMemberEmail!: string;
+
+  @IsEmail()
+  newUserEmail!: string;
+}
+
 @Controller("family-groups")
 export class FamilyGroupController {
   constructor(
@@ -150,6 +158,33 @@ export class FamilyGroupController {
       targetType: "FamilyGroup",
       targetId: id,
       detail: { memberEmail: dto.memberEmail }
+    });
+
+    return result;
+  }
+
+  @Post(":id/replace-member")
+  @Roles("ADMIN", "OPERATIONS")
+  async replaceMember(
+    @Param("id") id: string,
+    @Body() dto: ReplaceMemberDto,
+    @Request() req: any
+  ) {
+    const result = await this.familyGroupService.replaceMember(
+      id,
+      dto.targetMemberEmail,
+      dto.newUserEmail
+    );
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "REPLACE_MEMBER",
+      targetType: "FamilyGroup",
+      targetId: id,
+      detail: {
+        targetMemberEmail: dto.targetMemberEmail,
+        newUserEmail: dto.newUserEmail
+      }
     });
 
     return result;

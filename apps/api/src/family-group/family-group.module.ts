@@ -9,7 +9,8 @@ import { FamilyGroupService } from "./family-group.service";
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAMES.sync }),
     BullModule.registerQueue({ name: QUEUE_NAMES.remove }),
-    BullModule.registerQueue({ name: QUEUE_NAMES.invite })
+    BullModule.registerQueue({ name: QUEUE_NAMES.invite }),
+    BullModule.registerQueue({ name: QUEUE_NAMES.replace })
   ],
   controllers: [FamilyGroupController],
   providers: [FamilyGroupService],

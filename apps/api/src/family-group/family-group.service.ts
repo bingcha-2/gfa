@@ -16,7 +16,9 @@ export class FamilyGroupService {
     @InjectQueue(QUEUE_NAMES.remove)
     private readonly removeQueue: Queue,
     @InjectQueue(QUEUE_NAMES.invite)
-    private readonly inviteQueue: Queue
+    private readonly inviteQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.replace)
+    private readonly replaceQueue: Queue
   ) {}
 
   async findAll(accountId?: string) {
@@ -849,5 +851,49 @@ export class FamilyGroupService {
       ...group,
       account: accountMap.get(group.accountId) ?? null
     }));
+  }
+
+  /**
+   * Replace a member in a family group (kick old + invite new).
+   * Does NOT require an orderId — used from the group management panel.
+   */
+  async replaceMember(
+    groupId: string,
+    targetMemberEmail: string,
+    newUserEmail: string
+  ) {
+    const group = await this.prisma.familyGroup.findUnique({
+      where: { id: groupId }
+    });
+    if (!group) throw new NotFoundException("Family group not found");
+
+    const task = await this.prisma.task.create({
+      data: {
+        type: TASK_TYPES.replaceMember,
+        familyGroupId: group.id,
+        accountId: group.accountId,
+        payload: JSON.stringify({
+          familyGroupId: group.id,
+          accountId: group.accountId,
+          targetMemberEmail,
+          newUserEmail,
+          reason: "ADMIN_REPLACE"
+        })
+      }
+    });
+
+    await this.replaceQueue.add(
+      "replace-member",
+      {
+        taskId: task.id,
+        familyGroupId: group.id,
+        accountId: group.accountId,
+        targetMemberEmail,
+        newUserEmail
+      },
+      { ...JOB_DEFAULTS }
+    );
+
+    return { queued: true, taskId: task.id };
   }
 }
