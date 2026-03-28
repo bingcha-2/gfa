@@ -62,6 +62,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
   });
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   function startEdit(account: AccountSummary) {
     setEditId(account.id);
@@ -109,6 +112,16 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
       setIsSubmitting(false);
     }
   }
+
+
+  // Filtered and paginated accounts
+  const filteredAccounts = accounts.filter(a => {
+    if (!searchTerm) return true;
+    const q = searchTerm.toLowerCase();
+    return a.name.toLowerCase().includes(q) || a.loginEmail.toLowerCase().includes(q) || a.adspowerProfileId.toLowerCase().includes(q);
+  });
+  const totalPages = Math.ceil(filteredAccounts.length / PAGE_SIZE);
+  const paginatedAccounts = filteredAccounts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <section id="accounts" className="glass-panel account-panel">
@@ -451,6 +464,25 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
           )
         ) : (
           <div className="table-wrap table-wrap-accounts workspace-table-wrap">
+            {/* Search bar */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
+                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
+                <input
+                  type="text"
+                  placeholder="搜索名称 / 邮箱 / Profile ID…"
+                  value={searchTerm}
+                  onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                  style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+              <span className="muted" style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                {filteredAccounts.length} / {accounts.length} 条
+              </span>
+              {searchTerm && (
+                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setCurrentPage(1); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
+              )}
+            </div>
             <table className="data-table data-table-accounts">
               <thead>
                 <tr>
@@ -463,8 +495,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </tr>
               </thead>
               <tbody>
-                {accounts.length ? (
-                  accounts.map((account) => (
+                {paginatedAccounts.length ? (<>
+                  {paginatedAccounts.map((account) => (
                     <tr key={account.id}>
                       <td>
                         <div className="account-primary">
@@ -581,11 +613,23 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                         </td>
                       )}
                     </tr>
-                  ))
-                ) : (
+                   ))}
+                {/* Pagination */}
+                {totalPages > 1 && (
                   <tr>
                     <td colSpan={canManage ? 6 : 5}>
-                      <div className="empty-state">还没有录入任何母号。</div>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                        <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                        <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
+                        <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </>) : (
+                  <tr>
+                    <td colSpan={canManage ? 6 : 5}>
+                      <div className="empty-state">{searchTerm ? "没有匹配的母号。" : "还没有录入任何母号。"}</div>
                     </td>
                   </tr>
                 )}
