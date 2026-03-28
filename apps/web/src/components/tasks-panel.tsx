@@ -222,8 +222,18 @@ export function TasksPanel({
                         <StatusBadge value={isActioning ? "RUNNING" : task.status} />
                       </td>
                       <td>
-                        <div>{task.order?.orderNo ?? "-"}</div>
-                        <div className="muted">{task.familyGroup?.groupName ?? "-"}</div>
+                        {task.order?.orderNo && (
+                          <div style={{ fontSize: '0.85rem' }}><span className="muted">订单：</span>{task.order.orderNo}</div>
+                        )}
+                        {task.familyGroup?.groupName && (
+                          <div style={{ fontSize: '0.85rem' }}><span className="muted">家庭组：</span>{task.familyGroup.groupName}</div>
+                        )}
+                        {task.account?.name && (
+                          <div style={{ fontSize: '0.85rem' }}><span className="muted">母号：</span>{task.account.name}</div>
+                        )}
+                        {!task.order?.orderNo && !task.familyGroup?.groupName && !task.account?.name && (
+                          <span className="muted">-</span>
+                        )}
                       </td>
                       <td
                         style={{ cursor: task.lastErrorMessage ? 'pointer' : 'default' }}
