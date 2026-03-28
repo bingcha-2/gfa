@@ -109,16 +109,16 @@ export class BrowserPool {
 
   /**
    * Record a login failure for an account. After this, subsequent jobs for
-   * the same account will be rejected for COOLDOWN_TTL_MS to avoid repeated
-   * browser opens that escalate Google risk detection.
+   * the same account will be rejected for the specified cooldown duration
+   * (default: 10 minutes) to avoid repeated browser opens that escalate
+   * Google risk detection.
    */
-  async recordLoginFailure(accountId: string): Promise<void> {
-    const COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  async recordLoginFailure(accountId: string, cooldownMs = 10 * 60 * 1000): Promise<void> {
     await this.redis.set(
       `gfa:login-cooldown:${accountId}`,
       Date.now().toString(),
       "PX",
-      COOLDOWN_TTL_MS
+      cooldownMs
     );
   }
 

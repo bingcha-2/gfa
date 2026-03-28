@@ -22,6 +22,7 @@ import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
+import { handleLoginResult } from "../handle-login-result";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
@@ -90,24 +91,7 @@ export async function processRemove(
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
-      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
-      if (loginResult.reason === "TRANSIENT") {
-        throw new Error(`Login transient failure: ${loginResult.detail}`);
-      }
-      // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
-      if (loginResult.reason === "PHONE_CHALLENGE") {
-        await pool.recordLoginFailure(account.id);
-        throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
-      }
-      // VERIFICATION_REQUIRED or UNKNOWN → only mark account on LAST attempt
-      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
-      if (isLastAttempt) {
-        await pool.recordLoginFailure(account.id);
-        await prisma.account.update({ where: { id: account.id }, data: { status: "VERIFICATION_REQUIRED" } });
-        await logger.updateStatus("MANUAL_REVIEW", { code: loginResult.reason, message: loginResult.detail });
-        throw new UnrecoverableError("MANUAL_REVIEW");
-      }
-      throw new Error(`Login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
+      await handleLoginResult(loginResult, { job, pool, prisma, logger, accountId: account.id });
     }
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId, account.id);

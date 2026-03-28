@@ -24,7 +24,7 @@ const LOGIN_TIMEOUT_MS = 60_000;
 
 export type GmailLoginResult =
   | { success: true }
-  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT" | "PHONE_CHALLENGE"; detail: string };
+  | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT" | "PHONE_CHALLENGE" | "ACCOUNT_LOCKED" | "CAPTCHA"; detail: string };
 
 export interface LoginCredentials {
   loginEmail: string;
@@ -281,6 +281,20 @@ export async function gmailLogin(
         await page.waitForTimeout(3000);
         await page.waitForLoadState("domcontentloaded").catch(() => {});
         continue;
+      }
+
+      // Account locked / disabled by Google
+      if (await isAccountLockedPage(page, roundUrl)) {
+        const detail = `Account locked/disabled by Google at ${roundUrl}`;
+        await logger.log("WARN", `[gmail-login] Account locked: ${detail}`);
+        return { success: false, reason: "ACCOUNT_LOCKED", detail };
+      }
+
+      // CAPTCHA / reCAPTCHA challenge
+      if (await isCaptchaPage(page, roundUrl)) {
+        const detail = `CAPTCHA challenge required at ${roundUrl}`;
+        await logger.log("WARN", `[gmail-login] CAPTCHA detected: ${detail}`);
+        return { success: false, reason: "CAPTCHA", detail };
       }
 
       // Phone / SMS / push notification challenge (unhandled)
@@ -549,4 +563,39 @@ async function isPhoneChallengePage(page: Page): Promise<boolean> {
     bodyText.includes("Google prompt") ||
     bodyText.includes("Check your phone")
   );
+}
+
+/** Detect account locked/disabled pages */
+async function isAccountLockedPage(page: Page, url: string): Promise<boolean> {
+  if (
+    url.includes("deniedsignin") ||
+    url.includes("AccountDisabled") ||
+    url.includes("/disabled") ||     // path segment, not substring
+    url.includes("disabled?") ||     // disabled as final path with query
+    url.includes("account/suspended")
+  ) {
+    return true;
+  }
+  const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
+  return (
+    bodyText.includes("account has been disabled") ||
+    bodyText.includes("account is disabled") ||
+    bodyText.includes("此帐号已被停用") ||
+    bodyText.includes("此帳戶已被停用") ||
+    bodyText.includes("帐号已被暂停") ||
+    bodyText.includes("帳號已被暫停") ||
+    bodyText.includes("Your account has been suspended")
+  );
+}
+
+/** Detect CAPTCHA / reCAPTCHA challenge pages */
+async function isCaptchaPage(page: Page, url: string): Promise<boolean> {
+  if (url.includes("challenge/recaptcha") || url.includes("challenge/coaptcha")) {
+    return true;
+  }
+  // Check for reCAPTCHA iframe
+  const hasRecaptcha = await page
+    .locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], #captcha, .g-recaptcha')
+    .count();
+  return hasRecaptcha > 0;
 }

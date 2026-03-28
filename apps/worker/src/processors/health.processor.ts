@@ -14,6 +14,7 @@ import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
+import { handleLoginResult } from "../handle-login-result";
 import { scrapeSubscriptionInfo } from "../scrape-subscription";
 
 const GOOGLE_ACCOUNT_URL = "https://myaccount.google.com/?hl=en";
@@ -72,33 +73,14 @@ export async function processHealth(
     // Attempt Gmail auto-login to verify account health
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
-      // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
-      if (loginResult.reason === "TRANSIENT") {
-        throw new Error(`Login transient failure: ${loginResult.detail}`);
-      }
-      // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
-      if (loginResult.reason === "PHONE_CHALLENGE") {
-        await pool.recordLoginFailure(accountId);
-        throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
-      }
-      // Both VERIFICATION_REQUIRED and UNKNOWN reasons — only mark on LAST attempt
-      const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
-      if (isLastAttempt) {
-        await pool.recordLoginFailure(accountId);
-        const newAccountStatus = loginResult.reason === "VERIFICATION_REQUIRED"
-          ? "VERIFICATION_REQUIRED"
-          : "LOGIN_REQUIRED";
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { status: newAccountStatus as any, lastHealthCheckAt: new Date() },
-        });
-        // Always record as MANUAL_REVIEW so operators see it in the review queue
-        await logger.updateStatus("MANUAL_REVIEW",
-          { code: loginResult.reason, message: loginResult.detail });
-        return;
-      }
-      // Not last attempt — let BullMQ retry
-      throw new Error(`Health login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`);
+      const handled = await handleLoginResult(loginResult, {
+        job, pool, prisma, logger,
+        accountId,
+        returnOnFinal: true,
+        unknownAccountStatus: "LOGIN_REQUIRED",
+        extraAccountUpdate: { lastHealthCheckAt: new Date() },
+      });
+      if (handled) return; // Health processor returns gracefully on final failure
     }
 
     // Navigate to Google Account page to determine final health status
