@@ -167,7 +167,14 @@ export function TasksPanel({
         </div>
 
         <div className="table-wrap workspace-table-wrap">
-          <table className="data-table">
+          <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+            <colgroup>
+              <col style={{ width: '18%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '15%' }} />
+              <col style={{ width: '32%' }} />
+              <col style={{ width: '25%' }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>任务</th>
@@ -196,9 +203,18 @@ export function TasksPanel({
                         <div>{task.order?.orderNo ?? "-"}</div>
                         <div className="muted">{task.familyGroup?.groupName ?? "-"}</div>
                       </td>
-                      <td>
-                        <div>{task.lastErrorCode ?? "-"}</div>
-                        <div className="muted">{task.lastErrorMessage ?? "No error"}</div>
+                      <td title={[task.lastErrorCode, task.lastErrorMessage].filter(Boolean).join(': ')}>
+                        <div style={{ fontWeight: 500 }}>{task.lastErrorCode ?? "-"}</div>
+                        <div className="muted" style={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          wordBreak: 'break-word',
+                          lineHeight: '1.4',
+                          maxHeight: '2.8em'
+                        }}>{task.lastErrorMessage ?? "No error"}</div>
                       </td>
                       <td>
                         <div className="inline-actions">
