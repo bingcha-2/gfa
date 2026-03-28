@@ -13,13 +13,16 @@ import * as OTPAuth from "otpauth";
  * @returns 6-digit TOTP code string
  */
 export function generateTOTP(secret: string): string {
+  // Google displays secrets as "ABCD EFGH" or "ABCD-EFGH"; strip to pure base32
+  const cleanSecret = secret.replace(/[\s\-=]/g, "").toUpperCase();
+
   const totp = new OTPAuth.TOTP({
     issuer: "Google",
     label: "Account",
     algorithm: "SHA1",
     digits: 6,
     period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
+    secret: OTPAuth.Secret.fromBase32(cleanSecret),
   });
 
   return totp.generate();
