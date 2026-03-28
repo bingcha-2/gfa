@@ -655,7 +655,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           <MemberLookupPanel
             onRemoveMember={removeMember}
             onRetryOrder={retryOrder}
-            onSyncGroup={syncGroup}
+            onReplaceMember={replaceMember}
             showToast={showToast}
           />
         );

@@ -70,14 +70,14 @@ const CODE_TYPE_LABELS: Record<string, string> = {
 type MemberLookupPanelProps = {
   onRemoveMember?: (groupId: string, memberEmail: string) => Promise<boolean | undefined>;
   onRetryOrder?: (orderId: string) => Promise<boolean | undefined>;
-  onSyncGroup?: (groupId: string) => Promise<boolean | undefined>;
+  onReplaceMember?: (payload: { orderId: string; targetMemberEmail: string; newUserEmail: string }) => Promise<boolean | undefined>;
   showToast?: (type: "success" | "error" | "info", msg: string) => void;
 };
 
 export function MemberLookupPanel({
   onRemoveMember,
   onRetryOrder,
-  onSyncGroup,
+  onReplaceMember,
   showToast,
 }: MemberLookupPanelProps) {
   const [email, setEmail] = useState("");
@@ -85,6 +85,8 @@ export function MemberLookupPanel({
   const [result, setResult] = useState<LookupResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [showReplaceInput, setShowReplaceInput] = useState(false);
+  const [replaceEmail, setReplaceEmail] = useState("");
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -145,14 +147,30 @@ export function MemberLookupPanel({
     }
   }
 
-  async function handleSyncGroup() {
-    if (!result?.familyGroup || !onSyncGroup) return;
+  async function handleReplace() {
+    if (!result?.order || !onReplaceMember) return;
+    const newEmail = replaceEmail.trim().toLowerCase();
+    if (!newEmail) return;
+    const oldEmail = email.trim().toLowerCase();
+    if (newEmail === oldEmail) {
+      showToast?.("error", "新邮箱不能与原邮箱相同");
+      return;
+    }
+    if (!confirm(`确认将 ${oldEmail} 替换为 ${newEmail}？\n将自动移除旧成员并邀请新成员。`)) return;
 
-    setActionLoading("sync");
+    setActionLoading("replace");
     try {
-      const ok = await onSyncGroup(result.familyGroup.id);
+      const ok = await onReplaceMember({
+        orderId: result.order.id,
+        targetMemberEmail: oldEmail,
+        newUserEmail: newEmail
+      });
       if (ok) {
-        showToast?.("success", `已提交同步: ${result.familyGroup.groupName}`);
+        showToast?.("success", `替换任务已提交: ${oldEmail} → ${newEmail}`);
+        setShowReplaceInput(false);
+        setReplaceEmail("");
+        // Re-query to refresh
+        handleSearch({ preventDefault: () => {} } as React.FormEvent);
       }
     } catch (err) {
       showToast?.("error", getErrorMessage(err));
@@ -302,10 +320,10 @@ export function MemberLookupPanel({
                   </button>
                 )}
 
-                {result.familyGroup && onSyncGroup && (
+                {result.order && onReplaceMember && (
                   <button
                     className="button"
-                    onClick={handleSyncGroup}
+                    onClick={() => { setShowReplaceInput(!showReplaceInput); setReplaceEmail(""); }}
                     disabled={actionLoading !== null}
                     style={{
                       fontSize: "0.85rem",
@@ -313,16 +331,73 @@ export function MemberLookupPanel({
                       gap: 6,
                       display: "flex",
                       alignItems: "center",
-                      background: "rgba(56,189,248,0.15)",
-                      borderColor: "rgba(56,189,248,0.3)",
-                      color: "#38bdf8"
+                      background: showReplaceInput ? "rgba(139,92,246,0.25)" : "rgba(139,92,246,0.15)",
+                      borderColor: "rgba(139,92,246,0.3)",
+                      color: "#a78bfa"
                     }}
                   >
-                    {actionLoading === "sync" ? <Spinner size={12} color="currentColor" /> : "🔁"}
-                    同步家庭组
+                    {actionLoading === "replace" ? <Spinner size={12} color="currentColor" /> : "🔀"}
+                    替换成员
                   </button>
                 )}
               </div>
+
+              {/* Replace member inline input */}
+              {showReplaceInput && result.order && (
+                <div style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  alignItems: "flex-end",
+                  padding: "0.75rem",
+                  background: "rgba(139,92,246,0.06)",
+                  borderRadius: "0.5rem",
+                  border: "1px solid rgba(139,92,246,0.15)"
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="label" htmlFor="replace-new-email" style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.85rem" }}>
+                      新成员邮箱
+                    </label>
+                    <input
+                      id="replace-new-email"
+                      type="email"
+                      placeholder="new-member@gmail.com"
+                      value={replaceEmail}
+                      onChange={(e) => setReplaceEmail(e.target.value)}
+                      disabled={actionLoading !== null}
+                      autoComplete="off"
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={handleReplace}
+                    disabled={actionLoading !== null || !replaceEmail.trim()}
+                    style={{
+                      minWidth: 90,
+                      gap: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "rgba(139,92,246,0.2)",
+                      borderColor: "rgba(139,92,246,0.4)",
+                      color: "#a78bfa",
+                      fontSize: "0.85rem"
+                    }}
+                  >
+                    {actionLoading === "replace" ? <><Spinner size={12} color="currentColor" /> 提交中…</> : "确认替换"}
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => { setShowReplaceInput(false); setReplaceEmail(""); }}
+                    disabled={actionLoading !== null}
+                    style={{ fontSize: "0.85rem", padding: "0.4rem 0.6rem" }}
+                  >
+                    取消
+                  </button>
+                </div>
+              )}
 
               {/* Info cards grid */}
               <div className="surface-grid two-up" style={{ gap: "1rem" }}>
