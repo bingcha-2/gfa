@@ -119,7 +119,7 @@ export async function processReplace(
     // Look up the member's googleMemberId and displayName from DB
     const memberRecord = await prisma.familyMember.findFirst({
       where: { familyGroupId, email: targetMemberEmail },
-      select: { id: true, displayName: true, googleMemberId: true }
+      select: { id: true, displayName: true, googleMemberId: true, status: true }
     });
     const targetDisplayName = memberRecord?.displayName ?? undefined;
     const targetGaiaId = memberRecord?.googleMemberId ?? undefined;
@@ -128,21 +128,41 @@ export async function processReplace(
       `Target member: email=${targetMemberEmail}, displayName=${targetDisplayName ?? 'unknown'}, gaiaId=${targetGaiaId ?? 'unknown'}`
     );
 
-    // Step 1: Remove the target member on page
-    const discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
-      password: account.loginPassword ?? undefined,
-      totpSecret: account.totpSecret ?? undefined,
-      displayName: targetDisplayName,
-      googleMemberId: targetGaiaId,
-    });
+    // Fix #5: On retry, check if old member was already removed in a previous attempt.
+    // If member is already REMOVED in DB or not visible on the page, skip Step 1.
+    let skipRemove = false;
+    if (memberRecord?.status === "REMOVED") {
+      await logger.log("INFO", `Target member ${targetMemberEmail} already REMOVED in DB — skipping Step 1 (remove)`);
+      skipRemove = true;
+    } else {
+      // Also check the live page: if email/displayName is not on the family list, member is gone
+      const pageText = await page.textContent("body").catch(() => "") ?? "";
+      const emailOnPage = pageText.toLowerCase().includes(targetMemberEmail.toLowerCase());
+      const nameOnPage = !!(targetDisplayName && pageText.includes(targetDisplayName));
+      if (!emailOnPage && !nameOnPage) {
+        await logger.log("INFO", `Target member ${targetMemberEmail} not visible on family page — skipping Step 1 (remove)`);
+        skipRemove = true;
+      }
+    }
 
-    // Back-fill gaiaId into DB if we discovered it via fallback during this remove step
-    if (discoveredGaiaId && !targetGaiaId && memberRecord) {
-      await prisma.familyMember.update({
-        where: { id: memberRecord.id },
-        data: { googleMemberId: discoveredGaiaId },
-      }).catch(() => {}); // non-fatal
-      await logger.log("INFO", `Back-filled gaiaId=${discoveredGaiaId} for ${targetMemberEmail}`);
+    let discoveredGaiaId: string | undefined;
+    if (!skipRemove) {
+      // Step 1: Remove the target member on page
+      discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
+        password: account.loginPassword ?? undefined,
+        totpSecret: account.totpSecret ?? undefined,
+        displayName: targetDisplayName,
+        googleMemberId: targetGaiaId,
+      });
+
+      // Back-fill gaiaId into DB if we discovered it via fallback during this remove step
+      if (discoveredGaiaId && !targetGaiaId && memberRecord) {
+        await prisma.familyMember.update({
+          where: { id: memberRecord.id },
+          data: { googleMemberId: discoveredGaiaId },
+        }).catch(() => {}); // non-fatal
+        await logger.log("INFO", `Back-filled gaiaId=${discoveredGaiaId} for ${targetMemberEmail}`);
+      }
     }
 
     await logger.log("INFO", `Remove step complete. Current URL: ${page.url()}`);
@@ -257,6 +277,16 @@ export async function processReplace(
         "INVITE_SENT",
         `Replaced ${targetMemberEmail} with ${newUserEmail}`
       );
+
+      // Sync Order.userEmail to the new member so future lookups
+      // (e.g. customer self-service swap-by-email) find the correct order.
+      await prisma.order.update({
+        where: { id: orderId },
+        data: { userEmail: newUserEmail },
+      }).catch((err) => {
+        // Non-fatal: order status is already updated above
+        logger.log("WARN", `Failed to sync Order.userEmail: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
 
     await logger.log("INFO", "Replace completed successfully");
@@ -350,8 +380,22 @@ async function removeMemberOnPage(
     ).count();
 
     if (hasAction > 0) {
-      await logger.log("INFO", `S0 success: on member detail page for gaiaId=${googleMemberId}`);
-      // Already on the detail page — proceed directly to remove button logic below
+      // Identity verification: confirm this page actually belongs to the target member.
+      // Without this check, a stale/incorrect googleMemberId in DB would remove the wrong person.
+      const bodyText = await page.textContent("body").catch(() => "") ?? "";
+      const emailMatch = bodyText.toLowerCase().includes(email.toLowerCase());
+      const nameMatch = !!(displayName && bodyText.includes(displayName));
+
+      if (emailMatch || nameMatch) {
+        await logger.log("INFO", `S0 verified: page belongs to ${email} (emailMatch=${emailMatch}, nameMatch=${nameMatch})`);
+        // Identity confirmed — proceed to remove button logic below
+      } else {
+        await logger.log("WARN",
+          `S0 identity mismatch: gaiaId=${googleMemberId} page does not contain email="${email}" or displayName="${displayName ?? 'N/A'}". Falling back to list page matching.`
+        );
+        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+      }
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -706,7 +750,18 @@ async function fallbackFindMember(
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
       await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-      return extractGaiaIdFromUrl(page.url());
+
+      // Fix #4: Verify identity on detail page — displayName collision is possible.
+      // ONLY check email, NOT displayName. displayName will always be on the detail page
+      // of whichever member we clicked (it's THEIR name), so it can't distinguish members.
+      const detailBody = await page.textContent("body").catch(() => "") ?? "";
+      if (detailBody.toLowerCase().includes(email.toLowerCase())) {
+        await logger.log("INFO", `S2 verified: detail page contains target email`);
+        return extractGaiaIdFromUrl(page.url());
+      }
+      // Mismatch: displayName was ambiguous, fall through to S3
+      await logger.log("WARN", `S2: displayName matched on list but detail page does not contain "${email}" — falling to S3`);
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found on page either`);
   }

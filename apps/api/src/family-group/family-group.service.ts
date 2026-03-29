@@ -856,6 +856,9 @@ export class FamilyGroupService {
   /**
    * Replace a member in a family group (kick old + invite new).
    * Does NOT require an orderId — used from the group management panel.
+   *
+   * CAS guard: atomically verifies the target member is still removable
+   * (ACTIVE or PENDING) before creating a task, preventing double-click races.
    */
   async replaceMember(
     groupId: string,
@@ -867,33 +870,63 @@ export class FamilyGroupService {
     });
     if (!group) throw new NotFoundException("Family group not found");
 
-    const task = await this.prisma.task.create({
-      data: {
-        type: TASK_TYPES.replaceMember,
-        familyGroupId: group.id,
-        accountId: group.accountId,
-        payload: JSON.stringify({
+    // Atomic: check member + create task in one transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Verify target member exists and is in a removable state
+      const member = await tx.familyMember.findFirst({
+        where: {
+          familyGroupId: groupId,
+          email: targetMemberEmail,
+          status: { in: ["ACTIVE", "PENDING"] }
+        }
+      });
+
+      if (!member) {
+        return null; // Not found or already being processed
+      }
+
+      const task = await tx.task.create({
+        data: {
+          type: TASK_TYPES.replaceMember,
+          familyGroupId: group.id,
+          accountId: group.accountId,
+          payload: JSON.stringify({
+            familyGroupId: group.id,
+            accountId: group.accountId,
+            targetMemberEmail,
+            newUserEmail,
+            reason: "ADMIN_REPLACE"
+          })
+        }
+      });
+
+      return { task, memberId: member.id };
+    });
+
+    if (!result) {
+      throw new BadRequestException(
+        `Member ${targetMemberEmail} not found in group or already being replaced/removed`
+      );
+    }
+
+    try {
+      await this.replaceQueue.add(
+        "replace-member",
+        {
+          taskId: result.task.id,
           familyGroupId: group.id,
           accountId: group.accountId,
           targetMemberEmail,
-          newUserEmail,
-          reason: "ADMIN_REPLACE"
-        })
-      }
-    });
+          newUserEmail
+        },
+        { ...JOB_DEFAULTS }
+      );
+    } catch (queueError) {
+      // Queue add failed — clean up orphaned task
+      await this.prisma.task.delete({ where: { id: result.task.id } }).catch(() => {});
+      throw queueError;
+    }
 
-    await this.replaceQueue.add(
-      "replace-member",
-      {
-        taskId: task.id,
-        familyGroupId: group.id,
-        accountId: group.accountId,
-        targetMemberEmail,
-        newUserEmail
-      },
-      { ...JOB_DEFAULTS }
-    );
-
-    return { queued: true, taskId: task.id };
+    return { queued: true, taskId: result.task.id };
   }
 }

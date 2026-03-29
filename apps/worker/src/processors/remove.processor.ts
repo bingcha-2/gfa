@@ -160,6 +160,29 @@ export async function processRemove(
 
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Member ${memberEmail} removed successfully`);
+
+    // Fix #3: Sync Order status so frontend shows consistent data.
+    // Find orders tied to this member email in this family group and mark them.
+    try {
+      const relatedOrder = await prisma.order.findFirst({
+        where: {
+          userEmail: memberEmail,
+          familyGroupId,
+          status: { notIn: ["FAILED", "CREATED", "EXPIRED"] },
+        },
+        select: { id: true },
+      });
+      if (relatedOrder) {
+        await prisma.order.update({
+          where: { id: relatedOrder.id },
+          data: { status: "EXPIRED", resultMessage: `Member ${memberEmail} removed from family group` },
+        });
+        await logger.log("INFO", `Updated Order ${relatedOrder.id} status to MEMBER_REMOVED`);
+      }
+    } catch (orderErr) {
+      // Non-fatal: member removal itself succeeded
+      await logger.log("WARN", `Failed to sync Order status after removal: ${orderErr instanceof Error ? orderErr.message : String(orderErr)}`);
+    }
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status and don't rollback member status
     if (error instanceof UnrecoverableError) throw error;
@@ -223,6 +246,32 @@ async function removeMemberOnPage(
     await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
     await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+
+    // Identity verification: confirm this page actually belongs to the target member.
+    // Without this check, a stale/incorrect googleMemberId would remove the wrong person.
+    const hasAction = await page.locator(
+      'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove")'
+    ).count();
+
+    if (hasAction > 0) {
+      const bodyText = await page.textContent("body").catch(() => "") ?? "";
+      const emailMatch = bodyText.toLowerCase().includes(email.toLowerCase());
+      const nameMatch = !!(displayName && bodyText.includes(displayName));
+
+      if (emailMatch || nameMatch) {
+        await logger.log("INFO", `S0 verified: page belongs to ${email} (emailMatch=${emailMatch}, nameMatch=${nameMatch})`);
+      } else {
+        await logger.log("WARN",
+          `S0 identity mismatch: gaiaId=${googleMemberId} page does not contain email="${email}" or displayName="${displayName ?? 'N/A'}". Falling back.`
+        );
+        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await fallbackFindMember(page, email, displayName, logger);
+      }
+    } else {
+      await logger.log("WARN", `S0: No action button found, falling back to list page matching`);
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await fallbackFindMember(page, email, displayName, logger);
+    }
   } else {
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await fallbackFindMember(page, email, displayName, logger);
@@ -536,7 +585,18 @@ async function fallbackFindMember(
       await logger.log("INFO", `S2: Found by displayName, clicking`);
       await nameLocator.first().click();
       await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-      return;
+
+      // Fix #4: Verify identity on detail page — displayName collision is possible.
+      // ONLY check email, NOT displayName. displayName will always be on the detail page
+      // of whichever member we clicked (it's THEIR name), so it can't distinguish members.
+      const detailBody = await page.textContent("body").catch(() => "") ?? "";
+      if (detailBody.toLowerCase().includes(email.toLowerCase())) {
+        await logger.log("INFO", `S2 verified: detail page contains target email`);
+        return;
+      }
+      // Mismatch: displayName was ambiguous, fall through to S3
+      await logger.log("WARN", `S2: displayName matched on list but detail page does not contain "${email}" — falling to S3`);
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     }
     await logger.log("WARN", `S2: displayName "${displayName}" not found`);
   }

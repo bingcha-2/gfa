@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { apiRequest } from "../lib/client-api";
 import { canCreateGroup } from "../lib/permissions";
@@ -40,9 +40,9 @@ type GroupPanelProps = {
     groupName: string;
     maxMembers: number;
   }) => Promise<boolean>;
-  onSync: (groupId: string) => Promise<boolean>;
-  onRemoveMember: (groupId: string, memberEmail: string) => Promise<boolean>;
-  onReplaceMember: (groupId: string, targetEmail: string, newEmail: string) => Promise<boolean>;
+  onSync: (groupId: string) => Promise<{ taskId: string } | null>;
+  onRemoveMember: (groupId: string, memberEmail: string) => Promise<{ taskId: string } | null>;
+  onReplaceMember: (groupId: string, targetEmail: string, newEmail: string) => Promise<{ taskId: string } | null>;
   onCrossInvite: (emails: string[]) => Promise<CrossInviteResult | null>;
   onCrossRemove: (memberEmails: string[]) => Promise<CrossRemoveResult | null>;
   onBulkInviteGroup: (groupId: string, emails: string[]) => Promise<BulkGroupInviteResult | null>;
@@ -79,6 +79,12 @@ export function GroupPanel({
   const [replacingMemberId, setReplacingMemberId] = useState<string | null>(null);
   const [replaceEmail, setReplaceEmail] = useState("");
   const [syncingGroupId, setSyncingGroupId] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<{ groupId: string; taskId: string; status: string; message?: string } | null>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const expandedGroupIdRef = useRef<string | null>(null);
+  // Per-member task status tracking: keyed by memberId
+  const [memberTaskMap, setMemberTaskMap] = useState<Record<string, { taskId: string; type: string; status: string; message: string }>>({});
+  const memberPollRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const canManage = canCreateGroup(role);
@@ -107,6 +113,8 @@ export function GroupPanel({
     maxMembers: "5"
   });
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  // Keep ref in sync for use inside setInterval closures
+  useEffect(() => { expandedGroupIdRef.current = expandedGroupId; }, [expandedGroupId]);
   const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
@@ -142,27 +150,158 @@ export function GroupPanel({
     setTimeout(() => setToast(null), 3500);
   }
 
-  async function handleSync(groupId: string) {
-    setSyncingGroupId(groupId);
+  // Cleanup sync polling on unmount
+  useEffect(() => {
+    return () => {
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
+      Object.values(memberPollRefs.current).forEach(clearInterval);
+    };
+  }, []);
+
+  const refreshGroupDetail = useCallback(async (gid: string) => {
     try {
-      const ok = await onSync(groupId);
-      if (ok) {
-        showToast('success', '同步任务已入队，等待 Worker 执行');
-        // If this group's member list is expanded, refresh it after a short delay
-        if (expandedGroupId === groupId) {
-          setTimeout(async () => {
-            try {
-              const detail = await apiRequest<GroupDetail>(`family-groups/${groupId}`);
-              setGroupDetail(detail);
-            } catch { /* noop */ }
-          }, 4000);
-        }
-      } else {
-        showToast('error', '同步触发失败');
+      const detail = await apiRequest<GroupDetail>(`family-groups/${gid}`);
+      setGroupDetail(detail);
+    } catch { /* noop */ }
+  }, []);
+
+  /** Start polling a member task after remove/replace is queued */
+  function pollMemberTask(memberId: string, taskId: string, type: 'remove' | 'replace', groupId: string) {
+    // Clear any existing poll for this member
+    if (memberPollRefs.current[memberId]) { clearInterval(memberPollRefs.current[memberId]); }
+
+    setMemberTaskMap(prev => ({ ...prev, [memberId]: { taskId, type, status: 'PENDING', message: type === 'remove' ? '移除排队中' : '替换排队中' } }));
+
+    let pollCount = 0;
+    const MAX_POLLS = 60;
+    const statusLabels: Record<string, string> = {
+      PENDING: type === 'remove' ? '移除排队中' : '替换排队中',
+      QUEUED: type === 'remove' ? '移除排队中' : '替换排队中',
+      RUNNING: type === 'remove' ? '移除执行中' : '替换执行中',
+      SUCCESS: type === 'remove' ? '已移除' : '替换完成',
+      REPLACED_AND_INVITE_SENT: '已替换并发送邀请',
+      FAILED: type === 'remove' ? '移除失败' : '替换失败',
+      MANUAL_REVIEW: '需人工处理',
+      CANCELLED: '已取消',
+    };
+    const terminalStatuses = new Set(['SUCCESS', 'FAILED', 'MANUAL_REVIEW', 'CANCELLED', 'REPLACED_AND_INVITE_SENT']);
+
+    memberPollRefs.current[memberId] = setInterval(async () => {
+      pollCount++;
+      if (pollCount > MAX_POLLS) {
+        clearInterval(memberPollRefs.current[memberId]);
+        delete memberPollRefs.current[memberId];
+        setMemberTaskMap(prev => ({ ...prev, [memberId]: { taskId, type, status: 'TIMEOUT', message: '轮询超时' } }));
+        return;
       }
+      try {
+        const task = await apiRequest<{ status: string; lastErrorMessage?: string }>(`tasks/${taskId}`);
+        setMemberTaskMap(prev => ({ ...prev, [memberId]: { taskId, type, status: task.status, message: statusLabels[task.status] ?? task.status } }));
+
+        if (terminalStatuses.has(task.status)) {
+          clearInterval(memberPollRefs.current[memberId]);
+          delete memberPollRefs.current[memberId];
+
+          if (task.status === 'SUCCESS' || task.status === 'REPLACED_AND_INVITE_SENT') {
+            showToast('success', statusLabels[task.status]);
+          } else if (task.status === 'FAILED') {
+            showToast('error', task.lastErrorMessage ?? statusLabels[task.status]);
+          }
+
+          // Refresh member list
+          if (expandedGroupIdRef.current === groupId) {
+            refreshGroupDetail(groupId);
+          }
+
+          // Auto-clear after 10 seconds
+          setTimeout(() => setMemberTaskMap(prev => {
+            const next = { ...prev };
+            if (next[memberId]?.taskId === taskId) delete next[memberId];
+            return next;
+          }), 10000);
+        }
+      } catch { /* network error, keep polling */ }
+    }, 3000);
+  }
+
+  async function handleSync(groupId: string) {
+    // Stop any existing poll
+    if (syncPollRef.current) { clearInterval(syncPollRef.current); syncPollRef.current = null; }
+
+    setSyncingGroupId(groupId);
+    setSyncStatus(null);
+    try {
+      const result = await onSync(groupId);
+      if (!result) {
+        showToast('error', '同步触发失败');
+        setSyncingGroupId(null);
+        return;
+      }
+
+      // Start polling task status
+      const { taskId } = result;
+      setSyncStatus({ groupId, taskId, status: 'PENDING', message: '任务已入队' });
+
+      let pollCount = 0;
+      const MAX_POLLS = 60; // 60 × 3s = 3 minutes timeout
+
+      syncPollRef.current = setInterval(async () => {
+        pollCount++;
+        if (pollCount > MAX_POLLS) {
+          if (syncPollRef.current) { clearInterval(syncPollRef.current); syncPollRef.current = null; }
+          setSyncingGroupId(null);
+          setSyncStatus({ groupId, taskId, status: 'TIMEOUT', message: '轮询超时，请在任务面板查看' });
+          showToast('error', '同步任务超时，请到任务面板查看状态');
+          setTimeout(() => setSyncStatus((prev) => prev?.taskId === taskId ? null : prev), 8000);
+          return;
+        }
+
+        try {
+          const task = await apiRequest<{ status: string; resultMessage?: string; lastErrorMessage?: string }>(`tasks/${taskId}`);
+          const terminalStatuses = new Set(['SUCCESS', 'FAILED', 'MANUAL_REVIEW', 'CANCELLED', 'REPLACED_AND_INVITE_SENT']);
+          const statusLabels: Record<string, string> = {
+            PENDING: '排队中',
+            QUEUED: '排队中',
+            RUNNING: '同步执行中',
+            SUCCESS: '同步完成',
+            FAILED: '同步失败',
+            MANUAL_REVIEW: '需要人工处理',
+            CANCELLED: '已取消',
+          };
+
+          setSyncStatus({
+            groupId,
+            taskId,
+            status: task.status,
+            message: statusLabels[task.status] ?? task.status,
+          });
+
+          if (terminalStatuses.has(task.status)) {
+            if (syncPollRef.current) { clearInterval(syncPollRef.current); syncPollRef.current = null; }
+            setSyncingGroupId(null);
+
+            if (task.status === 'SUCCESS') {
+              showToast('success', '同步完成');
+            } else if (task.status === 'FAILED') {
+              showToast('error', task.lastErrorMessage ?? '同步失败');
+            } else if (task.status === 'MANUAL_REVIEW') {
+              showToast('error', '同步需要人工处理');
+            }
+
+            // Refresh member detail if expanded (read from ref to avoid stale closure)
+            if (expandedGroupIdRef.current === groupId) {
+              refreshGroupDetail(groupId);
+            }
+
+            // Auto-clear status after 8 seconds
+            setTimeout(() => setSyncStatus((prev) => prev?.taskId === taskId ? null : prev), 8000);
+          }
+        } catch {
+          // Network error during poll — keep polling, don't crash
+        }
+      }, 3000);
     } catch {
       showToast('error', '同步请求异常');
-    } finally {
       setSyncingGroupId(null);
     }
   }
@@ -632,6 +771,25 @@ user2@gmail.com`}
                                     ? <><Spinner size={12} color="currentColor" /> 同步中...</>
                                     : '同步'}
                                 </button>
+                                {/* Sync status indicator */}
+                                {syncStatus?.groupId === group.id && (
+                                  <span style={{
+                                    fontSize: '0.8rem',
+                                    fontWeight: 500,
+                                    padding: '2px 8px',
+                                    borderRadius: '4px',
+                                    whiteSpace: 'nowrap',
+                                    background: syncStatus.status === 'SUCCESS' ? 'rgba(16,185,129,0.12)'
+                                      : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? 'rgba(239,68,68,0.12)'
+                                      : 'rgba(59,130,246,0.12)',
+                                    color: syncStatus.status === 'SUCCESS' ? '#059669'
+                                      : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? '#dc2626'
+                                      : '#2563eb',
+                                  }}>
+                                    {syncStatus.status === 'RUNNING' && <Spinner size={10} color="currentColor" />}
+                                    {' '}{syncStatus.message}
+                                  </span>
+                                )}
                                 <button
                                   className="button secondary small"
                                   disabled={togglingGroupId === group.id || group.status === 'DISABLED'}
@@ -725,35 +883,60 @@ user2@gmail.com`}
                                                      {canManage && (
                                                        <td>
                                                          {!isOwner && (<>
-                                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                                                              <button
                                                                className="button"
                                                                style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                               disabled={removingMemberId === m.id || replacingMemberId !== null}
-                                                               onClick={async () => {
-                                                                 if (!confirm(`确定移除成员 ${m.email}？`)) return;
-                                                                 setRemovingMemberId(m.id);
-                                                                 try {
-                                                                   await onRemoveMember(group.id, m.email);
-                                                                   const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
-                                                                   setGroupDetail(detail);
-                                                                 } finally {
-                                                                   setRemovingMemberId(null);
-                                                                 }
-                                                               }}
+                                                               disabled={removingMemberId === m.id || replacingMemberId !== null || !!memberTaskMap[m.id]}
+                                                                onClick={async () => {
+                                                                  if (!confirm(`确定移除成员 ${m.email}？`)) return;
+                                                                  setRemovingMemberId(m.id);
+                                                                  try {
+                                                                    const result = await onRemoveMember(group.id, m.email);
+                                                                    if (result?.taskId) {
+                                                                      pollMemberTask(m.id, result.taskId, 'remove', group.id);
+                                                                    }
+                                                                  } finally {
+                                                                    setRemovingMemberId(null);
+                                                                  }
+                                                                }}
                                                                type="button"
                                                              >
-                                                               {removingMemberId === m.id ? "移除中..." : "🗑 移除"}
+                                                               {removingMemberId === m.id ? "提交中..." : "🗑 移除"}
                                                              </button>
                                                              <button
                                                                className="button"
                                                                style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                               disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id)}
+                                                               disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id) || !!memberTaskMap[m.id]}
                                                                onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
                                                                type="button"
                                                              >
                                                                🔀 替换
                                                              </button>
+                                                              {/* Per-member task status indicator */}
+                                                              {memberTaskMap[m.id] && (() => {
+                                                                const ts = memberTaskMap[m.id];
+                                                                const isOk = ts.status === 'SUCCESS' || ts.status === 'REPLACED_AND_INVITE_SENT';
+                                                                const isFail = ts.status === 'FAILED' || ts.status === 'MANUAL_REVIEW' || ts.status === 'TIMEOUT';
+                                                                const isRunning = ts.status === 'RUNNING';
+                                                                return (
+                                                                  <span style={{
+                                                                    fontSize: '0.78rem',
+                                                                    fontWeight: 500,
+                                                                    padding: '2px 8px',
+                                                                    borderRadius: '4px',
+                                                                    whiteSpace: 'nowrap',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    background: isOk ? 'rgba(16,185,129,0.12)' : isFail ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)',
+                                                                    color: isOk ? '#059669' : isFail ? '#dc2626' : '#2563eb',
+                                                                  }}>
+                                                                    {isRunning && <Spinner size={10} color="currentColor" />}
+                                                                    {ts.message}
+                                                                  </span>
+                                                                );
+                                                              })()}
                                                            </div>
                                                            {replacingMemberId === m.id && (
                                                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
@@ -776,11 +959,12 @@ user2@gmail.com`}
                                                                    if (!confirm(`确认将 ${m.email} 替换为 ${newE}？\n将自动踢出旧成员并邀请新成员。`)) return;
                                                                    setRemovingMemberId(m.id);
                                                                    try {
-                                                                     await onReplaceMember(group.id, m.email, newE);
-                                                                     setReplacingMemberId(null);
-                                                                     setReplaceEmail('');
-                                                                     const detail = await apiRequest<GroupDetail>(`family-groups/${group.id}`);
-                                                                     setGroupDetail(detail);
+                                                                      const result = await onReplaceMember(group.id, m.email, newE);
+                                                                      setReplacingMemberId(null);
+                                                                      setReplaceEmail('');
+                                                                      if (result?.taskId) {
+                                                                        pollMemberTask(m.id, result.taskId, 'replace', group.id);
+                                                                      }
                                                                    } finally {
                                                                      setRemovingMemberId(null);
                                                                    }

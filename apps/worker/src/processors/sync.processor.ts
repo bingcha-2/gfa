@@ -434,7 +434,9 @@ async function reconcileMembers(
         displayName: scraped.displayName || undefined,
         role: scraped.role,
         status: newStatus,
-        googleMemberId: scraped.googleMemberId || undefined,
+        // Fix #2: Only overwrite googleMemberId if scraped value is valid.
+        // Prevents a failed scrape from clearing a previously correct GAIA ID.
+        ...(scraped.googleMemberId ? { googleMemberId: scraped.googleMemberId } : {}),
         ...(newStatus === "ACTIVE" ? { joinedAt: new Date() } : {}),
       },
       create: {
@@ -520,18 +522,50 @@ async function reconcileMembers(
         !claimedIds.has(m.id)
     );
     if (unlinked.length === 1) {
-      await prisma.familyMember.update({
-        where: { id: unlinked[0].id },
-        data: {
-          googleMemberId: scrape.googleMemberId,
-          status: newStatus,
-          displayName: scrape.displayName || unlinked[0].displayName || undefined,
-        },
-      });
-      claimedIds.add(unlinked[0].id);
-      await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${unlinked[0].email} by elimination (status=${newStatus})`);
+      // Fix #1: Cross-validate displayName before binding.
+      // Without this, T3 may bind the wrong GAIA ID when members have been swapped.
+      const candidate = unlinked[0];
+      const nameMatches = !scrape.displayName || !candidate.displayName ||
+        scrape.displayName === candidate.displayName;
+
+      if (nameMatches) {
+        await prisma.familyMember.update({
+          where: { id: candidate.id },
+          data: {
+            googleMemberId: scrape.googleMemberId,
+            status: newStatus,
+            displayName: scrape.displayName || candidate.displayName || undefined,
+          },
+        });
+        claimedIds.add(candidate.id);
+        await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${candidate.email} by elimination (status=${newStatus})`);
+      } else {
+        await logger.log("WARN",
+          `T3 skipped: sole unlinked candidate ${candidate.email} has displayName="${candidate.displayName}" ` +
+          `but scraped displayName="${scrape.displayName}" — mismatch, creating placeholder instead`
+        );
+        // Fall through to T4 placeholder creation
+        const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
+        await prisma.familyMember.upsert({
+          where: { familyGroupId_email: { familyGroupId, email: placeholder } },
+          update: {
+            displayName: scrape.displayName || undefined,
+            googleMemberId: scrape.googleMemberId,
+            status: newStatus,
+          },
+          create: {
+            familyGroupId,
+            email: placeholder,
+            displayName: scrape.displayName || undefined,
+            googleMemberId: scrape.googleMemberId,
+            role: scrape.role ?? "member",
+            status: newStatus,
+            joinedAt: new Date(),
+          },
+        });
+      }
     } else {
-      // Tier 4: No match found — create placeholder
+      // Tier 4: No match found (multiple unlinked candidates) — create placeholder
       const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
       await prisma.familyMember.upsert({
         where: { familyGroupId_email: { familyGroupId, email: placeholder } },

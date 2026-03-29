@@ -68,7 +68,7 @@ const CODE_TYPE_LABELS: Record<string, string> = {
 };
 
 type MemberLookupPanelProps = {
-  onRemoveMember?: (groupId: string, memberEmail: string) => Promise<boolean | undefined>;
+  onRemoveMember?: (groupId: string, memberEmail: string) => Promise<{ taskId: string } | null>;
   onRetryOrder?: (orderId: string) => Promise<boolean | undefined>;
   onReplaceMember?: (payload: { orderId: string; targetMemberEmail: string; newUserEmail: string }) => Promise<boolean | undefined>;
   showToast?: (type: "success" | "error" | "info", msg: string) => void;

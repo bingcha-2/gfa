@@ -270,30 +270,76 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
-  async function syncGroup(groupId: string) {
-    return runAction(() =>
-      apiRequest(`family-groups/${groupId}/sync`, {
-        method: "POST"
-      })
-    );
+  async function syncGroup(groupId: string): Promise<{ taskId: string } | null> {
+    setIsActioning(true);
+    try {
+      const result = await apiRequest<{ queued: boolean; taskId: string }>(
+        `family-groups/${groupId}/sync`,
+        { method: "POST" }
+      );
+      await loadDashboard();
+      return result?.taskId ? { taskId: result.taskId } : null;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (isUnauthorized(message)) {
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
+        router.refresh();
+        return null;
+      }
+      showToast("error", message);
+      return null;
+    } finally {
+      setIsActioning(false);
+    }
   }
 
-  async function removeMember(groupId: string, memberEmail: string) {
-    return runAction(() =>
-      apiRequest(`family-groups/${groupId}/remove-member`, {
-        method: "POST",
-        body: { memberEmail }
-      })
-    );
+  async function removeMember(groupId: string, memberEmail: string): Promise<{ taskId: string } | null> {
+    setIsActioning(true);
+    try {
+      const result = await apiRequest<{ queued: boolean; taskId: string }>(
+        `family-groups/${groupId}/remove-member`,
+        { method: "POST", body: { memberEmail } }
+      );
+      await loadDashboard();
+      return result?.taskId ? { taskId: result.taskId } : null;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (isUnauthorized(message)) {
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
+        router.refresh();
+        return null;
+      }
+      showToast("error", message);
+      return null;
+    } finally {
+      setIsActioning(false);
+    }
   }
 
-  async function replaceGroupMember(groupId: string, targetEmail: string, newEmail: string) {
-    return runAction(() =>
-      apiRequest(`family-groups/${groupId}/replace-member`, {
-        method: "POST",
-        body: { targetMemberEmail: targetEmail, newUserEmail: newEmail }
-      })
-    );
+  async function replaceGroupMember(groupId: string, targetEmail: string, newEmail: string): Promise<{ taskId: string } | null> {
+    setIsActioning(true);
+    try {
+      const result = await apiRequest<{ queued: boolean; taskId: string }>(
+        `family-groups/${groupId}/replace-member`,
+        { method: "POST", body: { targetMemberEmail: targetEmail, newUserEmail: newEmail } }
+      );
+      await loadDashboard();
+      return result?.taskId ? { taskId: result.taskId } : null;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (isUnauthorized(message)) {
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
+        router.refresh();
+        return null;
+      }
+      showToast("error", message);
+      return null;
+    } finally {
+      setIsActioning(false);
+    }
   }
 
   async function crossInvite(emails: string[]): Promise<CrossInviteResult | null> {
