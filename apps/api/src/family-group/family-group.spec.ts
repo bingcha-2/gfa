@@ -28,13 +28,17 @@ describe("FamilyGroupService", () => {
   const mockInviteQueue = {
     add: async (_name: string, _data: any, _opts: any) => ({ id: "mock-invite-1" })
   };
+  const mockReplaceQueue = {
+    add: async (_name: string, _data: any, _opts: any) => ({ id: "mock-replace-1" })
+  };
 
   beforeAll(() => {
     service = new FamilyGroupService(
       getPrisma() as any,
       mockSyncQueue as any,
       mockRemoveQueue as any,
-      mockInviteQueue as any
+      mockInviteQueue as any,
+      mockReplaceQueue as any
     );
   });
 
@@ -130,7 +134,8 @@ describe("FamilyGroupService", () => {
         } as any,
         mockSyncQueue as any,
         mockRemoveQueue as any,
-        mockInviteQueue as any
+        mockInviteQueue as any,
+        mockReplaceQueue as any
       );
 
       const all = await mockService.findAll();
@@ -288,7 +293,7 @@ describe("FamilyGroupService", () => {
       expect(member?.isInGroup).toBe(false);
     });
 
-    it("findOne: REMOVED member has isInGroup=false", async () => {
+    it("findOne: REMOVED member is excluded from results", async () => {
       const account = await createTestAccount();
       const group = await createTestFamilyGroup(account.id);
       const db = getPrisma();
@@ -304,7 +309,8 @@ describe("FamilyGroupService", () => {
 
       const found = await service.findOne(group.id);
       const member = found.members.find((m: any) => m.email === "removed@test.com");
-      expect(member?.isInGroup).toBe(false);
+      // REMOVED members are filtered out at query level (audit records, not active slots)
+      expect(member).toBeUndefined();
     });
 
     it("getMembers: correctly maps isInGroup for mixed statuses", async () => {
@@ -347,7 +353,7 @@ describe("FamilyGroupService", () => {
       expect(result.alreadyRemoved).toHaveLength(0);
     });
 
-    it("should report alreadyRemoved for non-ACTIVE members", async () => {
+    it("should queue PENDING members for removal (not alreadyRemoved)", async () => {
       const account = await createTestAccount();
       const group = await createTestFamilyGroup(account.id);
       const db = getPrisma();
@@ -358,8 +364,9 @@ describe("FamilyGroupService", () => {
 
       const result = await service.bulkRemove(group.id, ["pending@test.com"]);
 
-      expect(result.queued).toHaveLength(0);
-      expect(result.alreadyRemoved).toContain("pending@test.com");
+      // PENDING members are now removable (invited-not-yet-accepted)
+      expect(result.queued).toContain("pending@test.com");
+      expect(result.alreadyRemoved).toHaveLength(0);
     });
 
     it("should deduplicate email casing", async () => {

@@ -243,7 +243,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   async function createCodes(payload: {
     count: number;
     product: string;
-    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
+    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
+    validDays?: number;
+    swapLimit?: number;
+    swapWindowHours?: number;
   }): Promise<string[] | null> {
     setIsActioning(true);
     try {

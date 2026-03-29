@@ -32,8 +32,9 @@ describe("RedeemCodeService", () => {
       const codes = await service.batchCreate({ count: 5 });
       expect(codes).toHaveLength(5);
       codes.forEach((c) => {
-        expect(c.code).toHaveLength(16);
-        expect(c.code).toMatch(/^[A-Z0-9]{16}$/);
+        // Codes now have a type prefix: JZ-<16 alphanumeric chars>
+        expect(c.code).toHaveLength(19); // "JZ-" (3) + 16 = 19
+        expect(c.code).toMatch(/^JZ-[A-Z0-9]{16}$/);
         expect(c.product).toBe("GOOGLE_ONE");
         expect(c.status).toBe("UNUSED");
         expect(c.expiresAt).toBeNull();
@@ -54,13 +55,12 @@ describe("RedeemCodeService", () => {
       expect(codes[0].product).toBe("YOUTUBE_PREMIUM");
     });
 
-    it("should generate codes without symbols", async () => {
+    it("should generate codes with consistent prefix format", async () => {
       const codes = await service.batchCreate({ count: 25 });
 
       codes.forEach((code) => {
-        expect(code.code).toMatch(/^[A-Z0-9]+$/);
-        expect(code.code.includes("-")).toBe(false);
-        expect(code.code.includes("_")).toBe(false);
+        // Default codeType is JOIN_GROUP which uses "JZ" prefix
+        expect(code.code).toMatch(/^JZ-[A-Z0-9]{16}$/);
       });
     });
 
