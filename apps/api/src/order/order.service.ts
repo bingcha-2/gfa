@@ -813,6 +813,62 @@ export class OrderService {
       }
     }
 
+    // Fallback: member may have been added via admin bulkInvite (no Order record).
+    // Look up FamilyMember table and auto-create a bridge Order if member exists in a group.
+    if (!order) {
+      let fallbackMember: { familyGroupId: string; status: string } | null = null;
+
+      // Exact match
+      const member = await this.prisma.familyMember.findFirst({
+        where: {
+          email: normalized,
+          status: { in: ["ACTIVE", "PENDING"] },
+          familyGroup: { status: "ACTIVE" }
+        },
+        select: { familyGroupId: true, status: true },
+        orderBy: { createdAt: "desc" }
+      });
+
+      if (member) {
+        fallbackMember = member;
+      } else {
+        // Case-insensitive fallback for FamilyMember
+        const memberRows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+          `SELECT fm.id FROM FamilyMember fm
+           JOIN FamilyGroup fg ON fm.familyGroupId = fg.id
+           WHERE LOWER(fm.email) = ?
+             AND fm.status IN ('ACTIVE','PENDING')
+             AND fg.status = 'ACTIVE'
+           ORDER BY fm.createdAt DESC LIMIT 1`,
+          normalized
+        );
+        if (memberRows.length > 0) {
+          const record = await this.prisma.familyMember.findUnique({
+            where: { id: memberRows[0].id },
+            select: { familyGroupId: true, status: true }
+          });
+          if (record) fallbackMember = record;
+        }
+      }
+
+      if (fallbackMember) {
+        // Map member status to semantically correct Order status
+        const bridgeStatus: OrderStatus =
+          fallbackMember.status === "ACTIVE" ? OrderStatus.COMPLETED : OrderStatus.INVITE_SENT;
+
+        const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
+        order = await this.prisma.order.create({
+          data: {
+            orderNo,
+            userEmail: normalized,
+            familyGroupId: fallbackMember.familyGroupId,
+            status: bridgeStatus,
+            resultMessage: "Auto-created from FamilyMember record (admin invite)"
+          }
+        });
+      }
+    }
+
     if (!order) {
       throw new NotFoundException(
         "No eligible order found for this email. The account may not be in a family group, or the order is in an ineligible status."
