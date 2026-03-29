@@ -262,4 +262,181 @@ describe("E2E: swap-by-email FamilyMember fallback", () => {
     expect(allOrders.length).toBe(1);
     expect(allOrders[0].id).toBe(existingOrder.id);
   });
+  it("should match FamilyMember email case-insensitively", async () => {
+    const account = await createTestAccount();
+    const group = await createTestFamilyGroup(account.id, {
+      availableSlots: 3,
+    });
+
+    // FamilyMember stored with mixed-case email
+    await db.familyMember.create({
+      data: {
+        familyGroupId: group.id,
+        email: "MixedCase@Gmail.COM",
+        displayName: "Mixed Case",
+        role: "member",
+        status: "ACTIVE",
+      },
+    });
+
+    await createTestRedeemCode(undefined, {
+      code: "HH-SWAP-CASE-001",
+      codeType: "ACCOUNT_SWAP",
+    });
+
+    // Swap request uses lowercase
+    const result = await orderService.swapAccountByEmail({
+      swapCode: "HH-SWAP-CASE-001",
+      originalEmail: "mixedcase@gmail.com",
+      newEmail: "new-case@gmail.com",
+    });
+
+    expect(result.status).toBe("TASK_QUEUED");
+    expect(replaceQueueJobs.length).toBe(1);
+  });
+
+  it("should NOT fallback to members in DISABLED groups", async () => {
+    const account = await createTestAccount();
+    const group = await createTestFamilyGroup(account.id, {
+      availableSlots: 3,
+      status: "DISABLED",
+    });
+
+    await db.familyMember.create({
+      data: {
+        familyGroupId: group.id,
+        email: "disabled-group@gmail.com",
+        displayName: "In Disabled Group",
+        role: "member",
+        status: "ACTIVE",
+      },
+    });
+
+    await createTestRedeemCode(undefined, {
+      code: "HH-SWAP-DISABLED-001",
+      codeType: "ACCOUNT_SWAP",
+    });
+
+    await expect(
+      orderService.swapAccountByEmail({
+        swapCode: "HH-SWAP-DISABLED-001",
+        originalEmail: "disabled-group@gmail.com",
+        newEmail: "new@gmail.com",
+      })
+    ).rejects.toThrow("No eligible order found");
+  });
+
+  it("should persist bridge Order when swap code is invalid (self-healing)", async () => {
+    const account = await createTestAccount();
+    const group = await createTestFamilyGroup(account.id, {
+      availableSlots: 3,
+    });
+
+    await db.familyMember.create({
+      data: {
+        familyGroupId: group.id,
+        email: "bridge-persist@gmail.com",
+        displayName: "Bridge Persist",
+        role: "member",
+        status: "ACTIVE",
+      },
+    });
+
+    // Invalid code — not ACCOUNT_SWAP type
+    await createTestRedeemCode(undefined, {
+      code: "HH-JOINONLY-001",
+      codeType: "JOIN_GROUP",
+    });
+
+    // First attempt: should fail because code type is wrong
+    await expect(
+      orderService.swapAccountByEmail({
+        swapCode: "HH-JOINONLY-001",
+        originalEmail: "bridge-persist@gmail.com",
+        newEmail: "new@gmail.com",
+      })
+    ).rejects.toThrow(); // ForbiddenException from swapAccount
+
+    // Bridge Order should have been created and persisted
+    const bridgeOrders = await db.order.findMany({
+      where: { userEmail: "bridge-persist@gmail.com" },
+    });
+    expect(bridgeOrders.length).toBe(1);
+    expect(bridgeOrders[0].resultMessage).toContain("Auto-created");
+    // Status should be COMPLETED (member is ACTIVE)
+    expect(bridgeOrders[0].status).toBe("COMPLETED");
+
+    // Second attempt with valid code: should use existing bridge Order (no fallback needed)
+    await createTestRedeemCode(undefined, {
+      code: "HH-SWAP-RETRY-001",
+      codeType: "ACCOUNT_SWAP",
+    });
+
+    const result = await orderService.swapAccountByEmail({
+      swapCode: "HH-SWAP-RETRY-001",
+      originalEmail: "bridge-persist@gmail.com",
+      newEmail: "new-retry@gmail.com",
+    });
+
+    expect(result.status).toBe("TASK_QUEUED");
+    // Should reuse the bridge Order, NOT create a second one
+    expect(result.orderNo).toBe(bridgeOrders[0].orderNo);
+  });
+
+  it("should pick the most recent group when same email exists in multiple groups", async () => {
+    const account = await createTestAccount();
+    const oldGroup = await createTestFamilyGroup(account.id, {
+      groupName: "Old Group",
+      availableSlots: 3,
+    });
+
+    // Small delay to ensure different createdAt
+    await new Promise((r) => setTimeout(r, 50));
+
+    const newGroup = await createTestFamilyGroup(account.id, {
+      groupName: "New Group",
+      availableSlots: 3,
+    });
+
+    // Same email in both groups — REMOVED in old, ACTIVE in new
+    await db.familyMember.create({
+      data: {
+        familyGroupId: oldGroup.id,
+        email: "multi-group@gmail.com",
+        displayName: "Old Member",
+        role: "member",
+        status: "REMOVED",
+        removedAt: new Date(),
+      },
+    });
+
+    await db.familyMember.create({
+      data: {
+        familyGroupId: newGroup.id,
+        email: "multi-group@gmail.com",
+        displayName: "New Member",
+        role: "member",
+        status: "ACTIVE",
+      },
+    });
+
+    await createTestRedeemCode(undefined, {
+      code: "HH-SWAP-MULTI-001",
+      codeType: "ACCOUNT_SWAP",
+    });
+
+    const result = await orderService.swapAccountByEmail({
+      swapCode: "HH-SWAP-MULTI-001",
+      originalEmail: "multi-group@gmail.com",
+      newEmail: "new-multi@gmail.com",
+    });
+
+    expect(result.status).toBe("TASK_QUEUED");
+
+    // Bridge Order should be linked to the NEW group (ACTIVE member)
+    const bridgeOrder = await db.order.findFirst({
+      where: { orderNo: result.orderNo },
+    });
+    expect(bridgeOrder!.familyGroupId).toBe(newGroup.id);
+  });
 });
