@@ -69,9 +69,12 @@ export class RedeemCodeService {
       // SUBSCRIPTION codes carry validity + swap config
       if (codeType === RedeemCodeType.SUBSCRIPTION) {
         const validDays = params.validDays ?? 30;
+        // S-05: Enforce swap rate-limit bounds to prevent misconfiguration
+        const swapLimit = Math.min(Math.max(params.swapLimit ?? 2, 1), 10);
+        const swapWindowHours = Math.max(params.swapWindowHours ?? 5, 1);
         base.validDays = validDays;
-        base.swapLimit = params.swapLimit ?? 2;
-        base.swapWindowHours = params.swapWindowHours ?? 5;
+        base.swapLimit = swapLimit;
+        base.swapWindowHours = swapWindowHours;
         // Pre-compute expiresAt so it's visible in the admin panel
         base.expiresAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000);
       }
