@@ -50,7 +50,8 @@ enum RedeemCodeStatus {
 
 enum RedeemCodeType {
   JOIN_GROUP    // Standard: customer joins a family group
-  ACCOUNT_SWAP  // Customer self-service account replacement
+  ACCOUNT_SWAP  // Customer self-service account replacement (one-time)
+  SUBSCRIPTION  // Long-term: allows periodic account swaps within validity
 }
 
 enum OrderStatus {
@@ -180,18 +181,21 @@ model FamilyInvite {
 }
 
 model RedeemCode {
-  id          String           @id @default(cuid())
-  code        String           @unique
-  product     String           @default("GOOGLE_ONE")
-  codeType    RedeemCodeType   @default(JOIN_GROUP)
-  usesAllowed Int              @default(1)
-  status      RedeemCodeStatus @default(UNUSED)
-  expiresAt   DateTime?
-  usedAt      DateTime?
-  order       Order?
-  createdById String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  code            String           @unique
+  product         String           @default("GOOGLE_ONE")
+  codeType        RedeemCodeType   @default(JOIN_GROUP)
+  usesAllowed     Int              @default(1)
+  status          RedeemCodeStatus @default(UNUSED)
+  expiresAt       DateTime?
+  usedAt          DateTime?
+  validDays       Int?             // SUBSCRIPTION: validity period in days (set at generation)
+  swapLimit       Int              @default(0)  // Max swaps allowed within each window (0 = unlimited)
+  swapWindowHours Int              @default(5)  // Rolling window for swap rate-limit (hours)
+  order           Order?
+  createdById     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model Order {
@@ -205,6 +209,8 @@ model Order {
   assignedAt    DateTime?
   expiresAt     DateTime?  // membership expiry (set at redeem time)
   expiredAt     DateTime?  // actual auto-removal timestamp (audit)
+  swapCount     Int          @default(0)  // number of swaps performed
+  lastSwapAt    DateTime?                 // timestamp of most recent swap
   redeemCode    RedeemCode?  @relation(fields: [redeemCodeId], references: [id], onDelete: SetNull)
   familyGroup   FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
   tasks         Task[]

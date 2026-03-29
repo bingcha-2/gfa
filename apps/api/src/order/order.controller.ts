@@ -47,6 +47,15 @@ class SwapByEmailDto {
   newEmail!: string;
 }
 
+class SubscriptionSwapDto {
+  @IsString()
+  @MinLength(6)
+  originalCode!: string;
+
+  @IsEmail()
+  newEmail!: string;
+}
+
 class ReplaceMemberDto {
   @IsEmail()
   targetMemberEmail!: string;
@@ -64,7 +73,7 @@ export class OrderController {
   constructor(
     private readonly orderService: OrderService,
     private readonly auditLog: AuditLogService
-  ) {}
+  ) { }
 
   // ---- Public endpoints (no auth) ----
 
@@ -123,6 +132,19 @@ export class OrderController {
   findSwapStatus(@Param("orderNo") orderNo: string) {
     return this.orderService.findSwapStatus(orderNo);
   }
+
+  /** SUBSCRIPTION code holder self-service swap (no extra code needed) */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post("public/subscription-swap")
+  subscriptionSwap(@Body() dto: SubscriptionSwapDto) {
+    return this.orderService.subscriptionSwap({
+      originalCode: dto.originalCode,
+      newEmail: dto.newEmail
+    });
+  }
+
+
 
 
   // ---- Admin endpoints ----

@@ -108,9 +108,13 @@ export type RedeemCodeSummary = {
   id: string;
   code: string;
   product: string;
-  codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
+  codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
   status: string;
   usedAt?: string | null;
+  expiresAt?: string | null;
+  validDays?: number | null;
+  swapLimit?: number;
+  swapWindowHours?: number;
   createdAt: string;
   order?: {
     id: string;
