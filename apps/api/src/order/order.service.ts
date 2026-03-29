@@ -39,7 +39,7 @@ export class OrderService {
     private readonly inviteQueue: Queue,
     @InjectQueue(QUEUE_NAMES.replace)
     private readonly replaceQueue: Queue
-  ) {}
+  ) { }
 
   private toPublicOrder(order: PublicOrderPayload) {
     const atIdx = order.userEmail.indexOf("@");
@@ -231,7 +231,9 @@ export class OrderService {
     }
 
     // Guard: only JOIN_GROUP codes can be used in the redeem (join) flow
-    if (redeemCode.codeType !== "JOIN_GROUP") {
+    // SUBSCRIPTION codes are restricted to member replacement only (subscriptionSwap / swapAccount)
+    const JOINABLE_TYPES = ["JOIN_GROUP"];
+    if (!JOINABLE_TYPES.includes(redeemCode.codeType)) {
       // Roll back the reservation — code is not meant for joining groups
       await this.prisma.redeemCode.updateMany({
         where: { id: redeemCode.id, status: "RESERVED" },
@@ -279,7 +281,12 @@ export class OrderService {
     });
 
     const assignedAt = new Date();
-    const expiresAt = new Date(assignedAt.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+    // SUBSCRIPTION: use validDays from the code; default 30 days for JOIN_GROUP
+    const rc = redeemCode as any;
+    const validDays = (String(redeemCode.codeType) === "SUBSCRIPTION" && rc.validDays)
+      ? rc.validDays as number
+      : 30;
+    const expiresAt = new Date(assignedAt.getTime() + validDays * 24 * 60 * 60 * 1000);
 
     await this.prisma.order.update({
       where: { id: order.id },
@@ -488,10 +495,11 @@ export class OrderService {
    * Customer self-service account swap.
    *
    * Flow:
-   *   1. Verify ACCOUNT_SWAP redeem code (type-checked, can't use JOIN_GROUP code)
+   *   1. Verify ACCOUNT_SWAP or SUBSCRIPTION redeem code
    *   2. Locate customer's existing COMPLETED order by orderNo (proves they are a member)
-   *   3. Create REPLACE_MEMBER task: remove oldEmail, invite newEmail
-   *   4. Mark swap redeem code as USED
+   *   3. For SUBSCRIPTION: apply rate-limit check
+   *   4. Create REPLACE_MEMBER task: remove oldEmail, invite newEmail
+   *   5. Mark swap redeem code as USED (SUBSCRIPTION stays USED for reuse)
    */
   async swapAccount(params: {
     swapCode: string;
@@ -505,17 +513,33 @@ export class OrderService {
       throw new BadRequestException("New email cannot be empty");
     }
 
-    // 1. Validate the swap redeem code — must be ACCOUNT_SWAP type
+    // 1. Validate the swap redeem code — must be ACCOUNT_SWAP or SUBSCRIPTION type
     const normalizedCode = swapCode.trim().toUpperCase();
     const redeemCode = await this.prisma.redeemCode.findUnique({
       where: { code: normalizedCode }
     });
 
-    if (!redeemCode || redeemCode.status !== "UNUSED") {
-      throw new BadRequestException("Invalid or already used swap code");
-    }
-    if (redeemCode.codeType !== "ACCOUNT_SWAP") {
+    const SWAP_TYPES = ["ACCOUNT_SWAP", "SUBSCRIPTION"];
+    if (!redeemCode || !SWAP_TYPES.includes(redeemCode.codeType)) {
       throw new ForbiddenException("This code cannot be used for account swap");
+    }
+
+    const isSubscription = redeemCode.codeType === "SUBSCRIPTION";
+
+    // ACCOUNT_SWAP: must be UNUSED (one-time use)
+    // SUBSCRIPTION: accept UNUSED (first use) or USED (reuse)
+    if (isSubscription) {
+      if (redeemCode.status !== "UNUSED" && redeemCode.status !== "USED") {
+        throw new BadRequestException("Invalid or expired subscription code");
+      }
+      // Check expiry for SUBSCRIPTION codes
+      if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
+        throw new BadRequestException("This subscription code has expired");
+      }
+    } else {
+      if (redeemCode.status !== "UNUSED") {
+        throw new BadRequestException("Invalid or already used swap code");
+      }
     }
 
     // 2. Locate the original order — allow COMPLETED / INVITE_SENT / WAIT_USER_ACCEPT
@@ -540,20 +564,58 @@ export class OrderService {
     const group = order.familyGroup;
     const originalStatus = order.status;
 
+    // SUBSCRIPTION: rate-limit check before proceeding
+    if (isSubscription) {
+      const rcAny = redeemCode as any;
+      const swapLimit: number = rcAny.swapLimit ?? 2;
+      const swapWindowHours: number = rcAny.swapWindowHours ?? 5;
+
+      if (swapLimit > 0) {
+        const windowStart = new Date(Date.now() - swapWindowHours * 60 * 60 * 1000);
+        const recentSwaps = await this.prisma.task.count({
+          where: {
+            orderId: order.id,
+            type: "REPLACE_MEMBER",
+            createdAt: { gte: windowStart }
+          }
+        });
+        if (recentSwaps >= swapLimit) {
+          throw new BadRequestException(
+            `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours. Please try again later.`
+          );
+        }
+      }
+    }
+
     // 3. Atomically: lock code (RESERVED) + create task + update order
     // Claim the order via status compare-and-swap so only one swap can queue.
+    const swapReason = isSubscription ? "SUBSCRIPTION_SWAP" : "SWAP_REQUEST";
     const { task } = await this.prisma.$transaction(async (tx) => {
-      // Guard against double-use — updateMany returns count
-      const locked = await tx.redeemCode.updateMany({
-        where: {
-          id: redeemCode.id,
-          status: "UNUSED",
-          codeType: "ACCOUNT_SWAP"
-        },
-        data: { status: "RESERVED" }
-      });
-      if (locked.count === 0) {
-        throw new BadRequestException("Swap code already in use (concurrent request)");
+      // ACCOUNT_SWAP: lock UNUSED → RESERVED (one-time)
+      // SUBSCRIPTION: mark UNUSED → USED on first use, skip lock if already USED
+      if (isSubscription) {
+        if (redeemCode.status === "UNUSED") {
+          const locked = await tx.redeemCode.updateMany({
+            where: { id: redeemCode.id, status: "UNUSED" },
+            data: { status: "USED", usedAt: new Date() }
+          });
+          if (locked.count === 0) {
+            throw new BadRequestException("Subscription code already in use (concurrent request)");
+          }
+        }
+      } else {
+        // Guard against double-use — updateMany returns count
+        const locked = await tx.redeemCode.updateMany({
+          where: {
+            id: redeemCode.id,
+            status: "UNUSED",
+            codeType: "ACCOUNT_SWAP"
+          },
+          data: { status: "RESERVED" }
+        });
+        if (locked.count === 0) {
+          throw new BadRequestException("Swap code already in use (concurrent request)");
+        }
       }
 
       const claimedOrder = await tx.order.updateMany({
@@ -565,7 +627,8 @@ export class OrderService {
         },
         data: {
           userEmail: newEmail,
-          status: "TASK_QUEUED"
+          status: "TASK_QUEUED",
+          ...(isSubscription ? { swapCount: { increment: 1 }, lastSwapAt: new Date() } : {})
         }
       });
       if (claimedOrder.count === 0) {
@@ -586,8 +649,7 @@ export class OrderService {
             accountId: group.accountId,
             targetMemberEmail: oldEmail,
             newUserEmail: newEmail,
-            reason: "SWAP_REQUEST",
-            // Stored to enable reverse-lookup from ACCOUNT_SWAP code → Order
+            reason: swapReason,
             swapRedeemCodeId: redeemCode.id
           })
         }
@@ -607,7 +669,7 @@ export class OrderService {
           accountId: group.accountId,
           targetMemberEmail: oldEmail,
           newUserEmail: newEmail,
-          reason: "SWAP_REQUEST"
+          reason: swapReason
         },
         {
           ...JOB_DEFAULTS,
@@ -629,12 +691,14 @@ export class OrderService {
       throw error;
     }
 
-    // 5. Mark code USED only after queue succeeds
-    // Re-checks status to be idempotent in retry scenarios
-    await this.prisma.redeemCode.updateMany({
-      where: { id: redeemCode.id, status: "RESERVED" },
-      data: { status: "USED", usedAt: new Date() }
-    });
+    // 5. Mark ACCOUNT_SWAP code USED only after queue succeeds
+    // SUBSCRIPTION codes were already marked USED in the transaction
+    if (!isSubscription) {
+      await this.prisma.redeemCode.updateMany({
+        where: { id: redeemCode.id, status: "RESERVED" },
+        data: { status: "USED", usedAt: new Date() }
+      });
+    }
 
     return {
       orderNo: order.orderNo,
@@ -689,12 +753,12 @@ export class OrderService {
       ...publicOrder,
       task: latestTask
         ? {
-            status: latestTask.status,
-            startedAt: latestTask.startedAt,
-            finishedAt: latestTask.finishedAt,
-            // R4-D: Do not expose internal error messages to public endpoint
-            hasError: !!latestTask.lastErrorMessage
-          }
+          status: latestTask.status,
+          startedAt: latestTask.startedAt,
+          finishedAt: latestTask.finishedAt,
+          // R4-D: Do not expose internal error messages to public endpoint
+          hasError: !!latestTask.lastErrorMessage
+        }
         : null
     };
   }
@@ -758,5 +822,200 @@ export class OrderService {
     // Delegate to existing swapAccount — all validation, CAS, and audit logic
     // remains unchanged. We just resolved the orderNo from email.
     return this.swapAccount({ swapCode, orderNo: order.orderNo, newEmail });
+  }
+
+  /**
+   * Subscription self-service swap — long-term (SUBSCRIPTION) code holders
+   * can swap their account using the ORIGINAL redeem code (no extra swap code needed).
+   *
+   * Rate-limited by the code's swapLimit / swapWindowHours settings.
+   * Tracked via Order.swapCount and Order.lastSwapAt.
+   *
+   * Flow:
+   *   1. Validate original code is SUBSCRIPTION type and USED status
+   *   2. Find the order linked to that code
+   *   3. Rate-limit check: count swaps in the rolling window
+   *   4. Create REPLACE_MEMBER task
+   *   5. Atomically increment swap counter on Order
+   */
+  async subscriptionSwap(params: {
+    originalCode: string;
+    newEmail: string;
+  }) {
+    const { originalCode, newEmail } = params;
+
+    if (!newEmail.trim()) {
+      throw new BadRequestException("New email cannot be empty");
+    }
+
+    // 1. Find the SUBSCRIPTION code — accept UNUSED (first use) or USED (reuse)
+    const normalizedCode = originalCode.trim().toUpperCase();
+    const redeemCode = await this.prisma.redeemCode.findUnique({
+      where: { code: normalizedCode }
+    });
+
+    if (!redeemCode) {
+      throw new NotFoundException("Code not found");
+    }
+    if (String(redeemCode.codeType) !== "SUBSCRIPTION") {
+      throw new ForbiddenException("This code is not a subscription code");
+    }
+    if (redeemCode.status !== "USED" && redeemCode.status !== "UNUSED") {
+      throw new BadRequestException(
+        "Invalid or expired subscription code"
+      );
+    }
+
+    // Check code expiry
+    if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
+      throw new BadRequestException("This subscription code has expired");
+    }
+
+    // 2. Find linked order (only exists if the code was previously used via swapAccount)
+    const order = await this.prisma.order.findUnique({
+      where: { redeemCodeId: redeemCode.id },
+      include: { familyGroup: true }
+    });
+
+    if (!order) {
+      throw new NotFoundException(
+        redeemCode.status === "UNUSED"
+          ? "This subscription code has not been used yet. Please use swap-account or swap-by-email endpoint for first-time swap."
+          : "No order found for this code"
+      );
+    }
+
+    if (!SWAPPABLE_ORDER_STATUSES.includes(order.status as OrderStatus)) {
+      throw new BadRequestException(
+        `Order status "${order.status}" does not allow account swap`
+      );
+    }
+    if (!order.familyGroupId || !order.familyGroup) {
+      throw new BadRequestException("Order has no assigned family group");
+    }
+
+    const normalizedNewEmail = newEmail.trim().toLowerCase();
+    if (normalizedNewEmail === order.userEmail.toLowerCase()) {
+      throw new BadRequestException("New email is the same as current email");
+    }
+
+    // 3. Rate-limit check — rolling window
+    const rcAny = redeemCode as any;
+    const swapLimit: number = rcAny.swapLimit ?? 2;
+    const swapWindowHours: number = rcAny.swapWindowHours ?? 5;
+
+    if (swapLimit > 0) {
+      // Count REPLACE_MEMBER tasks in the rolling window
+      const windowStart = new Date(Date.now() - swapWindowHours * 60 * 60 * 1000);
+      const recentSwaps = await this.prisma.task.count({
+        where: {
+          orderId: order.id,
+          type: "REPLACE_MEMBER",
+          createdAt: { gte: windowStart }
+        }
+      });
+
+      if (recentSwaps >= swapLimit) {
+        const nextWindowEnd = new Date(windowStart.getTime() + swapWindowHours * 60 * 60 * 1000 * 2);
+        throw new BadRequestException(
+          `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours. Please try again later.`
+        );
+      }
+    }
+
+    // 4. Create swap task atomically
+    const group = order.familyGroup;
+    const oldEmail = order.userEmail;
+    const originalStatus = order.status;
+
+    const { task } = await this.prisma.$transaction(async (tx) => {
+      // Update order: new email, increment swap counter
+      const claimedOrder = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          familyGroupId: group.id,
+          userEmail: oldEmail,
+          status: { in: SWAPPABLE_ORDER_STATUSES }
+        },
+        data: {
+          userEmail: normalizedNewEmail,
+          status: "TASK_QUEUED",
+          swapCount: { increment: 1 },
+          lastSwapAt: new Date()
+        }
+      });
+
+      if (claimedOrder.count === 0) {
+        throw new BadRequestException(
+          "Order is already being swapped or no longer eligible"
+        );
+      }
+
+      const task = await tx.task.create({
+        data: {
+          type: "REPLACE_MEMBER",
+          orderId: order.id,
+          familyGroupId: group.id,
+          accountId: group.accountId,
+          payload: JSON.stringify({
+            orderId: order.id,
+            familyGroupId: group.id,
+            accountId: group.accountId,
+            targetMemberEmail: oldEmail,
+            newUserEmail: normalizedNewEmail,
+            reason: "SUBSCRIPTION_SWAP"
+          })
+        }
+      });
+
+      return { task };
+    });
+
+    // 5. Enqueue — compensate if queue fails
+    try {
+      await this.replaceQueue.add(
+        "replace-member",
+        {
+          taskId: task.id,
+          orderId: order.id,
+          familyGroupId: group.id,
+          accountId: group.accountId,
+          targetMemberEmail: oldEmail,
+          newUserEmail: normalizedNewEmail,
+          reason: "SUBSCRIPTION_SWAP"
+        },
+        {
+          ...JOB_DEFAULTS,
+          jobId: task.id
+        }
+      );
+    } catch (error) {
+      const existingJob = await this.replaceQueue.getJob(task.id).catch(() => null);
+      if (!existingJob) {
+        // Rollback
+        await this.prisma.$transaction(async (tx) => {
+          await tx.task.deleteMany({ where: { id: task.id, status: "PENDING" } });
+          await tx.order.updateMany({
+            where: { id: order.id, status: "TASK_QUEUED", userEmail: normalizedNewEmail },
+            data: {
+              userEmail: oldEmail,
+              status: originalStatus as any,
+              swapCount: { decrement: 1 }
+            }
+          });
+        });
+      }
+      throw error;
+    }
+
+    return {
+      orderNo: order.orderNo,
+      taskId: task.id,
+      status: "TASK_QUEUED",
+      message: "Account swap task queued. Your new account will be invited shortly.",
+      swapCount: (order as any).swapCount + 1,
+      swapLimit,
+      swapWindowHours
+    };
   }
 }

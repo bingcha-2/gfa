@@ -71,7 +71,7 @@ export class AdsPowerClient {
       await sleep(1500); // brief pause so AdsPower releases the process
     }
 
-    const url = this.buildUrl("/api/v1/browser/start", { serial_number: profileId });
+    const url = this.buildUrl("/api/v1/browser/start", { user_id: profileId });
 
     for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
       let json: {
@@ -136,7 +136,7 @@ export class AdsPowerClient {
    * Stop a running browser profile.
    */
   async closeProfile(profileId: string): Promise<void> {
-    const url = this.buildUrl("/api/v1/browser/stop", { serial_number: profileId });
+    const url = this.buildUrl("/api/v1/browser/stop", { user_id: profileId });
 
     try {
       const res = await this.fetchWithAuth(url);
@@ -162,7 +162,7 @@ export class AdsPowerClient {
   async checkProfile(
     profileId: string
   ): Promise<{ active: boolean; debugUrl?: string }> {
-    const url = this.buildUrl("/api/v1/browser/active", { serial_number: profileId });
+    const url = this.buildUrl("/api/v1/browser/active", { user_id: profileId });
 
     try {
       const res = await this.fetchWithAuth(url);

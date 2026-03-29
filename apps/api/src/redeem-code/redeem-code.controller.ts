@@ -14,7 +14,7 @@ import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { RedeemCodeService } from "./redeem-code.service";
 
-const VALID_CODE_TYPES = ["JOIN_GROUP", "ACCOUNT_SWAP"] as const;
+const VALID_CODE_TYPES = ["JOIN_GROUP", "ACCOUNT_SWAP", "SUBSCRIPTION"] as const;
 type CodeType = typeof VALID_CODE_TYPES[number];
 
 class BatchCreateDto {
@@ -30,6 +30,27 @@ class BatchCreateDto {
   @IsOptional()
   @IsEnum(VALID_CODE_TYPES)
   codeType?: CodeType;
+
+  /** SUBSCRIPTION: validity period in days */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  validDays?: number;
+
+  /** SUBSCRIPTION: max swaps per rolling window */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  swapLimit?: number;
+
+  /** SUBSCRIPTION: rolling window in hours */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  swapWindowHours?: number;
 }
 
 @Controller("redeem-codes")
@@ -37,7 +58,7 @@ export class RedeemCodeController {
   constructor(
     private readonly redeemCodeService: RedeemCodeService,
     private readonly auditLog: AuditLogService
-  ) {}
+  ) { }
 
   @Get()
   @Roles("ADMIN", "OPERATIONS")
@@ -52,7 +73,10 @@ export class RedeemCodeController {
       count: dto.count,
       product: dto.product,
       codeType: dto.codeType,
-      createdById: req.user.id
+      createdById: req.user.id,
+      validDays: dto.validDays,
+      swapLimit: dto.swapLimit,
+      swapWindowHours: dto.swapWindowHours
     });
 
     await this.auditLog.log({
@@ -60,7 +84,12 @@ export class RedeemCodeController {
       action: "BATCH_CREATE_CODES",
       targetType: "RedeemCode",
       targetId: "batch",
-      detail: { count: dto.count, product: dto.product ?? "GOOGLE_ONE", codeType: dto.codeType ?? "JOIN_GROUP" }
+      detail: {
+        count: dto.count,
+        product: dto.product ?? "GOOGLE_ONE",
+        codeType: dto.codeType ?? "JOIN_GROUP",
+        ...(dto.codeType === "SUBSCRIPTION" ? { validDays: dto.validDays, swapLimit: dto.swapLimit, swapWindowHours: dto.swapWindowHours } : {})
+      }
     });
 
     return codes;

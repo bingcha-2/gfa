@@ -2,13 +2,14 @@
  * Gmail login automation module.
  *
  * Handles the full Google account login flow on accounts.google.com,
- * including 5 types of occasional verification challenges:
+ * including 6 types of occasional verification challenges:
  *
  *  1. Normal email + password flow
  *  2. TOTP 2FA (Google Authenticator)
  *  3. Age/birthday verification → auto-fill adult birthdate (1990-01-01)
  *  4. Terms of service / privacy confirmation → auto-accept
  *  5. Phone/SMS verification code → fall back to MANUAL_REVIEW
+ *  6. Challenge selection page → auto-select TOTP if available
  *
  * Returns { success: true } on successful login, or
  * { success: false, reason, detail } when manual intervention is required.
@@ -44,7 +45,7 @@ async function verifyLoggedInAccount(
 ): Promise<boolean> {
   try {
     // myaccount.google.com shows the logged-in user's email in the page
-    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => { });
     const bodyText = await page.textContent("body", { timeout: 5_000 }).catch(() => "") ?? "";
     const match = bodyText.toLowerCase().includes(targetEmail.toLowerCase());
     if (!match) {
@@ -125,8 +126,8 @@ export async function gmailLogin(
     await emailInput.first().fill(loginEmail);
     await clickNext(page, logger, 0, "identifier");
     // Wait for page to advance past identifier step (smart wait, up to 4s)
-    await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 4000 }).catch(() => {});
-    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+    await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 4000 }).catch(() => { });
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
 
     // Verify the page actually advanced past the email step.
     // If still on identifier page, retry with escalating click methods.
@@ -139,7 +140,7 @@ export async function gmailLogin(
       }
       await clickNext(page, logger, nextRetry, "identifier");
       await page.waitForTimeout(5000);
-      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await page.waitForLoadState("domcontentloaded").catch(() => { });
     }
 
     // Handle "Something went wrong" error popup (up to 2 rounds — it can appear multiple times).
@@ -154,7 +155,7 @@ export async function gmailLogin(
         await emailRetry.first().fill(loginEmail);
         await clickNext(page, logger, 0, "identifier");
         await page.waitForTimeout(2000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
       }
     }
 
@@ -204,7 +205,7 @@ export async function gmailLogin(
     await passwordInput.first().fill(loginPassword);
     await clickNext(page, logger, 0, "password");
     await page.waitForTimeout(3000);
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await page.waitForLoadState("domcontentloaded").catch(() => { });
 
     // Step 4: Handle post-login challenges (up to 8 rounds)
     let totpSubmitted = false;
@@ -238,7 +239,7 @@ export async function gmailLogin(
           await logger.log("WARN", "[gmail-login] On pwd URL but no visible input — waiting");
         }
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
         continue;
       }
 
@@ -258,7 +259,7 @@ export async function gmailLogin(
         if (!result.success) return result;
         totpSubmitted = true;
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
         continue;
       }
 
@@ -272,7 +273,7 @@ export async function gmailLogin(
       if ((await birthdayInput.count()) > 0 || (await monthSelect.count()) > 0) {
         await handleAgVerification(page, logger);
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
         continue;
       }
 
@@ -285,7 +286,7 @@ export async function gmailLogin(
         await agreeButton.first().click();
         await logger.log("INFO", "[gmail-login] Accepted ToS/privacy prompt");
         await page.waitForTimeout(2000);
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
         continue;
       }
 
@@ -322,6 +323,21 @@ export async function gmailLogin(
         const detail = `Phone/SMS verification required at ${roundUrl}`;
         await logger.log("WARN", `[gmail-login] Unhandled phone challenge: ${detail}`);
         return { success: false, reason: "PHONE_CHALLENGE", detail };
+      }
+
+      // Challenge selection page — Google asks user to pick a verification method.
+      // Try to select TOTP (Google Authenticator) if available, then let the outer
+      // loop handle the actual TOTP input on the next round.
+      if (roundUrl.includes("challenge/selection")) {
+        const handled = await handleChallengeSelection(page, totpSecret, logger);
+        if (!handled) {
+          const detail = `Challenge selection page with no automated option at ${roundUrl}`;
+          await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
+          return { success: false, reason: "VERIFICATION_REQUIRED", detail };
+        }
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        continue;
       }
 
       // Unknown state — wait briefly before next round
@@ -449,7 +465,7 @@ async function dismissErrorPopup(page: Page, logger: TaskLogger): Promise<boolea
   await logger.log("WARN", "[gmail-login] 'Something went wrong' popup detected — clicking Restart");
   await restartBtn.first().click();
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  await page.waitForLoadState("domcontentloaded").catch(() => { });
   return true;
 }
 
@@ -537,7 +553,7 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
 
   // GDS pages are SPAs — wait for content to render
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => { });
 
   // Broad set of buttons that can dismiss GDS / recovery pages.
   // GDS is a multi-card flow: recoveryoptions → welcome → homeaddress.
@@ -599,7 +615,7 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
       await dismissBtn.first().click();
       await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on GDS card ${cardRound + 1}`);
       await page.waitForTimeout(3000);
-      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await page.waitForLoadState("domcontentloaded").catch(() => { });
       continue;
     }
 
@@ -621,6 +637,98 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
   }
 
   return true;
+}
+
+/**
+ * Handle Google's challenge/selection page (verification method picker).
+ *
+ * When Google requires additional verification, it sometimes presents a page
+ * listing available methods (TOTP, SMS, phone prompt, security key, etc.).
+ * This function scans the list and clicks the TOTP / Google Authenticator
+ * option so the outer loop can handle the TOTP input on the next round.
+ *
+ * Returns true if a suitable option was clicked, false if no automatable
+ * method was found (caller should return VERIFICATION_REQUIRED).
+ */
+async function handleChallengeSelection(
+  page: Page,
+  totpSecret: string | null | undefined,
+  logger: TaskLogger
+): Promise<boolean> {
+  await logger.log("INFO", "[gmail-login] Challenge selection page detected — scanning options");
+
+  // Wait for the page to fully render
+  await page.waitForTimeout(2000);
+  await page.waitForLoadState("domcontentloaded").catch(() => { });
+
+  // Google's challenge selection uses a list with data-challengetype attributes
+  // or plain text links. Try data-challengetype first (more reliable).
+  //
+  // Known challenge types:
+  //   6  = TOTP (Google Authenticator)
+  //   12 = Phone prompt (push notification)
+  //   9  = SMS verification
+  //   13 = Phone call
+  //   8  = Backup codes
+
+  // Priority 1: TOTP (challengetype=6) — fully automatable if totpSecret is set
+  if (totpSecret) {
+    const totpOption = page.locator(
+      'div[data-challengetype="6"], ' +
+      'li[data-challengetype="6"], ' +
+      'button[data-challengetype="6"], ' +
+      '[data-challengeindex][data-challengetype="6"]'
+    );
+    if ((await totpOption.count()) > 0) {
+      await totpOption.first().click();
+      await logger.log("INFO", "[gmail-login] Selected TOTP (Google Authenticator) challenge option");
+      return true;
+    }
+
+    // Fallback: look for text-based TOTP option
+    const totpTextOption = page.locator([
+      'li:has-text("Google Authenticator")',
+      'li:has-text("Authenticator")',
+      'li:has-text("authenticator")',
+      'li:has-text("身份验证器")',
+      'li:has-text("驗證器")',
+      'div[role="link"]:has-text("Google Authenticator")',
+      'div[role="link"]:has-text("Authenticator")',
+      'div[role="link"]:has-text("身份验证器")',
+      'a:has-text("Google Authenticator")',
+      'a:has-text("Authenticator")',
+      // Google may show "Enter a code from Google Authenticator" or
+      // "从 Google 身份验证器获取验证码"
+      'li:has-text("verification code")',
+      'li:has-text("验证码")',
+      'li:has-text("驗證碼")',
+    ].join(", "));
+    if ((await totpTextOption.count()) > 0) {
+      await totpTextOption.first().click();
+      await logger.log("INFO", "[gmail-login] Selected TOTP option via text match");
+      return true;
+    }
+  }
+
+  // Priority 2: Backup codes (challengetype=8) — not yet automated,
+  // but could be in the future. Skip for now.
+
+  // No automatable option found — log available options for debugging
+  const allOptions = await page.evaluate(() => {
+    const items = document.querySelectorAll(
+      '[data-challengetype], li[role="link"], div[role="link"]'
+    );
+    return Array.from(items).map((el) => ({
+      type: el.getAttribute("data-challengetype"),
+      text: (el as HTMLElement).innerText?.trim().slice(0, 80),
+    }));
+  });
+  await logger.log(
+    "WARN",
+    `[gmail-login] No automatable challenge option found. Available: ${JSON.stringify(allOptions)}`
+  );
+
+  return false;
 }
 
 /** Detect phone/push/SMS challenge pages heuristically */

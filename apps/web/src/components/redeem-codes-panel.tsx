@@ -7,7 +7,7 @@ import { canManageCodes } from "../lib/permissions";
 import { RedeemCodeSummary } from "../lib/types";
 import { StatusBadge } from "./status-badge";
 
-type CodeTypeFilter = "ALL" | "JOIN_GROUP" | "ACCOUNT_SWAP";
+type CodeTypeFilter = "ALL" | "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
 
 type RedeemCodesPanelProps = {
   codes: RedeemCodeSummary[];
@@ -15,7 +15,10 @@ type RedeemCodesPanelProps = {
   onCreate: (payload: {
     count: number;
     product: string;
-    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP";
+    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
+    validDays?: number;
+    swapLimit?: number;
+    swapWindowHours?: number;
   }) => Promise<string[] | null>;
   onDisable: (codeId: string) => Promise<boolean>;
 };
@@ -47,7 +50,10 @@ export function RedeemCodesPanel({
   const [form, setForm] = useState({
     count: "10",
     product: "GOOGLE_ONE",
-    codeType: "JOIN_GROUP" as "JOIN_GROUP" | "ACCOUNT_SWAP"
+    codeType: "JOIN_GROUP" as "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION",
+    validDays: "30",
+    swapLimit: "2",
+    swapWindowHours: "5"
   });
 
   // Filtered codes based on type tab
@@ -102,14 +108,22 @@ export function RedeemCodesPanel({
       const result = await onCreate({
         count: Number(form.count),
         product: form.product,
-        codeType: form.codeType
+        codeType: form.codeType,
+        ...(form.codeType === "SUBSCRIPTION" ? {
+          validDays: Number(form.validDays),
+          swapLimit: Number(form.swapLimit),
+          swapWindowHours: Number(form.swapWindowHours)
+        } : {})
       });
       if (result) {
         setNewCodes(result);
         setForm({
           count: "10",
           product: form.product || "GOOGLE_ONE",
-          codeType: form.codeType
+          codeType: form.codeType,
+          validDays: "30",
+          swapLimit: "2",
+          swapWindowHours: "5"
         });
       }
     } finally {
@@ -120,7 +134,8 @@ export function RedeemCodesPanel({
   const typeTabLabels: { key: CodeTypeFilter; label: string }[] = [
     { key: "ALL", label: "全部" },
     { key: "JOIN_GROUP", label: "进组" },
-    { key: "ACCOUNT_SWAP", label: "换号" }
+    { key: "ACCOUNT_SWAP", label: "换号" },
+    { key: "SUBSCRIPTION", label: "长效" }
   ];
 
   return (
@@ -210,10 +225,70 @@ export function RedeemCodesPanel({
                       }));
                     }}
                   >
-                    <option value="JOIN_GROUP">进组卡密（JOIN_GROUP）</option>
-                    <option value="ACCOUNT_SWAP">换号卡密（ACCOUNT_SWAP）</option>
+                    <option value="JOIN_GROUP">进组卡密（JZ-）</option>
+                    <option value="ACCOUNT_SWAP">换号卡密（HH-）</option>
+                    <option value="SUBSCRIPTION">长效换号卡密（CX-）</option>
                   </select>
                 </div>
+                {form.codeType === "SUBSCRIPTION" && (
+                  <>
+                    <div className="field">
+                      <label htmlFor="code-validDays">有效天数</label>
+                      <input
+                        id="code-validDays"
+                        min="1"
+                        max="3650"
+                        required
+                        type="number"
+                        value={form.validDays}
+                        onChange={(event) => {
+                          setNewCodes(null);
+                          setForm((current) => ({
+                            ...current,
+                            validDays: event.target.value
+                          }));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="code-swapLimit">窗口内最大替换次数</label>
+                      <input
+                        id="code-swapLimit"
+                        min="1"
+                        max="100"
+                        required
+                        type="number"
+                        value={form.swapLimit}
+                        onChange={(event) => {
+                          setNewCodes(null);
+                          setForm((current) => ({
+                            ...current,
+                            swapLimit: event.target.value
+                          }));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="code-swapWindow">限流窗口（小时）</label>
+                      <input
+                        id="code-swapWindow"
+                        min="1"
+                        max="720"
+                        required
+                        type="number"
+                        value={form.swapWindowHours}
+                        onChange={(event) => {
+                          setNewCodes(null);
+                          setForm((current) => ({
+                            ...current,
+                            swapWindowHours: event.target.value
+                          }));
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+
                 <div className="field field-span-2">
                   <p className="muted">
                     新生成的卡密默认不带过期时间。只有用户提交卡密、订单真正完成后，才会记录实际生效时间。
@@ -233,7 +308,7 @@ export function RedeemCodesPanel({
                       <p className="label">生成结果</p>
                       <h3 className="panel-title" style={{ fontSize: "1rem" }}>
                         已生成 {newCodes.length} 条
-                        {form.codeType === "ACCOUNT_SWAP" ? "换号" : "进组"}卡密
+                        {form.codeType === "ACCOUNT_SWAP" ? "换号" : form.codeType === "SUBSCRIPTION" ? "长效" : "进组"}卡密
                       </h3>
                     </div>
                     <button
@@ -286,7 +361,7 @@ export function RedeemCodesPanel({
                 {typeTabLabels.map(({ key, label }) => (
                   <button
                     key={key}
-                    className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-orange" : ""}`}
+                    className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-orange" : key === "SUBSCRIPTION" ? " tab-green" : ""}`}
                     onClick={() => setTypeFilter(key)}
                     type="button"
                   >
@@ -348,9 +423,14 @@ export function RedeemCodesPanel({
                           <div className="muted">created {formatDateTime(code.createdAt)}</div>
                         </td>
                         <td>
-                          <span className={`badge ${code.codeType === "ACCOUNT_SWAP" ? "badge-orange" : "badge-sky"}`}>
-                            {code.codeType === "ACCOUNT_SWAP" ? "换号" : "进组"}
+                          <span className={`badge ${code.codeType === "ACCOUNT_SWAP" ? "badge-orange" : code.codeType === "SUBSCRIPTION" ? "badge-green" : "badge-sky"}`}>
+                            {code.codeType === "ACCOUNT_SWAP" ? "换号" : code.codeType === "SUBSCRIPTION" ? "长效" : "进组"}
                           </span>
+                          {code.codeType === "SUBSCRIPTION" && code.expiresAt && (
+                            <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                              {code.validDays}天 | {code.swapLimit ?? 2}次/{code.swapWindowHours ?? 5}h
+                            </div>
+                          )}
                         </td>
                         <td>
                           <StatusBadge value={code.status} />
@@ -388,7 +468,7 @@ export function RedeemCodesPanel({
                     <tr>
                       <td colSpan={6}>
                         <div className="empty-state">
-                          {typeFilter === "ALL" ? "还没有卡密库存。" : `没有${typeFilter === "JOIN_GROUP" ? "进组" : "换号"}类型的卡密。`}
+                          {typeFilter === "ALL" ? "还没有卡密库存。" : `没有${typeFilter === "JOIN_GROUP" ? "进组" : typeFilter === "ACCOUNT_SWAP" ? "换号" : "长效"}类型的卡密。`}
                         </div>
                       </td>
                     </tr>
@@ -397,8 +477,9 @@ export function RedeemCodesPanel({
               </table>
             </div>
           </div>
-        )}
-      </div>
-    </section>
+        )
+        }
+      </div >
+    </section >
   );
 }
