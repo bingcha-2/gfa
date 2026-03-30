@@ -66,7 +66,7 @@ foreach ($port in @(3000, 3001)) {
     if ($line -match '\s+(\d+)\s*$') {
       $procPid = $Matches[1]
       if ($procPid -ne "0") {
-        taskkill /F /PID $procPid 2>$null | Out-Null
+        try { taskkill /F /PID $procPid 2>$null | Out-Null } catch {}
         Write-Host "  Killed PID $procPid on port $port" -ForegroundColor Yellow
       }
     }
