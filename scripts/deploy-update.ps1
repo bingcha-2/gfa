@@ -49,12 +49,12 @@ Write-Host "==> Step 1: Stopping services" -ForegroundColor Yellow
 
 $pidFile = Join-Path $ProjectRoot "gfa.pid"
 if (Test-Path $pidFile) {
-  $pid = (Get-Content $pidFile -Raw).Trim()
+  $gfaPid = (Get-Content $pidFile -Raw).Trim()
   try {
-    taskkill /T /F /PID $pid 2>$null | Out-Null
-    Write-Host "  Stopped process tree (PID: $pid)" -ForegroundColor Green
+    taskkill /T /F /PID $gfaPid 2>$null | Out-Null
+    Write-Host "  Stopped process tree (PID: $gfaPid)" -ForegroundColor Green
   } catch {
-    Write-Host "  Process $pid already stopped" -ForegroundColor Yellow
+    Write-Host "  Process $gfaPid already stopped" -ForegroundColor Yellow
   }
   Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 }
