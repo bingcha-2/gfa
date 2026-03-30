@@ -125,6 +125,11 @@ $schemaPath = Join-Path $ProjectRoot "prisma\schema.prisma"
 # This NEVER drops tables or columns — only adds what's missing
 $env:DATABASE_URL = $dbUrl
 
+# Temporarily relax error handling — external tools (prisma/npx) write
+# non-fatal info (upgrade notices, progress bars) to stderr which
+# PowerShell's "Stop" mode treats as terminating errors.
+$ErrorActionPreference = "Continue"
+
 if (Test-Path $dbPath) {
   # Existing DB: generate diff
   Write-Host "  Generating schema diff..." -ForegroundColor Gray
@@ -133,7 +138,7 @@ if (Test-Path $dbPath) {
   $diffResult = & npx prisma migrate diff `
     --from-url $dbUrl `
     --to-schema-datamodel $schemaPath `
-    --script 2>&1
+    --script 2>$null
   
   $diffSql = ($diffResult | Out-String).Trim()
   
@@ -149,7 +154,7 @@ if (Test-Path $dbPath) {
     $tempSql = Join-Path $env:TEMP "gfa-migrate-$timestamp.sql"
     $diffSql | Set-Content $tempSql -Encoding utf8
     
-    & npx prisma db execute --file $tempSql --schema $schemaPath 2>&1 | ForEach-Object {
+    & npx prisma db execute --file $tempSql --schema $schemaPath 2>$null | ForEach-Object {
       Write-Host "  $_"
     }
     
@@ -174,13 +179,16 @@ if (Test-Path $dbPath) {
 } else {
   # No DB: full init
   Write-Host "  No database found, running full init..." -ForegroundColor Yellow
-  & npx prisma db push --skip-generate 2>&1 | ForEach-Object { Write-Host "  $_" }
+  & npx prisma db push --skip-generate 2>$null | ForEach-Object { Write-Host "  $_" }
 }
+
+# Restore strict error handling
+$ErrorActionPreference = "Stop"
 
 # ── Step 4: Generate Prisma client ───────────────────────────────────────────
 Write-Host ""
 Write-Host "==> Step 4: Generating Prisma client" -ForegroundColor Yellow
-& npx prisma generate 2>&1 | Out-Null
+& npx prisma generate 2>$null | Out-Null
 Write-Host "  Prisma client generated" -ForegroundColor Green
 
 # ── Step 5: Build ────────────────────────────────────────────────────────────
