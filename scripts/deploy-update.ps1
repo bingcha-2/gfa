@@ -20,7 +20,7 @@ param(
   [switch]$SkipBuild   # Skip pnpm build (use existing dist/)
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 # ── Detect project root ──────────────────────────────────────────────────────
 # Script must be called from repo root, OR we auto-detect from script location
@@ -125,11 +125,6 @@ $schemaPath = Join-Path $ProjectRoot "prisma\schema.prisma"
 # This NEVER drops tables or columns — only adds what's missing
 $env:DATABASE_URL = $dbUrl
 
-# Temporarily relax error handling — external tools (prisma/npx) write
-# non-fatal info (upgrade notices, progress bars) to stderr which
-# PowerShell's "Stop" mode treats as terminating errors.
-$ErrorActionPreference = "Continue"
-
 if (Test-Path $dbPath) {
   # Existing DB: generate diff
   Write-Host "  Generating schema diff..." -ForegroundColor Gray
@@ -181,9 +176,6 @@ if (Test-Path $dbPath) {
   Write-Host "  No database found, running full init..." -ForegroundColor Yellow
   & npx prisma db push --skip-generate 2>$null | ForEach-Object { Write-Host "  $_" }
 }
-
-# Restore strict error handling
-$ErrorActionPreference = "Stop"
 
 # ── Step 4: Generate Prisma client ───────────────────────────────────────────
 Write-Host ""
