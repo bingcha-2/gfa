@@ -32,3 +32,5 @@ runtime/
 
 # Vitest config (auto-generated)
 apps/*/vitest.config.ts
+
+backups/
