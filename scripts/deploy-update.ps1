@@ -107,6 +107,17 @@ foreach ($line in $envContent) {
   }
 }
 
+# Convert relative file: URL to absolute (Prisma resolves relative to CWD, not prisma/)
+if ($dbUrl -match '^file:\.') {
+  $relPath = $dbUrl -replace '^file:', ''
+  $absDbPath = (Resolve-Path (Join-Path $ProjectRoot "prisma" $relPath) -ErrorAction SilentlyContinue).Path
+  if ($absDbPath) {
+    $dbUrl = "file:$absDbPath"
+  } else {
+    $dbUrl = "file:$(Join-Path $ProjectRoot 'prisma' $relPath)"
+  }
+}
+
 $schemaPath = Join-Path $ProjectRoot "prisma\schema.prisma"
 
 # Use prisma migrate diff to generate safe SQL, then execute
@@ -116,6 +127,7 @@ $env:DATABASE_URL = $dbUrl
 if (Test-Path $dbPath) {
   # Existing DB: generate diff
   Write-Host "  Generating schema diff..." -ForegroundColor Gray
+  Write-Host "  DB URL: $dbUrl" -ForegroundColor Gray
   
   $diffResult = & npx prisma migrate diff `
     --from-url $dbUrl `
