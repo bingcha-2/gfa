@@ -110,11 +110,12 @@ foreach ($line in $envContent) {
 # Convert relative file: URL to absolute (Prisma resolves relative to CWD, not prisma/)
 if ($dbUrl -match '^file:\.') {
   $relPath = $dbUrl -replace '^file:', ''
-  $absDbPath = (Resolve-Path (Join-Path $ProjectRoot "prisma" $relPath) -ErrorAction SilentlyContinue).Path
+  $prismaDir = Join-Path $ProjectRoot "prisma"
+  $absDbPath = (Resolve-Path (Join-Path $prismaDir $relPath) -ErrorAction SilentlyContinue).Path
   if ($absDbPath) {
     $dbUrl = "file:$absDbPath"
   } else {
-    $dbUrl = "file:$(Join-Path $ProjectRoot 'prisma' $relPath)"
+    $dbUrl = "file:$(Join-Path $prismaDir $relPath)"
   }
 }
 
