@@ -22,6 +22,8 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { ensureFamilyGroup } from "../ensure-family-group";
+import { checkTransferBatchProgress } from "../check-transfer-progress";
+import { Queue } from "bullmq";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -30,6 +32,7 @@ export interface InviteProcessorDeps {
   adspower: AdsPowerClient;
   pool: BrowserPool;
   workerId: string;
+  inviteQueue?: Queue;
 }
 
 export async function processInvite(
@@ -186,6 +189,13 @@ export async function processInvite(
     }
 
     await logger.log("INFO", "Invite completed successfully");
+
+    // Transfer batch callback: check if all invite tasks are done
+    if (deps.inviteQueue) {
+      await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch((err) =>
+        logger.log("WARN", `Transfer progress check failed: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    }
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
     if (error instanceof UnrecoverableError) throw error;
@@ -201,6 +211,25 @@ export async function processInvite(
       message: errMsg
     });
     await logger.log("ERROR", `Invite error (will retry): ${errMsg}`);
+
+    // Transfer batch callback on terminal failure:
+    // Mark task FAILED_FINAL first so the callback sees terminal status.
+    // Only for transfer tasks to avoid changing normal invite behavior.
+    if (deps.inviteQueue && job.attemptsMade >= (job.opts?.attempts ?? 3) - 1) {
+      const transferTask = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { transferBatchId: true },
+      }).catch(() => null);
+
+      if (transferTask?.transferBatchId) {
+        await prisma.task.update({
+          where: { id: taskId },
+          data: { status: "FAILED_FINAL" },
+        }).catch(() => {});
+        await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch(() => {});
+      }
+    }
+
     throw error;
   } finally {
     await browser.disconnect().catch(() => {});

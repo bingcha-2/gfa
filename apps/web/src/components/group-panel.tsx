@@ -12,7 +12,9 @@ import type {
   BulkGroupInviteResult,
   BulkGroupRemoveResult,
   CrossInviteResult,
-  CrossRemoveResult
+  CrossRemoveResult,
+  TransferBatchResult,
+  TransferStatusResult
 } from "./console-app";
 
 type MemberInfo = {
@@ -48,6 +50,8 @@ type GroupPanelProps = {
   onBulkInviteGroup: (groupId: string, emails: string[]) => Promise<BulkGroupInviteResult | null>;
   onBulkRemoveGroup: (groupId: string, memberEmails: string[]) => Promise<BulkGroupRemoveResult | null>;
   onToggleAutoAssign: (groupId: string) => Promise<boolean>;
+  onCreateTransfer: (sourceGroupId: string, targetGroupId: string, memberEmails?: string[]) => Promise<TransferBatchResult | null>;
+  onGetTransferStatus: (batchId: string) => Promise<TransferStatusResult | null>;
 };
 
 function formatDate(dateStr?: string | null) {
@@ -72,7 +76,9 @@ export function GroupPanel({
   onCrossRemove,
   onBulkInviteGroup,
   onBulkRemoveGroup,
-  onToggleAutoAssign
+  onToggleAutoAssign,
+  onCreateTransfer,
+  onGetTransferStatus
 }: GroupPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
@@ -91,20 +97,68 @@ export function GroupPanel({
   const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch">("inventory");
 
   // --- Batch tab state ---
-  const [batchSubTab, setBatchSubTab] = useState<"cross-invite" | "cross-remove" | "group-invite" | "group-remove">("cross-invite");
+  const [batchSubTab, setBatchSubTab] = useState<"cross-invite" | "cross-remove" | "group-invite" | "group-remove" | "transfer">("cross-invite");
   const [batchText, setBatchText] = useState("");
   const [batchGroupId, setBatchGroupId] = useState("");
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchResult, setBatchResult] = useState<CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null>(null);
 
-  // Reset result when switching tabs or subtabs
+  // Transfer state
+  const [transferSourceId, setTransferSourceId] = useState("");
+  const [transferTargetId, setTransferTargetId] = useState("");
+  const [transferEmails, setTransferEmails] = useState("");
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [transferStatus, setTransferStatus] = useState<TransferStatusResult | null>(null);
+  const transferPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   function switchBatchSubTab(tab: typeof batchSubTab) {
     setBatchSubTab(tab);
     setBatchResult(null);
     setBatchText("");
-    // Reset group selector when switching to cross-group ops (no group needed)
     if (tab === "cross-invite" || tab === "cross-remove") {
       setBatchGroupId("");
+    }
+    // Stop transfer polling when leaving the transfer sub-tab
+    if (tab !== "transfer" && transferPollRef.current) {
+      clearInterval(transferPollRef.current);
+      transferPollRef.current = null;
+    }
+  }
+
+  // Clean up transfer polling on unmount
+  useEffect(() => {
+    return () => {
+      if (transferPollRef.current) clearInterval(transferPollRef.current);
+    };
+  }, []);
+
+  function startTransferPolling(batchId: string) {
+    if (transferPollRef.current) clearInterval(transferPollRef.current);
+    transferPollRef.current = setInterval(async () => {
+      const status = await onGetTransferStatus(batchId);
+      if (status) {
+        setTransferStatus(status);
+        if (["COMPLETED", "PARTIALLY_FAILED", "FAILED"].includes(status.phase)) {
+          if (transferPollRef.current) clearInterval(transferPollRef.current);
+          transferPollRef.current = null;
+        }
+      }
+    }, 5000);
+  }
+
+  async function submitTransfer() {
+    setTransferLoading(true);
+    setTransferStatus(null);
+    try {
+      const emails = transferEmails.trim() ? parseEmails(transferEmails) : undefined;
+      const result = await onCreateTransfer(transferSourceId, transferTargetId, emails);
+      if (result) {
+        const status = await onGetTransferStatus(result.batchId);
+        if (status) setTransferStatus(status);
+        startTransferPolling(result.batchId);
+      }
+    } finally {
+      setTransferLoading(false);
     }
   }
   const [form, setForm] = useState({
@@ -421,7 +475,8 @@ export function GroupPanel({
                 { id: "cross-invite" as const, label: "跨组邀请" },
                 { id: "cross-remove" as const, label: "跨组踢人" },
                 { id: "group-invite" as const, label: "指定组邀请" },
-                { id: "group-remove" as const, label: "指定组踢人" }
+                { id: "group-remove" as const, label: "指定组踢人" },
+                { id: "transfer" as const, label: "整组迁移" }
               ]).map(t => (
                 <button
                   key={t.id}
@@ -435,6 +490,79 @@ export function GroupPanel({
               ))}
             </div>
 
+            {batchSubTab === "transfer" ? (
+              <div className="form-card field-grid workspace-form">
+                <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
+                  <strong>整组迁移</strong>：将 A 组成员整体迁移到 B 组。自动执行“先踢出、再邀请”两阶段流程，允许部分失败。留空邮箱列表 = 迁移全组。
+                </div>
+                <div className="field">
+                  <label>源家庭组（踢出成员）</label>
+                  <SearchableSelect id="transfer-source" value={transferSourceId} onChange={setTransferSourceId} placeholder="-- 选择源家庭组 --" options={groups.map(g => ({ value: g.id, label: `${g.groupName} · ${g.account?.name ?? '-'}` }))} />
+                </div>
+                <div className="field">
+                  <label>目标家庭组（邀请成员）</label>
+                  <SearchableSelect id="transfer-target" value={transferTargetId} onChange={setTransferTargetId} placeholder="-- 选择目标家庭组 --" options={groups.filter(g => g.id !== transferSourceId).map(g => ({ value: g.id, label: `${g.groupName} · ${g.availableSlots} slots · ${g.account?.name ?? '-'}` }))} />
+                </div>
+                <div className="field">
+                  <label htmlFor="transfer-emails">指定迁移邮箱（可选，留空 = 迁移全组非 Owner 成员）</label>
+                  <textarea id="transfer-emails" rows={4} placeholder="留空即迁移全组\n或每行一个邮箱指定迁移哪些" value={transferEmails} onChange={e => setTransferEmails(e.target.value)} style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }} />
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="button" type="button" disabled={transferLoading || !transferSourceId || !transferTargetId} onClick={submitTransfer}>
+                    {transferLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '🚀 开始迁移'}
+                  </button>
+                </div>
+                {transferStatus && (
+                  <div style={{ marginTop: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                      <strong>迁移批次</strong>
+                      <StatusBadge value={transferStatus.phase} />
+                      {["REMOVING", "INVITING"].includes(transferStatus.phase) && <Spinner size={14} />}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '12px' }}>
+                      <div style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.875rem', color: '#666' }}>移除</div>
+                        <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                          <span style={{ color: '#16a34a' }}>{transferStatus.removes.success}</span>
+                          {transferStatus.removes.failed > 0 && <span style={{ color: '#dc2626' }}> / {transferStatus.removes.failed}❌</span>}
+                          {transferStatus.removes.pending > 0 && <span style={{ color: '#d97706' }}> / {transferStatus.removes.pending}⏳</span>}
+                        </div>
+                      </div>
+                      <div style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.875rem', color: '#666' }}>邀请</div>
+                        <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                          <span style={{ color: '#16a34a' }}>{transferStatus.invites.sent}</span>
+                          {transferStatus.invites.failed > 0 && <span style={{ color: '#dc2626' }}> / {transferStatus.invites.failed}❌</span>}
+                          {transferStatus.invites.pending > 0 && <span style={{ color: '#d97706' }}> / {transferStatus.invites.pending}⏳</span>}
+                        </div>
+                      </div>
+                      <div style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.875rem', color: '#666' }}>总成员</div>
+                        <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{transferStatus.totalMembers}</div>
+                      </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                      <thead><tr style={{ borderBottom: '1px solid #e5e7eb' }}><th style={{ textAlign: 'left', padding: '6px 8px' }}>邮箱</th><th style={{ textAlign: 'center', padding: '6px 8px' }}>移除</th><th style={{ textAlign: 'center', padding: '6px 8px' }}>邀请</th></tr></thead>
+                      <tbody>
+                        {transferStatus.memberDetails.map(m => (
+                          <tr key={m.email} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '0.8rem' }}>{m.email}</td>
+                            <td style={{ textAlign: 'center', padding: '6px 8px' }}><StatusBadge value={m.removeStatus} /></td>
+                            <td style={{ textAlign: 'center', padding: '6px 8px' }}>{m.inviteStatus ? <StatusBadge value={m.inviteStatus} /> : <span className="muted">—</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {transferStatus.errorDetail.length > 0 && (
+                      <div style={{ marginTop: '8px', background: '#fef2f2', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                        <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: '4px' }}>⚠️ 错误详情</div>
+                        {transferStatus.errorDetail.map((e, i) => (<div key={i} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{e.email}: {e.error}</div>))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
             <div className="form-card field-grid workspace-form">
               {/* Description */}
               <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
@@ -559,6 +687,7 @@ user2@gmail.com`}
                 </div>
               )}
             </div>
+            )}
           </div>
         ) : activeTab === "create" ? (
           canManage ? (

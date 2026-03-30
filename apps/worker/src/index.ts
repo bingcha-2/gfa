@@ -11,7 +11,7 @@ import * as path from "path";
 // Load .env from repo root (pnpm --filter runs from apps/worker/)
 config({ path: path.resolve(__dirname, "../../../.env") });
 
-import { Job, Worker } from "bullmq";
+import { Job, Queue, Worker } from "bullmq";
 import Redis from "ioredis";
 import { PrismaClient } from "@prisma/client";
 
@@ -69,6 +69,11 @@ function parseRedisUrl(url: string) {
 
 const connection = parseRedisUrl(redisUrl);
 
+// Create a Queue instance for invite — needed by transfer batch callback
+// to enqueue Phase 2 invite tasks from within the remove processor.
+const inviteQueueRef = new Queue(QUEUE_NAMES.invite, { connection });
+const depsWithInviteQueue = { ...deps, inviteQueue: inviteQueueRef };
+
 // ---- Workers ----
 
 // Each queue runs at most 1 concurrent job.
@@ -80,7 +85,7 @@ const WORKER_CONCURRENCY = 1;
 
 const inviteWorker = new Worker<InviteMemberPayload>(
   QUEUE_NAMES.invite,
-  (job) => processInvite(job, deps),
+  (job) => processInvite(job, depsWithInviteQueue),
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
@@ -90,7 +95,7 @@ const inviteWorker = new Worker<InviteMemberPayload>(
 
 const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
   QUEUE_NAMES.remove,
-  (job) => processRemove(job, deps),
+  (job) => processRemove(job, depsWithInviteQueue),
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
@@ -147,10 +152,39 @@ async function cleanupStalledTasks(): Promise<void> {
   }
 }
 
-// Run cleanup before accepting jobs
-cleanupStalledTasks().catch((err) =>
-  console.error(`[${workerId}] Failed to cleanup stalled tasks:`, err)
-);
+// Run cleanup before accepting jobs, then recover stuck transfer batches
+cleanupStalledTasks()
+  .then(() => recoverStuckTransferBatches())
+  .catch((err) =>
+    console.error(`[${workerId}] Failed to cleanup stalled tasks:`, err)
+  );
+
+/**
+ * After worker restart, transfer batches may be stuck (all tasks terminal but
+ * phase still REMOVING/INVITING) because the crash prevented the callback.
+ * Find such batches and run the progress check once to advance them.
+ */
+async function recoverStuckTransferBatches(): Promise<void> {
+  const { checkTransferBatchProgress } = await import("./check-transfer-progress");
+
+  const stuckBatches = await prisma.transferBatch.findMany({
+    where: { phase: { in: ["REMOVING", "INVITING"] } },
+    include: {
+      tasks: { select: { id: true, status: true }, take: 1 },
+    },
+  });
+
+  for (const batch of stuckBatches) {
+    if (batch.tasks.length === 0) continue;
+    // Use any task from the batch to trigger the progress check
+    try {
+      await checkTransferBatchProgress(prisma, batch.tasks[0].id, inviteQueueRef);
+      console.log(`[${workerId}] Recovered stuck transfer batch ${batch.id}`);
+    } catch (err) {
+      console.warn(`[${workerId}] Failed to recover transfer batch ${batch.id}:`, err);
+    }
+  }
+}
 
 // Also force-release any Redis profile locks this worker left behind on crash
 pool.releaseAllByWorker(workerId).catch((err: Error) =>

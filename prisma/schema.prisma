@@ -88,6 +88,14 @@ enum TaskType {
   HEALTH_CHECK_ACCOUNT
 }
 
+enum TransferPhase {
+  REMOVING
+  INVITING
+  COMPLETED
+  PARTIALLY_FAILED
+  FAILED
+}
+
 model User {
   id           String     @id @default(cuid())
   email        String     @unique
@@ -143,6 +151,8 @@ model FamilyGroup {
   invites            FamilyInvite[]
   orders             Order[]
   tasks              Task[]
+  transfersAsSource  TransferBatch[] @relation("TransferSource")
+  transfersAsTarget  TransferBatch[] @relation("TransferTarget")
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 }
@@ -221,17 +231,18 @@ model Order {
 }
 
 model Task {
-  id                   String       @id @default(cuid())
+  id                   String          @id @default(cuid())
   type                 TaskType
   orderId              String?
   familyGroupId        String?
   accountId            String?
   workerId             String?
-  status               TaskStatus   @default(PENDING)
-  priority             Int          @default(0)
-  retryCount           Int          @default(0)
-  maxRetryCount        Int          @default(3)
-  payload              String       @default("{}")
+  transferBatchId      String?
+  status               TaskStatus      @default(PENDING)
+  priority             Int             @default(0)
+  retryCount           Int             @default(0)
+  maxRetryCount        Int             @default(3)
+  payload              String          @default("{}")
   lastErrorCode        String?
   lastErrorMessage     String?
   beforeScreenshotPath String?
@@ -239,12 +250,13 @@ model Task {
   errorScreenshotPath  String?
   startedAt            DateTime?
   finishedAt           DateTime?
-  order                Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  familyGroup          FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
-  account              Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  order                Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  familyGroup          FamilyGroup?    @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
+  account              Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  transferBatch        TransferBatch?  @relation(fields: [transferBatchId], references: [id], onDelete: SetNull)
   logs                 TaskLog[]
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
 }
 
 model TaskLog {
@@ -266,4 +278,24 @@ model AuditLog {
   detail     String?
   operator   User?    @relation(fields: [operatorId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
+}
+
+model TransferBatch {
+  id                String         @id @default(cuid())
+  sourceGroupId     String
+  targetGroupId     String
+  phase             TransferPhase  @default(REMOVING)
+  memberEmails      String         // JSON array of emails
+  totalMembers      Int
+  removedCount      Int            @default(0)
+  removeFailedCount Int            @default(0)
+  invitedCount      Int            @default(0)
+  inviteFailedCount Int            @default(0)
+  errorDetail       String?        // JSON array: [{email, error}]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  sourceGroup       FamilyGroup    @relation("TransferSource", fields: [sourceGroupId], references: [id])
+  targetGroup       FamilyGroup    @relation("TransferTarget", fields: [targetGroupId], references: [id])
+  tasks             Task[]
 }

@@ -929,4 +929,261 @@ export class FamilyGroupService {
 
     return { queued: true, taskId: result.task.id };
   }
+
+  // ========== Transfer Batch ==========
+
+  /**
+   * Create a cross-group transfer: remove members from source, then auto-invite to target.
+   * If memberEmails is omitted, all ACTIVE non-owner members are transferred.
+   */
+  async createTransfer(data: {
+    sourceGroupId: string;
+    targetGroupId: string;
+    memberEmails?: string[];
+  }): Promise<{
+    batchId: string;
+    phase: string;
+    totalMembers: number;
+    memberEmails: string[];
+    removeTaskIds: string[];
+  }> {
+    const { sourceGroupId, targetGroupId } = data;
+
+    if (sourceGroupId === targetGroupId) {
+      throw new BadRequestException("Source and target groups cannot be the same");
+    }
+
+    // Validate both groups exist and have accounts
+    const sourceGroup = await this.prisma.familyGroup.findUnique({
+      where: { id: sourceGroupId },
+      include: { account: { select: { id: true, loginEmail: true } } },
+    });
+    if (!sourceGroup) throw new NotFoundException("Source group not found");
+    if (!sourceGroup.account) throw new NotFoundException("Source group has no account");
+
+    const targetGroup = await this.prisma.familyGroup.findUnique({
+      where: { id: targetGroupId },
+      include: { account: { select: { id: true } } },
+    });
+    if (!targetGroup) throw new NotFoundException("Target group not found");
+    if (!targetGroup.account) throw new NotFoundException("Target group has no account");
+
+    // Resolve member list
+    let emails: string[];
+    if (data.memberEmails && data.memberEmails.length > 0) {
+      emails = [...new Set(data.memberEmails.map(e => e.trim().toLowerCase()))];
+    } else {
+      // Default: all ACTIVE non-owner members
+      const ownerEmail = sourceGroup.account.loginEmail?.toLowerCase() ?? "";
+      const members = await this.prisma.familyMember.findMany({
+        where: {
+          familyGroupId: sourceGroupId,
+          status: "ACTIVE",
+          role: { not: "OWNER" },
+        },
+        select: { email: true },
+      });
+      emails = members
+        .map(m => m.email.toLowerCase())
+        .filter(e => e !== ownerEmail);
+    }
+
+    if (emails.length === 0) {
+      throw new BadRequestException("No eligible members to transfer");
+    }
+
+    // Check for existing active transfer on this source group
+    const existingBatch = await this.prisma.transferBatch.findFirst({
+      where: {
+        sourceGroupId,
+        phase: { in: ["REMOVING", "INVITING"] },
+      },
+    });
+    if (existingBatch) {
+      throw new BadRequestException(
+        `Source group already has an active transfer (batch ${existingBatch.id}, phase ${existingBatch.phase})`
+      );
+    }
+
+    // Create TransferBatch record
+    const batch = await this.prisma.transferBatch.create({
+      data: {
+        sourceGroupId,
+        targetGroupId,
+        memberEmails: JSON.stringify(emails),
+        totalMembers: emails.length,
+        phase: "REMOVING",
+      },
+    });
+
+    // Create remove tasks with transferBatchId
+    const removeTaskIds: string[] = [];
+
+    for (const email of emails) {
+      // Optimistic lock: mark member PENDING
+      const member = await this.prisma.familyMember.findFirst({
+        where: { familyGroupId: sourceGroupId, email, status: { in: ["ACTIVE", "PENDING"] } },
+      });
+
+      const task = await this.prisma.task.create({
+        data: {
+          type: "REMOVE_MEMBER",
+          familyGroupId: sourceGroupId,
+          accountId: sourceGroup.account.id,
+          transferBatchId: batch.id,
+          payload: JSON.stringify({
+            familyGroupId: sourceGroupId,
+            accountId: sourceGroup.account.id,
+            memberEmail: email,
+          }),
+        },
+      });
+
+      // Mark member as PENDING to prevent duplicate operations
+      if (member && member.status === "ACTIVE") {
+        await this.prisma.familyMember.update({
+          where: { id: member.id },
+          data: { status: "PENDING" },
+        }).catch(() => {});
+      }
+
+      try {
+        await this.removeQueue.add(
+          "remove-member",
+          {
+            taskId: task.id,
+            familyGroupId: sourceGroupId,
+            accountId: sourceGroup.account.id,
+            memberEmail: email,
+          },
+          {
+            ...JOB_DEFAULTS,
+            jobId: `transfer-remove:${batch.id}:${email}`,
+          }
+        );
+        removeTaskIds.push(task.id);
+      } catch {
+        // Rollback: delete task, restore member status
+        await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+        if (member) {
+          await this.prisma.familyMember.update({
+            where: { id: member.id },
+            data: { status: "ACTIVE" },
+          }).catch(() => {});
+        }
+      }
+    }
+
+    if (removeTaskIds.length === 0) {
+      // All queue adds failed — clean up batch
+      await this.prisma.transferBatch.delete({ where: { id: batch.id } }).catch(() => {});
+      throw new BadRequestException("Failed to enqueue any remove tasks");
+    }
+
+    return {
+      batchId: batch.id,
+      phase: "REMOVING",
+      totalMembers: emails.length,
+      memberEmails: emails,
+      removeTaskIds,
+    };
+  }
+
+  /**
+   * Get transfer batch status with per-member detail.
+   */
+  async getTransferStatus(batchId: string) {
+    const batch = await this.prisma.transferBatch.findUnique({
+      where: { id: batchId },
+      include: {
+        sourceGroup: { select: { id: true, groupName: true } },
+        targetGroup: { select: { id: true, groupName: true } },
+        tasks: {
+          select: { id: true, type: true, status: true, payload: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!batch) throw new NotFoundException("Transfer batch not found");
+
+    const emails: string[] = JSON.parse(batch.memberEmails);
+
+    // Build per-member detail (safe JSON parsing to tolerate corrupted payloads)
+    const safeParsePayload = (payload: string): Record<string, unknown> => {
+      try { return JSON.parse(payload); }
+      catch { return {}; }
+    };
+
+    const memberDetails = emails.map(email => {
+      const removeTask = batch.tasks.find(
+        t => t.type === "REMOVE_MEMBER" && safeParsePayload(t.payload).memberEmail === email
+      );
+      const inviteTask = batch.tasks.find(
+        t => t.type === "INVITE_MEMBER" && safeParsePayload(t.payload).userEmail === email
+      );
+
+      return {
+        email,
+        removeStatus: removeTask?.status ?? "NOT_STARTED",
+        inviteStatus: inviteTask?.status ?? (batch.phase === "INVITING" || batch.phase === "COMPLETED" || batch.phase === "PARTIALLY_FAILED" ? "NOT_STARTED" : undefined),
+      };
+    });
+
+    const removeTasks = batch.tasks.filter(t => t.type === "REMOVE_MEMBER");
+    const inviteTasks = batch.tasks.filter(t => t.type === "INVITE_MEMBER");
+
+    const terminalStatuses = new Set(["SUCCESS", "INVITE_SENT", "FAILED_FINAL", "MANUAL_REVIEW", "CANCELLED"]);
+
+    return {
+      id: batch.id,
+      phase: batch.phase,
+      sourceGroupId: batch.sourceGroupId,
+      targetGroupId: batch.targetGroupId,
+      sourceGroupName: batch.sourceGroup.groupName,
+      targetGroupName: batch.targetGroup.groupName,
+      totalMembers: batch.totalMembers,
+      removes: {
+        success: removeTasks.filter(t => t.status === "SUCCESS").length,
+        failed: removeTasks.filter(t => ["FAILED_FINAL", "MANUAL_REVIEW", "CANCELLED"].includes(t.status)).length,
+        pending: removeTasks.filter(t => !terminalStatuses.has(t.status)).length,
+      },
+      invites: {
+        sent: inviteTasks.filter(t => ["SUCCESS", "INVITE_SENT"].includes(t.status)).length,
+        failed: inviteTasks.filter(t => ["FAILED_FINAL", "MANUAL_REVIEW", "CANCELLED"].includes(t.status)).length,
+        pending: inviteTasks.filter(t => !terminalStatuses.has(t.status)).length,
+      },
+      memberDetails,
+      errorDetail: batch.errorDetail ? JSON.parse(batch.errorDetail) : [],
+      createdAt: batch.createdAt,
+      updatedAt: batch.updatedAt,
+    };
+  }
+
+  /**
+   * List recent transfer batches.
+   */
+  async listTransfers() {
+    const batches = await this.prisma.transferBatch.findMany({
+      include: {
+        sourceGroup: { select: { groupName: true } },
+        targetGroup: { select: { groupName: true } },
+        _count: { select: { tasks: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    return batches.map(b => ({
+      id: b.id,
+      sourceGroupName: b.sourceGroup.groupName,
+      targetGroupName: b.targetGroup.groupName,
+      phase: b.phase,
+      totalMembers: b.totalMembers,
+      removedCount: b.removedCount,
+      invitedCount: b.invitedCount,
+      taskCount: b._count.tasks,
+      createdAt: b.createdAt,
+    }));
+  }
 }

@@ -17,6 +17,7 @@ import { BulkRemoveDto } from "./dto/bulk-remove.dto";
 import { BulkInviteDto } from "./dto/bulk-invite.dto";
 import { CrossBulkRemoveDto } from "./dto/cross-bulk-remove.dto";
 import { CrossBulkInviteDto } from "./dto/cross-bulk-invite.dto";
+import { CreateTransferDto } from "./dto/create-transfer.dto";
 
 class CreateFamilyGroupDto {
   @IsString()
@@ -109,6 +110,42 @@ export class FamilyGroupController {
       return { found: false, error: "Please provide a valid email address" };
     }
     return this.familyGroupService.lookupByMemberEmail(email);
+  }
+
+  // ========== Transfer ==========
+  // Static paths MUST come before /:id to avoid being matched as a group ID
+
+  @Post("transfer")
+  @Roles("ADMIN", "OPERATIONS")
+  async createTransfer(@Body() dto: CreateTransferDto, @Request() req: any) {
+    const result = await this.familyGroupService.createTransfer(dto);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "CREATE_TRANSFER",
+      targetType: "TransferBatch",
+      targetId: result.batchId,
+      detail: {
+        sourceGroupId: dto.sourceGroupId,
+        targetGroupId: dto.targetGroupId,
+        totalMembers: result.totalMembers,
+        memberEmails: result.memberEmails,
+      }
+    });
+
+    return result;
+  }
+
+  @Get("transfer")
+  @Roles("ADMIN", "OPERATIONS")
+  listTransfers() {
+    return this.familyGroupService.listTransfers();
+  }
+
+  @Get("transfer/:batchId")
+  @Roles("ADMIN", "OPERATIONS")
+  getTransferStatus(@Param("batchId") batchId: string) {
+    return this.familyGroupService.getTransferStatus(batchId);
   }
 
   @Get(":id")

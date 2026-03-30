@@ -63,6 +63,30 @@ export type BulkGroupRemoveResult = {
   failed: string[];
 };
 
+export type TransferBatchResult = {
+  batchId: string;
+  phase: string;
+  totalMembers: number;
+  memberEmails: string[];
+  removeTaskIds: string[];
+};
+
+export type TransferStatusResult = {
+  id: string;
+  phase: string;
+  sourceGroupId: string;
+  targetGroupId: string;
+  sourceGroupName: string;
+  targetGroupName: string;
+  totalMembers: number;
+  removes: { success: number; failed: number; pending: number };
+  invites: { sent: number; failed: number; pending: number };
+  memberDetails: { email: string; removeStatus: string; inviteStatus?: string }[];
+  errorDetail: { email: string; error: string }[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 const orderTerminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
 type ConsoleAppProps = {
@@ -417,6 +441,31 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
+  async function createTransfer(sourceGroupId: string, targetGroupId: string, memberEmails?: string[]): Promise<TransferBatchResult | null> {
+    try {
+      const body: Record<string, unknown> = { sourceGroupId, targetGroupId };
+      if (memberEmails && memberEmails.length > 0) body.memberEmails = memberEmails;
+      const result = await apiRequest<TransferBatchResult>("family-groups/transfer", {
+        method: "POST",
+        body,
+      });
+      showToast("success", `迁移任务已创建，共 ${result.totalMembers} 个成员`);
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
+  async function getTransferStatus(batchId: string): Promise<TransferStatusResult | null> {
+    try {
+      return await apiRequest<TransferStatusResult>(`family-groups/transfer/${batchId}`);
+    } catch {
+      return null;
+    }
+  }
+
   async function retryTask(taskId: string) {
     return runAction(() =>
       apiRequest(`tasks/${taskId}/retry`, {
@@ -681,6 +730,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onBulkInviteGroup={bulkInviteGroup}
             onBulkRemoveGroup={bulkRemoveGroup}
             onToggleAutoAssign={toggleAutoAssign}
+            onCreateTransfer={createTransfer}
+            onGetTransferStatus={getTransferStatus}
             role={data.user.role}
           />
         );

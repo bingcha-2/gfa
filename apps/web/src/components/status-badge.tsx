@@ -31,7 +31,11 @@ const toneMap: Record<string, StatusTone> = {
   CANCELLED: "crimson",
   RISKY: "amber",
   SENT: "sky",
-  USED: "stone"
+  USED: "stone",
+  REMOVING: "amber",
+  INVITING: "amber",
+  PARTIALLY_FAILED: "crimson",
+  NOT_STARTED: "stone"
 };
 
 // Chinese display labels for status values
@@ -93,6 +97,11 @@ const labelMap: Record<string, string> = {
   "No TOTP": "未设置",
   // Product
   GOOGLE_ONE: "Google One",
+  // Transfer batch phases
+  REMOVING: "移除中",
+  INVITING: "邀请中",
+  PARTIALLY_FAILED: "部分失败",
+  NOT_STARTED: "未开始",
 };
 
 type StatusBadgeProps = {
