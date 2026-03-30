@@ -129,31 +129,54 @@ export async function processReplace(
     );
 
     // Fix #5: On retry, check if old member was already removed in a previous attempt.
-    // If member is already REMOVED in DB or not visible on the page, skip Step 1.
+    // Two checks:
+    //   1. DB status = REMOVED → definitely skip
+    //   2. DB status != REMOVED but member not findable on page → also skip (crash-retry scenario)
+    // For check #2, we count member cards on the page (excluding manager).
+    // We do NOT use body.textContent for presence detection (it's unreliable for PENDING→ACTIVE transitions).
     let skipRemove = false;
     if (memberRecord?.status === "REMOVED") {
       await logger.log("INFO", `Target member ${targetMemberEmail} already REMOVED in DB — skipping Step 1 (remove)`);
       skipRemove = true;
-    } else {
-      // Also check the live page: if email/displayName is not on the family list, member is gone
-      const pageText = await page.textContent("body").catch(() => "") ?? "";
-      const emailOnPage = pageText.toLowerCase().includes(targetMemberEmail.toLowerCase());
-      const nameOnPage = !!(targetDisplayName && pageText.includes(targetDisplayName));
-      if (!emailOnPage && !nameOnPage) {
-        await logger.log("INFO", `Target member ${targetMemberEmail} not visible on family page — skipping Step 1 (remove)`);
-        skipRemove = true;
-      }
     }
 
     let discoveredGaiaId: string | undefined;
     if (!skipRemove) {
-      // Step 1: Remove the target member on page
-      discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
-        password: account.loginPassword ?? undefined,
-        totpSecret: account.totpSecret ?? undefined,
-        displayName: targetDisplayName,
-        googleMemberId: targetGaiaId,
+      // Query other members' GAIA IDs for cross-validation safety check
+      // This prevents S3 from accidentally removing a card that belongs to another known member
+      const otherMembers = await prisma.familyMember.findMany({
+        where: {
+          familyGroupId,
+          email: { not: targetMemberEmail },
+          googleMemberId: { not: null },
+          status: { not: "REMOVED" },
+        },
+        select: { googleMemberId: true },
       });
+      const otherGaiaIds = new Set(otherMembers.map((m) => m.googleMemberId!).filter(Boolean));
+      await logger.log("INFO", `Cross-validation set: ${otherGaiaIds.size} other member GAIA IDs loaded`);
+
+      // Step 1: Remove the target member on page
+      // Wrap in try-catch: if this is a retry and the member was already removed by a previous
+      // attempt (but DB wasn't updated), S0-S3 will all fail with "Cannot find member".
+      // In that case, treat as "already removed" and proceed to invite.
+      try {
+        discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
+          password: account.loginPassword ?? undefined,
+          totpSecret: account.totpSecret ?? undefined,
+          displayName: targetDisplayName,
+          googleMemberId: targetGaiaId,
+        }, otherGaiaIds);
+      } catch (removeErr) {
+        const msg = removeErr instanceof Error ? removeErr.message : String(removeErr);
+        if (msg.includes("Cannot find member")) {
+          await logger.log("WARN",
+            `Member ${targetMemberEmail} not found on page — likely already removed by previous attempt. Proceeding to invite.`
+          );
+        } else {
+          throw removeErr; // re-throw non-matching errors
+        }
+      }
 
       // Back-fill gaiaId into DB if we discovered it via fallback during this remove step
       if (discoveredGaiaId && !targetGaiaId && memberRecord) {
@@ -359,7 +382,8 @@ async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
-  credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string }
+  credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string },
+  otherMemberGaiaIds?: Set<string>
 ): Promise<string | undefined> {
   let discoveredGaiaId: string | undefined;
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
@@ -369,42 +393,67 @@ async function removeMemberOnPage(
 
   if (googleMemberId) {
     // Strategy 0: Direct navigation using GAIA ID — bypasses all text matching issues
-    const directUrl = `https://myaccount.google.com/family/member/g/${googleMemberId}?hl=en`;
-    await logger.log("INFO", `S0: Navigating directly to member page via GAIA ID ${googleMemberId}`);
-    await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+    // Google uses /g/<id> for accepted members and /i/<id> for pending invites.
+    // We cannot determine path from ID sign alone (pending IDs can be positive or negative).
+    // Try /g/ first (most common), then /i/ if no action button found.
+    const pathsToTry = ["g", "i"] as const;
+    let hasAction = 0;
 
-    // Verify we landed on the right page (check for remove/cancel button)
-    const hasAction = await page.locator(
-      'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove")'
-    ).count();
+    for (const pathSegment of pathsToTry) {
+      const directUrl = `https://myaccount.google.com/family/member/${pathSegment}/${googleMemberId}?hl=en`;
+      await logger.log("INFO", `S0: Trying /${pathSegment}/${googleMemberId}`);
+      await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+
+      hasAction = await page.locator(
+        'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove")'
+      ).count();
+
+      if (hasAction > 0) {
+        await logger.log("INFO", `S0: Found action button on /${pathSegment}/ path`);
+        break;
+      }
+      await logger.log("INFO", `S0: No action button on /${pathSegment}/ path, trying next`);
+    }
 
     if (hasAction > 0) {
       // Identity verification: confirm this page actually belongs to the target member.
-      // Without this check, a stale/incorrect googleMemberId in DB would remove the wrong person.
-      const bodyText = await page.textContent("body").catch(() => "") ?? "";
-      const emailMatch = bodyText.toLowerCase().includes(email.toLowerCase());
-      const nameMatch = !!(displayName && bodyText.includes(displayName));
+      // IMPORTANT: Use leaf-node extraction, NOT body.textContent — body contains ALL members' emails.
+      const leafEmails = await page.evaluate(() => {
+        const leafEls = Array.from(document.querySelectorAll("*"))
+          .filter((el) => el.children.length === 0);
+        return leafEls
+          .map((el) => el.textContent?.trim() ?? "")
+          .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
+      });
+      await logger.log("INFO", `S0: Leaf emails on detail page: [${leafEmails.join(", ")}]`);
+      const emailMatch = leafEmails.some((e) => e.toLowerCase() === email.toLowerCase());
+      const nameMatch = false; // displayName is unreliable for verification
 
-      if (emailMatch || nameMatch) {
-        await logger.log("INFO", `S0 verified: page belongs to ${email} (emailMatch=${emailMatch}, nameMatch=${nameMatch})`);
+      if (emailMatch) {
+        await logger.log("INFO", `S0 verified: leaf email matches ${email}`);
         // Identity confirmed — proceed to remove button logic below
       } else {
         await logger.log("WARN",
           `S0 identity mismatch: gaiaId=${googleMemberId} page does not contain email="${email}" or displayName="${displayName ?? 'N/A'}". Falling back to list page matching.`
         );
+        // Clear SPA state: navigate to blank page first to prevent stale DOM content
+        // from leaking into subsequent S3 page visits
+        await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-        discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+        discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
       }
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
+      // Clear SPA state before fallback
+      await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+      discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
     }
   } else {
     // No GAIA ID — fall back to text-based matching
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, undefined, otherMemberGaiaIds);
   }
 
   await logger.log("INFO", `On detail page for member ${email}`);
@@ -417,7 +466,7 @@ async function removeMemberOnPage(
   if ((await deleteGroupBtn.count()) > 0) {
     await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger);
+    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
     await logger.log("INFO", `After fallback, now on: ${page.url()}`);
   }
 
@@ -729,7 +778,9 @@ async function fallbackFindMember(
   page: import("playwright").Page,
   email: string,
   displayName: string | undefined,
-  logger: TaskLogger
+  logger: TaskLogger,
+  knownGaiaId?: string,
+  otherMemberGaiaIds?: Set<string>
 ): Promise<string | undefined> {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
@@ -752,11 +803,17 @@ async function fallbackFindMember(
       await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
       // Fix #4: Verify identity on detail page — displayName collision is possible.
-      // ONLY check email, NOT displayName. displayName will always be on the detail page
-      // of whichever member we clicked (it's THEIR name), so it can't distinguish members.
-      const detailBody = await page.textContent("body").catch(() => "") ?? "";
-      if (detailBody.toLowerCase().includes(email.toLowerCase())) {
-        await logger.log("INFO", `S2 verified: detail page contains target email`);
+      // Use leaf-node extraction: body.textContent contains ALL members' emails (always matches).
+      const s2LeafEmails = await page.evaluate(() => {
+        const leafEls = Array.from(document.querySelectorAll("*"))
+          .filter((el) => el.children.length === 0);
+        return leafEls
+          .map((el) => el.textContent?.trim() ?? "")
+          .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
+      });
+      await logger.log("INFO", `S2: Leaf emails on detail page: [${s2LeafEmails.join(", ")}]`);
+      if (s2LeafEmails.some((e) => e.toLowerCase() === email.toLowerCase())) {
+        await logger.log("INFO", `S2 verified: leaf email matches target ${email}`);
         return extractGaiaIdFromUrl(page.url());
       }
       // Mismatch: displayName was ambiguous, fall through to S3
@@ -787,12 +844,35 @@ async function fallbackFindMember(
     await logger.log("WARN", `S3: No member links found. Page snippet: ${pageSnippet}`);
   }
 
+  // S3-fast: If we have a known GAIA ID, try to find matching href FIRST (O(1) vs O(n) page visits)
+  if (knownGaiaId) {
+    const gaiaHref = memberHrefs.find((h) => h.includes(`/g/${knownGaiaId}`) || h.includes(`/i/${knownGaiaId}`));
+    if (gaiaHref) {
+      await logger.log("INFO", `S3-fast: Found href matching known GAIA ${knownGaiaId}, navigating directly`);
+      await page.goto(gaiaHref, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      return extractGaiaIdFromUrl(page.url());
+    }
+    await logger.log("WARN", `S3-fast: Known GAIA ${knownGaiaId} not found in ${memberHrefs.length} hrefs, falling to blind iteration`);
+  }
+
   for (let i = 0; i < memberHrefs.length; i++) {
     const href = memberHrefs[i];
 
     try {
       await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForTimeout(500);
+      // Wait for Google Angular content to render — domcontentloaded only means
+      // the HTML shell is parsed, not that dynamic content is visible.
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+
+      // Verify URL actually navigated to a member detail page
+      const currentUrl = page.url();
+      if (!currentUrl.includes("family/member/")) {
+        await logger.log("WARN", `S3: Card #${i} navigation landed on unexpected URL: ${currentUrl}, skipping`);
+        continue;
+      }
 
       // Definitive manager detection: "Delete Family Group" button only appears on the manager's own page.
       // Always skip regardless of whether the email appears in body text (it often does on the manager page).
@@ -804,14 +884,40 @@ async function fallbackFindMember(
         continue;
       }
 
-      const bodyText = await page.textContent("body").catch(() => "");
+      // Extract emails from leaf-node elements ONLY to prevent false positives
+      // from body.textContent concatenation or SPA stale content.
+      // Uses the same strict regex as sync.processor.ts for consistency.
+      const detailEmails: string[] = await page.evaluate(() => {
+        const leafEls = Array.from(document.querySelectorAll("*"))
+          .filter((el) => el.children.length === 0);
+        return leafEls
+          .map((el) => el.textContent?.trim() ?? "")
+          .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
+      });
 
-      if (bodyText?.includes(email)) {
+      const matched = detailEmails.some(
+        (e) => e.toLowerCase() === email.toLowerCase()
+      );
+
+      // Diagnostic log: always record what emails were found on this detail page
+      await logger.log("DEBUG",
+        `S3: Card #${i} (href=${href}) found emails: [${detailEmails.join(", ")}], target=${email}, matched=${matched}`
+      );
+
+      if (matched) {
+        // Cross-validate: if we know other members' GAIA IDs, make sure this card
+        // does NOT belong to a different member (prevents removing the wrong person)
+        const cardGaiaId = extractGaiaIdFromUrl(page.url());
+        if (cardGaiaId && otherMemberGaiaIds?.has(cardGaiaId)) {
+          await logger.log("WARN",
+            `S3: SAFETY BLOCK — Card #${i} GAIA ${cardGaiaId} belongs to ANOTHER known member. ` +
+            `Email leaf-match was likely a false positive. Skipping this card.`
+          );
+          continue;
+        }
         await logger.log("INFO", `S3: Matched on detail page for card #${i} (href=${href})`);
-        return extractGaiaIdFromUrl(page.url());
+        return cardGaiaId;
       }
-
-      await logger.log("DEBUG", `S3: Card #${i} does not match email, continuing`);
     } catch (err) {
       await logger.log("WARN", `S3: Failed to navigate to card #${i}: ${err instanceof Error ? err.message : String(err)}`);
     }
