@@ -65,4 +65,8 @@ export class BulkImportDto {
   @ArrayNotEmpty()
   @IsString({ each: true })
   lines!: string[];
+
+  @IsOptional()
+  @IsString()
+  subscriptionExpiresAt?: string;
 }

@@ -52,6 +52,7 @@ type GroupPanelProps = {
   onToggleAutoAssign: (groupId: string) => Promise<boolean>;
   onCreateTransfer: (sourceGroupId: string, targetGroupId: string, memberEmails?: string[]) => Promise<TransferBatchResult | null>;
   onGetTransferStatus: (batchId: string) => Promise<TransferStatusResult | null>;
+  onUpdateAccount?: (accountId: string, payload: { subscriptionExpiresAt: string }) => Promise<boolean>;
 };
 
 function formatDate(dateStr?: string | null) {
@@ -78,7 +79,8 @@ export function GroupPanel({
   onBulkRemoveGroup,
   onToggleAutoAssign,
   onCreateTransfer,
-  onGetTransferStatus
+  onGetTransferStatus,
+  onUpdateAccount
 }: GroupPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
@@ -110,6 +112,10 @@ export function GroupPanel({
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferStatus, setTransferStatus] = useState<TransferStatusResult | null>(null);
   const transferPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Expiration date inline edit state
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [editingExpiresAt, setEditingExpiresAt] = useState<string>("");
 
   function switchBatchSubTab(tab: typeof batchSubTab) {
     setBatchSubTab(tab);
@@ -194,7 +200,7 @@ export function GroupPanel({
     let cancelled = false;
     apiRequest<GroupDetail>(`family-groups/${expandedGroupId}`)
       .then((detail) => { if (!cancelled) setGroupDetail(detail); })
-      .catch(() => {});
+      .catch(() => { });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups]);
@@ -563,130 +569,130 @@ export function GroupPanel({
                 )}
               </div>
             ) : (
-            <div className="form-card field-grid workspace-form">
-              {/* Description */}
-              <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
-                {batchSubTab === "cross-invite" && <><strong>跨组批量邀请</strong>：自动分配到可用槽位，先填满第一组再溢出到下一组。</>}
-                {batchSubTab === "cross-remove" && <><strong>跨组批量踢人</strong>：自动查找每个邮箱所在组并入队移除任务。</>}
-                {batchSubTab === "group-invite" && <><strong>指定组批量邀请</strong>：选择目标家庭组，一次最多 5 个。超出 availableSlots 时拒绝。</>}
-                {batchSubTab === "group-remove" && <><strong>指定组批量踢人</strong>：选择目标家庭组，批量移除指定邮箱成员。</>}
-              </div>
+              <div className="form-card field-grid workspace-form">
+                {/* Description */}
+                <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
+                  {batchSubTab === "cross-invite" && <><strong>跨组批量邀请</strong>：自动分配到可用槽位，先填满第一组再溢出到下一组。</>}
+                  {batchSubTab === "cross-remove" && <><strong>跨组批量踢人</strong>：自动查找每个邮箱所在组并入队移除任务。</>}
+                  {batchSubTab === "group-invite" && <><strong>指定组批量邀请</strong>：选择目标家庭组，一次最多 5 个。超出 availableSlots 时拒绝。</>}
+                  {batchSubTab === "group-remove" && <><strong>指定组批量踢人</strong>：选择目标家庭组，批量移除指定邮箱成员。</>}
+                </div>
 
-              {/* Group selector for single-group ops */}
-              {(batchSubTab === "group-invite" || batchSubTab === "group-remove") && (
+                {/* Group selector for single-group ops */}
+                {(batchSubTab === "group-invite" || batchSubTab === "group-remove") && (
+                  <div className="field">
+                    <label htmlFor="batch-group-select">目标家庭组</label>
+                    <SearchableSelect
+                      id="batch-group-select"
+                      value={batchGroupId}
+                      onChange={(val) => { setBatchGroupId(val); setBatchResult(null); }}
+                      placeholder="-- 请选择家庭组 --"
+                      options={groups.map(g => ({
+                        value: g.id,
+                        label: `${g.groupName} · ${g.availableSlots} slots · ${g.account?.name ?? '-'}`
+                      }))}
+                    />
+                  </div>
+                )}
+
+                {/* Email textarea */}
                 <div className="field">
-                  <label htmlFor="batch-group-select">目标家庭组</label>
-                  <SearchableSelect
-                    id="batch-group-select"
-                    value={batchGroupId}
-                    onChange={(val) => { setBatchGroupId(val); setBatchResult(null); }}
-                    placeholder="-- 请选择家庭组 --"
-                    options={groups.map(g => ({
-                      value: g.id,
-                      label: `${g.groupName} · ${g.availableSlots} slots · ${g.account?.name ?? '-'}`
-                    }))}
+                  <label htmlFor="batch-emails">
+                    邮箱列表（每行一个，共 {parseEmails(batchText).length} 个）
+                  </label>
+                  <textarea
+                    id="batch-emails"
+                    rows={6}
+                    placeholder={`user1@gmail.com
+user2@gmail.com`}
+                    value={batchText}
+                    onChange={e => { setBatchText(e.target.value); setBatchResult(null); }}
+                    style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }}
                   />
                 </div>
-              )}
 
-              {/* Email textarea */}
-              <div className="field">
-                <label htmlFor="batch-emails">
-                  邮箱列表（每行一个，共 {parseEmails(batchText).length} 个）
-                </label>
-                <textarea
-                  id="batch-emails"
-                  rows={6}
-                  placeholder={`user1@gmail.com
-user2@gmail.com`}
-                  value={batchText}
-                  onChange={e => { setBatchText(e.target.value); setBatchResult(null); }}
-                  style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }}
-                />
-              </div>
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  className="button"
-                  type="button"
-                  disabled={batchLoading || !parseEmails(batchText).length || ((batchSubTab === "group-invite" || batchSubTab === "group-remove") && !batchGroupId)}
-                  onClick={async () => {
-                    const emails = parseEmails(batchText);
-                    setBatchLoading(true);
-                    setBatchResult(null);
-                    try {
-                      let result: CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null = null;
-                      if (batchSubTab === "cross-invite") result = await onCrossInvite(emails);
-                      else if (batchSubTab === "cross-remove") result = await onCrossRemove(emails);
-                      else if (batchSubTab === "group-invite") result = await onBulkInviteGroup(batchGroupId, emails);
-                      else if (batchSubTab === "group-remove") result = await onBulkRemoveGroup(batchGroupId, emails);
-                      if (result) { setBatchResult(result); setBatchText(""); }
-                    } finally {
-                      setBatchLoading(false);
-                    }
-                  }}
-                >
-                  {batchLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '提交任务'}
-                </button>
-                <button
-                  className="button secondary"
-                  type="button"
-                  disabled={batchLoading}
-                  onClick={() => { setBatchText(""); setBatchResult(null); }}
-                >
-                  清空
-                </button>
-              </div>
-
-              {/* Result display */}
-              {batchResult && (
-                <div style={{ marginTop: '4px' }}>
-                  {batchSubTab === "cross-invite" && (() => {
-                    const r = batchResult as CrossInviteResult;
-                    const allocated = r.allocated ?? [];
-                    const unplaceable = r.unplaceable ?? [];
-                    const alreadyActive = r.alreadyActive ?? [];
-                    return (
-                      <div className="panel-stack" style={{ gap: '8px' }}>
-                        {allocated.length === 0 && unplaceable.length === 0 && alreadyActive.length === 0 && (
-                          <div className="muted" style={{ fontSize: '0.875rem' }}>无操作结果</div>
-                        )}
-                        {allocated.map((alloc, i) => {
-                          const groupName = groups.find(g => g.id === alloc.groupId)?.groupName ?? alloc.groupId.slice(0, 8) + '…';
-                          return (
-                            <div key={i} style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
-                              <div style={{ fontWeight: 600, marginBottom: '4px' }}>✅ 已分配到 <strong>{groupName}</strong>（{alloc.queued.length} 个）</div>
-                              <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{alloc.queued.join(', ')}</div>
-                            </div>
-                          );
-                        })}
-                        {unplaceable.length > 0 && (
-                          <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
-                            <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: '4px' }}>⚠️ 无法分配（槽位不足，{unplaceable.length} 个）</div>
-                            <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{unplaceable.join(', ')}</div>
-                          </div>
-                        )}
-                        {alreadyActive.length > 0 && (
-                          <div style={{ background: '#eff6ff', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
-                            <div style={{ fontWeight: 600, color: '#2563eb', marginBottom: '4px' }}>ℹ️ 已是活跃成员（跳过，{alreadyActive.length} 个）</div>
-                            <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all', color: '#1d4ed8' }}>{alreadyActive.join(', ')}</div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {(batchSubTab === "cross-remove" || batchSubTab === "group-remove") && (
-                    <BatchResultTable result={batchResult as CrossRemoveResult | BulkGroupRemoveResult} />
-                  )}
-
-                  {batchSubTab === "group-invite" && (
-                    <BatchInviteResultTable result={batchResult as BulkGroupInviteResult} />
-                  )}
+                {/* Action buttons */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={batchLoading || !parseEmails(batchText).length || ((batchSubTab === "group-invite" || batchSubTab === "group-remove") && !batchGroupId)}
+                    onClick={async () => {
+                      const emails = parseEmails(batchText);
+                      setBatchLoading(true);
+                      setBatchResult(null);
+                      try {
+                        let result: CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null = null;
+                        if (batchSubTab === "cross-invite") result = await onCrossInvite(emails);
+                        else if (batchSubTab === "cross-remove") result = await onCrossRemove(emails);
+                        else if (batchSubTab === "group-invite") result = await onBulkInviteGroup(batchGroupId, emails);
+                        else if (batchSubTab === "group-remove") result = await onBulkRemoveGroup(batchGroupId, emails);
+                        if (result) { setBatchResult(result); setBatchText(""); }
+                      } finally {
+                        setBatchLoading(false);
+                      }
+                    }}
+                  >
+                    {batchLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '提交任务'}
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={batchLoading}
+                    onClick={() => { setBatchText(""); setBatchResult(null); }}
+                  >
+                    清空
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {/* Result display */}
+                {batchResult && (
+                  <div style={{ marginTop: '4px' }}>
+                    {batchSubTab === "cross-invite" && (() => {
+                      const r = batchResult as CrossInviteResult;
+                      const allocated = r.allocated ?? [];
+                      const unplaceable = r.unplaceable ?? [];
+                      const alreadyActive = r.alreadyActive ?? [];
+                      return (
+                        <div className="panel-stack" style={{ gap: '8px' }}>
+                          {allocated.length === 0 && unplaceable.length === 0 && alreadyActive.length === 0 && (
+                            <div className="muted" style={{ fontSize: '0.875rem' }}>无操作结果</div>
+                          )}
+                          {allocated.map((alloc, i) => {
+                            const groupName = groups.find(g => g.id === alloc.groupId)?.groupName ?? alloc.groupId.slice(0, 8) + '…';
+                            return (
+                              <div key={i} style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                                <div style={{ fontWeight: 600, marginBottom: '4px' }}>✅ 已分配到 <strong>{groupName}</strong>（{alloc.queued.length} 个）</div>
+                                <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{alloc.queued.join(', ')}</div>
+                              </div>
+                            );
+                          })}
+                          {unplaceable.length > 0 && (
+                            <div style={{ background: '#fef2f2', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                              <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: '4px' }}>⚠️ 无法分配（槽位不足，{unplaceable.length} 个）</div>
+                              <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>{unplaceable.join(', ')}</div>
+                            </div>
+                          )}
+                          {alreadyActive.length > 0 && (
+                            <div style={{ background: '#eff6ff', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
+                              <div style={{ fontWeight: 600, color: '#2563eb', marginBottom: '4px' }}>ℹ️ 已是活跃成员（跳过，{alreadyActive.length} 个）</div>
+                              <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all', color: '#1d4ed8' }}>{alreadyActive.join(', ')}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {(batchSubTab === "cross-remove" || batchSubTab === "group-remove") && (
+                      <BatchResultTable result={batchResult as CrossRemoveResult | BulkGroupRemoveResult} />
+                    )}
+
+                    {batchSubTab === "group-invite" && (
+                      <BatchInviteResultTable result={batchResult as BulkGroupInviteResult} />
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ) : activeTab === "create" ? (
@@ -767,256 +773,288 @@ user2@gmail.com`}
             </div>
           )
         ) : (
-        <div className="table-wrap workspace-table-wrap">
-          {/* ----- Search bar ----- */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
-            <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
-              <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
-              <input
-                id="group-search-email"
-                type="text"
-                placeholder="搜索母号邮箱…"
-                value={searchEmail}
-                onChange={(e) => { setSearchEmail(e.target.value); setCurrentGroupPage(1); }}
-                style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
-              />
-            </div>
-            <select
-              id="group-filter-status"
-              value={filterStatus}
-              onChange={(e) => { setFilterStatus(e.target.value); setCurrentGroupPage(1); }}
-              style={{ flex: '0 0 auto', minWidth: 120 }}
-            >
-              <option value="ALL">全部状态</option>
-              <option value="ACTIVE">🟢 ACTIVE</option>
-              <option value="MANUAL_ONLY">⏸ MANUAL_ONLY</option>
-              <option value="DISABLED">🚫 DISABLED</option>
-            </select>
-            {(searchEmail || filterStatus !== 'ALL') && (
-              <button
-                className="button secondary small"
-                type="button"
-                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); }}
-                style={{ whiteSpace: 'nowrap' }}
+          <div className="table-wrap workspace-table-wrap">
+            {/* ----- Search bar ----- */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
+                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
+                <input
+                  id="group-search-email"
+                  type="text"
+                  placeholder="搜索母号邮箱…"
+                  value={searchEmail}
+                  onChange={(e) => { setSearchEmail(e.target.value); setCurrentGroupPage(1); }}
+                  style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+              <select
+                id="group-filter-status"
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setCurrentGroupPage(1); }}
+                style={{ flex: '0 0 auto', minWidth: 120 }}
               >
-                清除筛选
-              </button>
-            )}
-          </div>
-          {/* ----- Filtered result ----- */}
-          {(() => {
-            const q = searchEmail.trim().toLowerCase();
-            const filtered = groups.filter((g) => {
-              const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
-              const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
-              return matchEmail && matchStatus;
-            });
-            const totalGroupPages = Math.ceil(filtered.length / PAGE_SIZE);
-            const displayed = filtered.slice((currentGroupPage - 1) * PAGE_SIZE, currentGroupPage * PAGE_SIZE);
+                <option value="ALL">全部状态</option>
+                <option value="ACTIVE">🟢 ACTIVE</option>
+                <option value="MANUAL_ONLY">⏸ MANUAL_ONLY</option>
+                <option value="DISABLED">🚫 DISABLED</option>
+              </select>
+              {(searchEmail || filterStatus !== 'ALL') && (
+                <button
+                  className="button secondary small"
+                  type="button"
+                  onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); }}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  清除筛选
+                </button>
+              )}
+            </div>
+            {/* ----- Filtered result ----- */}
+            {(() => {
+              const q = searchEmail.trim().toLowerCase();
+              const filtered = groups.filter((g) => {
+                const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
+                const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
+                return matchEmail && matchStatus;
+              });
+              const totalGroupPages = Math.ceil(filtered.length / PAGE_SIZE);
+              const displayed = filtered.slice((currentGroupPage - 1) * PAGE_SIZE, currentGroupPage * PAGE_SIZE);
 
-            return (
-              <>
-                {/* Stats bar */}
-                <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '6px' }}>
-                  共 {groups.length} 组{filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''} · 第 {currentGroupPage}/{totalGroupPages} 页
-                </div>
+              return (
+                <>
+                  {/* Stats bar */}
+                  <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '6px' }}>
+                    共 {groups.length} 组{filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''} · 第 {currentGroupPage}/{totalGroupPages} 页
+                  </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>家庭组</th>
-                      <th>库存</th>
-                      <th>状态</th>
-                      <th>母号</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayed.length ? (
-                      displayed.map((group) => (
-                        <Fragment key={group.id}>
-                          <tr>
-                            <td>
-                              <div className="strong">{group.groupName}</div>
-                              <div className="muted">
-                                {group.memberCount ?? group._count?.members ?? 0} members ·{" "}
-                                {group.pendingInviteCount ?? group._count?.invites ?? 0} invites
-                              </div>
-                            </td>
-                            <td>
-                              <div>{group.availableSlots} slots left</div>
-                              <div className="muted">risk {group.riskScore}</div>
-                            </td>
-                            <td>
-                              <StatusBadge value={group.status} />
-                            </td>
-                            <td>
-                              <div>{group.account?.name ?? "-"}</div>
-                              {group.account?.loginEmail && (
-                                <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                                  {group.account.loginEmail}
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>家庭组</th>
+                        <th>库存</th>
+                        <th>状态</th>
+                        <th>母号</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayed.length ? (
+                        displayed.map((group) => (
+                          <Fragment key={group.id}>
+                            <tr>
+                              <td>
+                                <div className="strong">{group.groupName}</div>
+                                <div className="muted">
+                                  {group.memberCount ?? group._count?.members ?? 0} members ·{" "}
+                                  {group.pendingInviteCount ?? group._count?.invites ?? 0} invites
                                 </div>
-                              )}
-                              {(
-                                <div style={{ marginTop: '2px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                                  <span style={{
-                                    padding: '1px 6px',
-                                    borderRadius: '4px',
-                                    fontWeight: 600,
-                                    fontSize: '0.75rem',
-                                    background: group.account?.subscriptionStatus === 'ACTIVE' ? 'rgba(16,185,129,0.12)' : group.account?.subscriptionStatus === 'EXPIRED' ? 'rgba(239,68,68,0.12)' : group.account?.subscriptionStatus === 'SUSPENDED' ? 'rgba(245,158,11,0.12)' : 'rgba(156,163,175,0.12)',
-                                    color: group.account?.subscriptionStatus === 'ACTIVE' ? '#059669' : group.account?.subscriptionStatus === 'EXPIRED' ? '#dc2626' : group.account?.subscriptionStatus === 'SUSPENDED' ? '#d97706' : '#6b7280',
-                                  }}>
-                                    {group.account?.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account?.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : group.account?.subscriptionStatus === 'SUSPENDED' ? '⚠️ 已暂停' : '❓ 未知'}
-                                  </span>
-                                  {group.account?.subscriptionPlan && (
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      {group.account.subscriptionPlan}
+                              </td>
+                              <td>
+                                <div>{group.availableSlots} slots left</div>
+                                <div className="muted">risk {group.riskScore}</div>
+                              </td>
+                              <td>
+                                <StatusBadge value={group.status} />
+                              </td>
+                              <td>
+                                <div>{group.account?.name ?? "-"}</div>
+                                {group.account?.loginEmail && (
+                                  <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                                    {group.account.loginEmail}
+                                  </div>
+                                )}
+                                {(
+                                  <div style={{ marginTop: '2px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    <span style={{
+                                      padding: '1px 6px',
+                                      borderRadius: '4px',
+                                      fontWeight: 600,
+                                      fontSize: '0.75rem',
+                                      background: group.account?.subscriptionStatus === 'ACTIVE' ? 'rgba(16,185,129,0.12)' : group.account?.subscriptionStatus === 'EXPIRED' ? 'rgba(239,68,68,0.12)' : group.account?.subscriptionStatus === 'SUSPENDED' ? 'rgba(245,158,11,0.12)' : 'rgba(156,163,175,0.12)',
+                                      color: group.account?.subscriptionStatus === 'ACTIVE' ? '#059669' : group.account?.subscriptionStatus === 'EXPIRED' ? '#dc2626' : group.account?.subscriptionStatus === 'SUSPENDED' ? '#d97706' : '#6b7280',
+                                    }}>
+                                      {group.account?.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account?.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : group.account?.subscriptionStatus === 'SUSPENDED' ? '⚠️ 已暂停' : '❓ 未知'}
+                                    </span>
+                                    {group.account?.subscriptionPlan && (
+                                      <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                        {group.account.subscriptionPlan}
+                                      </span>
+                                    )}
+                                    {editingAccountId === group.account?.id ? (
+                                      <span style={{ fontSize: '0.75rem', marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                        <input
+                                          type="date"
+                                          value={editingExpiresAt}
+                                          onChange={e => setEditingExpiresAt(e.target.value)}
+                                          style={{ fontSize: '0.75rem', padding: '1px 4px', height: '22px' }}
+                                          autoFocus
+                                        />
+                                        <button className="button" style={{ fontSize: '0.7rem', padding: '1px 6px', minHeight: '22px' }} onClick={async () => {
+                                          if (onUpdateAccount) {
+                                            await onUpdateAccount(group.account!.id, { subscriptionExpiresAt: editingExpiresAt });
+                                            setEditingAccountId(null);
+                                          }
+                                        }}>保存</button>
+                                        <button className="button secondary" style={{ fontSize: '0.7rem', padding: '1px 6px', minHeight: '22px' }} onClick={() => setEditingAccountId(null)}>取消</button>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="muted"
+                                        style={canManage ? { fontSize: '0.75rem', cursor: 'pointer', transition: 'color 0.2s' } : { fontSize: '0.75rem' }}
+                                        title={canManage ? "点击修改到期时间" : undefined}
+                                        onClick={() => {
+                                          if (canManage && group.account) {
+                                            setEditingAccountId(group.account.id);
+                                            setEditingExpiresAt(group.account.subscriptionExpiresAt ? new Date(group.account.subscriptionExpiresAt).toISOString().split("T")[0] : "");
+                                          }
+                                        }}
+                                        onMouseEnter={(e) => canManage && (e.currentTarget.style.color = 'var(--foreground, #171717)')}
+                                        onMouseLeave={(e) => canManage && (e.currentTarget.style.color = '')}
+                                      >
+                                        · 到期 {group.account?.subscriptionExpiresAt ? formatDate(group.account.subscriptionExpiresAt) : '未设置'}
+                                        {canManage && <span style={{ marginLeft: 4, opacity: 0.7 }}>✏️</span>}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                  <button
+                                    className="button secondary small"
+                                    onClick={() => void toggleMembers(group.id)}
+                                    type="button"
+                                  >
+                                    {expandedGroupId === group.id ? "收起" : "查看成员"}
+                                  </button>
+                                  <button
+                                    className="button secondary small"
+                                    disabled={syncingGroupId === group.id}
+                                    onClick={() => void handleSync(group.id)}
+                                    type="button"
+                                    style={{ gap: 6 }}
+                                  >
+                                    {syncingGroupId === group.id
+                                      ? <><Spinner size={12} color="currentColor" /> 同步中...</>
+                                      : '同步'}
+                                  </button>
+                                  {/* Sync status indicator */}
+                                  {syncStatus?.groupId === group.id && (
+                                    <span style={{
+                                      fontSize: '0.8rem',
+                                      fontWeight: 500,
+                                      padding: '2px 8px',
+                                      borderRadius: '4px',
+                                      whiteSpace: 'nowrap',
+                                      background: syncStatus.status === 'SUCCESS' ? 'rgba(16,185,129,0.12)'
+                                        : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? 'rgba(239,68,68,0.12)'
+                                          : 'rgba(59,130,246,0.12)',
+                                      color: syncStatus.status === 'SUCCESS' ? '#059669'
+                                        : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? '#dc2626'
+                                          : '#2563eb',
+                                    }}>
+                                      {syncStatus.status === 'RUNNING' && <Spinner size={10} color="currentColor" />}
+                                      {' '}{syncStatus.message}
                                     </span>
                                   )}
-                                  <span className="muted" style={{ fontSize: '0.75rem' }}>
-                                    · 到期 {group.account?.subscriptionExpiresAt ? formatDate(group.account.subscriptionExpiresAt) : '未设置'}
-                                  </span>
+                                  <button
+                                    className="button secondary small"
+                                    disabled={togglingGroupId === group.id || group.status === 'DISABLED'}
+                                    onClick={() => void handleToggleAutoAssign(group.id)}
+                                    type="button"
+                                    title={group.status === 'DISABLED' ? '组已停用，无法切换' : (group.status === 'ACTIVE' ? '点击关闭自动分配' : '点击开启自动分配')}
+                                    style={{
+                                      color: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#92400e' : undefined,
+                                      borderColor: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#d97706' : undefined,
+                                      opacity: group.status === 'DISABLED' ? 0.5 : 1
+                                    }}
+                                  >
+                                    {togglingGroupId === group.id
+                                      ? <><Spinner size={12} color="currentColor" /> 切换中...</>
+                                      : group.status === 'ACTIVE' ? '🟢 自动 ON'
+                                        : group.status === 'MANUAL_ONLY' ? '⏸ 自动 OFF'
+                                          : '🚫 已停用'}
+                                  </button>
                                 </div>
-                              )}
-                            </td>
-                            <td>
-                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                <button
-                                  className="button secondary small"
-                                  onClick={() => void toggleMembers(group.id)}
-                                  type="button"
-                                >
-                                  {expandedGroupId === group.id ? "收起" : "查看成员"}
-                                </button>
-                                <button
-                                  className="button secondary small"
-                                  disabled={syncingGroupId === group.id}
-                                  onClick={() => void handleSync(group.id)}
-                                  type="button"
-                                  style={{ gap: 6 }}
-                                >
-                                  {syncingGroupId === group.id
-                                    ? <><Spinner size={12} color="currentColor" /> 同步中...</>
-                                    : '同步'}
-                                </button>
-                                {/* Sync status indicator */}
-                                {syncStatus?.groupId === group.id && (
-                                  <span style={{
-                                    fontSize: '0.8rem',
-                                    fontWeight: 500,
-                                    padding: '2px 8px',
-                                    borderRadius: '4px',
-                                    whiteSpace: 'nowrap',
-                                    background: syncStatus.status === 'SUCCESS' ? 'rgba(16,185,129,0.12)'
-                                      : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? 'rgba(239,68,68,0.12)'
-                                      : 'rgba(59,130,246,0.12)',
-                                    color: syncStatus.status === 'SUCCESS' ? '#059669'
-                                      : syncStatus.status === 'FAILED' || syncStatus.status === 'MANUAL_REVIEW' ? '#dc2626'
-                                      : '#2563eb',
-                                  }}>
-                                    {syncStatus.status === 'RUNNING' && <Spinner size={10} color="currentColor" />}
-                                    {' '}{syncStatus.message}
-                                  </span>
-                                )}
-                                <button
-                                  className="button secondary small"
-                                  disabled={togglingGroupId === group.id || group.status === 'DISABLED'}
-                                  onClick={() => void handleToggleAutoAssign(group.id)}
-                                  type="button"
-                                  title={group.status === 'DISABLED' ? '组已停用，无法切换' : (group.status === 'ACTIVE' ? '点击关闭自动分配' : '点击开启自动分配')}
-                                  style={{
-                                    color: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#92400e' : undefined,
-                                    borderColor: group.status === 'ACTIVE' ? '#059669' : group.status === 'MANUAL_ONLY' ? '#d97706' : undefined,
-                                    opacity: group.status === 'DISABLED' ? 0.5 : 1
-                                  }}
-                                >
-                                  {togglingGroupId === group.id
-                                    ? <><Spinner size={12} color="currentColor" /> 切换中...</>
-                                    : group.status === 'ACTIVE' ? '🟢 自动 ON'
-                                    : group.status === 'MANUAL_ONLY' ? '⏸ 自动 OFF'
-                                    : '🚫 已停用'}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                          {expandedGroupId === group.id && (
-                            <tr key={`${group.id}-detail`}>
-                              <td colSpan={5} style={{ padding: 0 }}>
-                                <div style={{ background: 'var(--surface-2, #fafaf9)', padding: '12px 16px', borderTop: '1px solid var(--border, #e5e5e5)' }}>
-                                  {isLoadingDetail ? (
-                                    <div className="muted" style={{ padding: '12px', textAlign: 'center' }}>加载中...</div>
-                                  ) : (
-                                    <>
-                                      {/* Members */}
-                                      <div style={{ marginBottom: '12px' }}>
-                                        <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px' }}>
-                                          成员列表 ({groupDetail?.members?.length ?? 0})
-                                        </div>
-                                        {groupDetail?.members?.length ? (
-                                          <table className="data-table" style={{ fontSize: '0.875rem' }}>
-                                            <thead>
-                                               <tr>
-                                                 <th>邮箱</th>
-                                                 <th>显示名</th>
-                                                 <th>角色</th>
-                                                 <th>状态</th>
-                                                 <th>加入时间</th>
-                                                 {canManage && <th style={{ minWidth: 80 }}>操作</th>}
-                                               </tr>
-                                             </thead>
-                                             <tbody>
+                              </td>
+                            </tr>
+                            {expandedGroupId === group.id && (
+                              <tr key={`${group.id}-detail`}>
+                                <td colSpan={5} style={{ padding: 0 }}>
+                                  <div style={{ background: 'var(--surface-2, #fafaf9)', padding: '12px 16px', borderTop: '1px solid var(--border, #e5e5e5)' }}>
+                                    {isLoadingDetail ? (
+                                      <div className="muted" style={{ padding: '12px', textAlign: 'center' }}>加载中...</div>
+                                    ) : (
+                                      <>
+                                        {/* Members */}
+                                        <div style={{ marginBottom: '12px' }}>
+                                          <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px' }}>
+                                            成员列表 ({groupDetail?.members?.length ?? 0})
+                                          </div>
+                                          {groupDetail?.members?.length ? (
+                                            <table className="data-table" style={{ fontSize: '0.875rem' }}>
+                                              <thead>
+                                                <tr>
+                                                  <th>邮箱</th>
+                                                  <th>显示名</th>
+                                                  <th>角色</th>
+                                                  <th>状态</th>
+                                                  <th>加入时间</th>
+                                                  {canManage && <th style={{ minWidth: 80 }}>操作</th>}
+                                                </tr>
+                                              </thead>
+                                              <tbody>
                                                 {groupDetail.members.map((m) => {
                                                   const ownerEmail = group.account?.loginEmail?.toLowerCase() ?? "";
                                                   const isOwner = m.role === "OWNER" || (ownerEmail !== "" && m.email.toLowerCase() === ownerEmail);
                                                   return (
-                                                   <tr key={m.id} style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : undefined}>
-                                                     <td style={{ fontFamily: 'monospace' }}>
-                                                       {m.email}
-                                                       {isOwner && (
-                                                         <span style={{
-                                                           marginLeft: '6px',
-                                                           fontSize: '0.75rem',
-                                                           padding: '1px 6px',
-                                                           borderRadius: '4px',
-                                                           background: 'rgba(56,189,248,0.15)',
-                                                           color: '#0284c7',
-                                                           fontWeight: 600,
-                                                           fontFamily: 'inherit'
-                                                         }}>
-                                                           👑 母号
-                                                         </span>
-                                                       )}
-                                                       <span
-                                                         title={m.googleMemberId ? `GaiaID: ${m.googleMemberId}` : '未同步 GaiaID'}
-                                                         style={{
-                                                           marginLeft: '4px',
-                                                           fontSize: '0.7rem',
-                                                           cursor: 'help',
-                                                           opacity: m.googleMemberId ? 0.6 : 0.4,
-                                                         }}
-                                                       >
-                                                         {m.googleMemberId ? '🔗' : '⚠️'}
-                                                       </span>
-                                                     </td>
-                                                     <td>{m.displayName ?? "-"}</td>
-                                                     <td><StatusBadge value={isOwner ? "OWNER" : m.role} tone={isOwner ? "sky" : undefined} /></td>
-                                                     <td>
-                                                       {m.isInGroup
-                                                         ? <StatusBadge value="已在组" tone="emerald" />
-                                                         : m.status === "PENDING"
-                                                           ? <StatusBadge value="待接受" tone="amber" />
-                                                           : <StatusBadge value={m.status} />}
-                                                     </td>
-                                                     <td className="muted">{formatDate(m.joinedAt)}</td>
-                                                     {canManage && (
-                                                       <td>
-                                                         {!isOwner && (<>
-                                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                                             <button
-                                                               className="button"
-                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                               disabled={removingMemberId === m.id || replacingMemberId !== null || !!memberTaskMap[m.id]}
+                                                    <tr key={m.id} style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : undefined}>
+                                                      <td style={{ fontFamily: 'monospace' }}>
+                                                        {m.email}
+                                                        {isOwner && (
+                                                          <span style={{
+                                                            marginLeft: '6px',
+                                                            fontSize: '0.75rem',
+                                                            padding: '1px 6px',
+                                                            borderRadius: '4px',
+                                                            background: 'rgba(56,189,248,0.15)',
+                                                            color: '#0284c7',
+                                                            fontWeight: 600,
+                                                            fontFamily: 'inherit'
+                                                          }}>
+                                                            👑 母号
+                                                          </span>
+                                                        )}
+                                                        <span
+                                                          title={m.googleMemberId ? `GaiaID: ${m.googleMemberId}` : '未同步 GaiaID'}
+                                                          style={{
+                                                            marginLeft: '4px',
+                                                            fontSize: '0.7rem',
+                                                            cursor: 'help',
+                                                            opacity: m.googleMemberId ? 0.6 : 0.4,
+                                                          }}
+                                                        >
+                                                          {m.googleMemberId ? '🔗' : '⚠️'}
+                                                        </span>
+                                                      </td>
+                                                      <td>{m.displayName ?? "-"}</td>
+                                                      <td><StatusBadge value={isOwner ? "OWNER" : m.role} tone={isOwner ? "sky" : undefined} /></td>
+                                                      <td>
+                                                        {m.isInGroup
+                                                          ? <StatusBadge value="已在组" tone="emerald" />
+                                                          : m.status === "PENDING"
+                                                            ? <StatusBadge value="待接受" tone="amber" />
+                                                            : <StatusBadge value={m.status} />}
+                                                      </td>
+                                                      <td className="muted">{formatDate(m.joinedAt)}</td>
+                                                      {canManage && (
+                                                        <td>
+                                                          {!isOwner && (<>
+                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                              <button
+                                                                className="button"
+                                                                style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                                disabled={removingMemberId === m.id || replacingMemberId !== null || !!memberTaskMap[m.id]}
                                                                 onClick={async () => {
                                                                   if (!confirm(`确定移除成员 ${m.email}？`)) return;
                                                                   setRemovingMemberId(m.id);
@@ -1029,19 +1067,19 @@ user2@gmail.com`}
                                                                     setRemovingMemberId(null);
                                                                   }
                                                                 }}
-                                                               type="button"
-                                                             >
-                                                               {removingMemberId === m.id ? "提交中..." : "🗑 移除"}
-                                                             </button>
-                                                             <button
-                                                               className="button"
-                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
-                                                               disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id) || !!memberTaskMap[m.id]}
-                                                               onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
-                                                               type="button"
-                                                             >
-                                                               🔀 替换
-                                                             </button>
+                                                                type="button"
+                                                              >
+                                                                {removingMemberId === m.id ? "提交中..." : "🗑 移除"}
+                                                              </button>
+                                                              <button
+                                                                className="button"
+                                                                style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                                disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id) || !!memberTaskMap[m.id]}
+                                                                onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
+                                                                type="button"
+                                                              >
+                                                                🔀 替换
+                                                              </button>
                                                               {/* Per-member task status indicator */}
                                                               {memberTaskMap[m.id] && (() => {
                                                                 const ts = memberTaskMap[m.id];
@@ -1066,125 +1104,125 @@ user2@gmail.com`}
                                                                   </span>
                                                                 );
                                                               })()}
-                                                           </div>
-                                                           {replacingMemberId === m.id && (
-                                                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
-                                                               <input
-                                                                 type="email"
-                                                                 placeholder="新邮箱"
-                                                                 value={replaceEmail}
-                                                                 onChange={(e) => setReplaceEmail(e.target.value)}
-                                                                 style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }}
-                                                                 autoFocus
-                                                               />
-                                                               <button
-                                                                 className="button"
-                                                                 style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                                                 disabled={!replaceEmail.trim() || removingMemberId !== null}
-                                                                 onClick={async () => {
-                                                                   const newE = replaceEmail.trim().toLowerCase();
-                                                                   if (!newE) return;
-                                                                   if (newE === m.email.toLowerCase()) { alert('新邮箱不能与原邮箱相同'); return; }
-                                                                   if (!confirm(`确认将 ${m.email} 替换为 ${newE}？\n将自动踢出旧成员并邀请新成员。`)) return;
-                                                                   setRemovingMemberId(m.id);
-                                                                   try {
+                                                            </div>
+                                                            {replacingMemberId === m.id && (
+                                                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
+                                                                <input
+                                                                  type="email"
+                                                                  placeholder="新邮箱"
+                                                                  value={replaceEmail}
+                                                                  onChange={(e) => setReplaceEmail(e.target.value)}
+                                                                  style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }}
+                                                                  autoFocus
+                                                                />
+                                                                <button
+                                                                  className="button"
+                                                                  style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                                                  disabled={!replaceEmail.trim() || removingMemberId !== null}
+                                                                  onClick={async () => {
+                                                                    const newE = replaceEmail.trim().toLowerCase();
+                                                                    if (!newE) return;
+                                                                    if (newE === m.email.toLowerCase()) { alert('新邮箱不能与原邮箱相同'); return; }
+                                                                    if (!confirm(`确认将 ${m.email} 替换为 ${newE}？\n将自动踢出旧成员并邀请新成员。`)) return;
+                                                                    setRemovingMemberId(m.id);
+                                                                    try {
                                                                       const result = await onReplaceMember(group.id, m.email, newE);
                                                                       setReplacingMemberId(null);
                                                                       setReplaceEmail('');
                                                                       if (result?.taskId) {
                                                                         pollMemberTask(m.id, result.taskId, 'replace', group.id);
                                                                       }
-                                                                   } finally {
-                                                                     setRemovingMemberId(null);
-                                                                   }
-                                                                 }}
-                                                                 type="button"
-                                                               >
-                                                                 确认
-                                                               </button>
-                                                               <button
-                                                                 className="button secondary"
-                                                                 style={{ fontSize: '0.75rem', padding: '3px 6px', borderRadius: '4px', cursor: 'pointer' }}
-                                                                 onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }}
-                                                                 type="button"
-                                                               >
-                                                                 取消
-                                                               </button>
-                                                             </div>
-                                                           )}
-                                                         </>)}
-                                                       </td>
-                                                     )}
-                                                   </tr>
+                                                                    } finally {
+                                                                      setRemovingMemberId(null);
+                                                                    }
+                                                                  }}
+                                                                  type="button"
+                                                                >
+                                                                  确认
+                                                                </button>
+                                                                <button
+                                                                  className="button secondary"
+                                                                  style={{ fontSize: '0.75rem', padding: '3px 6px', borderRadius: '4px', cursor: 'pointer' }}
+                                                                  onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }}
+                                                                  type="button"
+                                                                >
+                                                                  取消
+                                                                </button>
+                                                              </div>
+                                                            )}
+                                                          </>)}
+                                                        </td>
+                                                      )}
+                                                    </tr>
                                                   );
                                                 })}
-                                             </tbody>
-                                          </table>
-                                        ) : (
-                                          <div className="muted" style={{ fontSize: '0.875rem' }}>暂无成员记录</div>
-                                        )}
-                                      </div>
-
-                                      {/* Invites */}
-                                      {(groupDetail?.invites?.length ?? 0) > 0 && (
-                                        <div>
-                                          <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px' }}>
-                                            邀请记录 ({groupDetail?.invites?.length ?? 0})
-                                          </div>
-                                          <table className="data-table" style={{ fontSize: '0.875rem' }}>
-                                            <thead>
-                                              <tr>
-                                                <th>邮箱</th>
-                                                <th>状态</th>
-                                                <th>创建时间</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody>
-                                              {groupDetail!.invites!.map((inv) => (
-                                                <tr key={inv.id}>
-                                                  <td style={{ fontFamily: 'monospace' }}>{inv.email}</td>
-                                                  <td><StatusBadge value={inv.status} /></td>
-                                                  <td className="muted">{formatDate(inv.createdAt)}</td>
-                                                </tr>
-                                              ))}
-                                            </tbody>
-                                          </table>
+                                              </tbody>
+                                            </table>
+                                          ) : (
+                                            <div className="muted" style={{ fontSize: '0.875rem' }}>暂无成员记录</div>
+                                          )}
                                         </div>
-                                      )}
-                                    </>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={5}>
-                          <div className="empty-state">
-                            {searchEmail || filterStatus !== 'ALL'
-                              ? `没有符合条件的家庭组。`
-                              : '还没有家庭组库存。'}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
 
-                {/* Pagination */}
-                {totalGroupPages > 1 && (
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px 0 4px' }}>
-                    <button className="button secondary small" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
-                    <span style={{ fontSize: '0.85rem' }}>{currentGroupPage} / {totalGroupPages}</span>
-                    <button className="button secondary small" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </div>
+                                        {/* Invites */}
+                                        {(groupDetail?.invites?.length ?? 0) > 0 && (
+                                          <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px' }}>
+                                              邀请记录 ({groupDetail?.invites?.length ?? 0})
+                                            </div>
+                                            <table className="data-table" style={{ fontSize: '0.875rem' }}>
+                                              <thead>
+                                                <tr>
+                                                  <th>邮箱</th>
+                                                  <th>状态</th>
+                                                  <th>创建时间</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {groupDetail!.invites!.map((inv) => (
+                                                  <tr key={inv.id}>
+                                                    <td style={{ fontFamily: 'monospace' }}>{inv.email}</td>
+                                                    <td><StatusBadge value={inv.status} /></td>
+                                                    <td className="muted">{formatDate(inv.createdAt)}</td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5}>
+                            <div className="empty-state">
+                              {searchEmail || filterStatus !== 'ALL'
+                                ? `没有符合条件的家庭组。`
+                                : '还没有家庭组库存。'}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+
+                  {/* Pagination */}
+                  {totalGroupPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px 0 4px' }}>
+                      <button className="button secondary small" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                      <span style={{ fontSize: '0.85rem' }}>{currentGroupPage} / {totalGroupPages}</span>
+                      <button className="button secondary small" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         )}
       </div>
     </section>

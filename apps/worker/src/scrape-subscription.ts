@@ -90,7 +90,7 @@ interface CurrentPlanSection {
  */
 function extractCurrentPlanSection(text: string): CurrentPlanSection | null {
   // Find the first occurrence of "Current plan" / "Your current plan"
-  const cpMatch = text.match(/(?:your\s+)?current\s*plan|当前方案|当前套餐|目前方案/i);
+  const cpMatch = text.match(/(?:your\s+)?current\s*plan|当前方案|当前套餐|目前方案|현재\s*요금제|현재\s*구독/i);
   if (!cpMatch || cpMatch.index === undefined) return null;
 
   // Extract the next 300 chars after the label
@@ -98,7 +98,7 @@ function extractCurrentPlanSection(text: string): CurrentPlanSection | null {
 
   // Free tier detection: "15 GB" near "$0" / "¥0" / "included with your Google Account"
   const hasFreeTierIndicator =
-    /(?:\$0|¥0|￥0|included\s+with\s+your\s+Google)/i.test(afterLabel) ||
+    /(?:\$0|¥0|￥0|₩0|0원|included\s+with\s+your\s+Google|Google\s*계정에\s*포함됨)/i.test(afterLabel) ||
     (/15\s*GB/i.test(afterLabel) && !/Google\s+(One|AI)/i.test(afterLabel));
 
   if (hasFreeTierIndicator) {
@@ -140,8 +140,8 @@ function extractCurrentPlanSection(text: string): CurrentPlanSection | null {
  * Tries multiple patterns to handle locale variations.
  */
 function parseExpiryDate(text: string): Date | null {
-  // Pattern 1: Chinese "2025年3月15日" or "2025 年 3 月 15 日"
-  const chineseMatch = text.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  // Pattern 1: Chinese/Korean "2025年3月15日" or "2025년 3월 15일"
+  const chineseMatch = text.match(/(\d{4})\s*[年년]\s*(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]/);
   if (chineseMatch) {
     const d = new Date(
       parseInt(chineseMatch[1], 10),
@@ -161,7 +161,7 @@ function parseExpiryDate(text: string): Date | null {
   }
 
   // Pattern 3: ISO-like near renewal/expiry keywords
-  const isoMatch = text.match(/(?:续订|到期|到期时间|Renewal|Expir).*?(\d{4})-(\d{2})-(\d{2})/i);
+  const isoMatch = text.match(/(?:续订|到期|到期时间|Renewal|Expir|갱신|만료).*?(\d{4})-(\d{2})-(\d{2})/i);
   if (isoMatch) {
     const d = new Date(
       parseInt(isoMatch[1], 10),
