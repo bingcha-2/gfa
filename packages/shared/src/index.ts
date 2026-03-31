@@ -4,7 +4,8 @@ export const QUEUE_NAMES = {
   replace: "family-replace-queue",
   sync: "family-sync-queue",
   health: "account-health-queue",
-  retry: "manual-retry-queue"
+  retry: "manual-retry-queue",
+  automation: "automation-queue"
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -14,7 +15,10 @@ export const TASK_TYPES = {
   removeMember: "REMOVE_MEMBER",
   replaceMember: "REPLACE_MEMBER",
   syncFamilyGroup: "SYNC_FAMILY_GROUP",
-  healthCheckAccount: "HEALTH_CHECK_ACCOUNT"
+  healthCheckAccount: "HEALTH_CHECK_ACCOUNT",
+  oauthAuthorize: "OAUTH_AUTHORIZE",
+  acceptInvite: "ACCEPT_INVITE",
+  testLogin: "TEST_LOGIN"
 } as const;
 
 export type TaskType = (typeof TASK_TYPES)[keyof typeof TASK_TYPES];
@@ -54,6 +58,22 @@ export type SyncFamilyGroupPayload = {
 export type HealthCheckAccountPayload = {
   taskId?: string;
   accountId: string;
+};
+
+export type AutomationPayload = {
+  taskId?: string;
+  action: "oauth" | "accept-invite" | "test-login";
+  /** Account credentials — passed from client, not stored server-side */
+  credentials: {
+    email: string;
+    password: string;
+    recoveryEmail?: string;
+    totpSecret?: string;
+  };
+  /** OAuth-specific: redirect URI for code exchange */
+  redirectUri?: string;
+  /** OAuth-specific: state parameter */
+  oauthState?: string;
 };
 
 // Redis key prefixes used by worker infrastructure
