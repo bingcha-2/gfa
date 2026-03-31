@@ -14,6 +14,7 @@
 import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { InviteMemberPayload } from "@gfa/shared";
+import { JOB_DEFAULTS } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
 import { BrowserPool } from "../browser-pool";
@@ -197,7 +198,116 @@ export async function processInvite(
       );
     }
   } catch (error) {
-    // Don't overwrite MANUAL_REVIEW status if login challenge was detected
+    // --- Auto-reassign: intercept MANUAL_REVIEW for order-backed invite tasks ---
+    if (error instanceof UnrecoverableError && error.message === "MANUAL_REVIEW") {
+      if (orderId && deps.inviteQueue) {
+        try {
+          // 1. Resolve the old familyGroupId
+          const currentTask = await prisma.task.findUnique({
+            where: { id: taskId },
+            select: { familyGroupId: true },
+          });
+          const oldGroupId = currentTask?.familyGroupId ?? job.data.familyGroupId;
+
+          // 2. Release old group slot (availableSlots + 1, pendingInviteCount - 1)
+          if (oldGroupId) {
+            await prisma.familyGroup.update({
+              where: { id: oldGroupId },
+              data: { availableSlots: { increment: 1 } },
+            });
+            await prisma.familyGroup.updateMany({
+              where: { id: oldGroupId, pendingInviteCount: { gt: 0 } },
+              data: { pendingInviteCount: { decrement: 1 } },
+            });
+          }
+
+          // 3. Find the next healthy group (exclude the failed one)
+          const newGroup = await prisma.familyGroup.findFirst({
+            where: {
+              status: "ACTIVE",
+              availableSlots: { gt: 0 },
+              account: { status: "HEALTHY" },
+              ...(oldGroupId ? { id: { not: oldGroupId } } : {}),
+            },
+            include: { account: { select: { id: true } } },
+            orderBy: { createdAt: "asc" },
+          });
+
+          if (newGroup) {
+            // 4. Reserve slot in new group
+            await prisma.familyGroup.update({
+              where: { id: newGroup.id },
+              data: {
+                availableSlots: { decrement: 1 },
+                pendingInviteCount: { increment: 1 },
+              },
+            });
+
+            // 5. Update Order to point to new group
+            await prisma.order.update({
+              where: { id: orderId },
+              data: {
+                familyGroupId: newGroup.id,
+                status: "TASK_QUEUED" as any,
+                resultMessage: null,
+              },
+            });
+
+            // 6. Mark current task as FAILED_FINAL (not MANUAL_REVIEW)
+            await logger.updateStatus("FAILED_FINAL", {
+              code: "AUTO_REASSIGNED",
+              message: `Auto-reassigned to group ${newGroup.id}`,
+            });
+
+            // 7. Create new task and enqueue
+            const newTask = await prisma.task.create({
+              data: {
+                type: "INVITE_MEMBER",
+                orderId,
+                familyGroupId: newGroup.id,
+                accountId: newGroup.accountId,
+                payload: JSON.stringify({
+                  orderId,
+                  familyGroupId: newGroup.id,
+                  accountId: newGroup.accountId,
+                  userEmail,
+                }),
+              },
+            });
+
+            await deps.inviteQueue.add(
+              "invite-member",
+              {
+                taskId: newTask.id,
+                orderId,
+                familyGroupId: newGroup.id,
+                accountId: newGroup.accountId,
+                userEmail,
+              },
+              { ...JOB_DEFAULTS }
+            );
+
+            await logger.log("INFO",
+              `Auto-reassigned order ${orderId} from group ${oldGroupId} to group ${newGroup.id} (new task ${newTask.id})`
+            );
+
+            // Task has been auto-handled — do NOT rethrow
+            return;
+          }
+          // else: no healthy group available → fall through to original MANUAL_REVIEW
+          await logger.log("WARN", "Auto-reassign: no healthy group available, falling back to MANUAL_REVIEW");
+        } catch (reassignErr) {
+          // Reassign process failed → log and fall through to original MANUAL_REVIEW
+          await logger.log("ERROR",
+            `Auto-reassign failed: ${reassignErr instanceof Error ? reassignErr.message : String(reassignErr)}`
+          );
+        }
+      }
+      // No orderId / no inviteQueue / no healthy group / reassign error → original behavior
+      throw error;
+    }
+
+    // Other UnrecoverableErrors (e.g. LOGIN_COOLDOWN) — original behavior
     if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);

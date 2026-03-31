@@ -12,7 +12,7 @@ function stripSensitive<T extends Record<string, unknown>>(account: T): Omit<T, 
 
 @Injectable()
 export class AccountService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   private validateLoginPassword(loginPassword: string | undefined, action: "create" | "update") {
     if (loginPassword === undefined) {
@@ -167,7 +167,6 @@ export class AccountService {
    */
   async bulkImport(dto: BulkImportDto) {
     const rawLines = dto.lines.map((l) => l.trim()).filter(Boolean);
-    const subscriptionExpiresAt = dto.subscriptionExpiresAt ? new Date(dto.subscriptionExpiresAt) : undefined;
 
     const created: string[] = [];
     const skipped: string[] = [];
@@ -279,7 +278,7 @@ export class AccountService {
               appPassword,
               adspowerProfileId: placeholderProfileId,
               notes,
-              subscriptionExpiresAt
+              subscriptionExpiresAt: dto.subscriptionExpiresAt ? new Date(dto.subscriptionExpiresAt) : undefined,
             },
             select: { id: true }
           });

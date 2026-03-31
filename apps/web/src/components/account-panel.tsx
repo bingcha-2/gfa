@@ -28,7 +28,7 @@ type AccountPanelProps = {
     totpSecret?: string;
     notes?: string;
   }) => Promise<boolean>;
-  onBulkImport: (lines: string[], subscriptionExpiresAt?: string) => Promise<BulkImportResult | null>;
+  onBulkImport: (payload: { lines: string[], subscriptionExpiresAt?: string }) => Promise<BulkImportResult | null>;
   onDelete: (id: string) => Promise<boolean>;
   onUpdate: (id: string, payload: Record<string, string | undefined>) => Promise<boolean>;
   onConfirmLogin?: (id: string) => Promise<boolean>;
@@ -48,13 +48,13 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
     notes: ""
   });
   const [bulkText, setBulkText] = useState("");
+  const [bulkSubscriptionExpiresAt, setBulkSubscriptionExpiresAt] = useState(() => {
+    const today = new Date();
+    today.setMonth(today.getMonth() + 1);
+    return today.toISOString().split("T")[0];
+  });
   const [bulkResult, setBulkResult] = useState<BulkImportResult | null>(null);
   const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
-  const [bulkSubscriptionExpiresAt, setBulkSubscriptionExpiresAt] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 1);
-    return d.toISOString().split("T")[0];
-  });
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
@@ -178,6 +178,19 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <div style={{ marginTop: '8px', color: 'var(--text-muted, #888)' }}>字段 3、4 自动识别（含 @ 为辅助邮箱，否则为 2FA 密钥/链接）</div>
               </div>
               <div className="field">
+                <label htmlFor="bulk-preset-expire">预设订阅到期时间</label>
+                <input
+                  id="bulk-preset-expire"
+                  type="date"
+                  value={bulkSubscriptionExpiresAt}
+                  onChange={(e) => setBulkSubscriptionExpiresAt(e.target.value)}
+                  style={{ width: "100%", maxWidth: "300px" }}
+                />
+                <p className="muted" style={{ fontSize: "0.8rem", marginTop: 4 }}>
+                  本次导入的所有新母号将会默认关联此到期时间 (默认当前之后一个月)
+                </p>
+              </div>
+              <div className="field">
                 <label htmlFor="bulk-lines">账号数据（每行一个）</label>
                 <textarea
                   id="bulk-lines"
@@ -186,16 +199,6 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   value={bulkText}
                   onChange={(event) => setBulkText(event.target.value)}
                   style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="bulk-sub-expires">默认订阅到期时间 <span className="muted">（将自动应用到本次导入的所有母号）</span></label>
-                <input
-                  id="bulk-sub-expires"
-                  type="date"
-                  value={bulkSubscriptionExpiresAt}
-                  onChange={(e) => setBulkSubscriptionExpiresAt(e.target.value)}
-                  style={{ maxWidth: '200px' }}
                 />
               </div>
               <div className="inline-actions">
@@ -211,7 +214,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                     setBulkResult(null);
                     try {
                       const lines = bulkText.split('\n').map(l => l.trim()).filter(Boolean);
-                      const result = await onBulkImport(lines, bulkSubscriptionExpiresAt || undefined);
+                      const result = await onBulkImport({ lines, subscriptionExpiresAt: bulkSubscriptionExpiresAt || undefined });
                       setBulkResult(result);
                       if (result && result.created > 0) {
                         setBulkText("");
@@ -544,16 +547,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                           <div className="muted account-meta">
                             最后登录 {formatDateTime(account.lastLoginAt)}
                           </div>
-                          <div
-                            className="muted account-meta"
-                            style={canManage ? { cursor: 'pointer', transition: 'color 0.2s' } : undefined}
-                            title={canManage ? "点击修改到期时间" : undefined}
-                            onClick={() => canManage && startEdit(account)}
-                            onMouseEnter={(e) => canManage && (e.currentTarget.style.color = 'var(--foreground, #171717)')}
-                            onMouseLeave={(e) => canManage && (e.currentTarget.style.color = '')}
-                          >
+                          <div className="muted account-meta">
                             订阅到期 {account.subscriptionExpiresAt ? formatDateTime(account.subscriptionExpiresAt) : "未知"}
-                            {canManage && <span style={{ marginLeft: 6, fontSize: '0.8em', opacity: 0.7 }}>✏️</span>}
                           </div>
                           <StatusBadge
                             value={account.subscriptionStatus ?? "未知"}
@@ -561,8 +556,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                               account.subscriptionStatus === "ACTIVE"
                                 ? "emerald"
                                 : account.subscriptionStatus === "EXPIRED" || account.subscriptionStatus === "SUSPENDED"
-                                  ? "crimson"
-                                  : "amber"
+                                ? "crimson"
+                                : "amber"
                             }
                           />
                         </div>
@@ -607,48 +602,48 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                               account.status === "VERIFICATION_REQUIRED" ||
                               account.status === "LOGIN_REQUIRED"
                             ) && (
-                                <button
-                                  className="button"
-                                  style={{
-                                    fontSize: "0.875rem",
-                                    padding: "5px 14px",
-                                    background: "var(--amber, #d97706)",
-                                    color: "#fff",
-                                    border: "none",
-                                    whiteSpace: "nowrap"
-                                  }}
-                                  disabled={confirmingId === account.id}
-                                  title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
-                                  onClick={async () => {
-                                    setConfirmingId(account.id);
-                                    try {
-                                      await onConfirmLogin!(account.id);
-                                    } finally {
-                                      setConfirmingId(null);
-                                    }
-                                  }}
-                                >
-                                  {confirmingId === account.id ? "确认中..." : "✅ 确认已登录"}
-                                </button>
-                              )}
+                              <button
+                                className="button"
+                                style={{
+                                  fontSize: "0.875rem",
+                                  padding: "5px 14px",
+                                  background: "var(--amber, #d97706)",
+                                  color: "#fff",
+                                  border: "none",
+                                  whiteSpace: "nowrap"
+                                }}
+                                disabled={confirmingId === account.id}
+                                title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
+                                onClick={async () => {
+                                  setConfirmingId(account.id);
+                                  try {
+                                    await onConfirmLogin!(account.id);
+                                  } finally {
+                                    setConfirmingId(null);
+                                  }
+                                }}
+                              >
+                                {confirmingId === account.id ? "确认中..." : "✅ 确认已登录"}
+                              </button>
+                            )}
 
                           </div>
                         </td>
                       )}
                     </tr>
-                  ))}
-                  {/* Pagination */}
-                  {totalPages > 1 && (
-                    <tr>
-                      <td colSpan={canManage ? 6 : 5}>
-                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
-                          <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
-                          <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
-                          <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                   ))}
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <tr>
+                    <td colSpan={canManage ? 6 : 5}>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                        <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                        <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
+                        <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 </>) : (
                   <tr>
                     <td colSpan={canManage ? 6 : 5}>

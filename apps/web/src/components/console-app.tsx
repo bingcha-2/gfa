@@ -199,7 +199,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
-  async function bulkImport(lines: string[], subscriptionExpiresAt?: string) {
+  async function bulkImport(payload: { lines: string[], subscriptionExpiresAt?: string }) {
     try {
       const result = await apiRequest<{
         total: number;
@@ -211,7 +211,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         errors: string[];
       }>("accounts/bulk-import", {
         method: "POST",
-        body: { lines, subscriptionExpiresAt }
+        body: payload
       });
       // Refresh dashboard data after import
       await loadDashboard();
@@ -706,7 +706,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         );
       case "accounts":
         return (
-          <AccountPanel
+            <AccountPanel
             accounts={data.accounts}
             onCreate={createAccount}
             onBulkImport={bulkImport}
