@@ -78,7 +78,7 @@ interface AppState {
   logs: LogEntry[];
   clearLogs: () => void;
   runAcceptInvite: (email: string) => Promise<void>;
-  runTestLogin: (email: string) => Promise<void>;
+
 
   // GFA API
   gfaApiUrl: string;
@@ -229,49 +229,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  runTestLogin: async (email: string) => {
-    set({ isRunning: true, runningEmail: email, logs: [] });
-    try {
-      const { taskId } = await invoke<{ taskId: string }>(
-        "run_test_login",
-        { email }
-      );
-
-      const result = await pollUntilDone(taskId, (entry) => {
-        set((s) => ({ logs: [...s.logs, entry] }));
-      });
-
-      if (result.status !== "SUCCESS") {
-        set((s) => ({
-          logs: [
-            ...s.logs,
-            {
-              id: logCounter++,
-              level: "ERROR",
-              message:
-                result.lastErrorMessage ??
-                `Task failed: ${result.lastErrorCode}`,
-              timestamp: Date.now(),
-            },
-          ],
-        }));
-      }
-    } catch (e) {
-      set((s) => ({
-        logs: [
-          ...s.logs,
-          {
-            id: logCounter++,
-            level: "ERROR",
-            message: String(e),
-            timestamp: Date.now(),
-          },
-        ],
-      }));
-    } finally {
-      set({ isRunning: false, runningEmail: null });
-    }
-  },
 
   gfaApiUrl: "http://localhost:3000",
   loadSettings: async () => {

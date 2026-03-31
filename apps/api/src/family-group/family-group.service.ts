@@ -865,6 +865,9 @@ export class FamilyGroupService {
     targetMemberEmail: string,
     newUserEmail: string
   ) {
+    // Normalize emails to lowercase — Gmail is case-insensitive
+    targetMemberEmail = targetMemberEmail.trim().toLowerCase();
+    newUserEmail = newUserEmail.trim().toLowerCase();
     const group = await this.prisma.familyGroup.findUnique({
       where: { id: groupId }
     });

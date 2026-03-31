@@ -1,8 +1,8 @@
 import { IsString, IsIn, IsOptional } from "class-validator";
 
 export class StartAutomationDto {
-  @IsIn(["oauth", "accept-invite", "test-login"])
-  action!: "oauth" | "accept-invite" | "test-login";
+  @IsIn(["oauth", "accept-invite"])
+  action!: "oauth" | "accept-invite";
 
   /** Account credentials — passed from client's local SQLite */
   @IsString()

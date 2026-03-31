@@ -65,11 +65,13 @@ export async function processReplace(
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
+    // Throw regular Error (not UnrecoverableError) so BullMQ retries after backoff.
+    // Exponential backoff (30s→60s→120s) is typically enough for cooldown to expire.
     const cooldownSecs = await pool.isLoginCoolingDown(accountId);
     if (cooldownSecs > 0) {
       await logger.log("WARN", `[replace] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
       await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new UnrecoverableError("LOGIN_COOLDOWN");
+      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
@@ -341,6 +343,19 @@ export async function processReplace(
 
       if (orderId) {
         await logger.updateOrderStatus(orderId, "FAILED", errMsg);
+
+        // Rollback Order.userEmail to the original member so the order
+        // is discoverable again for subsequent swap-by-email attempts.
+        const { targetMemberEmail, newUserEmail } = job.data;
+        if (targetMemberEmail && newUserEmail) {
+          await prisma.order.updateMany({
+            where: { id: orderId, userEmail: newUserEmail },
+            data: { userEmail: targetMemberEmail },
+          }).catch((rollbackErr) => {
+            logger.log("WARN", `Failed to rollback Order.userEmail: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+          });
+          await logger.log("INFO", `Rolled back Order.userEmail from ${newUserEmail} to ${targetMemberEmail}`);
+        }
       }
 
       await logger.log("ERROR", `Replace failed permanently: ${errMsg}`);
@@ -960,10 +975,22 @@ async function inviteMemberOnPage(
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
-  // Email input
-  const emailInput = page.locator('input.I4p4db, input[placeholder*="電子郵件"], input[placeholder*="email" i]');
-  if ((await emailInput.count()) === 0) {
-    throw new Error("Cannot find email input field");
+  // Email input — selectors must match invite.processor.ts
+  const emailInput = page.locator([
+    "input.I4p4db",
+    'input[placeholder*="電子郵件"]',
+    'input[placeholder*="电子邮件"]',
+    'input[placeholder*="email" i]',
+    'input[type="email"]',
+  ].join(", "));
+
+  // Wait up to 15s for Angular to render the input (lazy-loaded component)
+  try {
+    await emailInput.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    const url = page.url();
+    const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+    throw new Error(`Cannot find email input field. URL: ${url}, body: ${bodySnippet}`);
   }
 
   await emailInput.first().fill(email);

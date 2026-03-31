@@ -31,7 +31,6 @@ pub fn run() {
             commands::accounts::get_account,
             // Automation commands (calls GFA API → Worker)
             commands::automation::run_accept_invite,
-            commands::automation::run_test_login,
             commands::automation::start_antigravity_oauth,
             commands::automation::poll_automation_status,
             commands::automation::batch_automation_oauth,

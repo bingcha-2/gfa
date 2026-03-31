@@ -1,6 +1,6 @@
 /**
  * AutomationService — creates Task records and enqueues BullMQ jobs
- * for browser automation (OAuth, accept-invite, test-login).
+ * for browser automation (OAuth, accept-invite).
  *
  * Credentials are passed from the client (local SQLite) in each request.
  * The server does NOT store account credentials — they live only in the
@@ -49,15 +49,47 @@ export class AutomationService {
    * Creates a Task record, enqueues BullMQ job, returns taskId for polling.
    */
   async startAutomation(
-    action: "oauth" | "accept-invite" | "test-login",
+    action: "oauth" | "accept-invite",
     credentials: AccountCredentials
   ) {
     // Map action to TaskType enum
     const typeMap: Record<string, string> = {
       oauth: TASK_TYPES.oauthAuthorize,
-      "accept-invite": TASK_TYPES.acceptInvite,
-      "test-login": TASK_TYPES.testLogin
+      "accept-invite": TASK_TYPES.acceptInvite
     };
+
+    const taskType = typeMap[action] as any;
+
+    // ── Dedup: reject if an active task already exists for this email + action ──
+    // Task.payload stores JSON like { action, email }, so we query by type + status
+    // and then filter by email in the payload to avoid duplicate browser sessions.
+    const activeTasks = await this.prisma.task.findMany({
+      where: {
+        type: taskType,
+        status: { in: ["PENDING", "RUNNING"] }
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20 // limit scan scope
+    });
+
+    const existing = activeTasks.find((t) => {
+      try {
+        const p = JSON.parse(t.payload);
+        return p.email === credentials.email;
+      } catch {
+        return false;
+      }
+    });
+
+    if (existing) {
+      // Return the existing task — client can continue polling it
+      return {
+        taskId: existing.id,
+        action,
+        email: credentials.email,
+        status: existing.status
+      };
+    }
 
     const payload: AutomationPayload = {
       action,
@@ -72,7 +104,7 @@ export class AutomationService {
     // Create Task record (no accountId — credentials are in payload)
     const task = await this.prisma.task.create({
       data: {
-        type: typeMap[action] as any,
+        type: taskType,
         status: "PENDING",
         // Store action + email (NOT password) for display purposes
         payload: JSON.stringify({ action, email: credentials.email })

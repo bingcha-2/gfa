@@ -290,6 +290,13 @@ export async function gmailLogin(
         continue;
       }
 
+      // Passkey enrollment / other speedbump interstitials.
+      // Google prompts users to set up passkeys after login — skip it.
+      if (roundUrl.includes("/speedbump/")) {
+        await handleSpeedbump(page, logger);
+        continue;
+      }
+
       // GDS setup pages (gds.google.com): recovery options, welcome, home address.
       // Google shows these on first login for new accounts.
       // handleRecoveryOptions clicks through dismiss buttons and falls back to
@@ -637,6 +644,95 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
   }
 
   return true;
+}
+
+/**
+ * Handle Google's speedbump / interstitial pages (e.g. passkey enrollment).
+ * These are non-blocking promotional pages shown after successful authentication.
+ * Tries skip/dismiss buttons first, then falls back to direct myaccount navigation.
+ */
+async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
+  await logger.log("INFO", `[gmail-login] Speedbump/interstitial detected — attempting to skip`);
+
+  await page.waitForTimeout(2000);
+  await page.waitForLoadState("domcontentloaded").catch(() => { });
+
+  // Try all known dismiss buttons for speedbump pages
+  const dismissBtn = page.locator([
+    // English variants
+    'button:has-text("Not now")',
+    'button:has-text("Skip")',
+    'button:has-text("Maybe later")',
+    'button:has-text("No thanks")',
+    'button:has-text("Cancel")',
+    'a:has-text("Not now")',
+    'a:has-text("Skip")',
+    'a:has-text("Maybe later")',
+    'a:has-text("No thanks")',
+    // Chinese variants
+    'button:has-text("以后再说")',
+    'button:has-text("以後再說")',
+    'button:has-text("稍后")',
+    'button:has-text("稍後")',
+    'button:has-text("不用了")',
+    'button:has-text("跳过")',
+    'button:has-text("跳過")',
+    'button:has-text("取消")',
+    'a:has-text("以后再说")',
+    'a:has-text("以後再說")',
+    'a:has-text("不用了")',
+    'a:has-text("跳过")',
+    'a:has-text("跳過")',
+    // Material design role="button" variants
+    'div[role="button"]:has-text("Not now")',
+    'div[role="button"]:has-text("Skip")',
+    'div[role="button"]:has-text("Maybe later")',
+    'div[role="button"]:has-text("No thanks")',
+  ].join(", "));
+
+  if ((await dismissBtn.count()) > 0) {
+    const btnText = await dismissBtn.first().textContent().catch(() => "?");
+
+    // Google's speedbump pages often render the dismiss button outside the
+    // viewport, causing Playwright's actionability checks to fail with
+    // "element is outside of the viewport".  Use scrollIntoView + JS click
+    // to bypass this reliably.
+    try {
+      await dismissBtn.first().evaluate((el: HTMLElement) => {
+        el.scrollIntoView({ block: "center", inline: "center" });
+      });
+      await page.waitForTimeout(500);
+      // Try Playwright click first (with short timeout), fall back to JS click
+      try {
+        await dismissBtn.first().click({ timeout: 5000 });
+      } catch {
+        await dismissBtn.first().evaluate((el: HTMLElement) => el.click());
+        await logger.log("INFO", "[gmail-login] Used JS click fallback for speedbump dismiss");
+      }
+    } catch {
+      // scrollIntoView or JS click failed — fall back to direct navigation
+      await logger.log("WARN", "[gmail-login] Could not click speedbump dismiss button — navigating to myaccount");
+      await page.goto("https://myaccount.google.com/?hl=en", {
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
+      });
+      await page.waitForTimeout(2000);
+      return;
+    }
+
+    await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" to dismiss speedbump`);
+    await page.waitForTimeout(3000);
+    await page.waitForLoadState("domcontentloaded").catch(() => { });
+    return;
+  }
+
+  // No dismiss button found — navigate directly to myaccount to break out
+  await logger.log("WARN", "[gmail-login] No dismiss button found on speedbump — navigating to myaccount");
+  await page.goto("https://myaccount.google.com/?hl=en", {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  await page.waitForTimeout(2000);
 }
 
 /**

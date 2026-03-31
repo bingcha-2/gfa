@@ -1,5 +1,5 @@
 /**
- * Automation processor — handles OAuth, accept-invite, and test-login tasks.
+ * Automation processor — handles OAuth and accept-invite tasks.
  *
  * Credentials come from the BullMQ job payload (passed from client).
  * Uses the existing BrowserPool + AdsPower infrastructure.
@@ -157,9 +157,8 @@ export async function processAutomation(
         break;
       case "accept-invite":
         await handleAcceptInvite(page, loginCreds, logger);
-        break;
-      case "test-login":
-        await handleTestLogin(page, loginCreds, logger);
+        // After accept-invite succeeds, sync Order + FamilyMember status
+        await syncOrderAfterAccept(prisma, credentials.email, logger);
         break;
     }
   } catch (error) {
@@ -779,16 +778,82 @@ async function handleAcceptInvite(
   }
 }
 
+
+
 // ============================================================
-// Test login handler
+// Post-accept sync: update Order + FamilyMember status
 // ============================================================
 
-async function handleTestLogin(
-  page: import("playwright").Page,
-  _credentials: LoginCredentials,
+/**
+ * After accept-invite succeeds, find the Order and FamilyMember records
+ * for the accepted email and update them to COMPLETED / ACTIVE.
+ *
+ * Uses case-insensitive email matching for robustness.
+ */
+async function syncOrderAfterAccept(
+  prisma: PrismaClient,
+  email: string,
   logger: TaskLogger
 ): Promise<void> {
-  // Login was already done in processAutomation — if we reach here, it succeeded
-  await logger.updateStatus("SUCCESS");
-  await logger.log("INFO", "Login test passed");
+  const normalized = email.trim().toLowerCase();
+
+  try {
+    // Update Order: INVITE_SENT / WAIT_USER_ACCEPT / TASK_QUEUED → COMPLETED
+    const updated = await prisma.order.updateMany({
+      where: {
+        userEmail: normalized,
+        status: { in: ["INVITE_SENT", "WAIT_USER_ACCEPT", "TASK_QUEUED"] },
+      },
+      data: {
+        status: "COMPLETED",
+        resultMessage: "Member accepted invite (auto-detected by accept-invite automation)",
+      },
+    });
+
+    // Case-insensitive fallback
+    if (updated.count === 0) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Order" SET status = 'COMPLETED',
+           resultMessage = 'Member accepted invite (auto-detected by accept-invite automation)',
+           updatedAt = datetime('now')
+         WHERE LOWER(userEmail) = ?
+           AND status IN ('INVITE_SENT','WAIT_USER_ACCEPT','TASK_QUEUED')`,
+        normalized
+      ).catch(() => {});
+    }
+
+    if (updated.count > 0) {
+      await logger.log("INFO", `Order status synced to COMPLETED for ${email} (${updated.count} order(s))`);
+    }
+
+    // Update FamilyMember: PENDING → ACTIVE
+    const memberUpdate = await prisma.familyMember.updateMany({
+      where: {
+        email: normalized,
+        status: "PENDING",
+      },
+      data: {
+        status: "ACTIVE",
+        joinedAt: new Date(),
+      },
+    });
+
+    // Case-insensitive fallback for FamilyMember
+    if (memberUpdate.count === 0) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE FamilyMember SET status = 'ACTIVE', joinedAt = datetime('now'), updatedAt = datetime('now')
+         WHERE LOWER(email) = ? AND status = 'PENDING'`,
+        normalized
+      ).catch(() => {});
+    }
+
+    if (memberUpdate.count > 0) {
+      await logger.log("INFO", `FamilyMember status synced to ACTIVE for ${email}`);
+    }
+  } catch (err) {
+    // Non-fatal: accept-invite itself succeeded, DB sync is best-effort
+    await logger.log("WARN",
+      `Post-accept DB sync failed for ${email}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }

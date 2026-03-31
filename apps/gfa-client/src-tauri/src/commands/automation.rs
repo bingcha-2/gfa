@@ -73,16 +73,11 @@ pub struct BatchOAuthResult {
 // Commands — call GFA API for automation
 // ============================================================
 
-/// Start an automation task (accept-invite or test-login) via API.
+/// Start an automation task (accept-invite) via API.
 /// Sends credentials from local SQLite to the server.
 #[tauri::command]
 pub async fn run_accept_invite(email: String, db: State<'_, Database>) -> Result<AutomationStartResponse, String> {
     start_automation(&email, "accept-invite", &db).await
-}
-
-#[tauri::command]
-pub async fn run_test_login(email: String, db: State<'_, Database>) -> Result<AutomationStartResponse, String> {
-    start_automation(&email, "test-login", &db).await
 }
 
 /// Start Antigravity OAuth via API.

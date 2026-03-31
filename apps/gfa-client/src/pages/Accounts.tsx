@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppStore, type QuotaInfo } from "../stores/useAppStore";
-import { Upload, Trash2, TestTube, Mail, Copy, Zap, Key, RefreshCw, Terminal, ChevronDown, ChevronUp, CheckCircle, XCircle, Loader, Download } from "lucide-react";
+import { Upload, Trash2, Mail, Copy, Zap, Key, RefreshCw, Terminal, ChevronDown, ChevronUp, CheckCircle, XCircle, Loader, Download } from "lucide-react";
 
 export function Accounts() {
   const {
-    accounts, importAccounts, deleteAccount, runTestLogin, loadAccounts,
+    accounts, importAccounts, deleteAccount, loadAccounts,
     isRunning, setCurrentPage,
     startAntigravityOAuth, switchAntigravityAccount, batchAntigravityOAuth,
     oauthProgress, fetchQuota, quotaCache,
@@ -239,9 +239,7 @@ export function Accounts() {
                           授权
                         </button>
                       )}
-                      <button className="btn btn-ghost btn-sm" onClick={() => runTestLogin(account.email)} disabled={isRunning} title="测试登录">
-                        <TestTube size={12} />
-                      </button>
+
                       <button className="btn btn-ghost btn-sm" onClick={() => setCurrentPage("accept-invite")} title="接受邀请">
                         <Mail size={12} />
                       </button>
@@ -346,7 +344,7 @@ export function Accounts() {
             <div className="log-stream" style={{ maxHeight: 300, overflowY: "auto" }}>
               {logs.length === 0 ? (
                 <div className="text-muted text-sm" style={{ padding: 16, textAlign: "center" }}>
-                  暂无日志，执行授权或测试登录后显示
+                  暂无日志，执行授权后显示
                 </div>
               ) : (
                 logs.map((log) => (

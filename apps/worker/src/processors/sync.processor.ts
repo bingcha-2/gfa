@@ -70,7 +70,7 @@ export async function processSync(
     if (cooldownSecs > 0) {
       await logger.log("WARN", `[sync] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
       await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new UnrecoverableError("LOGIN_COOLDOWN");
+      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
@@ -428,6 +428,13 @@ async function reconcileMembers(
   // --- Step 1: Upsert email members ---
   for (const scraped of emailMembers) {
     const newStatus = scraped.isPending ? "PENDING" : "ACTIVE";
+
+    // Check previous status BEFORE upsert to detect PENDING → ACTIVE transitions
+    const previousRecord = await prisma.familyMember.findUnique({
+      where: { familyGroupId_email: { familyGroupId, email: scraped.email } },
+      select: { status: true },
+    });
+
     await prisma.familyMember.upsert({
       where: { familyGroupId_email: { familyGroupId, email: scraped.email } },
       update: {
@@ -451,6 +458,33 @@ async function reconcileMembers(
     });
     await logger.log("INFO",
       `Upserted member: ${scraped.email} status=${newStatus} (gaia=${scraped.googleMemberId || "unknown"})`);
+
+    // Sync Order status: when member transitions to ACTIVE (accepted invite),
+    // update the corresponding Order from INVITE_SENT → COMPLETED.
+    // Uses case-insensitive email match to handle legacy mixed-case records.
+    if (newStatus === "ACTIVE" && (!previousRecord || previousRecord.status !== "ACTIVE")) {
+      const updatedOrders = await prisma.order.updateMany({
+        where: {
+          familyGroupId,
+          status: { in: ["INVITE_SENT", "WAIT_USER_ACCEPT", "TASK_QUEUED"] },
+        },
+        data: {
+          status: "COMPLETED",
+          resultMessage: "Member accepted invite (detected by sync)",
+        },
+      });
+      // Case-insensitive fallback
+      if (updatedOrders.count === 0) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE "Order" SET status = 'COMPLETED', resultMessage = 'Member accepted invite (detected by sync)', updatedAt = datetime('now')
+           WHERE familyGroupId = ? AND LOWER(userEmail) = LOWER(?) AND status IN ('INVITE_SENT','WAIT_USER_ACCEPT','TASK_QUEUED')`,
+          familyGroupId, scraped.email
+        ).catch(() => {});
+      }
+      if (updatedOrders.count > 0) {
+        await logger.log("INFO", `Order status synced to COMPLETED for ${scraped.email} (${updatedOrders.count} order(s))`);
+      }
+    }
 
     // Cleanup: if this member has a gaiaId, delete any OTHER records in the same group
     // with the same gaiaId but a DIFFERENT email (fixes previously scraped corrupted emails

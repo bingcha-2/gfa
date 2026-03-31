@@ -26,7 +26,12 @@ type PublicOrderPayload = {
 const SWAPPABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.INVITE_SENT,
-  OrderStatus.WAIT_USER_ACCEPT
+  OrderStatus.WAIT_USER_ACCEPT,
+  // Safety net: allow re-swap when a previous replace task failed and left the
+  // order stuck at TASK_QUEUED or FAILED. The CAS in swapAccount() prevents
+  // double-processing if a task is still running.
+  OrderStatus.TASK_QUEUED,
+  OrderStatus.FAILED,
 ];
 
 @Injectable()
@@ -444,6 +449,9 @@ export class OrderService {
     newUserEmail: string,
     operatorId?: string
   ) {
+    // Normalize emails to lowercase — Gmail is case-insensitive
+    targetMemberEmail = targetMemberEmail.trim().toLowerCase();
+    newUserEmail = newUserEmail.trim().toLowerCase();
     const order = await this.findOne(orderId);
 
     if (!order.familyGroupId) {
@@ -506,7 +514,9 @@ export class OrderService {
     orderNo: string;
     newEmail: string;
   }) {
-    const { swapCode, orderNo, newEmail } = params;
+    const { swapCode, orderNo } = params;
+    // Normalize email to lowercase — Gmail is case-insensitive
+    const newEmail = params.newEmail.trim().toLowerCase();
 
     // Guard: new email must differ from the current one
     if (!newEmail.trim()) {
@@ -852,20 +862,45 @@ export class OrderService {
       }
 
       if (fallbackMember) {
-        // Map member status to semantically correct Order status
-        const bridgeStatus: OrderStatus =
-          fallbackMember.status === "ACTIVE" ? OrderStatus.COMPLETED : OrderStatus.INVITE_SENT;
-
-        const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
-        order = await this.prisma.order.create({
-          data: {
-            orderNo,
-            userEmail: normalized,
+        // Before creating a bridge Order, check if there's an existing Order in the
+        // same family group that was left in TASK_QUEUED or FAILED by a previous failed
+        // swap (its userEmail was changed to the new email during the swap transaction).\n        // If found, correct the email back and reuse it instead of creating a duplicate.
+        const stuckOrder = await this.prisma.order.findFirst({
+          where: {
             familyGroupId: fallbackMember.familyGroupId,
-            status: bridgeStatus,
-            resultMessage: "Auto-created from FamilyMember record (admin invite)"
-          }
+            status: { in: ["TASK_QUEUED", "FAILED"] },
+          },
+          orderBy: { updatedAt: "desc" },
         });
+
+        if (stuckOrder) {
+          // Restore the original email so the swap can proceed
+          await this.prisma.order.update({
+            where: { id: stuckOrder.id },
+            data: {
+              userEmail: normalized,
+              status: fallbackMember.status === "ACTIVE"
+                ? OrderStatus.COMPLETED
+                : OrderStatus.INVITE_SENT,
+            },
+          });
+          order = await this.prisma.order.findUnique({ where: { id: stuckOrder.id } });
+        } else {
+          // No stuck order — create bridge Order (admin invite scenario)
+          const bridgeStatus: OrderStatus =
+            fallbackMember.status === "ACTIVE" ? OrderStatus.COMPLETED : OrderStatus.INVITE_SENT;
+
+          const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
+          order = await this.prisma.order.create({
+            data: {
+              orderNo,
+              userEmail: normalized,
+              familyGroupId: fallbackMember.familyGroupId,
+              status: bridgeStatus,
+              resultMessage: "Auto-created from FamilyMember record (admin invite)"
+            }
+          });
+        }
       }
     }
 

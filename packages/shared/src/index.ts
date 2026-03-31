@@ -17,8 +17,7 @@ export const TASK_TYPES = {
   syncFamilyGroup: "SYNC_FAMILY_GROUP",
   healthCheckAccount: "HEALTH_CHECK_ACCOUNT",
   oauthAuthorize: "OAUTH_AUTHORIZE",
-  acceptInvite: "ACCEPT_INVITE",
-  testLogin: "TEST_LOGIN"
+  acceptInvite: "ACCEPT_INVITE"
 } as const;
 
 export type TaskType = (typeof TASK_TYPES)[keyof typeof TASK_TYPES];
@@ -62,7 +61,7 @@ export type HealthCheckAccountPayload = {
 
 export type AutomationPayload = {
   taskId?: string;
-  action: "oauth" | "accept-invite" | "test-login";
+  action: "oauth" | "accept-invite";
   /** Account credentials — passed from client, not stored server-side */
   credentials: {
     email: string;
