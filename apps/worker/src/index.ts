@@ -21,6 +21,7 @@ import {
   ReplaceMemberPayload,
   SyncFamilyGroupPayload,
   HealthCheckAccountPayload,
+  AutomationPayload,
   QUEUE_NAMES,
 } from "@gfa/shared";
 
@@ -31,6 +32,7 @@ import { processRemove } from "./processors/remove.processor";
 import { processReplace } from "./processors/replace.processor";
 import { processSync } from "./processors/sync.processor";
 import { processHealth } from "./processors/health.processor";
+import { processAutomation } from "./processors/automation.processor";
 
 // ---- Configuration ----
 
@@ -133,7 +135,18 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   }
 );
 
-const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWorker];
+const automationWorker = new Worker<AutomationPayload>(
+  QUEUE_NAMES.automation,
+  (job) => processAutomation(job, deps),
+  {
+    connection,
+    concurrency: WORKER_CONCURRENCY,
+    lockDuration: 600_000, // 10 min — OAuth flow with multiple TOTP rounds can exceed 5 min
+    stalledInterval: 120_000, // check every 2 min instead of default 30s
+  }
+);
+
+const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWorker, automationWorker];
 
 // ---- Startup: clean up orphaned RUNNING tasks from previous crash ----
 // If the worker crashed mid-task, the DB task stays in RUNNING forever.
@@ -218,8 +231,14 @@ for (const worker of workers) {
       console.error(`[${workerId}] Failed to release pool locks on stall:`, err.message)
     );
 
+    // Extract taskId from the BullMQ jobId (format: "automation-<taskId>")
+    // Only update THIS specific task, not all RUNNING tasks
+    const taskId = jobId.replace(/^automation-/, "");
     prisma.task.updateMany({
-      where: { status: { in: ["RUNNING", "PENDING"] } },
+      where: {
+        id: taskId,
+        status: { in: ["RUNNING", "PENDING"] },
+      },
       data: {
         status: "FAILED_RETRYABLE",
         lastErrorCode: "STALLED",

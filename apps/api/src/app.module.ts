@@ -16,6 +16,7 @@ import { RedeemCodeModule } from "./redeem-code/redeem-code.module";
 import { OrderModule } from "./order/order.module";
 import { TaskModule } from "./task/task.module";
 import { ExpireScanModule } from "./expire-scan/expire-scan.module";
+import { AutomationModule } from "./automation/automation.module";
 import { HealthController } from "./health.controller";
 
 @Module({
@@ -54,7 +55,8 @@ import { HealthController } from "./health.controller";
     RedeemCodeModule,
     OrderModule,
     TaskModule,
-    ExpireScanModule
+    ExpireScanModule,
+    AutomationModule
   ],
   controllers: [HealthController],
   providers: [

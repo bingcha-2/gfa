@@ -23,11 +23,8 @@ type PublicOrderPayload = {
   updatedAt: Date;
 };
 
-const SWAPPABLE_ORDER_STATUSES: OrderStatus[] = [
-  OrderStatus.COMPLETED,
-  OrderStatus.INVITE_SENT,
-  OrderStatus.WAIT_USER_ACCEPT
-];
+
+
 
 @Injectable()
 export class OrderService {
@@ -52,47 +49,77 @@ export class OrderService {
 
     return { ...order, userEmail: masked };
   }
+  /**
+   * Find an active/pending family member by email.
+   * Tries exact match first, then case-insensitive fallback.
+   */
+  private async findActiveMember(email: string) {
+    const normalized = email.trim().toLowerCase();
 
-  private async rollbackSwapPreparation(params: {
-    swapCodeId: string;
-    taskId: string;
-    orderId: string;
-    originalEmail: string;
-    originalStatus: OrderStatus;
-    newEmail: string;
-  }) {
-    const {
-      swapCodeId,
-      taskId,
-      orderId,
-      originalEmail,
-      originalStatus,
-      newEmail
-    } = params;
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.task.deleteMany({
-        where: { id: taskId, status: "PENDING" }
-      });
-
-      await tx.order.updateMany({
-        where: {
-          id: orderId,
-          status: "TASK_QUEUED",
-          userEmail: newEmail
-        },
-        data: {
-          userEmail: originalEmail,
-          status: originalStatus
-        }
-      });
-
-      await tx.redeemCode.updateMany({
-        where: { id: swapCodeId, status: "RESERVED" },
-        data: { status: "UNUSED", usedAt: null }
-      });
+    let member = await this.prisma.familyMember.findFirst({
+      where: {
+        email: normalized,
+        status: { in: ["ACTIVE", "PENDING"] },
+        familyGroup: { status: "ACTIVE" }
+      },
+      select: { familyGroupId: true, email: true },
+      orderBy: { createdAt: "desc" }
     });
+
+    if (!member) {
+      // Case-insensitive fallback for legacy data
+      const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT fm.id FROM FamilyMember fm
+         JOIN FamilyGroup fg ON fm.familyGroupId = fg.id
+         WHERE LOWER(fm.email) = ?
+           AND fm.status IN ('ACTIVE','PENDING')
+           AND fg.status = 'ACTIVE'
+         ORDER BY fm.createdAt DESC LIMIT 1`,
+        normalized
+      );
+      if (rows.length > 0) {
+        member = await this.prisma.familyMember.findUnique({
+          where: { id: rows[0].id },
+          select: { familyGroupId: true, email: true }
+        });
+      }
+    }
+
+    return member;
   }
+
+  /**
+   * Validate an ACCOUNT_SWAP or SUBSCRIPTION redeem code.
+   */
+  private async validateSwapCode(codeStr: string) {
+    const normalizedCode = codeStr.trim().toUpperCase();
+    const redeemCode = await this.prisma.redeemCode.findUnique({
+      where: { code: normalizedCode }
+    });
+
+    const SWAP_TYPES = ["ACCOUNT_SWAP", "SUBSCRIPTION"];
+    if (!redeemCode || !SWAP_TYPES.includes(redeemCode.codeType)) {
+      throw new ForbiddenException("This code cannot be used for account swap");
+    }
+
+    const isSubscription = redeemCode.codeType === "SUBSCRIPTION";
+
+    if (isSubscription) {
+      if (redeemCode.status !== "UNUSED" && redeemCode.status !== "USED") {
+        throw new BadRequestException("Invalid or expired subscription code");
+      }
+      if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
+        throw new BadRequestException("This subscription code has expired");
+      }
+    } else {
+      if (redeemCode.status !== "UNUSED") {
+        throw new BadRequestException("Invalid or already used swap code");
+      }
+    }
+
+    return redeemCode;
+  }
+
 
   async findAll(status?: string) {
     const VALID_STATUSES = [
@@ -173,47 +200,10 @@ export class OrderService {
       throw new NotFoundException("Order not found");
     }
 
-    // Primary path: JOIN_GROUP code — order linked directly via Order.redeemCodeId
+    // All code types (JOIN_GROUP, ACCOUNT_SWAP, SUBSCRIPTION) now have
+    // a direct Order linked via Order.redeemCodeId.
     if (redeemCode.order) {
       return this.toPublicOrder(redeemCode.order);
-    }
-
-    // Fallback: ACCOUNT_SWAP code — find the REPLACE_MEMBER task whose payload
-    // contains the swap code's id (written by swapAccount at queue time)
-    if (redeemCode.codeType === "ACCOUNT_SWAP") {
-      // Prisma (SQLite) does not support native JSON filtering;
-      // we read recent REPLACE_MEMBER tasks and match in JS.
-      // This is safe because ACCOUNT_SWAP codes are used infrequently.
-      const tasks = await this.prisma.task.findMany({
-        where: { type: "REPLACE_MEMBER" },
-        select: { payload: true, orderId: true },
-        orderBy: { createdAt: "desc" },
-        take: 500  // bounded scan — swap tasks are rare
-      });
-
-      const matched = tasks.find((t) => {
-        try {
-          const p = JSON.parse(t.payload);
-          return p.swapRedeemCodeId === redeemCode.id;
-        } catch {
-          return false;
-        }
-      });
-
-      if (matched?.orderId) {
-        const order = await this.prisma.order.findUnique({
-          where: { id: matched.orderId },
-          select: {
-            orderNo: true,
-            userEmail: true,
-            status: true,
-            resultMessage: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        });
-        if (order) return this.toPublicOrder(order);
-      }
     }
 
     throw new NotFoundException("Order not found");
@@ -253,6 +243,7 @@ export class OrderService {
     const order = await this.prisma.order.create({
       data: {
         orderNo,
+        orderType: "JOIN",
         redeemCodeId: redeemCode.id,
         userEmail: normalizedEmail,
         status: "CODE_VERIFIED"
@@ -444,6 +435,9 @@ export class OrderService {
     newUserEmail: string,
     operatorId?: string
   ) {
+    // Normalize emails to lowercase — Gmail is case-insensitive
+    targetMemberEmail = targetMemberEmail.trim().toLowerCase();
+    newUserEmail = newUserEmail.trim().toLowerCase();
     const order = await this.findOne(orderId);
 
     if (!order.familyGroupId) {
@@ -494,147 +488,263 @@ export class OrderService {
   /**
    * Customer self-service account swap.
    *
+   * Creates an independent SWAP or SUBSCRIPTION Order (not linked to JOIN Order).
+   * Locates the member by oldEmail via FamilyMember table.
+   *
    * Flow:
-   *   1. Verify ACCOUNT_SWAP or SUBSCRIPTION redeem code
-   *   2. Locate customer's existing COMPLETED order by orderNo (proves they are a member)
-   *   3. For SUBSCRIPTION: apply rate-limit check
-   *   4. Create REPLACE_MEMBER task: remove oldEmail, invite newEmail
-   *   5. Mark swap redeem code as USED (SUBSCRIPTION stays USED for reuse)
+   *   1. Validate swap/subscription code
+   *   2. SUBSCRIPTION reuse: delegate to subscriptionReuse()
+   *   3. First-time: find member in FamilyMember → create Order + SwapRecord + Task
+   *   4. Enqueue REPLACE_MEMBER job
    */
   async swapAccount(params: {
     swapCode: string;
-    orderNo: string;
+    oldEmail: string;
     newEmail: string;
   }) {
-    const { swapCode, orderNo, newEmail } = params;
+    const newEmail = params.newEmail.trim().toLowerCase();
+    const oldEmail = params.oldEmail.trim().toLowerCase();
 
-    // Guard: new email must differ from the current one
-    if (!newEmail.trim()) {
-      throw new BadRequestException("New email cannot be empty");
-    }
+    if (!newEmail) throw new BadRequestException("New email cannot be empty");
+    if (!oldEmail) throw new BadRequestException("Old email cannot be empty");
+    if (newEmail === oldEmail) throw new BadRequestException("New email is the same as old email");
 
-    // 1. Validate the swap redeem code — must be ACCOUNT_SWAP or SUBSCRIPTION type
-    const normalizedCode = swapCode.trim().toUpperCase();
-    const redeemCode = await this.prisma.redeemCode.findUnique({
-      where: { code: normalizedCode }
-    });
-
-    const SWAP_TYPES = ["ACCOUNT_SWAP", "SUBSCRIPTION"];
-    if (!redeemCode || !SWAP_TYPES.includes(redeemCode.codeType)) {
-      throw new ForbiddenException("This code cannot be used for account swap");
-    }
-
+    // 1. Validate swap code
+    const redeemCode = await this.validateSwapCode(params.swapCode);
     const isSubscription = redeemCode.codeType === "SUBSCRIPTION";
 
-    // ACCOUNT_SWAP: must be UNUSED (one-time use)
-    // SUBSCRIPTION: accept UNUSED (first use) or USED (reuse)
-    if (isSubscription) {
-      if (redeemCode.status !== "UNUSED" && redeemCode.status !== "USED") {
-        throw new BadRequestException("Invalid or expired subscription code");
-      }
-      // Check expiry for SUBSCRIPTION codes
-      if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
-        throw new BadRequestException("This subscription code has expired");
-      }
-    } else {
-      if (redeemCode.status !== "UNUSED") {
-        throw new BadRequestException("Invalid or already used swap code");
-      }
+    // 2. SUBSCRIPTION reuse: code already USED → delegate
+    if (isSubscription && redeemCode.status === "USED") {
+      return this.subscriptionReuse({ redeemCode, oldEmail, newEmail });
     }
 
-    // 2. Locate the original order — allow COMPLETED / INVITE_SENT / WAIT_USER_ACCEPT
-    // (account can be banned at any terminal stage before the new user accepts)
-    const order = await this.prisma.order.findUnique({
-      where: { orderNo },
-      include: { familyGroup: true }
-    });
-
-    if (!order) throw new NotFoundException("Order not found");
-
-    if (!SWAPPABLE_ORDER_STATUSES.includes(order.status as OrderStatus)) {
-      throw new BadRequestException(
-        `Order status "${order.status}" does not allow account swap`
+    // 3. First-time use: find member by oldEmail
+    const member = await this.findActiveMember(oldEmail);
+    if (!member) {
+      throw new NotFoundException(
+        "No active member found for this email. The account may not be in any family group."
       );
     }
-    if (!order.familyGroupId || !order.familyGroup) {
-      throw new BadRequestException("Order has no assigned family group");
-    }
 
-    const oldEmail = order.userEmail;
-    const group = order.familyGroup;
-    const originalStatus = order.status;
+    const group = await this.prisma.familyGroup.findUnique({
+      where: { id: member.familyGroupId },
+    });
+    if (!group) throw new BadRequestException("Family group not found");
 
-    // SUBSCRIPTION: rate-limit check before proceeding
-    if (isSubscription) {
-      const rcAny = redeemCode as any;
-      const swapLimit: number = rcAny.swapLimit ?? 2;
-      const swapWindowHours: number = rcAny.swapWindowHours ?? 5;
-
-      if (swapLimit > 0) {
-        const windowStart = new Date(Date.now() - swapWindowHours * 60 * 60 * 1000);
-        const recentSwaps = await this.prisma.task.count({
-          where: {
-            orderId: order.id,
-            type: "REPLACE_MEMBER",
-            createdAt: { gte: windowStart }
-          }
-        });
-        if (recentSwaps >= swapLimit) {
-          throw new BadRequestException(
-            `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours. Please try again later.`
-          );
-        }
-      }
-    }
-
-    // 3. Atomically: lock code (RESERVED) + create task + update order
-    // Claim the order via status compare-and-swap so only one swap can queue.
+    // 4. Atomic: lock code + create Order + SwapRecord + Task
+    const orderType = isSubscription ? "SUBSCRIPTION" : "SWAP";
     const swapReason = isSubscription ? "SUBSCRIPTION_SWAP" : "SWAP_REQUEST";
-    const { task } = await this.prisma.$transaction(async (tx) => {
-      // ACCOUNT_SWAP: lock UNUSED → RESERVED (one-time)
-      // SUBSCRIPTION: mark UNUSED → USED on first use, skip lock if already USED
+
+    const { order, task } = await this.prisma.$transaction(async (tx) => {
+      // Lock the redeem code
       if (isSubscription) {
-        if (redeemCode.status === "UNUSED") {
-          const locked = await tx.redeemCode.updateMany({
-            where: { id: redeemCode.id, status: "UNUSED" },
-            data: { status: "USED", usedAt: new Date() }
-          });
-          if (locked.count === 0) {
-            throw new BadRequestException("Subscription code already in use (concurrent request)");
-          }
+        const locked = await tx.redeemCode.updateMany({
+          where: { id: redeemCode.id, status: "UNUSED" },
+          data: { status: "USED", usedAt: new Date() },
+        });
+        if (locked.count === 0) {
+          throw new BadRequestException("Code already in use (concurrent request)");
         }
       } else {
-        // Guard against double-use — updateMany returns count
         const locked = await tx.redeemCode.updateMany({
-          where: {
-            id: redeemCode.id,
-            status: "UNUSED",
-            codeType: "ACCOUNT_SWAP"
-          },
-          data: { status: "RESERVED" }
+          where: { id: redeemCode.id, status: "UNUSED", codeType: "ACCOUNT_SWAP" },
+          data: { status: "RESERVED" },
         });
         if (locked.count === 0) {
           throw new BadRequestException("Swap code already in use (concurrent request)");
         }
       }
 
-      const claimedOrder = await tx.order.updateMany({
+      // Create Order
+      const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
+      const order = await tx.order.create({
+        data: {
+          orderNo,
+          orderType: orderType as any,
+          redeemCodeId: redeemCode.id,
+          userEmail: newEmail,
+          familyGroupId: member.familyGroupId,
+          status: "TASK_QUEUED",
+        },
+      });
+
+      // Create Task
+      const task = await tx.task.create({
+        data: {
+          type: "REPLACE_MEMBER",
+          orderId: order.id,
+          familyGroupId: member.familyGroupId,
+          accountId: group!.accountId,
+          payload: JSON.stringify({
+            orderId: order.id,
+            familyGroupId: member.familyGroupId,
+            accountId: group!.accountId,
+            targetMemberEmail: oldEmail,
+            newUserEmail: newEmail,
+            reason: swapReason,
+          }),
+        },
+      });
+
+      // Create SwapRecord
+      await tx.swapRecord.create({
+        data: {
+          orderId: order.id,
+          oldEmail,
+          newEmail,
+          taskId: task.id,
+        },
+      });
+
+      return { order, task };
+    });
+
+    // 5. Enqueue — rollback if queue fails
+    try {
+      await this.replaceQueue.add(
+        "replace-member",
+        {
+          taskId: task.id,
+          orderId: order.id,
+          familyGroupId: member.familyGroupId,
+          accountId: group!.accountId,
+          targetMemberEmail: oldEmail,
+          newUserEmail: newEmail,
+          reason: swapReason,
+        },
+        { ...JOB_DEFAULTS, jobId: task.id }
+      );
+    } catch (error) {
+      const existingJob = await this.replaceQueue.getJob(task.id).catch(() => null);
+      if (!existingJob) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.swapRecord.deleteMany({ where: { orderId: order.id } });
+          await tx.task.deleteMany({ where: { id: task.id, status: "PENDING" } });
+          await tx.order.delete({ where: { id: order.id } });
+          if (isSubscription) {
+            await tx.redeemCode.updateMany({
+              where: { id: redeemCode.id, status: "USED" },
+              data: { status: "UNUSED", usedAt: null },
+            });
+          } else {
+            await tx.redeemCode.updateMany({
+              where: { id: redeemCode.id, status: "RESERVED" },
+              data: { status: "UNUSED" },
+            });
+          }
+        });
+      }
+      throw error;
+    }
+
+    // 6. Mark ACCOUNT_SWAP code as USED (after queue success)
+    if (!isSubscription) {
+      await this.prisma.redeemCode.updateMany({
+        where: { id: redeemCode.id, status: "RESERVED" },
+        data: { status: "USED", usedAt: new Date() },
+      });
+    }
+
+    return {
+      orderNo: order.orderNo,
+      taskId: task.id,
+      status: "TASK_QUEUED",
+      message: "Account swap task queued. Your new account will be invited shortly.",
+    };
+  }
+
+  /**
+   * Subscription reuse: existing SUBSCRIPTION Order + binding check.
+   *
+   * Verifies the last successful swap's newEmail matches the current oldEmail,
+   * preventing code sharing between different users.
+   */
+  private async subscriptionReuse(params: {
+    redeemCode: any;
+    oldEmail: string;
+    newEmail: string;
+  }) {
+    const { redeemCode, oldEmail, newEmail } = params;
+
+    // 1. Find existing SUBSCRIPTION Order
+    const order = await this.prisma.order.findUnique({
+      where: { redeemCodeId: redeemCode.id },
+      include: { familyGroup: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException("Subscription code has no associated order");
+    }
+
+    // 2. Binding check: last successful swap's newEmail must == oldEmail
+    const lastSuccessSwap = await this.prisma.swapRecord.findFirst({
+      where: { orderId: order.id, status: "COMPLETED" },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (lastSuccessSwap) {
+      if (lastSuccessSwap.newEmail.toLowerCase() !== oldEmail) {
+        throw new ForbiddenException(
+          "This subscription code is bound to a different account"
+        );
+      }
+    } else {
+      // No completed swap yet — check first swap record's oldEmail for binding
+      const firstSwap = await this.prisma.swapRecord.findFirst({
+        where: { orderId: order.id },
+        orderBy: { createdAt: "asc" },
+      });
+      if (firstSwap && firstSwap.oldEmail.toLowerCase() !== oldEmail) {
+        throw new ForbiddenException(
+          "This subscription code is bound to a different account"
+        );
+      }
+    }
+
+    // 3. Rate limit check
+    const rcAny = redeemCode as any;
+    const swapLimit: number = rcAny.swapLimit ?? 2;
+    const swapWindowHours: number = rcAny.swapWindowHours ?? 5;
+
+    if (swapLimit > 0) {
+      const windowStart = new Date(Date.now() - swapWindowHours * 60 * 60 * 1000);
+      const recentSwaps = await this.prisma.swapRecord.count({
+        where: { orderId: order.id, createdAt: { gte: windowStart } },
+      });
+      if (recentSwaps >= swapLimit) {
+        throw new BadRequestException(
+          `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours.`
+        );
+      }
+    }
+
+    // 4. Verify oldEmail is still in a group
+    const member = await this.findActiveMember(oldEmail);
+    if (!member) {
+      throw new NotFoundException("The account is not currently in any family group");
+    }
+
+    if (!order.familyGroupId || !order.familyGroup) {
+      throw new BadRequestException("Order has no assigned family group");
+    }
+    const group = order.familyGroup;
+
+    // 5. Atomic: CAS order + create SwapRecord + Task
+    const { task, swapRecord } = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({
         where: {
           id: order.id,
-          familyGroupId: group.id,
-          userEmail: oldEmail,
-          status: { in: SWAPPABLE_ORDER_STATUSES }
+          status: { in: ["COMPLETED", "INVITE_SENT", "WAIT_USER_ACCEPT", "FAILED"] as any },
         },
         data: {
           userEmail: newEmail,
           status: "TASK_QUEUED",
-          ...(isSubscription ? { swapCount: { increment: 1 }, lastSwapAt: new Date() } : {})
-        }
+          swapCount: { increment: 1 },
+          lastSwapAt: new Date(),
+        },
       });
-      if (claimedOrder.count === 0) {
-        throw new BadRequestException(
-          "Order is already being swapped or no longer eligible for swap"
-        );
+      if (claimed.count === 0) {
+        throw new BadRequestException("Order is already being swapped or not eligible");
       }
 
       const task = await tx.task.create({
@@ -649,16 +759,19 @@ export class OrderService {
             accountId: group.accountId,
             targetMemberEmail: oldEmail,
             newUserEmail: newEmail,
-            reason: swapReason,
-            swapRedeemCodeId: redeemCode.id
-          })
-        }
+            reason: "SUBSCRIPTION_SWAP",
+          }),
+        },
       });
 
-      return { task };
+      const swapRecord = await tx.swapRecord.create({
+        data: { orderId: order.id, oldEmail, newEmail, taskId: task.id },
+      });
+
+      return { task, swapRecord };
     });
 
-    // 4. Enqueue — compensate the DB state if the job was not persisted.
+    // 6. Enqueue
     try {
       await this.replaceQueue.add(
         "replace-member",
@@ -669,42 +782,31 @@ export class OrderService {
           accountId: group.accountId,
           targetMemberEmail: oldEmail,
           newUserEmail: newEmail,
-          reason: swapReason
+          reason: "SUBSCRIPTION_SWAP",
         },
-        {
-          ...JOB_DEFAULTS,
-          jobId: task.id,
-        }
+        { ...JOB_DEFAULTS, jobId: task.id }
       );
     } catch (error) {
       const existingJob = await this.replaceQueue.getJob(task.id).catch(() => null);
       if (!existingJob) {
-        await this.rollbackSwapPreparation({
-          swapCodeId: redeemCode.id,
-          taskId: task.id,
-          orderId: order.id,
-          originalEmail: oldEmail,
-          originalStatus,
-          newEmail
+        await this.prisma.$transaction(async (tx) => {
+          await tx.swapRecord.deleteMany({ where: { id: swapRecord.id } });
+          await tx.task.deleteMany({ where: { id: task.id, status: "PENDING" } });
+          await tx.order.updateMany({
+            where: { id: order.id, status: "TASK_QUEUED", userEmail: newEmail },
+            data: { userEmail: oldEmail, status: "COMPLETED", swapCount: { decrement: 1 } },
+          });
         });
       }
       throw error;
-    }
-
-    // 5. Mark ACCOUNT_SWAP code USED only after queue succeeds
-    // SUBSCRIPTION codes were already marked USED in the transaction
-    if (!isSubscription) {
-      await this.prisma.redeemCode.updateMany({
-        where: { id: redeemCode.id, status: "RESERVED" },
-        data: { status: "USED", usedAt: new Date() }
-      });
     }
 
     return {
       orderNo: order.orderNo,
       taskId: task.id,
       status: "TASK_QUEUED",
-      message: "Account swap task queued. Your new account will be invited shortly."
+      message: "Account swap task queued.",
+      swapCount: (order.swapCount ?? 0) + 1,
     };
   }
 
@@ -756,7 +858,6 @@ export class OrderService {
           status: latestTask.status,
           startedAt: latestTask.startedAt,
           finishedAt: latestTask.finishedAt,
-          // R4-D: Do not expose internal error messages to public endpoint
           hasError: !!latestTask.lastErrorMessage
         }
         : null
@@ -764,314 +865,102 @@ export class OrderService {
   }
 
   /**
-   * Customer self-service account swap by original email.
-   * Automatically locates the most recent eligible order for the given email,
-   * removing the need for customers to know their order number.
+   * Customer swap by original email — primary swap endpoint.
+   * Delegates to swapAccount() with oldEmail = originalEmail.
    */
   async swapAccountByEmail(params: {
     swapCode: string;
     originalEmail: string;
     newEmail: string;
   }) {
-    const { swapCode, originalEmail, newEmail } = params;
-    const normalized = originalEmail.trim().toLowerCase();
-
-    if (!normalized) {
-      throw new BadRequestException("Original email cannot be empty");
-    }
-
-    // Find the most recent swappable order for this email.
-    // We do NOT filter by redeemCode.codeType here because the order may have been
-    // created from any code type (including ACCOUNT_SWAP from a prior swap operation).
-    // Eligibility is determined by order status and group assignment, not code type.
-    // Email is normalized to lowercase for consistent lookup (and stored lowercase since this fix).
-    let order = await this.prisma.order.findFirst({
-      where: {
-        userEmail: normalized,
-        status: { in: SWAPPABLE_ORDER_STATUSES },
-        familyGroupId: { not: null }
-      },
-      orderBy: { createdAt: "desc" }
+    return this.swapAccount({
+      swapCode: params.swapCode,
+      oldEmail: params.originalEmail,
+      newEmail: params.newEmail,
     });
-
-    if (!order) {
-      // Fallback: case-insensitive lookup for legacy records stored with mixed-case email.
-      // statusList is a compile-time constant (not user input) so $queryRawUnsafe is safe here.
-      const statusList = SWAPPABLE_ORDER_STATUSES.map((s) => `'${s}'`).join(",");
-      const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
-        `SELECT o.id
-         FROM "Order" o
-         WHERE LOWER(o.userEmail) = ?
-           AND o.status IN (${statusList})
-           AND o.familyGroupId IS NOT NULL
-         ORDER BY o.createdAt DESC
-         LIMIT 1`,
-        normalized
-      );
-      if (rows.length > 0) {
-        order = await this.prisma.order.findUnique({ where: { id: rows[0].id } });
-      }
-    }
-
-    // Fallback: member may have been added via admin bulkInvite (no Order record).
-    // Look up FamilyMember table and auto-create a bridge Order if member exists in a group.
-    if (!order) {
-      let fallbackMember: { familyGroupId: string; status: string } | null = null;
-
-      // Exact match
-      const member = await this.prisma.familyMember.findFirst({
-        where: {
-          email: normalized,
-          status: { in: ["ACTIVE", "PENDING"] },
-          familyGroup: { status: "ACTIVE" }
-        },
-        select: { familyGroupId: true, status: true },
-        orderBy: { createdAt: "desc" }
-      });
-
-      if (member) {
-        fallbackMember = member;
-      } else {
-        // Case-insensitive fallback for FamilyMember
-        const memberRows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
-          `SELECT fm.id FROM FamilyMember fm
-           JOIN FamilyGroup fg ON fm.familyGroupId = fg.id
-           WHERE LOWER(fm.email) = ?
-             AND fm.status IN ('ACTIVE','PENDING')
-             AND fg.status = 'ACTIVE'
-           ORDER BY fm.createdAt DESC LIMIT 1`,
-          normalized
-        );
-        if (memberRows.length > 0) {
-          const record = await this.prisma.familyMember.findUnique({
-            where: { id: memberRows[0].id },
-            select: { familyGroupId: true, status: true }
-          });
-          if (record) fallbackMember = record;
-        }
-      }
-
-      if (fallbackMember) {
-        // Map member status to semantically correct Order status
-        const bridgeStatus: OrderStatus =
-          fallbackMember.status === "ACTIVE" ? OrderStatus.COMPLETED : OrderStatus.INVITE_SENT;
-
-        const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
-        order = await this.prisma.order.create({
-          data: {
-            orderNo,
-            userEmail: normalized,
-            familyGroupId: fallbackMember.familyGroupId,
-            status: bridgeStatus,
-            resultMessage: "Auto-created from FamilyMember record (admin invite)"
-          }
-        });
-      }
-    }
-
-    if (!order) {
-      throw new NotFoundException(
-        "No eligible order found for this email. The account may not be in a family group, or the order is in an ineligible status."
-      );
-    }
-
-    // Delegate to existing swapAccount — all validation, CAS, and audit logic
-    // remains unchanged. We just resolved the orderNo from email.
-    return this.swapAccount({ swapCode, orderNo: order.orderNo, newEmail });
   }
 
   /**
-   * Subscription self-service swap — long-term (SUBSCRIPTION) code holders
-   * can swap their account using the ORIGINAL redeem code (no extra swap code needed).
+   * Legacy endpoint: swap by orderNo.
+   * Finds the order's userEmail and delegates to swapAccount().
+   */
+  async swapAccountByOrderNo(params: {
+    swapCode: string;
+    orderNo: string;
+    newEmail: string;
+  }) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderNo: params.orderNo },
+      select: { userEmail: true },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    return this.swapAccount({
+      swapCode: params.swapCode,
+      oldEmail: order.userEmail,
+      newEmail: params.newEmail,
+    });
+  }
+
+  /**
+   * Subscription self-service swap — SUBSCRIPTION code holders can swap
+   * using their original code (no extra swap code needed).
    *
-   * Rate-limited by the code's swapLimit / swapWindowHours settings.
-   * Tracked via Order.swapCount and Order.lastSwapAt.
-   *
-   * Flow:
-   *   1. Validate original code is SUBSCRIPTION type and USED status
-   *   2. Find the order linked to that code
-   *   3. Rate-limit check: count swaps in the rolling window
-   *   4. Create REPLACE_MEMBER task
-   *   5. Atomically increment swap counter on Order
+   * Automatically determines oldEmail from the last successful SwapRecord.
    */
   async subscriptionSwap(params: {
     originalCode: string;
     newEmail: string;
   }) {
-    const { originalCode, newEmail } = params;
+    const newEmail = params.newEmail.trim().toLowerCase();
+    if (!newEmail) throw new BadRequestException("New email cannot be empty");
 
-    if (!newEmail.trim()) {
-      throw new BadRequestException("New email cannot be empty");
-    }
-
-    // 1. Find the SUBSCRIPTION code — accept UNUSED (first use) or USED (reuse)
-    const normalizedCode = originalCode.trim().toUpperCase();
+    // 1. Find the SUBSCRIPTION code
+    const normalizedCode = params.originalCode.trim().toUpperCase();
     const redeemCode = await this.prisma.redeemCode.findUnique({
-      where: { code: normalizedCode }
+      where: { code: normalizedCode },
     });
 
-    if (!redeemCode) {
-      throw new NotFoundException("Code not found");
-    }
-    if (String(redeemCode.codeType) !== "SUBSCRIPTION") {
+    if (!redeemCode) throw new NotFoundException("Code not found");
+    if (redeemCode.codeType !== "SUBSCRIPTION") {
       throw new ForbiddenException("This code is not a subscription code");
     }
-    if (redeemCode.status !== "USED" && redeemCode.status !== "UNUSED") {
+    if (redeemCode.status !== "USED") {
       throw new BadRequestException(
-        "Invalid or expired subscription code"
+        redeemCode.status === "UNUSED"
+          ? "This subscription code has not been used yet. Use swap-by-email for first use."
+          : "Invalid or expired subscription code"
       );
     }
-
-    // Check code expiry
     if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
       throw new BadRequestException("This subscription code has expired");
     }
 
-    // 2. Find linked order (only exists if the code was previously used via swapAccount)
+    // 2. Find the SUBSCRIPTION Order
     const order = await this.prisma.order.findUnique({
       where: { redeemCodeId: redeemCode.id },
-      include: { familyGroup: true }
     });
-
     if (!order) {
-      throw new NotFoundException(
-        redeemCode.status === "UNUSED"
-          ? "This subscription code has not been used yet. Please use swap-account or swap-by-email endpoint for first-time swap."
-          : "No order found for this code"
-      );
+      throw new NotFoundException("No order found for this subscription code");
     }
 
-    if (!SWAPPABLE_ORDER_STATUSES.includes(order.status as OrderStatus)) {
+    // 3. Get oldEmail from last successful swap
+    const lastSwap = await this.prisma.swapRecord.findFirst({
+      where: { orderId: order.id, status: "COMPLETED" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!lastSwap) {
       throw new BadRequestException(
-        `Order status "${order.status}" does not allow account swap`
+        "No successful swap found for this subscription. Contact support."
       );
     }
-    if (!order.familyGroupId || !order.familyGroup) {
-      throw new BadRequestException("Order has no assigned family group");
-    }
 
-    const normalizedNewEmail = newEmail.trim().toLowerCase();
-    if (normalizedNewEmail === order.userEmail.toLowerCase()) {
+    const oldEmail = lastSwap.newEmail.toLowerCase();
+    if (oldEmail === newEmail) {
       throw new BadRequestException("New email is the same as current email");
     }
 
-    // 3. Rate-limit check — rolling window
-    const rcAny = redeemCode as any;
-    const swapLimit: number = rcAny.swapLimit ?? 2;
-    const swapWindowHours: number = rcAny.swapWindowHours ?? 5;
-
-    if (swapLimit > 0) {
-      // Count REPLACE_MEMBER tasks in the rolling window
-      const windowStart = new Date(Date.now() - swapWindowHours * 60 * 60 * 1000);
-      const recentSwaps = await this.prisma.task.count({
-        where: {
-          orderId: order.id,
-          type: "REPLACE_MEMBER",
-          createdAt: { gte: windowStart }
-        }
-      });
-
-      if (recentSwaps >= swapLimit) {
-        const nextWindowEnd = new Date(windowStart.getTime() + swapWindowHours * 60 * 60 * 1000 * 2);
-        throw new BadRequestException(
-          `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours. Please try again later.`
-        );
-      }
-    }
-
-    // 4. Create swap task atomically
-    const group = order.familyGroup;
-    const oldEmail = order.userEmail;
-    const originalStatus = order.status;
-
-    const { task } = await this.prisma.$transaction(async (tx) => {
-      // Update order: new email, increment swap counter
-      const claimedOrder = await tx.order.updateMany({
-        where: {
-          id: order.id,
-          familyGroupId: group.id,
-          userEmail: oldEmail,
-          status: { in: SWAPPABLE_ORDER_STATUSES }
-        },
-        data: {
-          userEmail: normalizedNewEmail,
-          status: "TASK_QUEUED",
-          swapCount: { increment: 1 },
-          lastSwapAt: new Date()
-        }
-      });
-
-      if (claimedOrder.count === 0) {
-        throw new BadRequestException(
-          "Order is already being swapped or no longer eligible"
-        );
-      }
-
-      const task = await tx.task.create({
-        data: {
-          type: "REPLACE_MEMBER",
-          orderId: order.id,
-          familyGroupId: group.id,
-          accountId: group.accountId,
-          payload: JSON.stringify({
-            orderId: order.id,
-            familyGroupId: group.id,
-            accountId: group.accountId,
-            targetMemberEmail: oldEmail,
-            newUserEmail: normalizedNewEmail,
-            reason: "SUBSCRIPTION_SWAP"
-          })
-        }
-      });
-
-      return { task };
-    });
-
-    // 5. Enqueue — compensate if queue fails
-    try {
-      await this.replaceQueue.add(
-        "replace-member",
-        {
-          taskId: task.id,
-          orderId: order.id,
-          familyGroupId: group.id,
-          accountId: group.accountId,
-          targetMemberEmail: oldEmail,
-          newUserEmail: normalizedNewEmail,
-          reason: "SUBSCRIPTION_SWAP"
-        },
-        {
-          ...JOB_DEFAULTS,
-          jobId: task.id
-        }
-      );
-    } catch (error) {
-      const existingJob = await this.replaceQueue.getJob(task.id).catch(() => null);
-      if (!existingJob) {
-        // Rollback
-        await this.prisma.$transaction(async (tx) => {
-          await tx.task.deleteMany({ where: { id: task.id, status: "PENDING" } });
-          await tx.order.updateMany({
-            where: { id: order.id, status: "TASK_QUEUED", userEmail: normalizedNewEmail },
-            data: {
-              userEmail: oldEmail,
-              status: originalStatus as any,
-              swapCount: { decrement: 1 }
-            }
-          });
-        });
-      }
-      throw error;
-    }
-
-    return {
-      orderNo: order.orderNo,
-      taskId: task.id,
-      status: "TASK_QUEUED",
-      message: "Account swap task queued. Your new account will be invited shortly.",
-      swapCount: (order as any).swapCount + 1,
-      swapLimit,
-      swapWindowHours
-    };
+    // 4. Delegate to subscriptionReuse
+    return this.subscriptionReuse({ redeemCode, oldEmail, newEmail });
   }
 }

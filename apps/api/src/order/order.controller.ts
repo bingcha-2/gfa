@@ -106,7 +106,7 @@ export class OrderController {
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Post("public/swap-account")
   swapAccount(@Body() dto: SwapAccountDto) {
-    return this.orderService.swapAccount({
+    return this.orderService.swapAccountByOrderNo({
       swapCode: dto.swapCode,
       orderNo: dto.orderNo,
       newEmail: dto.newEmail

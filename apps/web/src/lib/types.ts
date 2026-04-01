@@ -62,6 +62,7 @@ export type FamilyGroupSummary = {
 export type OrderSummary = {
   id: string;
   orderNo: string;
+  orderType?: "JOIN" | "SWAP" | "SUBSCRIPTION";
   userEmail: string;
   status: string;
   resultMessage?: string | null;

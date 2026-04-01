@@ -73,7 +73,7 @@ export async function processInvite(
     if (cooldownSecs > 0) {
       await logger.log("WARN", `[invite] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
       await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new UnrecoverableError("LOGIN_COOLDOWN");
+      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),

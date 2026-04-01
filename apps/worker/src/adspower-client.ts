@@ -33,18 +33,23 @@ export class AdsPowerClient {
 
   constructor(config?: Partial<AdsPowerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    console.log(`[adspower] init: baseUrl=${this.config.baseUrl}, apiKey=${this.config.apiKey ? this.config.apiKey.slice(0,8) + "..." : "NOT SET"}`);
   }
 
-  /** Build URL with query params */
+  /** Build URL with query params, auto-appending api_key if configured */
   private buildUrl(path: string, params: Record<string, string> = {}): string {
     const url = new URL(path, this.config.baseUrl);
+    // AdsPower authenticates via api_key query parameter
+    if (this.config.apiKey) {
+      url.searchParams.set("api_key", this.config.apiKey);
+    }
     for (const [k, v] of Object.entries(params)) {
       url.searchParams.set(k, v);
     }
     return url.toString();
   }
 
-  /** Fetch with optional Bearer auth header */
+  /** Fetch with auth (both header and query param for compat) */
   private fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
     const headers: Record<string, string> = {};
     if (this.config.apiKey) {

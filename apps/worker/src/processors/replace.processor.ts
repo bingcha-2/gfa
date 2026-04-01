@@ -65,11 +65,13 @@ export async function processReplace(
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
+    // Throw regular Error (not UnrecoverableError) so BullMQ retries after backoff.
+    // Exponential backoff (30s→60s→120s) is typically enough for cooldown to expire.
     const cooldownSecs = await pool.isLoginCoolingDown(accountId);
     if (cooldownSecs > 0) {
       await logger.log("WARN", `[replace] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
       await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new UnrecoverableError("LOGIN_COOLDOWN");
+      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
@@ -162,6 +164,7 @@ export async function processReplace(
       // In that case, treat as "already removed" and proceed to invite.
       try {
         discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
+          loginEmail: account.loginEmail,
           password: account.loginPassword ?? undefined,
           totpSecret: account.totpSecret ?? undefined,
           displayName: targetDisplayName,
@@ -301,14 +304,12 @@ export async function processReplace(
         `Replaced ${targetMemberEmail} with ${newUserEmail}`
       );
 
-      // Sync Order.userEmail to the new member so future lookups
-      // (e.g. customer self-service swap-by-email) find the correct order.
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { userEmail: newUserEmail },
-      }).catch((err) => {
-        // Non-fatal: order status is already updated above
-        logger.log("WARN", `Failed to sync Order.userEmail: ${err instanceof Error ? err.message : String(err)}`);
+      // Mark SwapRecord as COMPLETED (if any exists for this order+task)
+      await prisma.swapRecord.updateMany({
+        where: { orderId, taskId, status: "PENDING" },
+        data: { status: "COMPLETED" },
+      }).catch((err: any) => {
+        logger.log("WARN", `Failed to update SwapRecord: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
 
@@ -341,6 +342,14 @@ export async function processReplace(
 
       if (orderId) {
         await logger.updateOrderStatus(orderId, "FAILED", errMsg);
+
+        // Mark SwapRecord as FAILED
+        await prisma.swapRecord.updateMany({
+          where: { orderId, taskId, status: "PENDING" },
+          data: { status: "FAILED" },
+        }).catch((rollbackErr: any) => {
+          logger.log("WARN", `Failed to update SwapRecord: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+        });
       }
 
       await logger.log("ERROR", `Replace failed permanently: ${errMsg}`);
@@ -382,7 +391,7 @@ async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
-  credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string },
+  credentials?: { loginEmail?: string; password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string },
   otherMemberGaiaIds?: Set<string>
 ): Promise<string | undefined> {
   let discoveredGaiaId: string | undefined;
@@ -620,7 +629,7 @@ async function removeMemberOnPage(
         await page.waitForTimeout((remaining + 1) * 1000);
       }
 
-      const totpCode = generateTOTP(credentials.totpSecret);
+      const totpCode = generateTOTP(credentials.totpSecret, credentials.loginEmail);
       await logger.log("INFO", `Generated TOTP code: ${totpCode.slice(0, 2)}****`);
 
       let totpInput = page.locator(
@@ -674,7 +683,7 @@ async function removeMemberOnPage(
           if (retryRemaining < 8) {
             await page.waitForTimeout((retryRemaining + 1) * 1000);
           }
-          const freshCode = generateTOTP(credentials!.totpSecret!);
+          const freshCode = generateTOTP(credentials!.totpSecret!, credentials!.loginEmail);
           await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
 
           const retryInput = page.locator(
@@ -948,22 +957,62 @@ async function inviteMemberOnPage(
   await page.waitForTimeout(1000);
 
   // Wait for the invite link to appear (confirms the slot opened up)
-  // After a removal, Google may take up to 30s to release the slot
+  // After a removal, Google's backend may take 30-60s+ to release the slot.
+  // The page does NOT live-update, so we must reload/navigate to re-fetch.
+  // Strategy: poll with page refresh every 10s, up to 90s total.
   const inviteLink = page.locator('a[href*="invitemembers"]');
-  try {
-    await inviteLink.waitFor({ state: "visible", timeout: 30_000 });
-  } catch {
-    throw new Error("Invite link not found on family page after removal — slot may not be available yet (waited 30s)");
+  const POLL_INTERVAL_MS = 5_000;
+  const MAX_WAIT_MS = 30_000;
+  let inviteLinkFound = false;
+
+  for (let elapsed = 0; elapsed < MAX_WAIT_MS; elapsed += POLL_INTERVAL_MS) {
+    if ((await inviteLink.count()) > 0 && await inviteLink.first().isVisible().catch(() => false)) {
+      inviteLinkFound = true;
+      break;
+    }
+
+    if (elapsed > 0) {
+      await logger.log("INFO", `Invite link not yet visible — refreshing page (${elapsed / 1000}s / ${MAX_WAIT_MS / 1000}s)`);
+    }
+
+    // Reload the family page to pick up backend slot changes
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(POLL_INTERVAL_MS);
+  }
+
+  if (!inviteLinkFound) {
+    // Last check after final wait
+    if ((await inviteLink.count()) > 0 && await inviteLink.first().isVisible().catch(() => false)) {
+      inviteLinkFound = true;
+    }
+  }
+
+  if (!inviteLinkFound) {
+    throw new Error(
+      `Invite link not found on family page after removal — slot may not be available yet (waited ${MAX_WAIT_MS / 1000}s with ${MAX_WAIT_MS / POLL_INTERVAL_MS} page refreshes)`
+    );
   }
 
   await inviteLink.first().click();
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   await page.waitForTimeout(2000);
 
-  // Email input
-  const emailInput = page.locator('input.I4p4db, input[placeholder*="電子郵件"], input[placeholder*="email" i]');
-  if ((await emailInput.count()) === 0) {
-    throw new Error("Cannot find email input field");
+  // Email input — selectors must match invite.processor.ts
+  const emailInput = page.locator([
+    "input.I4p4db",
+    'input[placeholder*="電子郵件"]',
+    'input[placeholder*="电子邮件"]',
+    'input[placeholder*="email" i]',
+    'input[type="email"]',
+  ].join(", "));
+
+  // Wait up to 15s for Angular to render the input (lazy-loaded component)
+  try {
+    await emailInput.first().waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    const url = page.url();
+    const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+    throw new Error(`Cannot find email input field. URL: ${url}, body: ${bodySnippet}`);
   }
 
   await emailInput.first().fill(email);

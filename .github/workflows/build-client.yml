@@ -1,0 +1,98 @@
+name: Build & Release GFA Client
+
+on:
+  # 推送 tag 时自动触发 (例如 v0.1.0, v1.0.0)
+  push:
+    tags:
+      - 'v*'
+  # 也支持手动触发
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon (M1/M2/M3)
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust_target: ''
+          # macOS Intel
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+          # Windows x64
+          - platform: windows-latest
+            args: ''
+            rust_target: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ──────────────── Rust 工具链 ────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust cross-compilation target
+        if: matrix.rust_target != ''
+        run: rustup target add ${{ matrix.rust_target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/gfa-client/src-tauri -> target
+
+      # ──────────────── macOS 系统依赖 ────────────────
+      # macOS: Xcode CLT 已预装, 无需额外依赖
+
+      # ──────────────── Node.js + 前端依赖 ────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/gfa-client/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/gfa-client
+        run: npm ci
+
+      # ──────────────── 构建 & 发布 ────────────────
+      - name: Build Tauri app & create release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ── 如需 macOS 代码签名，取消注释以下变量 ──
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/gfa-client
+          tauriScript: npx tauri
+          # __VERSION__ 会自动替换为 tauri.conf.json 中的 version 字段
+          tagName: v__VERSION__
+          releaseName: 'GFA Client v__VERSION__'
+          releaseBody: |
+            ## 📦 下载安装
+
+            | 平台 | 架构 | 文件 |
+            |------|------|------|
+            | macOS | Apple Silicon (M1/M2/M3) | `.dmg` (aarch64) |
+            | macOS | Intel | `.dmg` (x64) |
+            | Windows | x64 | `.msi` 或 `.exe` |
+
+            > ⚠️ macOS 用户首次打开未签名应用：右键点击 → 打开
+            > ⚠️ Windows 用户可能看到 SmartScreen 警告，点击「更多信息」→「仍要运行」
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

@@ -54,6 +54,18 @@ enum RedeemCodeType {
   SUBSCRIPTION  // Long-term: allows periodic account swaps within validity
 }
 
+enum OrderType {
+  JOIN          // 上车（JOIN_GROUP 码）
+  SWAP          // 一次性换号（ACCOUNT_SWAP 码）
+  SUBSCRIPTION  // 订阅换号（SUBSCRIPTION 码）
+}
+
+enum SwapRecordStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 enum OrderStatus {
   CREATED
   CODE_VERIFIED
@@ -86,6 +98,9 @@ enum TaskType {
   REPLACE_MEMBER
   SYNC_FAMILY_GROUP
   HEALTH_CHECK_ACCOUNT
+  OAUTH_AUTHORIZE
+  ACCEPT_INVITE
+  TEST_LOGIN
 }
 
 enum TransferPhase {
@@ -211,6 +226,7 @@ model RedeemCode {
 model Order {
   id            String       @id @default(cuid())
   orderNo       String       @unique
+  orderType     OrderType    @default(JOIN)
   redeemCodeId  String?      @unique
   userEmail     String
   familyGroupId String?
@@ -224,6 +240,7 @@ model Order {
   redeemCode    RedeemCode?  @relation(fields: [redeemCodeId], references: [id], onDelete: SetNull)
   familyGroup   FamilyGroup? @relation(fields: [familyGroupId], references: [id], onDelete: SetNull)
   tasks         Task[]
+  swapRecords   SwapRecord[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -298,4 +315,18 @@ model TransferBatch {
   sourceGroup       FamilyGroup    @relation("TransferSource", fields: [sourceGroupId], references: [id])
   targetGroup       FamilyGroup    @relation("TransferTarget", fields: [targetGroupId], references: [id])
   tasks             Task[]
+}
+
+model SwapRecord {
+  id        String           @id @default(cuid())
+  orderId   String
+  oldEmail  String
+  newEmail  String
+  taskId    String?
+  status    SwapRecordStatus @default(PENDING)
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([orderId])
 }
