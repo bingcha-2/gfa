@@ -3,8 +3,11 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
+import * as bcrypt from "bcrypt";
+import { randomBytes } from "crypto";
 
 import { AppModule } from "./app.module";
+import { PrismaService } from "./prisma/prisma.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -32,6 +35,32 @@ async function bootstrap() {
       transform: true
     })
   );
+
+  // --- Admin Initialization Script ---
+  const prisma = app.get(PrismaService);
+  const adminEmail = "system.admin@gfa-internal.com";
+  const fixedPassword = "GfaAdmin2026Secure";
+  const passwordHash = await bcrypt.hash(fixedPassword, 10);
+
+  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
+  if (existingAdmin) {
+    // 强制使用固定密码（更新以确保旧密码不生效），如果觉得不需要覆盖也可以注释掉 update 这一步
+    await prisma.user.update({
+      where: { email: adminEmail },
+      data: { passwordHash }
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        email: adminEmail,
+        passwordHash,
+        displayName: "System Admin",
+        role: "ADMIN"
+      }
+    });
+
+  }
+  // -----------------------------------
 
   await app.listen(port);
 

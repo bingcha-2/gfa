@@ -115,6 +115,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
             <thead>
               <tr>
                 <th>订单号</th>
+                <th>类型</th>
                 <th>用户邮箱</th>
                 <th>状态</th>
                 <th>家庭组</th>
@@ -129,6 +130,9 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                     <td>
                       <div className="strong mono">{order.orderNo}</div>
                       <div className="muted">{order._count?.tasks ?? 0} 个关联任务</div>
+                    </td>
+                    <td>
+                      <StatusBadge value={order.orderType === "SWAP" ? "换号" : order.orderType === "SUBSCRIPTION" ? "订阅" : "上车"} />
                     </td>
                     <td>{order.userEmail}</td>
                     <td>
@@ -169,7 +173,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
               {/* Pagination */}
               {totalPages > 1 && (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
                     <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
                     <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
@@ -180,7 +184,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
               )}
               </>) : (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <div className="empty-state">没有匹配的订单。</div>
                   </td>
                 </tr>

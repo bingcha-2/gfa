@@ -798,32 +798,46 @@ async function syncOrderAfterAccept(
   const normalized = email.trim().toLowerCase();
 
   try {
-    // Update Order: INVITE_SENT / WAIT_USER_ACCEPT / TASK_QUEUED → COMPLETED
-    const updated = await prisma.order.updateMany({
+    // Update Order: only JOIN type, INVITE_SENT / WAIT_USER_ACCEPT / TASK_QUEUED → COMPLETED
+    // Use findFirst + update to avoid accidentally marking multiple orders
+    const latestOrder = await prisma.order.findFirst({
       where: {
         userEmail: normalized,
+        orderType: "JOIN",
         status: { in: ["INVITE_SENT", "WAIT_USER_ACCEPT", "TASK_QUEUED"] },
       },
-      data: {
-        status: "COMPLETED",
-        resultMessage: "Member accepted invite (auto-detected by accept-invite automation)",
-      },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
     });
 
+    let updatedCount = 0;
+    if (latestOrder) {
+      await prisma.order.update({
+        where: { id: latestOrder.id },
+        data: {
+          status: "COMPLETED",
+          resultMessage: "Member accepted invite (auto-detected by accept-invite automation)",
+        },
+      });
+      updatedCount = 1;
+    }
+
     // Case-insensitive fallback
-    if (updated.count === 0) {
+    if (updatedCount === 0) {
       await prisma.$executeRawUnsafe(
         `UPDATE "Order" SET status = 'COMPLETED',
            resultMessage = 'Member accepted invite (auto-detected by accept-invite automation)',
            updatedAt = datetime('now')
          WHERE LOWER(userEmail) = ?
-           AND status IN ('INVITE_SENT','WAIT_USER_ACCEPT','TASK_QUEUED')`,
+           AND orderType = 'JOIN'
+           AND status IN ('INVITE_SENT','WAIT_USER_ACCEPT','TASK_QUEUED')
+         LIMIT 1`,
         normalized
       ).catch(() => {});
     }
 
-    if (updated.count > 0) {
-      await logger.log("INFO", `Order status synced to COMPLETED for ${email} (${updated.count} order(s))`);
+    if (updatedCount > 0) {
+      await logger.log("INFO", `Order status synced to COMPLETED for ${email}`);
     }
 
     // Update FamilyMember: PENDING → ACTIVE
