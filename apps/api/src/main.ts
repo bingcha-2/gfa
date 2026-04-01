@@ -41,7 +41,9 @@ async function bootstrap() {
   const passwordHash = await bcrypt.hash(defaultPassword, 10);
 
   const defaultUsers = [
-    { email: "admin@gfa.local",   displayName: "Admin",   role: "ADMIN" as const },
+    { email: "admin@gfa.local", displayName: "Admin", role: "ADMIN" as const },
+    { email: "test1@gfa.local", displayName: "Admin", role: "ADMIN" as const },
+
     { email: "support@gfa.local", displayName: "Support", role: "SUPPORT" as const },
   ];
 
