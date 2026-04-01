@@ -4,7 +4,6 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
 import * as bcrypt from "bcrypt";
-import { randomBytes } from "crypto";
 
 import { AppModule } from "./app.module";
 import { PrismaService } from "./prisma/prisma.service";
@@ -36,29 +35,27 @@ async function bootstrap() {
     })
   );
 
-  // --- Admin Initialization Script ---
+  // --- Default Account Initialization (matches seed.mjs & startup banner) ---
   const prisma = app.get(PrismaService);
-  const adminEmail = "system.admin@gfa-internal.com";
-  const fixedPassword = "GfaAdmin2026Secure";
-  const passwordHash = await bcrypt.hash(fixedPassword, 10);
+  const defaultPassword = "admin123";
+  const passwordHash = await bcrypt.hash(defaultPassword, 10);
 
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
-  if (existingAdmin) {
-    // 强制使用固定密码（更新以确保旧密码不生效），如果觉得不需要覆盖也可以注释掉 update 这一步
-    await prisma.user.update({
-      where: { email: adminEmail },
-      data: { passwordHash }
-    });
-  } else {
-    await prisma.user.create({
-      data: {
-        email: adminEmail,
+  const defaultUsers = [
+    { email: "admin@gfa.local",   displayName: "Admin",   role: "ADMIN" as const },
+    { email: "support@gfa.local", displayName: "Support", role: "SUPPORT" as const },
+  ];
+
+  for (const user of defaultUsers) {
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: { passwordHash },
+      create: {
+        email: user.email,
         passwordHash,
-        displayName: "System Admin",
-        role: "ADMIN"
-      }
+        displayName: user.displayName,
+        role: user.role,
+      },
     });
-
   }
   // -----------------------------------
 
