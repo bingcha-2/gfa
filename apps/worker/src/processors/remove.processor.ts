@@ -59,7 +59,8 @@ export async function processRemove(
   }
 
   let profileId: string | null = null;
-  let originalMemberStatus: MemberStatus = MemberStatus.ACTIVE; // track for rollback
+  let originalMemberStatus: MemberStatus = 
+    (job.data as any).originalMemberStatus as MemberStatus || MemberStatus.ACTIVE; // from API payload for rollback
   let reuseSession = false;
 
   try {
@@ -68,7 +69,7 @@ export async function processRemove(
       where: { familyGroupId, email: memberEmail },
       select: { googleMemberId: true, displayName: true, status: true },
     });
-    if (memberRecord?.status) originalMemberStatus = memberRecord.status as MemberStatus;
+    // NOTE: Don't override originalMemberStatus from DB — the API already changed it to PENDING
 
     // Cooldown guard: skip immediately if this account recently failed login
     const cooldownSecs = await pool.isLoginCoolingDown(account.id);

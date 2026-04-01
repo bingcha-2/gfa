@@ -185,7 +185,8 @@ export class FamilyGroupService {
           taskId: result.task.id,
           familyGroupId: groupId,
           accountId: group.accountId,
-          memberEmail
+          memberEmail,
+          originalMemberStatus: result.originalStatus
         },
         { ...JOB_DEFAULTS }
       );
