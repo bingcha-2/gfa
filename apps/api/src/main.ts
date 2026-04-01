@@ -3,8 +3,10 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
+import * as bcrypt from "bcrypt";
 
 import { AppModule } from "./app.module";
+import { PrismaService } from "./prisma/prisma.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -32,6 +34,32 @@ async function bootstrap() {
       transform: true
     })
   );
+
+  // --- Default Account Initialization (matches seed.mjs & startup banner) ---
+  const prisma = app.get(PrismaService);
+  const defaultPassword = "admin123";
+  const passwordHash = await bcrypt.hash(defaultPassword, 10);
+
+  const defaultUsers = [
+    { email: "admin@gfa.local", displayName: "Admin", role: "ADMIN" as const },
+    { email: "test1@gfa.local", displayName: "Admin", role: "ADMIN" as const },
+
+    { email: "support@gfa.local", displayName: "Support", role: "SUPPORT" as const },
+  ];
+
+  for (const user of defaultUsers) {
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: { passwordHash },
+      create: {
+        email: user.email,
+        passwordHash,
+        displayName: user.displayName,
+        role: user.role,
+      },
+    });
+  }
+  // -----------------------------------
 
   await app.listen(port);
 

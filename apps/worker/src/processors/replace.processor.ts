@@ -164,6 +164,7 @@ export async function processReplace(
       // In that case, treat as "already removed" and proceed to invite.
       try {
         discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
+          loginEmail: account.loginEmail,
           password: account.loginPassword ?? undefined,
           totpSecret: account.totpSecret ?? undefined,
           displayName: targetDisplayName,
@@ -303,14 +304,12 @@ export async function processReplace(
         `Replaced ${targetMemberEmail} with ${newUserEmail}`
       );
 
-      // Sync Order.userEmail to the new member so future lookups
-      // (e.g. customer self-service swap-by-email) find the correct order.
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { userEmail: newUserEmail },
-      }).catch((err) => {
-        // Non-fatal: order status is already updated above
-        logger.log("WARN", `Failed to sync Order.userEmail: ${err instanceof Error ? err.message : String(err)}`);
+      // Mark SwapRecord as COMPLETED (if any exists for this order+task)
+      await prisma.swapRecord.updateMany({
+        where: { orderId, taskId, status: "PENDING" },
+        data: { status: "COMPLETED" },
+      }).catch((err: any) => {
+        logger.log("WARN", `Failed to update SwapRecord: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
 
@@ -344,18 +343,13 @@ export async function processReplace(
       if (orderId) {
         await logger.updateOrderStatus(orderId, "FAILED", errMsg);
 
-        // Rollback Order.userEmail to the original member so the order
-        // is discoverable again for subsequent swap-by-email attempts.
-        const { targetMemberEmail, newUserEmail } = job.data;
-        if (targetMemberEmail && newUserEmail) {
-          await prisma.order.updateMany({
-            where: { id: orderId, userEmail: newUserEmail },
-            data: { userEmail: targetMemberEmail },
-          }).catch((rollbackErr) => {
-            logger.log("WARN", `Failed to rollback Order.userEmail: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
-          });
-          await logger.log("INFO", `Rolled back Order.userEmail from ${newUserEmail} to ${targetMemberEmail}`);
-        }
+        // Mark SwapRecord as FAILED
+        await prisma.swapRecord.updateMany({
+          where: { orderId, taskId, status: "PENDING" },
+          data: { status: "FAILED" },
+        }).catch((rollbackErr: any) => {
+          logger.log("WARN", `Failed to update SwapRecord: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+        });
       }
 
       await logger.log("ERROR", `Replace failed permanently: ${errMsg}`);
@@ -397,7 +391,7 @@ async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
-  credentials?: { password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string },
+  credentials?: { loginEmail?: string; password?: string; totpSecret?: string; displayName?: string; googleMemberId?: string },
   otherMemberGaiaIds?: Set<string>
 ): Promise<string | undefined> {
   let discoveredGaiaId: string | undefined;
@@ -635,7 +629,7 @@ async function removeMemberOnPage(
         await page.waitForTimeout((remaining + 1) * 1000);
       }
 
-      const totpCode = generateTOTP(credentials.totpSecret);
+      const totpCode = generateTOTP(credentials.totpSecret, credentials.loginEmail);
       await logger.log("INFO", `Generated TOTP code: ${totpCode.slice(0, 2)}****`);
 
       let totpInput = page.locator(
@@ -689,7 +683,7 @@ async function removeMemberOnPage(
           if (retryRemaining < 8) {
             await page.waitForTimeout((retryRemaining + 1) * 1000);
           }
-          const freshCode = generateTOTP(credentials!.totpSecret!);
+          const freshCode = generateTOTP(credentials!.totpSecret!, credentials!.loginEmail);
           await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
 
           const retryInput = page.locator(
@@ -963,12 +957,40 @@ async function inviteMemberOnPage(
   await page.waitForTimeout(1000);
 
   // Wait for the invite link to appear (confirms the slot opened up)
-  // After a removal, Google may take up to 30s to release the slot
+  // After a removal, Google's backend may take 30-60s+ to release the slot.
+  // The page does NOT live-update, so we must reload/navigate to re-fetch.
+  // Strategy: poll with page refresh every 10s, up to 90s total.
   const inviteLink = page.locator('a[href*="invitemembers"]');
-  try {
-    await inviteLink.waitFor({ state: "visible", timeout: 30_000 });
-  } catch {
-    throw new Error("Invite link not found on family page after removal — slot may not be available yet (waited 30s)");
+  const POLL_INTERVAL_MS = 5_000;
+  const MAX_WAIT_MS = 30_000;
+  let inviteLinkFound = false;
+
+  for (let elapsed = 0; elapsed < MAX_WAIT_MS; elapsed += POLL_INTERVAL_MS) {
+    if ((await inviteLink.count()) > 0 && await inviteLink.first().isVisible().catch(() => false)) {
+      inviteLinkFound = true;
+      break;
+    }
+
+    if (elapsed > 0) {
+      await logger.log("INFO", `Invite link not yet visible — refreshing page (${elapsed / 1000}s / ${MAX_WAIT_MS / 1000}s)`);
+    }
+
+    // Reload the family page to pick up backend slot changes
+    await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(POLL_INTERVAL_MS);
+  }
+
+  if (!inviteLinkFound) {
+    // Last check after final wait
+    if ((await inviteLink.count()) > 0 && await inviteLink.first().isVisible().catch(() => false)) {
+      inviteLinkFound = true;
+    }
+  }
+
+  if (!inviteLinkFound) {
+    throw new Error(
+      `Invite link not found on family page after removal — slot may not be available yet (waited ${MAX_WAIT_MS / 1000}s with ${MAX_WAIT_MS / POLL_INTERVAL_MS} page refreshes)`
+    );
   }
 
   await inviteLink.first().click();

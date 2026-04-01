@@ -255,7 +255,7 @@ export async function gmailLogin(
           await logger.log("WARN", `[gmail-login] TOTP rejected — waiting ${waitSecs}s for next code window`);
           await page.waitForTimeout(waitSecs * 1000);
         }
-        const result = await handleTotp(page, totpInput.first(), totpSecret, logger);
+        const result = await handleTotp(page, totpInput.first(), totpSecret, logger, loginEmail);
         if (!result.success) return result;
         totpSubmitted = true;
         await page.waitForTimeout(3000);
@@ -481,7 +481,8 @@ async function handleTotp(
   page: Page,
   input: import("playwright").Locator,
   totpSecret: string | null | undefined,
-  logger: TaskLogger
+  logger: TaskLogger,
+  loginEmail?: string
 ): Promise<GmailLoginResult> {
   await logger.log("INFO", "[gmail-login] TOTP 2FA challenge detected");
 
@@ -500,7 +501,19 @@ async function handleTotp(
     await page.waitForTimeout((remaining + 1) * 1000);
   }
 
-  const code = generateTOTP(totpSecret);
+  let code: string;
+  try {
+    code = generateTOTP(totpSecret, loginEmail);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    await logger.log("ERROR", `[gmail-login] TOTP generation failed: ${detail}`);
+    return {
+      success: false,
+      reason: "VERIFICATION_REQUIRED",
+      detail: `TOTP secret is invalid — ${detail}`,
+    };
+  }
+
   await logger.log("INFO", `[gmail-login] Generated TOTP: ${code.slice(0, 2)}****`);
 
   await input.fill(code);
