@@ -466,14 +466,38 @@ async function removeMemberOnPage(
 
         await page.waitForTimeout(5000);
         await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+      } else {
+        // Password input exists but is hidden (aria-hidden="true") — Google's lazy render.
+        // Wait for it to become visible, then retry.
+        await logger.log("WARN", "Password field hidden, waiting for it to become visible...");
+        const hiddenPwd = page.locator('input[type="password"]');
+        try {
+          await hiddenPwd.first().waitFor({ state: "visible", timeout: 10_000 });
+          await hiddenPwd.first().fill(credentials!.password!);
+          const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
+          await nextButton.first().click();
+          await logger.log("INFO", "Password submitted (after wait for visibility)");
+          await page.waitForTimeout(5000);
+          await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+        } catch {
+          await logger.log("WARN", "Password field never became visible — re-auth may fail");
+        }
       }
     } else {
       await logger.log("INFO", "Google skipped password, directly on TOTP challenge");
     }
 
     // Step 3: Handle TOTP 2FA challenge (after password OR direct)
+    // IMPORTANT: Only enter TOTP handling for actual TOTP/2FA challenge pages,
+    // NOT for /challenge/pwd (password page) which means password wasn't accepted yet.
     const afterAuthUrl = page.url();
-    if (afterAuthUrl.includes("challenge") || afterAuthUrl.includes("signin/v2")) {
+    const isTotpChallenge = afterAuthUrl.includes("challenge/totp") ||
+      afterAuthUrl.includes("challenge/az") ||
+      afterAuthUrl.includes("challenge/sk") ||  // security key
+      afterAuthUrl.includes("signin/v2") ||
+      // Generic /challenge/ but NOT /challenge/pwd
+      (afterAuthUrl.includes("challenge") && !afterAuthUrl.includes("challenge/pwd"));
+    if (isTotpChallenge) {
       await logger.log("INFO", `TOTP challenge page. URL: ${afterAuthUrl}`);
 
       if (!credentials?.totpSecret) {
