@@ -9,6 +9,13 @@
  * 5. Navigate to Google Family page, send invite
  * 6. Take screenshots, update Task + Order status
  * 7. Release profile back to pool
+ *
+ * === Account fallback (v2) ===
+ * On login failure:
+ *   1. Record cumulative failure for original account
+ *   2. Search for another HEALTHY account with available family group slots
+ *   3. If found → reassign task to new account/group and retry
+ *   4. If not found → throw error (BullMQ retries or fails)
  */
 
 import { Job, UnrecoverableError } from "bullmq";
@@ -35,12 +42,49 @@ export interface InviteProcessorDeps {
   inviteQueue?: Queue;
 }
 
+/**
+ * Find an alternative healthy account with available family group slots.
+ * Excludes the given accountId and any accounts in cooldown or with high failure counts.
+ */
+async function findAlternativeAccount(
+  prisma: PrismaClient,
+  pool: BrowserPool,
+  excludeAccountId: string
+): Promise<{ accountId: string; familyGroupId: string } | null> {
+  // Find all ACTIVE family groups with available slots whose account is HEALTHY
+  const candidates = await prisma.familyGroup.findMany({
+    where: {
+      status: "ACTIVE",
+      availableSlots: { gt: 0 },
+      accountId: { not: excludeAccountId },
+      account: { status: "HEALTHY" },
+    },
+    select: { id: true, accountId: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  // Filter out accounts in cooldown or with too many failures
+  for (const candidate of candidates) {
+    const cooldown = await pool.isLoginCoolingDown(candidate.accountId);
+    if (cooldown > 0) continue;
+
+    const failures = await pool.getAccountTaskFailureCount(candidate.accountId);
+    if (failures >= 3) continue;
+
+    return { accountId: candidate.accountId, familyGroupId: candidate.id };
+  }
+
+  return null;
+}
+
 export async function processInvite(
   job: Job<InviteMemberPayload>,
   deps: InviteProcessorDeps
 ): Promise<void> {
   const { prisma, adspower, pool, workerId } = deps;
-  const { orderId, accountId, userEmail } = job.data;
+  const { orderId, userEmail } = job.data;
+  let { accountId } = job.data;
+  let familyGroupId = job.data.familyGroupId;
   const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] invite job has no id or name, skipping`);
@@ -55,7 +99,7 @@ export async function processInvite(
     return;
   }
 
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  let account = await prisma.account.findUnique({ where: { id: accountId } });
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Account ${accountId} not found` });
     return;
@@ -68,12 +112,48 @@ export async function processInvite(
   try {
     await logger.updateStatus("RUNNING");
 
-    // Cooldown guard: skip immediately if this account recently failed login
+    // ── Pre-check: if original account is in cooldown or unhealthy, try fallback immediately ──
     const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    if (cooldownSecs > 0) {
-      await logger.log("WARN", `[invite] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+    const failureCount = await pool.getAccountTaskFailureCount(accountId);
+    const accountUnhealthy = account.status !== "HEALTHY";
+
+    if (cooldownSecs > 0 || failureCount >= 3 || accountUnhealthy) {
+      await logger.log("WARN",
+        `[invite] Original account ${accountId} unavailable ` +
+        `(cooldown=${cooldownSecs}s, failures=${failureCount}, status=${account.status}). ` +
+        `Searching for alternative account...`
+      );
+
+      const alt = await findAlternativeAccount(prisma, pool, accountId);
+      if (alt) {
+        await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId})`);
+        accountId = alt.accountId;
+        familyGroupId = alt.familyGroupId;
+        account = await prisma.account.findUnique({ where: { id: accountId } });
+        if (!account) {
+          await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Alternative account ${accountId} not found` });
+          return;
+        }
+        // Update task record to reflect new account/group
+        await prisma.task.update({
+          where: { id: taskId },
+          data: { accountId, familyGroupId },
+        }).catch(() => {});
+        // Update order's family group assignment if needed
+        if (orderId) {
+          await prisma.order.update({
+            where: { id: orderId },
+            data: { familyGroupId },
+          }).catch(() => {});
+        }
+      } else {
+        await logger.log("WARN", `[invite] No alternative account available. Failing task.`);
+        await logger.updateStatus("FAILED_RETRYABLE", {
+          code: "NO_HEALTHY_ACCOUNT",
+          message: `Original account in cooldown/unhealthy and no alternative found`,
+        });
+        throw new Error(`No healthy account available for invite`);
+      }
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
@@ -111,13 +191,62 @@ export async function processInvite(
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // ── Login failed: try to switch to another account ──
+      // Clean up current browser session first
+      await browser.disconnect().catch(() => {});
+      if (profileId) {
+        await adspower.closeProfile(profileId).catch(() => {});
+        await pool.release(profileId, workerId).catch(() => {});
+        profileId = null;
+      }
+
+      // Record failure for this account (handleLoginResult also does this, but we need
+      // to check for fallback BEFORE it throws)
+      await pool.recordLoginFailure(accountId, 2 * 60 * 1000);
+      const newFailCount = await pool.recordAccountTaskFailure(accountId);
+      await logger.log("WARN",
+        `Login failed for account ${accountId} (failures: ${newFailCount}/3). Searching for alternative...`
+      );
+
+      // Mark account RISKY if threshold reached
+      if (newFailCount >= 3) {
+        await prisma.account.update({
+          where: { id: accountId },
+          data: { status: "RISKY" as any },
+        }).catch(() => {});
+        await logger.log("ERROR",
+          `Account ${accountId} reached ${newFailCount} failures — marked RISKY, needs human intervention`
+        );
+      }
+
+      // Try to find alternative account
+      const alt = await findAlternativeAccount(prisma, pool, accountId);
+      if (alt) {
+        await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId})`);
+        // Update task and order to use new account/group
+        await prisma.task.update({
+          where: { id: taskId },
+          data: { accountId: alt.accountId, familyGroupId: alt.familyGroupId },
+        }).catch(() => {});
+        if (orderId) {
+          await prisma.order.update({
+            where: { id: orderId },
+            data: { familyGroupId: alt.familyGroupId },
+          }).catch(() => {});
+        }
+        // Throw a retryable error — BullMQ will retry and pick up the new account
+        throw new Error(`LOGIN_FAILED_SWITCHED:${alt.accountId}|Switched to alternative account, will retry`);
+      }
+
+      // No alternative — use normal handleLoginResult (may mark MANUAL_REVIEW)
       await handleLoginResult(loginResult, { job, pool, prisma, logger, accountId });
     }
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, accountId);
 
     // Ensure family group exists
-    const { familyGroupId } = await ensureFamilyGroup(page, account, prisma, logger);
+    const ensureResult = await ensureFamilyGroup(page, account, prisma, logger);
+    familyGroupId = ensureResult.familyGroupId;
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
@@ -137,12 +266,8 @@ export async function processInvite(
     }
 
     // --- Capture gaiaId from family page after invite ---
-    // Google renders the new member card on the family details page right after invite.
-    // We scan the page for the invited email to extract the card's gaiaId.
     let capturedGaiaId: string | undefined;
     try {
-      // After invite, Google usually redirects back to family details.
-      // Ensure we're on that page.
       if (!page.url().includes("family/details")) {
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       }
@@ -154,11 +279,10 @@ export async function processInvite(
         await logger.log("WARN", `Could not capture gaiaId for ${userEmail} — will be filled on next sync`);
       }
     } catch {
-      // Non-fatal: gaiaId will be filled on next sync
       await logger.log("WARN", "gaiaId capture failed — will be filled on next sync");
     }
 
-    // Upsert FamilyMember with gaiaId (so future remove/replace can use fast S0 path)
+    // Upsert FamilyMember with gaiaId
     try {
       await prisma.familyMember.upsert({
         where: { familyGroupId_email: { familyGroupId, email: userEmail } },
@@ -177,7 +301,6 @@ export async function processInvite(
         },
       });
 
-      // Idempotent: skip if a SENT invite already exists (prevents duplicates on BullMQ retry)
       const existingInvite = await prisma.familyInvite.findFirst({
         where: { familyGroupId, email: userEmail, status: "SENT" },
       });
@@ -190,7 +313,7 @@ export async function processInvite(
 
     await logger.log("INFO", "Invite completed successfully");
 
-    // Transfer batch callback: check if all invite tasks are done
+    // Transfer batch callback
     if (deps.inviteQueue) {
       await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch((err) =>
         logger.log("WARN", `Transfer progress check failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -212,9 +335,7 @@ export async function processInvite(
     });
     await logger.log("ERROR", `Invite error (will retry): ${errMsg}`);
 
-    // Transfer batch callback on terminal failure:
-    // Mark task FAILED_FINAL first so the callback sees terminal status.
-    // Only for transfer tasks to avoid changing normal invite behavior.
+    // Transfer batch callback on terminal failure
     if (deps.inviteQueue && job.attemptsMade >= (job.opts?.attempts ?? 3) - 1) {
       const transferTask = await prisma.task.findUnique({
         where: { id: taskId },
@@ -249,7 +370,6 @@ async function executeInviteOnPage(
   await page.waitForTimeout(2000); // Angular SPA needs time to render
 
   const inviteLink = page.locator('a[href*="invitemembers"]');
-  // Wait up to 15s for the invite link to render (Angular lazy-loads family member UI)
   try {
     await inviteLink.first().waitFor({ state: "visible", timeout: 15_000 });
   } catch {
@@ -278,11 +398,9 @@ async function executeInviteOnPage(
     'input[type="email"]',
   ].join(", "));
 
-  // Wait up to 15s for the input to appear (Angular renders lazily)
   try {
     await emailInput.first().waitFor({ state: "visible", timeout: 15_000 });
   } catch {
-    // Dump page content for debugging
     const url = page.url();
     const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
     throw new Error(`Cannot find email input on invite page. URL: ${url}, body: ${bodySnippet}`);
@@ -300,12 +418,6 @@ async function executeInviteOnPage(
   await sendButton.first().click();
   await logger.log("INFO", "Clicked send invite button");
 
-  // Wait for Google to process the invite.
-  // After a successful invite, Google either:
-  //   (a) redirects back to family/details page, or
-  //   (b) shows a success toast/snackbar, or
-  //   (c) the invite URL changes
-  // We wait up to 15s for the page to leave the invite page.
   try {
     await page.waitForURL(
       (url) => !url.toString().includes("invitemembers"),
@@ -313,20 +425,14 @@ async function executeInviteOnPage(
     );
     await logger.log("INFO", "Invite page navigated away — invite confirmed");
   } catch {
-    // If URL didn't change, check if we're still on invite page (could be an error)
     const currentUrl = page.url();
     if (currentUrl.includes("invitemembers")) {
       await logger.log("WARN", "Still on invite page after 15s — invite may not have been sent");
     }
   }
-  // Extra buffer for any async processing
   await page.waitForTimeout(2000);
 }
 
-/**
- * Scan the family details page for a member card matching the given email.
- * Returns the gaiaId extracted from the card's href, or undefined.
- */
 async function scanPageForMemberGaiaId(
   page: import("playwright").Page,
   email: string
@@ -335,12 +441,10 @@ async function scanPageForMemberGaiaId(
     const links = document.querySelectorAll('a[href*="family/member/"]');
     const lowerTarget = targetEmail.toLowerCase();
     for (const link of Array.from(links)) {
-      // Check card container text for the email
       const card = link.closest("li") ?? link.parentElement;
       const cardText = card?.textContent?.toLowerCase() ?? "";
       if (cardText.includes(lowerTarget)) {
         const href = link.getAttribute("href") ?? "";
-        // Extract gaiaId: /g/{id} for accepted, /member/i/{id} or /member/{id} for pending
         const match =
           href.match(/\/g\/(\d+)/) ??
           href.match(/\/member\/i\/([-\d]+)/) ??

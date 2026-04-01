@@ -3,7 +3,7 @@ import { useAppStore } from "../stores/useAppStore";
 import { Play, CheckCircle, XCircle, Loader, Mail } from "lucide-react";
 
 export function AcceptInvite() {
-  const { accounts, runAcceptInvite, isRunning, runningEmail, logs, clearLogs } = useAppStore();
+  const { accounts, runAcceptInvite, isRunning, runningEmail, logs, clearLogs, addToast } = useAppStore();
   const [selectedEmail, setSelectedEmail] = useState<string>("");
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -17,18 +17,39 @@ export function AcceptInvite() {
     }
   }, [accounts]);
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (!selectedEmail || isRunning) return;
     clearLogs();
-    runAcceptInvite(selectedEmail);
+    await runAcceptInvite(selectedEmail);
+    // Check final log for success/failure
+    const finalLogs = useAppStore.getState().logs;
+    const hasError = finalLogs.some((l) => l.level === "ERROR" || l.status === "failed");
+    if (hasError) {
+      addToast({ type: "error", message: `接受邀请失败: ${selectedEmail}` });
+    } else {
+      addToast({ type: "success", message: `✅ 邀请已成功接受: ${selectedEmail}` });
+    }
   };
 
   const handleRunAll = async () => {
     if (isRunning) return;
+    let successCount = 0;
+    let failCount = 0;
     for (const account of accounts) {
       clearLogs();
       await runAcceptInvite(account.email);
+      const finalLogs = useAppStore.getState().logs;
+      const hasError = finalLogs.some((l) => l.level === "ERROR" || l.status === "failed");
+      if (hasError) {
+        failCount++;
+      } else {
+        successCount++;
+      }
     }
+    addToast({
+      type: failCount > 0 ? "info" : "success",
+      message: `批量接受完成: ${successCount} 成功, ${failCount} 失败`,
+    });
   };
 
   return (
