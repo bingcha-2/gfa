@@ -720,23 +720,13 @@ async function fallbackFindMember(
         continue;
       }
 
-      // Extract emails from leaf-node elements ONLY to prevent false positives
-      // from body.textContent concatenation or SPA stale content.
-      const detailEmails: string[] = await page.evaluate(() => {
-        const leafEls = Array.from(document.querySelectorAll("*"))
-          .filter((el) => el.children.length === 0);
-        return leafEls
-          .map((el) => el.textContent?.trim() ?? "")
-          .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
-      });
-
-      const matched = detailEmails.some(
-        (e) => e.toLowerCase() === email.toLowerCase()
-      );
+      await page.waitForTimeout(1000);
+      const html = await page.content();
+      const matched = html.toLowerCase().includes(email.toLowerCase());
 
       // Diagnostic log: always record what emails were found on this detail page
       await logger.log("DEBUG",
-        `S3: Card #${i} (href=${memberHrefs[i]}) found emails: [${detailEmails.join(", ")}], target=${email}, matched=${matched}`
+        `S3: Card #${i} (href=${memberHrefs[i]}), target=${email}, matched=${matched}`
       );
 
       if (matched) {

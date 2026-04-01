@@ -174,8 +174,18 @@ export async function processReplace(
         const msg = removeErr instanceof Error ? removeErr.message : String(removeErr);
         if (msg.includes("Cannot find member")) {
           await logger.log("WARN",
-            `Member ${targetMemberEmail} not found on page — likely already removed by previous attempt. Proceeding to invite.`
+            `Member ${targetMemberEmail} not found on page. Verifying if slot is available...`
           );
+          
+          await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+          await page.waitForTimeout(2000);
+          
+          const inviteLinkCount = await page.locator('a[href*="invitemembers"]').count();
+          if (inviteLinkCount > 0) {
+            await logger.log("INFO", "Invite slot is available. Proceeding to invite.");
+          } else {
+            throw new Error(`Cannot find member and no invite slots available (当前识别失败且无可用空位)`);
+          }
         } else {
           throw removeErr; // re-throw non-matching errors
         }
@@ -893,24 +903,13 @@ async function fallbackFindMember(
         continue;
       }
 
-      // Extract emails from leaf-node elements ONLY to prevent false positives
-      // from body.textContent concatenation or SPA stale content.
-      // Uses the same strict regex as sync.processor.ts for consistency.
-      const detailEmails: string[] = await page.evaluate(() => {
-        const leafEls = Array.from(document.querySelectorAll("*"))
-          .filter((el) => el.children.length === 0);
-        return leafEls
-          .map((el) => el.textContent?.trim() ?? "")
-          .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
-      });
-
-      const matched = detailEmails.some(
-        (e) => e.toLowerCase() === email.toLowerCase()
-      );
+      await page.waitForTimeout(1000);
+      const html = await page.content();
+      const matched = html.toLowerCase().includes(email.toLowerCase());
 
       // Diagnostic log: always record what emails were found on this detail page
       await logger.log("DEBUG",
-        `S3: Card #${i} (href=${href}) found emails: [${detailEmails.join(", ")}], target=${email}, matched=${matched}`
+        `S3: Card #${i} (href=${href}), target=${email}, matched=${matched}`
       );
 
       if (matched) {

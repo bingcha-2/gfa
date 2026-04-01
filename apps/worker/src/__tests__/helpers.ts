@@ -46,6 +46,7 @@ export async function createTestAccount(overrides: Partial<{
   adspowerProfileId: string;
   loginPassword: string;
   totpSecret: string;
+  status: string;
 }> = {}) {
   const db = getPrisma();
   const ts = Date.now();
@@ -56,6 +57,7 @@ export async function createTestAccount(overrides: Partial<{
       adspowerProfileId: overrides.adspowerProfileId ?? `profile-${ts}`,
       loginPassword: overrides.loginPassword,
       totpSecret: overrides.totpSecret,
+      status: (overrides.status as any) ?? "HEALTHY",
     }
   });
 }
@@ -66,6 +68,7 @@ export async function createTestFamilyGroup(
     groupName: string;
     maxMembers: number;
     availableSlots: number;
+    pendingInviteCount: number;
     status: string;
   }> = {}
 ) {
@@ -76,6 +79,7 @@ export async function createTestFamilyGroup(
       groupName: overrides.groupName ?? `Group-${Date.now()}`,
       maxMembers: overrides.maxMembers ?? 6,
       availableSlots: overrides.availableSlots ?? 5,
+      pendingInviteCount: overrides.pendingInviteCount ?? 0,
       status: (overrides.status as any) ?? "ACTIVE",
     }
   });
