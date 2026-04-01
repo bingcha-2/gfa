@@ -535,62 +535,132 @@ async function handleAcceptInvite(
     .catch(() => {});
   await ensureEnglish();
 
-  // Check if already in a family — leave first
-  const pageText = (await page.textContent("body").catch(() => "")) ?? "";
-  const IN_FAMILY = [
-    "Family member",
-    "Leave family group",
-    "Family group",
-    "家庭成员",
-    "退出家庭群组",
+  // ── Check if already in a family — leave first ──
+  const rawPageText = (await page.textContent("body").catch(() => "")) ?? "";
+  const lowerText = rawPageText.toLowerCase();
+  await logger.log("INFO", `Family page text (first 300 chars): ${lowerText.slice(0, 300)}`);
+
+  // Loose match: keywords indicating the user IS a family member
+  // Covers English, Chinese (Simplified & Traditional), Japanese, Korean, etc.
+  const IN_FAMILY_KEYWORDS = [
+    // English
+    "family member", "leave family", "your family", "you're a member",
+    "you are a member", "family group members",
+    // Chinese Simplified
+    "家庭成员", "家庭群组", "退出家庭", "家庭组成员", "离开家庭",
+    // Chinese Traditional
+    "家庭成員", "退出家庭群組", "離開家庭",
+    // Japanese
+    "ファミリーメンバー", "ファミリーグループ",
+    // Korean
+    "가족 그룹", "가족 구성원",
   ];
-  const NOT_IN_FAMILY = [
-    "Join a family",
-    "Create a family",
-    "Get started",
-    "加入",
-    "创建",
+
+  // Keywords indicating the user is NOT in a family (on the "join/create" page)
+  const NOT_IN_FAMILY_KEYWORDS = [
+    "join a family", "create a family", "get started", "no family group",
+    "加入家庭", "创建家庭", "创建一个家庭群组",
+    "加入", "建立家庭",
+    "ファミリーグループに参加", "ファミリーを作成",
+    "가족 그룹에 참여",
   ];
-  const alreadyInFamily =
-    IN_FAMILY.some((m) => pageText.includes(m)) &&
-    !NOT_IN_FAMILY.some((m) => pageText.includes(m));
+
+  const matchesInFamily = IN_FAMILY_KEYWORDS.some((kw) => lowerText.includes(kw.toLowerCase()));
+  const matchesNotInFamily = NOT_IN_FAMILY_KEYWORDS.some((kw) => lowerText.includes(kw.toLowerCase()));
+
+  const alreadyInFamily = matchesInFamily && !matchesNotInFamily;
+
+  await logger.log("INFO",
+    `Family detection: inFamily=${matchesInFamily}, notInFamily=${matchesNotInFamily}, verdict=${alreadyInFamily ? "IN_FAMILY" : "NOT_IN_FAMILY"}`
+  );
 
   if (alreadyInFamily) {
-    await logger.log("INFO", "Already in a family group, leaving first...");
+    await logger.log("INFO", "Already in a family group — attempting to leave...");
+
+    // Navigate to family details page (where the leave option is)
     await page.goto(FAMILY_DETAILS_URL, {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     });
     await page.waitForTimeout(3000);
+    await ensureEnglish();
 
-    const leaveBtn = page.locator(
-      [
-        'button:has-text("Leave family group")',
-        'button:has-text("Leave")',
-        'a:has-text("Leave")',
-        'div[role="button"]:has-text("Leave")',
-      ].join(", ")
-    );
-    if ((await leaveBtn.count()) > 0) {
-      await leaveBtn.first().evaluate((el: HTMLElement) => el.click());
-      await logger.log("INFO", "Clicked Leave family group");
-      await page.waitForTimeout(3000);
+    // Broadly match any button/link containing "leave" in various languages
+    const LEAVE_KEYWORDS = [
+      "Leave family group", "Leave", "leave family",
+      "退出家庭群組", "退出家庭群组", "退出", "離開家庭群組", "离开家庭",
+      "Leave group", "脱退",
+      "ファミリーグループから脱退", "脱退する",
+      "가족 그룹 나가기", "나가기",
+    ];
+    const leaveBtnSelectors = LEAVE_KEYWORDS.flatMap((kw) => [
+      `button:has-text("${kw}")`,
+      `a:has-text("${kw}")`,
+      `div[role="button"]:has-text("${kw}")`,
+      `span:has-text("${kw}")`,
+    ]);
 
-      // Confirm leave dialog
-      const confirmLeave = page.locator(
-        'button:has-text("Leave"), button:has-text("Confirm"), button:has-text("Yes")'
-      );
-      for (let i = 0; i < 3; i++) {
-        if ((await confirmLeave.count()) > 0) {
-          await confirmLeave
-            .last()
-            .evaluate((el: HTMLElement) => el.click());
-          await logger.log("INFO", `Confirmed leave (round ${i + 1})`);
-          await page.waitForTimeout(3000);
-        } else break;
+    const leaveBtn = page.locator(leaveBtnSelectors.join(", "));
+    const leaveCount = await leaveBtn.count();
+    await logger.log("INFO", `Found ${leaveCount} leave button(s)`);
+
+    if (leaveCount > 0) {
+      // Log what we found for debugging
+      for (let i = 0; i < Math.min(leaveCount, 3); i++) {
+        const btnText = await leaveBtn.nth(i).textContent().catch(() => "?");
+        await logger.log("INFO", `Leave button ${i}: "${btnText?.trim()}"`);
       }
 
+      await leaveBtn.first().evaluate((el: HTMLElement) => el.click());
+      await logger.log("INFO", "Clicked Leave button");
+      await page.waitForTimeout(3000);
+
+      // Confirm leave dialog — broadly match confirmation buttons
+      const CONFIRM_KEYWORDS = [
+        "Leave", "Confirm", "Yes", "OK", "Continue",
+        "退出", "確認", "确认", "是", "好",
+        "確定", "続ける", "はい",
+        "나가기", "확인",
+      ];
+      const confirmSelectors = CONFIRM_KEYWORDS.flatMap((kw) => [
+        `button:has-text("${kw}")`,
+        `div[role="button"]:has-text("${kw}")`,
+      ]);
+
+      const confirmBtn = page.locator(confirmSelectors.join(", "));
+      for (let i = 0; i < 3; i++) {
+        const confirmCount = await confirmBtn.count();
+        if (confirmCount > 0) {
+          await confirmBtn.last().evaluate((el: HTMLElement) => el.click());
+          await logger.log("INFO", `Confirmed leave (attempt ${i + 1})`);
+          await page.waitForTimeout(3000);
+        } else {
+          break;
+        }
+      }
+
+      // Verify: reload family page and check if we're truly out
       await page.waitForTimeout(2000);
+      await page.goto(FAMILY_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page.waitForTimeout(3000);
+      await ensureEnglish();
+
+      // Verify we actually left
+      const verifyText = ((await page.textContent("body").catch(() => "")) ?? "").toLowerCase();
+      const stillInFamily = IN_FAMILY_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
+      const nowNotInFamily = NOT_IN_FAMILY_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
+
+      if (stillInFamily && !nowNotInFamily) {
+        await logger.log("WARN", "Leave family may have failed — still detecting family membership. Continuing anyway...");
+      } else {
+        await logger.log("INFO", "Successfully left family group ✓");
+      }
+    } else {
+      await logger.log("WARN", "Could not find Leave button. Attempting to continue with accept flow...");
+      // Navigate back to family URL to look for invite
       await page.goto(FAMILY_URL, {
         waitUntil: "domcontentloaded",
         timeout: 60000,

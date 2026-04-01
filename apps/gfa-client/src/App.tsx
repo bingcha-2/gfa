@@ -15,6 +15,7 @@ import {
   Gift,
   SettingsIcon,
 } from "lucide-react";
+import { ToastContainer } from "./components/Toast";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
@@ -69,6 +70,7 @@ function App() {
       <main className="main-content">
         {renderPage()}
       </main>
+      <ToastContainer />
     </div>
   );
 }

@@ -13,7 +13,7 @@ interface OrderStatus {
 }
 
 export function Redeem() {
-  const { accounts } = useAppStore();
+  const { accounts, addToast } = useAppStore();
   const [code, setCode] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,6 +35,7 @@ export function Redeem() {
       const res = await invoke<{ order_no: string; status: string; message?: string }>("redeem_code", { code, email });
       console.log("[Redeem] Response:", res);
       setResult(`✅ 兑换成功！订单号: ${res.order_no}，状态: ${res.status}${res.message ? ` — ${res.message}` : ""}`);
+      addToast({ type: "success", message: `✅ 兑换码激活成功！订单号: ${res.order_no}` });
       // 保留兑换码用于查询
       setLookupCode(code);
       setCode("");
@@ -42,7 +43,9 @@ export function Redeem() {
       console.error("[Redeem] Error:", e);
       const errStr = String(e);
       const msgMatch = errStr.match(/"message"\s*:\s*"([^"]+)"/);
-      setError(msgMatch ? msgMatch[1] : errStr);
+      const errMsg = msgMatch ? msgMatch[1] : errStr;
+      setError(errMsg);
+      addToast({ type: "error", message: `兑换失败: ${errMsg}` });
     } finally {
       setLoading(false);
     }

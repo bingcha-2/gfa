@@ -33,11 +33,44 @@ impl AccountCredentials {
         if parts.len() < 2 {
             return Err(format!("Invalid format: expected at least email----password, got {} parts", parts.len()));
         }
+
+        let email = parts[0].trim().to_string();
+        let password = parts[1].trim().to_string();
+        
+        let mut recovery_email = None;
+        let mut totp_secret = None;
+
+        if parts.len() >= 3 {
+            let part2 = parts[2].trim();
+            let part3 = parts.get(3).map(|s| s.trim()).unwrap_or("");
+            
+            // Heuristic to distinguish recovery_email from totp_secret
+            // If part2 contains '@', it's likely the recovery email.
+            // If part3 contains '@', then part3 is the recovery email.
+            if part3.contains('@') {
+                recovery_email = Some(part3.to_string());
+                totp_secret = Some(part2.to_string());
+            } else if part2.contains('@') {
+                recovery_email = Some(part2.to_string());
+                if !part3.is_empty() {
+                    totp_secret = Some(part3.to_string());
+                }
+            } else {
+                // Default fallback (original order)
+                if !part2.is_empty() {
+                    recovery_email = Some(part2.to_string());
+                }
+                if !part3.is_empty() {
+                    totp_secret = Some(part3.to_string());
+                }
+            }
+        }
+
         Ok(Self {
-            email: parts[0].trim().to_string(),
-            password: parts[1].trim().to_string(),
-            recovery_email: parts.get(2).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            totp_secret: parts.get(3).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            email,
+            password,
+            recovery_email,
+            totp_secret,
         })
     }
 

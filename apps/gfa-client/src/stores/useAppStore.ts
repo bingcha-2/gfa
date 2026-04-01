@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Toast } from "../components/Toast";
 
 export interface Account {
   id: string;
@@ -78,6 +79,11 @@ interface AppState {
   logs: LogEntry[];
   clearLogs: () => void;
   runAcceptInvite: (email: string) => Promise<void>;
+
+  // Toast notifications
+  toasts: Toast[];
+  addToast: (toast: Omit<Toast, "id">) => void;
+  removeToast: (id: number) => void;
 
 
   // GFA API
@@ -182,6 +188,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   runningEmail: null,
   logs: [],
   clearLogs: () => set({ logs: [] }),
+
+  // Toast notifications
+  toasts: [],
+  addToast: (toast) => {
+    const id = logCounter++;
+    set((s) => ({ toasts: [...s.toasts, { ...toast, id }] }));
+  },
+  removeToast: (id) => {
+    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  },
 
   runAcceptInvite: async (email: string) => {
     set({ isRunning: true, runningEmail: email, logs: [] });

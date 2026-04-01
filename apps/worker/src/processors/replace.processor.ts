@@ -64,14 +64,19 @@ export async function processReplace(
   let reuseSession = false;
 
   try {
-    // Cooldown guard: skip immediately if this account recently failed login
-    // Throw regular Error (not UnrecoverableError) so BullMQ retries after backoff.
-    // Exponential backoff (30s→60s→120s) is typically enough for cooldown to expire.
+    // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → fail fast ──
     const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    if (cooldownSecs > 0) {
-      await logger.log("WARN", `[replace] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+    const priorFailures = await pool.getAccountTaskFailureCount(accountId);
+    if (cooldownSecs > 0 || priorFailures >= 3 || account.status !== "HEALTHY") {
+      await logger.log("WARN",
+        `[replace] Account ${accountId} unavailable (cooldown=${cooldownSecs}s, failures=${priorFailures}, status=${account.status}). ` +
+        `Replace tasks require the group's own account — cannot switch. Failing task.`
+      );
+      await logger.updateStatus("FAILED_RETRYABLE", {
+        code: "ACCOUNT_UNAVAILABLE",
+        message: `Account in cooldown/unhealthy (failures=${priorFailures}, status=${account.status})`,
+      });
+      throw new Error(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
@@ -106,9 +111,11 @@ export async function processReplace(
 
     const page = await browser.connect(debugUrl!, reuseSession);
 
-    // Gmail auto-login (required every time — browser clears cache on start)
+    // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
     if (!loginResult.success) {
+      // Record failure before handleLoginResult throws
+      // handleLoginResult will also record, but we want to ensure it happens
       await handleLoginResult(loginResult, { job, pool, prisma, logger, accountId });
     }
     // Record which account is now logged into this profile

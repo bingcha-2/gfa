@@ -6,7 +6,7 @@ import { useAppStore } from "../stores/useAppStore";
 type Phase = "idle" | "swapping" | "polling" | "accepting";
 
 export function Swap() {
-  const { accounts, runAcceptInvite, isRunning, logs } = useAppStore();
+  const { accounts, runAcceptInvite, isRunning, logs, addToast } = useAppStore();
   const [swapCode, setSwapCode] = useState("");
   const [originalEmail, setOriginalEmail] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -49,8 +49,10 @@ export function Swap() {
         const resp = JSON.parse(respJson);
         orderNo = resp.orderNo;
         setResult(`换号已入队 (${orderNo}) — 等待 Worker 处理...`);
+        addToast({ type: "info", message: `换号已提交，订单号: ${orderNo}` });
       } catch {
         setResult("换号已提交");
+        addToast({ type: "info", message: "换号已提交" });
       }
 
       // Phase 2: Poll for completion
@@ -60,9 +62,11 @@ export function Swap() {
 
         if (!completed) {
           setResult(`换号超时 — 请到管理后台检查订单 ${orderNo}`);
+          addToast({ type: "error", message: `换号超时，请检查订单 ${orderNo}` });
           return;
         }
         setResult(`换号完成 ✅ 邀请已发送到 ${newEmail}`);
+        addToast({ type: "success", message: `✅ 换号完成！邀请已发送到 ${newEmail}` });
       }
 
       // Phase 3: Auto accept invite
@@ -75,10 +79,12 @@ export function Swap() {
           setResult((prev) => prev + " → 正在自动接受邀请...");
           await runAcceptInvite(account.email);
           setResult(`全部完成 ✅ ${newEmail} 已加入家庭组`);
+          addToast({ type: "success", message: `✅ ${newEmail} 已成功加入家庭组` });
         } else {
           setResult(
             (prev) => prev + " ⚠️ 新邮箱未导入账号，请手动接受邀请"
           );
+          addToast({ type: "info", message: "新邮箱未导入账号，请手动接受邀请" });
         }
       }
     } catch (e) {

@@ -230,6 +230,37 @@ export class BrowserPool {
   }
 
   /**
+   * Record a task failure for an account (cumulative counter).
+   * Used to track repeated failures across all task types.
+   * After N failures (e.g. 3), the caller should mark the account as RISKY.
+   *
+   * Counter is permanent — must be manually cleared after human intervention
+   * via clearAccountTaskFailures().
+   *
+   * @returns the new cumulative failure count
+   */
+  async recordAccountTaskFailure(accountId: string): Promise<number> {
+    const key = `gfa:account-failures:${accountId}`;
+    const count = await this.redis.incr(key);
+    return count;
+  }
+
+  /**
+   * Get the current cumulative task failure count for an account.
+   */
+  async getAccountTaskFailureCount(accountId: string): Promise<number> {
+    const val = await this.redis.get(`gfa:account-failures:${accountId}`);
+    return val ? parseInt(val, 10) : 0;
+  }
+
+  /**
+   * Clear the task failure counter for an account (after human intervention).
+   */
+  async clearAccountTaskFailures(accountId: string): Promise<void> {
+    await this.redis.del(`gfa:account-failures:${accountId}`);
+  }
+
+  /**
    * Check how many profiles are currently free.
    * Useful for health checks / status endpoints.
    */

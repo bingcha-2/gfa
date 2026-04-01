@@ -5,17 +5,21 @@
  * into a single reusable function. Each processor calls this after gmailLogin()
  * returns a failed result.
  *
+ * === New strategy (v2) ===
+ * On ANY login failure:
+ *   1. Record cumulative failure count for the account
+ *   2. If count >= 3 → mark account RISKY + MANUAL_REVIEW (needs human intervention)
+ *   3. Otherwise → throw Error so BullMQ retries (processor may try a different account)
+ *
+ * ACCOUNT_LOCKED is still immediately non-retryable (SUSPENDED).
+ *
  * Behavior matrix:
- *   TRANSIENT         → throw Error (BullMQ retries)
- *   PHONE_CHALLENGE   → recordLoginFailure + throw Error (BullMQ retries)
- *   CAPTCHA           → recordLoginFailure(5min) + throw Error (BullMQ retries)
- *   ACCOUNT_LOCKED    → recordLoginFailure(30min) + mark account SUSPENDED
- *                        + updateStatus MANUAL_REVIEW + throw UnrecoverableError
- *   VERIFICATION_REQUIRED / UNKNOWN (last attempt)
- *                     → recordLoginFailure + mark account + updateStatus MANUAL_REVIEW
- *                        + throw UnrecoverableError (or return for health)
- *   VERIFICATION_REQUIRED / UNKNOWN (not last attempt)
- *                     → throw Error (BullMQ retries)
+ *   TRANSIENT           → record failure + throw Error (BullMQ retries with possible account switch)
+ *   PHONE_CHALLENGE     → record failure + throw Error
+ *   CAPTCHA             → record failure + cooldown + throw Error
+ *   ACCOUNT_LOCKED      → mark SUSPENDED + throw UnrecoverableError
+ *   VERIFICATION_REQUIRED / UNKNOWN
+ *                       → record failure, if count >= 3 mark RISKY, else throw Error
  */
 
 import { Job, UnrecoverableError } from "bullmq";
@@ -23,6 +27,9 @@ import type { PrismaClient } from "@prisma/client";
 import type { BrowserPool } from "./browser-pool";
 import type { TaskLogger } from "./task-logger";
 import type { GmailLoginResult } from "./gmail-login";
+
+/** Threshold: after this many cumulative failures, mark account RISKY */
+const ACCOUNT_FAILURE_THRESHOLD = 3;
 
 export interface HandleLoginResultContext {
   job: Job;
@@ -53,10 +60,11 @@ export interface HandleLoginResultContext {
  * Handle a failed login result from gmailLogin().
  *
  * On success result, this is a no-op (returns immediately).
- * On failure, throws an appropriate Error or UnrecoverableError
- * (unless returnOnFinal is true for the last-attempt path).
+ * On failure, records cumulative failure count and either:
+ *   - marks account RISKY + throws UnrecoverableError (if count >= threshold)
+ *   - throws Error for BullMQ retry (processor can try a different account)
  *
- * @returns true if the handler returned without throwing (only when returnOnFinal=true on last attempt)
+ * @returns true if the handler returned without throwing (only when returnOnFinal=true)
  */
 export async function handleLoginResult(
   loginResult: GmailLoginResult,
@@ -66,28 +74,11 @@ export async function handleLoginResult(
 
   const { job, pool, prisma, logger, accountId } = ctx;
 
-  // TRANSIENT failures (e.g. password page didn't load) → let BullMQ retry
-  if (loginResult.reason === "TRANSIENT") {
-    throw new Error(`Login transient failure: ${loginResult.detail}`);
-  }
-
-  // PHONE_CHALLENGE → retryable (Google resets risk on profile reopen)
-  if (loginResult.reason === "PHONE_CHALLENGE") {
-    await pool.recordLoginFailure(accountId);
-    throw new Error(`Phone challenge (will retry): ${loginResult.detail}`);
-  }
-
-  // CAPTCHA → retryable with short cooldown
-  if (loginResult.reason === "CAPTCHA") {
-    const CAPTCHA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-    await pool.recordLoginFailure(accountId, CAPTCHA_COOLDOWN_MS);
-    throw new Error(`CAPTCHA challenge (will retry): ${loginResult.detail}`);
-  }
-
-  // ACCOUNT_LOCKED → non-retryable, long cooldown
+  // ACCOUNT_LOCKED → non-retryable, immediately mark SUSPENDED
   if (loginResult.reason === "ACCOUNT_LOCKED") {
     const LOCKED_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
     await pool.recordLoginFailure(accountId, LOCKED_COOLDOWN_MS);
+    await pool.recordAccountTaskFailure(accountId);
     await prisma.account.update({
       where: { id: accountId },
       data: { status: "SUSPENDED" as any },
@@ -99,15 +90,31 @@ export async function handleLoginResult(
     throw new UnrecoverableError("MANUAL_REVIEW");
   }
 
-  // VERIFICATION_REQUIRED or UNKNOWN → only mark account on LAST attempt
-  const isLastAttempt = (job.attemptsMade ?? 0) >= 2;
-  if (isLastAttempt) {
-    await pool.recordLoginFailure(accountId);
+  // ── All other failures: record cumulative count and check threshold ──
 
+  // CAPTCHA → also set a short cooldown to avoid hammering Google
+  if (loginResult.reason === "CAPTCHA") {
+    const CAPTCHA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+    await pool.recordLoginFailure(accountId, CAPTCHA_COOLDOWN_MS);
+  } else {
+    // For TRANSIENT, PHONE_CHALLENGE, VERIFICATION_REQUIRED, UNKNOWN:
+    // set a shorter cooldown to avoid immediate re-login
+    await pool.recordLoginFailure(accountId, 2 * 60 * 1000); // 2 min cooldown
+  }
+
+  // Record cumulative failure count
+  const failureCount = await pool.recordAccountTaskFailure(accountId);
+  await logger.log(
+    "WARN",
+    `Account ${accountId} login failed (reason: ${loginResult.reason}), cumulative failures: ${failureCount}/${ACCOUNT_FAILURE_THRESHOLD}`
+  );
+
+  // Check if we've hit the threshold → mark account RISKY for human intervention
+  if (failureCount >= ACCOUNT_FAILURE_THRESHOLD) {
     const accountStatus =
       loginResult.reason === "VERIFICATION_REQUIRED"
         ? "VERIFICATION_REQUIRED"
-        : (ctx.unknownAccountStatus ?? "VERIFICATION_REQUIRED");
+        : (ctx.unknownAccountStatus ?? "RISKY");
 
     await prisma.account.update({
       where: { id: accountId },
@@ -117,9 +124,14 @@ export async function handleLoginResult(
       },
     });
 
+    await logger.log(
+      "ERROR",
+      `Account ${accountId} reached ${failureCount} failures — marked as ${accountStatus}, needs human intervention`
+    );
+
     await logger.updateStatus("MANUAL_REVIEW", {
-      code: loginResult.reason,
-      message: loginResult.detail,
+      code: `ACCOUNT_${accountStatus}`,
+      message: `Account hit ${failureCount} cumulative failures. Reason: ${loginResult.detail}`,
     });
 
     if (ctx.returnOnFinal) {
@@ -129,8 +141,9 @@ export async function handleLoginResult(
     throw new UnrecoverableError("MANUAL_REVIEW");
   }
 
-  // Not last attempt — let BullMQ retry
+  // Under threshold → throw Error so BullMQ retries.
+  // The processor (invite/replace) can catch this and try a different account.
   throw new Error(
-    `Login failed (attempt ${(job.attemptsMade ?? 0) + 1}/3, will retry): ${loginResult.detail}`
+    `LOGIN_FAILED:${loginResult.reason}:${accountId}|${loginResult.detail}`
   );
 }
