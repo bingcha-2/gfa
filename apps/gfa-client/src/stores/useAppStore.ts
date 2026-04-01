@@ -114,7 +114,7 @@ async function pollUntilDone(
   taskId: string,
   onLog: (entry: LogEntry) => void,
   intervalMs = 3000,
-  timeoutMs = 180000
+  timeoutMs = 420_000
 ): Promise<AutomationStatus> {
   const deadline = Date.now() + timeoutMs;
   let lastLogCount = 0;
