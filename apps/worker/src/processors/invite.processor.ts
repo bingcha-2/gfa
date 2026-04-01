@@ -152,7 +152,7 @@ export async function processInvite(
           code: "NO_HEALTHY_ACCOUNT",
           message: `Original account in cooldown/unhealthy and no alternative found`,
         });
-        throw new Error(`No healthy account available for invite`);
+        throw new UnrecoverableError(`No healthy account available for invite`);
       }
     }
 
