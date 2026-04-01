@@ -76,7 +76,7 @@ export async function processReplace(
         code: "ACCOUNT_UNAVAILABLE",
         message: `Account in cooldown/unhealthy (failures=${priorFailures}, status=${account.status})`,
       });
-      throw new Error(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
+      throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
     }
 
     // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
