@@ -158,15 +158,23 @@ export async function processSync(
     try {
       const subInfo = await scrapeSubscriptionInfo(page);
       if (subInfo) {
+        // Only update subscriptionStatusUpdatedAt when the status actually changes
+        const currentAccount = await prisma.account.findUnique({
+          where: { id: accountId },
+          select: { subscriptionStatus: true },
+        });
+        const statusChanged = currentAccount?.subscriptionStatus !== subInfo.status;
+
         await prisma.account.update({
           where: { id: accountId },
           data: {
             subscriptionExpiresAt: subInfo.expiresAt,
             subscriptionStatus: subInfo.status,
             subscriptionPlan: subInfo.planName,
+            ...(statusChanged ? { subscriptionStatusUpdatedAt: new Date() } : {}),
           },
         });
-        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}${statusChanged ? " (status changed)" : ""}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
       }
     } catch {
       // Fully silent: even the WARN log failing must not bubble to the outer catch

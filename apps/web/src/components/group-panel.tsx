@@ -1302,6 +1302,16 @@ user2@gmail.com`}
                                   </span>
                                 </div>
                               )}
+                              {/* 订阅暂停时间 */}
+                              {group.account?.subscriptionStatus === 'SUSPENDED' && group.account?.subscriptionStatusUpdatedAt && (
+                                <div style={{ marginTop: '2px', fontSize: '0.75rem', color: '#d97706' }}>
+                                  暂停于 {formatDate(group.account.subscriptionStatusUpdatedAt)}
+                                </div>
+                              )}
+                              {/* 最近同步时间 */}
+                              <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--foreground-muted, #737373)' }}>
+                                同步 {group.lastSyncedAt ? formatDate(group.lastSyncedAt) : '从未'}
+                              </div>
                             </td>
                             <td>
                               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>

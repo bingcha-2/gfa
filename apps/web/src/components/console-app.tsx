@@ -534,7 +534,9 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   }
 
   const availableSlots =
-    data.groups.reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
+    data.groups
+      .filter((group) => group.account?.status === "HEALTHY")
+      .reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
   const activeOrders =
     data.orders.filter((order) => !orderTerminalStatuses.has(order.status)).length ?? 0;
   const manualReviewTasks =

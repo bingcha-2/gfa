@@ -141,6 +141,7 @@ model Account {
   lastHealthCheckAt        DateTime?
   subscriptionExpiresAt    DateTime?
   subscriptionStatus       String?   // "ACTIVE" | "EXPIRED" | "SUSPENDED"
+  subscriptionStatusUpdatedAt DateTime? // timestamp when subscriptionStatus last changed
   subscriptionPlan         String?   // e.g. "Google AI Ultra 30 TB"
   familyGroups             FamilyGroup[]
   tasks               Task[]

@@ -49,8 +49,10 @@ export type FamilyGroupSummary = {
     id: string;
     name: string;
     loginEmail: string;
+    status?: string;
     subscriptionExpiresAt?: string | null;
     subscriptionStatus?: string | null;
+    subscriptionStatusUpdatedAt?: string | null;
     subscriptionPlan?: string | null;
   };
   _count?: {
