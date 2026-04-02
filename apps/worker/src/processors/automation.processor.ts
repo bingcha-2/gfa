@@ -671,6 +671,7 @@ async function handleAcceptInvite(
     "家庭成員", "退出家庭群組", "離開家庭",
     "ファミリーメンバー", "ファミリーグループ",
     "가족 그룹", "가족 구성원",
+    "thành viên gia đình", "nhóm gia đình",
   ];
 
   const NOT_IN_FAMILY_KEYWORDS = [
@@ -678,7 +679,8 @@ async function handleAcceptInvite(
     "加入家庭", "创建家庭", "创建一个家庭群组",
     "加入", "建立家庭",
     "ファミリーグループに参加", "ファミリーを作成",
-    "가족 그룹에 참여",
+    "가족 그룹에 참여", "가족 그룹 만들기",
+    "tham gia nhóm gia đình", "tạo nhóm gia đình",
   ];
 
   const matchesInFamily = IN_FAMILY_KEYWORDS.some((kw) => lowerText.includes(kw.toLowerCase()));
@@ -711,6 +713,7 @@ async function handleAcceptInvite(
       "Leave group", "脱退",
       "ファミリーグループから脱退", "脱退する",
       "가족 그룹 나가기", "나가기",
+      "Rời nhóm gia đình", "Rời khỏi",
     ];
     const leaveBtnSelectors = LEAVE_KEYWORDS.flatMap((kw) => [
       `button:has-text("${kw}")`,
@@ -804,7 +807,8 @@ async function handleAcceptInvite(
         "Leave", "Confirm", "Yes", "OK", "Continue",
         "退出", "確認", "确认", "是", "好",
         "確定", "続ける", "はい",
-        "나가기", "확인",
+        "나가기", "확인", "예",
+        "Rời khỏi", "Xác nhận", "Có",
       ];
       const confirmSelectors = CONFIRM_LEAVE_KEYWORDS.flatMap((kw) => [
         `button:has-text("${kw}")`,
@@ -860,6 +864,7 @@ async function handleAcceptInvite(
         "查看邀请", "邀请", "已邀请你",
         "招待", "招待状を表示",
         "초대", "초대장 보기",
+        "lời mời", "xem lời mời",
       ];
       const hasInvitation = INVITATION_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
 
@@ -900,6 +905,12 @@ async function handleAcceptInvite(
     "查看邀请",
     "加入",
     "接受",
+    // Japanese
+    "招待状を表示", "参加", "承諾",
+    // Korean
+    "초대장 보기", "가입", "수락",
+    // Vietnamese
+    "Xem lời mời", "Tham gia", "Chấp nhận",
   ];
   const inviteSelectors = INVITE_KEYWORDS.flatMap((kw) => [
     `button:has-text("${kw}")`,
@@ -1002,6 +1013,12 @@ async function handleAcceptInvite(
     "已加入",
     "家庭成员",
     "家庭成員",
+    // Japanese
+    "ファミリーグループから脱退",
+    // Korean
+    "가족 그룹 나가기",
+    // Vietnamese
+    "Rời nhóm gia đình",
   ];
 
   for (let confirmRound = 0; confirmRound < 5; confirmRound++) {
@@ -1036,6 +1053,12 @@ async function handleAcceptInvite(
       "加入",
       "接受",
       "继续",
+      // Japanese
+      "参加する", "参加", "承諾", "確認", "はい",
+      // Korean
+      "가족 그룹 가입하기", "가입", "수락", "확인", "예",
+      // Vietnamese
+      "Tham gia nhóm gia đình", "Tham gia", "Chấp nhận", "Xác nhận", "Có",
     ];
     const confirmSelectors = CONFIRM_KEYWORDS.flatMap((kw) => [
       // Priority 1: Real buttons

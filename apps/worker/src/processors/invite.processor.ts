@@ -505,9 +505,19 @@ async function executeInviteOnPage(
     'a:has-text("Add member")',
     'button:has-text("Invite member")',
     'button:has-text("Invite family member")',
+    // Chinese
     'a:has-text("邀请成员")',
     'a:has-text("邀請成員")',
+    // Japanese
     'a:has-text("メンバーを招待")',
+    // Korean
+    'a:has-text("구성원 초대")',
+    'a:has-text("가족 구성원 초대")',
+    'button:has-text("구성원 초대")',
+    // Vietnamese
+    'a:has-text("Mời thành viên")',
+    'a:has-text("Thêm thành viên")',
+    'button:has-text("Mời thành viên")',
   ].join(", "));
 
   let inviteElement: import("playwright").Locator | null = null;
@@ -569,6 +579,8 @@ async function executeInviteOnPage(
     'input[placeholder*="電子郵件"]',
     'input[placeholder*="电子邮件"]',
     'input[placeholder*="email" i]',
+    'input[placeholder*="メール"]',
+    'input[placeholder*="이메일"]',
     'input[type="email"]',
   ].join(", "));
 
@@ -586,7 +598,12 @@ async function executeInviteOnPage(
   await emailInput.first().press("Enter");
   await page.waitForTimeout(1000);
 
-  const sendButton = page.locator('button:has-text("傳送"), button:has-text("Send"), button:has-text("发送")');
+  const sendButton = page.locator(
+    'button:has-text("傳送"), button:has-text("Send"), button:has-text("发送"), ' +
+    'button:has-text("보내기"), button:has-text("전송"), ' +
+    'button:has-text("送信"), ' +
+    'button:has-text("Gửi")'
+  );
   if ((await sendButton.count()) === 0) throw new Error("Cannot find send button on invite page");
 
   await sendButton.first().click();

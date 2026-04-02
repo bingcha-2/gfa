@@ -53,24 +53,6 @@ export async function processRemove(
   const logger = new TaskLogger(prisma, taskId, workerId);
   const browser = new WorkerBrowser();
 
-  /** Force English on any Google page — only call at major navigation points */
-  async function ensureEnglish(page: import("playwright").Page) {
-    try {
-      const url = new URL(page.url());
-      if (
-        url.hostname.includes("google") &&
-        url.searchParams.get("hl") !== "en"
-      ) {
-        url.searchParams.set("hl", "en");
-        await page.goto(url.toString(), {
-          waitUntil: "domcontentloaded",
-          timeout: 15000,
-        });
-        await page.waitForTimeout(1500);
-      }
-    } catch {}
-  }
-
   const account = await prisma.account.findUnique({ where: { id: job.data.accountId } });
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Account not found` });
@@ -154,13 +136,10 @@ export async function processRemove(
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, account.id);
 
-    await ensureEnglish(page);
-
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await ensureEnglish(page);
 
     // Query other members' GAIA IDs for cross-validation safety check
     const otherMembers = await prisma.familyMember.findMany({
@@ -381,7 +360,10 @@ async function removeMemberOnPage(
       await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
       hasAction = await page.locator(
-        'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove")'
+        'button:has-text("移除"), button:has-text("取消邀請"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("Remove"), ' +
+        'button:has-text("구성원 삭제"), button:has-text("초대 취소"), ' +
+        'button:has-text("メンバーを削除"), button:has-text("削除"), ' +
+        'button:has-text("Xóa thành viên"), button:has-text("Xóa")'
       ).count();
 
       if (hasAction > 0) {
@@ -431,7 +413,8 @@ async function removeMemberOnPage(
   // Safety net: detect if we accidentally landed on the family manager's page.
   // The manager page shows "Delete Family Group" instead of "Remove member".
   const deleteGroupBtn = page.locator(
-    'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組")'
+    'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組"), ' +
+    'button:has-text("가족 그룹 삭제"), button:has-text("ファミリーグループを削除"), button:has-text("Xóa nhóm gia đình")'
   );
   if ((await deleteGroupBtn.count()) > 0) {
     await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
@@ -449,16 +432,24 @@ async function removeMemberOnPage(
     'button:has-text("取消邀请")',
     'button:has-text("撤銷")',
     'button:has-text("撤销")',
-    'button:has-text("구성원 삭제")',
-    'button:has-text("삭제")',
-    'button:has-text("나가기")',
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
     'button:has-text("Revoke")',
     'button:has-text("Remove")',
+    // Korean
+    'button:has-text("구성원 삭제")',
+    'button:has-text("초대 취소")',
+    'button:has-text("취소")',
     // Japanese
+    'button:has-text("メンバーを削除")',
     'button:has-text("削除")',
-    'button:has-text("脱退")',
+    'button:has-text("招待をキャンセル")',
+    'button:has-text("キャンセル")',
+    // Vietnamese
+    'button:has-text("Xóa thành viên")',
+    'button:has-text("Xóa")',
+    'button:has-text("Hủy lời mời")',
+    'button:has-text("Thu hồi")',
   ].join(", "));
 
   try {
@@ -505,11 +496,25 @@ async function removeMemberOnPage(
     'button:has-text("Revoke")', 'button:has-text("撤銷")', 'button:has-text("撤销")',
     'button:has-text("是")', 'button:has-text("Yes")',
     'button:has-text("確認")', 'button:has-text("确认")', 'button:has-text("Confirm")',
-    'button:has-text("확인")', 'button:has-text("네")',
     'a:has-text("Remove")', 'a:has-text("移除")',
     'a:has-text("是")', 'a:has-text("Yes")',
     'a:has-text("確認")', 'a:has-text("Confirm")',
     'div[role="button"]:has-text("Remove")', 'div[role="button"]:has-text("移除")',
+    // Korean
+    'button:has-text("구성원 삭제")', 'button:has-text("삭제")',
+    'button:has-text("초대 취소")',
+    'button:has-text("예")', 'button:has-text("확인")',
+    'a:has-text("삭제")', 'a:has-text("예")', 'a:has-text("확인")',
+    // Japanese
+    'button:has-text("削除")', 'button:has-text("メンバーを削除")',
+    'button:has-text("招待をキャンセル")',
+    'button:has-text("はい")', 'button:has-text("確認")',
+    'a:has-text("削除")', 'a:has-text("はい")',
+    // Vietnamese
+    'button:has-text("Xóa")', 'button:has-text("Xóa thành viên")',
+    'button:has-text("Hủy lời mời")',
+    'button:has-text("Có")', 'button:has-text("Xác nhận")',
+    'a:has-text("Xóa")', 'a:has-text("Có")', 'a:has-text("Xác nhận")',
   ].join(", ");
 
   for (let step = 0; step < 10; step++) {
@@ -678,7 +683,10 @@ async function removeMemberOnPage(
     // ── Handle /family/remove/ confirmation page ──
     if (stepUrl.includes("family/remove/")) {
       const removeFinalBtn = page.locator(
-        'button:has-text("Remove"), button:has-text("移除"), button:has-text("Confirm"), button:has-text("確認")'
+        'button:has-text("Remove"), button:has-text("移除"), button:has-text("Confirm"), button:has-text("確認"), ' +
+        'button:has-text("삭제"), button:has-text("확인"), ' +
+        'button:has-text("削除"), ' +
+        'button:has-text("Xóa"), button:has-text("Xác nhận")'
       );
       if ((await removeFinalBtn.count()) > 0) {
         await removeFinalBtn.last().click();
@@ -844,7 +852,8 @@ async function fallbackFindMember(
       // Definitive manager detection: "Delete Family Group" button only appears on the manager's own page.
       // Always skip regardless of whether the email appears in body text.
       const deleteGroupBtn = await page.locator(
-        'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組")'
+        'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組"), ' +
+        'button:has-text("가족 그룹 삭제"), button:has-text("ファミリーグループを削除"), button:has-text("Xóa nhóm gia đình")'
       ).count();
       if (deleteGroupBtn > 0) {
         await logger.log("DEBUG", `S3: Card #${i} is manager page (Delete Family Group button), skipping`);
