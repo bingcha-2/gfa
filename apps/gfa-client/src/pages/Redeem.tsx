@@ -32,10 +32,21 @@ export function Redeem() {
     setError(null);
     try {
       console.log("[Redeem] Redeeming code:", code, "for email:", email);
-      const res = await invoke<{ order_no: string; status: string; message?: string }>("redeem_code", { code, email });
+      const res = await invoke<{ orderNo: string; status: string; message?: string }>("redeem_code", { code, email });
       console.log("[Redeem] Response:", res);
-      setResult(`✅ 兑换成功！订单号: ${res.order_no}，状态: ${res.status}${res.message ? ` — ${res.message}` : ""}`);
-      addToast({ type: "success", message: `✅ 兑换码激活成功！订单号: ${res.order_no}` });
+      
+      const isQueued = res.status === "TASK_QUEUED" || res.status === "INVITE_SENT";
+      const icon = isQueued ? "✅" : "ℹ️";
+      const prefix = isQueued ? "兑换成功！" : "已受理但需审核：";
+      
+      setResult(`${icon} ${prefix}订单号: ${res.orderNo}，状态: ${res.status}${res.message ? ` — ${res.message}` : ""}`);
+      
+      if (isQueued) {
+        addToast({ type: "success", message: `✅ 兑换码激活成功！订单号: ${res.orderNo}` });
+      } else {
+        addToast({ type: "info", message: `ℹ️ 订单已受理：${res.status}` });
+      }
+      
       // 保留兑换码用于查询
       setLookupCode(code);
       setCode("");

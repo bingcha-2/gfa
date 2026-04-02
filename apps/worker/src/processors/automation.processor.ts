@@ -165,12 +165,16 @@ export async function processAutomation(
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("ACCEPT_INVITE_TIMEOUT: exceeded 5 min")), ACCEPT_INVITE_TIMEOUT_MS)
         );
-        await Promise.race([
+        const acceptResult = await Promise.race([
           handleAcceptInvite(page, loginCreds, logger),
           timeoutPromise,
         ]);
-        // After accept-invite succeeds, sync Order + FamilyMember status
-        await syncOrderAfterAccept(prisma, credentials.email, logger);
+        // Only sync Order + FamilyMember status when accept-invite actually succeeded
+        if (acceptResult === true) {
+          await syncOrderAfterAccept(prisma, credentials.email, logger);
+        } else {
+          await logger.log("WARN", "accept-invite did not succeed — skipping Order/FamilyMember sync");
+        }
         break;
       }
     }
@@ -599,7 +603,7 @@ async function handleAcceptInvite(
   page: import("playwright").Page,
   credentials: LoginCredentials,
   logger: TaskLogger
-): Promise<void> {
+): Promise<boolean> {
   await logger.log("INFO", "Starting accept-invite flow");
 
   /** Force English on any Google page — only call at major navigation points */
@@ -652,6 +656,7 @@ async function handleAcceptInvite(
   // Handle re-auth if Google redirected to a challenge page
   for (let ra = 0; ra < 3; ra++) {
     if (!(await checkAndHandleReAuth())) break;
+    await ensureEnglish();
   }
 
   // ── Check if already in a family — leave first ──
@@ -697,6 +702,7 @@ async function handleAcceptInvite(
     // Handle re-auth when navigating to family details
     for (let ra = 0; ra < 3; ra++) {
       if (!(await checkAndHandleReAuth())) break;
+      await ensureEnglish();
     }
 
     const LEAVE_KEYWORDS = [
@@ -725,14 +731,75 @@ async function handleAcceptInvite(
 
       await leaveBtn.first().evaluate((el: HTMLElement) => el.click());
       await logger.log("INFO", "Clicked Leave button");
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
 
       // Handle re-auth that may appear after clicking Leave
-      for (let ra = 0; ra < 3; ra++) {
-        if (!(await checkAndHandleReAuth())) break;
+      // Google often redirects to a challenge page or shows a password/TOTP overlay
+      for (let ra = 0; ra < 5; ra++) {
+        const currentUrl = page.url();
+        await logger.log("DEBUG", `[leave-family] Re-auth check ${ra + 1}, URL: ${currentUrl}`);
+
+        // Check URL-based re-auth (redirect to challenge page)
+        if (await checkAndHandleReAuth()) {
+          await logger.log("INFO", `[leave-family] Re-auth handled (round ${ra + 1})`);
+          await page.waitForTimeout(3000);
+          continue;
+        }
+
+        // Also check for inline password field that Google sometimes shows as an overlay
+        const inlinePwd = page.locator(
+          'input[type="password"]:visible'
+        );
+        if (credentials.loginPassword && (await inlinePwd.count()) > 0) {
+          await inlinePwd.first().fill(credentials.loginPassword);
+          await logger.log("INFO", "[leave-family] Filled inline password field");
+          // Try to click a submit/next button near it
+          const inlineSubmit = page.locator(
+            'button[type="submit"], button[jsname="LgbsSe"], ' +
+            'div[role="button"][jsname="LgbsSe"], #passwordNext button'
+          );
+          if ((await inlineSubmit.count()) > 0) {
+            await inlineSubmit.first().evaluate((el: HTMLElement) => el.click());
+          } else {
+            await page.keyboard.press("Enter");
+          }
+          await logger.log("INFO", "[leave-family] Inline password submitted");
+          await page.waitForTimeout(4000);
+          continue;
+        }
+
+        // Check for inline TOTP field
+        if (credentials.totpSecret) {
+          const inlineTotp = page.locator(
+            'input[type="tel"]:visible, input[name="totpPin"]:visible, input[name="Pin"]:visible'
+          );
+          if ((await inlineTotp.count()) > 0) {
+            const remaining = totpSecondsRemaining();
+            if (remaining < 5) {
+              await page.waitForTimeout((remaining + 1) * 1000);
+            }
+            const code = generateTOTP(credentials.totpSecret!);
+            await inlineTotp.first().fill(code);
+            await logger.log("INFO", `[leave-family] Inline TOTP submitted (${code.substring(0, 2)}****)`);
+            const inlineSubmit = page.locator(
+              'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
+              'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
+            );
+            if ((await inlineSubmit.count()) > 0) {
+              await inlineSubmit.first().evaluate((el: HTMLElement) => el.click());
+            } else {
+              await page.keyboard.press("Enter");
+            }
+            await page.waitForTimeout(4000);
+            continue;
+          }
+        }
+
+        break; // No re-auth detected
       }
 
-      // Confirm leave dialog
+      // Confirm leave dialog — Google shows a confirmation popup
+      await page.waitForTimeout(2000);
       const CONFIRM_LEAVE_KEYWORDS = [
         "Leave", "Confirm", "Yes", "OK", "Continue",
         "退出", "確認", "确认", "是", "好",
@@ -745,31 +812,66 @@ async function handleAcceptInvite(
       ]);
 
       const confirmBtn = page.locator(confirmSelectors.join(", "));
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
+        // Also check for re-auth between confirm attempts
+        if (await checkAndHandleReAuth()) {
+          await logger.log("INFO", `[leave-family] Re-auth during confirm (attempt ${i + 1})`);
+          await page.waitForTimeout(3000);
+          continue;
+        }
+
+        // If URL no longer contains "family/leave", the leave was processed
+        const currentUrl = page.url();
+        if (!currentUrl.includes("family/leave") && !currentUrl.includes("challenge")) {
+          await logger.log("INFO", `[leave-family] URL changed away from leave page: ${currentUrl} — leave likely succeeded`);
+          break;
+        }
+
         const confirmCount = await confirmBtn.count();
         if (confirmCount > 0) {
+          const btnText = await confirmBtn.last().textContent().catch(() => "?");
           await confirmBtn.last().evaluate((el: HTMLElement) => el.click());
-          await logger.log("INFO", `Confirmed leave (attempt ${i + 1})`);
-          await page.waitForTimeout(2000);
+          await logger.log("INFO", `Confirmed leave (attempt ${i + 1}), clicked: "${btnText?.trim()}"`);
+          await page.waitForTimeout(3000);
         } else {
+          await logger.log("DEBUG", `[leave-family] No confirm button found (attempt ${i + 1})`);
           break;
         }
       }
 
       // Verify: reload family page and check
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(3000);
       await page.goto(FAMILY_URL, {
         waitUntil: "domcontentloaded",
         timeout: 30000,
       });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
+      await ensureEnglish();
 
       const verifyText = ((await page.textContent("body").catch(() => "")) ?? "").toLowerCase();
       const stillInFamily = IN_FAMILY_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
       const nowNotInFamily = NOT_IN_FAMILY_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
 
-      if (stillInFamily && !nowNotInFamily) {
-        await logger.log("WARN", "Leave family may have failed — still detecting family membership. Continuing anyway...");
+      // Also check for pending invitation on the page — if an invitation is visible,
+      // the leave was successful (we left the old group and can see the new invite).
+      const INVITATION_KEYWORDS = [
+        "view invitation", "invitation", "you've been invited",
+        "join", "accept invitation", "accept",
+        "查看邀请", "邀请", "已邀请你",
+        "招待", "招待状を表示",
+        "초대", "초대장 보기",
+      ];
+      const hasInvitation = INVITATION_KEYWORDS.some((kw) => verifyText.includes(kw.toLowerCase()));
+
+      if (stillInFamily && !nowNotInFamily && !hasInvitation) {
+        await logger.log("ERROR", "Leave family FAILED — still in family group after all attempts");
+        await logger.updateStatus("FAILED_RETRYABLE", {
+          code: "LEAVE_FAMILY_FAILED",
+          message: "Could not leave existing family group — Google may require manual password/2FA confirmation",
+        });
+        return false;
+      } else if (hasInvitation) {
+        await logger.log("INFO", "Successfully left family group ✓ (pending invitation detected on page)");
       } else {
         await logger.log("INFO", "Successfully left family group ✓");
       }
@@ -780,8 +882,12 @@ async function handleAcceptInvite(
         timeout: 30000,
       });
       await page.waitForTimeout(2000);
+      await ensureEnglish();
     }
   }
+
+  // ── Ensure English before looking for invitation ──
+  await ensureEnglish();
 
   // ── Look for pending invitation ──
   await logger.log("INFO", "Looking for pending invitation");
@@ -791,9 +897,14 @@ async function handleAcceptInvite(
     "Join",
     "Accept",
     "Accept invitation",
-    "查看邀请",
+    // Chinese
+    "查看邀请", "查看邀請",
     "加入",
     "接受",
+    // Korean
+    "초대장 보기", "가입", "수락", "참여",
+    // Japanese
+    "招待状を表示", "参加", "承諾",
   ];
   const inviteSelectors = INVITE_KEYWORDS.flatMap((kw) => [
     `button:has-text("${kw}")`,
@@ -811,6 +922,7 @@ async function handleAcceptInvite(
     inviteFound = true;
     await logger.log("INFO", "Clicked invite button on families page");
     await page.waitForTimeout(2000);
+    await ensureEnglish();
   }
 
   // Approach 2: family details page
@@ -820,6 +932,7 @@ async function handleAcceptInvite(
       timeout: 30000,
     });
     await page.waitForTimeout(2000);
+    await ensureEnglish();
 
     const joinBtn2 = page.locator(inviteSelectors.join(", "));
     if ((await joinBtn2.count()) > 0) {
@@ -827,6 +940,7 @@ async function handleAcceptInvite(
       inviteFound = true;
       await logger.log("INFO", "Clicked invite button on details page");
       await page.waitForTimeout(2000);
+      await ensureEnglish();
     }
   }
 
@@ -865,6 +979,7 @@ async function handleAcceptInvite(
             timeout: 30000,
           });
           await page.waitForTimeout(2000);
+          await ensureEnglish();
           inviteFound = true;
           await logger.log("INFO", "Opened invitation link from email");
         }
@@ -877,7 +992,7 @@ async function handleAcceptInvite(
       code: "NO_INVITATION",
       message: "No pending family invitation found",
     });
-    return;
+    return false;
   }
 
   // ── Handle confirmation dialogs (with re-auth awareness) ──
@@ -889,9 +1004,14 @@ async function handleAcceptInvite(
     "You're now part of",
     "Family member",
     "Leave family group",
+    // Chinese
     "已加入",
     "家庭成员",
     "家庭成員",
+    // Korean
+    "가족 구성원", "가족 그룹 나가기", "가족에 오신 것을 환영합니다",
+    // Japanese
+    "ファミリーメンバー", "ファミリーグループから脱退",
   ];
 
   for (let confirmRound = 0; confirmRound < 5; confirmRound++) {
@@ -901,6 +1021,7 @@ async function handleAcceptInvite(
     const reAuthed = await checkAndHandleReAuth();
     if (reAuthed) {
       await logger.log("INFO", `[accept-invite] Re-auth handled in confirm round ${confirmRound + 1}`);
+      await ensureEnglish();
       continue; // Retry this round after re-auth
     }
 
@@ -921,10 +1042,17 @@ async function handleAcceptInvite(
       "Accept",
       "Yes",
       "Continue",
-      "确认",
-      "加入",
-      "接受",
-      "继续",
+      // Chinese
+      "确认", "確認",
+      "加入", "加入家庭",
+      "接受", "接受邀请",
+      "继续", "繼續",
+      // Korean
+      "가족 그룹 가입하기", "가입", "가입하기",
+      "수락", "확인", "계속", "참여",
+      // Japanese
+      "参加する", "参加", "ファミリーグループに参加",
+      "承諾", "確認", "続ける",
     ];
     const confirmSelectors = CONFIRM_KEYWORDS.flatMap((kw) => [
       `button:has-text("${kw}")`,
@@ -940,6 +1068,7 @@ async function handleAcceptInvite(
         `Clicked confirm button (round ${confirmRound + 1})`
       );
       await page.waitForTimeout(2000);
+      await ensureEnglish();
     } else if (confirmRound >= 2) {
       await logger.log("WARN", `No confirm button found after ${confirmRound + 1} rounds — stopping`);
       break;
@@ -952,10 +1081,12 @@ async function handleAcceptInvite(
     timeout: 30000,
   });
   await page.waitForTimeout(2000);
+  await ensureEnglish();
 
   // Handle re-auth on verification page
   for (let ra = 0; ra < 3; ra++) {
     if (!(await checkAndHandleReAuth())) break;
+    await ensureEnglish();
   }
 
   const verifyText = (await page.textContent("body").catch(() => "")) ?? "";
@@ -968,6 +1099,7 @@ async function handleAcceptInvite(
   if (isMember) {
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", "Successfully joined family group!");
+    return true;
   } else {
     // Don't mark as SUCCESS when we can't verify membership
     await logger.updateStatus("FAILED_RETRYABLE", {
@@ -978,6 +1110,7 @@ async function handleAcceptInvite(
       "WARN",
       "Invite flow completed but membership could not be verified — marked as FAILED_RETRYABLE"
     );
+    return false;
   }
 }
 

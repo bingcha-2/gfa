@@ -255,7 +255,7 @@ export async function processInvite(
     // Navigate to Google Family page, execute invite
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await logger.log("INFO", "Navigated to Google Family page");
-    await executeInviteOnPage(page, userEmail, logger);
+    await executeInviteOnPage(page, userEmail, logger, prisma, familyGroupId);
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
@@ -321,19 +321,31 @@ export async function processInvite(
       );
     }
   } catch (error) {
-    // --- Auto-reassign: intercept MANUAL_REVIEW for order-backed invite tasks ---
-    if (error instanceof UnrecoverableError && error.message === "MANUAL_REVIEW") {
-      if (orderId && deps.inviteQueue) {
-        try {
-          // 1. Resolve the old familyGroupId
-          const currentTask = await prisma.task.findUnique({
-            where: { id: taskId },
-            select: { familyGroupId: true },
-          });
-          const oldGroupId = currentTask?.familyGroupId ?? job.data.familyGroupId;
+    // --- Auto-reassign: intercept MANUAL_REVIEW and FAMILY_FULL for order-backed invite tasks ---
+    const isManualReview = error instanceof UnrecoverableError && error.message === "MANUAL_REVIEW";
+    const isFamilyFull = error instanceof UnrecoverableError && (error.message ?? "").startsWith("FAMILY_FULL");
+    const shouldAutoReassign = isManualReview || isFamilyFull;
 
-          // 2. Release old group slot (availableSlots + 1, pendingInviteCount - 1)
-          if (oldGroupId) {
+    if (shouldAutoReassign && orderId && deps.inviteQueue) {
+      try {
+        // 1. Resolve the old familyGroupId
+        const currentTask = await prisma.task.findUnique({
+          where: { id: taskId },
+          select: { familyGroupId: true },
+        });
+        const oldGroupId = currentTask?.familyGroupId ?? job.data.familyGroupId;
+
+        // 2. Release old group slot
+        if (oldGroupId) {
+          if (isFamilyFull) {
+            // FAMILY_FULL: availableSlots already set to 0 by detection logic,
+            // just decrement pendingInviteCount
+            await prisma.familyGroup.updateMany({
+              where: { id: oldGroupId, pendingInviteCount: { gt: 0 } },
+              data: { pendingInviteCount: { decrement: 1 } },
+            });
+          } else {
+            // MANUAL_REVIEW: release slot normally
             await prisma.familyGroup.update({
               where: { id: oldGroupId },
               data: { availableSlots: { increment: 1 } },
@@ -343,94 +355,96 @@ export async function processInvite(
               data: { pendingInviteCount: { decrement: 1 } },
             });
           }
+        }
 
-          // 3. Find the next healthy group (exclude the failed one)
-          const newGroup = await prisma.familyGroup.findFirst({
-            where: {
-              status: "ACTIVE",
-              availableSlots: { gt: 0 },
-              account: { status: "HEALTHY" },
-              ...(oldGroupId ? { id: { not: oldGroupId } } : {}),
+        // 3. Find the next healthy group (exclude the failed one)
+        const newGroup = await prisma.familyGroup.findFirst({
+          where: {
+            status: "ACTIVE",
+            availableSlots: { gt: 0 },
+            account: { status: "HEALTHY" },
+            ...(oldGroupId ? { id: { not: oldGroupId } } : {}),
+          },
+          include: { account: { select: { id: true } } },
+          orderBy: { createdAt: "asc" },
+        });
+
+        if (newGroup) {
+          // 4. Reserve slot in new group
+          await prisma.familyGroup.update({
+            where: { id: newGroup.id },
+            data: {
+              availableSlots: { decrement: 1 },
+              pendingInviteCount: { increment: 1 },
             },
-            include: { account: { select: { id: true } } },
-            orderBy: { createdAt: "asc" },
           });
 
-          if (newGroup) {
-            // 4. Reserve slot in new group
-            await prisma.familyGroup.update({
-              where: { id: newGroup.id },
-              data: {
-                availableSlots: { decrement: 1 },
-                pendingInviteCount: { increment: 1 },
-              },
-            });
+          // 5. Update Order to point to new group
+          await prisma.order.update({
+            where: { id: orderId },
+            data: {
+              familyGroupId: newGroup.id,
+              status: "TASK_QUEUED" as any,
+              resultMessage: null,
+            },
+          });
 
-            // 5. Update Order to point to new group
-            await prisma.order.update({
-              where: { id: orderId },
-              data: {
-                familyGroupId: newGroup.id,
-                status: "TASK_QUEUED" as any,
-                resultMessage: null,
-              },
-            });
+          // 6. Mark current task as FAILED_FINAL
+          await logger.updateStatus("FAILED_FINAL", {
+            code: "AUTO_REASSIGNED",
+            message: `Auto-reassigned to group ${newGroup.id} (reason: ${isFamilyFull ? "FAMILY_FULL" : "MANUAL_REVIEW"})`,
+          });
 
-            // 6. Mark current task as FAILED_FINAL (not MANUAL_REVIEW)
-            await logger.updateStatus("FAILED_FINAL", {
-              code: "AUTO_REASSIGNED",
-              message: `Auto-reassigned to group ${newGroup.id}`,
-            });
-
-            // 7. Create new task and enqueue
-            const newTask = await prisma.task.create({
-              data: {
-                type: "INVITE_MEMBER",
-                orderId,
-                familyGroupId: newGroup.id,
-                accountId: newGroup.accountId,
-                payload: JSON.stringify({
-                  orderId,
-                  familyGroupId: newGroup.id,
-                  accountId: newGroup.accountId,
-                  userEmail,
-                }),
-              },
-            });
-
-            await deps.inviteQueue.add(
-              "invite-member",
-              {
-                taskId: newTask.id,
+          // 7. Create new task and enqueue
+          const newTask = await prisma.task.create({
+            data: {
+              type: "INVITE_MEMBER",
+              orderId,
+              familyGroupId: newGroup.id,
+              accountId: newGroup.accountId,
+              payload: JSON.stringify({
                 orderId,
                 familyGroupId: newGroup.id,
                 accountId: newGroup.accountId,
                 userEmail,
-              },
-              { ...JOB_DEFAULTS }
-            );
+              }),
+            },
+          });
 
-            await logger.log("INFO",
-              `Auto-reassigned order ${orderId} from group ${oldGroupId} to group ${newGroup.id} (new task ${newTask.id})`
-            );
-
-            // Task has been auto-handled — do NOT rethrow
-            return;
-          }
-          // else: no healthy group available → fall through to original MANUAL_REVIEW
-          await logger.log("WARN", "Auto-reassign: no healthy group available, falling back to MANUAL_REVIEW");
-        } catch (reassignErr) {
-          // Reassign process failed → log and fall through to original MANUAL_REVIEW
-          await logger.log("ERROR",
-            `Auto-reassign failed: ${reassignErr instanceof Error ? reassignErr.message : String(reassignErr)}`
+          await deps.inviteQueue.add(
+            "invite-member",
+            {
+              taskId: newTask.id,
+              orderId,
+              familyGroupId: newGroup.id,
+              accountId: newGroup.accountId,
+              userEmail,
+            },
+            { ...JOB_DEFAULTS }
           );
+
+          await logger.log("INFO",
+            `Auto-reassigned order ${orderId} from group ${oldGroupId} to group ${newGroup.id} (new task ${newTask.id})`
+          );
+
+          // Task has been auto-handled — do NOT rethrow
+          return;
         }
+        // else: no healthy group available → fall through
+        await logger.log("WARN",
+          `Auto-reassign: no healthy group available — falling back to ${isFamilyFull ? "FAMILY_FULL" : "MANUAL_REVIEW"}`
+        );
+      } catch (reassignErr) {
+        // Reassign process failed → log and fall through
+        await logger.log("ERROR",
+          `Auto-reassign failed: ${reassignErr instanceof Error ? reassignErr.message : String(reassignErr)}`
+        );
       }
-      // No orderId / no inviteQueue / no healthy group / reassign error → original behavior
+      // No healthy group / reassign error → rethrow original error
       throw error;
     }
 
-    // Other UnrecoverableErrors (e.g. LOGIN_COOLDOWN) — original behavior
+    // UnrecoverableError that we don't auto-reassign (e.g. LOGIN_COOLDOWN, FAMILY_FULL with no orderId)
     if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
@@ -474,21 +488,71 @@ export async function processInvite(
 async function executeInviteOnPage(
   page: import("playwright").Page,
   email: string,
-  logger: TaskLogger
+  logger: TaskLogger,
+  prisma?: PrismaClient,
+  familyGroupId?: string
 ): Promise<void> {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-  await page.waitForTimeout(2000); // Angular SPA needs time to render
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(4000); // Angular SPA needs time to render
 
+  // Primary selector: link with href containing "invitemembers"
   const inviteLink = page.locator('a[href*="invitemembers"]');
+  // Fallback selector: button/link with invite-related text
+  const inviteFallback = page.locator([
+    'a:has-text("Invite member")',
+    'a:has-text("Invite family member")',
+    'a:has-text("Add member")',
+    'button:has-text("Invite member")',
+    'button:has-text("Invite family member")',
+    'a:has-text("邀请成员")',
+    'a:has-text("邀請成員")',
+    'a:has-text("メンバーを招待")',
+  ].join(", "));
+
+  let inviteElement: import("playwright").Locator | null = null;
   try {
     await inviteLink.first().waitFor({ state: "visible", timeout: 15_000 });
+    inviteElement = inviteLink.first();
   } catch {
+    // Try fallback selectors
+    if ((await inviteFallback.count()) > 0) {
+      await logger.log("INFO", "Found invite button via fallback text selector");
+      inviteElement = inviteFallback.first();
+    }
+  }
+
+  if (!inviteElement) {
     const url = page.url();
     const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
+
+    // Check if family is full: member cards exist but no invite link
+    const memberCardCount = await page.locator('a[href*="family/member"]').count();
+    if (memberCardCount > 0) {
+      await logger.log("ERROR",
+        `Family group appears FULL (${memberCardCount} member cards, no invite link). ` +
+        `Cannot invite more members.`
+      );
+
+      // Sync DB to mark this group as full
+      if (prisma && familyGroupId) {
+        await prisma.familyGroup.update({
+          where: { id: familyGroupId },
+          data: { availableSlots: 0 },
+        }).catch(() => {});
+        await logger.log("INFO", `Updated familyGroup ${familyGroupId} availableSlots=0`);
+      }
+
+      throw new UnrecoverableError(
+        `FAMILY_FULL: Family group has ${memberCardCount} member(s) and no invite link. ` +
+        `URL: ${url}`
+      );
+    }
+
     throw new Error(`Cannot find invite link on family page. URL: ${url}, body: ${bodySnippet}`);
   }
 
-  await inviteLink.first().click();
+  await inviteElement.click();
   await logger.log("INFO", "Clicked invite link");
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   await page.waitForTimeout(2000);

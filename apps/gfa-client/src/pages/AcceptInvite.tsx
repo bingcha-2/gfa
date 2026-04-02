@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "../stores/useAppStore";
-import { Play, CheckCircle, XCircle, Loader, Mail } from "lucide-react";
+import { Play, CheckCircle, XCircle, Loader } from "lucide-react";
 
 export function AcceptInvite() {
   const { accounts, runAcceptInvite, isRunning, runningEmail, logs, clearLogs, addToast } = useAppStore();
@@ -29,27 +29,6 @@ export function AcceptInvite() {
     } else {
       addToast({ type: "success", message: `✅ 邀请已成功接受: ${selectedEmail}` });
     }
-  };
-
-  const handleRunAll = async () => {
-    if (isRunning) return;
-    let successCount = 0;
-    let failCount = 0;
-    for (const account of accounts) {
-      clearLogs();
-      await runAcceptInvite(account.email);
-      const finalLogs = useAppStore.getState().logs;
-      const hasError = finalLogs.some((l) => l.level === "ERROR" || l.status === "failed");
-      if (hasError) {
-        failCount++;
-      } else {
-        successCount++;
-      }
-    }
-    addToast({
-      type: failCount > 0 ? "info" : "success",
-      message: `批量接受完成: ${successCount} 成功, ${failCount} 失败`,
-    });
   };
 
   return (
@@ -82,14 +61,6 @@ export function AcceptInvite() {
             >
               <Play size={14} />
               {isRunning && runningEmail === selectedEmail ? "执行中..." : "开始接受邀请"}
-            </button>
-            <button
-              className="btn btn-success"
-              onClick={handleRunAll}
-              disabled={isRunning || accounts.length === 0}
-            >
-              <Mail size={14} />
-              全部执行
             </button>
           </div>
         </div>

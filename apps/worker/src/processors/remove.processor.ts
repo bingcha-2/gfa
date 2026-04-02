@@ -26,6 +26,7 @@ import { handleLoginResult } from "../handle-login-result";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 import { checkTransferBatchProgress } from "../check-transfer-progress";
 import { Queue } from "bullmq";
+import { scrapeMembersFromPage, reconcileMembers } from "./sync.processor";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -69,7 +70,21 @@ export async function processRemove(
       where: { familyGroupId, email: memberEmail },
       select: { googleMemberId: true, displayName: true, status: true },
     });
-    // NOTE: Don't override originalMemberStatus from DB — the API already changed it to PENDING
+    // Use actual DB status for rollback (not the API-sent one which may already be stale).
+    // The API side may have already changed it to PENDING before queuing this task.
+    if (memberRecord?.status) {
+      originalMemberStatus = memberRecord.status;
+    }
+
+    // Skip if member is already removed (duplicate task or retry after another task succeeded)
+    if (memberRecord?.status === "REMOVED") {
+      await logger.log("INFO", `Member ${memberEmail} is already REMOVED in DB — skipping removal`);
+      await logger.updateStatus("SUCCESS", {
+        code: "ALREADY_REMOVED",
+        message: `Member ${memberEmail} was already removed`,
+      });
+      return;
+    }
 
     // Cooldown guard: skip immediately if this account recently failed login
     const cooldownSecs = await pool.isLoginCoolingDown(account.id);
@@ -147,30 +162,74 @@ export async function processRemove(
       displayName: memberRecord?.displayName ?? undefined,
     }, otherGaiaIds);
 
-    // Update DB: mark member as removed
-    await prisma.familyMember.updateMany({
-      where: { familyGroupId, email: memberEmail },
-      data: { status: "REMOVED", removedAt: new Date() },
-    });
+    // ── Post-removal inline sync ──
+    // Browser is already logged in and on the family page (from verification in removeMemberOnPage).
+    // No re-login needed — reuse session for immediate sync.
+    try {
+      await logger.log("INFO", "Running post-removal sync (reusing browser session)...");
 
-    // Release the slot back to the group and fix pendingInviteCount drift.
-    // pendingInviteCount is incremented at GROUP_ASSIGNED time and never decremented
-    // by any removal path. Use $executeRaw-style guard via a separate conditional update
-    // so the counter never goes below 0.
-    await prisma.familyGroup.update({
-      where: { id: familyGroupId },
-      data: { availableSlots: { increment: 1 } },
-    });
-    // Decrement memberCount (guard: never below 0)
-    await prisma.familyGroup.updateMany({
-      where: { id: familyGroupId, memberCount: { gt: 0 } },
-      data: { memberCount: { decrement: 1 } },
-    });
-    // Decrement pendingInviteCount only when it is currently > 0 (prevents underflow)
-    await prisma.familyGroup.updateMany({
-      where: { id: familyGroupId, pendingInviteCount: { gt: 0 } },
-      data: { pendingInviteCount: { decrement: 1 } },
-    });
+      // Navigate to family page (already there from verification, but ensure clean state)
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(2000);
+
+      const adminEmail = (account.loginEmail ?? "").trim().toLowerCase();
+      const { members: currentMembers, availableSlots: pageSlots } = await scrapeMembersFromPage(page, adminEmail);
+      await logger.log("INFO", `Post-removal sync: found ${currentMembers.length} members on page`);
+
+      // Deduplicate by email
+      const seenSyncEmails = new Set<string>();
+      const dedupedSyncMembers = currentMembers.filter((m) => {
+        const key = m.email?.toLowerCase();
+        if (!key) return true;
+        if (seenSyncEmails.has(key)) return false;
+        seenSyncEmails.add(key);
+        return true;
+      });
+
+      // Reconcile with DB — auto-marks removed members as REMOVED, updates statuses
+      await reconcileMembers(prisma, familyGroupId, dedupedSyncMembers, logger);
+
+      // Update group counts from actual page data
+      const rawNonAdmin = currentMembers.filter(
+        (m) => !m.role.toLowerCase().includes("manager")
+      );
+      const dedupedNonAdmin = dedupedSyncMembers.filter(
+        (m) => !m.role.toLowerCase().includes("manager")
+      );
+      const NON_ADMIN_CAPACITY = 5;
+      const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - rawNonAdmin.length);
+      const finalSlots = Math.min(pageSlots, computedSlots);
+
+      await prisma.familyGroup.update({
+        where: { id: familyGroupId },
+        data: {
+          memberCount: dedupedNonAdmin.length,
+          availableSlots: finalSlots,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      await logger.log("INFO",
+        `Post-removal sync complete: ${dedupedNonAdmin.length} members, ${finalSlots} slots available`
+      );
+    } catch (syncErr) {
+      // Sync failed, but removal was already verified — fall back to manual DB update
+      await logger.log("WARN",
+        `Post-removal sync failed (falling back to manual update): ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`
+      );
+      await prisma.familyMember.updateMany({
+        where: { familyGroupId, email: memberEmail },
+        data: { status: "REMOVED", removedAt: new Date() },
+      });
+      await prisma.familyGroup.update({
+        where: { id: familyGroupId },
+        data: { availableSlots: { increment: 1 } },
+      });
+      await prisma.familyGroup.updateMany({
+        where: { id: familyGroupId, memberCount: { gt: 0 } },
+        data: { memberCount: { decrement: 1 } },
+      });
+    }
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
@@ -218,11 +277,13 @@ export async function processRemove(
       // noop
     }
 
-    // Rollback member status to original (ACTIVE or PENDING) so removal can be retried
-    await prisma.familyMember.updateMany({
-      where: { familyGroupId, email: memberEmail, status: "PENDING" },
-      data: { status: originalMemberStatus },
-    }).catch(() => {});
+    // Rollback member status: restore to whatever it was BEFORE the removal attempt
+    if (originalMemberStatus !== "REMOVED") {
+      await prisma.familyMember.updateMany({
+        where: { familyGroupId, email: memberEmail },
+        data: { status: originalMemberStatus },
+      }).catch(() => {});
+    }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
       code: profileId ? "REMOVE_ERROR" : "PROFILE_ACQUIRE_FAILED",
@@ -403,248 +464,265 @@ async function removeMemberOnPage(
   await page.waitForTimeout(3000);
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
-  // --- Handle Google re-authentication (password and/or TOTP) ---
-  // After clicking Remove for an ACTIVE member, Google may redirect to
-  // accounts.google.com for re-authentication. Possible landing pages:
-  //   a) Identifier page (email pre-filled, need to click Next)
-  //   b) Password page directly
-  //   c) TOTP challenge page directly (Google may skip password if recently verified)
-  const postClickUrl = page.url();
-  const needsReAuth = postClickUrl.includes("accounts.google.com") ||
-                       postClickUrl.includes("signin") ||
-                       postClickUrl.includes("challenge");
+  // ── Unified confirmation + re-auth loop ──
+  // Google's removal flow can vary:
+  //   Flow A: Click Remove → confirmation dialog (with "Remove" button) → re-auth → done
+  //   Flow B: Click Remove → re-auth → back to member page → click remove again → confirm → done
+  //   Flow C: Click Remove (pending invite) → done immediately
+  // This loop handles all flows by checking the page state at each step.
 
-  if (needsReAuth) {
-    await logger.log("INFO", `Re-auth required. URL: ${postClickUrl}`);
+  const CONFIRM_SELECTORS = [
+    'button:has-text("Remove")', 'button:has-text("移除")',
+    'button:has-text("Remove member")',
+    'button:has-text("Cancel invitation")', 'button:has-text("取消邀請")', 'button:has-text("取消邀请")',
+    'button:has-text("Revoke")', 'button:has-text("撤銷")', 'button:has-text("撤销")',
+    'button:has-text("是")', 'button:has-text("Yes")',
+    'button:has-text("確認")', 'button:has-text("确认")', 'button:has-text("Confirm")',
+    'a:has-text("Remove")', 'a:has-text("移除")',
+    'a:has-text("是")', 'a:has-text("Yes")',
+    'a:has-text("確認")', 'a:has-text("Confirm")',
+    'div[role="button"]:has-text("Remove")', 'div[role="button"]:has-text("移除")',
+  ].join(", ");
 
-    // Step 1: Handle identifier page (email pre-filled, click Next)
-    const identifierInput = page.locator('input[type="email"]');
-    if ((await identifierInput.count()) > 0) {
-      await logger.log("INFO", "On identifier page, clicking Next");
-      const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步"), button:has-text("繼續"), button:has-text("继续")');
-      if ((await nextBtn.count()) > 0) {
-        await nextBtn.first().click();
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-      }
+  for (let step = 0; step < 10; step++) {
+    const stepUrl = page.url();
+    await logger.log("DEBUG", `[remove] Step ${step + 1}, URL: ${stepUrl}`);
+
+    // ── Check if we've navigated away → removal complete ──
+    if (
+      stepUrl.includes("family/details") ||
+      stepUrl.includes("families.google.com/families")
+    ) {
+      await logger.log("INFO", `[remove] Reached family list page — removal likely complete`);
+      break;
     }
 
-    // Step 2: Detect if we're already on TOTP page (Google skipped password)
-    const currentReAuthUrl = page.url();
-    const isDirectTotp = currentReAuthUrl.includes("challenge/totp") || currentReAuthUrl.includes("challenge/az");
+    // ── Handle re-auth: accounts.google.com ──
+    const isReAuth =
+      stepUrl.includes("accounts.google.com") ||
+      stepUrl.includes("challenge/pwd") ||
+      stepUrl.includes("challenge/totp") ||
+      stepUrl.includes("challenge/az") ||
+      stepUrl.includes("challenge/sk") ||
+      stepUrl.includes("challenge/selection") ||
+      stepUrl.includes("signin/challenge");
 
-    if (!isDirectTotp) {
-      // Need password first
-      if (!credentials?.password) {
-        throw new Error(
-          `Google requires password to remove joined member ${email}, ` +
-          `but Account.loginPassword is not set`
+    if (isReAuth) {
+      await logger.log("INFO", `[remove] Re-auth at step ${step + 1}: ${stepUrl}`);
+
+      // Challenge selection → pick TOTP (check FIRST, before any input detection)
+      if (stepUrl.includes("challenge/selection") && credentials?.totpSecret) {
+        const totpOption = page.locator(
+          'div[data-challengetype="6"], li[data-challengetype="6"], button[data-challengetype="6"]'
         );
-      }
-
-      const passwordInput = page.locator('input[type="password"]');
-      try {
-        await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
-      } catch {
-        const anyPwd = page.locator('input[name="Passwd"], input[name="password"]');
-        if ((await anyPwd.count()) === 0) {
-          const nowUrl = page.url();
-          if (!nowUrl.includes("challenge")) {
-            await logger.log("WARN", `No password input found. URL: ${nowUrl}`);
-            throw new Error(`Password page not found during remove re-auth. URL: ${nowUrl}`);
-          }
-          await logger.log("INFO", "URL changed to challenge during password wait, proceeding to TOTP");
-        }
-      }
-
-      // Fill password if input is visible
-      const pwdField = page.locator('input[type="password"]:visible, input[name="Passwd"]:visible');
-      if ((await pwdField.count()) > 0) {
-        await pwdField.first().fill(credentials!.password!);
-        const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
-        await nextButton.first().click();
-        await logger.log("INFO", "Password submitted for re-auth");
-
-        await page.waitForTimeout(5000);
-        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-      } else {
-        // Password input exists but is hidden (aria-hidden="true") — Google's lazy render.
-        // Wait for it to become visible, then retry.
-        await logger.log("WARN", "Password field hidden, waiting for it to become visible...");
-        const hiddenPwd = page.locator('input[type="password"]');
-        try {
-          await hiddenPwd.first().waitFor({ state: "visible", timeout: 10_000 });
-          await hiddenPwd.first().fill(credentials!.password!);
-          const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
-          await nextButton.first().click();
-          await logger.log("INFO", "Password submitted (after wait for visibility)");
-          await page.waitForTimeout(5000);
-          await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-        } catch {
-          await logger.log("WARN", "Password field never became visible — re-auth may fail");
-        }
-      }
-    } else {
-      await logger.log("INFO", "Google skipped password, directly on TOTP challenge");
-    }
-
-    // Step 3: Handle TOTP 2FA challenge (after password OR direct)
-    // IMPORTANT: Only enter TOTP handling for actual TOTP/2FA challenge pages,
-    // NOT for /challenge/pwd (password page) which means password wasn't accepted yet.
-    const afterAuthUrl = page.url();
-    const isTotpChallenge = afterAuthUrl.includes("challenge/totp") ||
-      afterAuthUrl.includes("challenge/az") ||
-      afterAuthUrl.includes("challenge/sk") ||  // security key
-      afterAuthUrl.includes("signin/v2") ||
-      // Generic /challenge/ but NOT /challenge/pwd
-      (afterAuthUrl.includes("challenge") && !afterAuthUrl.includes("challenge/pwd"));
-    if (isTotpChallenge) {
-      await logger.log("INFO", `TOTP challenge page. URL: ${afterAuthUrl}`);
-
-      if (!credentials?.totpSecret) {
-        throw new Error(
-          `Google requires 2FA to remove joined member ${email}, ` +
-          `but Account.totpSecret is not set`
-        );
-      }
-
-      const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
-        await logger.log("INFO", `Waiting ${remaining + 1}s for fresh TOTP code`);
-        await page.waitForTimeout((remaining + 1) * 1000);
-      }
-
-      const totpCode = generateTOTP(credentials.totpSecret);
-      await logger.log("INFO", `Generated TOTP code: ${totpCode.slice(0, 2)}****`);
-
-      let totpInput = page.locator(
-        'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-      );
-
-      try {
-        await totpInput.first().waitFor({ state: "visible", timeout: 10_000 });
-      } catch {
-        const authOption = page.locator(
-          'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("验证器"), div:has-text("Authenticator")'
-        );
-        if ((await authOption.count()) > 0) {
-          await authOption.first().click();
+        if ((await totpOption.count()) > 0) {
+          await totpOption.first().click();
+          await logger.log("INFO", "[remove] Selected TOTP from challenge selection");
           await page.waitForTimeout(3000);
+          continue;
         }
-        totpInput = page.locator(
+      }
+
+      // TOTP challenge (check by URL before password)
+      if (stepUrl.includes("challenge/totp") || stepUrl.includes("challenge/az")) {
+        if (!credentials?.totpSecret) {
+          throw new Error(`Google requires TOTP to remove member ${email}, but no totpSecret configured`);
+        }
+        const remaining = totpSecondsRemaining();
+        if (remaining < 5) {
+          await page.waitForTimeout((remaining + 1) * 1000);
+        }
+        const totpCode = generateTOTP(credentials.totpSecret);
+
+        let totpInput = page.locator(
           'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
         );
-      }
-
-      if ((await totpInput.count()) === 0) {
-        throw new Error("Cannot find TOTP input field on 2FA challenge page");
-      }
-
-      await totpInput.first().fill(totpCode);
-      const verifyButton = page.locator(
-        'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
-      );
-      await verifyButton.first().click();
-      await logger.log("INFO", "TOTP code submitted");
-
-      await page.waitForTimeout(5000);
-      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-
-      // Verify we actually left the TOTP challenge page
-      // If still stuck, retry with a fresh TOTP code (first one may have expired)
-      for (let totpRetry = 0; totpRetry < 2; totpRetry++) {
-        const postTotpUrl = page.url();
-        const stillOnChallenge = postTotpUrl.includes("challenge/totp") ||
-          postTotpUrl.includes("challenge/az") ||
-          (postTotpUrl.includes("accounts.google.com") && postTotpUrl.includes("challenge"));
-
-        if (!stillOnChallenge) break; // Successfully passed TOTP
-
-        if (totpRetry === 0) {
-          await logger.log("WARN", `Still on TOTP page after submission, retrying with fresh code. URL: ${postTotpUrl}`);
-          // Wait for a fresh TOTP window
-          const retryRemaining = totpSecondsRemaining();
-          if (retryRemaining < 8) {
-            await page.waitForTimeout((retryRemaining + 1) * 1000);
+        try {
+          await totpInput.first().waitFor({ state: "visible", timeout: 10_000 });
+        } catch {
+          // Try clicking Authenticator option first
+          const authOption = page.locator(
+            'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("验证器")'
+          );
+          if ((await authOption.count()) > 0) {
+            await authOption.first().click();
+            await page.waitForTimeout(3000);
           }
-          const freshCode = generateTOTP(credentials!.totpSecret!);
-          await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
-
-          const retryInput = page.locator(
+          totpInput = page.locator(
             'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
           );
-          if ((await retryInput.count()) > 0) {
-            await retryInput.first().fill("");
-            await page.waitForTimeout(300);
-            await retryInput.first().fill(freshCode);
-            const retryBtn = page.locator(
-              'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
+        }
+        if ((await totpInput.count()) > 0) {
+          await totpInput.first().fill(totpCode);
+          const verifyBtn = page.locator(
+            'button:has-text("Next"), button:has-text("Verify"), button:has-text("下一步"), button:has-text("驗證"), button:has-text("验证")'
+          );
+          if ((await verifyBtn.count()) > 0) await verifyBtn.first().click();
+          else await page.keyboard.press("Enter");
+          await logger.log("INFO", `[remove] TOTP submitted (${totpCode.slice(0, 2)}****)`);
+          await page.waitForTimeout(5000);
+          await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+
+          // Retry with fresh code if still on TOTP page
+          const postTotpUrl = page.url();
+          if (postTotpUrl.includes("challenge/totp") || postTotpUrl.includes("challenge/az")) {
+            await logger.log("WARN", "[remove] Still on TOTP page, retrying with fresh code");
+            const retryRemaining = totpSecondsRemaining();
+            if (retryRemaining < 8) await page.waitForTimeout((retryRemaining + 1) * 1000);
+            const freshCode = generateTOTP(credentials.totpSecret!);
+            const retryInput = page.locator(
+              'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
             );
-            if ((await retryBtn.count()) > 0) {
-              await retryBtn.first().click();
+            if ((await retryInput.count()) > 0) {
+              await retryInput.first().fill("");
+              await page.waitForTimeout(300);
+              await retryInput.first().fill(freshCode);
+              const retryBtn = page.locator(
+                'button:has-text("Next"), button:has-text("Verify"), button:has-text("下一步")'
+              );
+              if ((await retryBtn.count()) > 0) await retryBtn.first().click();
+              else await page.keyboard.press("Enter");
+              await logger.log("INFO", `[remove] TOTP retry submitted (${freshCode.slice(0, 2)}****)`);
               await page.waitForTimeout(5000);
               await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
             }
           }
         } else {
-          throw new Error(
-            `TOTP verification failed after retry — still on challenge page. URL: ${postTotpUrl}`
-          );
+          throw new Error("Cannot find TOTP input field on 2FA challenge page");
         }
+        continue;
+      }
+
+      // Password page — detect by URL (challenge/pwd) OR by presence of password input
+      // IMPORTANT: Check password BEFORE email/identifier, because password pages also
+      // have a pre-filled email field at the top that would falsely match identifier check.
+      const pwdInput = page.locator('input[type="password"]');
+      const hasPwdInput = (await pwdInput.count()) > 0;
+      if (stepUrl.includes("challenge/pwd") || hasPwdInput) {
+        if (!credentials?.password) {
+          throw new Error(`Google requires password to remove member ${email}, but no password configured`);
+        }
+        if (hasPwdInput) {
+          try {
+            await pwdInput.first().waitFor({ state: "visible", timeout: 10_000 });
+          } catch {
+            await logger.log("WARN", "[remove] Password field not visible, trying anyway");
+          }
+          const visiblePwd = page.locator('input[type="password"]:visible');
+          if ((await visiblePwd.count()) > 0) {
+            await visiblePwd.first().fill(credentials.password);
+            const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步")');
+            if ((await nextBtn.count()) > 0) await nextBtn.first().click();
+            else await page.keyboard.press("Enter");
+            await logger.log("INFO", "[remove] Password submitted for re-auth");
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+          } else {
+            await logger.log("WARN", "[remove] Password input exists but not visible after wait");
+          }
+        } else {
+          // URL says challenge/pwd but no password input yet — wait for render
+          await logger.log("INFO", "[remove] On challenge/pwd but no input yet, waiting...");
+          await page.waitForTimeout(3000);
+        }
+        continue;
+      }
+
+      // Identifier/email page — LAST resort (only when no password/TOTP input present)
+      const identifierInput = page.locator('input[type="email"]');
+      if ((await identifierInput.count()) > 0) {
+        const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步"), button:has-text("繼續")');
+        if ((await nextBtn.count()) > 0) {
+          await nextBtn.first().click();
+          await logger.log("INFO", "[remove] Clicked Next on identifier page");
+          await page.waitForTimeout(3000);
+          await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
+        }
+        continue;
+      }
+
+      // Unrecognized auth page
+      await logger.log("WARN", `[remove] Unrecognized auth page, waiting... URL: ${stepUrl}`);
+      await page.waitForTimeout(3000);
+      continue;
+    }
+
+    // ── Handle /family/remove/ confirmation page ──
+    if (stepUrl.includes("family/remove/")) {
+      const removeFinalBtn = page.locator(
+        'button:has-text("Remove"), button:has-text("移除"), button:has-text("Confirm"), button:has-text("確認")'
+      );
+      if ((await removeFinalBtn.count()) > 0) {
+        await removeFinalBtn.last().click();
+        await logger.log("INFO", `[remove] Clicked confirm on /family/remove/ page`);
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+        continue;
       }
     }
 
-    // Step 4: After auth, may need to click remove again
-    if (page.url().includes("family/member/")) {
-      await logger.log("INFO", "Back on member detail after auth, clicking remove again");
-      const removeBtn2 = page.locator([
-        'button:has-text("移除")',
-        'button:has-text("Remove")',
-      ].join(", "));
-      if ((await removeBtn2.count()) > 0) {
-        await removeBtn2.first().click();
-        await page.waitForTimeout(2000);
-      }
-    } else if (page.url().includes("family/remove/")) {
-      await logger.log("INFO", "On /family/remove/ confirmation page");
-    } else if (!page.url().includes("family/")) {
-      await page.goto(memberDetailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-      const removeBtn3 = page.locator([
-        'button:has-text("移除")',
-        'button:has-text("Remove")',
-      ].join(", "));
-      if ((await removeBtn3.count()) > 0) {
-        await removeBtn3.first().click();
-        await page.waitForTimeout(2000);
+    // ── Handle confirmation dialog on member detail page ──
+    if (stepUrl.includes("family/member/")) {
+      const confirmBtn = page.locator(CONFIRM_SELECTORS);
+      const btnCount = await confirmBtn.count();
+      if (btnCount > 0) {
+        // Use last() to prefer dialog's confirm button over the original action button behind it
+        await confirmBtn.last().click();
+        await logger.log("INFO", `[remove] Clicked confirm/remove at step ${step + 1} (${btnCount} matching buttons)`);
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+        continue;
       }
     }
+
+    // Nothing matched — wait and try again
+    await logger.log("DEBUG", `[remove] No action matched at step ${step + 1}, waiting...`);
+    await page.waitForTimeout(2000);
   }
 
-  // Handle confirmation dialog
-  const confirmButton = page.locator([
-    'a:has-text("是")',
-    'button:has-text("是")',
-    'a:has-text("Yes")',
-    'button:has-text("Yes")',
-    'a:has-text("確認")',
-    'button:has-text("確認")',
-    'a:has-text("Confirm")',
-    'button:has-text("Confirm")',
-  ].join(", "));
+  // Final wait for any pending navigation
+  await page.waitForTimeout(2000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
 
-  if ((await confirmButton.count()) > 0) {
-    await confirmButton.last().click();
-    await logger.log("INFO", `Confirmed removal of ${email}`);
-  } else if (page.url().includes("family/remove/")) {
-    const removeFinalBtn = page.locator('button:has-text("Remove"), button:has-text("移除")');
-    if ((await removeFinalBtn.count()) > 0) {
-      await removeFinalBtn.last().click();
-      await logger.log("INFO", `Clicked Remove on confirmation page for ${email}`);
-    }
-  }
-
+  // ── Post-removal verification ──
+  // Navigate back to family list and confirm the member is gone.
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForTimeout(3000);
-  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+
+  // Check by email in leaf-node text
+  const emailStillPresent = await page.evaluate((targetEmail: string) => {
+    const leafEls = Array.from(document.querySelectorAll("*"))
+      .filter((el) => el.children.length === 0);
+    return leafEls.some((el) => {
+      const text = (el.textContent?.trim() ?? "").toLowerCase();
+      return text === targetEmail.toLowerCase();
+    });
+  }, email);
+
+  // Check by GAIA ID in member links
+  let gaiaStillPresent = false;
+  if (credentials?.googleMemberId) {
+    gaiaStillPresent = await page.evaluate((gaiaId: string) => {
+      const links = document.querySelectorAll('a[href*="family/member/"]');
+      return Array.from(links).some((link) => {
+        const href = link.getAttribute("href") ?? "";
+        return href.includes(`/g/${gaiaId}`) || href.includes(`/i/${gaiaId}`);
+      });
+    }, credentials.googleMemberId);
+  }
+
+  if (emailStillPresent || gaiaStillPresent) {
+    await logger.log("ERROR",
+      `Removal verification FAILED: ${email} still on family page ` +
+      `(email=${emailStillPresent}, gaia=${gaiaStillPresent})`
+    );
+    throw new Error(
+      `REMOVE_VERIFICATION_FAILED: Member ${email} still present on family page after removal attempt`
+    );
+  }
+
+  await logger.log("INFO", `Removal verified: ${email} no longer on family page ✓`);
 }
 
 /**

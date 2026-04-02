@@ -27,7 +27,7 @@ export interface SyncProcessorDeps {
   workerId: string;
 }
 
-interface ScrapedMember {
+export interface ScrapedMember {
   email: string;
   displayName: string;
   role: string;
@@ -228,7 +228,7 @@ export async function processSync(
  *
  * Returns { members, availableSlots }.
  */
-async function scrapeMembersFromPage(
+export async function scrapeMembersFromPage(
   page: import("playwright").Page,
   adminEmail: string = ""
 ): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
@@ -405,7 +405,7 @@ async function scrapeMembersFromPage(
  *   2. For REMOVED marking: skip if gaiaOnly members exist (they may correspond to DB records).
  *   3. For gaiaOnly members: link to existing DB records via gaiaId → displayName → elimination.
  */
-async function reconcileMembers(
+export async function reconcileMembers(
   prisma: PrismaClient,
   familyGroupId: string,
   scrapedMembers: ScrapedMember[],
