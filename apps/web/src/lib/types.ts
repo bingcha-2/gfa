@@ -43,6 +43,7 @@ export type FamilyGroupSummary = {
   memberCount: number;
   availableSlots: number;
   pendingInviteCount: number;
+  pendingMemberCount?: number;
   status: string;
   riskScore: number;
   createdAt: string;

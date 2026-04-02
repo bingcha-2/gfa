@@ -87,6 +87,17 @@ export type TransferStatusResult = {
   updatedAt: string;
 };
 
+export type MigrateResult = {
+  removedFromGroupId: string;
+  removedFromGroupName: string;
+  inviteResult: {
+    targetGroupId: string;
+    targetGroupName: string;
+    taskId: string;
+  } | null;
+  error?: string;
+};
+
 const orderTerminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
 type ConsoleAppProps = {
@@ -248,6 +259,12 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   async function confirmLogin(id: string) {
     return runAction(() =>
       apiRequest(`accounts/${id}/confirm-login`, { method: "POST" })
+    );
+  }
+
+  async function syncAccountGroups(id: string) {
+    return runAction(() =>
+      apiRequest(`accounts/${id}/sync`, { method: "POST" })
     );
   }
 
@@ -441,6 +458,21 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
+  async function migrateMember(groupId: string, memberEmail: string): Promise<MigrateResult | null> {
+    try {
+      const result = await apiRequest<MigrateResult>(
+        `family-groups/${groupId}/migrate-member`,
+        { method: "POST", body: { memberEmail } }
+      );
+      await loadDashboard();
+      return result;
+    } catch (err) {
+      const message = getErrorMessage(err);
+      showToast("error", message);
+      return null;
+    }
+  }
+
   async function createTransfer(sourceGroupId: string, targetGroupId: string, memberEmails?: string[]): Promise<TransferBatchResult | null> {
     try {
       const body: Record<string, unknown> = { sourceGroupId, targetGroupId };
@@ -535,7 +567,11 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
   const availableSlots =
     data.groups
-      .filter((group) => group.account?.status === "HEALTHY")
+      .filter((group) =>
+        group.account?.status === "HEALTHY" &&
+        group.status === "ACTIVE" &&
+        group.account?.subscriptionStatus !== "SUSPENDED"
+      )
       .reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
   const activeOrders =
     data.orders.filter((order) => !orderTerminalStatuses.has(order.status)).length ?? 0;
@@ -544,7 +580,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const disabledAccounts =
     data.accounts.filter((account) => account.status !== "HEALTHY").length ?? 0;
   const pendingInvites =
-    data.groups.reduce((sum, group) => sum + group.pendingInviteCount, 0) ?? 0;
+    data.groups.reduce((sum, group) => sum + (group.pendingMemberCount ?? 0), 0) ?? 0;
   const unusedCodes =
     data.redeemCodes.filter((code) => code.status === "UNUSED").length ?? 0;
   const recentOrders = data.orders.slice(0, 5);
@@ -715,6 +751,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onDelete={deleteAccount}
             onUpdate={updateAccount}
             onConfirmLogin={confirmLogin}
+            onSyncAccount={syncAccountGroups}
             role={data.user.role}
           />
         );
@@ -735,6 +772,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             onCreateTransfer={createTransfer}
             onGetTransferStatus={getTransferStatus}
             onUpdateAccount={updateAccount}
+            onMigrateMember={migrateMember}
             role={data.user.role}
           />
         );

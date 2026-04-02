@@ -47,12 +47,43 @@ export class FamilyGroupService {
             subscriptionPlan: true,
           },
         },
-        _count: { select: { members: true, invites: true } },
+        _count: {
+          select: {
+            members: true,
+            invites: true,
+          },
+        },
+        members: {
+          where: { status: "PENDING" },
+          select: { id: true },
+        },
       },
-      orderBy: { createdAt: "desc" }
     });
 
-    return groups;
+    // Sort: ACTIVE groups first (by subscription expiry desc), MANUAL_ONLY last (by suspension time desc)
+    const GROUP_STATUS_ORDER: Record<string, number> = { ACTIVE: 0, DISABLED: 1, MANUAL_ONLY: 2 };
+    groups.sort((a, b) => {
+      const aOrder = GROUP_STATUS_ORDER[a.status] ?? 1;
+      const bOrder = GROUP_STATUS_ORDER[b.status] ?? 1;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      if (a.status === "MANUAL_ONLY") {
+        // Among MANUAL_ONLY: more recently suspended first
+        const aTime = a.account?.subscriptionStatusUpdatedAt?.getTime() ?? 0;
+        const bTime = b.account?.subscriptionStatusUpdatedAt?.getTime() ?? 0;
+        return bTime - aTime;
+      }
+
+      // Among ACTIVE: longer subscription (later expiry) first
+      const aExp = a.account?.subscriptionExpiresAt?.getTime() ?? 0;
+      const bExp = b.account?.subscriptionExpiresAt?.getTime() ?? 0;
+      return bExp - aExp;
+    });
+
+    return groups.map(({ members: pendingMembers, ...g }) => ({
+      ...g,
+      pendingMemberCount: pendingMembers.length,
+    }));
   }
 
   async findOne(id: string) {
@@ -998,6 +1029,114 @@ export class FamilyGroupService {
     }
 
     return { queued: true, taskId: result.task.id };
+  }
+
+  /**
+   * Migrate a member: directly delete from current group in DB (no browser removal),
+   * then auto-invite to a different group with available slots.
+   *
+   * Steps:
+   * 1. Mark the member as REMOVED in the source group and reclaim the slot
+   * 2. Use crossBulkInvite to find an available group and enqueue an invite task
+   * 3. Return the invite task details for frontend polling
+   */
+  async migrateMember(
+    groupId: string,
+    memberEmail: string,
+    validDays: number = 30
+  ): Promise<{
+    removedFromGroupId: string;
+    removedFromGroupName: string;
+    inviteResult: {
+      targetGroupId: string;
+      targetGroupName: string;
+      taskId: string;
+    } | null;
+    error?: string;
+  }> {
+    memberEmail = memberEmail.trim().toLowerCase();
+
+    // 1. Validate source group
+    const sourceGroup = await this.prisma.familyGroup.findUnique({
+      where: { id: groupId },
+      select: { id: true, groupName: true, accountId: true },
+    });
+    if (!sourceGroup) throw new NotFoundException("Source family group not found");
+
+    // 2. Find the member in the source group
+    const member = await this.prisma.familyMember.findFirst({
+      where: {
+        familyGroupId: groupId,
+        email: memberEmail,
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+    });
+    if (!member) {
+      throw new BadRequestException(
+        `Member ${memberEmail} not found in group or already removed`
+      );
+    }
+
+    // 3. Directly remove from DB: mark as REMOVED, reclaim slot, decrement member count
+    await this.prisma.$transaction(async (tx) => {
+      await tx.familyMember.update({
+        where: { id: member.id },
+        data: { status: "REMOVED", removedAt: new Date() },
+      });
+
+      await tx.familyGroup.update({
+        where: { id: groupId },
+        data: {
+          availableSlots: { increment: 1 },
+          memberCount: { decrement: 1 },
+        },
+      });
+    });
+
+    // 4. Use crossBulkInvite to auto-find a group and enqueue invite
+    //    This reuses existing logic: finds ACTIVE groups, excludes the source group's account
+    //    if it's suspended, reserves slots atomically, etc.
+    const inviteResult = await this.crossBulkInvite([memberEmail], validDays);
+
+    // Extract the invite target info
+    if (inviteResult.allocated.length > 0) {
+      const alloc = inviteResult.allocated[0];
+
+      // Look up the target group name
+      const targetGroup = await this.prisma.familyGroup.findUnique({
+        where: { id: alloc.groupId },
+        select: { groupName: true },
+      });
+
+      // Find the task that was just created for this invite
+      const task = await this.prisma.task.findFirst({
+        where: {
+          type: "INVITE_MEMBER",
+          familyGroupId: alloc.groupId,
+          payload: { contains: memberEmail },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+
+      return {
+        removedFromGroupId: groupId,
+        removedFromGroupName: sourceGroup.groupName,
+        inviteResult: {
+          targetGroupId: alloc.groupId,
+          targetGroupName: targetGroup?.groupName ?? alloc.groupId,
+          taskId: task?.id ?? "",
+        },
+      };
+    }
+
+    // No slots available — member was removed but could not be re-invited
+    return {
+      removedFromGroupId: groupId,
+      removedFromGroupName: sourceGroup.groupName,
+      inviteResult: null,
+      error: inviteResult.reason ?? "No available family group with open slots",
+    };
   }
 
   // ========== Transfer Batch ==========

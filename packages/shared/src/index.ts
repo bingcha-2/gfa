@@ -56,6 +56,7 @@ export type SyncFamilyGroupPayload = {
   taskId?: string;
   familyGroupId: string;
   accountId: string;
+  ignoreCooldown?: boolean;
 };
 
 export type HealthCheckAccountPayload = {

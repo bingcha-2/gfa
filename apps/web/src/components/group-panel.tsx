@@ -13,6 +13,7 @@ import type {
   BulkGroupRemoveResult,
   CrossInviteResult,
   CrossRemoveResult,
+  MigrateResult,
   TransferBatchResult,
   TransferStatusResult
 } from "./console-app";
@@ -68,6 +69,7 @@ type GroupPanelProps = {
   onCreateTransfer: (sourceGroupId: string, targetGroupId: string, memberEmails?: string[]) => Promise<TransferBatchResult | null>;
   onGetTransferStatus: (batchId: string) => Promise<TransferStatusResult | null>;
   onUpdateAccount?: (accountId: string, payload: Record<string, string | undefined>) => Promise<boolean>;
+  onMigrateMember?: (groupId: string, memberEmail: string) => Promise<MigrateResult | null>;
 };
 
 function formatDate(dateStr?: string | null) {
@@ -107,7 +109,8 @@ export function GroupPanel({
   onToggleAutoAssign,
   onCreateTransfer,
   onGetTransferStatus,
-  onUpdateAccount
+  onUpdateAccount,
+  onMigrateMember
 }: GroupPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingDateGroupId, setEditingDateGroupId] = useState<string | null>(null);
@@ -124,6 +127,7 @@ export function GroupPanel({
   const [memberTaskMap, setMemberTaskMap] = useState<Record<string, { taskId: string; type: string; status: string; message: string }>>({});
   const memberPollRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
+  const [migratingMemberId, setMigratingMemberId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const canManage = canCreateGroup(role);
   const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch" | "expiry">("inventory");
@@ -1149,7 +1153,7 @@ user2@gmail.com`}
                 style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
               >
                 <option value="ALL">全部筛选</option>
-                <option value="HAS_PENDING">⏳ 有待进组</option>
+                <option value="HAS_PENDING">⏳ 有待接受</option>
                 <option value="HAS_SLOTS">🟢 有空位</option>
                 <option value="FULL">🔴 满员</option>
                 <option value="NEVER_SYNCED">⚠️ 未同步</option>
@@ -1183,7 +1187,7 @@ user2@gmail.com`}
                   const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
                   const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
                   let matchExtra = true;
-                  if (filterExtra === 'HAS_PENDING') matchExtra = (g.pendingInviteCount ?? 0) > 0;
+                  if (filterExtra === 'HAS_PENDING') matchExtra = (g.pendingMemberCount ?? 0) > 0;
                   else if (filterExtra === 'HAS_SLOTS') matchExtra = g.availableSlots > 0;
                   else if (filterExtra === 'FULL') matchExtra = g.availableSlots === 0;
                   else if (filterExtra === 'NEVER_SYNCED') matchExtra = !g.lastSyncedAt;
@@ -1221,25 +1225,10 @@ user2@gmail.com`}
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span className="strong">{group.groupName}</span>
-                                {(group.pendingInviteCount ?? 0) > 0 && (
-                                  <span style={{
-                                    fontSize: '0.7rem',
-                                    fontWeight: 600,
-                                    padding: '1px 6px',
-                                    borderRadius: '4px',
-                                    background: 'rgba(245,158,11,0.12)',
-                                    color: '#d97706',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                    title={`${group.pendingInviteCount} 个成员待进组`}
-                                  >
-                                    ⏳ {group.pendingInviteCount}待进组
-                                  </span>
-                                )}
                               </div>
                               <div className="muted">
                                 {group.memberCount ?? group._count?.members ?? 0} members ·{" "}
-                                {group.pendingInviteCount ?? group._count?.invites ?? 0} invites
+                                {group.pendingMemberCount ?? 0} 待接受
                               </div>
                             </td>
                             <td>
@@ -1274,7 +1263,24 @@ user2@gmail.com`}
                               )}
                             </td>
                             <td>
-                              <div>{group.account?.name ?? "-"}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <div>{group.account?.name ?? "-"}</div>
+                                {(group.pendingMemberCount ?? 0) > 0 && (
+                                  <span style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 600,
+                                    padding: '1px 6px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(245,158,11,0.12)',
+                                    color: '#d97706',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                    title={`${group.pendingMemberCount} 个成员同步后待接受`}
+                                  >
+                                    ⏳ {group.pendingMemberCount}待接受
+                                  </span>
+                                )}
+                              </div>
                               {group.account?.loginEmail && (
                                 <div className="muted" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
                                   {group.account.loginEmail}
@@ -1529,7 +1535,7 @@ user2@gmail.com`}
                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                                                              <button
                                                                className="button danger small"
-                                                               disabled={removingMemberId === m.id || replacingMemberId !== null || !!memberTaskMap[m.id]}
+                                                               disabled={removingMemberId === m.id || replacingMemberId !== null || migratingMemberId !== null || !!memberTaskMap[m.id]}
                                                                 onClick={async () => {
                                                                   if (!confirm(`确定移除成员 ${m.email}？`)) return;
                                                                   setRemovingMemberId(m.id);
@@ -1555,6 +1561,41 @@ user2@gmail.com`}
                                                              >
                                                                替换
                                                              </button>
+                                                              {onMigrateMember && (
+                                                                <button
+                                                                  className="button small"
+                                                                  style={{
+                                                                    background: 'rgba(139,92,246,0.15)',
+                                                                    color: '#7c3aed',
+                                                                    border: '1px solid rgba(139,92,246,0.3)',
+                                                                    borderRadius: '4px',
+                                                                    cursor: 'pointer',
+                                                                    whiteSpace: 'nowrap',
+                                                                  }}
+                                                                  disabled={migratingMemberId === m.id || removingMemberId !== null || replacingMemberId !== null || !!memberTaskMap[m.id]}
+                                                                  onClick={async () => {
+                                                                    if (!confirm(`确定迁移成员 ${m.email}？\n\n该操作将：\n1. 直接从当前家庭组数据库中删除该成员（不需登录母号）\n2. 自动在有空位的家庭组中重新邀请该账号\n\n确认继续？`)) return;
+                                                                    setMigratingMemberId(m.id);
+                                                                    try {
+                                                                      const result = await onMigrateMember(group.id, m.email);
+                                                                      if (result) {
+                                                                        if (result.inviteResult?.taskId) {
+                                                                          showToast('success', `已从 ${result.removedFromGroupName} 移除，邀请任务已发送至 ${result.inviteResult.targetGroupName}`);
+                                                                          pollMemberTask(m.id, result.inviteResult.taskId, 'remove', group.id);
+                                                                        } else {
+                                                                          showToast('error', result.error ?? '已从组中移除，但没有可用家庭组空位来重新邀请');
+                                                                        }
+                                                                        refreshGroupDetail(group.id);
+                                                                      }
+                                                                    } finally {
+                                                                      setMigratingMemberId(null);
+                                                                    }
+                                                                  }}
+                                                                  type="button"
+                                                                >
+                                                                  {migratingMemberId === m.id ? <><Spinner size={12} color="currentColor" /> 迁移中...</> : '🔀 迁移'}
+                                                                </button>
+                                                              )}
                                                               {/* Per-member task status indicator */}
                                                               {memberTaskMap[m.id] && (() => {
                                                                 const ts = memberTaskMap[m.id];

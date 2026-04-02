@@ -113,6 +113,22 @@ export class AccountController {
     return result;
   }
 
+  @Post(":id/sync")
+  @Roles("ADMIN")
+  async syncAccountGroups(@Param("id") id: string, @Request() req: any) {
+    const result = await this.accountService.syncAccountGroups(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "SYNC_ACCOUNT_GROUPS",
+      targetType: "Account",
+      targetId: id,
+      detail: { groupsSynced: result.groupsSynced }
+    });
+
+    return result;
+  }
+
   @Delete(":id")
   @Roles("ADMIN")
   async remove(@Param("id") id: string, @Request() req: any) {

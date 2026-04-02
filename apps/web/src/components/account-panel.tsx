@@ -32,9 +32,10 @@ type AccountPanelProps = {
   onDelete: (id: string) => Promise<boolean>;
   onUpdate: (id: string, payload: Record<string, string | undefined>) => Promise<boolean>;
   onConfirmLogin?: (id: string) => Promise<boolean>;
+  onSyncAccount?: (id: string) => Promise<boolean>;
 };
 
-export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, onConfirmLogin, role }: AccountPanelProps) {
+export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, onConfirmLogin, onSyncAccount, role }: AccountPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const canManage = canCreateAccount(role);
@@ -67,7 +68,10 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
   });
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterAccountStatus, setFilterAccountStatus] = useState("ALL");
+  const [filterSubStatus, setFilterSubStatus] = useState("ALL");
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 20;
 
@@ -121,9 +125,11 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
 
   // Filtered and paginated accounts
   const filteredAccounts = accounts.filter(a => {
-    if (!searchTerm) return true;
-    const q = searchTerm.toLowerCase();
-    return a.name.toLowerCase().includes(q) || a.loginEmail.toLowerCase().includes(q) || a.adspowerProfileId.toLowerCase().includes(q);
+    const q = searchTerm ? searchTerm.toLowerCase() : '';
+    const matchSearch = !q || a.name.toLowerCase().includes(q) || a.loginEmail.toLowerCase().includes(q) || a.adspowerProfileId.toLowerCase().includes(q);
+    const matchStatus = filterAccountStatus === 'ALL' || a.status === filterAccountStatus;
+    const matchSub = filterSubStatus === 'ALL' || (a.subscriptionStatus ?? '未知') === filterSubStatus;
+    return matchSearch && matchStatus && matchSub;
   });
   const totalPages = Math.ceil(filteredAccounts.length / PAGE_SIZE);
   const paginatedAccounts = filteredAccounts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -499,8 +505,30 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               <span className="muted" style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
                 {filteredAccounts.length} / {accounts.length} 条
               </span>
-              {searchTerm && (
-                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setCurrentPage(1); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
+              <select
+                value={filterAccountStatus}
+                onChange={(e) => { setFilterAccountStatus(e.target.value); setCurrentPage(1); }}
+                style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
+              >
+                <option value="ALL">全部状态</option>
+                <option value="HEALTHY">🟢 活跃</option>
+                <option value="LOGIN_REQUIRED">🔑 需登录</option>
+                <option value="VERIFICATION_REQUIRED">⚠️ 需验证</option>
+                <option value="RISKY">🔶 风险</option>
+                <option value="DISABLED">🚫 禁用</option>
+              </select>
+              <select
+                value={filterSubStatus}
+                onChange={(e) => { setFilterSubStatus(e.target.value); setCurrentPage(1); }}
+                style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
+              >
+                <option value="ALL">全部订阅</option>
+                <option value="ACTIVE">🟢 订阅活跃</option>
+                <option value="SUSPENDED">⏸ 已暂停</option>
+                <option value="EXPIRED">🔴 已过期</option>
+              </select>
+              {(searchTerm || filterAccountStatus !== 'ALL' || filterSubStatus !== 'ALL') && (
+                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setFilterAccountStatus('ALL'); setFilterSubStatus('ALL'); setCurrentPage(1); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
               )}
             </div>
             <table className="data-table data-table-accounts">
@@ -565,7 +593,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                             </button>
                             <button
                               className="button danger small"
-                              disabled={deletingId === account.id}
+                              disabled={deletingId === account.id || syncingId === account.id || confirmingId === account.id}
                               onClick={async () => {
                                 if (!confirm(`确定删除母号 ${account.loginEmail}？\n该操作会同时删除关联的家庭组和成员记录。`)) return;
                                 setDeletingId(account.id);
@@ -578,6 +606,26 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                             >
                               {deletingId === account.id ? "删除中..." : "删除"}
                             </button>
+                            {/* Sync Account Groups (ignoreCooldown) */}
+                            {onSyncAccount && (
+                              <button
+                                className="button small"
+                                style={{ background: 'var(--emerald, #059669)', color: 'white', borderColor: 'var(--emerald, #059669)' }}
+                                disabled={syncingId === account.id || confirmingId === account.id || deletingId === account.id}
+                                title="强制为该母号底下的所有组发起同步以解异常，无视冷却期"
+                                onClick={async () => {
+                                  if (!confirm(`确定要强制同步母号 ${account.loginEmail} 吗？\n将无视冷却期立刻启动浏览器同步家庭组。如同步成功，账号状态会自动恢复健康！`)) return;
+                                  setSyncingId(account.id);
+                                  try {
+                                    await onSyncAccount(account.id);
+                                  } finally {
+                                    setSyncingId(null);
+                                  }
+                                }}
+                              >
+                                {syncingId === account.id ? "调度中..." : "同步"}
+                              </button>
+                            )}
                             {/* Confirm Login: show only for accounts needing manual intervention */}
                             {onConfirmLogin && (
                               account.status === "MANUAL_REVIEW" ||
@@ -587,7 +635,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                               <button
                                 className="button small"
                                 style={{ background: 'var(--warm, #d97706)' }}
-                                disabled={confirmingId === account.id}
+                                disabled={confirmingId === account.id || syncingId === account.id || deletingId === account.id}
                                 title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
                                 onClick={async () => {
                                   setConfirmingId(account.id);

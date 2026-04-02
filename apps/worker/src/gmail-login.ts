@@ -95,31 +95,6 @@ export interface LoginCredentials {
   totpSecret?: string | null;
 }
 
-/**
- * Verify that the currently logged-in Google account matches the target email.
- * Checks the page body text on myaccount.google.com for the expected email.
- * Returns false on any error (safe fallback: will trigger fresh login).
- */
-async function verifyLoggedInAccount(
-  page: Page,
-  targetEmail: string,
-  logger: TaskLogger
-): Promise<boolean> {
-  try {
-    // myaccount.google.com shows the logged-in user's email in the page
-    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => { });
-    const bodyText = await page.textContent("body", { timeout: 5_000 }).catch(() => "") ?? "";
-    const match = bodyText.toLowerCase().includes(targetEmail.toLowerCase());
-    if (!match) {
-      await logger.log("WARN", `[gmail-login] Session email mismatch: expected ${targetEmail}, not found in page`);
-    }
-    return match;
-  } catch {
-    // On any error, return false to safely trigger fresh login
-    return false;
-  }
-}
-
 export async function gmailLogin(
   page: Page,
   credentials: LoginCredentials,
@@ -128,20 +103,6 @@ export async function gmailLogin(
   const { loginEmail, loginPassword, totpSecret } = credentials;
 
   await logger.log("INFO", `[gmail-login] Starting login for ${loginEmail}`);
-
-  // --- Session reuse: check if browser already has a valid session ---
-  const currentUrl = page.url();
-  if (currentUrl.includes(SUCCESS_DOMAIN) || currentUrl.includes("mail.google.com")) {
-    // Verify the session belongs to the correct account
-    const isCorrect = await verifyLoggedInAccount(page, loginEmail, logger);
-    if (isCorrect) {
-      await logger.log("INFO", "[gmail-login] Existing session verified — correct account, skipping login");
-      return { success: true };
-    }
-    // Wrong account — clear cookies and proceed with fresh login
-    await logger.log("WARN", `[gmail-login] Session exists but for WRONG account, clearing cookies`);
-    await page.context().clearCookies();
-  }
 
   // Guard: password is required for automated login
   if (!loginPassword) {
@@ -166,20 +127,8 @@ export async function gmailLogin(
     } catch {
       // No email input — already logged in?
       if (page.url().includes(SUCCESS_DOMAIN)) {
-        const isCorrect = await verifyLoggedInAccount(page, loginEmail, logger);
-        if (isCorrect) {
-          await logger.log("INFO", "[gmail-login] Already logged in (correct account), skipping login");
-          return { success: true };
-        }
-        // Wrong account — clear and restart login
-        await logger.log("WARN", "[gmail-login] Redirected to myaccount but wrong account, clearing cookies");
-        await page.context().clearCookies();
-        await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
-        try {
-          await emailInput.first().waitFor({ state: "visible", timeout: 5000 });
-        } catch {
-          return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field after cookie clear" };
-        }
+        await logger.log("INFO", "[gmail-login] Already on myaccount — login successful");
+        return { success: true };
       } else {
         return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field" };
       }
@@ -282,13 +231,6 @@ export async function gmailLogin(
 
       // Success: landed on myaccount.google.com
       if (roundUrl.includes(SUCCESS_DOMAIN) || roundUrl.includes("mail.google.com")) {
-        // Verify we're logged into the CORRECT account (not a stale/different session)
-        const isCorrectAccount = await verifyLoggedInAccount(page, loginEmail, logger);
-        if (!isCorrectAccount) {
-          await logger.log("WARN", `[gmail-login] Login landed on myaccount but WRONG account detected. Clearing cookies.`);
-          await page.context().clearCookies();
-          return { success: false, reason: "UNKNOWN", detail: `Login completed but wrong Google account detected (expected ${loginEmail})` };
-        }
         await logger.log("INFO", "[gmail-login] Login successful");
         return { success: true };
       }
@@ -438,12 +380,7 @@ export async function gmailLogin(
     // Exhausted rounds without success
     const finalUrl = page.url();
     if (finalUrl.includes(SUCCESS_DOMAIN)) {
-      const isCorrectAccount = await verifyLoggedInAccount(page, loginEmail, logger);
-      if (!isCorrectAccount) {
-        await logger.log("WARN", `[gmail-login] Final URL is myaccount but WRONG account. Clearing cookies.`);
-        await page.context().clearCookies();
-        return { success: false, reason: "UNKNOWN", detail: `Login completed but wrong Google account detected (expected ${loginEmail})` };
-      }
+      await logger.log("INFO", "[gmail-login] Login successful (after all rounds)");
       return { success: true };
     }
 

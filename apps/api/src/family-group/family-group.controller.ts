@@ -54,6 +54,15 @@ class ReplaceMemberDto {
   newUserEmail!: string;
 }
 
+class MigrateMemberDto {
+  @IsEmail()
+  memberEmail!: string;
+
+  @IsOptional()
+  @IsInt()
+  validDays?: number;
+}
+
 @Controller("family-groups")
 export class FamilyGroupController {
   constructor(
@@ -292,6 +301,36 @@ export class FamilyGroupController {
       detail: {
         targetMemberEmail: dto.targetMemberEmail,
         newUserEmail: dto.newUserEmail
+      }
+    });
+
+    return result;
+  }
+
+  @Post(":id/migrate-member")
+  @Roles("ADMIN", "OPERATIONS")
+  async migrateMember(
+    @Param("id") id: string,
+    @Body() dto: MigrateMemberDto,
+    @Request() req: any
+  ) {
+    const result = await this.familyGroupService.migrateMember(
+      id,
+      dto.memberEmail,
+      dto.validDays
+    );
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "MIGRATE_MEMBER",
+      targetType: "FamilyGroup",
+      targetId: id,
+      detail: {
+        memberEmail: dto.memberEmail,
+        removedFromGroup: result.removedFromGroupName,
+        targetGroup: result.inviteResult?.targetGroupName ?? null,
+        taskId: result.inviteResult?.taskId ?? null,
+        error: result.error ?? null,
       }
     });
 

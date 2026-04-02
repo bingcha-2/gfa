@@ -113,7 +113,6 @@ export async function processInvite(
 
   // Acquire a free profile + account lock from pool (AFTER account validation to avoid resource leak)
   let profileId: string | null = null;
-  let reuseSession = false;
   // Track accountId for account lock release; may change on fallback
   let lockedAccountId: string | null = null;
 
@@ -164,14 +163,56 @@ export async function processInvite(
       }
     }
 
-    // Acquire profile + open AdsPower browser (retries other profiles on failure)
-    const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
-    profileId = acquired.profileId;
-    reuseSession = acquired.reuseSession;
-    lockedAccountId = accountId;
+    // We will manually acquire the account lock first, so we can do a DB check
+    // BEFORE opening the heavy Adspower browser instance.
+    let debugUrl: string | null = null;
+    const maxRetries = pool.poolSize;
+    const failedProfiles = new Set<string>();
+
+    try {
+      // Re-check self-termination BEFORE even acquiring block lock
+      const preCheck = await prisma.task.findUnique({ where: { id: taskId } });
+      if (preCheck?.status === "INVITE_SENT" || preCheck?.status === "SUCCESS") {
+        await logger.log("INFO", "Self-terminating immediately (picked up from queue but DB says already done)");
+        return;
+      }
+    } catch(e) {}
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const acquiredLock = await pool.acquireForAccount(workerId, accountId, 180_000, failedProfiles);
+      profileId = acquiredLock.profileId;
+      lockedAccountId = accountId;
+
+      // ── NEW: Self-Termination Check (after acquiring lock but before opening browser) ──
+      const currentState = await prisma.task.findUnique({ where: { id: taskId } });
+      if (currentState?.status === "INVITE_SENT" || currentState?.status === "SUCCESS") {
+        await logger.log("INFO", "Self-terminating: task was already completed by another worker batch.");
+        return; // finally block will gracefully release lock and profile
+      }
+
+      try {
+        const opened = await adspower.openProfile(profileId);
+        debugUrl = opened.debugUrl;
+        break; // Success!
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await logger.log("WARN", `openProfile(${profileId}) failed: ${msg}. Retrying...`);
+        failedProfiles.add(profileId);
+        await adspower.closeProfile(profileId).catch(() => {});
+        await pool.release(profileId, workerId).catch(() => {});
+        await pool.releaseAccount(lockedAccountId, workerId).catch(() => {});
+        profileId = null;
+        lockedAccountId = null;
+      }
+    }
+
+    if (!debugUrl || !profileId) {
+      throw new Error(`Failed to open any adspower profile for account ${accountId}`);
+    }
+
     await logger.log("INFO", `Starting invite for ${userEmail}`, { profileId });
 
-    const page = await browser.connect(acquired.debugUrl, reuseSession);
+    const page = await browser.connect(debugUrl);
     await logger.log("INFO", "Browser connected via CDP");
 
     // Gmail auto-login (required every time — browser clears cache on start)
@@ -351,6 +392,158 @@ export async function processInvite(
         logger.log("WARN", `Transfer progress check failed: ${err instanceof Error ? err.message : String(err)}`)
       );
     }
+
+    // ── Batch invite: process additional waiting/active invite jobs for the same group ──
+    // This avoids redundant browser open/login cycles when multiple invites are queued.
+    // Instead of querying BullMQ (which misses ACTIVE tasks), we query the database.
+    const batchTasks = await prisma.task.findMany({
+      where: {
+        accountId,
+        familyGroupId,
+        type: "INVITE_MEMBER",
+        status: { in: ["PENDING", "RUNNING"] },
+        id: { not: taskId },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 5,
+    });
+
+    let batchCount = 0;
+
+    for (const nextTask of batchTasks) {
+      // Check available slots after most recent sync
+      const groupState = await prisma.familyGroup.findUnique({
+        where: { id: familyGroupId },
+        select: { availableSlots: true },
+      });
+      if (!groupState || groupState.availableSlots <= 0) {
+        await logger.log("INFO", `[batch] No available slots — stopping batch`);
+        break;
+      }
+
+      // Parse payload for job details
+      let payload: any = {};
+      try {
+        payload = JSON.parse(nextTask.payload);
+      } catch (e) {
+        await logger.log("WARN", `[batch] Failed to parse payload for task ${nextTask.id}`);
+        continue;
+      }
+
+      const nextUserEmail = payload.userEmail;
+      const nextOrderId = nextTask.orderId || payload.orderId;
+      const nextMemberExpiresAt = payload.memberExpiresAt
+        ? new Date(payload.memberExpiresAt)
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      if (!nextUserEmail) continue;
+
+      const batchLogger = new TaskLogger(prisma, nextTask.id, workerId);
+
+      try {
+        await batchLogger.updateStatus("RUNNING");
+        await batchLogger.log("INFO", `[batch] Processing as part of batch (DB Takeover)`);
+
+        // Extend the original job's lock so BullMQ doesn't think the parent stalled
+        await job.extendLock(job.token ?? "", 300_000).catch(() => {});
+
+        // Navigate to family page if not already there
+        if (!page.url().includes("family/details")) {
+          await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        }
+
+        // Idempotency check
+        const alreadyExists = await prisma.familyMember.findFirst({
+          where: {
+            familyGroupId,
+            email: nextUserEmail,
+            status: { in: ["ACTIVE", "PENDING"] },
+          },
+        });
+
+        if (alreadyExists) {
+          await batchLogger.log("INFO", `[batch] ${nextUserEmail} already in group — skipping`);
+          await batchLogger.updateStatus("INVITE_SENT");
+          if (nextOrderId) {
+            await batchLogger.updateOrderStatus(nextOrderId, "INVITE_SENT", `Member ${nextUserEmail} already in family group`);
+          }
+        } else {
+          // Execute the invite
+          await executeInviteOnPage(page, nextUserEmail, batchLogger, prisma, familyGroupId);
+
+          await batchLogger.updateStatus("INVITE_SENT");
+          if (nextOrderId) {
+            await batchLogger.updateOrderStatus(nextOrderId, "INVITE_SENT", `Invite sent to ${nextUserEmail}`);
+          }
+
+          // Capture gaiaId
+          let batchGaiaId: string | undefined;
+          try {
+            if (!page.url().includes("family/details")) {
+              await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+            }
+            await page.waitForTimeout(1500);
+            batchGaiaId = await scanPageForMemberGaiaId(page, nextUserEmail);
+          } catch { /* non-fatal */ }
+
+          // Upsert member record
+          await prisma.familyMember.upsert({
+            where: { familyGroupId_email: { familyGroupId, email: nextUserEmail } },
+            update: {
+              status: "PENDING",
+              displayName: nextUserEmail.split("@")[0],
+              expiresAt: nextMemberExpiresAt,
+              ...(batchGaiaId ? { googleMemberId: batchGaiaId } : {}),
+            },
+            create: {
+              familyGroupId,
+              email: nextUserEmail,
+              displayName: nextUserEmail.split("@")[0],
+              role: "member",
+              status: "PENDING",
+              expiresAt: nextMemberExpiresAt,
+              googleMemberId: batchGaiaId ?? undefined,
+            },
+          }).catch((e) => batchLogger.log("WARN", `DB upsert failed: ${e instanceof Error ? e.message : String(e)}`));
+
+          const existingInvite = await prisma.familyInvite.findFirst({
+            where: { familyGroupId, email: nextUserEmail, status: "SENT" },
+          });
+          if (!existingInvite) {
+            await prisma.familyInvite.create({ data: { familyGroupId, email: nextUserEmail, status: "SENT" } }).catch(() => {});
+          }
+
+          // Sync after each batch invite
+          await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", batchLogger);
+        }
+
+        // Note: We DO NOT call moveToCompleted on BullMQ here.
+        // The corresponding worker for this task will wake up (or pick it up),
+        // check the DB, see INVITE_SENT, and self-terminate gracefully in BullMQ.
+
+        // Transfer batch callback for this job
+        if (deps.inviteQueue) {
+            await checkTransferBatchProgress(prisma, nextTask.id, deps.inviteQueue).catch(() => {});
+        }
+
+        batchCount++;
+        await batchLogger.log("INFO", `[batch] Invite completed successfully`);
+
+      } catch (batchErr) {
+        const errMsg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+        await batchLogger.log("ERROR", `[batch] Invite failed: ${errMsg}`);
+        await batchLogger.updateStatus("FAILED_RETRYABLE", {
+          code: "BATCH_INVITE_ERROR",
+          message: errMsg,
+        });
+        // Stop batch on first failure — remaining jobs stay in DB for normal processing
+        break;
+      }
+    }
+
+    if (batchCount > 0) {
+      await logger.log("INFO", `[batch] Processed ${batchCount} additional invite(s) in this session`);
+    }
   } catch (error) {
     // --- Auto-reassign: intercept MANUAL_REVIEW and FAMILY_FULL for order-backed invite tasks ---
     const isManualReview = error instanceof UnrecoverableError && error.message === "MANUAL_REVIEW";
@@ -526,6 +719,13 @@ async function executeInviteOnPage(
   prisma?: PrismaClient,
   familyGroupId?: string
 ): Promise<void> {
+  // Ensure we're on the family details page — postTaskSync may leave us on a member detail page
+  if (!page.url().includes("family/details")) {
+    await page.goto("https://myaccount.google.com/family/details?hl=en", {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+  }
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // Primary selector: link with href containing "invitemembers"

@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateAccountDto, UpdateAccountDto, BulkImportDto } from "./dto/account.dto";
+import { QUEUE_NAMES, TASK_TYPES, JOB_DEFAULTS, SyncFamilyGroupPayload } from "@gfa/shared";
 
 function addConvenience<T extends Record<string, unknown>>(account: T): T & { hasTotpSecret: boolean } {
   return { ...account, hasTotpSecret: !!(account as any).totpSecret } as any;
@@ -10,7 +13,10 @@ function addConvenience<T extends Record<string, unknown>>(account: T): T & { ha
 
 @Injectable()
 export class AccountService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(QUEUE_NAMES.sync) private readonly syncQueue: Queue
+  ) {}
 
   private validateLoginPassword(loginPassword: string | undefined, action: "create" | "update") {
     if (loginPassword === undefined) {
@@ -33,7 +39,26 @@ export class AccountService {
       include: {
         _count: { select: { familyGroups: true, tasks: true } }
       },
-      orderBy: { createdAt: "desc" }
+    });
+
+    // Sort: active subscription first (by expiry desc), suspended last (by suspension time desc)
+    const SUB_STATUS_ORDER: Record<string, number> = { ACTIVE: 0, EXPIRED: 1, SUSPENDED: 2 };
+    accounts.sort((a, b) => {
+      const aOrder = SUB_STATUS_ORDER[a.subscriptionStatus ?? "ACTIVE"] ?? 0;
+      const bOrder = SUB_STATUS_ORDER[b.subscriptionStatus ?? "ACTIVE"] ?? 0;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      if (a.subscriptionStatus === "SUSPENDED") {
+        // Among suspended: more recently suspended first
+        const aTime = a.subscriptionStatusUpdatedAt?.getTime() ?? 0;
+        const bTime = b.subscriptionStatusUpdatedAt?.getTime() ?? 0;
+        return bTime - aTime;
+      }
+
+      // Among active / others: longer subscription (later expiry) first
+      const aExp = a.subscriptionExpiresAt?.getTime() ?? 0;
+      const bExp = b.subscriptionExpiresAt?.getTime() ?? 0;
+      return bExp - aExp;
     });
 
     return accounts.map(addConvenience);
@@ -376,6 +401,61 @@ export class AccountService {
     });
 
     return { previousStatus, tasksRequeued: count };
+  }
+
+  /**
+   * Triggers a sync task for all family groups under this account.
+   * Uses ignoreCooldown to push through any existing login restrictions.
+   */
+  async syncAccountGroups(id: string): Promise<{ groupsSynced: number }> {
+    const account = await this.prisma.account.findUnique({
+      where: { id },
+      include: { familyGroups: true },
+    });
+
+    if (!account) throw new NotFoundException("Account not found");
+
+    if (account.familyGroups.length === 0) {
+      throw new BadRequestException("Account has no family groups to sync");
+    }
+
+    let groupsSynced = 0;
+    for (const group of account.familyGroups) {
+      // Create a Task record first so the worker's TaskLogger can write logs/status
+      const task = await this.prisma.task.create({
+        data: {
+          type: "SYNC_FAMILY_GROUP",
+          familyGroupId: group.id,
+          accountId: id,
+          payload: JSON.stringify({
+            familyGroupId: group.id,
+            accountId: id,
+            ignoreCooldown: true,
+          }),
+        },
+      });
+
+      const payload: SyncFamilyGroupPayload = {
+        taskId: task.id,
+        familyGroupId: group.id,
+        accountId: id,
+        ignoreCooldown: true,
+      };
+
+      try {
+        await this.syncQueue.add(TASK_TYPES.syncFamilyGroup, payload, {
+          ...JOB_DEFAULTS,
+          jobId: `sync-${group.id}-${Date.now()}-manual`,
+        });
+        groupsSynced++;
+      } catch (queueError) {
+        // Clean up orphaned task if queue add fails
+        await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+        throw queueError;
+      }
+    }
+
+    return { groupsSynced };
   }
 }
 

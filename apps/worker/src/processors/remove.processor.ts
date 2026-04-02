@@ -62,7 +62,6 @@ export async function processRemove(
   let profileId: string | null = null;
   let originalMemberStatus: MemberStatus = 
     (job.data as any).originalMemberStatus as MemberStatus || MemberStatus.ACTIVE; // from API payload for rollback
-  let reuseSession = false;
   const lockedAccountId = account.id;
 
   try {
@@ -98,14 +97,13 @@ export async function processRemove(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, account.id, adspower);
     profileId = acquired.profileId;
-    reuseSession = acquired.reuseSession;
     await logger.log("INFO", `Removing member ${memberEmail}`, {
       profileId, familyGroupId,
       gaiaId: memberRecord?.googleMemberId ?? "unknown",
     });
     await logger.updateStatus("RUNNING");
 
-    const page = await browser.connect(acquired.debugUrl, reuseSession);
+    const page = await browser.connect(acquired.debugUrl);
 
     // Gmail auto-login (required every time — browser clears cache on start)
     const loginResult = await gmailLogin(page, account, logger);

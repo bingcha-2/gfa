@@ -62,24 +62,24 @@ export async function processSync(
   }
 
   let profileId: string | null = null;
-  let reuseSession = false;
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
-    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    if (cooldownSecs > 0) {
-      await logger.log("WARN", `[sync] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+    if (!job.data.ignoreCooldown) {
+      const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+      if (cooldownSecs > 0) {
+        await logger.log("WARN", `[sync] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+      }
     }
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
     profileId = acquired.profileId;
-    reuseSession = acquired.reuseSession;
     await logger.updateStatus("RUNNING");
 
-    const page = await browser.connect(acquired.debugUrl, reuseSession);
+    const page = await browser.connect(acquired.debugUrl);
 
     // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
@@ -159,6 +159,19 @@ export async function processSync(
       "INFO",
       `Sync complete: ${dedupedNonAdmin.length} non-admin members (deduped), ${rawNonAdmin.length} raw slots used (Google view), ${finalAvailableSlots} slots available`
     );
+
+    // If account was previously marked as unhealthy or risky, heal it since sync succeeded
+    if (account.status !== "HEALTHY") {
+      await prisma.account.update({
+        where: { id: accountId },
+        data: { status: "HEALTHY" },
+      });
+      await logger.log("INFO", `Reset account status to HEALTHY after successful sync`);
+    }
+
+    // Clear any accumulated failures or cooldowns
+    await pool.clearAccountTaskFailures(accountId);
+    await pool.clearLoginCooldown(accountId);
 
     // Non-fatal: update subscription info while we still have an active session
     try {

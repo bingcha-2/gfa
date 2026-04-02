@@ -62,7 +62,6 @@ export async function processReplace(
   }
 
   let profileId: string | null = null;
-  let reuseSession = false;
 
   try {
     // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → fail fast ──
@@ -83,14 +82,13 @@ export async function processReplace(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
     profileId = acquired.profileId;
-    reuseSession = acquired.reuseSession;
     await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail}`, {
       profileId, familyGroupId,
     });
 
     await logger.updateStatus("RUNNING");
 
-    const page = await browser.connect(acquired.debugUrl, reuseSession);
+    const page = await browser.connect(acquired.debugUrl);
 
     // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
@@ -101,34 +99,6 @@ export async function processReplace(
     }
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, accountId);
-
-    // Post-login identity verification: ensure we're logged into the CORRECT Google account.
-    // This catches cases where the browser has a stale session for a different account,
-    // or the login flow ended up on a different account's myaccount page.
-    await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(2000);
-    const bodyText = await page.textContent("body", { timeout: 5000 }).catch(() => "") ?? "";
-    if (!bodyText.toLowerCase().includes(account.loginEmail.toLowerCase())) {
-      await logger.log("WARN",
-        `[replace] Post-login identity mismatch: expected ${account.loginEmail} but not found on myaccount page. Clearing cookies and retrying login.`
-      );
-      await page.context().clearCookies();
-      const retryLogin = await gmailLogin(page, account, logger);
-      if (!retryLogin.success) {
-        await handleLoginResult(retryLogin, { job, pool, prisma, logger, accountId });
-      }
-      // Verify again after retry
-      await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForTimeout(2000);
-      const retryBody = await page.textContent("body", { timeout: 5000 }).catch(() => "") ?? "";
-      if (!retryBody.toLowerCase().includes(account.loginEmail.toLowerCase())) {
-        throw new Error(
-          `Post-login identity verification failed: logged into wrong account. ` +
-          `Expected: ${account.loginEmail}`
-        );
-      }
-    }
-    await logger.log("INFO", `[replace] Post-login identity verified: ${account.loginEmail}`);
 
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);

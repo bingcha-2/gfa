@@ -189,15 +189,14 @@ export class BrowserPool {
    *   3. If no profile is free, the account lock is released so other
    *      accounts can still proceed (no deadlock)
    *
-   * @returns { profileId, reuseSession } where reuseSession=true if the
-   *          assigned profile last used this same account.
+   * @returns { profileId } — the assigned profile ID.
    */
   async acquireForAccount(
     workerId: string,
     accountId: string,
     timeoutMs = 180_000,
     excludedProfiles?: Set<string>
-  ): Promise<{ profileId: string; reuseSession: boolean }> {
+  ): Promise<{ profileId: string }> {
     const deadline = Date.now() + timeoutMs;
     const accountKey = `${ACCOUNT_LOCK_PREFIX}${accountId}`;
 
@@ -221,9 +220,8 @@ export class BrowserPool {
       }
 
       // Step 2: Account locked — now find a profile.
-      // Priority: profile with lastAccount === accountId (session reuse)
+      // Priority: profile with lastAccount === accountId (reduces profile switching)
       let profileId: string | null = null;
-      let reuseSession = false;
 
       // 2a: Try affinity profile first
       for (const pid of this.profileIds) {
@@ -235,7 +233,6 @@ export class BrowserPool {
           );
           if (result === "OK") {
             profileId = pid;
-            reuseSession = true;
             break;
           }
           // Affinity profile is busy — fall through to any free profile
@@ -251,7 +248,6 @@ export class BrowserPool {
           );
           if (result === "OK") {
             profileId = pid;
-            reuseSession = false;
             break;
           }
         }
@@ -285,9 +281,9 @@ export class BrowserPool {
       // Success: both account lock and profile lock acquired
       console.log(
         `[BrowserPool] Profile ${profileId} acquired for account ${accountId} ` +
-        `by worker ${workerId} (reuse=${reuseSession})`
+        `by worker ${workerId}`
       );
-      return { profileId, reuseSession };
+      return { profileId };
     }
 
     throw new Error(
@@ -310,18 +306,17 @@ export class BrowserPool {
     accountId: string,
     adspower: AdsPowerClient,
     opts?: { maxProfileRetries?: number; timeoutMs?: number }
-  ): Promise<{ profileId: string; reuseSession: boolean; debugUrl: string }> {
+  ): Promise<{ profileId: string; debugUrl: string }> {
     const maxRetries = opts?.maxProfileRetries ?? this.profileIds.length;
     const timeoutMs = opts?.timeoutMs ?? 180_000;
     const failedProfiles = new Set<string>();
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const acquired = await this.acquireForAccount(workerId, accountId, timeoutMs, failedProfiles);
-      const { profileId, reuseSession } = acquired;
+      const { profileId } = await this.acquireForAccount(workerId, accountId, timeoutMs, failedProfiles);
 
       try {
         const { debugUrl } = await adspower.openProfile(profileId);
-        return { profileId, reuseSession, debugUrl };
+        return { profileId, debugUrl };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(
@@ -478,6 +473,13 @@ export class BrowserPool {
    */
   async clearAccountTaskFailures(accountId: string): Promise<void> {
     await this.redis.del(`gfa:account-failures:${accountId}`);
+  }
+
+  /**
+   * Clear the login cooldown for an account completely.
+   */
+  async clearLoginCooldown(accountId: string): Promise<void> {
+    await this.redis.del(`gfa:login-cooldown:${accountId}`);
   }
 
   /**
