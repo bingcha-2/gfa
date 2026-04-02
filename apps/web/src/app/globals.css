@@ -1362,3 +1362,62 @@ img {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* ── Order table ── */
+.data-table-orders {
+  min-width: 860px;
+}
+
+.order-type-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(31, 26, 23, 0.06);
+  color: rgba(31, 26, 23, 0.68);
+  white-space: nowrap;
+}
+
+/* Expanded row */
+.row-expanded td {
+  border-bottom: 0;
+}
+
+.detail-expand-row td {
+  padding: 0 !important;
+  border-bottom: 1px solid rgba(31, 26, 23, 0.08);
+}
+
+.order-detail-card {
+  padding: 20px 24px;
+  background:
+    linear-gradient(180deg, rgba(15, 118, 110, 0.03), rgba(255, 252, 248, 0.92));
+  border-top: 1px solid rgba(15, 118, 110, 0.1);
+}
+
+.order-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.order-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.order-detail-item .label {
+  font-size: 11px;
+}
+
+.order-detail-item > span:last-child,
+.order-detail-item > .status-badge {
+  font-size: 13px;
+}
+
