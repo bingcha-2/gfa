@@ -23,6 +23,68 @@ const GOOGLE_LOGIN_URL = "https://accounts.google.com?hl=en";
 const SUCCESS_DOMAIN = "myaccount.google.com";
 const LOGIN_TIMEOUT_MS = 60_000;
 
+/**
+ * Event-driven page state detector.
+ * Uses Promise.race to detect whichever next state appears first,
+ * eliminating fixed waitForTimeout delays.
+ *
+ * Returns immediately when ANY of these signals is detected:
+ *  - URL changed (left current page)
+ *  - Password input appeared
+ *  - TOTP input appeared
+ *  - Success domain reached
+ *  - Error popup appeared
+ *  - Timeout (fallback, default 6s)
+ */
+async function waitForNextState(page: Page, timeoutMs = 6000): Promise<void> {
+  const currentUrl = page.url();
+  const signals: Promise<string>[] = [
+    // --- URL-based signals ---
+    page.waitForURL((url) => url.toString() !== currentUrl, { timeout: timeoutMs })
+      .then(() => "url-changed").catch(() => ""),
+
+    // --- DOM-based signals (same-page popups/overlays) ---
+    // Password input appeared
+    page.locator('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])').first()
+      .waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "password-visible").catch(() => ""),
+    // TOTP input appeared
+    page.locator('input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]').first()
+      .waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "totp-visible").catch(() => ""),
+    // Error popup (Restart button)
+    page.locator('button:has-text("Restart"), button:has-text("重试"), button:has-text("重新开始"), button:has-text("重新啟動")')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "error-popup").catch(() => ""),
+    // CAPTCHA iframe appeared
+    page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], #captcha, .g-recaptcha')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "captcha").catch(() => ""),
+    // Phone/SMS challenge input appeared
+    page.locator('input[autocomplete="tel"], input[name="phoneNumberId"], div[data-challengetype="12"], div[data-challengetype="9"]')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "phone-challenge").catch(() => ""),
+    // ToS/privacy agree button appeared
+    page.locator('button:has-text("I agree"), button:has-text("同意"), button:has-text("Accept"), button:has-text("接受")')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "tos-prompt").catch(() => ""),
+    // Age/birthday input appeared
+    page.locator('select[id*="month" i], select[name*="month" i], input[id*="year" i]')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "age-verify").catch(() => ""),
+    // Challenge selection page appeared
+    page.locator('[data-challengetype], li[role="link"]')
+      .first().waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => "challenge-selection").catch(() => ""),
+
+    // --- Hard fallback ---
+    page.waitForTimeout(timeoutMs).then(() => "timeout"),
+  ];
+  await Promise.race(signals);
+  // Brief settle time for DOM to stabilize
+  await page.waitForTimeout(200);
+}
+
 export type GmailLoginResult =
   | { success: true }
   | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT" | "PHONE_CHALLENGE" | "ACCOUNT_LOCKED" | "CAPTCHA"; detail: string };
@@ -94,14 +156,15 @@ export async function gmailLogin(
   try {
     // Step 1: Navigate to Google login
     await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
-    await page.waitForTimeout(2000);
 
-    // Step 2: Fill email
+    // Step 2: Fill email — wait for input to appear (event-driven, no fixed delay)
     const emailInput = page.locator(
       'input[type="email"], input[id="identifierId"]'
     );
-    if ((await emailInput.count()) === 0) {
-      // Already logged in? (redirect after navigation)
+    try {
+      await emailInput.first().waitFor({ state: "visible", timeout: 5000 });
+    } catch {
+      // No email input — already logged in?
       if (page.url().includes(SUCCESS_DOMAIN)) {
         const isCorrect = await verifyLoggedInAccount(page, loginEmail, logger);
         if (isCorrect) {
@@ -112,10 +175,9 @@ export async function gmailLogin(
         await logger.log("WARN", "[gmail-login] Redirected to myaccount but wrong account, clearing cookies");
         await page.context().clearCookies();
         await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
-        await page.waitForTimeout(2000);
-        // Re-check for email input after fresh navigation
-        const emailInput2 = page.locator('input[type="email"], input[id="identifierId"]');
-        if ((await emailInput2.count()) === 0) {
+        try {
+          await emailInput.first().waitFor({ state: "visible", timeout: 5000 });
+        } catch {
           return { success: false, reason: "UNKNOWN", detail: "Cannot find email input field after cookie clear" };
         }
       } else {
@@ -125,9 +187,8 @@ export async function gmailLogin(
 
     await emailInput.first().fill(loginEmail);
     await clickNext(page, logger, 0, "identifier");
-    // Wait for page to advance past identifier step (smart wait, up to 4s)
-    await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 4000 }).catch(() => { });
-    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
+    // Event-driven: wait for page to leave /identifier OR password/challenge to appear
+    await waitForNextState(page, 5000);
 
     // Verify the page actually advanced past the email step.
     // If still on identifier page, retry with escalating click methods.
@@ -138,13 +199,13 @@ export async function gmailLogin(
       if ((await retryEmailInput.count()) > 0) {
         await retryEmailInput.first().fill(loginEmail);
       }
-      await clickNext(page, logger, nextRetry, "identifier");
-      await page.waitForTimeout(5000);
-      await page.waitForLoadState("domcontentloaded").catch(() => { });
+      // Escalate: retry 0 = Enter, retry 1 = JS click, retry 2 = button click
+      await clickNext(page, logger, nextRetry + 1, "identifier");
+      await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 3000 }).catch(() => { });
+      await page.waitForLoadState("domcontentloaded", { timeout: 2000 }).catch(() => { });
     }
 
-    // Handle "Something went wrong" error popup (up to 2 rounds — it can appear multiple times).
-    // If Restart was clicked, the page resets to the email input — re-fill email then continue.
+    // Handle "Something went wrong" error popup (up to 2 rounds).
     for (let dismissRound = 0; dismissRound < 2; dismissRound++) {
       const dismissed = await dismissErrorPopup(page, logger);
       if (!dismissed) break;
@@ -154,8 +215,7 @@ export async function gmailLogin(
       if ((await emailRetry.count()) > 0) {
         await emailRetry.first().fill(loginEmail);
         await clickNext(page, logger, 0, "identifier");
-        await page.waitForTimeout(2000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        await waitForNextState(page, 5000);
       }
     }
 
@@ -166,7 +226,7 @@ export async function gmailLogin(
       'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
     );
     try {
-      await passwordInput.first().waitFor({ state: "visible", timeout: 8_000 });
+      await passwordInput.first().waitFor({ state: "visible", timeout: 5_000 });
     } catch {
       // Password field never appeared — check if page redirected to a known challenge
       const url = page.url();
@@ -204,8 +264,11 @@ export async function gmailLogin(
 
     await passwordInput.first().fill(loginPassword);
     await clickNext(page, logger, 0, "password");
-    await page.waitForTimeout(3000);
-    await page.waitForLoadState("domcontentloaded").catch(() => { });
+    // After password submit: wait for URL to change (to TOTP, success, or challenge).
+    // Do NOT use waitForNextState — password input is still visible and would trigger immediately.
+    const pwdUrl = page.url();
+    await page.waitForURL((url) => url.toString() !== pwdUrl, { timeout: 8000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
 
     // Step 4: Handle post-login challenges (up to 8 rounds)
     let totpSubmitted = false;
@@ -245,8 +308,7 @@ export async function gmailLogin(
         } else {
           await logger.log("WARN", "[gmail-login] On pwd URL but no visible input — waiting");
         }
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        await waitForNextState(page, 5000);
         continue;
       }
 
@@ -258,15 +320,33 @@ export async function gmailLogin(
         // If TOTP was already submitted in a previous round, the code was rejected.
         // Wait for the next 30s TOTP window to get a fresh code.
         if (totpSubmitted) {
-          const waitSecs = totpSecondsRemaining() + 2;
-          await logger.log("WARN", `[gmail-login] TOTP rejected — waiting ${waitSecs}s for next code window`);
-          await page.waitForTimeout(waitSecs * 1000);
+          // TOTP was rejected — retry with a fresh code from the next window.
+          // handleTotp(forceNewCode=true) will wait internally for the next 30s boundary.
+          await logger.log("WARN", "[gmail-login] TOTP rejected — retrying with fresh code");
+
+          // Page may have changed during previous wait. Re-check TOTP input.
+          const freshTotpInput = page.locator(
+            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+          );
+          if ((await freshTotpInput.count()) === 0) {
+            await logger.log("WARN", "[gmail-login] TOTP input disappeared — re-detecting page state");
+            continue;
+          }
         }
-        const result = await handleTotp(page, totpInput.first(), totpSecret, logger, loginEmail);
+
+        // Re-locate input fresh (never use stale locator references)
+        const freshInput = page.locator(
+          'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+        );
+        const result = await handleTotp(page, freshInput.first(), totpSecret, logger, loginEmail, totpSubmitted);
         if (!result.success) return result;
         totpSubmitted = true;
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        // After TOTP submit: wait specifically for URL to change (success or next challenge).
+        // Do NOT use waitForNextState here — the TOTP input is still visible and would
+        // trigger an immediate false return.
+        const totpUrl = page.url();
+        await page.waitForURL((url) => url.toString() !== totpUrl, { timeout: 8000 }).catch(() => {});
+        await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
         continue;
       }
 
@@ -279,8 +359,7 @@ export async function gmailLogin(
       );
       if ((await birthdayInput.count()) > 0 || (await monthSelect.count()) > 0) {
         await handleAgVerification(page, logger);
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        await waitForNextState(page, 5000);
         continue;
       }
 
@@ -292,8 +371,7 @@ export async function gmailLogin(
       if ((await agreeButton.count()) > 0) {
         await agreeButton.first().click();
         await logger.log("INFO", "[gmail-login] Accepted ToS/privacy prompt");
-        await page.waitForTimeout(2000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        await waitForNextState(page, 5000);
         continue;
       }
 
@@ -349,13 +427,12 @@ export async function gmailLogin(
           await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
           return { success: false, reason: "VERIFICATION_REQUIRED", detail };
         }
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded").catch(() => { });
+        await waitForNextState(page, 5000);
         continue;
       }
 
-      // Unknown state — wait briefly before next round
-      await page.waitForTimeout(2000);
+      // Unknown state — brief wait before next round
+      await page.waitForTimeout(800);
     }
 
     // Exhausted rounds without success
@@ -456,7 +533,7 @@ async function clickNext(
       }
     } else {
       try {
-        await btn.click({ timeout: 5000 });
+        await btn.click({ timeout: 3000 });
       } catch {
         // Playwright click failed (intercepted/timeout) — try JS click, then Enter
         try {
@@ -486,8 +563,8 @@ async function dismissErrorPopup(page: Page, logger: TaskLogger): Promise<boolea
 
   await logger.log("WARN", "[gmail-login] 'Something went wrong' popup detected — clicking Restart");
   await restartBtn.first().click();
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("domcontentloaded").catch(() => { });
+  await page.waitForTimeout(1500);
+  await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
   return true;
 }
 
@@ -497,7 +574,8 @@ async function handleTotp(
   input: import("playwright").Locator,
   totpSecret: string | null | undefined,
   logger: TaskLogger,
-  loginEmail?: string
+  loginEmail?: string,
+  forceNewCode = false
 ): Promise<GmailLoginResult> {
   await logger.log("INFO", "[gmail-login] TOTP 2FA challenge detected");
 
@@ -509,11 +587,14 @@ async function handleTotp(
     };
   }
 
-  // Wait for a fresh TOTP code if current one is about to expire
+  // Wait for a fresh TOTP code:
+  //  - forceNewCode=true (retry): always wait for next 30s window
+  //  - forceNewCode=false (first): only wait if about to expire (<5s)
   const remaining = totpSecondsRemaining();
-  if (remaining < 5) {
-    await logger.log("INFO", `[gmail-login] Waiting ${remaining + 1}s for fresh TOTP`);
-    await page.waitForTimeout((remaining + 1) * 1000);
+  if (forceNewCode || remaining < 5) {
+    const waitSecs = remaining + 1;
+    await logger.log("INFO", `[gmail-login] Waiting ${waitSecs}s for fresh TOTP`);
+    await page.waitForTimeout(waitSecs * 1000);
   }
 
   let code: string;
@@ -530,6 +611,15 @@ async function handleTotp(
   }
 
   await logger.log("INFO", `[gmail-login] Generated TOTP: ${code.slice(0, 2)}****`);
+
+  // After the wait, the page may have changed (Google timeout/redirect).
+  // Re-check if the input is still available before filling.
+  try {
+    await input.waitFor({ state: "visible", timeout: 3000 });
+  } catch {
+    await logger.log("WARN", "[gmail-login] TOTP input gone after wait — page state changed");
+    return { success: false, reason: "TRANSIENT" as const, detail: "TOTP input disappeared during code wait" };
+  }
 
   await input.fill(code);
 
@@ -587,8 +677,8 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
   await logger.log("INFO", "[gmail-login] Account recovery/GDS page detected — trying to skip");
 
   // GDS pages are SPAs — wait for content to render
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => { });
+  await page.waitForTimeout(1500);
+  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => { });
 
   // Broad set of buttons that can dismiss GDS / recovery pages.
   // GDS is a multi-card flow: recoveryoptions → welcome → homeaddress.
@@ -649,8 +739,8 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
       const btnText = await dismissBtn.first().textContent().catch(() => "?");
       await dismissBtn.first().click();
       await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on GDS card ${cardRound + 1}`);
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("domcontentloaded").catch(() => { });
+      await page.waitForTimeout(1500);
+      await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
       continue;
     }
 
@@ -668,7 +758,7 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
       waitUntil: "domcontentloaded",
       timeout: 30_000,
     });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
   }
 
   return true;
@@ -682,8 +772,8 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
 async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
   await logger.log("INFO", `[gmail-login] Speedbump/interstitial detected — attempting to skip`);
 
-  await page.waitForTimeout(2000);
-  await page.waitForLoadState("domcontentloaded").catch(() => { });
+  await page.waitForTimeout(1000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
 
   // Try all known dismiss buttons for speedbump pages
   const dismissBtn = page.locator([
@@ -732,7 +822,7 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
       await page.waitForTimeout(500);
       // Try Playwright click first (with short timeout), fall back to JS click
       try {
-        await dismissBtn.first().click({ timeout: 5000 });
+        await dismissBtn.first().click({ timeout: 3000 });
       } catch {
         await dismissBtn.first().evaluate((el: HTMLElement) => el.click());
         await logger.log("INFO", "[gmail-login] Used JS click fallback for speedbump dismiss");
@@ -744,13 +834,13 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
       return;
     }
 
     await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" to dismiss speedbump`);
-    await page.waitForTimeout(3000);
-    await page.waitForLoadState("domcontentloaded").catch(() => { });
+    await page.waitForTimeout(1500);
+    await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
     return;
   }
 
@@ -760,7 +850,7 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
 }
 
 /**

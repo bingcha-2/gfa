@@ -38,22 +38,15 @@ export class WorkerBrowser {
 
     if (reuseSession) {
       // Session reuse mode: preserve cookies & storage from the previous task.
-      // gmailLogin will still verify if the session is valid before proceeding.
-      try {
-        await existingPage.goto("https://accounts.google.com?hl=en", { waitUntil: "domcontentloaded", timeout: 10_000 });
-      } catch {
-        // Non-fatal — navigation may fail on network blip
-      }
+      // gmailLogin will verify session validity and navigate as needed.
+      // No pre-navigation required — saves ~2s.
     } else {
       // Clean-slate mode (default): clear everything for a fresh login.
-      // This prevents stale sessions from a previous task (or a different account)
-      // from causing gmailLogin to skip re-authentication silently.
       await contexts[0].clearCookies();
 
-      // Also clear localStorage / sessionStorage to invalidate any in-memory auth tokens
-      // (AdsPower keeps Chromium alive between tasks, so web storage persists)
+      // Clear localStorage / sessionStorage — navigate briefly then clear
       try {
-        await existingPage.goto("https://accounts.google.com?hl=en", { waitUntil: "domcontentloaded", timeout: 10_000 });
+        await existingPage.goto("https://accounts.google.com?hl=en", { waitUntil: "domcontentloaded", timeout: 8_000 });
         await existingPage.evaluate(() => {
           try { localStorage.clear(); } catch { /* cross-origin guard */ }
           try { sessionStorage.clear(); } catch { /* cross-origin guard */ }

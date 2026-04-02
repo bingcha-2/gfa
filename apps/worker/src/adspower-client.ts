@@ -30,6 +30,8 @@ const DEFAULT_CONFIG: AdsPowerConfig = {
 
 export class AdsPowerClient {
   private config: AdsPowerConfig;
+  /** Serial mutex: only one openProfile call at a time to avoid AdsPower rate-limit */
+  private _openMutex: Promise<void> = Promise.resolve();
 
   constructor(config?: Partial<AdsPowerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -66,6 +68,26 @@ export class AdsPowerClient {
    * it is force-closed first so AdsPower will accept a fresh open request.
    */
   async openProfile(profileId: string): Promise<OpenProfileResult> {
+    // Serialize all openProfile calls to prevent AdsPower "Too many request per second" errors
+    const result = new Promise<OpenProfileResult>((resolve, reject) => {
+      this._openMutex = this._openMutex.then(async () => {
+        try {
+          const r = await this._openProfileImpl(profileId);
+          resolve(r);
+        } catch (e) {
+          reject(e);
+        }
+        // Small gap between sequential opens to stay under AdsPower rate limit
+        await sleep(800);
+      });
+    });
+    return result;
+  }
+
+  /**
+   * Internal implementation of openProfile (not rate-limited).
+   */
+  private async _openProfileImpl(profileId: string): Promise<OpenProfileResult> {
     // Guard: close stale profile before attempting to open
     const { active } = await this.checkProfile(profileId);
     if (active) {
