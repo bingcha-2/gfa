@@ -219,6 +219,13 @@ export async function gmailLogin(
 
       // Success: landed on myaccount.google.com
       if (roundUrl.includes(SUCCESS_DOMAIN) || roundUrl.includes("mail.google.com")) {
+        // Verify we're logged into the CORRECT account (not a stale/different session)
+        const isCorrectAccount = await verifyLoggedInAccount(page, loginEmail, logger);
+        if (!isCorrectAccount) {
+          await logger.log("WARN", `[gmail-login] Login landed on myaccount but WRONG account detected. Clearing cookies.`);
+          await page.context().clearCookies();
+          return { success: false, reason: "UNKNOWN", detail: `Login completed but wrong Google account detected (expected ${loginEmail})` };
+        }
         await logger.log("INFO", "[gmail-login] Login successful");
         return { success: true };
       }
@@ -353,7 +360,15 @@ export async function gmailLogin(
 
     // Exhausted rounds without success
     const finalUrl = page.url();
-    if (finalUrl.includes(SUCCESS_DOMAIN)) return { success: true };
+    if (finalUrl.includes(SUCCESS_DOMAIN)) {
+      const isCorrectAccount = await verifyLoggedInAccount(page, loginEmail, logger);
+      if (!isCorrectAccount) {
+        await logger.log("WARN", `[gmail-login] Final URL is myaccount but WRONG account. Clearing cookies.`);
+        await page.context().clearCookies();
+        return { success: false, reason: "UNKNOWN", detail: `Login completed but wrong Google account detected (expected ${loginEmail})` };
+      }
+      return { success: true };
+    }
 
     return {
       success: false,

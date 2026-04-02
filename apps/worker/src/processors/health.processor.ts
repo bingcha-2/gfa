@@ -16,6 +16,7 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { scrapeSubscriptionInfo } from "../scrape-subscription";
+import { postTaskSync } from "../post-task-sync";
 
 const GOOGLE_ACCOUNT_URL = "https://myaccount.google.com/?hl=en";
 
@@ -121,6 +122,18 @@ export async function processHealth(
         ...subUpdate,
       },
     });
+
+    // Opportunistic family sync: since we already have a logged-in session,
+    // sync the family group state to DB.
+    if (healthStatus === "HEALTHY") {
+      const familyGroup = await prisma.familyGroup.findFirst({
+        where: { accountId },
+        select: { id: true },
+      });
+      if (familyGroup) {
+        await postTaskSync(page, prisma, familyGroup.id, account.loginEmail ?? "", logger);
+      }
+    }
 
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Health check complete: ${healthStatus}`);

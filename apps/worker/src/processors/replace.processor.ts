@@ -23,6 +23,7 @@ import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
+import { postTaskSync } from "../post-task-sync";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -100,6 +101,35 @@ export async function processReplace(
     }
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, accountId);
+
+    // Post-login identity verification: ensure we're logged into the CORRECT Google account.
+    // This catches cases where the browser has a stale session for a different account,
+    // or the login flow ended up on a different account's myaccount page.
+    await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(2000);
+    const bodyText = await page.textContent("body", { timeout: 5000 }).catch(() => "") ?? "";
+    if (!bodyText.toLowerCase().includes(account.loginEmail.toLowerCase())) {
+      await logger.log("WARN",
+        `[replace] Post-login identity mismatch: expected ${account.loginEmail} but not found on myaccount page. Clearing cookies and retrying login.`
+      );
+      await page.context().clearCookies();
+      const retryLogin = await gmailLogin(page, account, logger);
+      if (!retryLogin.success) {
+        await handleLoginResult(retryLogin, { job, pool, prisma, logger, accountId });
+      }
+      // Verify again after retry
+      await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(2000);
+      const retryBody = await page.textContent("body", { timeout: 5000 }).catch(() => "") ?? "";
+      if (!retryBody.toLowerCase().includes(account.loginEmail.toLowerCase())) {
+        throw new Error(
+          `Post-login identity verification failed: logged into wrong account. ` +
+          `Expected: ${account.loginEmail}`
+        );
+      }
+    }
+    await logger.log("INFO", `[replace] Post-login identity verified: ${account.loginEmail}`);
+
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
@@ -124,6 +154,7 @@ export async function processReplace(
     // For check #2, we count member cards on the page (excluding manager).
     // We do NOT use body.textContent for presence detection (it's unreliable for PENDING→ACTIVE transitions).
     let skipRemove = false;
+    let skipInvite = false;
     if (memberRecord?.status === "REMOVED") {
       await logger.log("INFO", `Target member ${targetMemberEmail} already REMOVED in DB — skipping Step 1 (remove)`);
       skipRemove = true;
@@ -171,7 +202,64 @@ export async function processReplace(
           if (inviteLinkCount > 0) {
             await logger.log("INFO", "Invite slot is available. Proceeding to invite.");
           } else {
-            throw new Error(`Cannot find member and no invite slots available (当前识别失败且无可用空位)`);
+            // No invite slots AND old member not found.
+            // Possible scenarios:
+            //   A) Previous attempt already completed the full replace (removed old + invited new)
+            //      but crashed before updating DB. → newUserEmail is already on the page.
+            //   B) Identification genuinely failed — member IS on page but S0-S4 all missed it.
+            //
+            // Check for scenario A first: run a quick sync to get the actual page state
+            // into the DB, then query the DB for newUserEmail — much more reliable than UI text matching.
+            await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
+
+            const newMemberInDb = await prisma.familyMember.findFirst({
+              where: {
+                familyGroupId,
+                email: newUserEmail,
+                status: { in: ["ACTIVE", "PENDING"] },
+              },
+            });
+
+            if (newMemberInDb) {
+              await logger.log("INFO",
+                `Idempotency check: ${newUserEmail} already found on family page! ` +
+                `Previous attempt likely completed. Skipping remove+invite, proceeding to DB update.`
+              );
+              // skipRemove is already false here, but we need to skip the entire remove+invite flow.
+              // Set flags and break out of the catch to let execution continue to DB update.
+              skipRemove = true;
+              skipInvite = true;
+            } else {
+              // Scenario B: genuinely can't find the member. Reload and retry once.
+              await logger.log("WARN",
+                `No invite slots, newUserEmail not on page → member must be present but identification failed. Reloading and retrying...`
+              );
+              await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
+              await page.waitForTimeout(2000);
+              await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+              await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+              await page.waitForTimeout(5000);
+
+              try {
+                discoveredGaiaId = await removeMemberOnPage(page, targetMemberEmail, logger, {
+                  loginEmail: account.loginEmail,
+                  password: account.loginPassword ?? undefined,
+                  totpSecret: account.totpSecret ?? undefined,
+                  displayName: targetDisplayName,
+                  googleMemberId: targetGaiaId,
+                }, otherGaiaIds);
+                await logger.log("INFO", `Retry succeeded — member found and removed on second attempt`);
+              } catch (retryErr) {
+                const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                await logger.log("ERROR",
+                  `Retry also failed: ${retryMsg}. Group is full but cannot identify target member.`
+                );
+                throw new Error(
+                  `Cannot find member on page despite group being full (识别失败，组满但无法定位目标成员). ` +
+                  `Target: ${targetMemberEmail}, gaiaId: ${targetGaiaId ?? 'unknown'}`
+                );
+              }
+            }
           }
         } else {
           throw removeErr; // re-throw non-matching errors
@@ -197,30 +285,40 @@ export async function processReplace(
     await page.waitForTimeout(3000);
     await logger.log("INFO", `Back on family details, now inviting ${newUserEmail}`);
 
-    // Step 3: Invite the new member on page
-    await inviteMemberOnPage(page, newUserEmail, logger);
-
-    // --- Verify invite by checking new member appears on family page ---
+    // Step 3: Invite the new member on page (skip if previous attempt already invited)
     let newMemberGaiaId: string | undefined;
-    try {
-      if (!page.url().includes("family/details")) {
+    if (!skipInvite) {
+      await inviteMemberOnPage(page, newUserEmail, logger);
+
+      // --- Verify invite by checking new member appears on family page ---
+      try {
+        if (!page.url().includes("family/details")) {
+          await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        }
+        await page.waitForTimeout(2000);
+        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
+        if (newMemberGaiaId) {
+          await logger.log("INFO", `Verified invite: found ${newUserEmail} on family page (gaiaId=${newMemberGaiaId})`);
+        } else {
+          // New member not found — invite may have silently failed
+          await logger.log("ERROR", `Post-invite verification failed: ${newUserEmail} not found on family page`);
+          throw new Error(
+            `Invite verification failed: ${newUserEmail} not found on family page after invite — ` +
+            `Google may have rejected the invite silently`
+          );
+        }
+      } catch (err: any) {
+        if (err.message?.includes("Invite verification failed")) throw err;
+        await logger.log("WARN", `gaiaId capture error for new member (non-fatal): ${err.message}`);
+      }
+    } else {
+      await logger.log("INFO", `[replace] Skipping invite step — previous attempt already completed`);
+      // Try to get the new member's GAIA ID from the current page for DB update
+      try {
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      }
-      await page.waitForTimeout(2000);
-      newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
-      if (newMemberGaiaId) {
-        await logger.log("INFO", `Verified invite: found ${newUserEmail} on family page (gaiaId=${newMemberGaiaId})`);
-      } else {
-        // New member not found — invite may have silently failed
-        await logger.log("ERROR", `Post-invite verification failed: ${newUserEmail} not found on family page`);
-        throw new Error(
-          `Invite verification failed: ${newUserEmail} not found on family page after invite — ` +
-          `Google may have rejected the invite silently`
-        );
-      }
-    } catch (err: any) {
-      if (err.message?.includes("Invite verification failed")) throw err;
-      await logger.log("WARN", `gaiaId capture error for new member (non-fatal): ${err.message}`);
+        await page.waitForTimeout(2000);
+        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
+      } catch { /* non-fatal */ }
     }
 
     // Both page operations succeeded — now update DB atomically
@@ -326,6 +424,9 @@ export async function processReplace(
         logger.log("WARN", `Failed to update SwapRecord: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
+
+    // Post-task sync: scrape the family page to reconcile DB with actual state
+    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
 
     await logger.log("INFO", "Replace completed successfully");
   } catch (error) {
@@ -856,7 +957,7 @@ async function removeMemberOnPage(
  * e.g. /family/member/g/123456  →  "123456"
  */
 function extractGaiaIdFromUrl(url: string): string | undefined {
-  return url.match(/\/g\/(\d+)/)?.[1] ?? url.match(/\/member\/(\d+)/)?.[1];
+  return url.match(/\/g\/(\d+)/)?.[1] ?? url.match(/\/i\/([-\d]+)/)?.[1] ?? url.match(/\/member\/([-\d]+)/)?.[1];
 }
 
 async function fallbackFindMember(
@@ -1027,12 +1128,72 @@ async function fallbackFindMember(
     }
   }
 
+  // S4: Elimination strategy — if we know the GAIA IDs of OTHER members,
+  // identify the target by finding the card whose GAIA is NOT in the known set.
+  // This handles cases where email and displayName are both hidden/mismatched
+  // but we can deduce identity by process of elimination.
+  if (otherMemberGaiaIds && otherMemberGaiaIds.size > 0 && memberHrefs.length > 0) {
+    await logger.log("INFO", `S4: Attempting elimination — ${otherMemberGaiaIds.size} known other GAIA IDs, ${memberHrefs.length} cards`);
+
+    // Collect all card GAIA IDs (excluding manager)
+    const unknownCards: { href: string; gaiaId: string }[] = [];
+    for (const href of memberHrefs) {
+      const gaiaFromHref = href.match(/\/g\/(\d+)/)?.[1] ?? href.match(/\/i\/([-\d]+)/)?.[1];
+      if (!gaiaFromHref) continue;
+
+      // Skip the manager card (check if it's the known gaiaId of another member or manager)
+      if (otherMemberGaiaIds.has(gaiaFromHref)) {
+        await logger.log("DEBUG", `S4: Card GAIA ${gaiaFromHref} belongs to a known OTHER member, skipping`);
+        continue;
+      }
+
+      // Verify it's not the manager page
+      try {
+        await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(1500);
+
+        const isManager = await page.locator(
+          'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組"), ' +
+          'button:has-text("가족 그룹 삭제"), button:has-text("ファミリーグループを削除"), button:has-text("Xóa nhóm gia đình")'
+        ).count();
+        if (isManager > 0) {
+          await logger.log("DEBUG", `S4: Card GAIA ${gaiaFromHref} is manager, skipping`);
+          continue;
+        }
+
+        unknownCards.push({ href, gaiaId: gaiaFromHref });
+      } catch {
+        // Navigation error — skip this card
+      }
+    }
+
+    await logger.log("INFO", `S4: Found ${unknownCards.length} unmatched card(s) after elimination`);
+
+    if (unknownCards.length === 1) {
+      // Exactly one unknown card — it MUST be our target
+      const target = unknownCards[0];
+      await logger.log("INFO", `S4: Elimination match! Only 1 unmatched card: GAIA=${target.gaiaId}. This must be "${email}".`);
+      await page.goto(target.href, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      return target.gaiaId;
+    } else if (unknownCards.length > 1) {
+      await logger.log("WARN",
+        `S4: ${unknownCards.length} unmatched cards — cannot disambiguate. ` +
+        `GAIAs: [${unknownCards.map(c => c.gaiaId).join(", ")}]`
+      );
+    } else {
+      await logger.log("WARN", `S4: No unmatched cards found — all cards belong to known members or manager`);
+    }
+  }
+
   // Navigate back to family page for error screenshot
   await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 
   throw new Error(
     `Cannot find member "${email}" on family page. ` +
-    `Checked ${memberHrefs.length} cards via S1/S2/S3. Member may have left or DB is out of sync.`
+    `Checked ${memberHrefs.length} cards via S1/S2/S3/S4. Member may have left or DB is out of sync.`
   );
 }
 

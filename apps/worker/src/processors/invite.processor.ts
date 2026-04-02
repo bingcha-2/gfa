@@ -31,6 +31,7 @@ import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { ensureFamilyGroup } from "../ensure-family-group";
 import { checkTransferBatchProgress } from "../check-transfer-progress";
+import { postTaskSync } from "../post-task-sync";
 import { Queue } from "bullmq";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
@@ -302,6 +303,9 @@ export async function processInvite(
     } catch (dbErr) {
       await logger.log("WARN", `Failed to record invite in DB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
     }
+
+    // Post-task sync: scrape the family page to reconcile DB with actual state
+    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
 
     await logger.log("INFO", "Invite completed successfully");
 
