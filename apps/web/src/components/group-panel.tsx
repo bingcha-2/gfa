@@ -25,7 +25,22 @@ type MemberInfo = {
   status: string;
   isInGroup?: boolean;
   joinedAt?: string | null;
+  expiresAt?: string | null;
   googleMemberId?: string | null;
+};
+
+type ExpiredMemberInfo = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  expiresAt: string | null;
+  joinedAt: string | null;
+  status: string;
+  familyGroupId: string;
+  groupName: string;
+  accountEmail: string | null;
+  isExpired: boolean;
+  daysRemaining: number | null;
 };
 
 type GroupDetail = {
@@ -45,9 +60,9 @@ type GroupPanelProps = {
   onSync: (groupId: string) => Promise<{ taskId: string } | null>;
   onRemoveMember: (groupId: string, memberEmail: string) => Promise<{ taskId: string } | null>;
   onReplaceMember: (groupId: string, targetEmail: string, newEmail: string) => Promise<{ taskId: string } | null>;
-  onCrossInvite: (emails: string[]) => Promise<CrossInviteResult | null>;
+  onCrossInvite: (emails: string[], validDays?: number) => Promise<CrossInviteResult | null>;
   onCrossRemove: (memberEmails: string[]) => Promise<CrossRemoveResult | null>;
-  onBulkInviteGroup: (groupId: string, emails: string[]) => Promise<BulkGroupInviteResult | null>;
+  onBulkInviteGroup: (groupId: string, emails: string[], validDays?: number) => Promise<BulkGroupInviteResult | null>;
   onBulkRemoveGroup: (groupId: string, memberEmails: string[]) => Promise<BulkGroupRemoveResult | null>;
   onToggleAutoAssign: (groupId: string) => Promise<boolean>;
   onCreateTransfer: (sourceGroupId: string, targetGroupId: string, memberEmails?: string[]) => Promise<TransferBatchResult | null>;
@@ -99,10 +114,90 @@ export function GroupPanel({
   const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const canManage = canCreateGroup(role);
-  const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch">("inventory");
+  const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch" | "expiry">("inventory");
+
+  // --- Expiry tab state ---
+  const [expiryFilter, setExpiryFilter] = useState<"expired" | "expiring_soon" | "all">("all");
+  const [expirySearch, setExpirySearch] = useState("");
+  const [expiryMembers, setExpiryMembers] = useState<ExpiredMemberInfo[]>([]);
+  const [expiryTotal, setExpiryTotal] = useState(0);
+  const [expiryPage, setExpiryPage] = useState(1);
+  const [expiryLoading, setExpiryLoading] = useState(false);
+  const [expirySelected, setExpirySelected] = useState<Set<string>>(new Set());
+  const [expiryRemoving, setExpiryRemoving] = useState(false);
+  const [expiryRemoveResult, setExpiryRemoveResult] = useState<CrossRemoveResult | null>(null);
+  const EXPIRY_PAGE_SIZE = 30;
+  // Editing member dates
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editJoinedAt, setEditJoinedAt] = useState("");
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [savingMemberDates, setSavingMemberDates] = useState(false);
+
+  // Batch invite validDays state
+  const [batchValidDays, setBatchValidDays] = useState(30);
 
   // --- Batch tab state ---
   const [batchSubTab, setBatchSubTab] = useState<"cross-invite" | "cross-remove" | "group-invite" | "group-remove" | "transfer">("cross-invite");
+
+  // Fetch expired members; accepts optional overrides for filter values
+  // that haven't been committed to state yet (for onChange auto-refresh).
+  async function fetchExpiryMembers(page = 1, overrides?: { filter?: string }) {
+    setExpiryLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("status", overrides?.filter ?? expiryFilter);
+      params.set("page", String(page));
+      params.set("pageSize", String(EXPIRY_PAGE_SIZE));
+      if (expirySearch.trim()) params.set("email", expirySearch.trim());
+      const data = await apiRequest<{ members: ExpiredMemberInfo[]; total: number }>(`family-groups/expired-members?${params}`);
+      setExpiryMembers(data.members);
+      setExpiryTotal(data.total);
+      setExpiryPage(page);
+      setExpirySelected(new Set());
+    } catch {
+      setExpiryMembers([]);
+      setExpiryTotal(0);
+    } finally {
+      setExpiryLoading(false);
+    }
+  }
+
+  async function handleBulkRemoveExpired() {
+    const emails = expiryMembers.filter(m => expirySelected.has(m.id)).map(m => m.email);
+    if (!emails.length || !confirm(`确定批量踢出 ${emails.length} 个到期成员？`)) return;
+    setExpiryRemoving(true);
+    setExpiryRemoveResult(null);
+    try {
+      const result = await onCrossRemove(emails);
+      if (result) {
+        setExpiryRemoveResult(result);
+        showToast('success', `已入队 ${result.queued?.length ?? 0} 个移除任务`);
+        fetchExpiryMembers(expiryPage);
+      }
+    } finally {
+      setExpiryRemoving(false);
+    }
+  }
+
+  async function handleSaveMemberDates(memberId: string, groupId: string) {
+    setSavingMemberDates(true);
+    try {
+      await apiRequest(`family-groups/${groupId}/members/${memberId}/dates`, {
+        method: 'PATCH',
+        body: {
+          joinedAt: editJoinedAt || null,
+          expiresAt: editExpiresAt || null,
+        },
+      });
+      showToast('success', '日期已更新');
+      setEditingMemberId(null);
+      if (expandedGroupId) refreshGroupDetail(expandedGroupId);
+    } catch {
+      showToast('error', '日期更新失败');
+    } finally {
+      setSavingMemberDates(false);
+    }
+  }
   const [batchText, setBatchText] = useState("");
   const [batchGroupId, setBatchGroupId] = useState("");
   const [batchLoading, setBatchLoading] = useState(false);
@@ -178,10 +273,33 @@ export function GroupPanel({
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
   // --- Inventory search / filter state ---
+  const [searchMode, setSearchMode] = useState<"parent" | "member">("parent");
   const [searchEmail, setSearchEmail] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const PAGE_SIZE = 20;
   const [currentGroupPage, setCurrentGroupPage] = useState(1);
+
+  // --- Member (子号) search state ---
+  const [memberGroups, setMemberGroups] = useState<FamilyGroupSummary[]>([]);
+  const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberSearchDone, setMemberSearchDone] = useState(false);
+
+  async function fetchGroupsByMember() {
+    const q = searchEmail.trim();
+    if (!q || q.length < 2) { setMemberGroups([]); setMemberSearchDone(false); return; }
+    setMemberSearchLoading(true);
+    try {
+      const data = await apiRequest<FamilyGroupSummary[]>(`family-groups?memberEmail=${encodeURIComponent(q)}`);
+      setMemberGroups(data);
+      setMemberSearchDone(true);
+      setCurrentGroupPage(1);
+    } catch {
+      setMemberGroups([]);
+      setMemberSearchDone(true);
+    } finally {
+      setMemberSearchLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!form.accountId && accounts[0]?.id) {
@@ -470,9 +588,136 @@ export function GroupPanel({
           >
             批量操作
           </button>
+          <button
+            className={`panel-tab${activeTab === "expiry" ? " active" : ""}`}
+            onClick={() => { setActiveTab("expiry"); fetchExpiryMembers(1); }}
+            type="button"
+          >
+            到期管理
+          </button>
         </div>
 
-        {activeTab === "batch" ? (
+        {activeTab === "expiry" ? (
+          <div className="panel-stack">
+            {/* Expiry management panel */}
+            <div className="form-card field-grid workspace-form">
+              <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
+                <strong>到期管理</strong>：查看即将到期或已到期的成员，支持按邮箱搜索、批量踢出。
+              </div>
+              {/* Filters */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  value={expiryFilter}
+                  onChange={(e) => { const v = e.target.value as any; setExpiryFilter(v); fetchExpiryMembers(1, { filter: v }); }}
+                  style={{ minWidth: 120 }}
+                >
+                  <option value="all">全部有到期时间</option>
+                  <option value="expired">🔴 已到期</option>
+                  <option value="expiring_soon">🟡 7天内到期</option>
+                </select>
+                <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
+                  <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="搜索子号邮箱…"
+                    value={expirySearch}
+                    onChange={(e) => setExpirySearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && fetchExpiryMembers(1)}
+                    style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <button className="button secondary small" type="button" onClick={() => fetchExpiryMembers(1)}>
+                  查询
+                </button>
+              </div>
+
+              {/* Results table */}
+              {expiryLoading ? (
+                <div style={{ padding: '20px', textAlign: 'center' }}><Spinner size={20} /> 加载中...</div>
+              ) : expiryMembers.length === 0 ? (
+                <div className="muted" style={{ padding: '20px', textAlign: 'center', fontSize: '0.875rem' }}>无匹配记录</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted)', marginBottom: '4px' }}>
+                    共 {expiryTotal} 条 · 第 {expiryPage}/{Math.ceil(expiryTotal / EXPIRY_PAGE_SIZE)} 页 · 已选 {expirySelected.size} 个
+                  </div>
+                  <table className="data-table" style={{ fontSize: '0.875rem' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 30 }}>
+                          <input
+                            type="checkbox"
+                            checked={expirySelected.size === expiryMembers.length && expiryMembers.length > 0}
+                            onChange={(e) => {
+                              if (e.target.checked) setExpirySelected(new Set(expiryMembers.map(m => m.id)));
+                              else setExpirySelected(new Set());
+                            }}
+                          />
+                        </th>
+                        <th>邮箱</th>
+                        <th>家庭组</th>
+                        <th>到期时间</th>
+                        <th>剩余天数</th>
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {expiryMembers.map(m => (
+                        <tr key={m.id} style={m.isExpired ? { background: 'rgba(239,68,68,0.05)' } : undefined}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={expirySelected.has(m.id)}
+                              onChange={(e) => {
+                                const next = new Set(expirySelected);
+                                if (e.target.checked) next.add(m.id);
+                                else next.delete(m.id);
+                                setExpirySelected(next);
+                              }}
+                            />
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{m.email}</td>
+                          <td style={{ fontSize: '0.8rem' }}>{m.groupName}</td>
+                          <td style={{ fontSize: '0.8rem', color: m.isExpired ? '#dc2626' : m.daysRemaining !== null && m.daysRemaining <= 7 ? '#d97706' : undefined }}>
+                            {m.expiresAt ? new Date(m.expiresAt).toLocaleDateString('zh-CN') : '-'}
+                          </td>
+                          <td style={{ fontSize: '0.8rem', fontWeight: 600, color: m.isExpired ? '#dc2626' : m.daysRemaining !== null && m.daysRemaining <= 3 ? '#d97706' : '#059669' }}>
+                            {m.daysRemaining !== null ? (m.daysRemaining <= 0 ? `已过期 ${Math.abs(m.daysRemaining)} 天` : `${m.daysRemaining} 天`) : '-'}
+                          </td>
+                          <td><StatusBadge value={m.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Pagination */}
+                  {Math.ceil(expiryTotal / EXPIRY_PAGE_SIZE) > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                      <button className="button secondary small" disabled={expiryPage <= 1} onClick={() => fetchExpiryMembers(expiryPage - 1)} type="button">← 上页</button>
+                      <span style={{ fontSize: '0.85rem' }}>{expiryPage} / {Math.ceil(expiryTotal / EXPIRY_PAGE_SIZE)}</span>
+                      <button className="button secondary small" disabled={expiryPage >= Math.ceil(expiryTotal / EXPIRY_PAGE_SIZE)} onClick={() => fetchExpiryMembers(expiryPage + 1)} type="button">下页 →</button>
+                    </div>
+                  )}
+
+                  {/* Bulk actions */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    <button
+                      className="button"
+                      style={{ background: 'var(--red, #dc2626)', color: '#fff', border: 'none' }}
+                      disabled={expirySelected.size === 0 || expiryRemoving}
+                      onClick={handleBulkRemoveExpired}
+                      type="button"
+                    >
+                      {expiryRemoving ? <><Spinner size={14} color="currentColor" /> 踢出中...</> : `🗑 批量踢出 (${expirySelected.size})`}
+                    </button>
+                  </div>
+
+                  {expiryRemoveResult && <BatchResultTable result={expiryRemoveResult} />}
+                </>
+              )}
+            </div>
+          </div>
+        ) : activeTab === "batch" ? (
           <div className="panel-stack">
             {/* Batch sub-tab bar */}
             <div className="panel-tabs" style={{ gap: '4px' }}>
@@ -577,6 +822,21 @@ export function GroupPanel({
                 {batchSubTab === "group-remove" && <><strong>指定组批量踢人</strong>：选择目标家庭组，批量移除指定邮箱成员。</>}
               </div>
 
+              {/* Valid days for invite operations */}
+              {(batchSubTab === "cross-invite" || batchSubTab === "group-invite") && (
+                <div className="field" style={{ maxWidth: 200 }}>
+                  <label htmlFor="batch-valid-days">有效天数（默认 30）</label>
+                  <input
+                    id="batch-valid-days"
+                    type="number"
+                    min={1}
+                    value={batchValidDays}
+                    onChange={(e) => setBatchValidDays(parseInt(e.target.value, 10) || 30)}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+
               {/* Group selector for single-group ops */}
               {(batchSubTab === "group-invite" || batchSubTab === "group-remove") && (
                 <div className="field">
@@ -622,9 +882,9 @@ user2@gmail.com`}
                     setBatchResult(null);
                     try {
                       let result: CrossInviteResult | CrossRemoveResult | BulkGroupInviteResult | BulkGroupRemoveResult | null = null;
-                      if (batchSubTab === "cross-invite") result = await onCrossInvite(emails);
+                      if (batchSubTab === "cross-invite") result = await onCrossInvite(emails, batchValidDays);
                       else if (batchSubTab === "cross-remove") result = await onCrossRemove(emails);
-                      else if (batchSubTab === "group-invite") result = await onBulkInviteGroup(batchGroupId, emails);
+                      else if (batchSubTab === "group-invite") result = await onBulkInviteGroup(batchGroupId, emails, batchValidDays);
                       else if (batchSubTab === "group-remove") result = await onBulkRemoveGroup(batchGroupId, emails);
                       if (result) { setBatchResult(result); setBatchText(""); }
                     } finally {
@@ -774,48 +1034,133 @@ user2@gmail.com`}
         ) : (
         <div className="table-wrap workspace-table-wrap">
           {/* ----- Search bar ----- */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {/* Search mode toggle */}
+            <div style={{
+              display: 'inline-flex',
+              borderRadius: '8px',
+              border: '1px solid var(--border, #e5e5e5)',
+              overflow: 'hidden',
+              flexShrink: 0,
+            }}>
+              <button
+                type="button"
+                onClick={() => { setSearchMode("parent"); setSearchEmail(""); setMemberGroups([]); setMemberSearchDone(false); setCurrentGroupPage(1); }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  background: searchMode === "parent" ? 'var(--accent, #2563eb)' : 'transparent',
+                  color: searchMode === "parent" ? '#fff' : 'var(--foreground-muted, #737373)',
+                }}
+              >
+                母号
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSearchMode("member"); setSearchEmail(""); setMemberGroups([]); setMemberSearchDone(false); setCurrentGroupPage(1); }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  border: 'none',
+                  borderLeft: '1px solid var(--border, #e5e5e5)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  background: searchMode === "member" ? 'var(--accent, #2563eb)' : 'transparent',
+                  color: searchMode === "member" ? '#fff' : 'var(--foreground-muted, #737373)',
+                }}
+              >
+                子号
+              </button>
+            </div>
+            {/* Search input */}
             <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
-              <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
+              <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--foreground-muted, #a3a3a3)' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input
                 id="group-search-email"
                 type="text"
-                placeholder="搜索母号邮箱…"
+                placeholder={searchMode === "parent" ? "搜索母号邮箱…" : "搜索子号邮箱…"}
                 value={searchEmail}
-                onChange={(e) => { setSearchEmail(e.target.value); setCurrentGroupPage(1); }}
-                style={{ paddingLeft: 32, width: '100%', boxSizing: 'border-box' }}
+                onChange={(e) => {
+                  setSearchEmail(e.target.value);
+                  if (searchMode === "parent") setCurrentGroupPage(1);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchMode === "member") fetchGroupsByMember();
+                }}
+                style={{
+                  paddingLeft: 34,
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border, #e5e5e5)',
+                  height: '36px',
+                  fontSize: '0.875rem',
+                  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                  outline: 'none',
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent, #2563eb)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border, #e5e5e5)'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
-            <select
-              id="group-filter-status"
-              value={filterStatus}
-              onChange={(e) => { setFilterStatus(e.target.value); setCurrentGroupPage(1); }}
-              style={{ flex: '0 0 auto', minWidth: 120 }}
-            >
-              <option value="ALL">全部状态</option>
-              <option value="ACTIVE">🟢 ACTIVE</option>
-              <option value="MANUAL_ONLY">⏸ MANUAL_ONLY</option>
-              <option value="DISABLED">🚫 DISABLED</option>
-            </select>
+            {searchMode === "member" && (
+              <button
+                className="button small"
+                type="button"
+                onClick={() => fetchGroupsByMember()}
+                disabled={memberSearchLoading || searchEmail.trim().length < 2}
+                style={{ height: '36px', borderRadius: '8px', fontWeight: 600, minWidth: 60 }}
+              >
+                {memberSearchLoading ? '…' : '查询'}
+              </button>
+            )}
+            {searchMode === "parent" && (
+              <select
+                id="group-filter-status"
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setCurrentGroupPage(1); }}
+                style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
+              >
+                <option value="ALL">全部状态</option>
+                <option value="ACTIVE">🟢 ACTIVE</option>
+                <option value="MANUAL_ONLY">⏸ MANUAL_ONLY</option>
+                <option value="DISABLED">🚫 DISABLED</option>
+              </select>
+            )}
             {(searchEmail || filterStatus !== 'ALL') && (
               <button
                 className="button secondary small"
                 type="button"
-                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); }}
-                style={{ whiteSpace: 'nowrap' }}
+                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); setMemberGroups([]); setMemberSearchDone(false); }}
+                style={{ whiteSpace: 'nowrap', height: '36px', borderRadius: '8px' }}
               >
-                清除筛选
+                清除
               </button>
             )}
           </div>
-          {/* ----- Filtered result ----- */}
+
+          {/* ----- Unified group table (both 母号 and 子号 modes) ----- */}
           {(() => {
+            // In member mode: show loading / prompt states
+            if (searchMode === "member") {
+              if (memberSearchLoading) return <div style={{ padding: '24px', textAlign: 'center' }}><Spinner size={20} /> 搜索中...</div>;
+              if (!memberSearchDone) return <div className="muted" style={{ padding: '24px', textAlign: 'center', fontSize: '0.875rem' }}>输入子号邮箱后点击查询</div>;
+            }
+
+            // Compute source and apply filters
+            const source = searchMode === "member" ? memberGroups : groups;
             const q = searchEmail.trim().toLowerCase();
-            const filtered = groups.filter((g) => {
-              const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
-              const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
-              return matchEmail && matchStatus;
-            });
+            const filtered = searchMode === "parent"
+              ? source.filter((g) => {
+                  const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
+                  const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
+                  return matchEmail && matchStatus;
+                })
+              : source;
             const totalGroupPages = Math.ceil(filtered.length / PAGE_SIZE);
             const displayed = filtered.slice((currentGroupPage - 1) * PAGE_SIZE, currentGroupPage * PAGE_SIZE);
 
@@ -823,7 +1168,10 @@ user2@gmail.com`}
               <>
                 {/* Stats bar */}
                 <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '6px' }}>
-                  共 {groups.length} 组{filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''} · 第 {currentGroupPage}/{totalGroupPages} 页
+                  {searchMode === "member"
+                    ? `找到 ${filtered.length} 个家庭组`
+                    : `共 ${groups.length} 组${filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''}`}
+                  {totalGroupPages > 0 && ` · 第 ${currentGroupPage}/${totalGroupPages} 页`}
                 </div>
 
                 <table className="data-table">
@@ -853,7 +1201,25 @@ user2@gmail.com`}
                               <div className="muted">risk {group.riskScore}</div>
                             </td>
                             <td>
-                              <StatusBadge value={group.status} />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <StatusBadge value={group.status} />
+                                {!group.lastSyncedAt && (
+                                  <span 
+                                    className="badge" 
+                                    style={{ 
+                                      background: 'rgba(239,68,68,0.12)', 
+                                      color: '#dc2626', 
+                                      fontSize: '0.7rem', 
+                                      fontWeight: 600,
+                                      padding: '1px 6px',
+                                      borderRadius: '4px'
+                                    }}
+                                    title="该组尚未同步，已被自动邀请/轮换系统排除"
+                                  >
+                                    ⚠️ 未同步
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td>
                               <div>{group.account?.name ?? "-"}</div>
@@ -1019,6 +1385,7 @@ user2@gmail.com`}
                                                  <th>角色</th>
                                                  <th>状态</th>
                                                  <th>加入时间</th>
+                                                 <th>到期时间</th>
                                                  {canManage && <th style={{ minWidth: 80 }}>操作</th>}
                                                </tr>
                                              </thead>
@@ -1027,7 +1394,8 @@ user2@gmail.com`}
                                                   const ownerEmail = group.account?.loginEmail?.toLowerCase() ?? "";
                                                   const isOwner = m.role === "OWNER" || (ownerEmail !== "" && m.email.toLowerCase() === ownerEmail);
                                                   return (
-                                                   <tr key={m.id} style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : undefined}>
+                                                   <Fragment key={m.id}>
+                                                   <tr style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : undefined}>
                                                      <td style={{ fontFamily: 'monospace' }}>
                                                        {m.email}
                                                        {isOwner && (
@@ -1065,7 +1433,34 @@ user2@gmail.com`}
                                                            ? <StatusBadge value="待接受" tone="amber" />
                                                            : <StatusBadge value={m.status} />}
                                                      </td>
-                                                     <td className="muted">{formatDate(m.joinedAt)}</td>
+                                                     <td className="muted">{m.joinedAt ? formatDate(m.joinedAt) : '-'}</td>
+                                                     <td>
+                                                       <span style={{ color: m.expiresAt && new Date(m.expiresAt) <= new Date() ? '#dc2626' : m.expiresAt && new Date(m.expiresAt) <= new Date(Date.now() + 7 * 86400000) ? '#d97706' : undefined }}>
+                                                         {m.expiresAt ? formatDate(m.expiresAt) : <span className="muted">-</span>}
+                                                       </span>
+                                                       {canManage && !isOwner && editingMemberId !== m.id && (
+                                                         <button
+                                                           type="button"
+                                                           onClick={() => { setEditingMemberId(m.id); setEditJoinedAt(m.joinedAt ? m.joinedAt.slice(0, 16) : ''); setEditExpiresAt(m.expiresAt ? m.expiresAt.slice(0, 16) : ''); }}
+                                                           style={{
+                                                             marginLeft: '6px',
+                                                             fontSize: '0.7rem',
+                                                             padding: '2px 8px',
+                                                             borderRadius: '4px',
+                                                             border: '1px solid var(--border, #e5e5e5)',
+                                                             background: 'var(--surface-2, #fafaf9)',
+                                                             color: 'var(--foreground-muted, #737373)',
+                                                             cursor: 'pointer',
+                                                             transition: 'all 0.15s',
+                                                             verticalAlign: 'middle',
+                                                           }}
+                                                           onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent, #2563eb)'; e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'var(--accent, #2563eb)'; }}
+                                                           onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface-2, #fafaf9)'; e.currentTarget.style.color = 'var(--foreground-muted, #737373)'; e.currentTarget.style.borderColor = 'var(--border, #e5e5e5)'; }}
+                                                         >
+                                                           编辑
+                                                         </button>
+                                                       )}
+                                                     </td>
                                                      {canManage && (
                                                        <td>
                                                          {!isOwner && (<>
@@ -1173,6 +1568,100 @@ user2@gmail.com`}
                                                        </td>
                                                      )}
                                                    </tr>
+                                                   {editingMemberId === m.id && (
+                                                     <tr style={{ background: 'rgba(37,99,235,0.04)' }}>
+                                                       <td colSpan={canManage ? 7 : 6} style={{ padding: '10px 16px' }}>
+                                                         <div style={{
+                                                           display: 'flex',
+                                                           alignItems: 'center',
+                                                           gap: '16px',
+                                                           flexWrap: 'wrap',
+                                                           fontSize: '0.8rem',
+                                                         }}>
+                                                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                             <label style={{ fontWeight: 600, color: 'var(--foreground-muted, #737373)', whiteSpace: 'nowrap' }}>加入时间</label>
+                                                             <input
+                                                               type="datetime-local"
+                                                               value={editJoinedAt}
+                                                               onChange={e => setEditJoinedAt(e.target.value)}
+                                                               style={{
+                                                                 fontSize: '0.8rem',
+                                                                 padding: '4px 8px',
+                                                                 height: '32px',
+                                                                 borderRadius: '6px',
+                                                                 border: '1px solid var(--border, #e5e5e5)',
+                                                                 outline: 'none',
+                                                                 transition: 'border-color 0.15s',
+                                                               }}
+                                                               onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent, #2563eb)'; }}
+                                                               onBlur={e => { e.currentTarget.style.borderColor = 'var(--border, #e5e5e5)'; }}
+                                                             />
+                                                           </div>
+                                                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                             <label style={{ fontWeight: 600, color: 'var(--foreground-muted, #737373)', whiteSpace: 'nowrap' }}>到期时间</label>
+                                                             <input
+                                                               type="datetime-local"
+                                                               value={editExpiresAt}
+                                                               onChange={e => setEditExpiresAt(e.target.value)}
+                                                               style={{
+                                                                 fontSize: '0.8rem',
+                                                                 padding: '4px 8px',
+                                                                 height: '32px',
+                                                                 borderRadius: '6px',
+                                                                 border: '1px solid var(--border, #e5e5e5)',
+                                                                 outline: 'none',
+                                                                 transition: 'border-color 0.15s',
+                                                               }}
+                                                               onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent, #2563eb)'; }}
+                                                               onBlur={e => { e.currentTarget.style.borderColor = 'var(--border, #e5e5e5)'; }}
+                                                             />
+                                                           </div>
+                                                           <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                                                             <button
+                                                               type="button"
+                                                               disabled={savingMemberDates}
+                                                               onClick={() => handleSaveMemberDates(m.id, group.id)}
+                                                               style={{
+                                                                 background: 'var(--accent, #2563eb)',
+                                                                 color: '#fff',
+                                                                 border: 'none',
+                                                                 borderRadius: '6px',
+                                                                 padding: '6px 16px',
+                                                                 height: '32px',
+                                                                 cursor: 'pointer',
+                                                                 fontSize: '0.8rem',
+                                                                 fontWeight: 600,
+                                                                 transition: 'opacity 0.15s',
+                                                                 opacity: savingMemberDates ? 0.6 : 1,
+                                                               }}
+                                                             >
+                                                               {savingMemberDates ? '保存中...' : '保存'}
+                                                             </button>
+                                                             <button
+                                                               type="button"
+                                                               onClick={() => setEditingMemberId(null)}
+                                                               style={{
+                                                                 background: 'transparent',
+                                                                 border: '1px solid var(--border, #d4d4d4)',
+                                                                 borderRadius: '6px',
+                                                                 padding: '6px 16px',
+                                                                 height: '32px',
+                                                                 cursor: 'pointer',
+                                                                 fontSize: '0.8rem',
+                                                                 color: 'var(--foreground-muted, #737373)',
+                                                                 transition: 'all 0.15s',
+                                                               }}
+                                                               onMouseEnter={e => { e.currentTarget.style.borderColor = '#a3a3a3'; e.currentTarget.style.color = '#404040'; }}
+                                                               onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border, #d4d4d4)'; e.currentTarget.style.color = 'var(--foreground-muted, #737373)'; }}
+                                                             >
+                                                               取消
+                                                             </button>
+                                                           </div>
+                                                         </div>
+                                                       </td>
+                                                     </tr>
+                                                   )}
+                                                   </Fragment>
                                                   );
                                                 })}
                                              </tbody>

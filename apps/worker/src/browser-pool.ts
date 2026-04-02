@@ -10,8 +10,10 @@
  */
 
 import type { Redis } from "ioredis";
+import type { AdsPowerClient } from "./adspower-client";
 
 const POOL_KEY_PREFIX = "gfa:pool:profile:";
+const ACCOUNT_LOCK_PREFIX = "gfa:account-lock:";
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 min — normal task takes 1-2 min; 5 min covers slow Google pages
 const POLL_INTERVAL_MS = 3_000;
 
@@ -174,6 +176,224 @@ export class BrowserPool {
     throw new Error(
       `[BrowserPool] No free profile available (excluding: ${[...excluded].join(", ")}) after ${timeoutMs}ms`
     );
+  }
+
+  /**
+   * Acquire a free profile AND an account-level mutex for the given accountId.
+   *
+   * This is the primary entry point for all processors that operate on a
+   * specific Google account. It ensures:
+   *   1. Only one task can use a given accountId at any time (account lock)
+   *   2. Profile affinity — prefers the profile that last logged into this
+   *      account, reducing unnecessary re-login and Google risk signals
+   *   3. If no profile is free, the account lock is released so other
+   *      accounts can still proceed (no deadlock)
+   *
+   * @returns { profileId, reuseSession } where reuseSession=true if the
+   *          assigned profile last used this same account.
+   */
+  async acquireForAccount(
+    workerId: string,
+    accountId: string,
+    timeoutMs = 180_000,
+    excludedProfiles?: Set<string>
+  ): Promise<{ profileId: string; reuseSession: boolean }> {
+    const deadline = Date.now() + timeoutMs;
+    const accountKey = `${ACCOUNT_LOCK_PREFIX}${accountId}`;
+
+    while (Date.now() < deadline) {
+      // Step 1: Acquire account-level lock
+      const accountLock = await this.redis.set(
+        accountKey, workerId, "PX", LOCK_TTL_MS, "NX"
+      );
+
+      if (accountLock !== "OK") {
+        // Account is in use by another task — wait and retry
+        const holder = await this.redis.get(accountKey);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        console.log(
+          `[BrowserPool] Account ${accountId} locked by ${holder ?? "unknown"}, ` +
+          `worker ${workerId} waiting... (${Math.round(remaining / 1000)}s left)`
+        );
+        await sleep(Math.min(POLL_INTERVAL_MS, remaining));
+        continue;
+      }
+
+      // Step 2: Account locked — now find a profile.
+      // Priority: profile with lastAccount === accountId (session reuse)
+      let profileId: string | null = null;
+      let reuseSession = false;
+
+      // 2a: Try affinity profile first
+      for (const pid of this.profileIds) {
+        if (excludedProfiles?.has(pid)) continue;
+        const lastAcc = await this.redis.get(`${POOL_KEY_PREFIX}${pid}:lastAccount`);
+        if (lastAcc === accountId) {
+          const result = await this.redis.set(
+            `${POOL_KEY_PREFIX}${pid}`, workerId, "PX", LOCK_TTL_MS, "NX"
+          );
+          if (result === "OK") {
+            profileId = pid;
+            reuseSession = true;
+            break;
+          }
+          // Affinity profile is busy — fall through to any free profile
+        }
+      }
+
+      // 2b: No affinity match — try any free profile
+      if (!profileId) {
+        for (const pid of this.profileIds) {
+          if (excludedProfiles?.has(pid)) continue;
+          const result = await this.redis.set(
+            `${POOL_KEY_PREFIX}${pid}`, workerId, "PX", LOCK_TTL_MS, "NX"
+          );
+          if (result === "OK") {
+            profileId = pid;
+            reuseSession = false;
+            break;
+          }
+        }
+      }
+
+      // 2c: No free profile — release account lock and wait
+      if (!profileId) {
+        await this.redis.del(accountKey);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+
+        // Diagnostic: show lock status
+        const lockInfo: string[] = [];
+        for (const pid of this.profileIds) {
+          const holder = await this.redis.get(`${POOL_KEY_PREFIX}${pid}`);
+          const ttl = await this.redis.pttl(`${POOL_KEY_PREFIX}${pid}`);
+          lockInfo.push(holder
+            ? `${pid}→${holder}(${Math.round(ttl / 1000)}s)`
+            : `${pid}→FREE`
+          );
+        }
+        console.log(
+          `[BrowserPool] Account ${accountId} locked OK but no free profile, released account lock. ` +
+          `Worker ${workerId} waiting... (${Math.round(remaining / 1000)}s left) ` +
+          `locks: [${lockInfo.join(", ")}]`
+        );
+        await sleep(Math.min(POLL_INTERVAL_MS, remaining));
+        continue;
+      }
+
+      // Success: both account lock and profile lock acquired
+      console.log(
+        `[BrowserPool] Profile ${profileId} acquired for account ${accountId} ` +
+        `by worker ${workerId} (reuse=${reuseSession})`
+      );
+      return { profileId, reuseSession };
+    }
+
+    throw new Error(
+      `[BrowserPool] No profile+account available for account ${accountId} ` +
+      `after ${timeoutMs}ms (pool size: ${this.profileIds.length}). ` +
+      `Consider adding more profiles to ADSPOWER_POOL_IDS.`
+    );
+  }
+
+  /**
+   * Acquire a profile for the given account AND open it via AdsPower.
+   * If openProfile fails, the bad profile is released and another profile
+   * is tried — prevents a single broken profile from blocking all tasks.
+   *
+   * Callers get back the same shape as acquireForAccount plus the debugUrl.
+   * The account lock is kept throughout; only the profile lock rotates on failure.
+   */
+  async acquireAndOpen(
+    workerId: string,
+    accountId: string,
+    adspower: AdsPowerClient,
+    opts?: { maxProfileRetries?: number; timeoutMs?: number }
+  ): Promise<{ profileId: string; reuseSession: boolean; debugUrl: string }> {
+    const maxRetries = opts?.maxProfileRetries ?? this.profileIds.length;
+    const timeoutMs = opts?.timeoutMs ?? 180_000;
+    const failedProfiles = new Set<string>();
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const acquired = await this.acquireForAccount(workerId, accountId, timeoutMs, failedProfiles);
+      const { profileId, reuseSession } = acquired;
+
+      try {
+        const { debugUrl } = await adspower.openProfile(profileId);
+        return { profileId, reuseSession, debugUrl };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[BrowserPool] openProfile(${profileId}) failed: ${msg}. ` +
+          `Releasing and trying another profile (attempt ${attempt + 1}/${maxRetries}).`
+        );
+        failedProfiles.add(profileId);
+        // Release the broken profile lock so it doesn't block the pool
+        await adspower.closeProfile(profileId).catch(() => {});
+        await this.release(profileId, workerId).catch(() => {});
+        // Account lock stays held — we'll acquire a different profile next iteration.
+        // But acquireForAccount also acquires the account lock, so release it first
+        // to avoid self-deadlock on re-entry.
+        await this.releaseAccount(accountId, workerId).catch(() => {});
+      }
+    }
+
+    throw new Error(
+      `[BrowserPool] All ${failedProfiles.size} tried profiles failed to open for account ${accountId}. ` +
+      `Failed profiles: [${[...failedProfiles].join(", ")}]`
+    );
+  }
+
+  /**
+   * Release the account-level lock.
+   * Must be called in the processor's finally block alongside release(profileId).
+   */
+  async releaseAccount(accountId: string, workerId: string): Promise<void> {
+    const key = `${ACCOUNT_LOCK_PREFIX}${accountId}`;
+    const luaScript = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+    const released = await this.redis.eval(luaScript, 1, key, workerId);
+    if (released === 1) {
+      console.log(`[BrowserPool] Account lock ${accountId} released by worker ${workerId}`);
+    }
+  }
+
+  /**
+   * Force-release ALL account locks held by this workerId.
+   * Called on stalled job detection or startup cleanup.
+   * Uses SCAN to find all account lock keys (no fixed list like profiles).
+   */
+  async releaseAllAccountsByWorker(workerId: string): Promise<void> {
+    const luaScript = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+
+    let cursor = "0";
+    let released = 0;
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor, "MATCH", `${ACCOUNT_LOCK_PREFIX}*`, "COUNT", 100
+      );
+      cursor = nextCursor;
+      for (const key of keys) {
+        const result = await this.redis.eval(luaScript, 1, key, workerId);
+        if (result === 1) released++;
+      }
+    } while (cursor !== "0");
+
+    if (released > 0) {
+      console.log(`[BrowserPool] Force-released ${released} account lock(s) held by ${workerId}`);
+    }
   }
 
 

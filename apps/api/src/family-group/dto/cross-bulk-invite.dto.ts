@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail, IsInt, IsOptional, Min } from "class-validator";
 
 /**
  * DTO for cross-group bulk invite.
@@ -11,4 +11,10 @@ export class CrossBulkInviteDto {
   @ArrayMaxSize(1000)
   @IsEmail({}, { each: true })
   emails!: string[];
+
+  /** Member validity in days (default 30). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  validDays?: number;
 }

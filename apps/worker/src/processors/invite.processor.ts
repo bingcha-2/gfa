@@ -86,6 +86,10 @@ export async function processInvite(
   const { orderId, userEmail } = job.data;
   let { accountId } = job.data;
   let familyGroupId = job.data.familyGroupId;
+  // Compute member-level expiry: use payload value or default to 30 days from now
+  const memberExpiresAt = job.data.memberExpiresAt
+    ? new Date(job.data.memberExpiresAt)
+    : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const taskId = job.data.taskId ?? job.id ?? job.name;
   if (!taskId) {
     console.error(`[worker:${workerId}] invite job has no id or name, skipping`);
@@ -106,9 +110,11 @@ export async function processInvite(
     return;
   }
 
-  // Acquire a free profile from pool (AFTER account validation to avoid resource leak)
+  // Acquire a free profile + account lock from pool (AFTER account validation to avoid resource leak)
   let profileId: string | null = null;
   let reuseSession = false;
+  // Track accountId for account lock release; may change on fallback
+  let lockedAccountId: string | null = null;
 
   try {
     await logger.updateStatus("RUNNING");
@@ -157,36 +163,14 @@ export async function processInvite(
       }
     }
 
-    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
-    // release it and immediately acquire the next free profile.
-    let debugUrl: string | undefined;
-    const maxProfileAttempts = pool.poolSize;
-    const failedProfiles = new Set<string>();
-    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
-      profileId = await pool.acquireExcluding(workerId, failedProfiles);
-      await logger.log("INFO", `Starting invite for ${userEmail} (profile attempt ${profileAttempt}/${maxProfileAttempts})`, { profileId });
-      try {
-        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
-        break; // success — stop trying profiles
-      } catch (profileErr) {
-        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
-        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
-        // Release this profile and mark it as failed before trying another
-        failedProfiles.add(profileId!);
-        await adspower.closeProfile(profileId!).catch(() => {});
-        await pool.release(profileId!, workerId).catch(() => {});
-        profileId = null;
-        if (profileAttempt === maxProfileAttempts) {
-          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
-        }
-      }
-    }
+    // Acquire profile + open AdsPower browser (retries other profiles on failure)
+    const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
+    profileId = acquired.profileId;
+    reuseSession = acquired.reuseSession;
+    lockedAccountId = accountId;
+    await logger.log("INFO", `Starting invite for ${userEmail}`, { profileId });
 
-    // Check if the same account last used this profile — if so, reuse its session
-    const lastAccount = await pool.getLastAccount(profileId!);
-    reuseSession = lastAccount === accountId;
-
-    const page = await browser.connect(debugUrl!, reuseSession);
+    const page = await browser.connect(acquired.debugUrl, reuseSession);
     await logger.log("INFO", "Browser connected via CDP");
 
     // Gmail auto-login (required every time — browser clears cache on start)
@@ -199,6 +183,11 @@ export async function processInvite(
         await adspower.closeProfile(profileId).catch(() => {});
         await pool.release(profileId, workerId).catch(() => {});
         profileId = null;
+      }
+      // Release the account lock so fallback account can acquire it later
+      if (lockedAccountId) {
+        await pool.releaseAccount(lockedAccountId, workerId).catch(() => {});
+        lockedAccountId = null;
       }
 
       // Record failure for this account (handleLoginResult also does this, but we need
@@ -290,6 +279,7 @@ export async function processInvite(
         update: {
           status: "PENDING",
           displayName: userEmail.split("@")[0],
+          expiresAt: memberExpiresAt,
           ...(capturedGaiaId ? { googleMemberId: capturedGaiaId } : {}),
         },
         create: {
@@ -298,6 +288,7 @@ export async function processInvite(
           displayName: userEmail.split("@")[0],
           role: "member",
           status: "PENDING",
+          expiresAt: memberExpiresAt,
           googleMemberId: capturedGaiaId ?? undefined,
         },
       });
@@ -481,6 +472,9 @@ export async function processInvite(
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});
       await pool.release(profileId, workerId).catch(() => {});
+    }
+    if (lockedAccountId) {
+      await pool.releaseAccount(lockedAccountId, workerId).catch(() => {});
     }
   }
 }

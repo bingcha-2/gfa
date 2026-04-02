@@ -21,17 +21,36 @@ export class FamilyGroupService {
     private readonly replaceQueue: Queue
   ) {}
 
-  async findAll(accountId?: string) {
-    const where = accountId ? { accountId } : {};
+  async findAll(opts?: { accountId?: string; memberEmail?: string }) {
+    const where: Record<string, any> = {};
+    if (opts?.accountId) where.accountId = opts.accountId;
+    if (opts?.memberEmail) {
+      where.members = {
+        some: {
+          email: { contains: opts.memberEmail.trim().toLowerCase() },
+          status: { not: "REMOVED" },
+        },
+      };
+    }
     const groups = await this.prisma.familyGroup.findMany({
       where,
       include: {
-        _count: { select: { members: true, invites: true } }
+        account: {
+          select: {
+            id: true,
+            name: true,
+            loginEmail: true,
+            subscriptionExpiresAt: true,
+            subscriptionStatus: true,
+            subscriptionPlan: true,
+          },
+        },
+        _count: { select: { members: true, invites: true } },
       },
       orderBy: { createdAt: "desc" }
     });
 
-    return this.attachAccounts(groups);
+    return groups;
   }
 
   async findOne(id: string) {
@@ -301,7 +320,8 @@ export class FamilyGroupService {
    */
   async bulkInvite(
     groupId: string,
-    emails: string[]
+    emails: string[],
+    validDays: number = 30
   ): Promise<{
     queued: string[];
     rejected: string[];
@@ -312,6 +332,9 @@ export class FamilyGroupService {
 
     const normEmails = emails.map((e) => e.trim().toLowerCase());
     const uniqueEmails = [...new Set(normEmails)];
+
+    // Compute member expiry date
+    const memberExpiresAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
 
     // Atomically check slots and reserve them using a DB transaction.
     // This prevents two concurrent requests both seeing the same availableSlots value.
@@ -359,14 +382,14 @@ export class FamilyGroupService {
             type: "INVITE_MEMBER",
             familyGroupId: groupId,
             accountId: group.accountId,
-            payload: JSON.stringify({ familyGroupId: groupId, accountId: group.accountId, userEmail: email })
+            payload: JSON.stringify({ familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt })
           }
         });
         taskId = task.id;
 
         await this.inviteQueue.add(
           "invite-member",
-          { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email },
+          { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt },
           {
             ...JOB_DEFAULTS,
             jobId: `invite:${groupId}:${email}` // deduplication key
@@ -457,28 +480,34 @@ export class FamilyGroupService {
     });
 
     // email is "notFound" only if it has NO DB record at all.
-    // If it has only REMOVED/PENDING records, report as alreadyRemoved.
+    // If it has only REMOVED records, report as alreadyRemoved.
+    // ACTIVE and PENDING (invite sent, not yet accepted) are both removable.
+    const REMOVABLE_STATUSES = new Set(["ACTIVE", "PENDING"]);
     const emailStatusMap = new Map<string, string>(); // email -> best status
     for (const m of members) {
       const existing = emailStatusMap.get(m.email);
-      // Prefer ACTIVE over any other status
-      if (!existing || m.status === "ACTIVE") {
+      // Prefer ACTIVE, then PENDING, over REMOVED
+      if (!existing || (REMOVABLE_STATUSES.has(m.status) && !REMOVABLE_STATUSES.has(existing))) {
+        emailStatusMap.set(m.email, m.status);
+      }
+      // Within removable, prefer ACTIVE over PENDING
+      if (existing === "PENDING" && m.status === "ACTIVE") {
         emailStatusMap.set(m.email, m.status);
       }
     }
 
     for (const email of normEmails) {
       const status = emailStatusMap.get(email);
-      if (!status) result.notFound.push(email);                   // truly absent
-      else if (status !== "ACTIVE") result.alreadyRemoved.push(email); // present but inactive
+      if (!status) result.notFound.push(email);                                // truly absent
+      else if (!REMOVABLE_STATUSES.has(status)) result.alreadyRemoved.push(email); // only REMOVED records
     }
 
-    // R2-C fix: deduplicate ACTIVE members by email — keep only the first ACTIVE group
+    // R2-C fix: deduplicate removable members by email — keep only the first group
     // per email to prevent double-remove if an email appears in multiple groups.
     const byGroup = new Map<string, string[]>();
     const processedEmails = new Set<string>();
     for (const m of members) {
-      if (m.status !== "ACTIVE") continue;
+      if (!REMOVABLE_STATUSES.has(m.status)) continue;
       if (processedEmails.has(m.email)) continue; // skip duplicate groups for same email
       processedEmails.add(m.email);
       const list = byGroup.get(m.familyGroupId) ?? [];
@@ -503,7 +532,7 @@ export class FamilyGroupService {
    * Groups are filled in createdAt-ASC order (earliest first).
    * Returns per-group allocation and any emails that could not be placed.
    */
-  async crossBulkInvite(emails: string[]): Promise<{
+  async crossBulkInvite(emails: string[], validDays: number = 30): Promise<{
     allocated: Array<{ groupId: string; accountId: string; queued: string[] }>;
     unplaceable: string[];
     alreadyActive: string[];
@@ -535,7 +564,7 @@ export class FamilyGroupService {
       where: {
         status: "ACTIVE",
         availableSlots: { gt: 0 },
-        account: { status: "HEALTHY" }
+        account: { status: "HEALTHY" },
       },
       select: { id: true, accountId: true, availableSlots: true },
       orderBy: { createdAt: "asc" }
@@ -559,7 +588,7 @@ export class FamilyGroupService {
       if (remaining.length === 0) break;
 
       const chunk = remaining.splice(0, group.availableSlots);
-      const partial = await this.bulkInvite(group.id, chunk);
+      const partial = await this.bulkInvite(group.id, chunk, validDays);
 
       if (partial.queued.length > 0) {
         allocated.push({ groupId: group.id, accountId: group.accountId, queued: partial.queued });
@@ -616,6 +645,7 @@ export class FamilyGroupService {
       id: string;
       displayName: string | null;
       joinedAt: string | null;
+      expiresAt: string | null;
     };
     familyGroup?: {
       id: string;
@@ -710,6 +740,7 @@ export class FamilyGroupService {
           id: member.id,
           displayName: member.displayName,
           joinedAt: member.joinedAt?.toISOString() ?? null,
+          expiresAt: member.expiresAt?.toISOString() ?? null,
         },
         familyGroup: fg
           ? {
@@ -873,6 +904,11 @@ export class FamilyGroupService {
       where: { id: groupId }
     });
     if (!group) throw new NotFoundException("Family group not found");
+
+    // Unsynced groups cannot be used for replacement — slot data is unreliable
+    if (!group.lastSyncedAt) {
+      throw new BadRequestException("Family group has never been synced. Please sync first before replacing members.");
+    }
 
     // Atomic: check member + create task in one transaction
     const result = await this.prisma.$transaction(async (tx) => {
@@ -1189,5 +1225,240 @@ export class FamilyGroupService {
       taskCount: b._count.tasks,
       createdAt: b.createdAt,
     }));
+  }
+
+  // ========== Expired Member Management ==========
+
+  /**
+   * Query members with expiration info across all groups.
+   * Supports filtering by expired/expiring-soon status and email search.
+   */
+  async getExpiredMembers(opts: {
+    status?: "expired" | "expiring_soon" | "all";
+    email?: string;
+    groupId?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    const now = new Date();
+    const page = Math.max(1, opts.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
+    const skip = (page - 1) * pageSize;
+
+    // Build where clause for FamilyMember
+    const where: Record<string, any> = {
+      status: { in: ["ACTIVE", "PENDING"] },
+      expiresAt: { not: null },
+    };
+
+    if (opts.status === "expired") {
+      where.expiresAt = { lte: now };
+    } else if (opts.status === "expiring_soon") {
+      const soon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      where.expiresAt = { lte: soon, gt: now };
+    }
+    // "all" keeps expiresAt: { not: null } only
+
+    if (opts.email) {
+      where.email = { contains: opts.email.trim().toLowerCase() };
+    }
+    if (opts.groupId) {
+      where.familyGroupId = opts.groupId;
+    }
+
+    const [members, total] = await Promise.all([
+      this.prisma.familyMember.findMany({
+        where,
+        include: {
+          familyGroup: {
+            select: {
+              id: true,
+              groupName: true,
+              account: { select: { loginEmail: true } },
+            },
+          },
+        },
+        orderBy: { expiresAt: "asc" },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.familyMember.count({ where }),
+    ]);
+
+    return {
+      members: members.map((m) => {
+        const expiresAt = m.expiresAt;
+        const isExpired = expiresAt ? expiresAt <= now : false;
+        const daysRemaining = expiresAt
+          ? Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+          : null;
+
+        return {
+          id: m.id,
+          email: m.email,
+          displayName: m.displayName,
+          expiresAt: expiresAt?.toISOString() ?? null,
+          joinedAt: m.joinedAt?.toISOString() ?? null,
+          status: m.status,
+          familyGroupId: m.familyGroupId,
+          groupName: m.familyGroup.groupName,
+          accountEmail: m.familyGroup.account?.loginEmail ?? null,
+          isExpired,
+          daysRemaining,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  /**
+   * Bulk remove all expired members (expiresAt <= now, status ACTIVE/PENDING).
+   * Delegates to crossBulkRemove for actual removal.
+   */
+  async bulkRemoveExpired(): Promise<{
+    queued: string[];
+    notFound: string[];
+    alreadyRemoved: string[];
+    failed: string[];
+    totalExpired: number;
+  }> {
+    const now = new Date();
+    const MAX_BATCH = 500;
+
+    const expiredMembers = await this.prisma.familyMember.findMany({
+      where: {
+        expiresAt: { lte: now },
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: { email: true },
+      take: MAX_BATCH,
+    });
+
+    const emails = [...new Set(expiredMembers.map((m) => m.email))];
+
+    if (emails.length === 0) {
+      return { queued: [], notFound: [], alreadyRemoved: [], failed: [], totalExpired: 0 };
+    }
+
+    const result = await this.crossBulkRemove(emails);
+    return { ...result, totalExpired: emails.length };
+  }
+
+  /**
+   * Search family members by email (partial match).
+   * Returns member-centric results with associated group + account info.
+   * Used by the inventory panel's "search by child email" feature.
+   */
+  async searchByMemberEmail(email: string, opts?: { page?: number; pageSize?: number }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const page = Math.max(1, opts?.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, opts?.pageSize ?? 50));
+    const skip = (page - 1) * pageSize;
+
+    const where: Record<string, any> = {
+      email: { contains: normalizedEmail },
+      status: { not: "REMOVED" },
+    };
+
+    const [members, total] = await Promise.all([
+      this.prisma.familyMember.findMany({
+        where,
+        include: {
+          familyGroup: {
+            select: {
+              id: true,
+              groupName: true,
+              status: true,
+              account: {
+                select: {
+                  id: true,
+                  loginEmail: true,
+                  name: true,
+                  subscriptionExpiresAt: true,
+                  subscriptionStatus: true,
+                  subscriptionPlan: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.familyMember.count({ where }),
+    ]);
+
+    return {
+      members: members.map((m) => ({
+        id: m.id,
+        email: m.email,
+        displayName: m.displayName,
+        role: m.role,
+        status: m.status,
+        joinedAt: m.joinedAt?.toISOString() ?? null,
+        expiresAt: m.expiresAt?.toISOString() ?? null,
+        googleMemberId: m.googleMemberId,
+        familyGroupId: m.familyGroupId,
+        groupName: m.familyGroup.groupName,
+        groupStatus: m.familyGroup.status,
+        accountEmail: m.familyGroup.account?.loginEmail ?? null,
+        accountName: m.familyGroup.account?.name ?? null,
+        subscriptionExpiresAt: m.familyGroup.account?.subscriptionExpiresAt?.toISOString() ?? null,
+        subscriptionStatus: m.familyGroup.account?.subscriptionStatus ?? null,
+        subscriptionPlan: m.familyGroup.account?.subscriptionPlan ?? null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  /**
+   * Update a member's joinedAt and/or expiresAt dates.
+   * Used from the admin panel for manual date adjustments.
+   */
+  async updateMemberDates(
+    groupId: string,
+    memberId: string,
+    data: { joinedAt?: string | null; expiresAt?: string | null }
+  ) {
+    const member = await this.prisma.familyMember.findUnique({
+      where: { id: memberId },
+    });
+
+    if (!member) throw new NotFoundException("Family member not found");
+    if (member.familyGroupId !== groupId) {
+      throw new BadRequestException("Member does not belong to this family group");
+    }
+
+    const updateData: Record<string, any> = {};
+    if (data.joinedAt !== undefined) {
+      updateData.joinedAt = data.joinedAt ? new Date(data.joinedAt) : null;
+    }
+    if (data.expiresAt !== undefined) {
+      updateData.expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+    }
+
+    // Sanity check: expiresAt should not be before joinedAt
+    const finalJoinedAt = updateData.joinedAt ?? member.joinedAt;
+    const finalExpiresAt = updateData.expiresAt ?? member.expiresAt;
+    if (finalJoinedAt && finalExpiresAt && finalExpiresAt < finalJoinedAt) {
+      throw new BadRequestException("expiresAt cannot be earlier than joinedAt");
+    }
+
+    const updated = await this.prisma.familyMember.update({
+      where: { id: memberId },
+      data: updateData,
+    });
+
+    return {
+      id: updated.id,
+      email: updated.email,
+      joinedAt: updated.joinedAt?.toISOString() ?? null,
+      expiresAt: updated.expiresAt?.toISOString() ?? null,
+    };
   }
 }

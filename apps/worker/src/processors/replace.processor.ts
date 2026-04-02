@@ -79,37 +79,17 @@ export async function processReplace(
       throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
     }
 
-    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
-    // release it and immediately acquire the next free profile.
-    let debugUrl: string | undefined;
-    const maxProfileAttempts = pool.poolSize;
-    const failedProfiles = new Set<string>();
-    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
-      profileId = await pool.acquireExcluding(workerId, failedProfiles);
-      await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail} (profile attempt ${profileAttempt}/${maxProfileAttempts})`, {
-        profileId, familyGroupId,
-      });
-      try {
-        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
-        break;
-      } catch (profileErr) {
-        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
-        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
-        failedProfiles.add(profileId!);
-        await adspower.closeProfile(profileId!).catch(() => {});
-        await pool.release(profileId!, workerId).catch(() => {});
-        profileId = null;
-        if (profileAttempt === maxProfileAttempts) {
-          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
-        }
-      }
-    }
+    // Acquire profile + open AdsPower browser (retries other profiles on failure)
+    const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
+    profileId = acquired.profileId;
+    reuseSession = acquired.reuseSession;
+    await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail}`, {
+      profileId, familyGroupId,
+    });
 
-    const lastAccount = await pool.getLastAccount(profileId!);
-    reuseSession = lastAccount === accountId;
     await logger.updateStatus("RUNNING");
 
-    const page = await browser.connect(debugUrl!, reuseSession);
+    const page = await browser.connect(acquired.debugUrl, reuseSession);
 
     // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
@@ -262,12 +242,28 @@ export async function processReplace(
         usedCaseInsensitive = true;
       }
 
+      // Inherit expiry from old member (or from job payload if provided).
+      // If the inherited date is already in the past, grant a fresh 30-day window
+      // so the replacement member isn't immediately expired.
+      const oldMember = await tx.familyMember.findFirst({
+        where: { familyGroupId, email: targetMemberEmail },
+        select: { expiresAt: true },
+      });
+      const rawExpiry = job.data.inheritedExpiresAt
+        ? new Date(job.data.inheritedExpiresAt)
+        : oldMember?.expiresAt ?? null;
+      const inheritedExpiresAt =
+        rawExpiry && rawExpiry.getTime() <= Date.now()
+          ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          : rawExpiry;
+
       // Upsert placeholder for newly invited member (sync may have already created a PENDING record)
       await tx.familyMember.upsert({
         where: { familyGroupId_email: { familyGroupId, email: newUserEmail } },
         update: {
           status: "PENDING",
           displayName: newUserEmail.split("@")[0],
+          expiresAt: inheritedExpiresAt,
           ...(newMemberGaiaId ? { googleMemberId: newMemberGaiaId } : {}),
         },
         create: {
@@ -276,6 +272,7 @@ export async function processReplace(
           displayName: newUserEmail.split("@")[0],
           role: "member",
           status: "PENDING",
+          expiresAt: inheritedExpiresAt,
           googleMemberId: newMemberGaiaId ?? undefined,
         },
       });
@@ -388,6 +385,7 @@ export async function processReplace(
       await adspower.closeProfile(profileId).catch(() => {});
       await pool.release(profileId, workerId).catch(() => {});
     }
+    await pool.releaseAccount(accountId, workerId).catch(() => {});
   }
 }
 

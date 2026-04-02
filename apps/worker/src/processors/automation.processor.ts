@@ -87,48 +87,32 @@ export async function processAutomation(
   const browser = new WorkerBrowser();
   let profileId: string | null = null;
 
-  try {
-    // Acquire AdsPower profile (with retry across pool)
-    let debugUrl: string | undefined;
-    const maxProfileAttempts = pool.poolSize;
-    const failedProfiles = new Set<string>();
+  // Look up the Account record by email so we use the same lock key
+  // (account.id) as invite/sync/remove/replace processors.
+  // Without this, Redis would have two different lock names for the
+  // same Google account, defeating account-level serialisation.
+  //
+  // If no Account row exists yet (onboarding: oauth / accept-invite for
+  // a brand-new account), fall back to an email-derived key so the task
+  // can still proceed while maintaining per-email serialisation.
+  const dbAccount = await prisma.account.findFirst({
+    where: { loginEmail: credentials.email },
+    select: { id: true },
+  });
+  const accountLockKey = dbAccount?.id ?? `email:${credentials.email.toLowerCase()}`;
 
-    for (
-      let profileAttempt = 1;
-      profileAttempt <= maxProfileAttempts;
-      profileAttempt++
-    ) {
-      profileId = await pool.acquireExcluding(workerId, failedProfiles);
-      await logger.log(
-        "INFO",
-        `[automation:${action}] Acquired profile ${profileId} (attempt ${profileAttempt}/${maxProfileAttempts})`
-      );
-      try {
-        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
-        break;
-      } catch (profileErr) {
-        const msg =
-          profileErr instanceof Error
-            ? profileErr.message
-            : String(profileErr);
-        await logger.log(
-          "WARN",
-          `Profile ${profileId} unavailable: ${msg}`
-        );
-        failedProfiles.add(profileId!);
-        await adspower.closeProfile(profileId!).catch(() => {});
-        await pool.release(profileId!, workerId).catch(() => {});
-        profileId = null;
-        if (profileAttempt === maxProfileAttempts) {
-          throw new Error(
-            `All ${maxProfileAttempts} profiles unavailable: ${msg}`
-          );
-        }
-      }
-    }
+  try {
+
+    // Acquire profile + open AdsPower browser (retries other profiles on failure)
+    const acquired = await pool.acquireAndOpen(workerId, accountLockKey, adspower);
+    profileId = acquired.profileId;
+    await logger.log(
+      "INFO",
+      `[automation:${action}] Acquired profile ${profileId}`
+    );
 
     await logger.updateStatus("RUNNING");
-    const page = await browser.connect(debugUrl!);
+    const page = await browser.connect(acquired.debugUrl);
 
     // Build LoginCredentials from payload
     const loginCreds: LoginCredentials = {
@@ -199,6 +183,7 @@ export async function processAutomation(
       await adspower.closeProfile(profileId).catch(() => {});
       await pool.release(profileId, workerId).catch(() => {});
     }
+    await pool.releaseAccount(accountLockKey, workerId).catch(() => {});
   }
 }
 

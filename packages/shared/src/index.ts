@@ -28,6 +28,8 @@ export type InviteMemberPayload = {
   familyGroupId: string;
   accountId: string;
   userEmail: string;
+  /** ISO date string for member-level expiry. Worker sets FamilyMember.expiresAt from this. */
+  memberExpiresAt?: string;
 };
 
 export type ReplaceMemberPayload = {
@@ -39,6 +41,8 @@ export type ReplaceMemberPayload = {
   newUserEmail: string;
   /** Audit trail: 'ADMIN_REPLACE' | 'SWAP_REQUEST' */
   reason?: string;
+  /** ISO date string inherited from old member's expiresAt */
+  inheritedExpiresAt?: string;
 };
 
 export type RemoveMemberPayload = {

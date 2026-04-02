@@ -8,7 +8,7 @@ import {
   Query,
   Request
 } from "@nestjs/common";
-import { IsEmail, IsInt, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsInt, IsOptional, IsString, IsDateString } from "class-validator";
 
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
@@ -36,6 +36,16 @@ class RemoveMemberDto {
   memberEmail!: string;
 }
 
+class UpdateMemberDatesDto {
+  @IsOptional()
+  @IsDateString()
+  joinedAt?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string | null;
+}
+
 class ReplaceMemberDto {
   @IsEmail()
   targetMemberEmail!: string;
@@ -53,8 +63,11 @@ export class FamilyGroupController {
 
   @Get()
   @Roles("ADMIN", "OPERATIONS")
-  findAll(@Query("accountId") accountId?: string) {
-    return this.familyGroupService.findAll(accountId);
+  findAll(
+    @Query("accountId") accountId?: string,
+    @Query("memberEmail") memberEmail?: string,
+  ) {
+    return this.familyGroupService.findAll({ accountId, memberEmail });
   }
 
   /**
@@ -85,7 +98,7 @@ export class FamilyGroupController {
   @Post("cross-invite")
   @Roles("ADMIN", "OPERATIONS")
   async crossBulkInvite(@Body() dto: CrossBulkInviteDto, @Request() req: any) {
-    const result = await this.familyGroupService.crossBulkInvite(dto.emails);
+    const result = await this.familyGroupService.crossBulkInvite(dto.emails, dto.validDays);
 
     await this.auditLog.log({
       operatorId: req.user.id,
@@ -103,6 +116,46 @@ export class FamilyGroupController {
     return result;
   }
 
+  @Get("expired-members")
+  @Roles("ADMIN", "OPERATIONS")
+  getExpiredMembers(
+    @Query("status") status?: string,
+    @Query("email") email?: string,
+    @Query("groupId") groupId?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    const parsedPage = page ? parseInt(page, 10) : undefined;
+    const parsedSize = pageSize ? parseInt(pageSize, 10) : undefined;
+    return this.familyGroupService.getExpiredMembers({
+      status: status as any,
+      email,
+      groupId,
+      page: Number.isNaN(parsedPage) ? undefined : parsedPage,
+      pageSize: Number.isNaN(parsedSize) ? undefined : parsedSize,
+    });
+  }
+
+  @Post("bulk-remove-expired")
+  @Roles("ADMIN", "OPERATIONS")
+  async bulkRemoveExpired(@Request() req: any) {
+    const result = await this.familyGroupService.bulkRemoveExpired();
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "BULK_REMOVE_EXPIRED",
+      targetType: "FamilyMember",
+      targetId: "*",
+      detail: {
+        totalExpired: result.totalExpired,
+        queued: result.queued.length,
+        failed: result.failed.length
+      }
+    });
+
+    return result;
+  }
+
   @Get("lookup-by-member")
   @Roles("ADMIN", "OPERATIONS", "SUPPORT")
   lookupByMember(@Query("email") email: string) {
@@ -110,6 +163,24 @@ export class FamilyGroupController {
       return { found: false, error: "Please provide a valid email address" };
     }
     return this.familyGroupService.lookupByMemberEmail(email);
+  }
+
+  @Get("search-members")
+  @Roles("ADMIN", "OPERATIONS")
+  searchMembers(
+    @Query("email") email: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    if (!email || email.trim().length < 2) {
+      return { members: [], total: 0, page: 1, pageSize: 50 };
+    }
+    const parsedPage = page ? parseInt(page, 10) : undefined;
+    const parsedSize = pageSize ? parseInt(pageSize, 10) : undefined;
+    return this.familyGroupService.searchByMemberEmail(email, {
+      page: Number.isNaN(parsedPage) ? undefined : parsedPage,
+      pageSize: Number.isNaN(parsedSize) ? undefined : parsedSize,
+    });
   }
 
   // ========== Transfer ==========
@@ -274,7 +345,7 @@ export class FamilyGroupController {
     @Body() dto: BulkInviteDto,
     @Request() req: any
   ) {
-    const result = await this.familyGroupService.bulkInvite(id, dto.emails);
+    const result = await this.familyGroupService.bulkInvite(id, dto.emails, dto.validDays);
 
     await this.auditLog.log({
       operatorId: req.user.id,
@@ -315,5 +386,26 @@ export class FamilyGroupController {
     @Query("since") since?: string
   ) {
     return this.familyGroupService.getTasks(id, { type, since });
+  }
+
+  @Patch(":id/members/:memberId/dates")
+  @Roles("ADMIN", "OPERATIONS")
+  async updateMemberDates(
+    @Param("id") groupId: string,
+    @Param("memberId") memberId: string,
+    @Body() dto: UpdateMemberDatesDto,
+    @Request() req: any
+  ) {
+    const result = await this.familyGroupService.updateMemberDates(groupId, memberId, dto);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "UPDATE_MEMBER_DATES",
+      targetType: "FamilyMember",
+      targetId: memberId,
+      detail: { groupId, joinedAt: dto.joinedAt, expiresAt: dto.expiresAt }
+    });
+
+    return result;
   }
 }

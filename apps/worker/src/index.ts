@@ -199,9 +199,12 @@ async function recoverStuckTransferBatches(): Promise<void> {
   }
 }
 
-// Also force-release any Redis profile locks this worker left behind on crash
-pool.releaseAllByWorker(workerId).catch((err: Error) =>
-  console.error(`[${workerId}] Failed to release pool locks on startup:`, err.message)
+// Also force-release any Redis profile locks AND account locks this worker left behind on crash
+Promise.all([
+  pool.releaseAllByWorker(workerId),
+  pool.releaseAllAccountsByWorker(workerId),
+]).catch((err: Error) =>
+  console.error(`[${workerId}] Failed to release pool/account locks on startup:`, err.message)
 );
 
 // ---- Event Logging ----
@@ -226,9 +229,12 @@ for (const worker of workers) {
   worker.on("stalled", (jobId: string) => {
     console.warn(`[${workerId}] ⚠ stalled job=${jobId} on ${worker.name} — releasing pool locks & updating DB`);
 
-    // Force-release pool locks so the next job doesn't have to wait 20 min
-    pool.releaseAllByWorker(workerId).catch((err: Error) =>
-      console.error(`[${workerId}] Failed to release pool locks on stall:`, err.message)
+    // Force-release pool locks AND account locks so the next job doesn't have to wait
+    Promise.all([
+      pool.releaseAllByWorker(workerId),
+      pool.releaseAllAccountsByWorker(workerId),
+    ]).catch((err: Error) =>
+      console.error(`[${workerId}] Failed to release locks on stall:`, err.message)
     );
 
     // Extract taskId from the BullMQ jobId (format: "automation-<taskId>")

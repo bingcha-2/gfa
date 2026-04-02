@@ -168,6 +168,79 @@ export class ExpireScanService {
       this.lastRunAt = now;
       this.lastRunCount = results.length;
 
+      // --- Phase 2: Scan FamilyMember-level expiry (direct member expiresAt) ---
+      // These are members invited via console batch ops that don't have an Order record.
+      try {
+        const expiredMembers = await this.prisma.familyMember.findMany({
+          where: {
+            expiresAt: { lte: now },
+            status: { in: ["ACTIVE", "PENDING"] },
+          },
+          select: {
+            id: true,
+            email: true,
+            familyGroupId: true,
+            familyGroup: { select: { accountId: true } },
+          },
+        });
+
+        for (const member of expiredMembers) {
+          try {
+            if (!member.familyGroup?.accountId) continue;
+
+            // Skip if a pending/running/failed removal task already exists for this member.
+            // Including FAILED_RETRYABLE and MANUAL_REVIEW prevents creating orphan Task
+            // records that can never enter the queue (BullMQ dedup on old jobId).
+            const existingTask = await this.prisma.task.findFirst({
+              where: {
+                type: "REMOVE_MEMBER",
+                familyGroupId: member.familyGroupId,
+                status: { in: ["PENDING", "RUNNING", "FAILED_RETRYABLE", "MANUAL_REVIEW"] },
+                payload: { contains: member.email },
+              },
+            });
+            if (existingTask) continue;
+
+            const task = await this.prisma.task.create({
+              data: {
+                type: "REMOVE_MEMBER",
+                familyGroupId: member.familyGroupId,
+                accountId: member.familyGroup.accountId,
+                payload: JSON.stringify({
+                  familyGroupId: member.familyGroupId,
+                  accountId: member.familyGroup.accountId,
+                  memberEmail: member.email,
+                  reason: "MEMBER_EXPIRED",
+                }),
+              },
+            });
+
+            await this.removeQueue.add(
+              "remove-expired-member",
+              {
+                taskId: task.id,
+                familyGroupId: member.familyGroupId,
+                accountId: member.familyGroup.accountId,
+                memberEmail: member.email,
+                reason: "MEMBER_EXPIRED",
+              },
+              {
+                ...JOB_DEFAULTS,
+                jobId: `member-expire-${member.id}-${task.id}`,
+              }
+            );
+
+            this.lastRunCount++;
+          } catch (err) {
+            this.logger.error(`Failed to expire member ${member.id}: ${String(err)}`);
+          }
+        }
+
+        this.logger.log(`Phase 2: processed ${expiredMembers.length} expired member(s), queued removal tasks`);
+      } catch (err) {
+        this.logger.error(`Phase 2 member expiry scan failed: ${String(err)}`);
+      }
+
       return results;
     } finally {
       this.scanning = false;

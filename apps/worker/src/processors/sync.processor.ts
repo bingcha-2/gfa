@@ -73,34 +73,13 @@ export async function processSync(
       throw new UnrecoverableError(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
-    // Try up to poolSize profiles: if AdsPower rejects one (stale/occupied),
-    // release it and immediately acquire the next free profile.
-    let debugUrl: string | undefined;
-    const maxProfileAttempts = pool.poolSize;
-    const failedProfiles = new Set<string>();
-    for (let profileAttempt = 1; profileAttempt <= maxProfileAttempts; profileAttempt++) {
-      profileId = await pool.acquireExcluding(workerId, failedProfiles);
-      try {
-        debugUrl = (await adspower.openProfile(profileId)).debugUrl;
-        break;
-      } catch (profileErr) {
-        const profileErrMsg = profileErr instanceof Error ? profileErr.message : String(profileErr);
-        await logger.log("WARN", `Profile ${profileId} unavailable, switching to next: ${profileErrMsg}`);
-        failedProfiles.add(profileId!);
-        await adspower.closeProfile(profileId!).catch(() => {});
-        await pool.release(profileId!, workerId).catch(() => {});
-        profileId = null;
-        if (profileAttempt === maxProfileAttempts) {
-          throw new Error(`All ${maxProfileAttempts} profiles unavailable: ${profileErrMsg}`);
-        }
-      }
-    }
-
-    const lastAccount = await pool.getLastAccount(profileId!);
-    reuseSession = lastAccount === accountId;
+    // Acquire profile + open AdsPower browser (retries other profiles on failure)
+    const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
+    profileId = acquired.profileId;
+    reuseSession = acquired.reuseSession;
     await logger.updateStatus("RUNNING");
 
-    const page = await browser.connect(debugUrl!, reuseSession);
+    const page = await browser.connect(acquired.debugUrl, reuseSession);
 
     // Gmail auto-login
     const loginResult = await gmailLogin(page, account, logger);
@@ -218,6 +197,7 @@ export async function processSync(
       await adspower.closeProfile(profileId).catch(() => {});
       await pool.release(profileId, workerId).catch(() => {});
     }
+    await pool.releaseAccount(accountId, workerId).catch(() => {});
   }
 }
 

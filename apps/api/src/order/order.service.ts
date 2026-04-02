@@ -299,6 +299,7 @@ export class OrderService {
     });
 
     // 5. Create task and enqueue
+    const memberExpiresAt = expiresAt.toISOString();
     const task = await this.prisma.task.create({
       data: {
         type: "INVITE_MEMBER",
@@ -309,7 +310,8 @@ export class OrderService {
           orderId: order.id,
           familyGroupId: groupId,
           accountId: group!.accountId,
-          userEmail: normalizedEmail
+          userEmail: normalizedEmail,
+          memberExpiresAt
         })
       }
     });
@@ -326,7 +328,8 @@ export class OrderService {
         orderId: order.id,
         familyGroupId: groupId,
         accountId: group!.accountId,
-        userEmail: normalizedEmail
+        userEmail: normalizedEmail,
+        memberExpiresAt
       },
       { ...JOB_DEFAULTS }
     );
@@ -370,6 +373,7 @@ export class OrderService {
 
     const assignedAt = new Date();
     const expiresAt = new Date(assignedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const memberExpiresAt = expiresAt.toISOString();
 
     await this.prisma.order.update({
       where: { id: order.id },
@@ -401,6 +405,7 @@ export class OrderService {
           familyGroupId: groupId,
           accountId: group!.accountId,
           userEmail: order.userEmail,
+          memberExpiresAt,
         }),
       },
     });
@@ -418,6 +423,7 @@ export class OrderService {
         familyGroupId: groupId,
         accountId: group!.accountId,
         userEmail: order.userEmail,
+        memberExpiresAt,
       },
       { ...JOB_DEFAULTS }
     );

@@ -369,11 +369,11 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
-  async function crossInvite(emails: string[]): Promise<CrossInviteResult | null> {
+  async function crossInvite(emails: string[], validDays?: number): Promise<CrossInviteResult | null> {
     try {
       const result = await apiRequest<CrossInviteResult>("family-groups/cross-invite", {
         method: "POST",
-        body: { emails }
+        body: { emails, validDays }
       });
       await loadDashboard();
       return result;
@@ -399,11 +399,11 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
-  async function bulkInviteGroup(groupId: string, emails: string[]): Promise<BulkGroupInviteResult | null> {
+  async function bulkInviteGroup(groupId: string, emails: string[], validDays?: number): Promise<BulkGroupInviteResult | null> {
     try {
       const result = await apiRequest<BulkGroupInviteResult>(`family-groups/${groupId}/bulk-invite`, {
         method: "POST",
-        body: { emails }
+        body: { emails, validDays }
       });
       await loadDashboard();
       return result;

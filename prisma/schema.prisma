@@ -181,6 +181,7 @@ model FamilyMember {
   status          MemberStatus @default(ACTIVE)
   googleMemberId  String?      // GAIA member ID from href="/family/member/g/{id}"
   canAutoRemove   Boolean      @default(false)
+  expiresAt       DateTime?    // member-level expiry; null = never expires
   joinedAt        DateTime?
   removedAt       DateTime?
   familyGroup     FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)

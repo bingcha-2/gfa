@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail, IsInt, IsOptional, Min } from "class-validator";
 
 /**
  * DTO for bulk-invite: invite up to 5 emails to a family group in one request.
@@ -10,4 +10,10 @@ export class BulkInviteDto {
   @ArrayMaxSize(5)
   @IsEmail({}, { each: true })
   emails!: string[];
+
+  /** Member validity in days (default 30). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  validDays?: number;
 }

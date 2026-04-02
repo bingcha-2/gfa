@@ -13,6 +13,7 @@ type LookupResult = {
     id: string;
     displayName: string | null;
     joinedAt: string | null;
+    expiresAt: string | null;
   };
   familyGroup?: {
     id: string;
@@ -264,6 +265,18 @@ export function MemberLookupPanel({
                   {result.member?.joinedAt && (
                     <span className="muted" style={{ fontSize: "0.85rem" }}>
                       加入时间：{formatDate(result.member.joinedAt)}
+                    </span>
+                  )}
+                  {result.member?.expiresAt && (
+                    <span
+                      style={{
+                        fontSize: "0.85rem",
+                        fontWeight: 600,
+                        color: isExpired(result.member.expiresAt) ? "var(--red, #f87171)" : "var(--green, #4ade80)"
+                      }}
+                    >
+                      到期时间：{formatDate(result.member.expiresAt)}
+                      {isExpired(result.member.expiresAt) && " ⚠ 已到期"}
                     </span>
                   )}
                 </div>
