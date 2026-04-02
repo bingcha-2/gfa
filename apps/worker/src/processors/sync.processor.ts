@@ -90,9 +90,15 @@ export async function processSync(
     await pool.setLastAccount(profileId!, accountId);
 
     // Ensure family group exists (also creates DB record if first run)
+    const _syncT0 = Date.now();
+    const _syncTs = () => `[${new Date().toISOString().slice(11, 23)}][+${Date.now() - _syncT0}ms]`;
+    console.log(`${_syncTs()} [sync-flow] calling ensureFamilyGroup`);
     await ensureFamilyGroup(page, account, prisma, logger);
+    console.log(`${_syncTs()} [sync-flow] ensureFamilyGroup done`);
 
+    console.log(`${_syncTs()} [sync-flow] safeGoto family page`);
     await browser.safeGoto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    console.log(`${_syncTs()} [sync-flow] safeGoto done`);
     await logger.log("INFO", "Navigated to Family page for sync");
 
     // Scrape current members from the page (visits each member detail page for real emails)
@@ -220,19 +226,25 @@ export async function scrapeMembersFromPage(
   page: import("playwright").Page,
   adminEmail: string = ""
 ): Promise<{ members: ScrapedMember[]; availableSlots: number }> {
+  const _t0 = Date.now();
+  const _ts = () => `[${new Date().toISOString().slice(11, 23)}][+${Date.now() - _t0}ms]`;
+  console.log(`${_ts()} [scrape] start: waitForLoadState(domcontentloaded)`);
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  console.log(`${_ts()} [scrape] domcontentloaded done`);
 
   // Parse available slots from invite button text
-  const inviteLinkText = await page
-    .locator('a[href*="invitemembers"]')
-    .first()
-    .textContent()
-    .catch(() => "");
+  console.log(`${_ts()} [scrape] extracting invite link text`);
+  const inviteLocator = page.locator('a[href*="invitemembers"]').first();
+  const inviteLinkText = (await inviteLocator.count()) > 0
+    ? await inviteLocator.textContent({ timeout: 3000 }).catch(() => "")
+    : "";
   const slotMatch = inviteLinkText?.match(/(\d+)/);
+  console.log(`${_ts()} [scrape] invite link text done: "${inviteLinkText?.slice(0, 40)}"`);
 
   // KEY INSIGHT: a[href*="family/member/"] IS the "Family member details" link.
   // The member's display name lives in SIBLING elements inside the parent card container,
   // NOT inside the <a> element itself.
+  console.log(`${_ts()} [scrape] starting page.evaluate for card extraction`);
   const cardDebug = await page.evaluate(() => {
     const links = document.querySelectorAll('a[href*="family/member/"]');
     return Array.from(links).map((link) => {
@@ -268,7 +280,7 @@ export async function scrapeMembersFromPage(
     });
   });
 
-  console.debug("[sync] card raw count:", cardDebug.length);
+  console.log(`${_ts()} [scrape] page.evaluate done, card raw count: ${cardDebug.length}`);
 
   // Filter out Family Manager cards — detect by card text on list page
   const managerKw = ["family manager", "家庭群组管理员", "家庭群組管理員", "管理者"];
@@ -296,6 +308,7 @@ export async function scrapeMembersFromPage(
     }
   }
 
+  console.log(`${_ts()} [scrape] unique cards after dedup: ${uniqueCards.length}, starting detail page visits`);
   const members: ScrapedMember[] = [];
   const baseUrl = "https://myaccount.google.com/";
 
@@ -305,8 +318,9 @@ export async function scrapeMembersFromPage(
       : `${baseUrl}${card.href}`;
 
     try {
+      console.log(`${_ts()} [scrape] visiting detail page ${uniqueCards.indexOf(card)+1}/${uniqueCards.length}: ${card.gaiaId}`);
       await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(200);
 
       // Read emails from leaf-node elements only to avoid concatenated parent text
       const rawEmails: string[] = await page.evaluate(() => {
@@ -373,7 +387,7 @@ export async function scrapeMembersFromPage(
       waitUntil: "domcontentloaded",
       timeout: 60000,
     }).catch(() => {});
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(200);
   }
 
   // members array already excludes the Family Manager, so capacity is 5 (not 6)

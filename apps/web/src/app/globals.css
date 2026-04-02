@@ -393,39 +393,47 @@ img {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 18px;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 16px;
   border-radius: 999px;
   border: 1px solid transparent;
   background: rgba(255, 252, 248, 0.86);
+  font-size: 14px;
+  font-weight: 600;
   transition:
-    transform 180ms ease,
-    box-shadow 180ms ease,
-    border-color 180ms ease,
-    background 180ms ease;
-  box-shadow: 0 12px 30px rgba(56, 39, 30, 0.08);
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+  box-shadow: 0 8px 20px rgba(56, 39, 30, 0.06);
   cursor: pointer;
 }
 
 .pill-link:hover,
 .button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 16px 36px rgba(56, 39, 30, 0.1);
+  box-shadow: 0 12px 28px rgba(56, 39, 30, 0.1);
 }
 
 .button {
   border-color: rgba(15, 118, 110, 0.18);
   background:
-    linear-gradient(135deg, rgba(15, 118, 110, 0.98), rgba(17, 82, 77, 0.98));
+    linear-gradient(135deg, rgba(15, 118, 110, 0.96), rgba(17, 82, 77, 0.96));
   color: white;
   font-weight: 700;
 }
 
 .button.secondary {
-  border-color: var(--line);
-  background: rgba(255, 252, 248, 0.88);
+  border-color: var(--line-strong);
+  background: rgba(255, 252, 248, 0.92);
   color: var(--foreground);
+  box-shadow: 0 4px 12px rgba(56, 39, 30, 0.05);
+}
+
+.button.secondary:hover {
+  border-color: rgba(15, 118, 110, 0.3);
+  color: var(--accent-strong);
 }
 
 .button.ghost {
@@ -435,17 +443,37 @@ img {
   color: var(--foreground-muted);
 }
 
+.button.ghost:hover {
+  background: rgba(15, 118, 110, 0.06);
+  color: var(--foreground);
+  box-shadow: none;
+  transform: none;
+}
+
+.button.danger {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.92), rgba(185, 28, 28, 0.92));
+  color: white;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.12);
+}
+
+.button.danger:hover {
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.18);
+}
+
 .button.small,
 .pill-link.small {
-  min-height: 38px;
-  padding: 0 14px;
-  font-size: 14px;
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 10px;
 }
 
 .button:disabled {
-  cursor: wait;
-  opacity: 0.72;
+  cursor: not-allowed;
+  opacity: 0.6;
   transform: none;
+  box-shadow: none;
 }
 
 .hero-card,
@@ -1065,21 +1093,23 @@ img {
 
 .data-table th,
 .data-table td {
-  padding: 15px 16px;
+  padding: 10px 14px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid rgba(31, 26, 23, 0.08);
 }
 
 .data-table th {
-  font-size: 12px;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(31, 26, 23, 0.56);
+  color: rgba(31, 26, 23, 0.52);
+  font-weight: 700;
+  background: rgba(31, 26, 23, 0.02);
 }
 
 .data-table td {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .data-table tr:last-child td {
@@ -1421,3 +1451,143 @@ img {
   font-size: 13px;
 }
 
+/* ── Input Enhancement ─────────────────────────────────────────── */
+.table-wrap input[type="text"],
+.table-wrap input[type="search"],
+.table-wrap .search-field,
+.glass-panel input[type="text"],
+.glass-panel input[type="search"],
+.glass-panel input[type="password"],
+.glass-panel input[type="email"],
+.glass-panel input[type="date"] {
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 26, 23, 0.12);
+  background: rgba(255, 252, 248, 0.95);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.table-wrap input[type="text"]:focus,
+.table-wrap input[type="search"]:focus,
+.glass-panel input[type="text"]:focus,
+.glass-panel input[type="search"]:focus,
+.glass-panel input[type="password"]:focus,
+.glass-panel input[type="email"]:focus,
+.glass-panel input[type="date"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+/* Search with icon padding */
+.table-wrap input[type="text"][style*="paddingLeft"],
+.glass-panel input[type="text"][style*="paddingLeft"] {
+  padding-left: 32px;
+}
+
+/* ── Compact Status Badge in Tables ──────────────────────────── */
+.data-table .status-badge {
+  padding: 3px 8px;
+  font-size: 10px;
+  gap: 5px;
+  min-height: auto;
+}
+
+.data-table .status-badge::before {
+  width: 5px;
+  height: 5px;
+}
+
+/* ── Account Table Improvements ──────────────────────────────── */
+.data-table-accounts td {
+  vertical-align: middle;
+}
+
+.data-table-accounts th:nth-child(5),
+.data-table-accounts td:nth-child(5) {
+  min-width: 140px;
+}
+
+.account-stats {
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.account-stats .muted {
+  font-size: 11px;
+}
+
+.account-stats .status-badge {
+  margin-top: 4px;
+}
+
+/* ── Compact Buttons in Tables ───────────────────────────────── */
+.data-table .button {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  border-radius: 8px;
+  gap: 4px;
+}
+
+.data-table .button.small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ── Select Dropdowns Enhancement ────────────────────────────── */
+.glass-panel select,
+.table-wrap select {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(31, 26, 23, 0.12);
+  background: rgba(255, 252, 248, 0.95);
+  font-size: 13px;
+  color: var(--foreground);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 160ms ease;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.glass-panel select:focus,
+.table-wrap select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+/* ── Panel Tabs Enhancement ──────────────────────────────────── */
+.panel-tab {
+  font-size: 13px;
+}
+
+/* ── Inline Edit Buttons ─────────────────────────────────────── */
+button[title="修改到期时间"] {
+  color: var(--accent-strong) !important;
+  font-size: 11px !important;
+  opacity: 0.6;
+  transition: opacity 160ms ease;
+}
+
+button[title="修改到期时间"]:hover {
+  opacity: 1;
+}
+
+/* Make table rows slightly taller for readability */
+.data-table tbody tr {
+  transition: background 120ms ease;
+}
+
+.data-table tbody tr:hover {
+  background: rgba(15, 118, 110, 0.03);
+}

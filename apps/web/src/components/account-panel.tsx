@@ -81,8 +81,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
     setEditForm({
       name: account.name,
       adspowerProfileId: account.adspowerProfileId,
-      loginPassword: "",
-      totpSecret: "",
+      loginPassword: account.loginPassword ?? "",
+      totpSecret: account.totpSecret ?? "",
       notes: (account as any).notes ?? "",
       subscriptionExpiresAt: expiresDate,
       subscriptionPlan: (account as any).subscriptionPlan ?? ""
@@ -310,21 +310,23 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 />
               </div>
               <div className="field">
-                <label htmlFor="edit-password">登录密码 <span className="muted">(留空不修改)</span></label>
+                <label htmlFor="edit-password">登录密码</label>
                 <input
                   id="edit-password"
-                  type="password"
-                  placeholder="新密码（可选）"
+                  type="text"
+                  autoComplete="off"
+                  placeholder="登录密码"
                   value={editForm.loginPassword}
                   onChange={(e) => setEditForm({ ...editForm, loginPassword: e.target.value })}
                 />
               </div>
               <div className="field">
-                <label htmlFor="edit-totp">TOTP 密钥 <span className="muted">(留空不修改)</span></label>
+                <label htmlFor="edit-totp">TOTP 密钥</label>
                 <input
                   id="edit-totp"
-                  type="password"
-                  placeholder="Base32 格式（可选）"
+                  type="text"
+                  autoComplete="off"
+                  placeholder="Base32 格式"
                   value={editForm.totpSecret}
                   onChange={(e) => setEditForm({ ...editForm, totpSecret: e.target.value.replace(/\s/g, "").toUpperCase() })}
                 />
@@ -507,9 +509,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   <th>名称</th>
                   <th>登录邮箱</th>
                   <th>状态</th>
-                  <th>凭据</th>
                   <th>统计</th>
-                  {canManage && <th style={{ minWidth: 140 }}>操作</th>}
+                  {canManage && <th>操作</th>}
                 </tr>
               </thead>
               <tbody>
@@ -526,12 +527,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                         <div className="account-email">{account.loginEmail}</div>
                       </td>
                       <td>
-                        <div className="badge-cell">
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           <StatusBadge value={account.status} />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="badge-cell">
                           <StatusBadge
                             value={account.hasTotpSecret ? "TOTP" : "No TOTP"}
                             tone={account.hasTotpSecret ? "emerald" : "amber"}
@@ -540,15 +537,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                       </td>
                       <td>
                         <div className="account-stats">
-                          <div>{account._count?.familyGroups ?? 0} 个家庭组</div>
+                          <div>{account._count?.familyGroups ?? 0} 组 · {account._count?.tasks ?? 0} 任务</div>
                           <div className="muted account-meta">
-                            {account._count?.tasks ?? 0} 个任务
-                          </div>
-                          <div className="muted account-meta">
-                            最后登录 {formatDateTime(account.lastLoginAt)}
-                          </div>
-                          <div className="muted account-meta">
-                            订阅到期 {account.subscriptionExpiresAt ? formatDateTime(account.subscriptionExpiresAt) : "未知"}
+                            登录 {formatDateTime(account.lastLoginAt)} · 到期 {account.subscriptionExpiresAt ? formatDateTime(account.subscriptionExpiresAt) : "未知"}
                           </div>
                           <StatusBadge
                             value={account.subscriptionStatus ?? "未知"}
@@ -564,25 +555,16 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                       </td>
                       {canManage && (
                         <td>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                             <button
-                              className="button secondary"
-                              style={{ fontSize: '0.875rem', padding: '5px 14px', whiteSpace: 'nowrap' }}
+                              className="button secondary small"
                               onClick={() => startEdit(account)}
                               type="button"
                             >
-                              ✏️ 编辑
+                              编辑
                             </button>
                             <button
-                              className="button"
-                              style={{
-                                fontSize: '0.875rem',
-                                padding: '5px 14px',
-                                background: 'var(--red, #dc2626)',
-                                color: '#fff',
-                                border: 'none',
-                                whiteSpace: 'nowrap'
-                              }}
+                              className="button danger small"
                               disabled={deletingId === account.id}
                               onClick={async () => {
                                 if (!confirm(`确定删除母号 ${account.loginEmail}？\n该操作会同时删除关联的家庭组和成员记录。`)) return;
@@ -594,7 +576,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                                 }
                               }}
                             >
-                              {deletingId === account.id ? "删除中..." : "🗑 删除"}
+                              {deletingId === account.id ? "删除中..." : "删除"}
                             </button>
                             {/* Confirm Login: show only for accounts needing manual intervention */}
                             {onConfirmLogin && (
@@ -603,15 +585,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                               account.status === "LOGIN_REQUIRED"
                             ) && (
                               <button
-                                className="button"
-                                style={{
-                                  fontSize: "0.875rem",
-                                  padding: "5px 14px",
-                                  background: "var(--amber, #d97706)",
-                                  color: "#fff",
-                                  border: "none",
-                                  whiteSpace: "nowrap"
-                                }}
+                                className="button small"
+                                style={{ background: 'var(--warm, #d97706)' }}
                                 disabled={confirmingId === account.id}
                                 title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
                                 onClick={async () => {
@@ -623,10 +598,9 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                                   }
                                 }}
                               >
-                                {confirmingId === account.id ? "确认中..." : "✅ 确认已登录"}
+                                {confirmingId === account.id ? "确认中..." : "确认已登录"}
                               </button>
                             )}
-
                           </div>
                         </td>
                       )}
@@ -635,7 +609,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 {/* Pagination */}
                 {totalPages > 1 && (
                   <tr>
-                    <td colSpan={canManage ? 6 : 5}>
+                    <td colSpan={canManage ? 5 : 4}>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
                         <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
                         <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
@@ -646,7 +620,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 )}
                 </>) : (
                   <tr>
-                    <td colSpan={canManage ? 6 : 5}>
+                    <td colSpan={canManage ? 5 : 4}>
                       <div className="empty-state">{searchTerm ? "没有匹配的母号。" : "还没有录入任何母号。"}</div>
                     </td>
                   </tr>

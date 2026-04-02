@@ -24,7 +24,12 @@ export async function ensureFamilyGroup(
   await logger.log("INFO", "[ensure-family-group] Checking family group status");
 
   await page.goto(FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(3000);
+  // Wait for key elements to render (invite link or member cards), fallback 3s
+  await Promise.race([
+    page.locator('a[href*="invitemembers"], a[href*="family/member"], a[href*="family/create"]').first()
+      .waitFor({ state: "visible", timeout: 3000 }).catch(() => {}),
+    page.waitForTimeout(3000),
+  ]);
 
   const landedUrl = page.url();
 

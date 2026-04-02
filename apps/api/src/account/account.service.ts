@@ -4,10 +4,8 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateAccountDto, UpdateAccountDto, BulkImportDto } from "./dto/account.dto";
 
-// Strip sensitive credentials from API responses, add hasTotp flag
-function stripSensitive<T extends Record<string, unknown>>(account: T): Omit<T, "loginPassword" | "totpSecret"> & { hasTotpSecret: boolean } {
-  const { loginPassword, totpSecret, ...safe } = account;
-  return { ...safe, hasTotpSecret: !!totpSecret } as any;
+function addConvenience<T extends Record<string, unknown>>(account: T): T & { hasTotpSecret: boolean } {
+  return { ...account, hasTotpSecret: !!(account as any).totpSecret } as any;
 }
 
 @Injectable()
@@ -38,7 +36,7 @@ export class AccountService {
       orderBy: { createdAt: "desc" }
     });
 
-    return accounts.map(stripSensitive);
+    return accounts.map(addConvenience);
   }
 
   async findOne(id: string) {
@@ -61,7 +59,22 @@ export class AccountService {
 
     if (!account) throw new NotFoundException("Account not found");
 
-    return stripSensitive(account);
+    return addConvenience(account);
+  }
+
+  /** Return account WITH credentials — only for admin edit forms */
+  async findOneWithCredentials(id: string) {
+    const account = await this.prisma.account.findUnique({
+      where: { id },
+      select: {
+        loginPassword: true,
+        totpSecret: true,
+      },
+    });
+
+    if (!account) throw new NotFoundException("Account not found");
+
+    return account;
   }
 
   async create(dto: CreateAccountDto) {
@@ -80,7 +93,7 @@ export class AccountService {
       }
     });
 
-    return stripSensitive(account);
+    return addConvenience(account);
   }
 
 
@@ -110,7 +123,7 @@ export class AccountService {
       }
     });
 
-    return stripSensitive(account);
+    return addConvenience(account);
   }
 
   async delete(id: string) {

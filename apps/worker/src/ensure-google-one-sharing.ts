@@ -57,7 +57,15 @@ async function _ensureGoogleOneSharing(
 
   // Navigate to settings page
   await page.goto(GOOGLE_ONE_SETTINGS_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(4000);
+  // Wait for sharing toggle to render (or 3s fallback)
+  const earlyToggleSel = SHARING_TOGGLE_LABELS
+    .map(label => `button[role="switch"][aria-label="${label}"]`)
+    .join(", ");
+  await Promise.race([
+    page.locator(earlyToggleSel).first()
+      .waitFor({ state: "visible", timeout: 3000 }).catch(() => {}),
+    page.waitForTimeout(3000),
+  ]);
 
   const currentUrl = page.url();
 

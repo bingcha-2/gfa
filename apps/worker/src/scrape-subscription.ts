@@ -51,7 +51,7 @@ export async function scrapeSubscriptionInfo(
 async function scrapeFromSubscriptionsPage(page: Page): Promise<SubscriptionInfo | null> {
   try {
     await page.goto(GOOGLE_SUBSCRIPTIONS_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1000);
 
     const pageText = await page.evaluate(() => document.body.innerText);
 
@@ -114,7 +114,7 @@ async function scrapeFromSubscriptionsPage(page: Page): Promise<SubscriptionInfo
 async function scrapeFromGoogleOnePage(page: Page): Promise<SubscriptionInfo | null> {
   try {
     await page.goto(GOOGLE_ONE_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(2000);
 
     const pageText = await page.evaluate(() => document.body.innerText);
 

@@ -75,6 +75,18 @@ function formatDate(dateStr?: string | null) {
   return new Date(dateStr).toLocaleDateString("zh-CN");
 }
 
+function timeAgo(dateStr?: string | null): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins}分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days}天前`;
+}
+
 // Parse a newline-separated textarea into a trimmed, non-empty email array
 function parseEmails(text: string): string[] {
   return text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -276,6 +288,7 @@ export function GroupPanel({
   const [searchMode, setSearchMode] = useState<"parent" | "member">("parent");
   const [searchEmail, setSearchEmail] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterExtra, setFilterExtra] = useState("ALL");
   const PAGE_SIZE = 20;
   const [currentGroupPage, setCurrentGroupPage] = useState(1);
 
@@ -702,13 +715,12 @@ export function GroupPanel({
                   {/* Bulk actions */}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button
-                      className="button"
-                      style={{ background: 'var(--red, #dc2626)', color: '#fff', border: 'none' }}
+                      className="button danger small"
                       disabled={expirySelected.size === 0 || expiryRemoving}
                       onClick={handleBulkRemoveExpired}
                       type="button"
                     >
-                      {expiryRemoving ? <><Spinner size={14} color="currentColor" /> 踢出中...</> : `🗑 批量踢出 (${expirySelected.size})`}
+                      {expiryRemoving ? <><Spinner size={14} color="currentColor" /> 踢出中...</> : `批量踢出 (${expirySelected.size})`}
                     </button>
                   </div>
 
@@ -1118,7 +1130,7 @@ user2@gmail.com`}
                 {memberSearchLoading ? '…' : '查询'}
               </button>
             )}
-            {searchMode === "parent" && (
+            {searchMode === "parent" && (<>
               <select
                 id="group-filter-status"
                 value={filterStatus}
@@ -1130,12 +1142,24 @@ user2@gmail.com`}
                 <option value="MANUAL_ONLY">⏸ MANUAL_ONLY</option>
                 <option value="DISABLED">🚫 DISABLED</option>
               </select>
-            )}
-            {(searchEmail || filterStatus !== 'ALL') && (
+              <select
+                id="group-filter-extra"
+                value={filterExtra}
+                onChange={(e) => { setFilterExtra(e.target.value); setCurrentGroupPage(1); }}
+                style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
+              >
+                <option value="ALL">全部筛选</option>
+                <option value="HAS_PENDING">⏳ 有待进组</option>
+                <option value="HAS_SLOTS">🟢 有空位</option>
+                <option value="FULL">🔴 满员</option>
+                <option value="NEVER_SYNCED">⚠️ 未同步</option>
+              </select>
+            </>)}
+            {(searchEmail || filterStatus !== 'ALL' || filterExtra !== 'ALL') && (
               <button
                 className="button secondary small"
                 type="button"
-                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setCurrentGroupPage(1); setMemberGroups([]); setMemberSearchDone(false); }}
+                onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setFilterExtra('ALL'); setCurrentGroupPage(1); setMemberGroups([]); setMemberSearchDone(false); }}
                 style={{ whiteSpace: 'nowrap', height: '36px', borderRadius: '8px' }}
               >
                 清除
@@ -1158,7 +1182,12 @@ user2@gmail.com`}
               ? source.filter((g) => {
                   const matchEmail = !q || (g.account?.loginEmail ?? '').toLowerCase().includes(q);
                   const matchStatus = filterStatus === 'ALL' || g.status === filterStatus;
-                  return matchEmail && matchStatus;
+                  let matchExtra = true;
+                  if (filterExtra === 'HAS_PENDING') matchExtra = (g.pendingInviteCount ?? 0) > 0;
+                  else if (filterExtra === 'HAS_SLOTS') matchExtra = g.availableSlots > 0;
+                  else if (filterExtra === 'FULL') matchExtra = g.availableSlots === 0;
+                  else if (filterExtra === 'NEVER_SYNCED') matchExtra = !g.lastSyncedAt;
+                  return matchEmail && matchStatus && matchExtra;
                 })
               : source;
             const totalGroupPages = Math.ceil(filtered.length / PAGE_SIZE);
@@ -1190,7 +1219,24 @@ user2@gmail.com`}
                         <Fragment key={group.id}>
                           <tr>
                             <td>
-                              <div className="strong">{group.groupName}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span className="strong">{group.groupName}</span>
+                                {(group.pendingInviteCount ?? 0) > 0 && (
+                                  <span style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 600,
+                                    padding: '1px 6px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(245,158,11,0.12)',
+                                    color: '#d97706',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                    title={`${group.pendingInviteCount} 个成员待进组`}
+                                  >
+                                    ⏳ {group.pendingInviteCount}待进组
+                                  </span>
+                                )}
+                              </div>
                               <div className="muted">
                                 {group.memberCount ?? group._count?.members ?? 0} members ·{" "}
                                 {group.pendingInviteCount ?? group._count?.invites ?? 0} invites
@@ -1205,7 +1251,6 @@ user2@gmail.com`}
                                 <StatusBadge value={group.status} />
                                 {!group.lastSyncedAt && (
                                   <span 
-                                    className="badge" 
                                     style={{ 
                                       background: 'rgba(239,68,68,0.12)', 
                                       color: '#dc2626', 
@@ -1214,12 +1259,19 @@ user2@gmail.com`}
                                       padding: '1px 6px',
                                       borderRadius: '4px'
                                     }}
-                                    title="该组尚未同步，已被自动邀请/轮换系统排除"
+                                    title="该组尚未同步"
                                   >
                                     ⚠️ 未同步
                                   </span>
                                 )}
                               </div>
+                              {group.lastSyncedAt && (
+                                <div className="muted" style={{ fontSize: '0.75rem', marginTop: '2px' }}
+                                  title={new Date(group.lastSyncedAt).toLocaleString('zh-CN')}
+                                >
+                                  🔄 {timeAgo(group.lastSyncedAt)}
+                                </div>
+                              )}
                             </td>
                             <td>
                               <div>{group.account?.name ?? "-"}</div>
@@ -1294,7 +1346,7 @@ user2@gmail.com`}
                                               setEditingDateValue(group.account?.subscriptionExpiresAt ? new Date(group.account.subscriptionExpiresAt).toISOString().split('T')[0] : '');
                                             }}
                                           >
-                                            ✏️
+                                            编辑
                                           </button>
                                         )}
                                       </>
@@ -1476,8 +1528,7 @@ user2@gmail.com`}
                                                          {!isOwner && (<>
                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                                                              <button
-                                                               className="button"
-                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'var(--red, #dc2626)', color: '#fff', border: 'none', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                               className="button danger small"
                                                                disabled={removingMemberId === m.id || replacingMemberId !== null || !!memberTaskMap[m.id]}
                                                                 onClick={async () => {
                                                                   if (!confirm(`确定移除成员 ${m.email}？`)) return;
@@ -1493,16 +1544,16 @@ user2@gmail.com`}
                                                                 }}
                                                                type="button"
                                                              >
-                                                               {removingMemberId === m.id ? "提交中..." : "🗑 移除"}
+                                                               {removingMemberId === m.id ? "提交中..." : "移除"}
                                                              </button>
                                                              <button
-                                                               className="button"
-                                                               style={{ fontSize: '0.8rem', padding: '3px 10px', background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', whiteSpace: 'nowrap', borderRadius: '4px', cursor: 'pointer' }}
+                                                               className="button secondary small"
+                                                               
                                                                disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id) || !!memberTaskMap[m.id]}
                                                                onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
                                                                type="button"
                                                              >
-                                                               🔀 替换
+                                                               替换
                                                              </button>
                                                               {/* Per-member task status indicator */}
                                                               {memberTaskMap[m.id] && (() => {
@@ -1719,7 +1770,7 @@ user2@gmail.com`}
                       <tr>
                         <td colSpan={5}>
                           <div className="empty-state">
-                            {searchEmail || filterStatus !== 'ALL'
+                            {searchEmail || filterStatus !== 'ALL' || filterExtra !== 'ALL'
                               ? `没有符合条件的家庭组。`
                               : '还没有家庭组库存。'}
                           </div>

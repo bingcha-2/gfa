@@ -21,6 +21,8 @@ export type AccountSummary = {
   dailyOperationCount: number;
   dailyOperationLimit: number;
   hasTotpSecret: boolean;
+  loginPassword?: string | null;
+  totpSecret?: string | null;
   notes?: string | null;
   lastLoginAt?: string | null;
   lastHealthCheckAt?: string | null;

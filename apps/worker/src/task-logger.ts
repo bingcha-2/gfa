@@ -23,7 +23,8 @@ export class TaskLogger {
    */
   async log(level: LogLevel, message: string, extra?: unknown): Promise<void> {
     const extraStr = extra ? JSON.stringify(extra) : undefined;
-    const prefix = `[worker:${this.workerId}][task:${this.taskId}]`;
+    const ts = new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS
+    const prefix = `[${ts}][worker:${this.workerId}][task:${this.taskId}]`;
     const consoleMsg = `${prefix} ${level}: ${message}`;
 
     if (level === "ERROR") {

@@ -149,7 +149,7 @@ export async function processRemove(
 
       // Navigate to family page (already there from verification, but ensure clean state)
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(500);
 
       const adminEmail = (account.loginEmail ?? "").trim().toLowerCase();
       const { members: currentMembers, availableSlots: pageSlots } = await scrapeMembersFromPage(page, adminEmail);
@@ -703,8 +703,8 @@ async function removeMemberOnPage(
   // ── Post-removal verification ──
   // Navigate back to family list and confirm the member is gone.
   await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+  await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
 
   // Check by email in leaf-node text
   const emailStillPresent = await page.evaluate((targetEmail: string) => {

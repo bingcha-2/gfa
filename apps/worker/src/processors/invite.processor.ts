@@ -527,8 +527,6 @@ async function executeInviteOnPage(
   familyGroupId?: string
 ): Promise<void> {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-  await page.waitForTimeout(4000); // Angular SPA needs time to render
 
   // Primary selector: link with href containing "invitemembers"
   const inviteLink = page.locator('a[href*="invitemembers"]');

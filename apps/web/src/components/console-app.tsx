@@ -941,7 +941,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
                       <span>{item.label}</span>
                       <small>{item.caption}</small>
                     </span>
-                    <span className="console-menu-metric">{item.metric}</span>
+                    {item.metric && <span className="console-menu-metric">{item.metric}</span>}
                   </button>
                 ))}
               </div>

@@ -35,7 +35,7 @@ export async function postTaskSync(
     if (!page.url().includes("family/details")) {
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
     }
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(500);
 
     // Scrape current state
     const { members, availableSlots } = await scrapeMembersFromPage(page, adminEmail.trim().toLowerCase());
