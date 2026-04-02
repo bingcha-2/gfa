@@ -53,6 +53,24 @@ export async function processRemove(
   const logger = new TaskLogger(prisma, taskId, workerId);
   const browser = new WorkerBrowser();
 
+  /** Force English on any Google page — only call at major navigation points */
+  async function ensureEnglish(page: import("playwright").Page) {
+    try {
+      const url = new URL(page.url());
+      if (
+        url.hostname.includes("google") &&
+        url.searchParams.get("hl") !== "en"
+      ) {
+        url.searchParams.set("hl", "en");
+        await page.goto(url.toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+        await page.waitForTimeout(1500);
+      }
+    } catch {}
+  }
+
   const account = await prisma.account.findUnique({ where: { id: job.data.accountId } });
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Account not found` });
@@ -136,10 +154,13 @@ export async function processRemove(
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, account.id);
 
+    await ensureEnglish(page);
+
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await ensureEnglish(page);
 
     // Query other members' GAIA IDs for cross-validation safety check
     const otherMembers = await prisma.familyMember.findMany({
@@ -428,10 +449,16 @@ async function removeMemberOnPage(
     'button:has-text("取消邀请")',
     'button:has-text("撤銷")',
     'button:has-text("撤销")',
+    'button:has-text("구성원 삭제")',
+    'button:has-text("삭제")',
+    'button:has-text("나가기")',
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
     'button:has-text("Revoke")',
     'button:has-text("Remove")',
+    // Japanese
+    'button:has-text("削除")',
+    'button:has-text("脱退")',
   ].join(", "));
 
   try {
@@ -478,6 +505,7 @@ async function removeMemberOnPage(
     'button:has-text("Revoke")', 'button:has-text("撤銷")', 'button:has-text("撤销")',
     'button:has-text("是")', 'button:has-text("Yes")',
     'button:has-text("確認")', 'button:has-text("确认")', 'button:has-text("Confirm")',
+    'button:has-text("확인")', 'button:has-text("네")',
     'a:has-text("Remove")', 'a:has-text("移除")',
     'a:has-text("是")', 'a:has-text("Yes")',
     'a:has-text("確認")', 'a:has-text("Confirm")',

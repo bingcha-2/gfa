@@ -897,18 +897,14 @@ async function handleAcceptInvite(
     "Join",
     "Accept",
     "Accept invitation",
-    // Chinese
-    "查看邀请", "查看邀請",
+    "查看邀请",
     "加入",
     "接受",
-    // Korean
-    "초대장 보기", "가입", "수락", "참여",
-    // Japanese
-    "招待状を表示", "参加", "承諾",
   ];
   const inviteSelectors = INVITE_KEYWORDS.flatMap((kw) => [
     `button:has-text("${kw}")`,
-    `a:has-text("${kw}")`,
+    // Filter out member cards which are <a> tags to specific member IDs
+    `a:not([href*="member/g"]):has-text("${kw}")`,
     `div[role="button"]:has-text("${kw}")`,
     `div[role="link"]:has-text("${kw}")`,
   ]);
@@ -1002,16 +998,10 @@ async function handleAcceptInvite(
     "Welcome to the family",
     "You joined",
     "You're now part of",
-    "Family member",
     "Leave family group",
-    // Chinese
     "已加入",
     "家庭成员",
     "家庭成員",
-    // Korean
-    "가족 구성원", "가족 그룹 나가기", "가족에 오신 것을 환영합니다",
-    // Japanese
-    "ファミリーメンバー", "ファミリーグループから脱退",
   ];
 
   for (let confirmRound = 0; confirmRound < 5; confirmRound++) {
@@ -1042,21 +1032,16 @@ async function handleAcceptInvite(
       "Accept",
       "Yes",
       "Continue",
-      // Chinese
-      "确认", "確認",
-      "加入", "加入家庭",
-      "接受", "接受邀请",
-      "继续", "繼續",
-      // Korean
-      "가족 그룹 가입하기", "가입", "가입하기",
-      "수락", "확인", "계속", "참여",
-      // Japanese
-      "参加する", "参加", "ファミリーグループに参加",
-      "承諾", "確認", "続ける",
+      "确认",
+      "加入",
+      "接受",
+      "继续",
     ];
     const confirmSelectors = CONFIRM_KEYWORDS.flatMap((kw) => [
+      // Priority 1: Real buttons
       `button:has-text("${kw}")`,
-      `a:has-text("${kw}")`,
+      // Priority 2: Links that are NOT member detail cards
+      `a:not([href*="member/g"]):has-text("${kw}")`,
       `div[role="button"]:has-text("${kw}")`,
     ]);
     const confirmBtn = page.locator(confirmSelectors.join(", "));

@@ -49,6 +49,24 @@ export async function processReplace(
   const logger = new TaskLogger(prisma, taskId, workerId);
   const browser = new WorkerBrowser();
 
+  /** Force English on any Google page — only call at major navigation points */
+  async function ensureEnglish(page: import("playwright").Page) {
+    try {
+      const url = new URL(page.url());
+      if (
+        url.hostname.includes("google") &&
+        url.searchParams.get("hl") !== "en"
+      ) {
+        url.searchParams.set("hl", "en");
+        await page.goto(url.toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+        await page.waitForTimeout(1500);
+      }
+    } catch {}
+  }
+
   const account = await prisma.account.findUnique({
     where: { id: accountId },
   });
@@ -120,10 +138,13 @@ export async function processReplace(
     }
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, accountId);
+    await ensureEnglish(page);
+
     const beforePath = await browser.takeScreenshot(taskId, "before");
     await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await ensureEnglish(page);
 
     // Look up the member's googleMemberId and displayName from DB
     const memberRecord = await prisma.familyMember.findFirst({
@@ -508,10 +529,16 @@ async function removeMemberOnPage(
     'button:has-text("取消邀请")',
     'button:has-text("撤銷")',           // Revoke (Traditional Chinese)
     'button:has-text("撤销")',           // Revoke (Simplified Chinese)
+    'button:has-text("구성원 삭제")',     // Korean: Delete member
+    'button:has-text("삭제")',           // Korean: Delete
+    'button:has-text("나가기")',         // Korean: Leave
     'button:has-text("Remove member")',
     'button:has-text("Cancel invitation")',
     'button:has-text("Revoke")',
     'button:has-text("Remove")',
+    // Japanese
+    'button:has-text("削除")',
+    'button:has-text("脱退")',
   ].join(", "));
 
   // Broad fallback: Google may show just "取消"/"Cancel" for pending invites.
@@ -781,16 +808,19 @@ async function removeMemberOnPage(
   // Pattern 1: /family/remove/ page with "Remove" / "Cancel" buttons
   // Pattern 2: Same-page dialog with 是/Yes or 確認/Confirm <a> links
   const confirmButton = page.locator([
-    'a:has-text("是")',
+    'a:not([href*="member/g"]):has-text("是")',
     'button:has-text("是")',
-    'a:has-text("Yes")',
+    'a:not([href*="member/g"]):has-text("Yes")',
     'button:has-text("Yes")',
-    'a:has-text("確認")',
+    'a:not([href*="member/g"]):has-text("確認")',
     'button:has-text("確認")',
-    'a:has-text("确认")',
+    'a:not([href*="member/g"]):has-text("确认")',
     'button:has-text("确认")',
-    'a:has-text("Confirm")',
+    'a:not([href*="member/g"]):has-text("Confirm")',
     'button:has-text("Confirm")',
+    // Korean
+    'button:has-text("확인")',
+    'button:has-text("네")',
   ].join(", "));
 
   if ((await confirmButton.count()) > 0) {
