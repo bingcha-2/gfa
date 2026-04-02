@@ -245,6 +245,42 @@ export async function processInvite(
     // Navigate to Google Family page, execute invite
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await logger.log("INFO", "Navigated to Google Family page");
+
+    // Idempotency check: sync page state first, then check if member already exists
+    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
+
+    const existingMember = await prisma.familyMember.findFirst({
+      where: {
+        familyGroupId,
+        email: userEmail,
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+    });
+
+    if (existingMember) {
+      await logger.log("INFO",
+        `[invite] Idempotency: ${userEmail} already in group (status=${existingMember.status}). Skipping invite.`
+      );
+
+      const afterPath = await browser.takeScreenshot(taskId, "after");
+      await logger.recordScreenshot("afterScreenshotPath", afterPath);
+
+      await logger.updateStatus("INVITE_SENT");
+      if (orderId) {
+        await logger.updateOrderStatus(orderId, "INVITE_SENT", `Member ${userEmail} already in family group`);
+      }
+
+      // Post-task sync already done above
+      await logger.log("INFO", "Invite completed successfully (idempotent — already present)");
+
+      if (deps.inviteQueue) {
+        await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch((err) =>
+          logger.log("WARN", `Transfer progress check failed: ${err instanceof Error ? err.message : String(err)}`)
+        );
+      }
+      return; // Skip the actual invite
+    }
+
     await executeInviteOnPage(page, userEmail, logger, prisma, familyGroupId);
 
     const afterPath = await browser.takeScreenshot(taskId, "after");
