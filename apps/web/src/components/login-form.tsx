@@ -80,9 +80,9 @@ export function LoginForm() {
     <section className="form-card">
       <div className="panel-stack">
         <div>
-          <p className="label">Credentials</p>
-          <h2 className="public-panel-title">后台登录</h2>
-          <p className="muted">输入运营账号和密码。</p>
+          <p className="label" suppressHydrationWarning>Credentials</p>
+          <h2 className="public-panel-title" suppressHydrationWarning>后台登录</h2>
+          <p className="muted" suppressHydrationWarning>输入运营账号和密码。</p>
         </div>
 
         <form className="field-grid" onSubmit={onSubmit}>

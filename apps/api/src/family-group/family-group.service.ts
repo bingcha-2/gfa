@@ -332,6 +332,16 @@ export class FamilyGroupService {
     const group = await this.findOne(groupId);
     if (!group.account) throw new NotFoundException("Account not found for family group");
 
+    // Block invitations to groups whose account subscription is suspended or expired
+    const subStatus = group.account.subscriptionStatus;
+    const subExpiresAt = group.account.subscriptionExpiresAt;
+    const isSubscriptionExpired = subExpiresAt && new Date(subExpiresAt) <= new Date();
+    if (subStatus === "SUSPENDED" || subStatus === "EXPIRED" || isSubscriptionExpired) {
+      throw new BadRequestException(
+        `Cannot invite to this group: account subscription is ${subStatus === "SUSPENDED" ? "SUSPENDED" : "EXPIRED"}`
+      );
+    }
+
     const normEmails = emails.map((e) => e.trim().toLowerCase());
     const uniqueEmails = [...new Set(normEmails)];
 
@@ -562,11 +572,20 @@ export class FamilyGroupService {
     }
 
     // Fetch all available groups with remaining slots, ordered earliest-first
+    // Exclude accounts with SUSPENDED/EXPIRED subscription status or expired subscriptionExpiresAt
+    const now = new Date();
     const availableGroups = await this.prisma.familyGroup.findMany({
       where: {
         status: "ACTIVE",
         availableSlots: { gt: 0 },
-        account: { status: "HEALTHY" },
+        account: {
+          status: "HEALTHY",
+          subscriptionStatus: { notIn: ["SUSPENDED", "EXPIRED"] },
+          OR: [
+            { subscriptionExpiresAt: null },
+            { subscriptionExpiresAt: { gt: now } },
+          ],
+        },
       },
       select: { id: true, accountId: true, availableSlots: true },
       orderBy: { createdAt: "asc" }
@@ -616,11 +635,20 @@ export class FamilyGroupService {
    */
   async findAvailableGroup(): Promise<string | null> {
     // Single query with JOIN — no N+1
+    // Exclude accounts with SUSPENDED/EXPIRED subscription status or expired subscriptionExpiresAt
+    const now = new Date();
     const groups = await this.prisma.familyGroup.findMany({
       where: {
         status: "ACTIVE",
         availableSlots: { gt: 0 },
-        account: { status: "HEALTHY" },
+        account: {
+          status: "HEALTHY",
+          subscriptionStatus: { notIn: ["SUSPENDED", "EXPIRED"] },
+          OR: [
+            { subscriptionExpiresAt: null },
+            { subscriptionExpiresAt: { gt: now } },
+          ],
+        },
       },
       select: { id: true },
       orderBy: [{ createdAt: "asc" }],
