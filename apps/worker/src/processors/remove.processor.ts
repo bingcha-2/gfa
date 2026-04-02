@@ -92,7 +92,7 @@ export async function processRemove(
     if (cooldownSecs > 0) {
       await logger.log("WARN", `[remove] Account ${account.id} in login cooldown (${cooldownSecs}s remaining), skipping`);
       await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new UnrecoverableError(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
     }
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
