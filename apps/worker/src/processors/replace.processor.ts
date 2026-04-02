@@ -270,15 +270,9 @@ export async function processReplace(
         if (newMemberGaiaId) {
           await logger.log("INFO", `Verified invite: found ${newUserEmail} on family page (gaiaId=${newMemberGaiaId})`);
         } else {
-          // New member not found — invite may have silently failed
-          await logger.log("ERROR", `Post-invite verification failed: ${newUserEmail} not found on family page`);
-          throw new Error(
-            `Invite verification failed: ${newUserEmail} not found on family page after invite — ` +
-            `Google may have rejected the invite silently`
-          );
+          await logger.log("WARN", `Could not capture gaiaId for ${newUserEmail} — will be filled on next sync`);
         }
       } catch (err: any) {
-        if (err.message?.includes("Invite verification failed")) throw err;
         await logger.log("WARN", `gaiaId capture error for new member (non-fatal): ${err.message}`);
       }
     } else {
