@@ -1,6 +1,6 @@
 import { useAppStore } from "../stores/useAppStore";
 import {
-  Users, Key, CheckCircle, AlertCircle,
+  Users, Key, CheckCircle, AlertCircle, ShieldAlert,
   ArrowRight, Mail, Gift, ArrowLeftRight,
 } from "lucide-react";
 
@@ -9,12 +9,14 @@ export function Dashboard() {
   const tokenCount = accounts.filter((a) => a.antigravity_token).length;
   const activeCount = accounts.filter((a) => a.status === "active").length;
   const failedCount = accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length;
+  const forbiddenCount = accounts.filter((a) => !!quotaCache[a.email]?.is_forbidden).length;
 
   const stats = [
     { icon: Users, label: "总账号", value: accounts.length, cls: "accent" },
     { icon: Key, label: "已授权", value: tokenCount, cls: "success" },
     { icon: CheckCircle, label: "活跃", value: activeCount, cls: "info" },
     { icon: AlertCircle, label: "异常", value: failedCount, cls: "warning" },
+    ...(forbiddenCount > 0 ? [{ icon: ShieldAlert, label: "封禁", value: forbiddenCount, cls: "warning" }] : []),
   ];
 
   const quickActions = [
@@ -34,7 +36,7 @@ export function Dashboard() {
       </div>
       <div className="page-body">
         {/* Stats */}
-        <div className="bento-grid bento-grid-4">
+        <div className="bento-grid" style={{ gridTemplateColumns: `repeat(${stats.length}, 1fr)` }}>
           {stats.map((s) => (
             <div key={s.label} className="stat-card">
               <div className={`stat-icon ${s.cls}`}><s.icon size={18} /></div>
@@ -85,9 +87,12 @@ export function Dashboard() {
                       <tr key={a.id}>
                         <td><span className="account-email-text">{a.email}</span></td>
                         <td>
-                          <span className={`status-pill ${a.status === "active" ? "active" : a.status === "login_failed" ? "danger" : "info"}`}>
-                            {a.status === "active" ? "活跃" : a.status === "login_failed" ? "失败" : "新"}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className={`status-pill ${a.status === "active" ? "active" : a.status === "login_failed" ? "danger" : "info"}`}>
+                              {a.status === "active" ? "活跃" : a.status === "login_failed" ? "失败" : "新"}
+                            </span>
+                            {quota?.is_forbidden && <span className="status-pill forbidden"><ShieldAlert size={10} /> 封禁</span>}
+                          </div>
                         </td>
                         <td>{tier ? <span className={`tier-badge ${tier.toLowerCase().includes("ultra") ? "ultra" : tier.toLowerCase().includes("pro") ? "pro" : "free"}`}>{tier}</span> : <span className="text-muted">—</span>}</td>
                       </tr>
