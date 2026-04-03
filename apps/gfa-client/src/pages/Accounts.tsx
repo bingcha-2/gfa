@@ -1,13 +1,90 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useAppStore, type QuotaInfo } from "../stores/useAppStore";
+import { useAppStore, type QuotaInfo, type ModelQuota } from "../stores/useAppStore";
 import {
   Upload, Trash2, Copy, Zap, Key, RefreshCw, Terminal,
   ChevronDown, ChevronUp, CheckCircle, XCircle, Loader,
-  Download, Search, LayoutGrid, List, Lock,
+  Download, Search, LayoutGrid, List, ShieldAlert,
 } from "lucide-react";
 
 type ViewMode = "grid" | "list";
-type StatusFilter = "all" | "active" | "failed" | "no-token" | "has-token";
+type StatusFilter = "all" | "active" | "failed" | "no-token" | "has-token" | "forbidden";
+type TierFilter = "all-tier" | "ultra" | "pro" | "free" | "error";
+
+// ─── 规范化模型映射（对齐 cockpit-tools）───────────────────
+interface CanonicalModel {
+  id: string;
+  displayName: string;
+  modelConstant: string;
+  aliases: string[];
+}
+
+const CANONICAL_MODELS: CanonicalModel[] = [
+  {
+    id: "gemini-3.1-pro-high",
+    displayName: "Gemini 3.1 Pro (High)",
+    modelConstant: "MODEL_PLACEHOLDER_M37",
+    aliases: ["gemini-3-pro-high", "MODEL_PLACEHOLDER_M8"],
+  },
+  {
+    id: "gemini-3.1-pro-low",
+    displayName: "Gemini 3.1 Pro (Low)",
+    modelConstant: "MODEL_PLACEHOLDER_M36",
+    aliases: ["gemini-3-pro-low", "MODEL_PLACEHOLDER_M7"],
+  },
+  {
+    id: "gemini-3-flash",
+    displayName: "Gemini 3 Flash",
+    modelConstant: "MODEL_PLACEHOLDER_M18",
+    aliases: [],
+  },
+  {
+    id: "claude-sonnet-4-6",
+    displayName: "Claude Sonnet 4.6",
+    modelConstant: "MODEL_PLACEHOLDER_M35",
+    aliases: ["claude-sonnet-4-6-thinking", "claude-sonnet-4-5", "claude-sonnet-4-5-thinking"],
+  },
+  {
+    id: "claude-opus-4-6-thinking",
+    displayName: "Claude Opus 4.6",
+    modelConstant: "MODEL_PLACEHOLDER_M26",
+    aliases: ["claude-opus-4-6", "claude-opus-4-5-thinking", "MODEL_PLACEHOLDER_M12"],
+  },
+  {
+    id: "gpt-oss-120b-medium",
+    displayName: "GPT-OSS 120B",
+    modelConstant: "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+    aliases: [],
+  },
+];
+
+const normalizeModelKey = (value: string) =>
+  (value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const CANONICAL_ALIAS_MAP = (() => {
+  const map = new Map<string, CanonicalModel>();
+  for (const item of CANONICAL_MODELS) {
+    for (const v of [item.id, item.modelConstant, item.displayName, ...item.aliases]) {
+      const key = normalizeModelKey(v);
+      if (key && !map.has(key)) map.set(key, item);
+    }
+  }
+  return map;
+})();
+
+const CANONICAL_RANK = new Map<string, number>(
+  CANONICAL_MODELS.map((item, index) => [item.id, index])
+);
+
+function resolveCanonicalModel(name: string, displayName?: string | null): CanonicalModel | undefined {
+  for (const v of [name, displayName]) {
+    const key = normalizeModelKey(v || "");
+    if (key) {
+      const found = CANONICAL_ALIAS_MAP.get(key);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
 
 export function Accounts() {
   const {
@@ -33,6 +110,7 @@ export function Accounts() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [tierFilter, setTierFilter] = useState<TierFilter>("all-tier");
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     return (localStorage.getItem("gfa-accounts-view") as ViewMode) || "grid";
   });
@@ -69,12 +147,26 @@ export function Accounts() {
           case "failed": return a.status === "login_failed" || a.status === "locked";
           case "has-token": return !!a.antigravity_token;
           case "no-token": return !a.antigravity_token;
+          case "forbidden": return !!quotaCache[a.email]?.is_forbidden;
+          default: return true;
+        }
+      });
+    }
+    if (tierFilter !== "all-tier") {
+      result = result.filter((a) => {
+        const quota = quotaCache[a.email];
+        const tier = (quota?.subscription_tier || "").toLowerCase();
+        switch (tierFilter) {
+          case "ultra": return tier.includes("ultra");
+          case "pro": return tier.includes("pro") && !tier.includes("ultra");
+          case "free": return !!a.antigravity_token && !!quota && !quota.is_forbidden && !quota.error && !tier.includes("pro") && !tier.includes("ultra") && !!tier;
+          case "error": return !!a.antigravity_token && !!quota && (!!quota.error || quota.is_forbidden);
           default: return true;
         }
       });
     }
     return result;
-  }, [accounts, searchQuery, statusFilter]);
+  }, [accounts, searchQuery, statusFilter, tierFilter, quotaCache]);
 
   const handleImport = async () => {
     if (!importText.trim()) return;
@@ -134,6 +226,7 @@ export function Accounts() {
   };
 
   const countNoToken = accounts.filter((a) => !a.antigravity_token).length;
+  const countForbidden = accounts.filter((a) => !!quotaCache[a.email]?.is_forbidden).length;
 
   const filterOptions: { value: StatusFilter; label: string; count: number }[] = [
     { value: "all", label: "全部", count: accounts.length },
@@ -141,7 +234,32 @@ export function Accounts() {
     { value: "has-token", label: "已授权", count: accounts.filter((a) => !!a.antigravity_token).length },
     { value: "no-token", label: "未授权", count: countNoToken },
     { value: "failed", label: "异常", count: accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length },
+    { value: "forbidden", label: "封禁", count: countForbidden },
   ];
+
+  const tierFilterOptions: { value: TierFilter; label: string; count: number }[] = useMemo(() => {
+    const ultraCount = accounts.filter((a) => (quotaCache[a.email]?.subscription_tier || "").toLowerCase().includes("ultra")).length;
+    const proCount = accounts.filter((a) => {
+      const t = (quotaCache[a.email]?.subscription_tier || "").toLowerCase();
+      return t.includes("pro") && !t.includes("ultra");
+    }).length;
+    const freeCount = accounts.filter((a) => {
+      const q = quotaCache[a.email];
+      const t = (q?.subscription_tier || "").toLowerCase();
+      return !!a.antigravity_token && !!q && !q.is_forbidden && !q.error && !t.includes("pro") && !t.includes("ultra") && !!t;
+    }).length;
+    const errorCount = accounts.filter((a) => {
+      const q = quotaCache[a.email];
+      return !!a.antigravity_token && !!q && (!!q.error || q.is_forbidden);
+    }).length;
+    return [
+      { value: "all-tier" as TierFilter, label: "全部类型", count: accounts.length },
+      { value: "ultra" as TierFilter, label: "Ultra", count: ultraCount },
+      { value: "pro" as TierFilter, label: "Pro", count: proCount },
+      { value: "free" as TierFilter, label: "Free", count: freeCount },
+      ...(errorCount > 0 ? [{ value: "error" as TierFilter, label: "异常/封禁", count: errorCount }] : []),
+    ];
+  }, [accounts, quotaCache]);
 
   function getQuotaClass(pct: number) { return pct > 60 ? "high" : pct > 25 ? "medium" : "low"; }
 
@@ -159,25 +277,44 @@ export function Accounts() {
 
   function getQuotaDisplayItems(quota: QuotaInfo) {
     if (!quota || quota.error || quota.is_forbidden) return [];
-    return quota.models
-      .filter((m) => {
-        const l = (m.display_name || m.name).toLowerCase();
-        return (l.includes("claude") && l.includes("opus"))
-          || (l.includes("gemini") && l.includes("pro") && l.includes("high"));
-      })
-      .map((m) => ({
-        key: m.name,
-        label: (m.display_name || m.name).replace(/^models\//, "").split("/").pop() || m.name,
-        percentage: m.percentage,
-        resetTime: m.reset_time,
+    if (!quota.models || quota.models.length === 0) return [];
+
+    // 规范化模型：通过 canonical 映射去重 + 排序
+    const picked: Array<{ rank: number; model: ModelQuota; canonical: CanonicalModel }> = [];
+    const seen = new Set<string>();
+
+    for (const m of quota.models) {
+      const canonical = resolveCanonicalModel(m.name, m.display_name);
+      if (!canonical) continue;
+      if (seen.has(canonical.id)) continue;
+      seen.add(canonical.id);
+      picked.push({
+        rank: CANONICAL_RANK.get(canonical.id) ?? Number.MAX_SAFE_INTEGER,
+        model: m,
+        canonical,
+      });
+    }
+
+    return picked
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ model, canonical }) => ({
+        key: model.name,
+        label: canonical.displayName,
+        percentage: model.percentage,
+        resetTime: model.reset_time,
       }));
   }
 
-  function getTierBadge(quota?: QuotaInfo) {
-    if (!quota || quota.error) return null;
-    if (quota.is_forbidden) return { label: "FORBIDDEN", cls: "free" };
+  function getTierBadge(quota?: QuotaInfo, hasToken?: boolean) {
+    if (!quota) return hasToken ? null : null; // 没 fetch 过不显示
+    if (quota.is_forbidden) return { label: "FORBIDDEN", cls: "forbidden" };
+    if (quota.error) {
+      // 区分 401 和其他错误
+      if (quota.error.includes("401")) return { label: "TOKEN失效", cls: "error" };
+      return { label: "ERROR", cls: "error" };
+    }
     const tier = quota.subscription_tier || "";
-    if (!tier) return null;
+    if (!tier) return { label: "UNKNOWN", cls: "free" };
     const t = tier.toLowerCase();
     if (t.includes("ultra")) return { label: tier, cls: "ultra" };
     if (t.includes("pro")) return { label: tier, cls: "pro" };
@@ -229,14 +366,32 @@ export function Accounts() {
               <Search size={14} className="search-icon" />
               <input placeholder="搜索邮箱..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
-            <div className="filter-tabs">
+            <select
+              className="input"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              style={{ width: "auto", minWidth: 120, padding: "8px 32px 8px 12px", fontSize: 12, fontWeight: 600 }}
+            >
               {filterOptions.map((f) => (
-                <button key={f.value} className={`filter-tab ${statusFilter === f.value ? "active" : ""}`} onClick={() => setStatusFilter(f.value)}>
-                  {f.label}
-                  <span className="count">{f.count}</span>
-                </button>
+                <option key={f.value} value={f.value}>
+                  {f.label} ({f.count})
+                </option>
               ))}
-            </div>
+            </select>
+            {Object.keys(quotaCache).length > 0 && (
+              <select
+                className="input"
+                value={tierFilter}
+                onChange={(e) => setTierFilter(e.target.value as TierFilter)}
+                style={{ width: "auto", minWidth: 120, padding: "8px 32px 8px 12px", fontSize: 12, fontWeight: 600 }}
+              >
+                {tierFilterOptions.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label} ({f.count})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="toolbar-right">
             <div className="view-switcher">
@@ -308,7 +463,7 @@ export function Accounts() {
               const rResult = refreshResult[account.email];
               const isSelected = selected.has(account.id);
               const quotaItems = hasToken && quota ? getQuotaDisplayItems(quota) : [];
-              const tierBadge = getTierBadge(quota);
+              const tierBadge = getTierBadge(quota, hasToken);
 
               return (
                 <div className={`account-card ${isSelected ? "selected" : ""}`} key={account.id}>
@@ -320,14 +475,16 @@ export function Accounts() {
                     <span className="account-email" title={account.email}>{account.email}</span>
                     <StatusPill status={account.status} />
                     {hasToken && <span className="status-pill active">Token</span>}
+                    {quota?.is_forbidden && <span className="status-pill forbidden"><ShieldAlert size={10} /> 封禁</span>}
                     {tierBadge && <span className={`tier-badge ${tierBadge.cls}`}>{tierBadge.label}</span>}
                   </div>
 
                   {/* Quota Grid */}
                   <div className="card-quota-grid">
                     {quota?.is_forbidden ? (
-                      <div className="quota-empty" style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--danger)" }}>
-                        <Lock size={14} /> 账号被禁止访问
+                      <div className="quota-forbidden">
+                        <ShieldAlert size={14} />
+                        <span>账号已被封禁</span>
                       </div>
                     ) : quotaItems.length > 0 ? (
                       <>
@@ -344,8 +501,10 @@ export function Accounts() {
                           </div>
                         ))}
                       </>
+                    ) : hasToken && quota?.error ? (
+                      <div className="quota-empty" style={{ color: "var(--warning)" }}>配额查询失败</div>
                     ) : hasToken ? (
-                      <div className="quota-empty">暂无配额数据</div>
+                      <div className="quota-empty">{tierBadge ? `${tierBadge.label} · 暂无模型数据` : "暂无配额数据"}</div>
                     ) : (
                       <div className="quota-empty">未授权 — 无法获取配额</div>
                     )}
@@ -409,7 +568,7 @@ export function Accounts() {
                   const isSelected = selected.has(account.id);
                   const isRefreshing = refreshing.has(account.email);
                   const rResult = refreshResult[account.email];
-                  const tierBadge = getTierBadge(quota);
+                  const tierBadge = getTierBadge(quota, hasToken);
                   const quotaItems = hasToken && quota ? getQuotaDisplayItems(quota) : [];
 
                   return (
@@ -422,6 +581,7 @@ export function Accounts() {
                         <div className="flex items-center gap-1">
                           <StatusPill status={account.status} />
                           {hasToken && <span className="status-pill active">Token</span>}
+                          {quota?.is_forbidden && <span className="status-pill forbidden"><ShieldAlert size={10} /> 封禁</span>}
                         </div>
                       </td>
                       <td>{tierBadge ? <span className={`tier-badge ${tierBadge.cls}`}>{tierBadge.label}</span> : <span className="text-muted">—</span>}</td>
