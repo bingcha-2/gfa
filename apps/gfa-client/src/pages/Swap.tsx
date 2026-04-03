@@ -3,7 +3,7 @@ import { useAppStore } from "../stores/useAppStore";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Play, ArrowLeftRight, Repeat2, KeyRound,
-  Loader, CheckCircle, XCircle, Terminal, ChevronDown, ChevronUp, AlertCircle,
+  Loader, CheckCircle, Terminal, ChevronDown, ChevronUp, AlertCircle,
 } from "lucide-react";
 
 type SwapPhase = "config" | "running" | "done" | "error";
@@ -16,7 +16,7 @@ interface SwapResult {
 }
 
 export function Swap() {
-  const { accounts } = useAppStore();
+  const { } = useAppStore();
 
   const [swapCode, setSwapCode] = useState("");
   const [sourceEmail, setSourceEmail] = useState("");
@@ -24,7 +24,6 @@ export function Swap() {
   const [phase, setPhase] = useState<SwapPhase>("config");
   const [result, setResult] = useState<SwapResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pollStatus, setPollStatus] = useState<string | null>(null);
   const [swapLogs, setSwapLogs] = useState<string[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [showLogs, setShowLogs] = useState(true);
@@ -48,7 +47,6 @@ export function Swap() {
   const handleSwap = async () => {
     setError(null);
     setResult(null);
-    setPollStatus(null);
     setSwapLogs([]);
     setPhase("running");
 
@@ -94,7 +92,6 @@ export function Swap() {
             try { statusParsed = JSON.parse(statusRaw); } catch { statusParsed = { status: statusRaw }; }
 
             const st = statusParsed.status || "";
-            setPollStatus(st);
             addLog(`[${attempts}/${maxAttempts}] 状态: ${st}${statusParsed.message ? ` - ${statusParsed.message}` : ""}`);
 
             if (st === "completed" || st === "done" || st === "success") {
@@ -130,7 +127,6 @@ export function Swap() {
     setPhase("config");
     setError(null);
     setResult(null);
-    setPollStatus(null);
   };
 
   return (
