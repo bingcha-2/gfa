@@ -246,7 +246,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
 
-  gfaApiUrl: "http://localhost:3000",
+  gfaApiUrl: "https://bcai.site",
   loadSettings: async () => {
     try {
       const url = await invoke<string>("get_gfa_api_url");

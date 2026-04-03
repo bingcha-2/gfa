@@ -305,19 +305,16 @@ export async function processReplace(
       }
 
       // Inherit expiry from old member (or from job payload if provided).
-      // If the inherited date is already in the past, grant a fresh 30-day window
-      // so the replacement member isn't immediately expired.
+      // Keep the original expiresAt as-is — even if already past.
+      // ExpireScanService runs hourly and will handle expired members automatically.
+      // Do NOT grant a free 30-day extension to prevent abuse via swap-after-expiry.
       const oldMember = await tx.familyMember.findFirst({
         where: { familyGroupId, email: targetMemberEmail },
         select: { expiresAt: true },
       });
-      const rawExpiry = job.data.inheritedExpiresAt
+      const inheritedExpiresAt = job.data.inheritedExpiresAt
         ? new Date(job.data.inheritedExpiresAt)
         : oldMember?.expiresAt ?? null;
-      const inheritedExpiresAt =
-        rawExpiry && rawExpiry.getTime() <= Date.now()
-          ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-          : rawExpiry;
 
       // Upsert placeholder for newly invited member (sync may have already created a PENDING record)
       await tx.familyMember.upsert({

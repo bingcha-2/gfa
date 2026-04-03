@@ -137,7 +137,18 @@ export class OrderService {
       include: {
         familyGroup: { select: { id: true, groupName: true } },
         redeemCode: { select: { id: true, code: true } },
-        _count: { select: { tasks: true } }
+        _count: { select: { tasks: true } },
+        swapRecords: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            oldEmail: true,
+            newEmail: true,
+            status: true,
+            taskId: true,
+            createdAt: true,
+          },
+        },
       }
     });
   }

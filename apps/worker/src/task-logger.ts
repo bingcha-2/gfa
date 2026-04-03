@@ -76,6 +76,10 @@ export class TaskLogger {
     if (error) {
       data.lastErrorCode = error.code ?? null;
       data.lastErrorMessage = error.message ?? null;
+    } else if (status === "SUCCESS") {
+      // Clear stale error fields from previous failed attempts
+      data.lastErrorCode = null;
+      data.lastErrorMessage = null;
     }
 
     await this.prisma.task.update({

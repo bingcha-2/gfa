@@ -84,6 +84,14 @@ export type OrderSummary = {
   _count?: {
     tasks: number;
   };
+  swapRecords?: Array<{
+    id: string;
+    oldEmail: string;
+    newEmail: string;
+    status: string;
+    taskId: string | null;
+    createdAt: string;
+  }>;
 };
 
 export type TaskSummary = {

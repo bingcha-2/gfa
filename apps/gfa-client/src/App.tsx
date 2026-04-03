@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 import { useAppStore } from "./stores/useAppStore";
 import { Accounts } from "./pages/Accounts";
@@ -13,7 +13,10 @@ import {
   Mail,
   ArrowLeftRight,
   Gift,
-  SettingsIcon,
+  Settings as SettingsIcon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Zap,
 } from "lucide-react";
 import { ToastContainer } from "./components/Toast";
 
@@ -28,12 +31,23 @@ const NAV_ITEMS = [
 
 function App() {
   const { currentPage, setCurrentPage, loadAccounts, loadSettings, initEventListener } = useAppStore();
+  const [collapsed, setCollapsed] = useState(() => {
+    return localStorage.getItem("sidebar-collapsed") === "true";
+  });
 
   useEffect(() => {
     loadAccounts();
     loadSettings();
     initEventListener();
   }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebar-collapsed", String(next));
+      return next;
+    });
+  };
 
   const renderPage = () => {
     switch (currentPage) {
@@ -49,26 +63,40 @@ function App() {
 
   return (
     <div className="app-layout">
-      <aside className="sidebar">
+      <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
         <div className="sidebar-header">
-          <div className="sidebar-title">GFA Client</div>
-          <div className="sidebar-subtitle">Google Family Automation</div>
+          <div className="sidebar-logo">
+            <Zap size={20} />
+          </div>
+          <div className="sidebar-brand-text">
+            <span className="sidebar-title">GFA Client</span>
+            <span className="sidebar-subtitle">Google Family Automation</span>
+          </div>
         </div>
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item) => (
-            <div
+            <button
               key={item.id}
               className={`nav-item ${currentPage === item.id ? "active" : ""}`}
               onClick={() => setCurrentPage(item.id)}
+              title={collapsed ? item.label : undefined}
             >
-              <item.icon />
+              <item.icon size={20} />
               <span>{item.label}</span>
-            </div>
+            </button>
           ))}
         </nav>
+        <div className="sidebar-footer">
+          <button className="sidebar-collapse-btn" onClick={toggleCollapsed}>
+            {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          </button>
+          <div className="sidebar-version">v1.1.0</div>
+        </div>
       </aside>
       <main className="main-content">
-        {renderPage()}
+        <div key={currentPage} className="animate-in" style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: 20 }}>
+          {renderPage()}
+        </div>
       </main>
       <ToastContainer />
     </div>

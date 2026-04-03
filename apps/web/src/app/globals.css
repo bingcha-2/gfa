@@ -1451,6 +1451,85 @@ img {
   font-size: 13px;
 }
 
+/* ── Swap History (inside order detail expand) ──────────────── */
+.swap-history-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(31, 26, 23, 0.08);
+}
+
+.swap-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.swap-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.swap-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 26, 23, 0.07);
+  background: rgba(255, 252, 248, 0.7);
+  transition: border-color 160ms ease;
+}
+
+.swap-history-item:hover {
+  border-color: rgba(15, 118, 110, 0.18);
+}
+
+.swap-history-index {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.swap-history-body {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.swap-history-emails {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swap-history-emails .mono {
+  word-break: break-all;
+}
+
+.swap-arrow {
+  color: var(--accent-strong);
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.swap-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* ── Input Enhancement ─────────────────────────────────────────── */
 .table-wrap input[type="text"],
 .table-wrap input[type="search"],

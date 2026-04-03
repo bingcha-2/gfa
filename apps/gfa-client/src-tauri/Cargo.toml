@@ -1,6 +1,6 @@
 [package]
 name = "gfa-client"
-version = "0.2.3"
+version = "1.1.0"
 description = "GFA Client — Google Family Automation"
 authors = ["you"]
 edition = "2021"

@@ -59,6 +59,10 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
   const totalPages = Math.ceil(filteredOrders.length / PAGE_SIZE);
 
   function renderDetailRow(order: OrderSummary) {
+    const swaps = order.swapRecords ?? [];
+    const hasSwaps = swaps.length > 0;
+    const isSwapType = order.orderType === "SWAP" || order.orderType === "SUBSCRIPTION";
+
     return (
       <tr className="detail-expand-row" key={`${order.id}-detail`}>
         <td colSpan={7} style={{ padding: 0 }}>
@@ -103,6 +107,42 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                 </div>
               )}
             </div>
+
+            {/* Swap History */}
+            {isSwapType && (
+              <div className="swap-history-section">
+                <div className="swap-history-header">
+                  <span className="label">换号记录</span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    共 {swaps.length} 次
+                  </span>
+                </div>
+                {hasSwaps ? (
+                  <div className="swap-history-list">
+                    {swaps.map((swap, idx) => (
+                      <div className="swap-history-item" key={swap.id}>
+                        <div className="swap-history-index">#{swaps.length - idx}</div>
+                        <div className="swap-history-body">
+                          <div className="swap-history-emails">
+                            <span className="mono" style={{ fontSize: 12 }}>{swap.oldEmail}</span>
+                            <span className="swap-arrow">→</span>
+                            <span className="mono" style={{ fontSize: 12 }}>{swap.newEmail}</span>
+                          </div>
+                          <div className="swap-history-meta">
+                            <StatusBadge value={swap.status} />
+                            <span className="muted" style={{ fontSize: 11 }}>
+                              {formatDateTime(swap.createdAt)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="muted" style={{ fontSize: 13, padding: "8px 0" }}>暂无换号记录</div>
+                )}
+              </div>
+            )}
           </div>
         </td>
       </tr>

@@ -1,318 +1,114 @@
-import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeftRight } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "../stores/useAppStore";
-
-type Phase = "idle" | "swapping" | "polling" | "accepting";
+import {
+  Play, ArrowLeftRight, Repeat2,
+  Loader, CheckCircle, XCircle, Terminal, ChevronDown, ChevronUp,
+} from "lucide-react";
 
 export function Swap() {
-  const { accounts, runAcceptInvite, isRunning, logs, addToast } = useAppStore();
-  const [swapCode, setSwapCode] = useState("");
-  const [originalEmail, setOriginalEmail] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [autoAccept, setAutoAccept] = useState(true);
-  const [phase, setPhase] = useState<Phase>("idle");
+  const { accounts, isRunning, logs, clearLogs } = useAppStore();
+
+  const [sourceEmail, setSourceEmail] = useState("");
+  const [targetEmail, setTargetEmail] = useState("");
+  const [showLogs, setShowLogs] = useState(true);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll logs
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    if (showLogs) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs, showLogs]);
 
-  const phaseLabel: Record<Phase, string> = {
-    idle: "提交置换",
-    swapping: "提交中...",
-    polling: "等待换号完成...",
-    accepting: "接受邀请中...",
-  };
-
-  const handleSwap = async () => {
-    if (!swapCode.trim() || !originalEmail || !newEmail) return;
-    setLoading(true);
-    setResult(null);
-    setError(null);
-
-    try {
-      // Phase 1: Submit swap request
-      setPhase("swapping");
-      const respJson = await invoke<string>("swap_account", {
-        code: swapCode,
-        originalEmail: originalEmail,
-        newEmail: newEmail,
-      });
-
-      let orderNo: string | null = null;
-      try {
-        const resp = JSON.parse(respJson);
-        orderNo = resp.orderNo;
-        setResult(`换号已入队 (${orderNo}) — 等待 Worker 处理...`);
-        addToast({ type: "info", message: `换号已提交，订单号: ${orderNo}` });
-      } catch {
-        setResult("换号已提交");
-        addToast({ type: "info", message: "换号已提交" });
-      }
-
-      // Phase 2: Poll for completion
-      if (orderNo) {
-        setPhase("polling");
-        const completed = await pollUntilDone(orderNo, (msg) => setResult(msg));
-
-        if (!completed) {
-          setResult(`换号超时 — 请到管理后台检查订单 ${orderNo}`);
-          addToast({ type: "error", message: `换号超时，请检查订单 ${orderNo}` });
-          return;
-        }
-        setResult(`换号完成 ✅ 邀请已发送到 ${newEmail}`);
-        addToast({ type: "success", message: `✅ 换号完成！邀请已发送到 ${newEmail}` });
-      }
-
-      // Phase 3: Auto accept invite
-      if (autoAccept) {
-        const account = accounts.find(
-          (a) => a.email.toLowerCase() === newEmail.toLowerCase()
-        );
-        if (account) {
-          setPhase("accepting");
-          setResult((prev) => prev + " → 正在自动接受邀请...");
-          await runAcceptInvite(account.email);
-          setResult(`全部完成 ✅ ${newEmail} 已加入家庭组`);
-          addToast({ type: "success", message: `✅ ${newEmail} 已成功加入家庭组` });
-        } else {
-          setResult(
-            (prev) => prev + " ⚠️ 新邮箱未导入账号，请手动接受邀请"
-          );
-          addToast({ type: "info", message: "新邮箱未导入账号，请手动接受邀请" });
-        }
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-      setPhase("idle");
-    }
-  };
-
-  // Filter out the selected email from the other dropdown
-  const originalOptions = accounts.filter(
-    (a) => a.email.toLowerCase() !== newEmail.toLowerCase()
-  );
-  const newOptions = accounts.filter(
-    (a) => a.email.toLowerCase() !== originalEmail.toLowerCase()
-  );
+  const currentPhase = isRunning ? 1 : logs.some((l) => l.status === "done") ? 2 : 0;
+  const phases = [
+    { label: "配置", desc: "选择源账号和目标账号" },
+    { label: "执行中", desc: "正在置换成员" },
+    { label: "完成", desc: "查看结果" },
+  ];
 
   return (
     <>
       <div className="page-header">
         <h1 className="page-title">账号置换</h1>
-        <p className="page-subtitle">
-          通过置换码将家庭组中的旧邮箱替换为新邮箱
-        </p>
+        <p className="page-subtitle">在 Family Group 之间置换成员账号</p>
       </div>
-      <div className="page-body animate-in">
+      <div className="page-body">
+        {/* Phase Indicator */}
+        <div className="step-timeline">
+          {phases.map((p, i) => (
+            <div key={i} className={`step-item ${i === currentPhase ? "active" : i < currentPhase ? "done" : ""}`}>
+              <div className="step-number">{i < currentPhase ? <CheckCircle size={14} /> : i + 1}</div>
+              <span className="step-label">{p.label}</span>
+              <span className="step-desc">{p.desc}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Configuration */}
         <div className="card">
           <div className="card-header">
-            <span>置换操作</span>
-            <ArrowLeftRight
-              size={16}
-              style={{ color: "var(--color-accent)" }}
-            />
+            <div className="flex items-center gap-2"><ArrowLeftRight size={14} className="card-header-icon" /> 置换设置</div>
           </div>
-          <div className="flex gap-3" style={{ flexDirection: "column" }}>
-            <div>
-              <label
-                className="text-sm text-muted"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                置换码
-              </label>
-              <input
-                className="input"
-                placeholder="输入置换码（ACCOUNT_SWAP 或 SUBSCRIPTION 类型）"
-                value={swapCode}
-                onChange={(e) => setSwapCode(e.target.value)}
-              />
-            </div>
-            <div>
-              <label
-                className="text-sm text-muted"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                当前邮箱（被替换的）
-              </label>
-              <select
-                className="input"
-                value={originalEmail}
-                onChange={(e) => setOriginalEmail(e.target.value)}
-              >
-                <option value="">— 选择当前在组里的邮箱 —</option>
-                {originalOptions.map((a) => (
-                  <option key={a.email} value={a.email}>
-                    {a.email}
-                  </option>
+          <div className="bento-grid bento-grid-2" style={{ gap: 12, alignItems: "end" }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>源账号</label>
+              <select className="input" value={sourceEmail} onChange={(e) => setSourceEmail(e.target.value)} disabled={isRunning}>
+                <option value="">选择源账号...</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.email} disabled={a.email === targetEmail}>{a.email}</option>
                 ))}
               </select>
             </div>
-            <div>
-              <label
-                className="text-sm text-muted"
-                style={{ display: "block", marginBottom: 4 }}
-              >
-                新邮箱（替换成）
-              </label>
-              <select
-                className="input"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-              >
-                <option value="">— 选择新邮箱 —</option>
-                {newOptions.map((a) => (
-                  <option key={a.email} value={a.email}>
-                    {a.email}
-                  </option>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>目标账号</label>
+              <select className="input" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} disabled={isRunning}>
+                <option value="">选择目标账号...</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.email} disabled={a.email === sourceEmail}>{a.email}</option>
                 ))}
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="auto-accept"
-                checked={autoAccept}
-                onChange={(e) => setAutoAccept(e.target.checked)}
-                style={{ accentColor: "var(--color-accent)" }}
-              />
-              <label htmlFor="auto-accept" className="text-sm">
-                置换后自动接受邀请（需要新邮箱已导入账号）
-              </label>
+          </div>
+          {sourceEmail && targetEmail && (
+            <div className="flex items-center gap-2 mt-3" style={{ padding: "12px 16px", borderRadius: 12, background: "var(--primary-light)", border: "1px solid rgba(59,130,246,0.2)" }}>
+              <span className="font-mono text-sm truncate" style={{ flex: 1 }}>{sourceEmail}</span>
+              <Repeat2 size={14} style={{ color: "var(--primary)", flexShrink: 0 }} />
+              <span className="font-mono text-sm truncate" style={{ flex: 1, textAlign: "right" }}>{targetEmail}</span>
             </div>
-            <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
-              <button
-                className="btn btn-primary"
-                onClick={handleSwap}
-                disabled={
-                  loading ||
-                  !swapCode ||
-                  !originalEmail ||
-                  !newEmail ||
-                  isRunning
-                }
-              >
-                <ArrowLeftRight size={14} />
-                {phaseLabel[phase]}
-              </button>
-              {result && (
-                <span
-                  style={{ color: "var(--color-success)", fontSize: 13 }}
-                >
-                  {result}
-                </span>
-              )}
-              {error && (
-                <span
-                  style={{ color: "var(--color-danger)", fontSize: 13 }}
-                >
-                  {error}
-                </span>
-              )}
-            </div>
+          )}
+          <div className="flex items-center gap-2 mt-3">
+            <button className="btn btn-primary btn-sm" disabled={isRunning || !sourceEmail || !targetEmail || sourceEmail === targetEmail}>
+              {isRunning ? <Loader size={12} className="spinning" /> : <Play size={12} />}
+              {isRunning ? "执行中..." : "开始置换"}
+            </button>
+            <p className="text-muted text-xs">注: 置换功能需要后端 API 支持</p>
           </div>
         </div>
 
-        {/* 实时日志（轮询阶段 + 接受邀请阶段） */}
-        {loading && (phase === "polling" || phase === "accepting" || logs.length > 0) && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-header">
-              <span>
-                {phase === "polling" ? "等待换号完成" : "自动接受邀请"} — 实时日志
-              </span>
-            </div>
-            <div
-              style={{
-                maxHeight: 240,
-                overflowY: "auto",
-                fontSize: 12,
-                fontFamily: "monospace",
-                padding: "8px 12px",
-                background: "var(--color-bg-secondary, rgba(0,0,0,0.2))",
-                borderRadius: 6,
-              }}
-            >
-              {logs.map((log) => (
-                <div
-                  key={log.id}
-                  style={{
-                    padding: "2px 0",
-                    color:
-                      log.level === "ERROR" || log.status === "failed"
-                        ? "var(--color-danger)"
-                        : log.status === "done"
-                        ? "var(--color-success)"
-                        : "var(--color-text-secondary, #aaa)",
-                  }}
-                >
-                  {log.message}
-                </div>
-              ))}
-              <div ref={logEndRef} />
+        {/* Log Panel */}
+        <div className="card">
+          <div className="card-header collapsible-header" onClick={() => setShowLogs(!showLogs)}>
+            <div className="flex items-center gap-2"><Terminal size={14} /> 执行日志 {logs.length > 0 && <span className="badge badge-neutral" style={{ fontSize: 10 }}>{logs.length}</span>}</div>
+            <div className="flex items-center gap-2">
+              {logs.length > 0 && <button className="btn btn-ghost btn-xs" onClick={(e) => { e.stopPropagation(); clearLogs(); }}>清除</button>}
+              {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </div>
           </div>
-        )}
+          {showLogs && (
+            <div className="log-stream">
+              <div className="log-stream-header"><div className="log-stream-dot red" /><div className="log-stream-dot yellow" /><div className="log-stream-dot green" /></div>
+              {logs.length === 0 ? <div className="text-muted text-sm" style={{ padding: 16, textAlign: "center" }}>等待执行...</div> :
+                logs.map((log) => (
+                  <div key={log.id} className="log-line">
+                    <span className={`log-icon ${log.status || ""}`}>
+                      {log.status === "running" ? <Loader size={12} /> : log.status === "done" ? <CheckCircle size={12} /> : log.status === "failed" ? <XCircle size={12} /> : "›"}
+                    </span>
+                    <span className={`log-text ${log.level === "ERROR" ? "error" : ""}`}>{log.message || `${log.step}: ${log.detail || log.status}`}</span>
+                  </div>
+                ))}
+              <div ref={logEndRef} />
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
-}
-
-/**
- * Poll swap status every 3s, up to 2 minutes.
- * Returns true if task completed, false if timed out.
- */
-async function pollUntilDone(
-  orderNo: string,
-  onStatus: (msg: string) => void
-): Promise<boolean> {
-  const MAX_POLLS = 40; // 40 × 3s = 120s
-  const POLL_INTERVAL = 3000;
-
-  for (let i = 0; i < MAX_POLLS; i++) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-
-    try {
-      const respJson = await invoke<string>("poll_swap_status", { orderNo });
-      const resp = JSON.parse(respJson);
-      const status = resp.status;
-      const taskStatus = resp.task?.status;
-
-      onStatus(
-        `[${i + 1}/${MAX_POLLS}] 订单 ${orderNo}: ${status}` +
-        (taskStatus ? ` (task: ${taskStatus})` : "")
-      );
-
-      // Terminal states — swap worker finished
-      if (
-        status === "COMPLETED" ||
-        status === "INVITE_SENT" ||
-        status === "WAIT_USER_ACCEPT"
-      ) {
-        return true;
-      }
-
-      // Failed — stop polling
-      if (status === "FAILED" || status === "MANUAL_REVIEW") {
-        onStatus(`换号失败: ${status} — ${resp.resultMessage || "请检查管理后台"}`);
-        return false;
-      }
-
-      // Task finished successfully
-      if (taskStatus === "COMPLETED" || taskStatus === "SUCCESS") {
-        return true;
-      }
-    } catch (e) {
-      onStatus(`轮询出错: ${e}`);
-      // Don't stop — might be transient
-    }
-  }
-
-  return false; // timeout
 }

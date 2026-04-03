@@ -1,114 +1,104 @@
 import { useAppStore } from "../stores/useAppStore";
-import { Users, Mail, Zap, Gift } from "lucide-react";
+import {
+  Users, Key, CheckCircle, AlertCircle,
+  ArrowRight, Mail, Gift, ArrowLeftRight,
+} from "lucide-react";
 
 export function Dashboard() {
-  const { accounts } = useAppStore();
+  const { accounts, setCurrentPage, quotaCache } = useAppStore();
+  const tokenCount = accounts.filter((a) => a.antigravity_token).length;
+  const activeCount = accounts.filter((a) => a.status === "active").length;
+  const failedCount = accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length;
 
-  const totalAccounts = accounts.length;
-  const activeAccounts = accounts.filter((a) => a.status === "active").length;
-  const withAntigravity = accounts.filter((a) => a.antigravity_token).length;
-  const failedAccounts = accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length;
+  const stats = [
+    { icon: Users, label: "总账号", value: accounts.length, cls: "accent" },
+    { icon: Key, label: "已授权", value: tokenCount, cls: "success" },
+    { icon: CheckCircle, label: "活跃", value: activeCount, cls: "info" },
+    { icon: AlertCircle, label: "异常", value: failedCount, cls: "warning" },
+  ];
+
+  const quickActions = [
+    { icon: Mail, label: "接受邀请", page: "accept-invite" },
+    { icon: Gift, label: "兑换码", page: "redeem" },
+    { icon: ArrowLeftRight, label: "账号置换", page: "swap" },
+    { icon: Users, label: "账号管理", page: "accounts" },
+  ];
+
+  const recentAccounts = accounts.slice(0, 6);
 
   return (
     <>
       <div className="page-header">
         <h1 className="page-title">仪表盘</h1>
-        <p className="page-subtitle">Google Family Automation 概览</p>
+        <p className="page-subtitle">账号总览与快速操作</p>
       </div>
-      <div className="page-body animate-in">
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-label">总账号数</div>
-            <div className="stat-value accent">{totalAccounts}</div>
-            <div className="flex items-center gap-2">
-              <Users size={14} style={{ color: "var(--color-text-muted)" }} />
-              <span className="text-sm text-muted">已导入账号</span>
+      <div className="page-body">
+        {/* Stats */}
+        <div className="bento-grid bento-grid-4">
+          {stats.map((s) => (
+            <div key={s.label} className="stat-card">
+              <div className={`stat-icon ${s.cls}`}><s.icon size={18} /></div>
+              <span className="stat-label">{s.label}</span>
+              <span className="stat-value">{s.value}</span>
             </div>
+          ))}
+        </div>
+
+        {/* Quick Actions */}
+        <div className="card">
+          <div className="card-header">
+            <span>快速操作</span>
           </div>
-          <div className="stat-card">
-            <div className="stat-label">活跃账号</div>
-            <div className="stat-value success">{activeAccounts}</div>
-            <div className="flex items-center gap-2">
-              <Mail size={14} style={{ color: "var(--color-text-muted)" }} />
-              <span className="text-sm text-muted">已完成登录</span>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Antigravity</div>
-            <div className="stat-value" style={{ color: "var(--color-info)" }}>{withAntigravity}</div>
-            <div className="flex items-center gap-2">
-              <Zap size={14} style={{ color: "var(--color-text-muted)" }} />
-              <span className="text-sm text-muted">已授权 OAuth</span>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">异常账号</div>
-            <div className="stat-value warning">{failedAccounts}</div>
-            <div className="flex items-center gap-2">
-              <Gift size={14} style={{ color: "var(--color-text-muted)" }} />
-              <span className="text-sm text-muted">登录失败/锁定</span>
-            </div>
+          <div className="quick-actions">
+            {quickActions.map((a) => (
+              <button key={a.page} className="quick-action-btn" onClick={() => setCurrentPage(a.page)}>
+                <a.icon size={20} />
+                <span className="quick-action-label">{a.label}</span>
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">最近账号</div>
-          {accounts.length === 0 ? (
-            <div className="empty-state">
-              <Users />
-              <p>还没有导入任何账号。前往「账号管理」导入凭据。</p>
+        {/* Recent Accounts */}
+        {recentAccounts.length > 0 && (
+          <div className="card">
+            <div className="card-header">
+              <span>最近账号</span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setCurrentPage("accounts")}>
+                查看全部 <ArrowRight size={12} />
+              </button>
             </div>
-          ) : (
-            <div className="table-container">
-              <table>
+            <div className="account-table-container" style={{ border: "none", boxShadow: "none", background: "transparent" }}>
+              <table className="account-table">
                 <thead>
                   <tr>
                     <th>邮箱</th>
                     <th>状态</th>
-                    <th>Antigravity</th>
-                    <th>导入时间</th>
+                    <th>配额</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {accounts.slice(0, 10).map((account) => (
-                    <tr key={account.id}>
-                      <td className="truncate" style={{ maxWidth: 250 }}>{account.email}</td>
-                      <td>
-                        <StatusBadge status={account.status} />
-                      </td>
-                      <td>
-                        {account.antigravity_token ? (
-                          <span className="badge badge-success">已授权</span>
-                        ) : (
-                          <span className="badge" style={{ background: "var(--color-bg-elevated)", color: "var(--color-text-muted)" }}>未授权</span>
-                        )}
-                      </td>
-                      <td className="text-muted text-sm">
-                        {new Date(account.created_at).toLocaleDateString("zh-CN")}
-                      </td>
-                    </tr>
-                  ))}
+                  {recentAccounts.map((a) => {
+                    const quota = quotaCache[a.email];
+                    const tier = quota?.subscription_tier;
+                    return (
+                      <tr key={a.id}>
+                        <td><span className="account-email-text">{a.email}</span></td>
+                        <td>
+                          <span className={`status-pill ${a.status === "active" ? "active" : a.status === "login_failed" ? "danger" : "info"}`}>
+                            {a.status === "active" ? "活跃" : a.status === "login_failed" ? "失败" : "新"}
+                          </span>
+                        </td>
+                        <td>{tier ? <span className={`tier-badge ${tier.toLowerCase().includes("ultra") ? "ultra" : tier.toLowerCase().includes("pro") ? "pro" : "free"}`}>{tier}</span> : <span className="text-muted">—</span>}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "active":
-      return <span className="badge badge-success">活跃</span>;
-    case "login_failed":
-      return <span className="badge badge-danger">登录失败</span>;
-    case "locked":
-      return <span className="badge badge-danger">锁定</span>;
-    case "disabled":
-      return <span className="badge badge-warning">停用</span>;
-    default:
-      return <span className="badge badge-info">新导入</span>;
-  }
 }

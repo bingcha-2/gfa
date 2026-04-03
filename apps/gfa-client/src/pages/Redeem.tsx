@@ -1,176 +1,100 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Gift, Search, CheckCircle } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "../stores/useAppStore";
-
-interface OrderStatus {
-  orderNo: string;
-  status: string;
-  userEmail: string;
-  resultMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+import {
+  Gift, Users, Package,
+  Loader, CheckCircle, XCircle, Terminal, ChevronDown, ChevronUp,
+} from "lucide-react";
 
 export function Redeem() {
-  const { accounts, addToast } = useAppStore();
-  const [code, setCode] = useState("");
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { accounts, isRunning, logs, clearLogs } = useAppStore();
 
-  // Order lookup
-  const [lookupCode, setLookupCode] = useState("");
-  const [order, setOrder] = useState<OrderStatus | null>(null);
-  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
+  const [redeemCode, setRedeemCode] = useState("");
+  const [showLogs, setShowLogs] = useState(true);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
-  const handleRedeem = async () => {
-    if (!code.trim() || !email) return;
-    setLoading(true);
-    setResult(null);
-    setError(null);
-    try {
-      console.log("[Redeem] Redeeming code:", code, "for email:", email);
-      const res = await invoke<{ orderNo: string; status: string; message?: string }>("redeem_code", { code, email });
-      console.log("[Redeem] Response:", res);
-      
-      const isQueued = res.status === "TASK_QUEUED" || res.status === "INVITE_SENT";
-      const icon = isQueued ? "✅" : "ℹ️";
-      const prefix = isQueued ? "兑换成功！" : "已受理但需审核：";
-      
-      setResult(`${icon} ${prefix}订单号: ${res.orderNo}，状态: ${res.status}${res.message ? ` — ${res.message}` : ""}`);
-      
-      if (isQueued) {
-        addToast({ type: "success", message: `✅ 兑换码激活成功！订单号: ${res.orderNo}` });
-      } else {
-        addToast({ type: "info", message: `ℹ️ 订单已受理：${res.status}` });
-      }
-      
-      // 保留兑换码用于查询
-      setLookupCode(code);
-      setCode("");
-    } catch (e) {
-      console.error("[Redeem] Error:", e);
-      const errStr = String(e);
-      const msgMatch = errStr.match(/"message"\s*:\s*"([^"]+)"/);
-      const errMsg = msgMatch ? msgMatch[1] : errStr;
-      setError(errMsg);
-      addToast({ type: "error", message: `兑换失败: ${errMsg}` });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLookup = async () => {
-    if (!lookupCode.trim()) return;
-    setOrder(null);
-    setLookupError(null);
-    try {
-      const res = await invoke<OrderStatus>("get_order_status", { code: lookupCode });
-      setOrder(res);
-    } catch (e) {
-      setLookupError(String(e));
-    }
-  };
+  useEffect(() => {
+    if (showLogs) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs, showLogs]);
 
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">兑换码激活</h1>
-        <p className="page-subtitle">输入兑换码和 Gmail 邮箱激活家庭组订单</p>
+        <h1 className="page-title">兑换码</h1>
+        <p className="page-subtitle">批量兑换 Google 礼品卡码</p>
       </div>
-      <div className="page-body animate-in">
-        {/* Redeem */}
-        <div className="card mb-4">
-          <div className="card-header">
-            <span>兑换码激活</span>
-            <Gift size={16} style={{ color: "var(--color-accent)" }} />
-          </div>
-          <div className="flex gap-3" style={{ flexDirection: "column" }}>
-            <input
-              className="input"
-              placeholder="输入兑换码"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-            <select
-              className="input"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            >
-              <option value="">— 选择邮箱 —</option>
-              {accounts.map((a) => (
-                <option key={a.email} value={a.email}>
-                  {a.email}
-                </option>
-              ))}
-            </select>
-            <div className="flex items-center gap-3">
-              <button className="btn btn-primary" onClick={handleRedeem} disabled={loading || !code || !email}>
-                <Gift size={14} />
-                {loading ? "兑换中..." : "兑换"}
-              </button>
-              {result && (
-                <span className="flex items-center gap-2" style={{ color: "var(--color-success)", fontSize: 13 }}>
-                  <CheckCircle size={14} /> {result}
-                </span>
-              )}
-              {error && <span style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</span>}
+      <div className="page-body">
+        <div className="bento-grid bento-grid-2">
+          {/* Account Selection */}
+          <div className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-2"><Users size={14} className="card-header-icon" /> 选择账号</div>
+              <span className="badge badge-accent">{selectedAccounts.length} 已选</span>
             </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
+              {accounts.map((a) => {
+                const checked = selectedAccounts.includes(a.email);
+                return (
+                  <label key={a.id} className="flex items-center gap-2 cursor-pointer" style={{ padding: "8px 12px", borderRadius: 8, background: checked ? "var(--primary-light)" : "transparent", border: `1px solid ${checked ? "rgba(59,130,246,0.3)" : "var(--border-light)"}`, fontSize: 13, transition: "all 0.2s" }}>
+                    <input type="checkbox" checked={checked} onChange={() => setSelectedAccounts((prev) => checked ? prev.filter((e) => e !== a.email) : [...prev, a.email])} style={{ accentColor: "var(--primary)" }} />
+                    <span className="font-mono truncate">{a.email}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {accounts.length > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <button className="btn btn-ghost btn-xs" onClick={() => setSelectedAccounts(accounts.map((a) => a.email))}>全选</button>
+                <button className="btn btn-ghost btn-xs" onClick={() => setSelectedAccounts([])}>清除</button>
+              </div>
+            )}
+          </div>
+
+          {/* Redeem Config */}
+          <div className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-2"><Package size={14} className="card-header-icon" /> 兑换设置</div>
+            </div>
+            <div className="form-group">
+              <label>兑换码</label>
+              <input className="input" placeholder="输入兑换码" value={redeemCode} onChange={(e) => setRedeemCode(e.target.value)} disabled={isRunning} />
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <button className="btn btn-primary btn-sm" disabled={isRunning || selectedAccounts.length === 0 || !redeemCode.trim()}>
+                {isRunning ? <Loader size={12} className="spinning" /> : <Gift size={12} />}
+                {isRunning ? "兑换中..." : "开始兑换"}
+              </button>
+            </div>
+            <p className="text-muted text-xs mt-2">注: 兑换功能需要后端 API 支持，当前为界面预览。</p>
           </div>
         </div>
 
-        {/* Order lookup */}
+        {/* Log Panel */}
         <div className="card">
-          <div className="card-header">
-            <span>订单查询</span>
-            <Search size={16} style={{ color: "var(--color-accent)" }} />
+          <div className="card-header collapsible-header" onClick={() => setShowLogs(!showLogs)}>
+            <div className="flex items-center gap-2"><Terminal size={14} /> 执行日志 {logs.length > 0 && <span className="badge badge-neutral" style={{ fontSize: 10 }}>{logs.length}</span>}</div>
+            <div className="flex items-center gap-2">
+              {logs.length > 0 && <button className="btn btn-ghost btn-xs" onClick={(e) => { e.stopPropagation(); clearLogs(); }}>清除</button>}
+              {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </div>
           </div>
-          <div className="flex items-center gap-3 mb-4">
-            <input
-              className="input"
-              style={{ maxWidth: 400 }}
-              placeholder="输入兑换码查询订单状态"
-              value={lookupCode}
-              onChange={(e) => setLookupCode(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleLookup()}
-            />
-            <button className="btn btn-ghost" onClick={handleLookup} disabled={!lookupCode}>
-              <Search size={14} /> 查询
-            </button>
-          </div>
-
-          {lookupError && <p style={{ color: "var(--color-danger)", fontSize: 13 }}>{lookupError}</p>}
-
-          {order && (
-            <div className="table-container">
-              <table>
-                <tbody>
-                  <tr><td style={{ color: "var(--color-text-muted)", width: 120 }}>订单号</td><td>{order.orderNo}</td></tr>
-                  <tr><td style={{ color: "var(--color-text-muted)" }}>状态</td><td><OrderStatusBadge status={order.status} /></td></tr>
-                  <tr><td style={{ color: "var(--color-text-muted)" }}>邮箱</td><td>{order.userEmail}</td></tr>
-                  <tr><td style={{ color: "var(--color-text-muted)" }}>详情</td><td>{order.resultMessage || "—"}</td></tr>
-                  <tr><td style={{ color: "var(--color-text-muted)" }}>创建时间</td><td>{new Date(order.createdAt).toLocaleString("zh-CN")}</td></tr>
-                  <tr><td style={{ color: "var(--color-text-muted)" }}>更新时间</td><td>{new Date(order.updatedAt).toLocaleString("zh-CN")}</td></tr>
-                </tbody>
-              </table>
+          {showLogs && (
+            <div className="log-stream">
+              <div className="log-stream-header"><div className="log-stream-dot red" /><div className="log-stream-dot yellow" /><div className="log-stream-dot green" /></div>
+              {logs.length === 0 ? <div className="text-muted text-sm" style={{ padding: 16, textAlign: "center" }}>等待执行...</div> :
+                logs.map((log) => (
+                  <div key={log.id} className="log-line">
+                    <span className={`log-icon ${log.status || ""}`}>
+                      {log.status === "running" ? <Loader size={12} /> : log.status === "done" ? <CheckCircle size={12} /> : log.status === "failed" ? <XCircle size={12} /> : "›"}
+                    </span>
+                    <span className={`log-text ${log.level === "ERROR" ? "error" : ""}`}>{log.message || `${log.step}: ${log.detail || log.status}`}</span>
+                  </div>
+                ))}
+              <div ref={logEndRef} />
             </div>
           )}
         </div>
       </div>
     </>
   );
-}
-
-function OrderStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { cls: string; label: string }> = {
-    CREATED: { cls: "badge-info", label: "已创建" },
-    INVITE_SENT: { cls: "badge-warning", label: "邀请已发送" },
-    COMPLETED: { cls: "badge-success", label: "已完成" },
-    EXPIRED: { cls: "badge-danger", label: "已过期" },
-    CANCELLED: { cls: "badge-danger", label: "已取消" },
-  };
-  const m = map[status] || { cls: "badge-info", label: status };
-  return <span className={`badge ${m.cls}`}>{m.label}</span>;
 }

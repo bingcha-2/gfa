@@ -1,30 +1,51 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useAppStore, type QuotaInfo } from "../stores/useAppStore";
-import { Upload, Trash2, Mail, Copy, Zap, Key, RefreshCw, Terminal, ChevronDown, ChevronUp, CheckCircle, XCircle, Loader, Download } from "lucide-react";
+import {
+  Upload, Trash2, Copy, Zap, Key, RefreshCw, Terminal,
+  ChevronDown, ChevronUp, CheckCircle, XCircle, Loader,
+  Download, Search, LayoutGrid, List, Lock,
+} from "lucide-react";
+
+type ViewMode = "grid" | "list";
+type StatusFilter = "all" | "active" | "failed" | "no-token" | "has-token";
 
 export function Accounts() {
   const {
     accounts, importAccounts, deleteAccount, loadAccounts,
-    isRunning, setCurrentPage,
+    isRunning,
     startAntigravityOAuth, switchAntigravityAccount, batchAntigravityOAuth,
     oauthProgress, fetchQuota, quotaCache,
     logs, clearLogs,
   } = useAppStore();
+
   const [importText, setImportText] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
   const [switchResult, setSwitchResult] = useState<string | null>(null);
-  const [refreshingQuota, setRefreshingQuota] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
+  const [refreshResult, setRefreshResult] = useState<Record<string, "success" | "error">>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showLogs, setShowLogs] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    return (localStorage.getItem("gfa-accounts-view") as ViewMode) || "grid";
+  });
+
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem("gfa-accounts-view", mode);
+  };
 
   useEffect(() => {
     if (showLogs) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs, showLogs]);
 
-  // 仅在首次加载时查询有 token 的账号额度（不在 accounts 变化时反复触发）
   const quotaFetched = useRef(false);
   useEffect(() => {
     if (quotaFetched.current) return;
@@ -35,332 +56,444 @@ export function Accounts() {
     }
   }, [accounts]);
 
+  const filteredAccounts = useMemo(() => {
+    let result = [...accounts];
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((a) => a.email.toLowerCase().includes(q));
+    }
+    if (statusFilter !== "all") {
+      result = result.filter((a) => {
+        switch (statusFilter) {
+          case "active": return a.status === "active";
+          case "failed": return a.status === "login_failed" || a.status === "locked";
+          case "has-token": return !!a.antigravity_token;
+          case "no-token": return !a.antigravity_token;
+          default: return true;
+        }
+      });
+    }
+    return result;
+  }, [accounts, searchQuery, statusFilter]);
+
   const handleImport = async () => {
     if (!importText.trim()) return;
-    console.log("[Import] 开始导入...");
-    setImporting(true);
-    setImportError(null);
-    setImportSuccess(null);
+    setImporting(true); setImportError(null); setImportSuccess(null);
     try {
-      console.log("[Import] 调用 importAccounts...");
       const result = await importAccounts(importText);
-      console.log("[Import] 导入完成, 结果:", result.length, "个账号");
-      setImportText("");
-      setImportSuccess(`成功导入 ${result.length} 个账号`);
-    } catch (e) {
-      console.error("[Import] 导入失败:", e);
-      setImportError(String(e));
-    } finally {
-      console.log("[Import] 流程结束");
-      setImporting(false);
-    }
+      setImportText(""); setImportSuccess(`成功导入 ${result.length} 个账号`); setShowImport(false);
+    } catch (e) { setImportError(String(e)); }
+    finally { setImporting(false); }
   };
 
   const handleSwitch = async (email: string) => {
-    console.log("[Switch] 开始切号:", email);
-    setSwitchingEmail(email);
-    setSwitchResult(null);
+    setSwitchingEmail(email); setSwitchResult(null);
     try {
       const result = await switchAntigravityAccount(email);
-      console.log("[Switch] 切号结果:", result);
       setSwitchResult(result);
       setTimeout(() => setSwitchResult(null), 5000);
     } catch (e) {
-      console.error("[Switch] 切号失败:", e);
-      setSwitchResult(`❌ ${String(e)}`);
+      setSwitchResult(`切换失败: ${String(e)}`);
       setTimeout(() => setSwitchResult(null), 8000);
-    } finally {
-      setSwitchingEmail(null);
-    }
+    } finally { setSwitchingEmail(null); }
   };
 
-  const handleRefreshQuota = async (email: string) => {
-    setRefreshingQuota(email);
-    await fetchQuota(email);
-    setRefreshingQuota(null);
+  const handleRefreshQuota = useCallback(async (email: string) => {
+    setRefreshing((prev) => new Set(prev).add(email));
+    try {
+      await fetchQuota(email);
+      setRefreshResult((prev) => ({ ...prev, [email]: "success" }));
+      setTimeout(() => setRefreshResult((prev) => { const n = { ...prev }; delete n[email]; return n; }), 2000);
+    } catch {
+      setRefreshResult((prev) => ({ ...prev, [email]: "error" }));
+      setTimeout(() => setRefreshResult((prev) => { const n = { ...prev }; delete n[email]; return n; }), 2000);
+    } finally {
+      setRefreshing((prev) => { const n = new Set(prev); n.delete(email); return n; });
+    }
+  }, [fetchQuota]);
+
+  const handleRefreshAll = async () => {
+    const toRefresh = filteredAccounts.filter((a) => a.antigravity_token);
+    await Promise.allSettled(toRefresh.map((a) => handleRefreshQuota(a.email)));
   };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+
+  const toggleSelectAll = () => {
+    setSelected(selected.size === filteredAccounts.length ? new Set() : new Set(filteredAccounts.map((a) => a.id)));
+  };
+
+  const handleBatchDelete = async () => {
+    if (selected.size === 0) return;
+    for (const email of accounts.filter((a) => selected.has(a.id)).map((a) => a.email)) {
+      await deleteAccount(email);
+    }
+    setSelected(new Set());
+  };
+
+  const countNoToken = accounts.filter((a) => !a.antigravity_token).length;
+
+  const filterOptions: { value: StatusFilter; label: string; count: number }[] = [
+    { value: "all", label: "全部", count: accounts.length },
+    { value: "active", label: "活跃", count: accounts.filter((a) => a.status === "active").length },
+    { value: "has-token", label: "已授权", count: accounts.filter((a) => !!a.antigravity_token).length },
+    { value: "no-token", label: "未授权", count: countNoToken },
+    { value: "failed", label: "异常", count: accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length },
+  ];
+
+  function getQuotaClass(pct: number) { return pct > 60 ? "high" : pct > 25 ? "medium" : "low"; }
+
+  function formatResetTime(rt: string): string {
+    if (!rt) return "";
+    try {
+      const d = new Date(rt);
+      const diff = d.getTime() - Date.now();
+      if (diff <= 0) return "已重置";
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      return h > 0 ? `${h}h${m}m 后重置` : `${m}m 后重置`;
+    } catch { return ""; }
+  }
+
+  function getQuotaDisplayItems(quota: QuotaInfo) {
+    if (!quota || quota.error || quota.is_forbidden) return [];
+    return quota.models
+      .filter((m) => {
+        const l = (m.display_name || m.name).toLowerCase();
+        return (l.includes("claude") && l.includes("opus"))
+          || (l.includes("gemini") && l.includes("pro") && l.includes("high"));
+      })
+      .map((m) => ({
+        key: m.name,
+        label: (m.display_name || m.name).replace(/^models\//, "").split("/").pop() || m.name,
+        percentage: m.percentage,
+        resetTime: m.reset_time,
+      }));
+  }
+
+  function getTierBadge(quota?: QuotaInfo) {
+    if (!quota || quota.error) return null;
+    if (quota.is_forbidden) return { label: "FORBIDDEN", cls: "free" };
+    const tier = quota.subscription_tier || "";
+    if (!tier) return null;
+    const t = tier.toLowerCase();
+    if (t.includes("ultra")) return { label: tier, cls: "ultra" };
+    if (t.includes("pro")) return { label: tier, cls: "pro" };
+    return { label: tier, cls: "free" };
+  }
 
   return (
     <>
       <div className="page-header">
         <h1 className="page-title">账号管理</h1>
-        <p className="page-subtitle">导入 Google 账号凭据，管理所有账号</p>
+        <p className="page-subtitle">导入、管理 Google 账号与 Antigravity 授权</p>
       </div>
-      <div className="page-body animate-in">
-        {/* Import card */}
-        <div className="card mb-4">
-          <div className="card-header">
-            <span>导入账号</span>
-            <span className="text-sm text-muted">格式: email----password----recoveryEmail----totpSecret</span>
-          </div>
-          <textarea
-            className="input"
-            rows={4}
-            placeholder={`每行一个账号，例如：\nuser@gmail.com----password----recovery@mail.com----totpSecret...`}
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-          />
-          <div className="flex items-center gap-2 mt-3">
-            <button className="btn btn-primary" onClick={handleImport} disabled={importing || !importText.trim()}>
-              <Upload size={14} />
-              {importing ? "导入中..." : "导入账号"}
-            </button>
-            {importSuccess && <span style={{ color: "var(--color-success)", fontSize: 13 }}>{importSuccess}</span>}
-            {importError && <span style={{ color: "var(--color-danger)", fontSize: 13 }}>{importError}</span>}
-          </div>
-        </div>
-
+      <div className="page-body">
         {/* OAuth Progress */}
         {oauthProgress && (
-          <div className="card mb-4" style={{ borderColor: "var(--color-primary)" }}>
-            <div className="card-header">
-              <span>🔐 自动授权中</span>
-              <span className="text-sm" style={{ color: "var(--color-primary)" }}>
-                {oauthProgress.current} / {oauthProgress.total}
-              </span>
+          <div className="card" style={{ borderColor: "rgba(59,130,246,0.4)" }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Loader size={14} className="spinning" style={{ color: "var(--primary)" }} />
+                <span className="text-sm font-semibold">自动授权中</span>
+              </div>
+              <span className="badge badge-accent">{oauthProgress.current} / {oauthProgress.total}</span>
             </div>
-            <div style={{ padding: "12px 16px" }}>
-              <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 8 }}>
-                正在授权: {oauthProgress.email}
-              </div>
-              <div style={{ height: 4, borderRadius: 2, background: "var(--color-bg-elevated)" }}>
-                <div style={{
-                  height: "100%", borderRadius: 2,
-                  background: "var(--color-primary)",
-                  width: `${(oauthProgress.current / oauthProgress.total) * 100}%`,
-                  transition: "width 0.3s",
-                }} />
-              </div>
+            <div className="text-xs text-muted mb-2">正在授权: {oauthProgress.email}</div>
+            <div className="progress-bar">
+              <div className="progress-bar-fill" style={{ width: `${(oauthProgress.current / oauthProgress.total) * 100}%` }} />
             </div>
           </div>
         )}
 
-        {/* Switch result toast */}
         {switchResult && (
-          <div className="card mb-4" style={{
-            borderColor: switchResult.startsWith("❌") ? "var(--color-danger)" : "var(--color-success)",
-            padding: "12px 16px", fontSize: 13,
-          }}>
+          <div className="card" style={{ padding: "12px 16px", fontSize: 13, color: switchResult.includes("失败") ? "var(--danger)" : "var(--success)", borderColor: switchResult.includes("失败") ? "rgba(239,68,68,0.3)" : "rgba(34,197,94,0.3)" }}>
             {switchResult}
           </div>
         )}
 
-        {/* Account cards */}
-        <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>账号列表 ({accounts.length})</span>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => { 
-              loadAccounts(); 
-              useAppStore.setState({ quotaCache: {} });
-              quotaFetched.current = false; 
-            }}
-            title="刷新列表"
-            style={{ padding: 2 }}
-          >
-            <RefreshCw size={13} />
-          </button>
-          {accounts.filter((a) => !a.antigravity_token).length > 0 && (
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => {
-                const emails = accounts.filter((a) => !a.antigravity_token).map((a) => a.email);
-                batchAntigravityOAuth(emails);
-              }}
-              disabled={isRunning}
-              style={{ marginLeft: "auto" }}
-            >
-              <Key size={12} />
-              批量授权 ({accounts.filter((a) => !a.antigravity_token).length})
-            </button>
-          )}
-        </div>
-        {accounts.length === 0 ? (
-          <div className="card">
-            <div className="empty-state">
-              <Upload />
-              <p>粘贴凭据到上方文本框导入账号</p>
+        {importSuccess && (
+          <div className="card" style={{ padding: "12px 16px", borderColor: "rgba(34,197,94,0.3)" }}>
+            <span className="flex items-center gap-2" style={{ color: "var(--success)", fontSize: 13 }}>
+              <CheckCircle size={14} /> {importSuccess}
+            </span>
+          </div>
+        )}
+
+        {/* Toolbar */}
+        <div className="toolbar">
+          <div className="toolbar-left">
+            <div className="search-box">
+              <Search size={14} className="search-icon" />
+              <input placeholder="搜索邮箱..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+            </div>
+            <div className="filter-tabs">
+              {filterOptions.map((f) => (
+                <button key={f.value} className={`filter-tab ${statusFilter === f.value ? "active" : ""}`} onClick={() => setStatusFilter(f.value)}>
+                  {f.label}
+                  <span className="count">{f.count}</span>
+                </button>
+              ))}
             </div>
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {accounts.map((account) => {
+          <div className="toolbar-right">
+            <div className="view-switcher">
+              <button className={`view-btn ${viewMode === "grid" ? "active" : ""}`} onClick={() => handleViewModeChange("grid")}><LayoutGrid size={13} /></button>
+              <button className={`view-btn ${viewMode === "list" ? "active" : ""}`} onClick={() => handleViewModeChange("list")}><List size={13} /></button>
+            </div>
+            {selected.size > 0 && (
+              <button className="btn btn-danger btn-sm" onClick={handleBatchDelete}><Trash2 size={12} /> 删除 ({selected.size})</button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(!showImport)}><Upload size={13} /> 导入</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { loadAccounts(); useAppStore.setState({ quotaCache: {} }); quotaFetched.current = false; }} title="刷新"><RefreshCw size={13} /></button>
+            {countNoToken > 0 && (
+              <button className="btn btn-primary btn-sm" onClick={() => batchAntigravityOAuth(accounts.filter((a) => !a.antigravity_token).map((a) => a.email))} disabled={isRunning}>
+                <Key size={12} /> 批量授权 ({countNoToken})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Import Panel */}
+        {showImport && (
+          <div className="import-panel animate-in">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold">导入账号</span>
+              <span className="text-xs text-muted">格式: email----password----recoveryEmail----totpSecret</span>
+            </div>
+            <textarea className="input" rows={3} placeholder={`每行一个账号\nuser@gmail.com----password----recovery@mail.com----totpSecret`} value={importText} onChange={(e) => setImportText(e.target.value)} />
+            <div className="flex items-center gap-2 mt-2">
+              <button className="btn btn-primary btn-sm" onClick={handleImport} disabled={importing || !importText.trim()}>
+                <Upload size={13} /> {importing ? "导入中..." : "确认导入"}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowImport(false)}>取消</button>
+              {importError && <span style={{ color: "var(--danger)", fontSize: 12 }}>{importError}</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Selection bar */}
+        {filteredAccounts.length > 0 && (
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none" style={{ fontSize: 12 }}>
+              <input type="checkbox" checked={selected.size === filteredAccounts.length && filteredAccounts.length > 0} onChange={toggleSelectAll} style={{ accentColor: "var(--primary)" }} />
+              <span className="text-muted">{selected.size > 0 ? `已选 ${selected.size} / ${filteredAccounts.length}` : `${filteredAccounts.length} 个账号`}</span>
+            </label>
+            {filteredAccounts.some((a) => a.antigravity_token) && (
+              <button className="btn btn-ghost btn-sm ml-auto" onClick={handleRefreshAll} disabled={refreshing.size > 0}>
+                <RefreshCw size={11} className={refreshing.size > 0 ? "spinning" : ""} /> 刷新全部额度
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Content */}
+        {filteredAccounts.length === 0 ? (
+          <div className="card">
+            <div className="empty-state">
+              <div className="icon">{accounts.length === 0 ? <Upload size={28} /> : <Search size={28} />}</div>
+              <h3>{accounts.length === 0 ? "还没有账号" : "没有匹配结果"}</h3>
+              <p>{accounts.length === 0 ? "点击上方的「导入」按钮添加 Google 账号" : "试试调整搜索或过滤条件"}</p>
+            </div>
+          </div>
+        ) : viewMode === "grid" ? (
+          /* ─── Grid View ────────────────────────────────────────── */
+          <div className="accounts-grid">
+            {filteredAccounts.map((account) => {
               const quota = quotaCache[account.email];
               const hasToken = !!account.antigravity_token;
+              const isRefreshing = refreshing.has(account.email);
+              const rResult = refreshResult[account.email];
+              const isSelected = selected.has(account.id);
+              const quotaItems = hasToken && quota ? getQuotaDisplayItems(quota) : [];
+              const tierBadge = getTierBadge(quota);
+
               return (
-                <div className="card" key={account.id} style={{ padding: 0, overflow: "hidden" }}>
-                  {/* 头部：邮箱 + 状态标签 + 操作按钮 */}
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "14px 16px",
-                    borderBottom: "1px solid var(--color-border)",
-                  }}>
-                    {/* 邮箱 */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="flex items-center gap-2">
-                        <span style={{ fontWeight: 600, fontSize: 14 }} className="truncate">{account.email}</span>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => navigator.clipboard.writeText(account.email)}
-                          title="复制"
-                          style={{ padding: 2 }}
-                        >
-                          <Copy size={12} />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2" style={{ marginTop: 4 }}>
-                        <StatusBadge status={account.status} />
-                        <TokenBadge token={account.antigravity_token} />
-                        {quota && <TierBadge quota={quota} />}
-                        {account.totp_secret && <span className="badge badge-success" style={{ fontSize: 10 }}>TOTP</span>}
-                      </div>
+                <div className={`account-card ${isSelected ? "selected" : ""}`} key={account.id}>
+                  {/* Top row */}
+                  <div className="card-top">
+                    <div className="card-select">
+                      <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(account.id)} />
                     </div>
-
-                    {/* 操作按钮 */}
-                    <div className="flex gap-1" style={{ flexShrink: 0 }}>
-                      {hasToken ? (
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => handleSwitch(account.email)}
-                          disabled={switchingEmail !== null}
-                          title="一键切号：注入 Token + 切换指纹 + 重启 Antigravity"
-                        >
-                          <Zap size={12} />
-                          {switchingEmail === account.email ? "切换中..." : "切号"}
-                        </button>
-                      ) : (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => startAntigravityOAuth(account.email)}
-                          disabled={isRunning}
-                          title="Antigravity OAuth 授权"
-                        >
-                          <Key size={12} />
-                          授权
-                        </button>
-                      )}
-
-                      <button className="btn btn-ghost btn-sm" onClick={() => setCurrentPage("accept-invite")} title="接受邀请">
-                        <Mail size={12} />
-                      </button>
-                      {hasToken && (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            const json = JSON.stringify({ refresh_token: account.antigravity_token!.refresh_token });
-                            navigator.clipboard.writeText(json);
-                            setSwitchResult(`✅ refresh_token 已复制 (${account.email})`);
-                            setTimeout(() => setSwitchResult(null), 3000);
-                          }}
-                          title="导出 refresh_token (JSON)"
-                        >
-                          <Download size={12} />
-                        </button>
-                      )}
-                      <button className="btn btn-ghost btn-sm" onClick={() => deleteAccount(account.email)} title="删除">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
+                    <span className="account-email" title={account.email}>{account.email}</span>
+                    <StatusPill status={account.status} />
+                    {hasToken && <span className="status-pill active">Token</span>}
+                    {tierBadge && <span className={`tier-badge ${tierBadge.cls}`}>{tierBadge.label}</span>}
                   </div>
 
-                  {/* 额度区域：直接展示 */}
-                  {hasToken && (
-                    <div style={{ padding: "10px 16px", background: "var(--color-bg-elevated)" }}>
-                      {!quota ? (
-                        <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>额度加载中...</div>
-                      ) : quota.error ? (
-                        <div style={{ fontSize: 12, color: "var(--color-danger)" }}>❌ {quota.error}</div>
-                      ) : quota.models.length === 0 ? (
-                        <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                          订阅: {quota.subscription_tier || "—"} · 无模型额度数据
-                        </div>
-                      ) : (
-                        <>
-                          <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-                            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-                              订阅: <strong style={{ color: "var(--color-text)" }}>{quota.subscription_tier || "—"}</strong>
-                            </span>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => handleRefreshQuota(account.email)}
-                              disabled={refreshingQuota !== null}
-                              title="刷新额度"
-                              style={{ padding: 2, marginLeft: "auto" }}
-                            >
-                              <RefreshCw size={11} className={refreshingQuota === account.email ? "spinning" : ""} />
-                            </button>
+                  {/* Quota Grid */}
+                  <div className="card-quota-grid">
+                    {quota?.is_forbidden ? (
+                      <div className="quota-empty" style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--danger)" }}>
+                        <Lock size={14} /> 账号被禁止访问
+                      </div>
+                    ) : quotaItems.length > 0 ? (
+                      <>
+                        {quotaItems.map((item) => (
+                          <div key={item.key} className="quota-compact-item">
+                            <div className="quota-compact-header">
+                              <span className="model-label">{item.label}</span>
+                              <span className={`model-pct ${getQuotaClass(item.percentage)}`}>{item.percentage}%</span>
+                            </div>
+                            <div className="quota-compact-bar-track">
+                              <div className={`quota-compact-bar ${getQuotaClass(item.percentage)}`} style={{ width: `${item.percentage}%` }} />
+                            </div>
+                            {item.resetTime && <span className="quota-compact-reset">{formatResetTime(item.resetTime)}</span>}
                           </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 6 }}>
-                            {quota.models
-                              .filter((m) => {
-                                const label = (m.display_name || m.name).toLowerCase();
-                                return label.includes("claude") && label.includes("opus")
-                                  || label.includes("gemini") && label.includes("pro") && label.includes("high");
-                              })
-                              .map((m) => (
-                              <QuotaBar key={m.name} name={m.display_name || m.name} percentage={m.percentage} resetTime={m.reset_time} />
-                            ))}
-                          </div>
-                        </>
+                        ))}
+                      </>
+                    ) : hasToken ? (
+                      <div className="quota-empty">暂无配额数据</div>
+                    ) : (
+                      <div className="quota-empty">未授权 — 无法获取配额</div>
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="card-footer">
+                    <span className="card-date">{new Date(account.created_at).toLocaleDateString("zh-CN")}</span>
+                    <div className="card-actions">
+                      <button className="card-action-btn" onClick={() => navigator.clipboard.writeText(account.email)} title="复制邮箱"><Copy size={11} /></button>
+                      {hasToken && (
+                        <button className="card-action-btn" onClick={() => {
+                          navigator.clipboard.writeText(JSON.stringify({ refresh_token: account.antigravity_token!.refresh_token }));
+                          setSwitchResult(`refresh_token 已复制 (${account.email})`);
+                          setTimeout(() => setSwitchResult(null), 3000);
+                        }} title="导出 token"><Download size={11} /></button>
                       )}
+                      {hasToken && (
+                        <button className="card-action-btn" onClick={() => handleRefreshQuota(account.email)} disabled={isRefreshing} title="刷新额度">
+                          {isRefreshing ? <Loader size={11} className="spinning" /> :
+                            rResult === "success" ? <CheckCircle size={11} style={{ color: "var(--success)" }} /> :
+                            rResult === "error" ? <XCircle size={11} style={{ color: "var(--danger)" }} /> :
+                            <RefreshCw size={11} />}
+                        </button>
+                      )}
+                      <button className="card-action-btn is-danger" onClick={() => deleteAccount(account.email)} title="删除"><Trash2 size={11} /></button>
                     </div>
+                  </div>
+                  {/* Primary Action */}
+                  {hasToken ? (
+                    <button className="btn btn-primary btn-sm w-full" onClick={() => handleSwitch(account.email)} disabled={switchingEmail !== null} style={{ marginTop: -4 }}>
+                      <Zap size={13} /> 切号
+                    </button>
+                  ) : (
+                    <button className="btn btn-secondary btn-sm w-full" onClick={() => startAntigravityOAuth(account.email)} disabled={isRunning} style={{ marginTop: -4, borderColor: "rgba(59,130,246,0.4)", color: "var(--primary)" }}>
+                      <Key size={13} /> 授权认证
+                    </button>
                   )}
                 </div>
               );
             })}
           </div>
+        ) : (
+          /* ─── List View ────────────────────────────────────────── */
+          <div className="account-table-container">
+            <table className="account-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}></th>
+                  <th>邮箱</th>
+                  <th>状态</th>
+                  <th>订阅</th>
+                  <th>配额</th>
+                  <th style={{ textAlign: "right" }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAccounts.map((account) => {
+                  const quota = quotaCache[account.email];
+                  const hasToken = !!account.antigravity_token;
+                  const isSelected = selected.has(account.id);
+                  const isRefreshing = refreshing.has(account.email);
+                  const rResult = refreshResult[account.email];
+                  const tierBadge = getTierBadge(quota);
+                  const quotaItems = hasToken && quota ? getQuotaDisplayItems(quota) : [];
+
+                  return (
+                    <tr key={account.id} className={isSelected ? "selected" : ""}>
+                      <td><input type="checkbox" checked={isSelected} onChange={() => toggleSelect(account.id)} style={{ accentColor: "var(--primary)" }} /></td>
+                      <td>
+                        <span className="account-email-text">{account.email}</span>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <StatusPill status={account.status} />
+                          {hasToken && <span className="status-pill active">Token</span>}
+                        </div>
+                      </td>
+                      <td>{tierBadge ? <span className={`tier-badge ${tierBadge.cls}`}>{tierBadge.label}</span> : <span className="text-muted">—</span>}</td>
+                      <td>
+                        {quotaItems.length > 0 ? (
+                          <div className="flex items-center gap-2">
+                            {quotaItems.slice(0, 1).map((item) => (
+                              <span key={item.key} className={`model-pct ${getQuotaClass(item.percentage)}`} style={{ fontSize: 12 }}>{item.label}: {item.percentage}%</span>
+                            ))}
+                          </div>
+                        ) : <span className="text-muted text-xs">—</span>}
+                      </td>
+                      <td>
+                        <div className="action-buttons" style={{ justifyContent: "flex-end" }}>
+                          {hasToken && (
+                            <button className="action-btn" onClick={() => handleRefreshQuota(account.email)} disabled={isRefreshing} title="刷新额度">
+                              {isRefreshing ? <Loader size={13} className="spinning" /> :
+                                rResult === "success" ? <CheckCircle size={13} style={{ color: "var(--success)" }} /> :
+                                rResult === "error" ? <XCircle size={13} style={{ color: "var(--danger)" }} /> :
+                                <RefreshCw size={13} />}
+                            </button>
+                          )}
+                          {hasToken ? (
+                            <button className="action-btn is-success" onClick={() => handleSwitch(account.email)} disabled={switchingEmail !== null} title="切号">
+                              <Zap size={14} />
+                            </button>
+                          ) : (
+                            <button className="action-btn" onClick={() => startAntigravityOAuth(account.email)} disabled={isRunning} title="授权">
+                              <Key size={14} />
+                            </button>
+                          )}
+                          <button className="action-btn is-danger" onClick={() => deleteAccount(account.email)} title="删除"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
 
-        {/* 日志面板 */}
-        <div className="card" style={{ marginTop: 16 }}>
-          <div
-            className="card-header"
-            style={{ cursor: "pointer", userSelect: "none" }}
-            onClick={() => setShowLogs(!showLogs)}
-          >
+        {/* Log Panel */}
+        <div className="card">
+          <div className="card-header collapsible-header" onClick={() => setShowLogs(!showLogs)}>
             <div className="flex items-center gap-2">
               <Terminal size={14} />
               <span>运行日志</span>
-              {logs.length > 0 && (
-                <span className="badge" style={{ fontSize: 10, background: "var(--color-bg-elevated)", color: "var(--color-text-muted)" }}>
-                  {logs.length}
-                </span>
-              )}
+              {logs.length > 0 && <span className="badge badge-neutral" style={{ fontSize: 10 }}>{logs.length}</span>}
             </div>
             <div className="flex items-center gap-2">
-              {logs.length > 0 && (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={(e) => { e.stopPropagation(); clearLogs(); }}
-                  style={{ fontSize: 11 }}
-                >
-                  清除
-                </button>
-              )}
+              {logs.length > 0 && <button className="btn btn-ghost btn-xs" onClick={(e) => { e.stopPropagation(); clearLogs(); }}>清除</button>}
               {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </div>
           </div>
           {showLogs && (
-            <div className="log-stream" style={{ maxHeight: 300, overflowY: "auto" }}>
+            <div className="log-stream" style={{ maxHeight: 300 }}>
+              <div className="log-stream-header">
+                <div className="log-stream-dot red" />
+                <div className="log-stream-dot yellow" />
+                <div className="log-stream-dot green" />
+              </div>
               {logs.length === 0 ? (
-                <div className="text-muted text-sm" style={{ padding: 16, textAlign: "center" }}>
-                  暂无日志，执行授权后显示
+                <div className="text-muted text-sm" style={{ padding: 16, textAlign: "center" }}>暂无日志</div>
+              ) : logs.map((log) => (
+                <div key={log.id} className="log-line">
+                  <span className={`log-icon ${log.status || ""}`}>
+                    {log.status === "running" ? <Loader size={12} /> : log.status === "done" ? <CheckCircle size={12} /> : log.status === "failed" ? <XCircle size={12} /> : "›"}
+                  </span>
+                  <span className={`log-text ${log.level === "ERROR" ? "error" : ""}`}>{log.message || `${log.step}: ${log.detail || log.status}`}</span>
                 </div>
-              ) : (
-                logs.map((log) => (
-                  <div key={log.id} className="log-line">
-                    <span className={`log-icon ${log.status || ""}`}>
-                      {log.status === "running" ? <Loader size={13} /> :
-                       log.status === "done" ? <CheckCircle size={13} /> :
-                       log.status === "failed" ? <XCircle size={13} /> :
-                       "•"}
-                    </span>
-                    <span className={`log-text ${log.level === "ERROR" ? "error" : ""}`}>
-                      {log.message || `${log.step}: ${log.detail || log.status}`}
-                    </span>
-                  </div>
-                ))
-              )}
+              ))}
               <div ref={logEndRef} />
             </div>
           )}
@@ -370,45 +503,12 @@ export function Accounts() {
   );
 }
 
-function QuotaBar({ name, percentage }: { name: string; percentage: number; resetTime: string }) {
-  const barColor = percentage > 50 ? "#4ade80" : percentage > 20 ? "#fbbf24" : "#ef4444";
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 11, color: "var(--color-text-muted)", minWidth: 60, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={name}>
-        {name.replace(/^models\//, "").split("/").pop()}
-      </span>
-      <div style={{ flex: 1, height: 5, borderRadius: 3, background: "var(--color-border)", overflow: "hidden", minWidth: 40 }}>
-        <div style={{ height: "100%", borderRadius: 3, width: `${percentage}%`, background: barColor, transition: "width 0.3s" }} />
-      </div>
-      <span style={{ fontSize: 10, fontWeight: 600, minWidth: 28, textAlign: "right", color: barColor }}>
-        {percentage}%
-      </span>
-    </div>
-  );
-}
-
-function TokenBadge({ token }: { token: { access_token: string; expires_at: number } | null }) {
-  if (!token) return <span className="badge" style={{ background: "var(--color-bg-elevated)", color: "var(--color-text-muted)", fontSize: 10 }}>无Token</span>;
-  const now = Math.floor(Date.now() / 1000);
-  if (token.expires_at < now) return <span className="badge badge-warning" style={{ fontSize: 10 }} title="切号时自动刷新">⚠️ Token过期</span>;
-  return <span className="badge badge-success" style={{ fontSize: 10 }} title={`有效至 ${new Date(token.expires_at * 1000).toLocaleString()}`}>✅ Token</span>;
-}
-
-function TierBadge({ quota }: { quota: QuotaInfo }) {
-  if (quota.is_forbidden) return <span className="badge badge-danger" style={{ fontSize: 10 }}>禁止</span>;
-  if (quota.error) return null;
-  const tier = quota.subscription_tier || "";
-  if (!tier) return null;
-  const color = tier.toLowerCase().includes("pro") ? "badge-success" : tier.includes("ULTRA") ? "badge-info" : "badge-warning";
-  return <span className={`badge ${color}`} style={{ fontSize: 10 }}>{tier}</span>;
-}
-
-function StatusBadge({ status }: { status: string }) {
+function StatusPill({ status }: { status: string }) {
   switch (status) {
-    case "active": return <span className="badge badge-success" style={{ fontSize: 10 }}>活跃</span>;
-    case "login_failed": return <span className="badge badge-danger" style={{ fontSize: 10 }}>失败</span>;
-    case "locked": return <span className="badge badge-danger" style={{ fontSize: 10 }}>锁定</span>;
-    case "disabled": return <span className="badge badge-warning" style={{ fontSize: 10 }}>停用</span>;
-    default: return <span className="badge badge-info" style={{ fontSize: 10 }}>新</span>;
+    case "active": return <span className="status-pill active">活跃</span>;
+    case "login_failed": return <span className="status-pill danger">失败</span>;
+    case "locked": return <span className="status-pill danger">锁定</span>;
+    case "disabled": return <span className="status-pill warning">停用</span>;
+    default: return <span className="status-pill info">新</span>;
   }
 }
