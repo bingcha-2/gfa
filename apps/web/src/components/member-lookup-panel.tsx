@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
+import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
 import { Spinner } from "./spinner";
 
@@ -113,7 +114,6 @@ export function MemberLookupPanel({
   async function handleRemoveMember() {
     if (!result?.familyGroup || !onRemoveMember) return;
     const q = email.trim();
-    if (!confirm(`确认从 ${result.familyGroup.groupName} 中移除 ${q}？`)) return;
 
     setActionLoading("remove");
     try {
@@ -132,7 +132,6 @@ export function MemberLookupPanel({
 
   async function handleRetryOrder() {
     if (!result?.order || !onRetryOrder) return;
-    if (!confirm(`确认重试订单 ${result.order.orderNo}？`)) return;
 
     setActionLoading("retry");
     try {
@@ -157,7 +156,6 @@ export function MemberLookupPanel({
       showToast?.("error", "新邮箱不能与原邮箱相同");
       return;
     }
-    if (!confirm(`确认将 ${oldEmail} 替换为 ${newEmail}？\n将自动移除旧成员并邀请新成员。`)) return;
 
     setActionLoading("replace");
     try {
@@ -292,9 +290,11 @@ export function MemberLookupPanel({
                 borderBottom: "1px solid rgba(255,255,255,0.06)"
               }}>
                 {result.familyGroup && (result.memberStatus === "ACTIVE" || result.memberStatus === "PENDING") && onRemoveMember && (
-                  <button
+                  <ConfirmButton
                     className="button"
-                    onClick={handleRemoveMember}
+                    onConfirm={handleRemoveMember}
+                    confirmLabel="确定移除？"
+                    loadingLabel={<><Spinner size={12} color="currentColor" /> 移除中…</>}
                     disabled={actionLoading !== null}
                     style={{
                       fontSize: "0.85rem",
@@ -307,15 +307,16 @@ export function MemberLookupPanel({
                       color: "#f87171"
                     }}
                   >
-                    {actionLoading === "remove" ? <Spinner size={12} color="currentColor" /> : "⛔"}
-                    移除成员
-                  </button>
+                    ⛔ 移除成员
+                  </ConfirmButton>
                 )}
 
                 {result.order && RETRYABLE_ORDER_STATUSES.has(result.order.status) && onRetryOrder && (
-                  <button
+                  <ConfirmButton
                     className="button"
-                    onClick={handleRetryOrder}
+                    onConfirm={handleRetryOrder}
+                    confirmLabel="确定重试？"
+                    loadingLabel={<><Spinner size={12} color="currentColor" /> 重试中…</>}
                     disabled={actionLoading !== null}
                     style={{
                       fontSize: "0.85rem",
@@ -328,9 +329,8 @@ export function MemberLookupPanel({
                       color: "#fbbf24"
                     }}
                   >
-                    {actionLoading === "retry" ? <Spinner size={12} color="currentColor" /> : "🔄"}
-                    重试订单
-                  </button>
+                    🔄 重试订单
+                  </ConfirmButton>
                 )}
 
                 {result.order && onReplaceMember && (
@@ -381,10 +381,11 @@ export function MemberLookupPanel({
                       style={{ width: "100%" }}
                     />
                   </div>
-                  <button
+                  <ConfirmButton
                     className="button"
-                    type="button"
-                    onClick={handleReplace}
+                    onConfirm={handleReplace}
+                    confirmLabel="确定替换？"
+                    loadingLabel={<><Spinner size={12} color="currentColor" /> 提交中…</>}
                     disabled={actionLoading !== null || !replaceEmail.trim()}
                     style={{
                       minWidth: 90,
@@ -398,8 +399,8 @@ export function MemberLookupPanel({
                       fontSize: "0.85rem"
                     }}
                   >
-                    {actionLoading === "replace" ? <><Spinner size={12} color="currentColor" /> 提交中…</> : "确认替换"}
-                  </button>
+                    确认替换
+                  </ConfirmButton>
                   <button
                     className="button secondary"
                     type="button"

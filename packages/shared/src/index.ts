@@ -30,6 +30,7 @@ export type InviteMemberPayload = {
   userEmail: string;
   /** ISO date string for member-level expiry. Worker sets FamilyMember.expiresAt from this. */
   memberExpiresAt?: string;
+  ignoreCooldown?: boolean;
 };
 
 export type ReplaceMemberPayload = {
@@ -43,6 +44,7 @@ export type ReplaceMemberPayload = {
   reason?: string;
   /** ISO date string inherited from old member's expiresAt */
   inheritedExpiresAt?: string;
+  ignoreCooldown?: boolean;
 };
 
 export type RemoveMemberPayload = {
@@ -50,6 +52,7 @@ export type RemoveMemberPayload = {
   familyGroupId: string;
   accountId: string;
   memberEmail: string;
+  ignoreCooldown?: boolean;
 };
 
 export type SyncFamilyGroupPayload = {
@@ -62,6 +65,7 @@ export type SyncFamilyGroupPayload = {
 export type HealthCheckAccountPayload = {
   taskId?: string;
   accountId: string;
+  ignoreCooldown?: boolean;
 };
 
 export type AutomationPayload = {
@@ -85,6 +89,7 @@ export const REDIS_KEYS = {
   profileLock: "gfa:lock:profile:",
   workerHeartbeat: "gfa:heartbeat:",
   browserPool: "gfa:pool:profile:",
+  schedulerLock: "gfa:scheduler:running",
 } as const;
 
 

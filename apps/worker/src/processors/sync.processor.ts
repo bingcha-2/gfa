@@ -109,56 +109,13 @@ export async function processSync(
     const afterPath = await browser.takeScreenshot(taskId, "sync");
     await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
-    // Deduplicate members by email (same email invited twice → count as one slot).
-    // First occurrence wins for gaiaId, displayName etc.
-    const seenEmails = new Set<string>();
-    const dedupedMembers = members.filter((m) => {
-      const key = m.email?.toLowerCase();
-      if (!key) return true; // gaiaOnly members always kept
-      if (seenEmails.has(key)) return false;
-      seenEmails.add(key);
-      return true;
-    });
-
-    if (dedupedMembers.length < members.length) {
-      await logger.log("WARN",
-        `Deduped ${members.length - dedupedMembers.length} duplicate email(s) from scrape result (${members.length} → ${dedupedMembers.length})`);
-    }
-
-    // Reconcile with database
-    await reconcileMembers(prisma, familyGroupId, dedupedMembers, logger);
-
-    // Update group counts.
-    // Google family groups: 1 manager (admin) + up to 5 non-admin members = 6 total.
-    // We only count non-admin members against the slot limit.
-    const dedupedNonAdmin = dedupedMembers.filter(
-      (m) => !m.role.toLowerCase().includes("manager")
-    );
-    const NON_ADMIN_CAPACITY = 5; // Google always allows 5 non-admin seats
-
-    // IMPORTANT: For slot calculation, use the RAW (non-deduped) member count,
-    // because Google counts duplicate invitations as separate slots.
-    // Deduped count is only used for DB storage (memberCount).
-    const rawNonAdmin = members.filter(
-      (m) => !m.role.toLowerCase().includes("manager")
-    );
-    const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - rawNonAdmin.length);
-    const finalAvailableSlots = Math.min(availableSlots, computedSlots);
-
-    await prisma.familyGroup.update({
-      where: { id: familyGroupId },
-      data: {
-        memberCount: dedupedNonAdmin.length,
-        availableSlots: finalAvailableSlots,
-        lastSyncedAt: new Date(),
-      },
-    });
+    // Deduplicate, reconcile with DB, compute slots, and update FamilyGroup
+    const { memberCount, availableSlots: finalSlots } =
+      await dedupeAndUpdateGroupCounts(prisma, familyGroupId, members, availableSlots, logger);
 
     await logger.updateStatus("SUCCESS");
-    await logger.log(
-      "INFO",
-      `Sync complete: ${dedupedNonAdmin.length} non-admin members (deduped), ${rawNonAdmin.length} raw slots used (Google view), ${finalAvailableSlots} slots available`
-    );
+    await logger.log("INFO",
+      `Sync complete: ${memberCount} non-admin members, ${finalSlots} slots available`);
 
     // If account was previously marked as unhealthy or risky, heal it since sync succeeded
     if (account.status !== "HEALTHY") {
@@ -661,4 +618,77 @@ export async function reconcileMembers(
     });
     await logger.log("INFO", `Marked ${member.email} as REMOVED (not on page, not linked by gaia)`);
   }
+}
+
+const NON_ADMIN_CAPACITY = 5;
+
+/**
+ * Shared helper: deduplicate scraped members, reconcile with DB,
+ * compute slot counts, and update the FamilyGroup record.
+ *
+ * Used by: processSync, postTaskSync, and remove.processor inline sync.
+ * Centralised here so slot-calculation logic stays in one place.
+ */
+export async function dedupeAndUpdateGroupCounts(
+  prisma: PrismaClient,
+  familyGroupId: string,
+  members: ScrapedMember[],       // raw scraped (may contain duplicates)
+  pageSlots: number,              // availableSlots from scrapeMembersFromPage
+  logger: TaskLogger,
+  opts?: { skipReconcile?: boolean }
+): Promise<{ memberCount: number; availableSlots: number }> {
+  // --- Deduplicate by email ---
+  const seenEmails = new Set<string>();
+  const dedupedMembers = members.filter((m) => {
+    const key = m.email?.toLowerCase();
+    if (!key) return true; // gaiaOnly members always kept
+    if (seenEmails.has(key)) return false;
+    seenEmails.add(key);
+    return true;
+  });
+
+  if (dedupedMembers.length < members.length) {
+    await logger.log("WARN",
+      `Deduped ${members.length - dedupedMembers.length} duplicate email(s) (${members.length} → ${dedupedMembers.length})`);
+  }
+
+  // --- Reconcile with DB ---
+  if (!opts?.skipReconcile) {
+    await reconcileMembers(prisma, familyGroupId, dedupedMembers, logger);
+  }
+
+  // --- Compute slot counts ---
+  // Use RAW (non-deduped) count for slots because Google counts duplicate
+  // invitations as separate occupied slots.
+  const rawNonAdmin = members.filter(
+    (m) => !m.role.toLowerCase().includes("manager")
+  );
+  const dedupedNonAdmin = dedupedMembers.filter(
+    (m) => !m.role.toLowerCase().includes("manager")
+  );
+  const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - rawNonAdmin.length);
+
+  // Diagnostic: log divergence between Google invite link and computed value.
+  // We trust computedSlots (derived from actual member count) because
+  // Google's invite link text can be stale/cached. Over-invite risk is
+  // safely caught at execution time by invite processor's FAMILY_FULL detection.
+  if (pageSlots !== computedSlots) {
+    await logger.log("WARN",
+      `Slot divergence: page says ${pageSlots}, computed=${computedSlots} (using computed)`);
+  }
+
+  // --- Update DB ---
+  await prisma.familyGroup.update({
+    where: { id: familyGroupId },
+    data: {
+      memberCount: dedupedNonAdmin.length,
+      availableSlots: computedSlots,
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  await logger.log("INFO",
+    `Group counts updated: ${dedupedNonAdmin.length} members, ${computedSlots} slots available`);
+
+  return { memberCount: dedupedNonAdmin.length, availableSlots: computedSlots };
 }

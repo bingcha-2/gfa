@@ -168,7 +168,7 @@ export function GroupPanel({
 
   async function handleBulkRemoveExpired() {
     const emails = expiryMembers.filter(m => expirySelected.has(m.id)).map(m => m.email);
-    if (!emails.length || !confirm(`确定批量踢出 ${emails.length} 个到期成员？`)) return;
+    if (!emails.length) return;
     setExpiryRemoving(true);
     setExpiryRemoveResult(null);
     try {

@@ -120,46 +120,48 @@ export async function processInvite(
     await logger.updateStatus("RUNNING");
 
     // ── Pre-check: if original account is in cooldown or unhealthy, try fallback immediately ──
-    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    const failureCount = await pool.getAccountTaskFailureCount(accountId);
-    const accountUnhealthy = account.status !== "HEALTHY";
+    if (!job.data.ignoreCooldown) {
+      const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+      const failureCount = await pool.getAccountTaskFailureCount(accountId);
+      const accountUnhealthy = account.status !== "HEALTHY";
 
-    if (cooldownSecs > 0 || failureCount >= 3 || accountUnhealthy) {
-      await logger.log("WARN",
-        `[invite] Original account ${accountId} unavailable ` +
-        `(cooldown=${cooldownSecs}s, failures=${failureCount}, status=${account.status}). ` +
-        `Searching for alternative account...`
-      );
+      if (cooldownSecs > 0 || failureCount >= 3 || accountUnhealthy) {
+        await logger.log("WARN",
+          `[invite] Original account ${accountId} unavailable ` +
+          `(cooldown=${cooldownSecs}s, failures=${failureCount}, status=${account.status}). ` +
+          `Searching for alternative account...`
+        );
 
-      const alt = await findAlternativeAccount(prisma, pool, accountId);
-      if (alt) {
-        await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId})`);
-        accountId = alt.accountId;
-        familyGroupId = alt.familyGroupId;
-        account = await prisma.account.findUnique({ where: { id: accountId } });
-        if (!account) {
-          await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Alternative account ${accountId} not found` });
-          return;
-        }
-        // Update task record to reflect new account/group
-        await prisma.task.update({
-          where: { id: taskId },
-          data: { accountId, familyGroupId },
-        }).catch(() => {});
-        // Update order's family group assignment if needed
-        if (orderId) {
-          await prisma.order.update({
-            where: { id: orderId },
-            data: { familyGroupId },
+        const alt = await findAlternativeAccount(prisma, pool, accountId);
+        if (alt) {
+          await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId})`);
+          accountId = alt.accountId;
+          familyGroupId = alt.familyGroupId;
+          account = await prisma.account.findUnique({ where: { id: accountId } });
+          if (!account) {
+            await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Alternative account ${accountId} not found` });
+            return;
+          }
+          // Update task record to reflect new account/group
+          await prisma.task.update({
+            where: { id: taskId },
+            data: { accountId, familyGroupId },
           }).catch(() => {});
+          // Update order's family group assignment if needed
+          if (orderId) {
+            await prisma.order.update({
+              where: { id: orderId },
+              data: { familyGroupId },
+            }).catch(() => {});
+          }
+        } else {
+          await logger.log("WARN", `[invite] No alternative account available. Failing task.`);
+          await logger.updateStatus("FAILED_RETRYABLE", {
+            code: "NO_HEALTHY_ACCOUNT",
+            message: `Original account in cooldown/unhealthy and no alternative found`,
+          });
+          throw new UnrecoverableError(`No healthy account available for invite`);
         }
-      } else {
-        await logger.log("WARN", `[invite] No alternative account available. Failing task.`);
-        await logger.updateStatus("FAILED_RETRYABLE", {
-          code: "NO_HEALTHY_ACCOUNT",
-          message: `Original account in cooldown/unhealthy and no alternative found`,
-        });
-        throw new UnrecoverableError(`No healthy account available for invite`);
       }
     }
 

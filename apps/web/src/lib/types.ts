@@ -104,6 +104,9 @@ export type TaskSummary = {
   lastErrorCode?: string | null;
   lastErrorMessage?: string | null;
   createdAt: string;
+  updatedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
   order?: {
     id: string;
     orderNo: string;

@@ -17,6 +17,7 @@ import { OrderModule } from "./order/order.module";
 import { TaskModule } from "./task/task.module";
 import { ExpireScanModule } from "./expire-scan/expire-scan.module";
 import { AutomationModule } from "./automation/automation.module";
+import { SchedulerModule } from "./scheduler/scheduler.module";
 import { HealthController } from "./health.controller";
 
 @Module({
@@ -56,7 +57,8 @@ import { HealthController } from "./health.controller";
     OrderModule,
     TaskModule,
     ExpireScanModule,
-    AutomationModule
+    AutomationModule,
+    SchedulerModule,
   ],
   controllers: [HealthController],
   providers: [

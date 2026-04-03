@@ -10,6 +10,35 @@ import { canReplaceMember } from "../lib/permissions";
 import { OrderSummary } from "../lib/types";
 import { StatusBadge } from "./status-badge";
 
+/** Check if an order was cancelled by the scheduler (not a real failure) */
+function isSchedulerCancelled(order: OrderSummary): boolean {
+  if (order.status !== "FAILED" || !order.resultMessage) return false;
+  return (
+    order.resultMessage.startsWith("重复取消") ||
+    order.resultMessage.startsWith("定时取消")
+  );
+}
+
+/** Render the appropriate badge for an order */
+function OrderStatusBadge({ order }: { order: OrderSummary }) {
+  if (isSchedulerCancelled(order)) {
+    const label = order.resultMessage!.startsWith("重复取消") ? "重复清理" : "定时清理";
+    return (
+      <span
+        className="status-badge"
+        style={{
+          background: "rgba(120, 140, 180, 0.15)",
+          color: "#8a9dc0",
+          border: "1px solid rgba(120, 140, 180, 0.25)",
+        }}
+      >
+        {label}
+      </span>
+    );
+  }
+  return <StatusBadge value={order.status} />;
+}
+
 type OrdersPanelProps = {
   orders: OrderSummary[];
   role?: string;
@@ -218,7 +247,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                             </span>
                           </td>
                           <td><span style={{ fontSize: 13, wordBreak: "break-all" }}>{order.userEmail}</span></td>
-                          <td><StatusBadge value={order.status} /></td>
+                          <td><OrderStatusBadge order={order} /></td>
                           <td>{order.familyGroup?.groupName ?? "–"}</td>
                           <td style={{ whiteSpace: "nowrap", fontSize: 13 }}>{formatDateTime(order.createdAt)}</td>
                           <td>

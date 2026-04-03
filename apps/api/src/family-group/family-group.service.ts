@@ -221,7 +221,7 @@ export class FamilyGroupService {
     try {
       const job = await this.syncQueue.add(
         "sync-family-group",
-        { taskId: task.id, familyGroupId: groupId, accountId: group.accountId },
+        { taskId: task.id, familyGroupId: groupId, accountId: group.accountId, ignoreCooldown: true },
         { ...JOB_DEFAULTS }
       );
       return { queued: true, jobId: job.id, taskId: task.id };
@@ -296,7 +296,8 @@ export class FamilyGroupService {
           familyGroupId: groupId,
           accountId: group.accountId,
           memberEmail,
-          originalMemberStatus: result.originalStatus
+          originalMemberStatus: result.originalStatus,
+          ignoreCooldown: true
         },
         { ...JOB_DEFAULTS }
       );
@@ -377,7 +378,7 @@ export class FamilyGroupService {
         try {
           await this.removeQueue.add(
             "remove-member",
-            { taskId: outcome.taskId, familyGroupId: groupId, accountId: group.accountId, memberEmail: normEmail },
+            { taskId: outcome.taskId, familyGroupId: groupId, accountId: group.accountId, memberEmail: normEmail, ignoreCooldown: true },
             {
               ...JOB_DEFAULTS,
               jobId: `remove:${groupId}:${normEmail}` // deduplication key
@@ -490,7 +491,7 @@ export class FamilyGroupService {
 
         await this.inviteQueue.add(
           "invite-member",
-          { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt },
+          { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt, ignoreCooldown: true },
           {
             ...JOB_DEFAULTS,
             jobId: `invite:${groupId}:${email}` // deduplication key

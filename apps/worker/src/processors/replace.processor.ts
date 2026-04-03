@@ -65,18 +65,20 @@ export async function processReplace(
 
   try {
     // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → fail fast ──
-    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    const priorFailures = await pool.getAccountTaskFailureCount(accountId);
-    if (cooldownSecs > 0 || priorFailures >= 3 || account.status !== "HEALTHY") {
-      await logger.log("WARN",
-        `[replace] Account ${accountId} unavailable (cooldown=${cooldownSecs}s, failures=${priorFailures}, status=${account.status}). ` +
-        `Replace tasks require the group's own account — cannot switch. Failing task.`
-      );
-      await logger.updateStatus("FAILED_RETRYABLE", {
-        code: "ACCOUNT_UNAVAILABLE",
-        message: `Account in cooldown/unhealthy (failures=${priorFailures}, status=${account.status})`,
-      });
-      throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
+    if (!job.data.ignoreCooldown) {
+      const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+      const priorFailures = await pool.getAccountTaskFailureCount(accountId);
+      if (cooldownSecs > 0 || priorFailures >= 3 || account.status !== "HEALTHY") {
+        await logger.log("WARN",
+          `[replace] Account ${accountId} unavailable (cooldown=${cooldownSecs}s, failures=${priorFailures}, status=${account.status}). ` +
+          `Replace tasks require the group's own account — cannot switch. Failing task.`
+        );
+        await logger.updateStatus("FAILED_RETRYABLE", {
+          code: "ACCOUNT_UNAVAILABLE",
+          message: `Account in cooldown/unhealthy (failures=${priorFailures}, status=${account.status})`,
+        });
+        throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
+      }
     }
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)

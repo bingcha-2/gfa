@@ -57,11 +57,13 @@ export async function processHealth(
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
-    const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-    if (cooldownSecs > 0) {
-      await logger.log("WARN", `[health] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+    if (!job.data.ignoreCooldown) {
+      const cooldownSecs = await pool.isLoginCoolingDown(accountId);
+      if (cooldownSecs > 0) {
+        await logger.log("WARN", `[health] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+      }
     }
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)

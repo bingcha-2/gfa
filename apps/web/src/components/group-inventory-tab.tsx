@@ -1,6 +1,7 @@
 "use client";
 
 import React, { Fragment } from "react";
+import { ConfirmButton } from "./confirm-button";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 import { 
@@ -598,12 +599,13 @@ export function InventoryTab({
                                                         <>
                                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                                                             {m.status === 'PENDING' ? (
-                                                              <button
+                                                              <ConfirmButton
                                                                 className="button small"
                                                                 style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316', border: '1px solid rgba(249,115,22,0.2)' }}
                                                                 disabled={removingMemberId === m.id || !!memberTaskMap[m.id]}
-                                                                onClick={async () => {
-                                                                  if (!confirm(`确定取消对 ${m.email} 的邀请？`)) return;
+                                                                confirmLabel="确定取消？"
+                                                                loadingLabel="提交中..."
+                                                                onConfirm={async () => {
                                                                   setRemovingMemberId(m.id);
                                                                   try {
                                                                     const result = await onRemoveMember(group.id, m.email);
@@ -614,16 +616,16 @@ export function InventoryTab({
                                                                     setRemovingMemberId(null);
                                                                   }
                                                                 }}
-                                                                type="button"
                                                               >
-                                                                {removingMemberId === m.id ? "提交中..." : "取消邀请"}
-                                                              </button>
+                                                                取消邀请
+                                                              </ConfirmButton>
                                                             ) : (
-                                                              <button
+                                                              <ConfirmButton
                                                                 className="button danger small"
                                                                 disabled={removingMemberId === m.id || replacingMemberId !== null || migratingMemberId !== null || !!memberTaskMap[m.id]}
-                                                                onClick={async () => {
-                                                                  if (!confirm(`确定移除成员 ${m.email}？`)) return;
+                                                                confirmLabel="确定移除？"
+                                                                loadingLabel="提交中..."
+                                                                onConfirm={async () => {
                                                                   setRemovingMemberId(m.id);
                                                                   try {
                                                                     const result = await onRemoveMember(group.id, m.email);
@@ -634,10 +636,9 @@ export function InventoryTab({
                                                                     setRemovingMemberId(null);
                                                                   }
                                                                 }}
-                                                                type="button"
                                                               >
-                                                                {removingMemberId === m.id ? "提交中..." : "移除"}
-                                                              </button>
+                                                                移除
+                                                              </ConfirmButton>
                                                             )}
                                                             <button
                                                               className="button secondary small"
@@ -648,12 +649,13 @@ export function InventoryTab({
                                                               替换
                                                             </button>
                                                             {onMigrateMember && (
-                                                              <button
+                                                              <ConfirmButton
                                                                 className="button small"
                                                                 style={{ background: 'rgba(139,92,246,0.15)', color: '#7c3aed', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                                                 disabled={migratingMemberId === m.id || removingMemberId !== null || replacingMemberId !== null || !!memberTaskMap[m.id]}
-                                                                onClick={async () => {
-                                                                  if (!confirm(`确定迁移成员 ${m.email}？\n\n该操作将：\n1. 直接从当前家庭组数据库中删除该成员（不需登录母号）\n2. 自动在有空位的家庭组中重新邀请该账号\n\n确认继续？`)) return;
+                                                                confirmLabel="确定迁移？"
+                                                                loadingLabel={<><Spinner size={12} color="currentColor" /> 迁移中</>}
+                                                                onConfirm={async () => {
                                                                   setMigratingMemberId(m.id);
                                                                   try {
                                                                     const result = await onMigrateMember(group.id, m.email);
@@ -668,10 +670,9 @@ export function InventoryTab({
                                                                     setMigratingMemberId(null);
                                                                   }
                                                                 }}
-                                                                type="button"
                                                               >
-                                                                {migratingMemberId === m.id ? <Spinner size={12} color="currentColor" /> : '🔀 迁移'}
-                                                              </button>
+                                                                🔀 迁移
+                                                              </ConfirmButton>
                                                             )}
                                                             {memberTaskMap[m.id] && (() => {
                                                               const ts = memberTaskMap[m.id];
@@ -688,17 +689,20 @@ export function InventoryTab({
                                                           {replacingMemberId === m.id && (
                                                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
                                                               <input type="email" placeholder="新邮箱" value={replaceEmail} onChange={(e) => setReplaceEmail(e.target.value)} style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }} autoFocus />
-                                                              <button className="button" style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer' }} disabled={!replaceEmail.trim() || removingMemberId !== null} onClick={async () => {
-                                                                const newE = replaceEmail.trim().toLowerCase();
-                                                                if (!newE) return;
-                                                                if (!confirm(`确认将 ${m.email} 替换为 ${newE}？`)) return;
-                                                                setRemovingMemberId(m.id);
-                                                                try {
-                                                                  const result = await onReplaceMember(group.id, m.email, newE);
-                                                                  setReplacingMemberId(null); setReplaceEmail('');
-                                                                  if (result?.taskId) pollMemberTask(m.id, result.taskId, 'replace', group.id);
-                                                                } finally { setRemovingMemberId(null); }
-                                                              }} type="button">确认</button>
+                                                              <ConfirmButton className="button" style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer' }} disabled={!replaceEmail.trim() || removingMemberId !== null}
+                                                                confirmLabel="确定？"
+                                                                loadingLabel="提交中..."
+                                                                onConfirm={async () => {
+                                                                  const newE = replaceEmail.trim().toLowerCase();
+                                                                  if (!newE) return;
+                                                                  setRemovingMemberId(m.id);
+                                                                  try {
+                                                                    const result = await onReplaceMember(group.id, m.email, newE);
+                                                                    setReplacingMemberId(null); setReplaceEmail('');
+                                                                    if (result?.taskId) pollMemberTask(m.id, result.taskId, 'replace', group.id);
+                                                                  } finally { setRemovingMemberId(null); }
+                                                                }}
+                                                              >确认</ConfirmButton>
                                                               <button className="button secondary" style={{ fontSize: '0.75rem', padding: '3px 6px', borderRadius: '4px', cursor: 'pointer' }} onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }} type="button">取消</button>
                                                             </div>
                                                           )}

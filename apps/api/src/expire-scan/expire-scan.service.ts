@@ -126,6 +126,7 @@ export class ExpireScanService {
                 orderId: order.id,
                 familyGroupId: order.familyGroupId,
                 accountId: order.familyGroup.accountId,
+                source: "expire-scan",
                 payload: JSON.stringify({
                   orderId: order.id,
                   familyGroupId: order.familyGroupId,
@@ -206,6 +207,7 @@ export class ExpireScanService {
                 type: "REMOVE_MEMBER",
                 familyGroupId: member.familyGroupId,
                 accountId: member.familyGroup.accountId,
+                source: "expire-scan",
                 payload: JSON.stringify({
                   familyGroupId: member.familyGroupId,
                   accountId: member.familyGroup.accountId,

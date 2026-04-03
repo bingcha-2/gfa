@@ -86,6 +86,98 @@ export class TaskLogger {
       where: { id: this.taskId },
       data,
     });
+
+    // When a task succeeds, auto-cancel older failed siblings of the same
+    // type + familyGroupId so the dashboard stays clean.
+    const SUCCESS_STATUSES: TaskStatusValue[] = [
+      "SUCCESS", "INVITE_SENT", "REPLACED_AND_INVITE_SENT",
+    ];
+    if (SUCCESS_STATUSES.includes(status)) {
+      await this.supersedeSiblingTasks().catch((err) => {
+        console.warn(
+          `[task:${this.taskId}] supersedeSiblingTasks failed (non-fatal):`,
+          err instanceof Error ? err.message : String(err)
+        );
+      });
+    }
+  }
+
+  /**
+   * Cancel older sibling tasks (same type + familyGroupId) that are stuck
+   * in a failed/retryable/manual-review state. Called automatically when
+   * this task succeeds.
+   */
+  private async supersedeSiblingTasks(): Promise<void> {
+    // Fetch this task's metadata to know what to match against
+    const self = await this.prisma.task.findUnique({
+      where: { id: this.taskId },
+      select: { type: true, familyGroupId: true, payload: true },
+    });
+
+    if (!self?.familyGroupId) return; // nothing to supersede without a group
+
+    const where: Record<string, unknown> = {
+      type: self.type,
+      familyGroupId: self.familyGroupId,
+      id: { not: this.taskId },
+      status: {
+        in: ["FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW"],
+      },
+    };
+
+    // For member-specific tasks, scope the cleanup to the same member email
+    try {
+      const payload = JSON.parse(self.payload ?? "{}");
+      const memberEmail =
+        payload.memberEmail || payload.targetMemberEmail || payload.userEmail;
+      if (memberEmail) {
+        where.payload = { contains: memberEmail };
+      }
+    } catch { /* ignore parse errors */ }
+
+    const now = new Date();
+    const obsolete = await this.prisma.task.findMany({
+      where,
+      select: { id: true, orderId: true },
+    });
+
+    if (obsolete.length === 0) return;
+
+    await this.prisma.task.updateMany({
+      where: { id: { in: obsolete.map((t) => t.id) } },
+      data: {
+        status: "CANCELLED",
+        lastErrorCode: "SUPERSEDED",
+        lastErrorMessage: `被新的成功任务取代 (${this.taskId.slice(0, 12)})`,
+        finishedAt: now,
+      },
+    });
+
+    // Fail linked orders that are still in non-terminal states
+    const orderIds = obsolete
+      .map((t) => t.orderId)
+      .filter((id): id is string => !!id);
+    if (orderIds.length > 0) {
+      await this.prisma.order.updateMany({
+        where: {
+          id: { in: orderIds },
+          status: {
+            in: [
+              "CREATED", "CODE_VERIFIED", "GROUP_ASSIGNED",
+              "TASK_QUEUED", "TASK_RUNNING", "MANUAL_REVIEW",
+            ],
+          },
+        },
+        data: {
+          status: "FAILED",
+          resultMessage: "任务已被新的成功执行取代",
+        },
+      });
+    }
+
+    console.log(
+      `[task:${this.taskId}] Superseded ${obsolete.length} obsolete sibling task(s)`
+    );
   }
 
   /**

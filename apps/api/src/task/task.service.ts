@@ -32,7 +32,10 @@ export class TaskService {
   }
 
   async findAll(params?: { status?: string; type?: string }) {
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = {
+      // Exclude scheduler and expire-scan tasks from regular task list
+      source: { notIn: ["scheduler", "expire-scan"] },
+    };
 
     if (params?.status) where.status = params.status;
     if (params?.type) where.type = params.type;

@@ -461,6 +461,16 @@ img {
   box-shadow: 0 6px 18px rgba(220, 38, 38, 0.18);
 }
 
+/* Armed state: two-click confirmation — button is waiting for second click */
+.button.armed {
+  animation: armed-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes armed-pulse {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0.8; transform: scale(1.04); }
+}
+
 .button.small,
 .pill-link.small {
   min-height: 30px;
@@ -1126,34 +1136,30 @@ img {
   table-layout: fixed;
 }
 
+/* Fix: 5 columns (名称, 登录邮箱, 状态, 统计, 操作) */
 .data-table-accounts th:nth-child(1),
 .data-table-accounts td:nth-child(1) {
-  width: 24%;
+  width: 20%;
 }
 
 .data-table-accounts th:nth-child(2),
 .data-table-accounts td:nth-child(2) {
-  width: 24%;
+  width: 22%;
 }
 
 .data-table-accounts th:nth-child(3),
 .data-table-accounts td:nth-child(3) {
-  width: 14%;
+  width: 12%;
 }
 
 .data-table-accounts th:nth-child(4),
 .data-table-accounts td:nth-child(4) {
-  width: 14%;
+  width: 24%;
 }
 
 .data-table-accounts th:nth-child(5),
 .data-table-accounts td:nth-child(5) {
-  width: 8%;
-}
-
-.data-table-accounts th:nth-child(6),
-.data-table-accounts td:nth-child(6) {
-  width: 16%;
+  width: 22%;
 }
 
 .account-primary,
@@ -1584,9 +1590,15 @@ img {
   vertical-align: middle;
 }
 
-.data-table-accounts th:nth-child(5),
-.data-table-accounts td:nth-child(5) {
-  min-width: 140px;
+/* Allow account panel content (especially buttons) to not be clipped
+   by the glass-panel's overflow: hidden */
+.account-panel {
+  overflow: visible;
+}
+
+.account-panel::before {
+  /* Re-clip the decorative gradient so it doesn't bleed out */
+  border-radius: inherit;
 }
 
 .account-stats {

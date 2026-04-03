@@ -26,7 +26,7 @@ import { handleLoginResult } from "../handle-login-result";
 import { generateTOTP, totpSecondsRemaining } from "../totp";
 import { checkTransferBatchProgress } from "../check-transfer-progress";
 import { Queue } from "bullmq";
-import { scrapeMembersFromPage, reconcileMembers } from "./sync.processor";
+import { postTaskSync } from "../post-task-sync";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -87,11 +87,13 @@ export async function processRemove(
     }
 
     // Cooldown guard: skip immediately if this account recently failed login
-    const cooldownSecs = await pool.isLoginCoolingDown(account.id);
-    if (cooldownSecs > 0) {
-      await logger.log("WARN", `[remove] Account ${account.id} in login cooldown (${cooldownSecs}s remaining), skipping`);
-      await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
-      throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+    if (!job.data.ignoreCooldown) {
+      const cooldownSecs = await pool.isLoginCoolingDown(account.id);
+      if (cooldownSecs > 0) {
+        await logger.log("WARN", `[remove] Account ${account.id} in login cooldown (${cooldownSecs}s remaining), skipping`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
+      }
     }
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
@@ -139,61 +141,14 @@ export async function processRemove(
       displayName: memberRecord?.displayName ?? undefined,
     }, otherGaiaIds);
 
-    // ── Post-removal inline sync ──
-    // Browser is already logged in and on the family page (from verification in removeMemberOnPage).
-    // No re-login needed — reuse session for immediate sync.
-    try {
-      await logger.log("INFO", "Running post-removal sync (reusing browser session)...");
+    // ── Post-removal sync ──
+    // Reuse the shared postTaskSync which handles: dedup, reconcile, slot
+    // calculation — all in one consistent path.
+    const syncOk = await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
 
-      // Navigate to family page (already there from verification, but ensure clean state)
-      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForTimeout(500);
-
-      const adminEmail = (account.loginEmail ?? "").trim().toLowerCase();
-      const { members: currentMembers, availableSlots: pageSlots } = await scrapeMembersFromPage(page, adminEmail);
-      await logger.log("INFO", `Post-removal sync: found ${currentMembers.length} members on page`);
-
-      // Deduplicate by email
-      const seenSyncEmails = new Set<string>();
-      const dedupedSyncMembers = currentMembers.filter((m) => {
-        const key = m.email?.toLowerCase();
-        if (!key) return true;
-        if (seenSyncEmails.has(key)) return false;
-        seenSyncEmails.add(key);
-        return true;
-      });
-
-      // Reconcile with DB — auto-marks removed members as REMOVED, updates statuses
-      await reconcileMembers(prisma, familyGroupId, dedupedSyncMembers, logger);
-
-      // Update group counts from actual page data
-      const rawNonAdmin = currentMembers.filter(
-        (m) => !m.role.toLowerCase().includes("manager")
-      );
-      const dedupedNonAdmin = dedupedSyncMembers.filter(
-        (m) => !m.role.toLowerCase().includes("manager")
-      );
-      const NON_ADMIN_CAPACITY = 5;
-      const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - rawNonAdmin.length);
-      const finalSlots = Math.min(pageSlots, computedSlots);
-
-      await prisma.familyGroup.update({
-        where: { id: familyGroupId },
-        data: {
-          memberCount: dedupedNonAdmin.length,
-          availableSlots: finalSlots,
-          lastSyncedAt: new Date(),
-        },
-      });
-
-      await logger.log("INFO",
-        `Post-removal sync complete: ${dedupedNonAdmin.length} members, ${finalSlots} slots available`
-      );
-    } catch (syncErr) {
-      // Sync failed, but removal was already verified — fall back to manual DB update
-      await logger.log("WARN",
-        `Post-removal sync failed (falling back to manual update): ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`
-      );
+    if (!syncOk) {
+      // postTaskSync failed silently — apply manual fallback so slots stay accurate
+      await logger.log("WARN", "Post-removal sync failed, applying manual DB fallback");
       await prisma.familyMember.updateMany({
         where: { familyGroupId, email: memberEmail },
         data: { status: "REMOVED", removedAt: new Date() },
@@ -206,6 +161,20 @@ export async function processRemove(
         where: { id: familyGroupId, memberCount: { gt: 0 } },
         data: { memberCount: { decrement: 1 } },
       });
+    } else {
+      // Verify the removed member was marked in DB (postTaskSync's reconcile
+      // should have done this, but ensure it as a safety net)
+      const memberAfterSync = await prisma.familyMember.findFirst({
+        where: { familyGroupId, email: memberEmail },
+        select: { status: true },
+      });
+      if (memberAfterSync && memberAfterSync.status !== "REMOVED") {
+        await logger.log("WARN", `Post-sync: member ${memberEmail} still ${memberAfterSync.status}, forcing REMOVED`);
+        await prisma.familyMember.updateMany({
+          where: { familyGroupId, email: memberEmail },
+          data: { status: "REMOVED", removedAt: new Date() },
+        });
+      }
     }
 
     const afterPath = await browser.takeScreenshot(taskId, "after");

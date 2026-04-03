@@ -78,12 +78,11 @@ const depsWithInviteQueue = { ...deps, inviteQueue: inviteQueueRef };
 
 // ---- Workers ----
 
-// Each queue runs at most 4 concurrent jobs.
-// With 6 queues, up to 24 jobs can be active concurrently — but only `poolSize`
-// profiles exist, so the Redis-backed BrowserPool.acquire() naturally throttles
-// to `poolSize` active browsers. Extra jobs will queue-wait (up to 180s) for a
-// free profile rather than failing immediately.
-const WORKER_CONCURRENCY = 4;
+// Concurrency = pool size: each job needs an AdsPower profile, so there's no
+// point dispatching more concurrent jobs than available profiles — extras would
+// just spin in acquireForAccount() waiting for a free profile.
+const WORKER_CONCURRENCY = pool.poolSize;
+console.log(`[${workerId}] Pool size: ${pool.poolSize}, worker concurrency: ${WORKER_CONCURRENCY}`);
 
 const inviteWorker = new Worker<InviteMemberPayload>(
   QUEUE_NAMES.invite,

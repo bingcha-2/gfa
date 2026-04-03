@@ -5,6 +5,7 @@ import { useState } from "react";
 import { formatDateTime } from "../lib/format";
 import { canCreateAccount } from "../lib/permissions";
 import { AccountSummary } from "../lib/types";
+import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
 
 type BulkImportResult = {
@@ -37,7 +38,6 @@ type AccountPanelProps = {
 
 export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpdate, onConfirmLogin, onSyncAccount, role }: AccountPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const canManage = canCreateAccount(role);
   const [activeTab, setActiveTab] = useState<"list" | "create" | "bulk" | "edit">("list");
   const [form, setForm] = useState({
@@ -67,8 +67,6 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
     subscriptionPlan: ""
   });
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterAccountStatus, setFilterAccountStatus] = useState("ALL");
   const [filterSubStatus, setFilterSubStatus] = useState("ALL");
@@ -591,63 +589,42 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                             >
                               编辑
                             </button>
-                            <button
+                            <ConfirmButton
                               className="button danger small"
-                              disabled={deletingId === account.id || syncingId === account.id || confirmingId === account.id}
-                              onClick={async () => {
-                                if (!confirm(`确定删除母号 ${account.loginEmail}？\n该操作会同时删除关联的家庭组和成员记录。`)) return;
-                                setDeletingId(account.id);
-                                try {
-                                  await onDelete(account.id);
-                                } finally {
-                                  setDeletingId(null);
-                                }
-                              }}
+                              confirmLabel="确定删除？"
+                              loadingLabel="删除中..."
+                              onConfirm={() => onDelete(account.id)}
                             >
-                              {deletingId === account.id ? "删除中..." : "删除"}
-                            </button>
-                            {/* Sync Account Groups (ignoreCooldown) */}
+                              删除
+                            </ConfirmButton>
                             {onSyncAccount && (
-                              <button
+                              <ConfirmButton
                                 className="button small"
                                 style={{ background: 'var(--emerald, #059669)', color: 'white', borderColor: 'var(--emerald, #059669)' }}
-                                disabled={syncingId === account.id || confirmingId === account.id || deletingId === account.id}
+                                armedStyle={{ background: 'var(--warm, #d97706)', borderColor: 'var(--warm, #d97706)' }}
+                                confirmLabel="确定同步？"
+                                loadingLabel="调度中..."
                                 title="强制为该母号底下的所有组发起同步以解异常，无视冷却期"
-                                onClick={async () => {
-                                  if (!confirm(`确定要强制同步母号 ${account.loginEmail} 吗？\n将无视冷却期立刻启动浏览器同步家庭组。如同步成功，账号状态会自动恢复健康！`)) return;
-                                  setSyncingId(account.id);
-                                  try {
-                                    await onSyncAccount(account.id);
-                                  } finally {
-                                    setSyncingId(null);
-                                  }
-                                }}
+                                onConfirm={() => onSyncAccount(account.id)}
                               >
-                                {syncingId === account.id ? "调度中..." : "同步"}
-                              </button>
+                                同步
+                              </ConfirmButton>
                             )}
-                            {/* Confirm Login: show only for accounts needing manual intervention */}
                             {onConfirmLogin && (
                               account.status === "MANUAL_REVIEW" ||
                               account.status === "VERIFICATION_REQUIRED" ||
                               account.status === "LOGIN_REQUIRED"
                             ) && (
-                              <button
+                              <ConfirmButton
                                 className="button small"
                                 style={{ background: 'var(--warm, #d97706)' }}
-                                disabled={confirmingId === account.id || syncingId === account.id || deletingId === account.id}
+                                confirmLabel="确定？"
+                                loadingLabel="确认中..."
                                 title="运维人工在 AdsPower 中登录后点此确认，系统会重置账号状态并重试待处理任务"
-                                onClick={async () => {
-                                  setConfirmingId(account.id);
-                                  try {
-                                    await onConfirmLogin!(account.id);
-                                  } finally {
-                                    setConfirmingId(null);
-                                  }
-                                }}
+                                onConfirm={() => onConfirmLogin!(account.id)}
                               >
-                                {confirmingId === account.id ? "确认中..." : "确认已登录"}
-                              </button>
+                                确认已登录
+                              </ConfirmButton>
                             )}
                           </div>
                         </td>

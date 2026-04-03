@@ -23,6 +23,7 @@ import { StatusBadge } from "./status-badge";
 import { TasksPanel } from "./tasks-panel";
 import { ExpireScanPanel } from "./expire-scan-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";
+import { SchedulerPanel } from "./scheduler-panel";
 
 type ConsoleData = {
   user: SessionUser;
@@ -33,7 +34,7 @@ type ConsoleData = {
   redeemCodes: RedeemCodeSummary[];
 };
 
-type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "lookup" | "settings";
+type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings";
 
 // --- Bulk operation result types ---
 export type CrossInviteResult = {
@@ -586,6 +587,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const recentOrders = data.orders.slice(0, 5);
   const reviewQueue = data.tasks.filter((task) => task.status === "MANUAL_REVIEW").slice(0, 5);
 
+  const isAdminOrOps = data.user.role === "ADMIN" || data.user.role === "OPERATIONS";
+
   const navigation = [
     {
       id: "overview" as const,
@@ -629,6 +632,13 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       caption: "过期订单",
       metric: `${data.orders.filter((o) => o.status === "EXPIRED").length} 已过期`
     },
+    // Scheduler requires ADMIN/OPERATIONS — hide from SUPPORT to avoid 403 errors
+    ...(isAdminOrOps ? [{
+      id: "scheduler" as const,
+      label: "自动维护",
+      caption: "定时调度",
+      metric: ""
+    }] : []),
     {
       id: "lookup" as const,
       label: "成员管理",
@@ -810,6 +820,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
           <ExpireScanPanel
             expiredOrders={data.orders.filter((o) => o.status === "EXPIRED")}
           />
+        );
+      case "scheduler":
+        return (
+          <SchedulerPanel showToast={showToast} />
         );
       case "lookup":
         return (

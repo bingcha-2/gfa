@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useState, useEffect, useRef } from "react";
 
 import {
   canCancelTask,
@@ -11,6 +11,77 @@ import {
 import { TaskSummary } from "../lib/types";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
+
+/** 格式化绝对时间为本地可读字符串 */
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/** 格式化毫秒耗时为人类可读（< 60s 显示秒，否则分秒） */
+function fmtDuration(ms: number): string {
+  if (ms < 0) return "-";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${rem}s`;
+}
+
+type TaskTimeMetaProps = {
+  task: import("../lib/types").TaskSummary;
+};
+
+/** 展示任务创建时间与执行耗时，对 RUNNING 状态实时计时 */
+function TaskTimeMeta({ task }: TaskTimeMetaProps) {
+  const isRunning = task.status === "RUNNING";
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!isRunning || !task.startedAt) {
+      setElapsed(null);
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
+    const start = new Date(task.startedAt).getTime();
+    const tick = () => setElapsed(Date.now() - start);
+    tick();
+    timerRef.current = setInterval(tick, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isRunning, task.startedAt]);
+
+  // 计算静态耗时（已完成任务）
+  let durationLabel: string | null = null;
+  if (!isRunning && task.startedAt && task.finishedAt) {
+    const ms = new Date(task.finishedAt).getTime() - new Date(task.startedAt).getTime();
+    durationLabel = fmtDuration(ms);
+  } else if (!isRunning && task.startedAt && task.updatedAt) {
+    // fallback: updatedAt as end time
+    const ms = new Date(task.updatedAt).getTime() - new Date(task.startedAt).getTime();
+    if (ms > 0) durationLabel = fmtDuration(ms);
+  }
+
+  return (
+    <div style={{ fontSize: '0.72rem', color: 'var(--clr-muted, #94a3b8)', marginTop: 2, lineHeight: 1.6 }}>
+      <span title="创建时间">🕐 {fmtTime(task.createdAt)}</span>
+      {isRunning && task.startedAt && elapsed !== null && (
+        <span style={{ marginLeft: 6, color: 'var(--accent, #0d9488)' }}>
+          ⏱ {fmtDuration(elapsed)}
+        </span>
+      )}
+      {!isRunning && durationLabel && (
+        <span style={{ marginLeft: 6 }}>⏱ {durationLabel}</span>
+      )}
+    </div>
+  );
+}
 
 type TasksPanelProps = {
   tasks: TaskSummary[];
@@ -191,10 +262,10 @@ export function TasksPanel({
         <div className="table-wrap workspace-table-wrap">
           <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
             <colgroup>
-              <col style={{ width: '18%' }} />
+              <col style={{ width: '20%' }} />
               <col style={{ width: '10%' }} />
               <col style={{ width: '15%' }} />
-              <col style={{ width: '32%' }} />
+              <col style={{ width: '30%' }} />
               <col style={{ width: '25%' }} />
             </colgroup>
             <thead>
@@ -238,6 +309,7 @@ export function TasksPanel({
                         <div className="muted mono" style={{ fontSize: '0.75rem' }}>
                           {task.id.slice(0, 12)} · retry {task.retryCount}/{task.maxRetryCount}
                         </div>
+                        <TaskTimeMeta task={task} />
                       </td>
                       <td>
                         <StatusBadge value={isActioning ? "RUNNING" : task.status} />

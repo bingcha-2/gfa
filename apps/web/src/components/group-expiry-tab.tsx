@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { ConfirmButton } from "./confirm-button";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 import { BatchResultTable, ExpiredMemberInfo } from "./group-panel-types";
@@ -143,14 +144,15 @@ export function ExpiryTab({
 
           {/* Bulk actions */}
           <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-            <button
+            <ConfirmButton
               className="button danger small"
               disabled={expirySelected.size === 0 || expiryRemoving}
-              onClick={handleBulkRemoveExpired}
-              type="button"
+              confirmLabel={`确定踢出 ${expirySelected.size} 个？`}
+              loadingLabel={<><Spinner size={14} color="currentColor" /> 踢出中...</>}
+              onConfirm={handleBulkRemoveExpired}
             >
-              {expiryRemoving ? <><Spinner size={14} color="currentColor" /> 踢出中...</> : `批量踢出 (${expirySelected.size})`}
-            </button>
+              批量踢出 ({expirySelected.size})
+            </ConfirmButton>
           </div>
 
           {expiryRemoveResult && <BatchResultTable result={expiryRemoveResult} />}

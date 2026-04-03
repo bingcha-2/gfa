@@ -143,6 +143,7 @@ model Account {
   subscriptionStatus       String?   // "ACTIVE" | "EXPIRED" | "SUSPENDED"
   subscriptionStatusUpdatedAt DateTime? // timestamp when subscriptionStatus last changed
   subscriptionPlan         String?   // e.g. "Google AI Ultra 30 TB"
+  lastAutoMaintenanceAt    DateTime?
   familyGroups             FamilyGroup[]
   tasks               Task[]
   createdAt           DateTime      @default(now())
@@ -257,6 +258,7 @@ model Task {
   accountId            String?
   workerId             String?
   transferBatchId      String?
+  source               String          @default("manual")
   status               TaskStatus      @default(PENDING)
   priority             Int             @default(0)
   retryCount           Int             @default(0)
@@ -331,4 +333,24 @@ model SwapRecord {
   updatedAt DateTime         @updatedAt
 
   @@index([orderId])
+}
+
+model SystemSchedulerConfig {
+  id                          String   @id @default("default")
+  enabled                     Boolean  @default(false)
+  maxAccountsPerRun           Int      @default(10)
+  accountCooldownMinutes      Int      @default(60)
+  runWindowStart              String   @default("22:00")
+  runWindowEnd                String   @default("08:00")
+  staleSyncThresholdMinutes   Int      @default(1440)
+  syncEnabled                 Boolean  @default(true)
+  removeExpiredMembersEnabled Boolean  @default(true)
+  cancelTimedOutInvitesEnabled Boolean @default(true)
+  deduplicateMembersEnabled   Boolean  @default(true)
+  inviteTimeoutDays           Int      @default(3)
+  lastRunAt                   DateTime?
+  lastRunStatus               String?
+  lastRunSummary              String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
