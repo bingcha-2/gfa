@@ -386,6 +386,23 @@ export async function processInvite(
     // Post-task sync: scrape the family page to reconcile DB with actual state
     await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
 
+    // Guard: postTaskSync may incorrectly mark the just-invited member as REMOVED
+    // when Google hides the email on the family page (shows name only).
+    // Restore status so downstream batch processing and idempotency checks work.
+    const postSyncMember = await prisma.familyMember.findFirst({
+      where: { familyGroupId, email: userEmail },
+      select: { id: true, status: true },
+    });
+    if (postSyncMember?.status === "REMOVED") {
+      await prisma.familyMember.update({
+        where: { id: postSyncMember.id },
+        data: { status: "PENDING" },
+      });
+      await logger.log("WARN",
+        `Restored ${userEmail} to PENDING — postTaskSync incorrectly marked as REMOVED (Google hid email on page)`
+      );
+    }
+
     await logger.log("INFO", "Invite completed successfully");
 
     // Transfer batch callback
@@ -517,6 +534,21 @@ export async function processInvite(
 
           // Sync after each batch invite
           await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", batchLogger);
+
+          // Guard: protect just-invited member from incorrect REMOVED marking
+          const batchPostSyncMember = await prisma.familyMember.findFirst({
+            where: { familyGroupId, email: nextUserEmail },
+            select: { id: true, status: true },
+          });
+          if (batchPostSyncMember?.status === "REMOVED") {
+            await prisma.familyMember.update({
+              where: { id: batchPostSyncMember.id },
+              data: { status: "PENDING" },
+            });
+            await batchLogger.log("WARN",
+              `Restored ${nextUserEmail} to PENDING — postTaskSync incorrectly marked as REMOVED`
+            );
+          }
         }
 
         // Note: We DO NOT call moveToCompleted on BullMQ here.
@@ -806,9 +838,54 @@ async function executeInviteOnPage(
     // Check if family is full: member cards exist but no invite link
     const memberCardCount = await page.locator('a[href*="family/member"]').count();
     if (memberCardCount > 0) {
+      // Before declaring FAMILY_FULL, check if target member is already on the page.
+      // Google may hide the email on the list page but show it on the detail page.
+      // This handles retry/batch scenarios where the invite already succeeded.
+      await logger.log("INFO",
+        `No invite link found (${memberCardCount} cards). ` +
+        `Checking detail pages for target ${email}...`
+      );
+
+      const memberHrefs: string[] = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href*="family/member/"]'))
+          .map((a) => (a as HTMLAnchorElement).href)
+          .filter(Boolean)
+      );
+
+      let targetAlreadyOnPage = false;
+      for (const href of memberHrefs) {
+        try {
+          await page.goto(href, { waitUntil: "domcontentloaded", timeout: 30_000 });
+          await page.waitForTimeout(500);
+          const detailEmails: string[] = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll("*"))
+              .filter((el) => el.children.length === 0)
+              .map((el) => el.textContent?.trim() ?? "")
+              .filter((t) => /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(t));
+          });
+          if (detailEmails.some((e) => e.toLowerCase() === email.toLowerCase())) {
+            targetAlreadyOnPage = true;
+            await logger.log("INFO", `Target ${email} found on detail page ${href} — already invited`);
+            break;
+          }
+        } catch { /* continue checking next card */ }
+      }
+
+      // Navigate back to family list page
+      await page.goto("https://myaccount.google.com/family/details?hl=en", {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      }).catch(() => {});
+
+      if (targetAlreadyOnPage) {
+        await logger.log("INFO", `Idempotent: ${email} already in family group — skipping invite`);
+        return; // Member already invited, treat as success
+      }
+
+      // Truly full — target member is NOT on the page
       await logger.log("ERROR",
-        `Family group appears FULL (${memberCardCount} member cards, no invite link). ` +
-        `Cannot invite more members.`
+        `Family group is FULL (${memberCardCount} member cards, no invite link). ` +
+        `Target ${email} not found on any detail page. Cannot invite.`
       );
 
       // Sync DB to mark this group as full
@@ -822,7 +899,7 @@ async function executeInviteOnPage(
 
       throw new UnrecoverableError(
         `FAMILY_FULL: Family group has ${memberCardCount} member(s) and no invite link. ` +
-        `URL: ${url}`
+        `Target ${email} not found on any detail page. URL: ${url}`
       );
     }
 
