@@ -766,6 +766,39 @@ async function executeInviteOnPage(
     }
   }
 
+  // ── Retry with page refreshes ──
+  // After member removal, Google may need 30-90s to propagate the change
+  // and re-show the invite link. Refresh the page up to 6 times with 5s
+  // delays between each attempt (total extra wait: ~60-90s).
+  if (!inviteElement) {
+    const REFRESH_RETRIES = 6;
+    const REFRESH_DELAY_MS = 5_000;
+
+    for (let retry = 0; retry < REFRESH_RETRIES; retry++) {
+      await logger.log("INFO",
+        `Invite link not visible — refreshing page (${retry + 1}/${REFRESH_RETRIES}, waiting ${REFRESH_DELAY_MS / 1000}s)...`
+      );
+      await page.waitForTimeout(REFRESH_DELAY_MS);
+      await page.goto("https://myaccount.google.com/family/details?hl=en", {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+
+      try {
+        await inviteLink.first().waitFor({ state: "visible", timeout: 10_000 });
+        inviteElement = inviteLink.first();
+        await logger.log("INFO", `Invite link appeared after ${retry + 1} refresh(es)`);
+        break;
+      } catch {
+        if ((await inviteFallback.count()) > 0) {
+          inviteElement = inviteFallback.first();
+          await logger.log("INFO", `Found invite button via fallback after ${retry + 1} refresh(es)`);
+          break;
+        }
+      }
+    }
+  }
+
   if (!inviteElement) {
     const url = page.url();
     const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "").catch(() => "?");
