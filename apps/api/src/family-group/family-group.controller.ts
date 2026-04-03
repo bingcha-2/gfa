@@ -80,6 +80,15 @@ export class FamilyGroupController {
   }
 
   /**
+   * Find members existing in multiple family groups.
+   */
+  @Get("duplicate-members")
+  @Roles("ADMIN", "OPERATIONS")
+  findDuplicateMembers() {
+    return this.familyGroupService.findDuplicateMembers();
+  }
+
+  /**
    * Cross-group bulk remove — static path MUST come before /:id to avoid being
    * matched as a group ID by NestJS router.
    */

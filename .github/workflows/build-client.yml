@@ -93,6 +93,6 @@ jobs:
 
             > ⚠️ macOS 用户首次打开未签名应用：右键点击 → 打开
             > ⚠️ Windows 用户可能看到 SmartScreen 警告，点击「更多信息」→「仍要运行」
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

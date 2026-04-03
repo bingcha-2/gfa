@@ -100,6 +100,7 @@ export type TaskSummary = {
   status: string;
   retryCount: number;
   maxRetryCount: number;
+  payload?: string | null;
   lastErrorCode?: string | null;
   lastErrorMessage?: string | null;
   createdAt: string;

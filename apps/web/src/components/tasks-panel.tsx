@@ -73,7 +73,8 @@ export function TasksPanel({
       task.order?.orderNo?.toLowerCase().includes(query) ||
       task.order?.userEmail?.toLowerCase().includes(query) ||
       task.familyGroup?.groupName?.toLowerCase().includes(query) ||
-      task.account?.name?.toLowerCase().includes(query)
+      task.account?.name?.toLowerCase().includes(query) ||
+      (task.payload ?? "").toLowerCase().includes(query)
     );
   });
   const paginated = filteredTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -209,12 +210,30 @@ export function TasksPanel({
               {paginated.length ? (<>
                 {paginated.map((task) => {
                   const isActioning = actioning?.taskId === task.id;
+                  // Parse payload to extract target emails
+                  let payloadEmails: { target?: string; newUser?: string; user?: string } = {};
+                  try {
+                    if (task.payload) {
+                      const p = JSON.parse(task.payload);
+                      payloadEmails = {
+                        target: p.targetMemberEmail,
+                        newUser: p.newUserEmail,
+                        user: p.userEmail,
+                      };
+                    }
+                  } catch { /* ignore */ }
+                  const displayEmail = payloadEmails.user || payloadEmails.target || task.order?.userEmail;
                   return (
                     <tr key={task.id}>
                       <td>
                         <div className="strong">{task.type}</div>
-                        {task.order?.userEmail && (
-                          <div style={{ fontSize: '0.85rem' }}>{task.order.userEmail}</div>
+                        {displayEmail && (
+                          <div style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>
+                            {displayEmail}
+                            {payloadEmails.newUser && payloadEmails.target && (
+                              <span className="muted"> → {payloadEmails.newUser}</span>
+                            )}
+                          </div>
                         )}
                         <div className="muted mono" style={{ fontSize: '0.75rem' }}>
                           {task.id.slice(0, 12)} · retry {task.retryCount}/{task.maxRetryCount}

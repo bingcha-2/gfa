@@ -40,10 +40,23 @@ export class TaskService {
     return this.prisma.task.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      include: {
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        priority: true,
+        retryCount: true,
+        maxRetryCount: true,
+        payload: true,
+        lastErrorCode: true,
+        lastErrorMessage: true,
+        startedAt: true,
+        finishedAt: true,
+        createdAt: true,
+        updatedAt: true,
         order: { select: { id: true, orderNo: true, userEmail: true } },
         familyGroup: { select: { id: true, groupName: true } },
-        account: { select: { id: true, name: true } }
+        account: { select: { id: true, name: true } },
       }
     });
   }

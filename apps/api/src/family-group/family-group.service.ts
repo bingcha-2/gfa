@@ -86,6 +86,64 @@ export class FamilyGroupService {
     }));
   }
 
+  /**
+   * Find members that appear in multiple family groups (ACTIVE/PENDING only).
+   * Returns each duplicate email with all the groups they belong to.
+   */
+  async findDuplicateMembers(): Promise<Array<{
+    email: string;
+    count: number;
+    groups: Array<{ groupId: string; groupName: string; memberStatus: string; joinedAt: string | null }>;
+  }>> {
+    // Step 1: find emails that appear in more than one group
+    const duplicates = await this.prisma.$queryRaw<
+      { email: string; cnt: number }[]
+    >`
+      SELECT LOWER(email) as email, COUNT(DISTINCT familyGroupId) as cnt
+      FROM FamilyMember
+      WHERE status IN ('ACTIVE', 'PENDING')
+      GROUP BY LOWER(email)
+      HAVING COUNT(DISTINCT familyGroupId) > 1
+      ORDER BY cnt DESC, email ASC
+    `;
+
+    if (duplicates.length === 0) return [];
+
+    // Step 2: fetch group details for each duplicate email
+    const dupEmails = duplicates.map((d) => d.email);
+    const members = await this.prisma.familyMember.findMany({
+      where: {
+        email: { in: dupEmails },
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: {
+        email: true,
+        status: true,
+        joinedAt: true,
+        familyGroup: { select: { id: true, groupName: true } },
+      },
+    });
+
+    // Group by email
+    const emailMap = new Map<string, Array<{ groupId: string; groupName: string; memberStatus: string; joinedAt: string | null }>>();
+    for (const m of members) {
+      const key = m.email.toLowerCase();
+      if (!emailMap.has(key)) emailMap.set(key, []);
+      emailMap.get(key)!.push({
+        groupId: m.familyGroup.id,
+        groupName: m.familyGroup.groupName,
+        memberStatus: m.status,
+        joinedAt: m.joinedAt?.toISOString() ?? null,
+      });
+    }
+
+    return duplicates.map((d) => ({
+      email: d.email,
+      count: Number(d.cnt),
+      groups: emailMap.get(d.email) ?? [],
+    }));
+  }
+
   async findOne(id: string) {
     const group = await this.prisma.familyGroup.findUnique({
       where: { id },
