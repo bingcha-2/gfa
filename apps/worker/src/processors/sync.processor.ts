@@ -62,6 +62,7 @@ export async function processSync(
   }
 
   let profileId: string | null = null;
+  let stopHeartbeat: (() => void) | null = null;
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
@@ -77,6 +78,7 @@ export async function processSync(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
     profileId = acquired.profileId;
+    stopHeartbeat = pool.startHeartbeat(profileId, accountId, workerId);
     await logger.updateStatus("RUNNING");
 
     const page = await browser.connect(acquired.debugUrl);
@@ -106,8 +108,6 @@ export async function processSync(
     const { members, availableSlots } = await scrapeMembersFromPage(page, adminEmail);
     await logger.log("INFO", `Found ${members.length} members on page`, { members });
 
-    const afterPath = await browser.takeScreenshot(taskId, "sync");
-    await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
     // Deduplicate, reconcile with DB, compute slots, and update FamilyGroup
     const { memberCount, availableSlots: finalSlots } =
@@ -163,8 +163,6 @@ export async function processSync(
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
-      const errPath = await browser.takeScreenshot(taskId, "error");
-      await logger.recordScreenshot("errorScreenshotPath", errPath);
     } catch {
       // noop
     }
@@ -176,6 +174,7 @@ export async function processSync(
 
     throw error;
   } finally {
+    stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});

@@ -369,7 +369,15 @@ export async function gmailLogin(
           await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
           return { success: false, reason: "VERIFICATION_REQUIRED", detail };
         }
-        await waitForNextState(page, 5000);
+        // Wait for URL to actually leave /challenge/selection before proceeding.
+        // Using waitForNextState here is unreliable because residual [data-challengetype]
+        // elements on the page can trigger it prematurely, leading to the next round
+        // seeing the same URL and mis-detecting a phone challenge.
+        await page.waitForURL(
+          (url) => !url.toString().includes("challenge/selection"),
+          { timeout: 8000 }
+        ).catch(() => {});
+        await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
         continue;
       }
 
@@ -885,17 +893,31 @@ async function handleChallengeSelection(
 /** Detect phone/push/SMS challenge pages heuristically */
 async function isPhoneChallengePage(page: Page): Promise<boolean> {
   const url = page.url();
+  // URL-based: these paths are unambiguously phone/push challenges
   if (url.includes("challenge/dp") || url.includes("challenge/ipp") || url.includes("challenge/sk")) {
     return true;
   }
-  // Check for "Get a verification code" type text
+  // DOM-specific selectors: phone number input or challengetype 9/12 on current page
+  // (data-challengetype 9=SMS, 12=phone prompt — do NOT use text heuristics like
+  // "verification code" or "验证码" because those also appear on TOTP input pages,
+  // causing false positives when the page is mid-transition from selection→TOTP)
+  const hasPhoneInput = await page
+    .locator(
+      'input[autocomplete="tel"], input[name="phoneNumberId"], ' +
+      'div[data-challengetype="12"], div[data-challengetype="9"]'
+    )
+    .count();
+  if (hasPhoneInput > 0) return true;
+
+  // Only use text heuristics that are specific to phone/push flows and
+  // would NOT appear on a TOTP code-entry page
   const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
   return (
-    bodyText.includes("verification code") ||
-    bodyText.includes("验证码") ||
-    bodyText.includes("驗證碼") ||
     bodyText.includes("Google prompt") ||
-    bodyText.includes("Check your phone")
+    bodyText.includes("Check your phone") ||
+    bodyText.includes("check your phone") ||
+    bodyText.includes("查看您的手机") ||
+    bodyText.includes("查看您的手機")
   );
 }
 

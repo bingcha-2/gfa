@@ -61,18 +61,34 @@ export class AdsPowerClient {
   }
 
   /**
+   * Callback type for the force-close safety guard.
+   * Returns true if the caller is allowed to force-close the active profile,
+   * false if another task still holds the lock (force-close would be destructive).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static readonly CanForceCloseGuard: unique symbol = Symbol();
+
+  /**
    * Start a browser profile.
    * Returns the CDP debug URL for Playwright connection.
    *
    * If the profile is already open (e.g. stale from a previous crash),
    * it is force-closed first so AdsPower will accept a fresh open request.
+   *
+   * @param canForceClose Optional guard: when the profile is already active,
+   *   this callback is invoked to decide whether it is safe to force-close.
+   *   If the guard returns false, openProfile throws instead of killing
+   *   another task's browser.
    */
-  async openProfile(profileId: string): Promise<OpenProfileResult> {
+  async openProfile(
+    profileId: string,
+    canForceClose?: (profileId: string) => Promise<boolean>
+  ): Promise<OpenProfileResult> {
     // Serialize all openProfile calls to prevent AdsPower "Too many request per second" errors
     const result = new Promise<OpenProfileResult>((resolve, reject) => {
       this._openMutex = this._openMutex.then(async () => {
         try {
-          const r = await this._openProfileImpl(profileId);
+          const r = await this._openProfileImpl(profileId, canForceClose);
           resolve(r);
         } catch (e) {
           reject(e);
@@ -87,10 +103,20 @@ export class AdsPowerClient {
   /**
    * Internal implementation of openProfile (not rate-limited).
    */
-  private async _openProfileImpl(profileId: string): Promise<OpenProfileResult> {
+  private async _openProfileImpl(
+    profileId: string,
+    canForceClose?: (profileId: string) => Promise<boolean>
+  ): Promise<OpenProfileResult> {
     // Guard: close stale profile before attempting to open
     const { active } = await this.checkProfile(profileId);
     if (active) {
+      // Safety guard: check if another task still holds the lock
+      if (canForceClose && !(await canForceClose(profileId))) {
+        throw new Error(
+          `[adspower] Profile ${profileId} is active and protected by another task's lock. ` +
+          `Cannot force-close — will try a different profile.`
+        );
+      }
       console.warn(
         `[adspower] Profile ${profileId} is already active — force-closing before reopen`
       );

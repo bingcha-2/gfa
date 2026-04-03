@@ -54,6 +54,7 @@ export async function processHealth(
   }
 
   let profileId: string | null = null;
+  let stopHeartbeat: (() => void) | null = null;
 
   try {
     // Cooldown guard: skip immediately if this account recently failed login
@@ -69,6 +70,7 @@ export async function processHealth(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
     profileId = acquired.profileId;
+    stopHeartbeat = pool.startHeartbeat(profileId, accountId, workerId);
     await logger.log("INFO", `Health check for account ${account.name}`, { profileId });
 
     await logger.updateStatus("RUNNING");
@@ -92,8 +94,6 @@ export async function processHealth(
     const currentUrl = page.url();
     await logger.log("INFO", `Page URL after navigation: ${currentUrl}`);
 
-    const screenshotPath = await browser.takeScreenshot(taskId, "health");
-    await logger.recordScreenshot("afterScreenshotPath", screenshotPath);
 
     // Determine account health based on the page state
     const healthStatus = await determineHealth(page, currentUrl);
@@ -146,8 +146,6 @@ export async function processHealth(
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
-      const errPath = await browser.takeScreenshot(taskId, "error");
-      await logger.recordScreenshot("errorScreenshotPath", errPath);
     } catch {
       // noop
     }
@@ -159,6 +157,7 @@ export async function processHealth(
 
     throw error;
   } finally {
+    stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});

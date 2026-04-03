@@ -113,6 +113,7 @@ export async function processInvite(
 
   // Acquire a free profile + account lock from pool (AFTER account validation to avoid resource leak)
   let profileId: string | null = null;
+  let stopHeartbeat: (() => void) | null = null;
   // Track accountId for account lock release; may change on fallback
   let lockedAccountId: string | null = null;
 
@@ -170,6 +171,7 @@ export async function processInvite(
     let debugUrl: string | null = null;
     const maxRetries = pool.poolSize;
     const failedProfiles = new Set<string>();
+    const canForceClose = pool.createForceCloseGuard(workerId);
 
     try {
       // Re-check self-termination BEFORE even acquiring block lock
@@ -193,7 +195,7 @@ export async function processInvite(
       }
 
       try {
-        const opened = await adspower.openProfile(profileId);
+        const opened = await adspower.openProfile(profileId, canForceClose);
         debugUrl = opened.debugUrl;
         break; // Success!
       } catch (err) {
@@ -211,6 +213,9 @@ export async function processInvite(
     if (!debugUrl || !profileId) {
       throw new Error(`Failed to open any adspower profile for account ${accountId}`);
     }
+
+    // Start heartbeat AFTER successful profile open
+    stopHeartbeat = pool.startHeartbeat(profileId, accountId, workerId);
 
     await logger.log("INFO", `Starting invite for ${userEmail}`, { profileId });
 
@@ -282,8 +287,6 @@ export async function processInvite(
     const ensureResult = await ensureFamilyGroup(page, account, prisma, logger);
     familyGroupId = ensureResult.familyGroupId;
 
-    const beforePath = await browser.takeScreenshot(taskId, "before");
-    await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     // Navigate to Google Family page, execute invite
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -305,8 +308,6 @@ export async function processInvite(
         `[invite] Idempotency: ${userEmail} already in group (status=${existingMember.status}). Skipping invite.`
       );
 
-      const afterPath = await browser.takeScreenshot(taskId, "after");
-      await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
       await logger.updateStatus("INVITE_SENT");
       if (orderId) {
@@ -326,8 +327,6 @@ export async function processInvite(
 
     await executeInviteOnPage(page, userEmail, logger, prisma, familyGroupId);
 
-    const afterPath = await browser.takeScreenshot(taskId, "after");
-    await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
     await logger.updateStatus("INVITE_SENT");
 
@@ -707,8 +706,6 @@ export async function processInvite(
 
     const errMsg = error instanceof Error ? error.message : String(error);
     try {
-      const errPath = await browser.takeScreenshot(taskId, "error");
-      await logger.recordScreenshot("errorScreenshotPath", errPath);
     } catch { /* noop */ }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
@@ -735,6 +732,7 @@ export async function processInvite(
 
     throw error;
   } finally {
+    stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});

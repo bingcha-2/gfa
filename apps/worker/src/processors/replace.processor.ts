@@ -62,6 +62,7 @@ export async function processReplace(
   }
 
   let profileId: string | null = null;
+  let stopHeartbeat: (() => void) | null = null;
 
   try {
     // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → fail fast ──
@@ -84,6 +85,7 @@ export async function processReplace(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountId, adspower);
     profileId = acquired.profileId;
+    stopHeartbeat = pool.startHeartbeat(profileId, accountId, workerId);
     await logger.log("INFO", `Replacing ${targetMemberEmail} → ${newUserEmail}`, {
       profileId, familyGroupId,
     });
@@ -102,8 +104,6 @@ export async function processReplace(
     // Record which account is now logged into this profile
     await pool.setLastAccount(profileId!, accountId);
 
-    const beforePath = await browser.takeScreenshot(taskId, "before");
-    await logger.recordScreenshot("beforeScreenshotPath", beforePath);
 
     await browser.navigateTo(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
 
@@ -367,8 +367,6 @@ export async function processReplace(
       await logger.log("INFO", `Used case-insensitive update for ${targetMemberEmail}`);
     }
 
-    const afterPath = await browser.takeScreenshot(taskId, "after");
-    await logger.recordScreenshot("afterScreenshotPath", afterPath);
 
     await logger.updateStatus("REPLACED_AND_INVITE_SENT");
 
@@ -399,8 +397,6 @@ export async function processReplace(
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
-      const errPath = await browser.takeScreenshot(taskId, "error");
-      await logger.recordScreenshot("errorScreenshotPath", errPath);
     } catch {
       // noop
     }
@@ -444,6 +440,7 @@ export async function processReplace(
 
     throw error;
   } finally {
+    stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});

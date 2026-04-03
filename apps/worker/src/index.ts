@@ -90,7 +90,8 @@ const inviteWorker = new Worker<InviteMemberPayload>(
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 300_000, // 5 min — browser ops can take 1-2 min
+    lockDuration: 600_000, // 10 min — heartbeat extends Redis locks up to 5 min, BullMQ lock must outlast
+    stalledInterval: 120_000, // check every 2 min
   }
 );
 
@@ -100,7 +101,8 @@ const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 300_000,
+    lockDuration: 600_000,
+    stalledInterval: 120_000,
   }
 );
 
@@ -110,7 +112,8 @@ const replaceWorker = new Worker<ReplaceMemberPayload>(
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 300_000,
+    lockDuration: 600_000,
+    stalledInterval: 120_000,
   }
 );
 
@@ -120,7 +123,8 @@ const syncWorker = new Worker<SyncFamilyGroupPayload>(
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 300_000,
+    lockDuration: 600_000,
+    stalledInterval: 120_000,
   }
 );
 
@@ -130,7 +134,8 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 300_000,
+    lockDuration: 600_000,
+    stalledInterval: 120_000,
   }
 );
 

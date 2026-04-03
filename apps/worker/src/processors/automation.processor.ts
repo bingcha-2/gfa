@@ -86,6 +86,7 @@ export async function processAutomation(
 
   const browser = new WorkerBrowser();
   let profileId: string | null = null;
+  let stopHeartbeat: (() => void) | null = null;
 
   // Look up the Account record by email so we use the same lock key
   // (account.id) as invite/sync/remove/replace processors.
@@ -106,6 +107,7 @@ export async function processAutomation(
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
     const acquired = await pool.acquireAndOpen(workerId, accountLockKey, adspower);
     profileId = acquired.profileId;
+    stopHeartbeat = pool.startHeartbeat(profileId, accountLockKey, workerId);
     await logger.log(
       "INFO",
       `[automation:${action}] Acquired profile ${profileId}`
@@ -166,7 +168,6 @@ export async function processAutomation(
     const errMsg = error instanceof Error ? error.message : String(error);
 
     try {
-      await browser.takeScreenshot(taskId, "error");
     } catch {
       // noop
     }
@@ -178,6 +179,7 @@ export async function processAutomation(
 
     throw error;
   } finally {
+    stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});

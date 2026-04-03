@@ -225,8 +225,9 @@ export class TaskLogger {
    */
   async recordScreenshot(
     field: "beforeScreenshotPath" | "afterScreenshotPath" | "errorScreenshotPath",
-    path: string
+    path: string | null
   ): Promise<void> {
+    if (!path) return;
     await this.prisma.task.update({
       where: { id: this.taskId },
       data: { [field]: path },

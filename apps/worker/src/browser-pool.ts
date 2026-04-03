@@ -16,6 +16,8 @@ const POOL_KEY_PREFIX = "gfa:pool:profile:";
 const ACCOUNT_LOCK_PREFIX = "gfa:account-lock:";
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 min — normal task takes 1-2 min; 5 min covers slow Google pages
 const POLL_INTERVAL_MS = 3_000;
+const HEARTBEAT_INTERVAL_MS = 60_000; // extend lock every 60s
+const MAX_HEARTBEAT_MS = 5 * 60 * 1000; // hard upper limit: stop heartbeat after 5 min
 
 
 export class BrowserPool {
@@ -310,12 +312,13 @@ export class BrowserPool {
     const maxRetries = opts?.maxProfileRetries ?? this.profileIds.length;
     const timeoutMs = opts?.timeoutMs ?? 180_000;
     const failedProfiles = new Set<string>();
+    const canForceClose = this.createForceCloseGuard(workerId);
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const { profileId } = await this.acquireForAccount(workerId, accountId, timeoutMs, failedProfiles);
 
       try {
-        const { debugUrl } = await adspower.openProfile(profileId);
+        const { debugUrl } = await adspower.openProfile(profileId, canForceClose);
         return { profileId, debugUrl };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -480,6 +483,86 @@ export class BrowserPool {
    */
   async clearLoginCooldown(accountId: string): Promise<void> {
     await this.redis.del(`gfa:login-cooldown:${accountId}`);
+  }
+
+  /**
+   * Start a heartbeat that periodically extends the Redis lock TTL for both
+   * the profile and account locks.  Prevents lock expiration while a task is
+   * still actively using the browser.
+   *
+   * Automatically stops after MAX_HEARTBEAT_MS (hard ceiling) to prevent
+   * hung tasks from holding a profile forever.
+   *
+   * @returns A stop function — call it in the processor's `finally` block.
+   */
+  startHeartbeat(
+    profileId: string,
+    accountId: string,
+    workerId: string
+  ): () => void {
+    const startTime = Date.now();
+    const luaExtend = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        redis.call("pexpire", KEYS[1], ARGV[2])
+        return 1
+      else
+        return 0
+      end
+    `;
+
+    const interval = setInterval(async () => {
+      // Hard ceiling: auto-stop after MAX_HEARTBEAT_MS
+      if (Date.now() - startTime > MAX_HEARTBEAT_MS) {
+        clearInterval(interval);
+        console.warn(
+          `[BrowserPool] Heartbeat for profile ${profileId} exceeded max lifetime ` +
+          `(${MAX_HEARTBEAT_MS / 1000}s) — stopping. Lock will expire naturally.`
+        );
+        return;
+      }
+
+      try {
+        await this.redis.eval(
+          luaExtend, 1,
+          `${POOL_KEY_PREFIX}${profileId}`, workerId, String(LOCK_TTL_MS)
+        );
+        await this.redis.eval(
+          luaExtend, 1,
+          `${ACCOUNT_LOCK_PREFIX}${accountId}`, workerId, String(LOCK_TTL_MS)
+        );
+      } catch (err) {
+        // Non-fatal: if Redis is temporarily unreachable the lock may expire,
+        // but the next heartbeat tick will re-extend if Redis recovers.
+        console.warn(
+          `[BrowserPool] Heartbeat failed for profile ${profileId}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }
+
+  /**
+   * Create a guard function that checks whether it is safe to force-close
+   * an active AdsPower profile.  Passed to `AdsPowerClient.openProfile()`
+   * so it won't kill a browser that another task is still using.
+   *
+   * Force-close is allowed when:
+   *   - No Redis lock exists for the profile (stale / abandoned browser)
+   *   - The lock is held by the same workerId (our own leftover)
+   *
+   * Force-close is BLOCKED when:
+   *   - The lock is held by a different workerId
+   */
+  createForceCloseGuard(
+    workerId: string
+  ): (profileId: string) => Promise<boolean> {
+    return async (profileId: string) => {
+      const key = `${POOL_KEY_PREFIX}${profileId}`;
+      const holder = await this.redis.get(key);
+      return !holder || holder === workerId;
+    };
   }
 
   /**

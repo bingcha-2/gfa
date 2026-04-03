@@ -69,7 +69,7 @@ export class WorkerBrowser {
    * Take a screenshot and save to disk.
    * Returns the absolute file path of the saved screenshot.
    */
-  async takeScreenshot(taskId: string, label: string): Promise<string> {
+  async takeScreenshot(taskId: string, label: string): Promise<string | null> {
     const page = this.getPage();
     const dir = path.join(SCREENSHOTS_DIR, taskId);
     fs.mkdirSync(dir, { recursive: true });
@@ -77,8 +77,14 @@ export class WorkerBrowser {
     const filename = `${label}-${Date.now()}.png`;
     const filepath = path.join(dir, filename);
 
-    await page.screenshot({ path: filepath, fullPage: false, timeout: 10_000 });
-    return filepath;
+    try {
+      await page.screenshot({ path: filepath, fullPage: false, timeout: 10_000 });
+      return filepath;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[browser] screenshot failed for ${taskId} (${label}): ${msg}`);
+      return null;
+    }
   }
 
   /**
