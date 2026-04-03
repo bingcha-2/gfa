@@ -857,6 +857,8 @@ async function executeInviteOnPage(
         try {
           await page.goto(href, { waitUntil: "domcontentloaded", timeout: 30_000 });
           await page.waitForTimeout(500);
+
+          // Layer 1: visible leaf-node email text
           const detailEmails: string[] = await page.evaluate(() => {
             return Array.from(document.querySelectorAll("*"))
               .filter((el) => el.children.length === 0)
@@ -865,7 +867,23 @@ async function executeInviteOnPage(
           });
           if (detailEmails.some((e) => e.toLowerCase() === email.toLowerCase())) {
             targetAlreadyOnPage = true;
-            await logger.log("INFO", `Target ${email} found on detail page ${href} — already invited`);
+            await logger.log("INFO", `Target ${email} found via visible text on ${href}`);
+            break;
+          }
+
+          // Layer 2: raw HTML search (Google may embed email in JS data even when hidden visually)
+          const foundInRawHtml = await page.evaluate((targetEmail: string) => {
+            const rawHtml = document.documentElement.innerHTML;
+            const emailRegex = /"([^"]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})"/g;
+            let m;
+            while ((m = emailRegex.exec(rawHtml)) !== null) {
+              if (m[1].toLowerCase() === targetEmail.toLowerCase()) return true;
+            }
+            return false;
+          }, email);
+          if (foundInRawHtml) {
+            targetAlreadyOnPage = true;
+            await logger.log("INFO", `Target ${email} found via raw HTML on ${href}`);
             break;
           }
         } catch { /* continue checking next card */ }
