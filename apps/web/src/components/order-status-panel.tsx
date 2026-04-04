@@ -6,6 +6,7 @@ import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { formatDateTime } from "../lib/format";
 import { PublicOrder } from "../lib/types";
 import { StatusBadge } from "./status-badge";
+import { ProcessingAnimation } from "./processing-animation";
 
 type OrderStatusPanelProps = {
   orderNo: string;
@@ -58,14 +59,7 @@ export function OrderStatusPanel({ orderNo, onOrderLoaded }: OrderStatusPanelPro
             <h2 className="panel-title">订单进度</h2>
           </div>
 
-          <button
-            className="button secondary small"
-            disabled={isPending}
-            onClick={() => startTransition(() => void loadOrder())}
-            type="button"
-          >
-            {isPending ? "刷新中..." : "手动刷新"}
-          </button>
+
         </div>
 
         {error ? <div className="notice error">{error}</div> : null}
@@ -73,40 +67,46 @@ export function OrderStatusPanel({ orderNo, onOrderLoaded }: OrderStatusPanelPro
         {!error && !order ? <div className="empty-state">正在读取订单状态...</div> : null}
 
         {order ? (
-          <div className="panel-stack">
-            <StatusBadge value={order.status} />
+          <div className="panel-stack slide-up-enter">
+            {!terminalStatuses.has(order.status) ? (
+              <ProcessingAnimation status={order.status} />
+            ) : (
+              <div className="panel-stack">
+                <StatusBadge value={order.status} />
 
-            <div className="info-grid">
-              <div className="info-row">
-                <span className="muted">订单号</span>
-                <strong className="mono">{order.orderNo}</strong>
-              </div>
-              <div className="info-row">
-                <span className="muted">邀请邮箱</span>
-                <strong>{order.userEmail}</strong>
-              </div>
-              <div className="info-row">
-                <span className="muted">最新更新时间</span>
-                <strong>{formatDateTime(order.updatedAt)}</strong>
-              </div>
-            </div>
+                <div className="info-grid">
+                  <div className="info-row">
+                    <span className="muted">订单号</span>
+                    <strong className="mono">{order.orderNo}</strong>
+                  </div>
+                  <div className="info-row">
+                    <span className="muted">邀请邮箱</span>
+                    <strong>{order.userEmail}</strong>
+                  </div>
+                  <div className="info-row">
+                    <span className="muted">最新更新时间</span>
+                    <strong>{formatDateTime(order.updatedAt)}</strong>
+                  </div>
+                </div>
 
-            <div className="divider" />
+                <div className="divider" />
 
-            <div className="panel-stack">
-              <div>
-                <p className="label">Result Message</p>
-                <p className="muted">
-                  {order.resultMessage ??
-                    "如果这里暂时没有说明，代表任务还在排队或等待自动化执行。"}
-                </p>
-              </div>
+                <div className="panel-stack">
+                  <div>
+                    <p className="label">Result Message</p>
+                    <p className="muted">
+                      {order.resultMessage ?? 
+                        (order.status === "COMPLETED" ? "任务已成功完成" : "发生异常，任务中断")}
+                    </p>
+                  </div>
 
-              <div>
-                <p className="label">Created At</p>
-                <p className="muted">{formatDateTime(order.createdAt)}</p>
+                  <div>
+                    <p className="label">Created At</p>
+                    <p className="muted">{formatDateTime(order.createdAt)}</p>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         ) : null}
       </div>
