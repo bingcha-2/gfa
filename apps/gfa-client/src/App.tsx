@@ -90,7 +90,7 @@ function App() {
           <button className="sidebar-collapse-btn" onClick={toggleCollapsed}>
             {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
           </button>
-          <div className="sidebar-version">v2.0.0</div>
+          <div className="sidebar-version">v2.0.6</div>
         </div>
       </aside>
       <main className="main-content">
