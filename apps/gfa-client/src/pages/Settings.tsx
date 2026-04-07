@@ -49,7 +49,7 @@ export function Settings() {
               </div>
               <div className="stat-card" style={{ padding: 14 }}>
                 <span className="stat-label">版本</span>
-                <span className="stat-value" style={{ fontSize: 16 }}>v2.0.6</span>
+                <span className="stat-value" style={{ fontSize: 16 }}>v3.0.0</span>
               </div>
               <div className="stat-card" style={{ padding: 14 }}>
                 <span className="stat-label">框架</span>
