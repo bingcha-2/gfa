@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Gift, Users, Package,
   Loader, CheckCircle, Terminal, ChevronDown, ChevronUp, AlertCircle,
+  UserCheck,
 } from "lucide-react";
 
 type RedeemPhase = "config" | "running" | "done";
@@ -14,7 +15,13 @@ interface RedeemResult {
   orderNo?: string;
   message?: string;
   error?: string;
+  acceptInviteStatus?: "pending" | "polling" | "accepting" | "done" | "failed";
 }
+
+// Statuses that mean the invite is ready for the user to accept
+const INVITE_READY_STATUSES = ["INVITE_SENT", "WAIT_USER_ACCEPT", "COMPLETED"];
+// Terminal failure statuses
+const FAILED_STATUSES = ["FAILED", "MANUAL_REVIEW", "EXPIRED"];
 
 export function Redeem() {
   const { accounts } = useAppStore();
@@ -26,6 +33,7 @@ export function Redeem() {
   const [redeemLogs, setRedeemLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [autoAccept, setAutoAccept] = useState(true);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,6 +45,119 @@ export function Redeem() {
 
   const isRunning = phase === "running";
 
+  /**
+   * Poll order status until invite is sent, then auto-accept.
+   * Returns only after the entire flow (redeem + optional accept) completes.
+   */
+  const pollAndAccept = async (
+    email: string,
+    _orderNo: string,
+    code: string,
+    resultIdx: number,
+    allResults: RedeemResult[]
+  ) => {
+    // Update result to show polling state
+    const updateResult = (patch: Partial<RedeemResult>) => {
+      allResults[resultIdx] = { ...allResults[resultIdx], ...patch };
+      setResults([...allResults]);
+    };
+
+    updateResult({ acceptInviteStatus: "polling" });
+    addLog(`⏳ [${email}] 等待后端发送邀请...`);
+
+    const maxAttempts = 60; // 3 minutes max
+    const pollInterval = 3000;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await new Promise((r) => setTimeout(r, pollInterval));
+
+      try {
+        const statusRaw = await invoke<{ status?: string; userEmail?: string; resultMessage?: string }>(
+          "get_order_status",
+          { code }
+        );
+
+        const st = statusRaw.status || "";
+
+        if (INVITE_READY_STATUSES.includes(st)) {
+          addLog(`✅ [${email}] 邀请已发送 (${st})，开始自动接受...`);
+          updateResult({ acceptInviteStatus: "accepting" });
+
+          try {
+            // Trigger accept-invite automation via API
+            const { taskId } = await invoke<{ taskId: string }>(
+              "run_accept_invite",
+              { email }
+            );
+
+            // Poll automation status
+            addLog(`🤖 [${email}] 接受邀请任务已创建 (${taskId})，等待完成...`);
+            const automationMaxAttempts = 140; // ~7 minutes
+            const automationPollInterval = 3000;
+
+            for (let j = 1; j <= automationMaxAttempts; j++) {
+              await new Promise((r) => setTimeout(r, automationPollInterval));
+
+              try {
+                const automationStatus = await invoke<{
+                  taskId: string;
+                  status: string;
+                  lastErrorMessage?: string;
+                  logs?: Array<{ level: string; message: string }>;
+                }>("poll_automation_status", { taskId });
+
+                const aStatus = automationStatus.status;
+
+                if (aStatus === "SUCCESS") {
+                  addLog(`🎉 [${email}] 邀请已自动接受！`);
+                  updateResult({ acceptInviteStatus: "done" });
+                  return;
+                }
+
+                if (["FAILED_FINAL", "FAILED_RETRYABLE", "CANCELLED", "MANUAL_REVIEW"].includes(aStatus)) {
+                  addLog(`❌ [${email}] 自动接受失败: ${automationStatus.lastErrorMessage || aStatus}`);
+                  updateResult({ acceptInviteStatus: "failed" });
+                  return;
+                }
+
+                // Still running, log progress occasionally
+                if (j % 5 === 0) {
+                  addLog(`⏳ [${email}] 接受邀请中... (${j}/${automationMaxAttempts})`);
+                }
+              } catch (pollErr) {
+                addLog(`⚠️ [${email}] 轮询接受状态失败: ${pollErr}`);
+              }
+            }
+
+            addLog(`⏳ [${email}] 接受邀请超时，请手动检查`);
+            updateResult({ acceptInviteStatus: "failed" });
+            return;
+          } catch (acceptErr) {
+            addLog(`❌ [${email}] 触发自动接受失败: ${acceptErr}`);
+            updateResult({ acceptInviteStatus: "failed" });
+            return;
+          }
+        }
+
+        if (FAILED_STATUSES.includes(st)) {
+          addLog(`❌ [${email}] 订单失败 (${st})，无法自动接受`);
+          updateResult({ acceptInviteStatus: "failed" });
+          return;
+        }
+
+        // Still processing, show progress
+        if (attempt % 5 === 0) {
+          addLog(`⏳ [${email}] 等待邀请发送中... 状态: ${st} (${attempt}/${maxAttempts})`);
+        }
+      } catch (pollErr) {
+        addLog(`⚠️ [${email}] 查询订单状态失败: ${pollErr}`);
+      }
+    }
+
+    addLog(`⏳ [${email}] 等待邀请超时，请手动接受`);
+    updateResult({ acceptInviteStatus: "failed" });
+  };
+
   const handleRedeem = async () => {
     setPhase("running");
     setResults([]);
@@ -46,6 +167,7 @@ export function Redeem() {
     const code = redeemCode.trim();
     addLog(`开始批量兑换，共 ${selectedAccounts.length} 个账号`);
     addLog(`兑换码: ${code}`);
+    if (autoAccept) addLog(`✅ 自动接受邀请已开启`);
 
     const allResults: RedeemResult[] = [];
 
@@ -55,7 +177,7 @@ export function Redeem() {
       addLog(`[${i + 1}/${selectedAccounts.length}] 正在为 ${email} 兑换...`);
 
       try {
-        const response = await invoke<{ orderNo?: string; message?: string }>(
+        const response = await invoke<{ orderNo?: string; message?: string; status?: string }>(
           "redeem_code",
           { code, email }
         );
@@ -65,10 +187,18 @@ export function Redeem() {
           success: true,
           orderNo: response.orderNo,
           message: response.message,
+          acceptInviteStatus: autoAccept ? "pending" : undefined,
         };
         allResults.push(result);
         setResults([...allResults]);
-        addLog(`✅ ${email} 兑换成功${response.orderNo ? ` (订单号: ${response.orderNo})` : ""}${response.message ? ` - ${response.message}` : ""}`);
+        addLog(`✅ ${email} 兑换提交成功${response.orderNo ? ` (订单: ${response.orderNo})` : ""}${response.message ? ` - ${response.message}` : ""}`);
+
+        // Auto-accept: poll order status and accept invite after each successful redeem
+        if (autoAccept && accounts.find((a) => a.email === email)) {
+          await pollAndAccept(email, response.orderNo || "", code, allResults.length - 1, allResults);
+        } else if (autoAccept && !accounts.find((a) => a.email === email)) {
+          addLog(`⚠️ [${email}] 该邮箱不在本地账号列表中，跳过自动接受`);
+        }
       } catch (err) {
         const errMsg = String(err);
         const result: RedeemResult = {
@@ -84,7 +214,8 @@ export function Redeem() {
 
     const successCount = allResults.filter((r) => r.success).length;
     const failCount = allResults.filter((r) => !r.success).length;
-    addLog(`🏁 兑换完成: ${successCount} 成功, ${failCount} 失败`);
+    const acceptedCount = allResults.filter((r) => r.acceptInviteStatus === "done").length;
+    addLog(`🏁 兑换完成: ${successCount} 成功, ${failCount} 失败${autoAccept ? `, ${acceptedCount} 已自动接受` : ""}`);
     setPhase("done");
   };
 
@@ -96,6 +227,7 @@ export function Redeem() {
 
   const successCount = results.filter((r) => r.success).length;
   const failCount = results.filter((r) => !r.success).length;
+  const acceptedCount = results.filter((r) => r.acceptInviteStatus === "done").length;
 
   return (
     <>
@@ -139,6 +271,25 @@ export function Redeem() {
               <label>兑换码</label>
               <input className="input" placeholder="输入兑换码" value={redeemCode} onChange={(e) => setRedeemCode(e.target.value)} disabled={isRunning} />
             </div>
+
+            {/* Auto-accept toggle */}
+            <label className="flex items-center gap-2 cursor-pointer mt-2" style={{ fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={autoAccept}
+                onChange={() => setAutoAccept(!autoAccept)}
+                disabled={isRunning}
+                style={{ accentColor: "var(--primary)" }}
+              />
+              <UserCheck size={13} style={{ color: autoAccept ? "var(--primary)" : "var(--text-muted)" }} />
+              <span>兑换后自动接受邀请</span>
+            </label>
+            {autoAccept && (
+              <p className="text-muted text-xs mt-1" style={{ paddingLeft: 4 }}>
+                将在后端发送邀请后自动登录账号接受 Family 邀请
+              </p>
+            )}
+
             <div className="flex items-center gap-2 mt-3">
               {phase === "config" ? (
                 <button
@@ -180,7 +331,7 @@ export function Redeem() {
         {/* Results Summary */}
         {results.length > 0 && (
           <div className="card" style={{ padding: "12px 16px", borderColor: failCount > 0 ? "rgba(239,68,68,0.3)" : "rgba(34,197,94,0.3)" }}>
-            <div className="flex items-center gap-2" style={{ fontSize: 13 }}>
+            <div className="flex items-center gap-2" style={{ fontSize: 13, flexWrap: "wrap" }}>
               {failCount === 0 ? (
                 <><CheckCircle size={14} style={{ color: "var(--success)" }} /> <span style={{ color: "var(--success)" }}>全部兑换成功</span></>
               ) : successCount === 0 ? (
@@ -190,6 +341,7 @@ export function Redeem() {
               )}
               <span className="badge badge-accent" style={{ marginLeft: 8 }}>{successCount} 成功</span>
               {failCount > 0 && <span className="badge" style={{ marginLeft: 4, background: "rgba(239,68,68,0.15)", color: "var(--danger)" }}>{failCount} 失败</span>}
+              {autoAccept && acceptedCount > 0 && <span className="badge" style={{ marginLeft: 4, background: "rgba(34,197,94,0.15)", color: "var(--success)" }}>{acceptedCount} 已接受</span>}
             </div>
           </div>
         )}
