@@ -16,7 +16,7 @@
  */
 
 import type { Page } from "playwright";
-import { generateTOTP, totpSecondsRemaining } from "./totp";
+import { generateTOTP, totpSecondsRemaining, markTotpUsed, isTotpWindowUsed } from "./totp";
 import type { TaskLogger } from "./task-logger";
 
 const GOOGLE_LOGIN_URL = "https://accounts.google.com?hl=en";
@@ -534,9 +534,10 @@ async function handleTotp(
 
   // Wait for a fresh TOTP code:
   //  - forceNewCode=true (retry): always wait for next 30s window
-  //  - forceNewCode=false (first): only wait if about to expire (<5s)
+  //  - isTotpWindowUsed(): code from this window already submitted elsewhere
+  //  - remaining < 5: about to expire
   const remaining = totpSecondsRemaining();
-  if (forceNewCode || remaining < 5) {
+  if (forceNewCode || isTotpWindowUsed(totpSecret) || remaining < 5) {
     const waitSecs = remaining + 1;
     await logger.log("INFO", `[gmail-login] Waiting ${waitSecs}s for fresh TOTP`);
     await page.waitForTimeout(waitSecs * 1000);
@@ -571,6 +572,7 @@ async function handleTotp(
   // Submit via Enter key — more reliable than clicking the Verify button,
   // because Google's kPY6ve overlay div intercepts pointer events during processing.
   await page.keyboard.press("Enter");
+  markTotpUsed(totpSecret);
 
   await logger.log("INFO", "[gmail-login] TOTP submitted");
   return { success: true }; // Provisional — outer loop will verify URL

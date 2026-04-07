@@ -90,3 +90,33 @@ export function generateTOTP(secret: string, label?: string): string {
 export function totpSecondsRemaining(): number {
   return 30 - (Math.floor(Date.now() / 1000) % 30);
 }
+
+/**
+ * Per-secret tracker for the last TOTP time window that was submitted.
+ * Google rejects reuse of the same TOTP code within the same 30s period,
+ * so callers must ensure they wait for a new window before re-submitting.
+ *
+ * Keyed by the first 8 chars of the secret to avoid storing full secrets
+ * in memory while still isolating concurrent/sequential accounts.
+ */
+const _lastUsedWindows = new Map<string, number>();
+
+function _currentWindow(): number {
+  return Math.floor(Date.now() / 1000 / 30);
+}
+
+function _secretKey(secret: string): string {
+  // Normalise before truncating so different formatting of the same secret
+  // (e.g. "JBSW Y3DP" vs "jbswy3dp") always maps to the same key.
+  return secret.replace(/[\s\-=]/g, "").toUpperCase().slice(0, 8);
+}
+
+/** Mark the current 30s window as "used" for this secret after submitting. */
+export function markTotpUsed(secret: string): void {
+  _lastUsedWindows.set(_secretKey(secret), _currentWindow());
+}
+
+/** True if a TOTP code from the current 30s window was already submitted for this secret. */
+export function isTotpWindowUsed(secret: string): boolean {
+  return _lastUsedWindows.get(_secretKey(secret)) === _currentWindow();
+}

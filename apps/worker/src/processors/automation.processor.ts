@@ -23,7 +23,7 @@ import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin, type LoginCredentials } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
-import { generateTOTP, totpSecondsRemaining } from "../totp";
+import { handleReAuth as sharedHandleReAuth, isReAuthPage } from "../handle-reauth";
 
 /** Max time for the entire accept-invite flow (5 min), well under BullMQ lockDuration (10 min). */
 const ACCEPT_INVITE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -284,53 +284,17 @@ async function handleOAuth(
       }
     }
 
-    // TOTP re-auth during OAuth
-    if (nowUrl.includes("challenge/totp") && credentials.totpSecret) {
-      const { generateTOTP, totpSecondsRemaining } = await import("../totp");
-      const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
-        await page.waitForTimeout((remaining + 1) * 1000);
-      }
-      const totpInput = page.locator(
-        'input[type="tel"], input[type="text"][name="totpPin"], input[name="Pin"]'
-      );
-      if ((await totpInput.count()) > 0) {
-        const code = generateTOTP(credentials.totpSecret!);
-        await totpInput.first().fill(code);
-        await logger.log("INFO", `TOTP re-auth submitted: ${code.substring(0, 2)}****`);
-        const nextBtn = page.locator(
-          'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
-          'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
-        );
-        if ((await nextBtn.count()) > 0) {
-          await nextBtn.first().evaluate((el: HTMLElement) => el.click());
-        } else {
-          await page.keyboard.press("Enter");
-        }
-        await page.waitForTimeout(5000);
-        continue;
-      }
-    }
-
-    // Password re-auth
-    if (nowUrl.includes("challenge/pwd") && credentials.loginPassword) {
-      const pwdInput = page.locator(
-        'input[type="password"]:not([aria-hidden="true"])'
-      );
-      if ((await pwdInput.count()) > 0) {
-        await pwdInput.first().fill(credentials.loginPassword);
-        await logger.log("INFO", "Password re-auth submitted");
-        const nextBtn = page.locator(
-          'button[type="submit"], button[jsname="LgbsSe"], #passwordNext button'
-        );
-        if ((await nextBtn.count()) > 0) {
-          await nextBtn.first().evaluate((el: HTMLElement) => el.click());
-        } else {
-          await page.keyboard.press("Enter");
-        }
-        await page.waitForTimeout(5000);
-        continue;
-      }
+    // Handle re-auth during OAuth (TOTP, password, challenge selection)
+    // NOTE: Don't throw if still on a challenge page after one step — Google
+    // chains challenges (e.g. password → TOTP). The outer for-loop will
+    // handle the next step on the next iteration.
+    if (isReAuthPage(nowUrl)) {
+      const handled = await sharedHandleReAuth(page, {
+        loginEmail: credentials.loginEmail,
+        password: credentials.loginPassword,
+        totpSecret: credentials.totpSecret,
+      }, logger, "[oauth]");
+      if (handled) continue;
     }
 
     // Skip / Not now
@@ -499,90 +463,6 @@ async function handleOAuth(
 }
 
 // ============================================================
-// Re-auth helper — handles password & TOTP re-authentication
-// during the accept-invite flow (Google may require it after
-// navigating to family pages or clicking Join/Leave).
-// ============================================================
-
-async function handleReAuth(
-  page: import("playwright").Page,
-  credentials: LoginCredentials,
-  logger: TaskLogger
-): Promise<boolean> {
-  const url = page.url();
-
-  // Password re-auth
-  if (url.includes("challenge/pwd") || url.includes("signin/challenge")) {
-    const pwdInput = page.locator(
-      'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
-    );
-    if (credentials.loginPassword && (await pwdInput.count()) > 0) {
-      await pwdInput.first().fill(credentials.loginPassword);
-      await logger.log("INFO", "[accept-invite] Re-auth: password submitted");
-      const nextBtn = page.locator(
-        'button[type="submit"], button[jsname="LgbsSe"], #passwordNext button'
-      );
-      if ((await nextBtn.count()) > 0) {
-        await nextBtn.first().evaluate((el: HTMLElement) => el.click());
-      } else {
-        await page.keyboard.press("Enter");
-      }
-      await page.waitForTimeout(4000);
-      await page.waitForLoadState("domcontentloaded").catch(() => {});
-      return true;
-    }
-  }
-
-  // TOTP re-auth
-  if (url.includes("challenge/totp")) {
-    if (!credentials.totpSecret) {
-      await logger.log("WARN", "[accept-invite] TOTP challenge but no totpSecret configured");
-      return false;
-    }
-    const remaining = totpSecondsRemaining();
-    if (remaining < 5) {
-      await page.waitForTimeout((remaining + 1) * 1000);
-    }
-    const totpInput = page.locator(
-      'input[type="tel"], input[type="text"][name="totpPin"], input[name="Pin"]'
-    );
-    if ((await totpInput.count()) > 0) {
-      const code = generateTOTP(credentials.totpSecret!);
-      await totpInput.first().fill(code);
-      await logger.log("INFO", `[accept-invite] Re-auth: TOTP submitted (${code.substring(0, 2)}****)`);
-      const nextBtn = page.locator(
-        'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
-        'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
-      );
-      if ((await nextBtn.count()) > 0) {
-        await nextBtn.first().evaluate((el: HTMLElement) => el.click());
-      } else {
-        await page.keyboard.press("Enter");
-      }
-      await page.waitForTimeout(4000);
-      await page.waitForLoadState("domcontentloaded").catch(() => {});
-      return true;
-    }
-  }
-
-  // Challenge selection page — try to pick TOTP
-  if (url.includes("challenge/selection") && credentials.totpSecret) {
-    const totpOption = page.locator(
-      'div[data-challengetype="6"], li[data-challengetype="6"], ' +
-      'button[data-challengetype="6"]'
-    );
-    if ((await totpOption.count()) > 0) {
-      await totpOption.first().click();
-      await logger.log("INFO", "[accept-invite] Re-auth: selected TOTP from challenge selection");
-      await page.waitForTimeout(3000);
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// ============================================================
 // Accept invite handler
 // ============================================================
 
@@ -616,14 +496,12 @@ async function handleAcceptInvite(
    * Returns true if a re-auth was performed (caller should re-check page state).
    */
   async function checkAndHandleReAuth(): Promise<boolean> {
-    const url = page.url();
-    if (
-      url.includes("challenge/pwd") ||
-      url.includes("challenge/totp") ||
-      url.includes("challenge/selection") ||
-      url.includes("signin/challenge")
-    ) {
-      return handleReAuth(page, credentials, logger);
+    if (isReAuthPage(page.url())) {
+      return sharedHandleReAuth(page, {
+        loginEmail: credentials.loginEmail,
+        password: credentials.loginPassword,
+        totpSecret: credentials.totpSecret,
+      }, logger, "[accept-invite]");
     }
     return false;
   }
@@ -725,67 +603,17 @@ async function handleAcceptInvite(
 
       // Handle re-auth that may appear after clicking Leave
       // Google often redirects to a challenge page or shows a password/TOTP overlay
+      // The shared handleReAuth also detects inline password/TOTP overlays.
       for (let ra = 0; ra < 5; ra++) {
-        const currentUrl = page.url();
-        await logger.log("DEBUG", `[leave-family] Re-auth check ${ra + 1}, URL: ${currentUrl}`);
-
-        // Check URL-based re-auth (redirect to challenge page)
-        if (await checkAndHandleReAuth()) {
-          await logger.log("INFO", `[leave-family] Re-auth handled (round ${ra + 1})`);
-          await page.waitForTimeout(3000);
-          continue;
-        }
-
-        // Also check for inline password field that Google sometimes shows as an overlay
-        const inlinePwd = page.locator(
-          'input[type="password"]:visible'
-        );
-        if (credentials.loginPassword && (await inlinePwd.count()) > 0) {
-          await inlinePwd.first().fill(credentials.loginPassword);
-          await logger.log("INFO", "[leave-family] Filled inline password field");
-          // Try to click a submit/next button near it
-          const inlineSubmit = page.locator(
-            'button[type="submit"], button[jsname="LgbsSe"], ' +
-            'div[role="button"][jsname="LgbsSe"], #passwordNext button'
-          );
-          if ((await inlineSubmit.count()) > 0) {
-            await inlineSubmit.first().evaluate((el: HTMLElement) => el.click());
-          } else {
-            await page.keyboard.press("Enter");
-          }
-          await logger.log("INFO", "[leave-family] Inline password submitted");
-          await page.waitForTimeout(4000);
-          continue;
-        }
-
-        // Check for inline TOTP field
-        if (credentials.totpSecret) {
-          const inlineTotp = page.locator(
-            'input[type="tel"]:visible, input[name="totpPin"]:visible, input[name="Pin"]:visible'
-          );
-          if ((await inlineTotp.count()) > 0) {
-            const remaining = totpSecondsRemaining();
-            if (remaining < 5) {
-              await page.waitForTimeout((remaining + 1) * 1000);
-            }
-            const code = generateTOTP(credentials.totpSecret!);
-            await inlineTotp.first().fill(code);
-            await logger.log("INFO", `[leave-family] Inline TOTP submitted (${code.substring(0, 2)}****)`);
-            const inlineSubmit = page.locator(
-              'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
-              'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
-            );
-            if ((await inlineSubmit.count()) > 0) {
-              await inlineSubmit.first().evaluate((el: HTMLElement) => el.click());
-            } else {
-              await page.keyboard.press("Enter");
-            }
-            await page.waitForTimeout(4000);
-            continue;
-          }
-        }
-
-        break; // No re-auth detected
+        await logger.log("DEBUG", `[leave-family] Re-auth check ${ra + 1}, URL: ${page.url()}`);
+        const handled = await sharedHandleReAuth(page, {
+          loginEmail: credentials.loginEmail,
+          password: credentials.loginPassword,
+          totpSecret: credentials.totpSecret,
+        }, logger, "[leave-family]");
+        if (!handled) break;
+        await logger.log("INFO", `[leave-family] Re-auth handled (round ${ra + 1})`);
+        await page.waitForTimeout(3000);
       }
 
       // Confirm leave dialog — Google shows a confirmation popup
@@ -1071,11 +899,23 @@ async function handleAcceptInvite(
   }
 
   // ── Verify success ──
+  // If the confirm loop already detected success markers on the page body,
+  // trust that result — navigating away and back risks getting unrendered JS.
+  const preNavBodyText = (await page.textContent("body").catch(() => "")) ?? "";
+  const alreadyConfirmed = SUCCESS_MARKERS.some((m) => preNavBodyText.includes(m));
+  if (alreadyConfirmed) {
+    await logger.updateStatus("SUCCESS");
+    await logger.log("INFO", "Successfully joined family group! (confirmed from accept page)");
+    return true;
+  }
+
   await page.goto(FAMILY_DETAILS_URL, {
     waitUntil: "domcontentloaded",
     timeout: 30000,
   });
-  await page.waitForTimeout(2000);
+  // Wait for SPA to render — Google Family is a JS-heavy page
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(3000);
   await ensureEnglish();
 
   // Handle re-auth on verification page
@@ -1084,29 +924,57 @@ async function handleAcceptInvite(
     await ensureEnglish();
   }
 
-  const verifyText = (await page.textContent("body").catch(() => "")) ?? "";
-  const isMember =
-    verifyText.includes(credentials.loginEmail) ||
-    verifyText.includes("Family member") ||
-    verifyText.includes("Leave family group") ||
-    SUCCESS_MARKERS.some((m) => verifyText.includes(m));
+  // Poll for rendered content — SPA may take several seconds to populate
+  const VERIFY_KEYWORDS = [
+    "Family member", "Leave family group",
+    "家庭成员", "家庭成員", "退出家庭",
+    "ファミリーメンバー", "ファミリーグループから脱退",
+    "가족 구성원", "가족 그룹 나가기",
+    "thành viên gia đình", "Rời nhóm gia đình",
+  ];
 
-  if (isMember) {
-    await logger.updateStatus("SUCCESS");
-    await logger.log("INFO", "Successfully joined family group!");
-    return true;
-  } else {
-    // Don't mark as SUCCESS when we can't verify membership
-    await logger.updateStatus("FAILED_RETRYABLE", {
-      code: "MEMBERSHIP_UNVERIFIED",
-      message: "Invite flow completed but could not verify family membership",
-    });
-    await logger.log(
-      "WARN",
-      "Invite flow completed but membership could not be verified — marked as FAILED_RETRYABLE"
-    );
-    return false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const verifyText = (await page.textContent("body").catch(() => "")) ?? "";
+    const isMember =
+      verifyText.toLowerCase().includes(credentials.loginEmail.toLowerCase()) ||
+      VERIFY_KEYWORDS.some((kw) => verifyText.includes(kw)) ||
+      SUCCESS_MARKERS.some((m) => verifyText.includes(m));
+
+    if (isMember) {
+      await logger.updateStatus("SUCCESS");
+      await logger.log("INFO", "Successfully joined family group!");
+      return true;
+    }
+
+    // Check if page has rendered (not just raw JS)
+    const hasRendered = !verifyText.includes("window.wiz_progress") &&
+                        verifyText.length > 500 &&
+                        (verifyText.includes("Google") || verifyText.includes("account"));
+    if (hasRendered && attempt >= 2) {
+      // Page rendered but no membership keywords found — likely not a member
+      await logger.log("WARN", `Page rendered but no membership keywords found (attempt ${attempt + 1})`);
+      break;
+    }
+
+    await logger.log("DEBUG", `Verify attempt ${attempt + 1}: page not ready yet (text length=${verifyText.length}), waiting...`);
+    await page.waitForTimeout(3000);
   }
+
+  // Last resort: check current page URL — if we're on /family/details it's a good sign
+  const finalUrl = page.url();
+  const finalBody = (await page.textContent("body").catch(() => "")) ?? "";
+  await logger.log("WARN", `Verification failed. URL: ${finalUrl}, body length: ${finalBody.length}, first 200: ${finalBody.slice(0, 200)}`);
+
+  // Don't mark as SUCCESS when we can't verify membership
+  await logger.updateStatus("FAILED_RETRYABLE", {
+    code: "MEMBERSHIP_UNVERIFIED",
+    message: "Invite flow completed but could not verify family membership",
+  });
+  await logger.log(
+    "WARN",
+    "Invite flow completed but membership could not be verified — marked as FAILED_RETRYABLE"
+  );
+  return false;
 }
 
 
