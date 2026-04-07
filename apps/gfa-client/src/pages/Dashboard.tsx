@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useAppStore } from "../stores/useAppStore";
 import {
   Users, Key, CheckCircle, AlertCircle, ShieldAlert,
@@ -7,37 +6,27 @@ import {
 
 export function Dashboard() {
   const { accounts, setCurrentPage, quotaCache } = useAppStore();
-  const { tokenCount, activeCount, failedCount, forbiddenCount, stats } = useMemo(() => {
-    const tCount = accounts.filter((a) => a.antigravity_token).length;
-    const aCount = accounts.filter((a) => a.status === "active").length;
-    const fCount = accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length;
-    const dCount = accounts.filter((a) => !!quotaCache[a.email]?.is_forbidden).length;
+  const tokenCount = accounts.filter((a) => a.antigravity_token).length;
+  const activeCount = accounts.filter((a) => a.status === "active").length;
+  const failedCount = accounts.filter((a) => a.status === "login_failed" || a.status === "locked").length;
+  const forbiddenCount = accounts.filter((a) => !!quotaCache[a.email]?.is_forbidden).length;
 
-    const s = [
-      { icon: Users, label: "总账号", value: accounts.length, cls: "accent" },
-      { icon: Key, label: "已授权", value: tCount, cls: "success" },
-      { icon: CheckCircle, label: "活跃", value: aCount, cls: "info" },
-      { icon: AlertCircle, label: "异常", value: fCount, cls: "warning" },
-      ...(dCount > 0 ? [{ icon: ShieldAlert, label: "封禁", value: dCount, cls: "warning" }] : []),
-    ];
+  const stats = [
+    { icon: Users, label: "总账号", value: accounts.length, cls: "accent" },
+    { icon: Key, label: "已授权", value: tokenCount, cls: "success" },
+    { icon: CheckCircle, label: "活跃", value: activeCount, cls: "info" },
+    { icon: AlertCircle, label: "异常", value: failedCount, cls: "warning" },
+    ...(forbiddenCount > 0 ? [{ icon: ShieldAlert, label: "封禁", value: forbiddenCount, cls: "warning" }] : []),
+  ];
 
-    return {
-      tokenCount: tCount,
-      activeCount: aCount,
-      failedCount: fCount,
-      forbiddenCount: dCount,
-      stats: s
-    };
-  }, [accounts, quotaCache]);
-
-  const quickActions = useMemo(() => [
+  const quickActions = [
     { icon: Mail, label: "接受邀请", page: "accept-invite" },
     { icon: Gift, label: "兑换码", page: "redeem" },
     { icon: ArrowLeftRight, label: "账号置换", page: "swap" },
     { icon: Users, label: "账号管理", page: "accounts" },
-  ], []);
+  ];
 
-  const recentAccounts = useMemo(() => accounts.slice(0, 6), [accounts]);
+  const recentAccounts = accounts.slice(0, 6);
 
   return (
     <>
