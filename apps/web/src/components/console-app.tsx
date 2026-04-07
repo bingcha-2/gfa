@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
@@ -132,16 +132,23 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
   async function loadDashboard() {
     try {
-      const [user, accounts, groups, orders, tasks, redeemCodes] = await Promise.all([
+      const [user, accounts, groups, ordersRes, tasksRes, codesRes] = await Promise.all([
         apiRequest<SessionUser>("auth/me"),
         apiRequest<AccountSummary[]>("accounts"),
         apiRequest<FamilyGroupSummary[]>("family-groups"),
-        apiRequest<OrderSummary[]>("orders"),
-        apiRequest<TaskSummary[]>("tasks"),
-        apiRequest<RedeemCodeSummary[]>("redeem-codes")
+        apiRequest<{ data: OrderSummary[]; total: number }>("orders?pageSize=100"),
+        apiRequest<{ data: TaskSummary[]; total: number }>("tasks?pageSize=100"),
+        apiRequest<{ data: RedeemCodeSummary[]; total: number }>("redeem-codes?pageSize=100")
       ]);
 
-      setData({ user, accounts, groups, orders, tasks, redeemCodes });
+      setData({
+        user,
+        accounts,
+        groups,
+        orders: ordersRes.data,
+        tasks: tasksRes.data,
+        redeemCodes: codesRes.data
+      });
       setError(null);
     } catch (requestError) {
       const message = getErrorMessage(requestError);
@@ -157,13 +164,61 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
+  /** Refresh only the tables relevant to the current section */
+  async function refreshSection() {
+    try {
+      switch (activeSection) {
+        case "accounts": {
+          const accounts = await apiRequest<AccountSummary[]>("accounts");
+          setData((prev) => ({ ...prev, accounts }));
+          break;
+        }
+        case "groups": {
+          const [accounts, groups] = await Promise.all([
+            apiRequest<AccountSummary[]>("accounts"),
+            apiRequest<FamilyGroupSummary[]>("family-groups"),
+          ]);
+          setData((prev) => ({ ...prev, accounts, groups }));
+          break;
+        }
+        case "orders": {
+          const ordersRes = await apiRequest<{ data: OrderSummary[]; total: number }>("orders?pageSize=100");
+          setData((prev) => ({ ...prev, orders: ordersRes.data }));
+          break;
+        }
+        case "tasks": {
+          const tasksRes = await apiRequest<{ data: TaskSummary[]; total: number }>("tasks?pageSize=100");
+          setData((prev) => ({ ...prev, tasks: tasksRes.data }));
+          break;
+        }
+        case "codes": {
+          const codesRes = await apiRequest<{ data: RedeemCodeSummary[]; total: number }>("redeem-codes?pageSize=100");
+          setData((prev) => ({ ...prev, redeemCodes: codesRes.data }));
+          break;
+        }
+        default:
+          await refreshSection();
+      }
+      setError(null);
+    } catch (requestError) {
+      const message = getErrorMessage(requestError);
+      if (isUnauthorized(message)) {
+        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        router.push(`/${prefix}/login`);
+        router.refresh();
+        return;
+      }
+      setError(message);
+    }
+  }
+
   async function runAction(action: () => Promise<unknown>) {
     setIsActioning(true);
     const minDelay = new Promise<void>((res) => setTimeout(res, 600));
     try {
       const [result] = await Promise.allSettled([action(), minDelay]);
       if (result.status === "rejected") throw result.reason;
-      await loadDashboard();
+      await refreshSection();
       setError(null);
       return true;
     } catch (actionError) {
@@ -226,7 +281,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         body: payload
       });
       // Refresh dashboard data after import
-      await loadDashboard();
+      await refreshSection();
       setError(null);
       return result;
     } catch (importError) {
@@ -297,7 +352,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         method: "POST",
         body: payload
       });
-      await loadDashboard();
+      await refreshSection();
       return created.map((c) => c.code);
     } catch (err) {
       const message = getErrorMessage(err);
@@ -322,7 +377,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         `family-groups/${groupId}/sync`,
         { method: "POST" }
       );
-      await loadDashboard();
+      await refreshSection();
       return result?.taskId ? { taskId: result.taskId } : null;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -346,7 +401,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         `family-groups/${groupId}/remove-member`,
         { method: "POST", body: { memberEmail } }
       );
-      await loadDashboard();
+      await refreshSection();
       return result?.taskId ? { taskId: result.taskId } : null;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -370,7 +425,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         `family-groups/${groupId}/replace-member`,
         { method: "POST", body: { targetMemberEmail: targetEmail, newUserEmail: newEmail } }
       );
-      await loadDashboard();
+      await refreshSection();
       return result?.taskId ? { taskId: result.taskId } : null;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -393,7 +448,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         method: "POST",
         body: { emails, validDays }
       });
-      await loadDashboard();
+      await refreshSection();
       return result;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -408,7 +463,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         method: "POST",
         body: { memberEmails }
       });
-      await loadDashboard();
+      await refreshSection();
       return result;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -423,7 +478,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         method: "POST",
         body: { emails, validDays }
       });
-      await loadDashboard();
+      await refreshSection();
       return result;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -438,7 +493,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         method: "POST",
         body: { memberEmails }
       });
-      await loadDashboard();
+      await refreshSection();
       return result;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -450,7 +505,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   async function toggleAutoAssign(groupId: string): Promise<boolean> {
     try {
       await apiRequest(`family-groups/${groupId}/toggle-auto-assign`, { method: "POST" });
-      await loadDashboard();
+      await refreshSection();
       return true;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -465,7 +520,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         `family-groups/${groupId}/migrate-member`,
         { method: "POST", body: { memberEmail } }
       );
-      await loadDashboard();
+      await refreshSection();
       return result;
     } catch (err) {
       const message = getErrorMessage(err);
@@ -566,26 +621,41 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     );
   }
 
-  const availableSlots =
+  const availableSlots = useMemo(() =>
     data.groups
       .filter((group) =>
         group.account?.status === "HEALTHY" &&
         group.status === "ACTIVE" &&
         group.account?.subscriptionStatus !== "SUSPENDED"
       )
-      .reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
-  const activeOrders =
-    data.orders.filter((order) => !orderTerminalStatuses.has(order.status)).length ?? 0;
-  const manualReviewTasks =
-    data.tasks.filter((task) => task.status === "MANUAL_REVIEW").length ?? 0;
-  const disabledAccounts =
-    data.accounts.filter((account) => account.status !== "HEALTHY").length ?? 0;
-  const pendingInvites =
-    data.groups.reduce((sum, group) => sum + (group.pendingMemberCount ?? 0), 0) ?? 0;
-  const unusedCodes =
-    data.redeemCodes.filter((code) => code.status === "UNUSED").length ?? 0;
-  const recentOrders = data.orders.slice(0, 5);
-  const reviewQueue = data.tasks.filter((task) => task.status === "MANUAL_REVIEW").slice(0, 5);
+      .reduce((sum, group) => sum + group.availableSlots, 0) ?? 0,
+    [data.groups]
+  );
+  const activeOrders = useMemo(() =>
+    data.orders.filter((order) => !orderTerminalStatuses.has(order.status)).length ?? 0,
+    [data.orders]
+  );
+  const manualReviewTasks = useMemo(() =>
+    data.tasks.filter((task) => task.status === "MANUAL_REVIEW").length ?? 0,
+    [data.tasks]
+  );
+  const disabledAccounts = useMemo(() =>
+    data.accounts.filter((account) => account.status !== "HEALTHY").length ?? 0,
+    [data.accounts]
+  );
+  const pendingInvites = useMemo(() =>
+    data.groups.reduce((sum, group) => sum + (group.pendingMemberCount ?? 0), 0) ?? 0,
+    [data.groups]
+  );
+  const unusedCodes = useMemo(() =>
+    data.redeemCodes.filter((code) => code.status === "UNUSED").length ?? 0,
+    [data.redeemCodes]
+  );
+  const recentOrders = useMemo(() => data.orders.slice(0, 5), [data.orders]);
+  const reviewQueue = useMemo(() =>
+    data.tasks.filter((task) => task.status === "MANUAL_REVIEW").slice(0, 5),
+    [data.tasks]
+  );
 
   const isAdminOrOps = data.user.role === "ADMIN" || data.user.role === "OPERATIONS";
 

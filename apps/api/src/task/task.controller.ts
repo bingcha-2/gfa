@@ -11,6 +11,7 @@ import { IsOptional, IsString } from "class-validator";
 
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { PaginationQuery } from "../common/pagination";
 import { TaskService } from "./task.service";
 
 class ManualCompleteDto {
@@ -33,8 +34,12 @@ export class TaskController {
   ) {}
 
   @Get()
-  findAll(@Query("status") status?: string, @Query("type") type?: string) {
-    return this.taskService.findAll({ status, type });
+  findAll(
+    @Query("status") status?: string,
+    @Query("type") type?: string,
+    @Query() pagination?: PaginationQuery,
+  ) {
+    return this.taskService.findAll({ status, type, ...pagination });
   }
 
   @Get(":id")

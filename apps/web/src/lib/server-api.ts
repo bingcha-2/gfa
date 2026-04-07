@@ -67,21 +67,21 @@ export type ConsoleBootstrapData = {
 };
 
 export async function getConsoleBootstrapData(token: string) {
-  const [user, accounts, groups, orders, tasks, redeemCodes] = await Promise.all([
+  const [user, accounts, groups, ordersRes, tasksRes, codesRes] = await Promise.all([
     serverApiRequest<SessionUser>("auth/me", token),
     serverApiRequest<AccountSummary[]>("accounts", token),
     serverApiRequest<FamilyGroupSummary[]>("family-groups", token),
-    serverApiRequest<OrderSummary[]>("orders", token),
-    serverApiRequest<TaskSummary[]>("tasks", token),
-    serverApiRequest<RedeemCodeSummary[]>("redeem-codes", token)
+    serverApiRequest<{ data: OrderSummary[]; total: number }>("orders?pageSize=100", token),
+    serverApiRequest<{ data: TaskSummary[]; total: number }>("tasks?pageSize=100", token),
+    serverApiRequest<{ data: RedeemCodeSummary[]; total: number }>("redeem-codes?pageSize=100", token)
   ]);
 
   return {
     user,
     accounts,
     groups,
-    orders,
-    tasks,
-    redeemCodes
+    orders: ordersRes.data,
+    tasks: tasksRes.data,
+    redeemCodes: codesRes.data
   } satisfies ConsoleBootstrapData;
 }

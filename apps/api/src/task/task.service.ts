@@ -8,6 +8,7 @@ import { Queue } from "bullmq";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_NAMES, TASK_TYPES, JOB_DEFAULTS } from "@gfa/shared";
+import { normalizePagination } from "../common/pagination";
 
 @Injectable()
 export class TaskService {
@@ -31,7 +32,7 @@ export class TaskService {
     }
   }
 
-  async findAll(params?: { status?: string; type?: string }) {
+  async findAll(params?: { status?: string; type?: string; page?: number; pageSize?: number }) {
     const where: Record<string, unknown> = {
       // Exclude scheduler and expire-scan tasks from regular task list
       source: { notIn: ["scheduler", "expire-scan"] },
@@ -40,28 +41,37 @@ export class TaskService {
     if (params?.status) where.status = params.status;
     if (params?.type) where.type = params.type;
 
-    return this.prisma.task.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        priority: true,
-        retryCount: true,
-        maxRetryCount: true,
-        payload: true,
-        lastErrorCode: true,
-        lastErrorMessage: true,
-        startedAt: true,
-        finishedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        order: { select: { id: true, orderNo: true, userEmail: true } },
-        familyGroup: { select: { id: true, groupName: true } },
-        account: { select: { id: true, name: true } },
-      }
-    });
+    const { page, pageSize, skip } = normalizePagination(params);
+
+    const [data, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take: pageSize,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          priority: true,
+          retryCount: true,
+          maxRetryCount: true,
+          payload: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
+          startedAt: true,
+          finishedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          order: { select: { id: true, orderNo: true, userEmail: true } },
+          familyGroup: { select: { id: true, groupName: true } },
+          account: { select: { id: true, name: true } },
+        }
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
   async findOne(id: string) {

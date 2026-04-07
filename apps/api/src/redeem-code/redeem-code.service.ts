@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import { RedeemCodeType } from "@prisma/client";
 
 import { PrismaService } from "../prisma/prisma.service";
+import { normalizePagination } from "../common/pagination";
 
 /** Prefix map: each code type gets a recognisable prefix */
 const CODE_PREFIX: Record<RedeemCodeType, string> = {
@@ -22,18 +23,27 @@ export class RedeemCodeService {
     return prefix ? `${prefix}-${body}` : body;
   }
 
-  async findAll(status?: string) {
+  async findAll(status?: string, pagination?: { page?: number; pageSize?: number }) {
     const where = status ? { status: status as any } : {};
 
-    return this.prisma.redeemCode.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        order: {
-          select: { id: true, orderNo: true, userEmail: true, status: true }
+    const { page, pageSize, skip } = normalizePagination(pagination);
+
+    const [data, total] = await Promise.all([
+      this.prisma.redeemCode.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+        include: {
+          order: {
+            select: { id: true, orderNo: true, userEmail: true, status: true }
+          }
         }
-      }
-    });
+      }),
+      this.prisma.redeemCode.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
   async batchCreate(params: {

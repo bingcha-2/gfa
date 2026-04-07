@@ -278,6 +278,13 @@ model Task {
   logs                 TaskLog[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
+
+  @@index([source, createdAt])
+  @@index([status])
+  @@index([type, status])
+  @@index([familyGroupId])
+  @@index([accountId])
+  @@index([updatedAt])
 }
 
 model TaskLog {

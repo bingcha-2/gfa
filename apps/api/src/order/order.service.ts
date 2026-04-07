@@ -12,6 +12,7 @@ import { nanoid } from "nanoid";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedeemCodeService } from "../redeem-code/redeem-code.service";
 import { FamilyGroupService } from "../family-group/family-group.service";
+import { normalizePagination } from "../common/pagination";
 import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
 
 type PublicOrderPayload = {
@@ -121,7 +122,7 @@ export class OrderService {
   }
 
 
-  async findAll(status?: string) {
+  async findAll(status?: string, pagination?: { page?: number; pageSize?: number }) {
     const VALID_STATUSES = [
       "CREATED", "CODE_VERIFIED", "GROUP_ASSIGNED", "TASK_QUEUED", "TASK_RUNNING",
       "INVITE_SENT", "WAIT_USER_ACCEPT", "COMPLETED", "FAILED", "MANUAL_REVIEW", "EXPIRED"
@@ -131,26 +132,35 @@ export class OrderService {
       ? { status: status as any }
       : {};
 
-    return this.prisma.order.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        familyGroup: { select: { id: true, groupName: true } },
-        redeemCode: { select: { id: true, code: true } },
-        _count: { select: { tasks: true } },
-        swapRecords: {
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            oldEmail: true,
-            newEmail: true,
-            status: true,
-            taskId: true,
-            createdAt: true,
+    const { page, pageSize, skip } = normalizePagination(pagination);
+
+    const [data, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take: pageSize,
+        include: {
+          familyGroup: { select: { id: true, groupName: true } },
+          redeemCode: { select: { id: true, code: true } },
+          _count: { select: { tasks: true } },
+          swapRecords: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              oldEmail: true,
+              newEmail: true,
+              status: true,
+              taskId: true,
+              createdAt: true,
+            },
           },
-        },
-      }
-    });
+        }
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
   async findOne(id: string) {

@@ -12,6 +12,7 @@ import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 
 import { Roles } from "../auth/roles.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { PaginationQuery } from "../common/pagination";
 import { RedeemCodeService } from "./redeem-code.service";
 
 const VALID_CODE_TYPES = ["JOIN_GROUP", "ACCOUNT_SWAP", "SUBSCRIPTION"] as const;
@@ -62,8 +63,11 @@ export class RedeemCodeController {
 
   @Get()
   @Roles("ADMIN", "OPERATIONS")
-  findAll(@Query("status") status?: string) {
-    return this.redeemCodeService.findAll(status);
+  findAll(
+    @Query("status") status?: string,
+    @Query() pagination?: PaginationQuery,
+  ) {
+    return this.redeemCodeService.findAll(status, pagination);
   }
 
   @Post("batch-create")

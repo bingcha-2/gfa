@@ -13,6 +13,7 @@ import { Throttle } from "@nestjs/throttler";
 import { Roles } from "../auth/roles.decorator";
 import { Public } from "../auth/public.decorator";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { PaginationQuery } from "../common/pagination";
 import { OrderService } from "./order.service";
 
 class RedeemDto {
@@ -151,8 +152,11 @@ export class OrderController {
 
   @Get("orders")
   @Roles("ADMIN", "OPERATIONS")
-  findAll(@Query("status") status?: string) {
-    return this.orderService.findAll(status);
+  findAll(
+    @Query("status") status?: string,
+    @Query() pagination?: PaginationQuery,
+  ) {
+    return this.orderService.findAll(status, pagination);
   }
 
   @Get("orders/:id")
