@@ -3,7 +3,7 @@ import { useAppStore } from "../stores/useAppStore";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Play, ArrowLeftRight, Repeat2, KeyRound,
-  Loader, CheckCircle, Terminal, ChevronDown, ChevronUp, AlertCircle,
+  Loader, CheckCircle, Terminal, ChevronDown, ChevronUp, AlertCircle, UserCheck,
 } from "lucide-react";
 
 type SwapPhase = "config" | "running" | "done" | "error";
@@ -16,7 +16,7 @@ interface SwapResult {
 }
 
 export function Swap() {
-  const { } = useAppStore();
+  const { accounts } = useAppStore();
 
   const [swapCode, setSwapCode] = useState("");
   const [sourceEmail, setSourceEmail] = useState("");
@@ -27,6 +27,7 @@ export function Swap() {
   const [swapLogs, setSwapLogs] = useState<string[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [showLogs, setShowLogs] = useState(true);
+  const [autoAccept, setAutoAccept] = useState(true);
 
   useEffect(() => {
     if (showLogs) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -56,6 +57,7 @@ export function Swap() {
 
     addLog(`开始置换: ${origEmail} → ${newEmail}`);
     addLog(`置换码: ${code}`);
+    if (autoAccept) addLog(`✅ 自动接受邀请已开启`);
 
     try {
       // Step 1: Call swap_account
@@ -96,6 +98,42 @@ export function Swap() {
 
             if (st === "completed" || st === "done" || st === "success") {
               addLog("🎉 置换完成！");
+
+              // Auto-accept invite for the new email
+              if (autoAccept) {
+                const newAccount = accounts.find((a) => a.email === newEmail);
+                if (newAccount) {
+                  addLog(`🤖 正在为 ${newEmail} 自动接受邀请...`);
+                  try {
+                    const { taskId: acceptTaskId } = await invoke<{ taskId: string }>("run_accept_invite", { email: newEmail });
+                    addLog(`接受邀请任务已创建 (${acceptTaskId})，等待完成...`);
+
+                    const acceptMaxAttempts = 140;
+                    for (let j = 1; j <= acceptMaxAttempts; j++) {
+                      await new Promise((r) => setTimeout(r, 3000));
+                      try {
+                        const acceptStatus = await invoke<{ status: string; lastErrorMessage?: string }>("poll_automation_status", { taskId: acceptTaskId });
+                        if (acceptStatus.status === "SUCCESS") {
+                          addLog(`🎉 ${newEmail} 邀请已自动接受！`);
+                          break;
+                        }
+                        if (["FAILED_FINAL", "FAILED_RETRYABLE", "CANCELLED", "MANUAL_REVIEW"].includes(acceptStatus.status)) {
+                          addLog(`❌ 自动接受失败: ${acceptStatus.lastErrorMessage || acceptStatus.status}`);
+                          break;
+                        }
+                        if (j % 5 === 0) addLog(`⏳ 接受邀请中... (${j}/${acceptMaxAttempts})`);
+                      } catch (pe) {
+                        addLog(`⚠️ 轮询失败: ${pe}`);
+                      }
+                    }
+                  } catch (acceptErr) {
+                    addLog(`❌ 触发自动接受失败: ${acceptErr}`);
+                  }
+                } else {
+                  addLog(`⚠️ ${newEmail} 不在本地账号列表中，跳过自动接受`);
+                }
+              }
+
               setPhase("done");
               return;
             }
@@ -194,6 +232,24 @@ export function Swap() {
               <span className="text-muted text-xs" style={{ marginTop: 4 }}>邀请将发送到此邮箱，确认拼写正确</span>
             </div>
           </div>
+
+          {/* Auto-accept toggle */}
+          <label className="flex items-center gap-2 cursor-pointer mt-2" style={{ fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={autoAccept}
+              onChange={() => setAutoAccept(!autoAccept)}
+              disabled={phase === "running"}
+              style={{ accentColor: "var(--primary)" }}
+            />
+            <UserCheck size={13} style={{ color: autoAccept ? "var(--primary)" : "var(--text-muted)" }} />
+            <span>置换后自动接受邀请</span>
+          </label>
+          {autoAccept && (
+            <p className="text-muted text-xs mt-1" style={{ paddingLeft: 4 }}>
+              将在置换完成后自动登录新账号接受 Family 邀请（需新邮箱在本地账号列表中）
+            </p>
+          )}
 
           {/* Preview */}
           {sourceEmail && targetEmail && (

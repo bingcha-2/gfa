@@ -209,12 +209,13 @@ export function GroupPanel({
 
     const poll = async () => {
       try {
-        const tasks = await apiRequest<Array<{
+        const res = await apiRequest<{ data: Array<{
           status: string;
           payload?: string;
           lastErrorMessage?: string | null;
-        }>>('tasks?type=INVITE_MEMBER');
-        if (!tasks) return;
+        }>; total: number }>('tasks?type=INVITE_MEMBER&pageSize=50');
+        if (!res?.data) return;
+        const tasks = res.data;
 
         const emailSet = new Set(emails.map(e => e.toLowerCase()));
         const statusMap = new Map<string, { status: string; errorMessage?: string }>();
