@@ -137,6 +137,16 @@ export async function processHealth(
       }
     }
 
+    // Automatically restore any associated MANUAL_ONLY groups back to ACTIVE
+    // since a successful health check proves the account is accessible.
+    const restoredGroups = await prisma.familyGroup.updateMany({
+      where: { accountId, status: "MANUAL_ONLY" },
+      data: { status: "ACTIVE" },
+    });
+    if (restoredGroups.count > 0) {
+      await logger.log("INFO", `Auto-restored ${restoredGroups.count} family group(s) from MANUAL_ONLY to ACTIVE after successful health check`);
+    }
+
     await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `Health check complete: ${healthStatus}`);
   } catch (error) {

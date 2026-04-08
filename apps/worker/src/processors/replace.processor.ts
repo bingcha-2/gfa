@@ -12,7 +12,7 @@
  * 8. Release lock, close profile
  */
 
-import { Job, UnrecoverableError } from "bullmq";
+import { Job, UnrecoverableError, DelayedError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { ReplaceMemberPayload } from "@gfa/shared";
 
@@ -22,7 +22,7 @@ import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
-import { generateTOTP, totpSecondsRemaining } from "../totp";
+import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
 import { postTaskSync } from "../post-task-sync";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
@@ -65,20 +65,33 @@ export async function processReplace(
   let stopHeartbeat: (() => void) | null = null;
 
   try {
-    // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → fail fast ──
+    // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → delay/fail ──
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(accountId);
       const priorFailures = await pool.getAccountTaskFailureCount(accountId);
-      if (cooldownSecs > 0 || priorFailures >= 3 || account.status !== "HEALTHY") {
+
+      // Account truly unhealthy (too many failures or bad status) → unrecoverable, needs human
+      if (priorFailures >= 3 || (account.status !== "HEALTHY" && account.status !== "LOGIN_REQUIRED")) {
         await logger.log("WARN",
-          `[replace] Account ${accountId} unavailable (cooldown=${cooldownSecs}s, failures=${priorFailures}, status=${account.status}). ` +
+          `[replace] Account ${accountId} unhealthy (failures=${priorFailures}, status=${account.status}). ` +
           `Replace tasks require the group's own account — cannot switch. Failing task.`
         );
         await logger.updateStatus("FAILED_RETRYABLE", {
           code: "ACCOUNT_UNAVAILABLE",
-          message: `Account in cooldown/unhealthy (failures=${priorFailures}, status=${account.status})`,
+          message: `Account unhealthy (failures=${priorFailures}, status=${account.status})`,
         });
-        throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: cooldown=${cooldownSecs}s, failures=${priorFailures}`);
+        throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: failures=${priorFailures}, status=${account.status}`);
+      }
+
+      // Account in transient cooldown → delay job until cooldown expires (don't waste an attempt)
+      if (cooldownSecs > 0) {
+        const delayMs = (cooldownSecs + 5) * 1000; // add 5s buffer
+        await logger.log("INFO",
+          `[replace] Account ${accountId} in cooldown (${cooldownSecs}s remaining). ` +
+          `Delaying job by ${Math.ceil(delayMs / 1000)}s instead of failing.`
+        );
+        await job.moveToDelayed(Date.now() + delayMs, job.token);
+        throw new DelayedError(`Delayed by ${cooldownSecs}s cooldown`);
       }
     }
 
@@ -113,7 +126,70 @@ export async function processReplace(
       select: { id: true, displayName: true, googleMemberId: true, status: true }
     });
     const targetDisplayName = memberRecord?.displayName ?? undefined;
-    const targetGaiaId = memberRecord?.googleMemberId ?? undefined;
+    let targetGaiaId = memberRecord?.googleMemberId ?? undefined;
+
+    // Fuzzy GAIA lookup (方案B): If the real member record has no GAIA ID,
+    // search for placeholder records (@gaia.unknown) in the same group.
+    // This handles the "split identity" case where sync created a placeholder
+    // instead of merging the GAIA ID into the real record.
+    if (!targetGaiaId && memberRecord) {
+      const placeholders = await prisma.familyMember.findMany({
+        where: {
+          familyGroupId,
+          email: { endsWith: "@gaia.unknown" },
+          status: { in: ["ACTIVE", "PENDING"] },
+        },
+        select: { id: true, email: true, googleMemberId: true, displayName: true },
+      });
+
+      if (placeholders.length === 1) {
+        // Single placeholder — high confidence it's the same person
+        targetGaiaId = placeholders[0].googleMemberId ?? undefined;
+        await logger.log("INFO",
+          `Fuzzy GAIA: single placeholder ${placeholders[0].email} found → using gaiaId=${targetGaiaId}`);
+
+        // Backfill: merge GAIA ID into the real record and delete the placeholder
+        if (targetGaiaId && memberRecord.id) {
+          await prisma.familyMember.update({
+            where: { id: memberRecord.id },
+            data: { googleMemberId: targetGaiaId },
+          }).catch(() => {});
+          await prisma.familyMember.delete({
+            where: { id: placeholders[0].id },
+          }).catch(() => {});
+          await logger.log("INFO",
+            `Fuzzy GAIA: merged placeholder into ${targetMemberEmail}, deleted ${placeholders[0].email}`);
+        }
+      } else if (placeholders.length > 1 && targetDisplayName) {
+        // Multiple placeholders — try displayName match
+        const byName = placeholders.filter(
+          (p) => p.displayName && p.displayName === targetDisplayName
+        );
+        if (byName.length === 1) {
+          targetGaiaId = byName[0].googleMemberId ?? undefined;
+          await logger.log("INFO",
+            `Fuzzy GAIA: matched placeholder by displayName "${targetDisplayName}" → gaiaId=${targetGaiaId}`);
+
+          if (targetGaiaId && memberRecord.id) {
+            await prisma.familyMember.update({
+              where: { id: memberRecord.id },
+              data: { googleMemberId: targetGaiaId },
+            }).catch(() => {});
+            await prisma.familyMember.delete({
+              where: { id: byName[0].id },
+            }).catch(() => {});
+            await logger.log("INFO",
+              `Fuzzy GAIA: merged placeholder into ${targetMemberEmail}`);
+          }
+        } else {
+          await logger.log("WARN",
+            `Fuzzy GAIA: ${placeholders.length} placeholders found, ${byName.length} matched displayName — cannot disambiguate`);
+        }
+      } else if (placeholders.length > 1) {
+        await logger.log("WARN",
+          `Fuzzy GAIA: ${placeholders.length} placeholders found but no displayName to disambiguate`);
+      }
+    }
 
     await logger.log("INFO",
       `Target member: email=${targetMemberEmail}, displayName=${targetDisplayName ?? 'unknown'}, gaiaId=${targetGaiaId ?? 'unknown'}`
@@ -268,7 +344,7 @@ export async function processReplace(
           await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
         }
         await page.waitForTimeout(2000);
-        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
+        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail, prisma, familyGroupId);
         if (newMemberGaiaId) {
           await logger.log("INFO", `Verified invite: found ${newUserEmail} on family page (gaiaId=${newMemberGaiaId})`);
         } else {
@@ -283,7 +359,7 @@ export async function processReplace(
       try {
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForTimeout(2000);
-        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail);
+        newMemberGaiaId = await scanPageForMemberGaiaId(page, newUserEmail, prisma, familyGroupId);
       } catch { /* non-fatal */ }
     }
 
@@ -387,12 +463,16 @@ export async function processReplace(
     }
 
     // Post-task sync: scrape the family page to reconcile DB with actual state
-    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
+    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger, {
+      justInvitedEmail: newUserEmail,
+    });
 
     await logger.log("INFO", "Replace completed successfully");
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
     if (error instanceof UnrecoverableError) throw error;
+    // DelayedError = job was rescheduled via moveToDelayed, not a real failure
+    if (error instanceof DelayedError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
 
@@ -629,20 +709,47 @@ async function removeMemberOnPage(
   await removeButton.first().click();
   await logger.log("INFO", `Clicked remove/cancel for ${email}`);
 
-  // Wait for potential redirect to re-auth page or confirmation dialog
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  // --- Handle potential redirect or confirmation dialog ---
+  // Google's redirect to re-auth (or popping up a dialog) can take >3s and cause race conditions.
+  // We poll for up to 15s to definitively detect the state change.
+  let needsReAuth = false;
+  let confirmDetected = false;
+  
+  for (let poll = 0; poll < 30; poll++) {
+    await page.waitForTimeout(500);
+    const u = page.url();
+    if (u.includes("accounts.google.com") || u.includes("signin") || u.includes("challenge") || u.includes("ServiceLogin")) {
+      needsReAuth = true;
+      break;
+    }
+    
+    if (u.includes("family/remove/")) {
+      confirmDetected = true;
+      break;
+    }
 
-  // --- Handle Google re-authentication (password and/or TOTP) ---
-  // After clicking Remove for an ACTIVE member, Google may redirect to
-  // accounts.google.com for re-authentication. Possible landing pages:
-  //   a) Identifier page (email pre-filled, need to click Next)
-  //   b) Password page directly
-  //   c) TOTP challenge page directly (Google may skip password if recently verified)
+    // Check if dialog appeared
+    const confirmButton = page.locator([
+      'a:has-text("是")', 'button:has-text("是")',
+      'a:has-text("Yes")', 'button:has-text("Yes")',
+      'a:has-text("確認")', 'button:has-text("確認")',
+      'a:has-text("确认")', 'button:has-text("确认")',
+      'a:has-text("Confirm")', 'button:has-text("Confirm")',
+      'button:has-text("예")', 'a:has-text("예")',
+      'button:has-text("확인")', 'a:has-text("확인")',
+      'button:has-text("はい")', 'a:has-text("はい")',
+      'button:has-text("Có")', 'a:has-text("Có")',
+      'button:has-text("Xác nhận")', 'a:has-text("Xác nhận")',
+    ].join(", "));
+
+    if ((await confirmButton.count()) > 0 && await confirmButton.first().isVisible().catch(()=>false)) {
+      confirmDetected = true;
+      break;
+    }
+  }
+
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   const postClickUrl = page.url();
-  const needsReAuth = postClickUrl.includes("accounts.google.com") ||
-                       postClickUrl.includes("signin") ||
-                       postClickUrl.includes("challenge");
 
   if (needsReAuth) {
     await logger.log("INFO", `Re-auth required. URL: ${postClickUrl}`);
@@ -650,13 +757,10 @@ async function removeMemberOnPage(
     // Step 1: Handle identifier page (email pre-filled, click Next)
     const identifierInput = page.locator('input[type="email"]');
     if ((await identifierInput.count()) > 0) {
-      await logger.log("INFO", "On identifier page, clicking Next");
-      const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步"), button:has-text("繼續"), button:has-text("继续")');
-      if ((await nextBtn.count()) > 0) {
-        await nextBtn.first().click();
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-      }
+      await logger.log("INFO", "On identifier page, pressing Enter");
+      await identifierInput.first().press("Enter");
+      await page.waitForTimeout(3000);
+      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
     }
 
     // Step 2: Detect if we're already on TOTP page (Google skipped password)
@@ -693,8 +797,7 @@ async function removeMemberOnPage(
       const pwdField = page.locator('input[type="password"]:visible, input[name="Passwd"]:visible');
       if ((await pwdField.count()) > 0) {
         await pwdField.first().fill(credentials!.password!);
-        const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
-        await nextButton.first().click();
+        await pwdField.first().press("Enter");
         await logger.log("INFO", "Password submitted for re-auth");
 
         await page.waitForTimeout(5000);
@@ -707,8 +810,7 @@ async function removeMemberOnPage(
         try {
           await hiddenPwd.first().waitFor({ state: "visible", timeout: 10_000 });
           await hiddenPwd.first().fill(credentials!.password!);
-          const nextButton = page.locator('button:has-text("Next"), button:has-text("下一步")');
-          await nextButton.first().click();
+          await hiddenPwd.first().press("Enter");
           await logger.log("INFO", "Password submitted (after wait for visibility)");
           await page.waitForTimeout(5000);
           await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
@@ -740,11 +842,20 @@ async function removeMemberOnPage(
         );
       }
 
-      // Wait for fresh TOTP code if current one is about to expire
-      const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
-        await logger.log("INFO", `Waiting ${remaining + 1}s for fresh TOTP code`);
+      // Ensure we use a different TOTP code than the one submitted during login.
+      // Google rejects same-code reuse within a session, even if still valid.
+      const curWindow = currentTotpWindow();
+      if (curWindow <= lastUsedTotpWindow()) {
+        const remaining = totpSecondsRemaining();
+        await logger.log("INFO", `Waiting ${remaining + 1}s to avoid TOTP code reuse (same window as login)`);
         await page.waitForTimeout((remaining + 1) * 1000);
+      } else {
+        // Different window, but still check if code is about to expire
+        const remaining = totpSecondsRemaining();
+        if (remaining < 5) {
+          await logger.log("INFO", `Waiting ${remaining + 1}s for fresh TOTP code`);
+          await page.waitForTimeout((remaining + 1) * 1000);
+        }
       }
 
       const totpCode = generateTOTP(credentials.totpSecret, credentials.loginEmail);
@@ -775,57 +886,79 @@ async function removeMemberOnPage(
       }
 
       await totpInput.first().fill(totpCode);
-      const verifyButton = page.locator(
-        'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
-      );
-      await verifyButton.first().click();
+      // Submit via Enter key to avoid pointer interception
+      await totpInput.first().press("Enter");
       await logger.log("INFO", "TOTP code submitted");
+      markTotpUsed();
 
-      await page.waitForTimeout(5000);
-      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+      // Poll for URL change instead of fixed wait.
+      // Google's TOTP verification + redirect takes 8-12s (observed in gmail-login logs).
+      // Check every 1s for up to 15s before concluding the code was rejected.
+      const TOTP_POLL_INTERVAL_MS = 1000;
+      const TOTP_POLL_MAX_MS = 15000;
+      let totpPassed = false;
 
-      // Verify we actually left the TOTP challenge page
-      // If still stuck, retry with a fresh TOTP code (first one may have expired)
-      for (let totpRetry = 0; totpRetry < 2; totpRetry++) {
-        const postTotpUrl = page.url();
-        const stillOnChallenge = postTotpUrl.includes("challenge/totp") ||
-          postTotpUrl.includes("challenge/az") ||
-          (postTotpUrl.includes("accounts.google.com") && postTotpUrl.includes("challenge"));
+      for (let elapsed = 0; elapsed < TOTP_POLL_MAX_MS; elapsed += TOTP_POLL_INTERVAL_MS) {
+        await page.waitForTimeout(TOTP_POLL_INTERVAL_MS);
+        const pollUrl = page.url();
+        const stillOnChallenge = pollUrl.includes("challenge/totp") ||
+          pollUrl.includes("challenge/az") ||
+          (pollUrl.includes("accounts.google.com") && pollUrl.includes("challenge"));
 
-        if (!stillOnChallenge) break; // Successfully passed TOTP
-
-        if (totpRetry === 0) {
-          await logger.log("WARN", `Still on TOTP page after submission, retrying with fresh code. URL: ${postTotpUrl}`);
-          // Wait for a fresh TOTP window
-          const retryRemaining = totpSecondsRemaining();
-          if (retryRemaining < 8) {
-            await page.waitForTimeout((retryRemaining + 1) * 1000);
-          }
-          const freshCode = generateTOTP(credentials!.totpSecret!, credentials!.loginEmail);
-          await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
-
-          const retryInput = page.locator(
-            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-          );
-          if ((await retryInput.count()) > 0) {
-            await retryInput.first().fill("");
-            await page.waitForTimeout(300);
-            await retryInput.first().fill(freshCode);
-            const retryBtn = page.locator(
-              'button:has-text("Next"), button:has-text("下一步"), button:has-text("Verify"), button:has-text("驗證"), button:has-text("验证")'
-            );
-            if ((await retryBtn.count()) > 0) {
-              await retryBtn.first().click();
-              await page.waitForTimeout(5000);
-              await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-            }
-          }
-        } else {
-          throw new Error(
-            `TOTP verification failed after retry — still on challenge page. URL: ${postTotpUrl}`
-          );
+        if (!stillOnChallenge) {
+          await logger.log("INFO", `TOTP verified — URL changed after ${elapsed + TOTP_POLL_INTERVAL_MS}ms. URL: ${pollUrl}`);
+          totpPassed = true;
+          break;
         }
       }
+
+      if (!totpPassed) {
+        // Still on challenge page after full polling window — retry with a guaranteed-fresh code.
+        await logger.log("WARN", `Still on TOTP page after ${TOTP_POLL_MAX_MS}ms polling, retrying with fresh code. URL: ${page.url()}`);
+
+        // Always wait for the next 30s TOTP window to ensure a different code
+        const retryRemaining = totpSecondsRemaining();
+        await logger.log("INFO", `Waiting ${retryRemaining + 1}s for next TOTP window`);
+        await page.waitForTimeout((retryRemaining + 1) * 1000);
+
+        const freshCode = generateTOTP(credentials!.totpSecret!, credentials!.loginEmail);
+        await logger.log("INFO", `Retry TOTP code: ${freshCode.slice(0, 2)}****`);
+
+        const retryInput = page.locator(
+          'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+        );
+        if ((await retryInput.count()) > 0) {
+          await retryInput.first().fill("");
+          await page.waitForTimeout(300);
+          await retryInput.first().fill(freshCode);
+          await retryInput.first().press("Enter");
+
+          // Poll again after retry submission
+          let retryPassed = false;
+          for (let elapsed = 0; elapsed < TOTP_POLL_MAX_MS; elapsed += TOTP_POLL_INTERVAL_MS) {
+            await page.waitForTimeout(TOTP_POLL_INTERVAL_MS);
+            const retryUrl = page.url();
+            const stillOnChallenge = retryUrl.includes("challenge/totp") ||
+              retryUrl.includes("challenge/az") ||
+              (retryUrl.includes("accounts.google.com") && retryUrl.includes("challenge"));
+            if (!stillOnChallenge) {
+              await logger.log("INFO", `TOTP retry verified — URL changed after ${elapsed + TOTP_POLL_INTERVAL_MS}ms. URL: ${retryUrl}`);
+              retryPassed = true;
+              break;
+            }
+          }
+
+          if (!retryPassed) {
+            throw new Error(
+              `TOTP verification failed after retry — still on challenge page after ${TOTP_POLL_MAX_MS}ms polling. URL: ${page.url()}`
+            );
+          }
+        } else {
+          throw new Error("TOTP input field disappeared during retry — cannot re-submit code");
+        }
+      }
+
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
     }
 
     // Step 4: After auth, Google redirects back — may need to click remove again
@@ -1298,7 +1431,9 @@ async function inviteMemberOnPage(
  */
 async function scanPageForMemberGaiaId(
   page: import("playwright").Page,
-  email: string
+  email: string,
+  prisma: PrismaClient,
+  familyGroupId: string
 ): Promise<string | undefined> {
   const result = await page.evaluate((targetEmail: string) => {
     const links = document.querySelectorAll('a[href*="family/member/"]');
@@ -1317,5 +1452,37 @@ async function scanPageForMemberGaiaId(
     }
     return null;
   }, email);
-  return result ?? undefined;
+
+  if (result) return result;
+
+  // Fallback: If Google hid the email text entirely, look for any new GAIA ID on the page 
+  // that we don't already know about in the DB.
+  const allIds = await page.evaluate(() => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    const ids: string[] = [];
+    for (const link of Array.from(links)) {
+      const href = link.getAttribute("href") ?? "";
+      const match =
+        href.match(/\/g\/(\d+)/) ??
+        href.match(/\/member\/i\/([-\d]+)/) ??
+        href.match(/\/member\/([-\d]+)/);
+      if (match?.[1]) ids.push(match[1]);
+    }
+    return ids;
+  });
+
+  if (allIds.length > 0) {
+    const existing = await prisma.familyMember.findMany({
+      where: { familyGroupId, googleMemberId: { in: allIds } },
+      select: { googleMemberId: true }
+    });
+    const existingSet = new Set(existing.map(e => e.googleMemberId!));
+    const newIds = allIds.filter(id => !existingSet.has(id));
+    if (newIds.length > 0) {
+      // Pick the first new ID, assuming this is the one we just invited
+      return newIds[0];
+    }
+  }
+
+  return undefined;
 }

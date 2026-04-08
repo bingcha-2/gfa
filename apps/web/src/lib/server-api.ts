@@ -59,29 +59,17 @@ export async function serverApiRequest<T>(path: string, token: string) {
 
 export type ConsoleBootstrapData = {
   user: SessionUser;
-  accounts: AccountSummary[];
-  groups: FamilyGroupSummary[];
-  orders: OrderSummary[];
-  tasks: TaskSummary[];
-  redeemCodes: RedeemCodeSummary[];
+  stats: any;
 };
 
 export async function getConsoleBootstrapData(token: string) {
-  const [user, accounts, groups, orders, tasks, redeemCodes] = await Promise.all([
+  const [user, stats] = await Promise.all([
     serverApiRequest<SessionUser>("auth/me", token),
-    serverApiRequest<AccountSummary[]>("accounts", token),
-    serverApiRequest<FamilyGroupSummary[]>("family-groups", token),
-    serverApiRequest<OrderSummary[]>("orders", token),
-    serverApiRequest<TaskSummary[]>("tasks", token),
-    serverApiRequest<RedeemCodeSummary[]>("redeem-codes", token)
+    serverApiRequest<any>("stats", token) // We will fetch stats instead of everything
   ]);
 
   return {
     user,
-    accounts,
-    groups,
-    orders,
-    tasks,
-    redeemCodes
-  } satisfies ConsoleBootstrapData;
+    stats
+  } as ConsoleBootstrapData;
 }

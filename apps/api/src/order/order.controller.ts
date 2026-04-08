@@ -151,8 +151,16 @@ export class OrderController {
 
   @Get("orders")
   @Roles("ADMIN", "OPERATIONS")
-  findAll(@Query("status") status?: string) {
-    return this.orderService.findAll(status);
+  findAll(
+    @Query("status") status?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string
+  ) {
+    return this.orderService.findAll(
+      status,
+      page ? parseInt(page, 10) : undefined,
+      pageSize ? parseInt(pageSize, 10) : undefined,
+    );
   }
 
   @Get("orders/:id")

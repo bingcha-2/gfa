@@ -1,29 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 import { formatDateTime } from "../lib/format";
 import { canManageCodes } from "../lib/permissions";
 import { RedeemCodeSummary } from "../lib/types";
+import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
+import { apiRequest, getErrorMessage } from "../lib/client-api";
+import { Spinner } from "./spinner";
 
 type CodeTypeFilter = "ALL" | "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
 
+const PAGE_SIZE = 30;
+
 type RedeemCodesPanelProps = {
-  codes: RedeemCodeSummary[];
   role?: string;
-  onCreate: (payload: {
-    count: number;
-    product: string;
-    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
-    validDays?: number;
-    swapLimit?: number;
-    swapWindowHours?: number;
-  }) => Promise<string[] | null>;
-  onDisable: (codeId: string) => Promise<boolean>;
+  // onCreate, onDisable, onDelete no longer needed as they are handled internally
 };
 
-/** Download a string as a file */
 function downloadText(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -34,16 +29,20 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-export function RedeemCodesPanel({
-  codes,
-  role,
-  onCreate,
-  onDisable
-}: RedeemCodesPanelProps) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const canManage = canManageCodes(role);
+export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
   const [activeTab, setActiveTab] = useState<"inventory" | "create">("inventory");
   const [typeFilter, setTypeFilter] = useState<CodeTypeFilter>("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const canManage = canManageCodes(role);
+
+  // Server state
+  const [codes, setCodes] = useState<RedeemCodeSummary[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [stats, setStats] = useState({ unused: 0, types: { ALL: 0, JOIN_GROUP: 0, ACCOUNT_SWAP: 0, SUBSCRIPTION: 0 } });
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Form state map
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [newCodes, setNewCodes] = useState<string[] | null>(null);
@@ -56,11 +55,28 @@ export function RedeemCodesPanel({
     swapWindowHours: "5"
   });
 
-  // Filtered codes based on type tab
-  const filteredCodes =
-    typeFilter === "ALL" ? codes : codes.filter((c) => c.codeType === typeFilter);
+  async function loadData() {
+    setIsLoading(true);
+    try {
+      const url = `redeem-codes?page=${currentPage}&pageSize=${PAGE_SIZE}${typeFilter !== "ALL" ? `&codeType=${typeFilter}` : ""}`;
+      const res = await apiRequest<{ items: RedeemCodeSummary[], total: number, stats: any }>(url);
+      setCodes(res.items);
+      setTotalItems(res.total);
+      setStats(res.stats);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
-  const unusedFiltered = filteredCodes.filter((c) => c.status === "UNUSED");
+  useEffect(() => {
+    if (activeTab === "inventory") {
+      loadData();
+    }
+  }, [currentPage, typeFilter, activeTab]);
+
+  const totalPages = Math.ceil(totalItems / PAGE_SIZE);
 
   function showCopyFeedback(msg: string) {
     setCopyFeedback(msg);
@@ -76,14 +92,68 @@ export function RedeemCodesPanel({
     }
   }
 
-  function handleCopyAll() {
-    if (!unusedFiltered.length) return;
-    void copyText(unusedFiltered.map((c) => c.code).join("\n"), `已复制 ${unusedFiltered.length} 条卡密`);
+  async function onCreate(payload: any) {
+    setIsSubmitting(true);
+    setValidationError(null);
+    setNewCodes(null);
+    try {
+      const created = await apiRequest<RedeemCodeSummary[]>("redeem-codes/batch-create", {
+        method: "POST",
+        body: payload
+      });
+      const generatedCodes = created.map((c) => c.code);
+      setNewCodes(generatedCodes);
+      setForm((current) => ({
+        ...current,
+        count: "10",
+        product: current.product || "GOOGLE_ONE"
+      }));
+    } catch (err) {
+      setValidationError(getErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function onDisable(codeId: string) {
+    try {
+      await apiRequest(`redeem-codes/${codeId}/disable`, { method: "PATCH" });
+      setCodes((prev) => prev.map((c) => c.id === codeId ? { ...c, status: "DISABLED" } : c));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function onDelete(codeId: string) {
+    try {
+      await apiRequest(`redeem-codes/${codeId}`, { method: "DELETE" });
+      setCodes((prev) => prev.filter((c) => c.id !== codeId));
+      setTotalItems((prev) => prev - 1);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canManage) return;
+    await onCreate({
+      count: Number(form.count),
+      product: form.product,
+      codeType: form.codeType,
+      ...(form.codeType === "SUBSCRIPTION" ? {
+        validDays: Number(form.validDays),
+        swapLimit: Number(form.swapLimit),
+        swapWindowHours: Number(form.swapWindowHours)
+      } : {})
+    });
   }
 
   function handleExportCsv() {
+    // Note: since it's paginated, exporting all requires an API endpoint. 
+    // For now we export the current page.
     const header = "code,type,status,product,order_no,user_email,created_at";
-    const rows = filteredCodes.map((c) =>
+    const rows = codes.map((c) =>
       [
         c.code,
         c.codeType,
@@ -95,40 +165,7 @@ export function RedeemCodesPanel({
       ].join(",")
     );
     const label = typeFilter === "ALL" ? "all" : typeFilter.toLowerCase();
-    downloadText(`codes-${label}-${Date.now()}.csv`, [header, ...rows].join("\n"));
-  }
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canManage) return;
-    setIsSubmitting(true);
-    setValidationError(null);
-    setNewCodes(null);
-    try {
-      const result = await onCreate({
-        count: Number(form.count),
-        product: form.product,
-        codeType: form.codeType,
-        ...(form.codeType === "SUBSCRIPTION" ? {
-          validDays: Number(form.validDays),
-          swapLimit: Number(form.swapLimit),
-          swapWindowHours: Number(form.swapWindowHours)
-        } : {})
-      });
-      if (result) {
-        setNewCodes(result);
-        setForm({
-          count: "10",
-          product: form.product || "GOOGLE_ONE",
-          codeType: form.codeType,
-          validDays: "30",
-          swapLimit: "2",
-          swapWindowHours: "5"
-        });
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
+    downloadText(`codes-${label}-page${currentPage}-${Date.now()}.csv`, [header, ...rows].join("\n"));
   }
 
   const typeTabLabels: { key: CodeTypeFilter; label: string }[] = [
@@ -149,7 +186,6 @@ export function RedeemCodesPanel({
           </div>
         </div>
 
-        {/* Copy feedback toast */}
         {copyFeedback && (
           <div className="notice success" style={{ marginBottom: 0 }}>
             ✅ {copyFeedback}
@@ -189,10 +225,7 @@ export function RedeemCodesPanel({
                     onChange={(event) => {
                       setValidationError(null);
                       setNewCodes(null);
-                      setForm((current) => ({
-                        ...current,
-                        count: event.target.value
-                      }));
+                      setForm((current) => ({ ...current, count: event.target.value }));
                     }}
                   />
                 </div>
@@ -205,10 +238,7 @@ export function RedeemCodesPanel({
                     onChange={(event) => {
                       setValidationError(null);
                       setNewCodes(null);
-                      setForm((current) => ({
-                        ...current,
-                        product: event.target.value.trim()
-                      }));
+                      setForm((current) => ({ ...current, product: event.target.value.trim() }));
                     }}
                   />
                 </div>
@@ -219,10 +249,7 @@ export function RedeemCodesPanel({
                     value={form.codeType}
                     onChange={(event) => {
                       setNewCodes(null);
-                      setForm((current) => ({
-                        ...current,
-                        codeType: event.target.value as "JOIN_GROUP" | "ACCOUNT_SWAP"
-                      }));
+                      setForm((current) => ({ ...current, codeType: event.target.value as "JOIN_GROUP" | "ACCOUNT_SWAP" }));
                     }}
                   >
                     <option value="JOIN_GROUP">进组卡密（JZ-）</option>
@@ -241,13 +268,7 @@ export function RedeemCodesPanel({
                         required
                         type="number"
                         value={form.validDays}
-                        onChange={(event) => {
-                          setNewCodes(null);
-                          setForm((current) => ({
-                            ...current,
-                            validDays: event.target.value
-                          }));
-                        }}
+                        onChange={(event) => setForm((c) => ({ ...c, validDays: event.target.value }))}
                       />
                     </div>
                     <div className="field">
@@ -259,13 +280,7 @@ export function RedeemCodesPanel({
                         required
                         type="number"
                         value={form.swapLimit}
-                        onChange={(event) => {
-                          setNewCodes(null);
-                          setForm((current) => ({
-                            ...current,
-                            swapLimit: event.target.value
-                          }));
-                        }}
+                        onChange={(event) => setForm((c) => ({ ...c, swapLimit: event.target.value }))}
                       />
                     </div>
                     <div className="field">
@@ -277,13 +292,7 @@ export function RedeemCodesPanel({
                         required
                         type="number"
                         value={form.swapWindowHours}
-                        onChange={(event) => {
-                          setNewCodes(null);
-                          setForm((current) => ({
-                            ...current,
-                            swapWindowHours: event.target.value
-                          }));
-                        }}
+                        onChange={(event) => setForm((c) => ({ ...c, swapWindowHours: event.target.value }))}
                       />
                     </div>
                   </>
@@ -300,15 +309,13 @@ export function RedeemCodesPanel({
                 {validationError ? <div className="notice error">{validationError}</div> : null}
               </form>
 
-              {/* Result block after generation */}
               {newCodes && newCodes.length > 0 && (
                 <div className="form-card panel-stack">
                   <div className="split-head">
                     <div>
                       <p className="label">生成结果</p>
                       <h3 className="panel-title" style={{ fontSize: "1rem" }}>
-                        已生成 {newCodes.length} 条
-                        {form.codeType === "ACCOUNT_SWAP" ? "换号" : form.codeType === "SUBSCRIPTION" ? "长效" : "进组"}卡密
+                        已生成 {newCodes.length} 条卡密
                       </h3>
                     </div>
                     <button
@@ -336,9 +343,6 @@ export function RedeemCodesPanel({
                       <div key={c}>{c}</div>
                     ))}
                   </div>
-                  <p className="muted" style={{ fontSize: "0.8rem" }}>
-                    可直接框选全部文字复制，或点击「一键全部复制」。卡密已写入数据库，可在库存 Tab 查看。
-                  </p>
                 </div>
               )}
             </div>
@@ -348,26 +352,22 @@ export function RedeemCodesPanel({
                 <p className="label">只读模式</p>
                 <h3 className="panel-title">当前角色只能查看卡密库存</h3>
               </div>
-              <p className="muted">
-                卡密生成和禁用只对 `ADMIN` 与 `OPERATIONS` 开放，支持角色默认只读。
-              </p>
             </div>
           )
         ) : (
           <div className="panel-stack">
-            {/* Type filter tabs + action buttons */}
             <div className="split-head" style={{ alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
               <div className="panel-tabs" style={{ marginTop: 0 }}>
                 {typeTabLabels.map(({ key, label }) => (
                   <button
                     key={key}
-                    className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-orange" : key === "SUBSCRIPTION" ? " tab-green" : ""}`}
-                    onClick={() => setTypeFilter(key)}
+                    className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-green" : key === "SUBSCRIPTION" ? " tab-green" : ""}`}
+                    onClick={() => { setTypeFilter(key); setCurrentPage(1); }}
                     type="button"
                   >
                     {label}
                     <span className="muted" style={{ marginLeft: "0.35em", fontSize: "0.8em" }}>
-                      ({key === "ALL" ? codes.length : codes.filter((c) => c.codeType === key).length})
+                      ({stats.types[key] ?? 0})
                     </span>
                   </button>
                 ))}
@@ -376,26 +376,35 @@ export function RedeemCodesPanel({
               <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
                 <button
                   className="button secondary small"
-                  disabled={!unusedFiltered.length}
-                  onClick={handleCopyAll}
-                  title={`复制 ${unusedFiltered.length} 条可用卡密`}
+                  onClick={loadData}
+                  disabled={isLoading}
                   type="button"
                 >
-                  复制全部可用 ({unusedFiltered.length})
+                  {isLoading ? '刷新中...' : '刷新这页'}
                 </button>
                 <button
                   className="button secondary small"
-                  disabled={!filteredCodes.length}
+                  disabled={!codes.length}
                   onClick={handleExportCsv}
-                  title="导出当前视图为 CSV"
+                  title="导出当前页视图为 CSV"
                   type="button"
                 >
-                  导出 CSV
+                  导出本页 CSV
                 </button>
               </div>
             </div>
 
-            <div className="table-wrap workspace-table-wrap">
+            <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
+              共 {totalItems} 条 · 未使用 {stats.unused} 条
+              {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
+            </div>
+
+            <div className="table-wrap workspace-table-wrap" style={{ minHeight: '300px', position: 'relative' }}>
+              {isLoading && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', zIndex: 10 }}>
+                  <Spinner />
+                </div>
+              )}
               <table className="data-table">
                 <thead>
                   <tr>
@@ -408,8 +417,8 @@ export function RedeemCodesPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCodes.length ? (
-                    filteredCodes.map((code) => (
+                  {codes.length ? (
+                    codes.map((code) => (
                       <tr key={code.id}>
                         <td>
                           <div
@@ -423,7 +432,7 @@ export function RedeemCodesPanel({
                           <div className="muted">created {formatDateTime(code.createdAt)}</div>
                         </td>
                         <td>
-                          <span className={`badge ${code.codeType === "ACCOUNT_SWAP" ? "badge-orange" : code.codeType === "SUBSCRIPTION" ? "badge-green" : "badge-sky"}`}>
+                          <span className={`badge ${code.codeType === "ACCOUNT_SWAP" ? "badge-green" : code.codeType === "SUBSCRIPTION" ? "badge-green" : "badge-sky"}`}>
                             {code.codeType === "ACCOUNT_SWAP" ? "换号" : code.codeType === "SUBSCRIPTION" ? "长效" : "进组"}
                           </span>
                           {code.codeType === "SUBSCRIPTION" && code.expiresAt && (
@@ -441,23 +450,35 @@ export function RedeemCodesPanel({
                             {code.usedAt
                               ? `used ${formatDateTime(code.usedAt)}`
                               : code.status === "RESERVED"
-                                ? "已占用，等待订单完成"
-                                : "未使用，未开始计时"}
+                                ? "已占用"
+                                : "未使用"}
                           </div>
                         </td>
                         <td>
                           <div>{code.order?.orderNo ?? "-"}</div>
-                          <div className="muted">{code.order?.userEmail ?? "Not redeemed"}</div>
+                          <div className="muted">{code.order?.userEmail ?? "-"}</div>
                         </td>
                         <td>
                           {canManage ? (
-                            <button
-                              className="button secondary small"
-                              onClick={() => void onDisable(code.id)}
-                              type="button"
-                            >
-                              禁用
-                            </button>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {code.status === "UNUSED" && (
+                                <button
+                                  className="button secondary small"
+                                  onClick={() => void onDisable(code.id)}
+                                  type="button"
+                                >
+                                  禁用
+                                </button>
+                              )}
+                              <ConfirmButton
+                                className="button danger small"
+                                confirmLabel="确定删除？"
+                                loadingLabel="删除中..."
+                                onConfirm={() => onDelete(code.id)}
+                              >
+                                删除
+                              </ConfirmButton>
+                            </div>
                           ) : (
                             <span className="muted">只读</span>
                           )}
@@ -468,7 +489,7 @@ export function RedeemCodesPanel({
                     <tr>
                       <td colSpan={6}>
                         <div className="empty-state">
-                          {typeFilter === "ALL" ? "还没有卡密库存。" : `没有${typeFilter === "JOIN_GROUP" ? "进组" : typeFilter === "ACCOUNT_SWAP" ? "换号" : "长效"}类型的卡密。`}
+                          没有任何数据。
                         </div>
                       </td>
                     </tr>
@@ -476,10 +497,44 @@ export function RedeemCodesPanel({
                 </tbody>
               </table>
             </div>
+
+            {/* Server Pagination */}
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '12px 0 4px', flexWrap: 'wrap' }}>
+                <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  const delta = 2;
+                  for (let i = 1; i <= totalPages; i++) {
+                    if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+                      pages.push(i);
+                    } else if (pages.length > 0 && pages[pages.length - 1] !== '...') {
+                      pages.push('...');
+                    }
+                  }
+                  return pages.map((p, idx) =>
+                    p === '...' ? (
+                      <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                        disabled={isLoading}
+                        onClick={() => setCurrentPage(p as number)}
+                        type="button"
+                        style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                      >
+                        {p}
+                      </button>
+                    )
+                  );
+                })()}
+                <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+              </div>
+            )}
           </div>
-        )
-        }
-      </div >
-    </section >
+        )}
+      </div>
+    </section>
   );
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomInt } from "node:crypto";
 import { RedeemCodeType } from "@prisma/client";
 
@@ -22,18 +22,51 @@ export class RedeemCodeService {
     return prefix ? `${prefix}-${body}` : body;
   }
 
-  async findAll(status?: string) {
-    const where = status ? { status: status as any } : {};
+  async findAll(page = 1, pageSize = 30, status?: string, codeType?: string, skipStats = false) {
+    const where: any = {};
+    if (status && status !== 'ALL') where.status = status;
+    if (codeType && codeType !== 'ALL') where.codeType = codeType;
 
-    return this.prisma.redeemCode.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        order: {
-          select: { id: true, orderNo: true, userEmail: true, status: true }
+    const [items, total] = await Promise.all([
+      this.prisma.redeemCode.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          order: {
+            select: { id: true, orderNo: true, userEmail: true, status: true }
+          }
+        }
+      }),
+      this.prisma.redeemCode.count({ where })
+    ]);
+
+    if (skipStats) {
+      return { items, total, stats: null };
+    }
+
+    const [totalUnused, countJoin, countSwap, countSub, totalAll] = await Promise.all([
+      this.prisma.redeemCode.count({ where: { status: "UNUSED" } }),
+      this.prisma.redeemCode.count({ where: { codeType: "JOIN_GROUP" } }),
+      this.prisma.redeemCode.count({ where: { codeType: "ACCOUNT_SWAP" } }),
+      this.prisma.redeemCode.count({ where: { codeType: "SUBSCRIPTION" } }),
+      this.prisma.redeemCode.count()
+    ]);
+
+    return { 
+      items, 
+      total, 
+      stats: {
+        unused: totalUnused,
+        types: {
+          JOIN_GROUP: countJoin,
+          ACCOUNT_SWAP: countSwap,
+          SUBSCRIPTION: countSub,
+          ALL: totalAll
         }
       }
-    });
+    };
   }
 
   async batchCreate(params: {
@@ -97,6 +130,16 @@ export class RedeemCodeService {
       where: { id },
       data: { status: "DISABLED" }
     });
+  }
+
+  async remove(id: string) {
+    const code = await this.prisma.redeemCode.findUnique({ where: { id } });
+
+    if (!code) throw new NotFoundException("Redeem code not found");
+
+    // Allow deletion of any status — Order.redeemCodeId uses onDelete:SetNull
+    await this.prisma.redeemCode.delete({ where: { id } });
+    return { id, code: code.code, deleted: true };
   }
 
   async verifyAndReserve(codeStr: string) {

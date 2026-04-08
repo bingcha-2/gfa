@@ -130,7 +130,7 @@ export class BrowserPool {
    * (default: 10 minutes) to avoid repeated browser opens that escalate
    * Google risk detection.
    */
-  async recordLoginFailure(accountId: string, cooldownMs = 10 * 60 * 1000): Promise<void> {
+  async recordLoginFailure(accountId: string, cooldownMs = 2 * 60 * 1000): Promise<void> {
     await this.redis.set(
       `gfa:login-cooldown:${accountId}`,
       Date.now().toString(),

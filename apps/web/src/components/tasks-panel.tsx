@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 import {
   canCancelTask,
@@ -9,6 +9,7 @@ import {
   canRetryTask
 } from "../lib/permissions";
 import { TaskSummary } from "../lib/types";
+import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 
@@ -35,7 +36,7 @@ function fmtDuration(ms: number): string {
 }
 
 type TaskTimeMetaProps = {
-  task: import("../lib/types").TaskSummary;
+  task: TaskSummary;
 };
 
 /** 展示任务创建时间与执行耗时，对 RUNNING 状态实时计时 */
@@ -83,13 +84,11 @@ function TaskTimeMeta({ task }: TaskTimeMetaProps) {
   );
 }
 
+const PAGE_SIZE = 50;
+
 type TasksPanelProps = {
-  tasks: TaskSummary[];
   role?: string;
-  onRetry: (taskId: string) => Promise<boolean>;
-  onManualComplete: (taskId: string, resultMessage: string) => Promise<boolean>;
-  onManualFail: (taskId: string, reason: string) => Promise<boolean>;
-  onCancel: (taskId: string, reason: string) => Promise<boolean>;
+  showToast?: (type: "success" | "error" | "info", msg: string) => void;
 };
 
 type ActioningState = {
@@ -97,33 +96,57 @@ type ActioningState = {
   action: "retry" | "complete" | "fail" | "cancel";
 } | null;
 
-export function TasksPanel({
-  tasks,
-  role,
-  onRetry,
-  onManualComplete,
-  onManualFail,
-  onCancel
-}: TasksPanelProps) {
-  const [filter, setFilter] = useState("");
+export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) {
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"all" | "manual" | "retryable">("all");
+  const [filter, setFilter] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
   const [actioning, setActioning] = useState<ActioningState>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [expandedErrors, setExpandedErrors] = useState<Set<string>>(new Set());
-  const [currentPage, setCurrentPage] = useState(1);
-  const PAGE_SIZE = 20;
-  const deferredFilter = useDeferredValue(filter);
 
   function showToast(type: "success" | "error", msg: string) {
+    if (externalToast) { externalToast(type, msg); return; }
     setToast({ type, msg });
     setTimeout(() => setToast(null), 3500);
   }
 
-  const filteredTasks = tasks.filter((task) => {
-    if (activeTab === "manual" && task.status !== "MANUAL_REVIEW") {
-      return false;
-    }
+  // Build server query params based on tab
+  const getStatusParam = useCallback(() => {
+    if (activeTab === "manual") return "MANUAL_REVIEW";
+    // For "retryable", we fetch all and filter client-side since it's multiple statuses
+    // But we can use the "all" endpoint — the page size is small enough
+    return undefined;
+  }, [activeTab]);
 
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const status = getStatusParam();
+      const params = new URLSearchParams();
+      params.set("page", String(currentPage));
+      params.set("pageSize", String(PAGE_SIZE));
+      if (status) params.set("status", status);
+      const res = await apiRequest<{ items: TaskSummary[]; total: number }>(`tasks?${params.toString()}`);
+      setTasks(res.items);
+      setTotalItems(res.total);
+    } catch (err) {
+      console.error("Failed to load tasks:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, activeTab, getStatusParam]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+
+  // Client-side filtering for search and "retryable" tab
+  const displayTasks = tasks.filter((task) => {
     if (
       activeTab === "retryable" &&
       !["PENDING", "FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW"].includes(task.status)
@@ -131,11 +154,8 @@ export function TasksPanel({
       return false;
     }
 
-    const query = deferredFilter.trim().toLowerCase();
-
-    if (!query) {
-      return true;
-    }
+    const query = filter.trim().toLowerCase();
+    if (!query) return true;
 
     return (
       task.id.toLowerCase().includes(query) ||
@@ -148,17 +168,15 @@ export function TasksPanel({
       (task.payload ?? "").toLowerCase().includes(query)
     );
   });
-  const paginated = filteredTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const totalPages = Math.ceil(filteredTasks.length / PAGE_SIZE);
 
   async function handleRetry(taskId: string) {
     setActioning({ taskId, action: "retry" });
     try {
-      const ok = await onRetry(taskId);
-      if (ok) showToast("success", "已重新入队，等待 Worker 处理");
-      else showToast("error", "重试失败，请查看日志");
-    } catch {
-      showToast("error", "重试请求失败");
+      await apiRequest(`tasks/${taskId}/retry`, { method: "POST" });
+      showToast("success", "已重新入队，等待 Worker 处理");
+      await loadData();
+    } catch (err) {
+      showToast("error", getErrorMessage(err));
     } finally {
       setActioning(null);
     }
@@ -169,11 +187,11 @@ export function TasksPanel({
       window.prompt("填写手动完成说明", "Manually completed from console") ?? "";
     setActioning({ taskId, action: "complete" });
     try {
-      const ok = await onManualComplete(taskId, resultMessage);
-      if (ok) showToast("success", "任务已标记为完成");
-      else showToast("error", "操作失败");
-    } catch {
-      showToast("error", "请求失败");
+      await apiRequest(`tasks/${taskId}/manual-complete`, { method: "POST", body: { resultMessage } });
+      showToast("success", "任务已标记为完成");
+      await loadData();
+    } catch (err) {
+      showToast("error", getErrorMessage(err));
     } finally {
       setActioning(null);
     }
@@ -183,11 +201,11 @@ export function TasksPanel({
     const reason = window.prompt("填写失败原因", "Manual review failed") ?? "";
     setActioning({ taskId, action: "fail" });
     try {
-      const ok = await onManualFail(taskId, reason);
-      if (ok) showToast("success", "任务已标记为失败");
-      else showToast("error", "操作失败");
-    } catch {
-      showToast("error", "请求失败");
+      await apiRequest(`tasks/${taskId}/manual-fail`, { method: "POST", body: { reason } });
+      showToast("success", "任务已标记为失败");
+      await loadData();
+    } catch (err) {
+      showToast("error", getErrorMessage(err));
     } finally {
       setActioning(null);
     }
@@ -198,11 +216,11 @@ export function TasksPanel({
     if (reason === null) return; // user pressed browser Cancel
     setActioning({ taskId, action: "cancel" });
     try {
-      const ok = await onCancel(taskId, reason);
-      if (ok) showToast("success", "任务已终止");
-      else showToast("error", "终止失败");
-    } catch {
-      showToast("error", "终止请求失败");
+      await apiRequest(`tasks/${taskId}/cancel`, { method: "POST", body: { reason } });
+      showToast("success", "任务已终止");
+      await loadData();
+    } catch (err) {
+      showToast("error", getErrorMessage(err));
     } finally {
       setActioning(null);
     }
@@ -225,14 +243,28 @@ export function TasksPanel({
             <p className="muted">支持重试、手动完成和手动失败，先把人工兜底能力做出来。</p>
           </div>
 
-          <div className="filter-row">
+          <div className="filter-row" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <input
               className="search-field"
               placeholder="筛选邮箱 / 任务号 / 类型 / 状态"
               value={filter}
-              onChange={(event) => { setFilter(event.target.value); setCurrentPage(1); }}
+              onChange={(event) => setFilter(event.target.value)}
             />
+            <button
+              className="button secondary small"
+              onClick={loadData}
+              disabled={isLoading}
+              type="button"
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {isLoading ? "刷新中..." : "刷新"}
+            </button>
           </div>
+        </div>
+
+        <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
+          共 {totalItems} 条
+          {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
         </div>
 
         <div className="panel-tabs">
@@ -259,7 +291,12 @@ export function TasksPanel({
           </button>
         </div>
 
-        <div className="table-wrap workspace-table-wrap">
+        <div className="table-wrap workspace-table-wrap" style={{ minHeight: '200px', position: 'relative' }}>
+          {isLoading && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', zIndex: 10 }}>
+              <Spinner />
+            </div>
+          )}
           <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
             <colgroup>
               <col style={{ width: '20%' }} />
@@ -278,8 +315,8 @@ export function TasksPanel({
               </tr>
             </thead>
             <tbody>
-              {paginated.length ? (<>
-                {paginated.map((task) => {
+              {displayTasks.length ? (<>
+                {displayTasks.map((task) => {
                   const isActioning = actioning?.taskId === task.id;
                   // Parse payload to extract target emails
                   let payloadEmails: { target?: string; newUser?: string; user?: string } = {};
@@ -428,11 +465,37 @@ export function TasksPanel({
               {totalPages > 1 && (
                 <tr>
                   <td colSpan={5}>
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
-                    <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
-                    <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
-                    <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
-                  </div>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '8px 0', flexWrap: 'wrap' }}>
+                      <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                      {(() => {
+                        const pages: (number | string)[] = [];
+                        const delta = 2;
+                        for (let i = 1; i <= totalPages; i++) {
+                          if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+                            pages.push(i);
+                          } else if (pages.length > 0 && pages[pages.length - 1] !== '...') {
+                            pages.push('...');
+                          }
+                        }
+                        return pages.map((p, idx) =>
+                          p === '...' ? (
+                            <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
+                          ) : (
+                            <button
+                              key={p}
+                              className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                              disabled={isLoading}
+                              onClick={() => setCurrentPage(p as number)}
+                              type="button"
+                              style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                            >
+                              {p}
+                            </button>
+                          )
+                        );
+                      })()}
+                      <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                    </div>
                   </td>
                 </tr>
               )}

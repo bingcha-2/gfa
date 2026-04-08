@@ -125,7 +125,13 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
   const filteredAccounts = accounts.filter(a => {
     const q = searchTerm ? searchTerm.toLowerCase() : '';
     const matchSearch = !q || a.name.toLowerCase().includes(q) || a.loginEmail.toLowerCase().includes(q) || a.adspowerProfileId.toLowerCase().includes(q);
-    const matchStatus = filterAccountStatus === 'ALL' || a.status === filterAccountStatus;
+    let matchStatus = filterAccountStatus === 'ALL' || a.status === filterAccountStatus;
+    // Special filters that check syncError field on associated family groups
+    if (filterAccountStatus === 'PASSWORD_ERROR') {
+      matchStatus = (a as any).syncError === 'PASSWORD_ERROR' || a.status === 'MANUAL_ONLY';
+    } else if (filterAccountStatus === 'CAPTCHA') {
+      matchStatus = (a as any).syncError === 'CAPTCHA_REQUIRED' || a.status === 'VERIFICATION_REQUIRED';
+    }
     const matchSub = filterSubStatus === 'ALL' || (a.subscriptionStatus ?? '未知') === filterSubStatus;
     return matchSearch && matchStatus && matchSub;
   });
@@ -512,8 +518,12 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <option value="HEALTHY">🟢 活跃</option>
                 <option value="LOGIN_REQUIRED">🔑 需登录</option>
                 <option value="VERIFICATION_REQUIRED">⚠️ 需验证</option>
+                <option value="MANUAL_ONLY">⏸ 仅手动</option>
+                <option value="MANUAL_REVIEW">🔍 人工审核</option>
                 <option value="RISKY">🔶 风险</option>
                 <option value="DISABLED">🚫 禁用</option>
+                <option value="PASSWORD_ERROR">🔴 密码错误</option>
+                <option value="CAPTCHA">🤖 人机验证</option>
               </select>
               <select
                 value={filterSubStatus}
@@ -635,9 +645,34 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 {totalPages > 1 && (
                   <tr>
                     <td colSpan={canManage ? 5 : 4}>
-                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '8px 0', flexWrap: 'wrap' }}>
                         <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
-                        <span style={{ fontSize: '0.85rem' }}>{currentPage} / {totalPages}</span>
+                        {(() => {
+                          const pages: (number | string)[] = [];
+                          const delta = 2;
+                          for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+                              pages.push(i);
+                            } else if (pages.length > 0 && pages[pages.length - 1] !== '...') {
+                              pages.push('...');
+                            }
+                          }
+                          return pages.map((p, idx) =>
+                            p === '...' ? (
+                              <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
+                            ) : (
+                              <button
+                                key={p}
+                                className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                                onClick={() => setCurrentPage(p as number)}
+                                type="button"
+                                style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                              >
+                                {p}
+                              </button>
+                            )
+                          );
+                        })()}
                         <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
                       </div>
                     </td>

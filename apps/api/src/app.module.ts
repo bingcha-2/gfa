@@ -20,6 +20,8 @@ import { AutomationModule } from "./automation/automation.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
 import { HealthController } from "./health.controller";
 
+import { StatsController } from "./stats.controller";
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -60,7 +62,7 @@ import { HealthController } from "./health.controller";
     AutomationModule,
     SchedulerModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, StatsController],
   providers: [
     // ThrottlerGuard must be first so rate-limit is checked before auth
     { provide: APP_GUARD, useClass: ThrottlerGuard },

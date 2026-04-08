@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -62,8 +63,16 @@ export class RedeemCodeController {
 
   @Get()
   @Roles("ADMIN", "OPERATIONS")
-  findAll(@Query("status") status?: string) {
-    return this.redeemCodeService.findAll(status);
+  findAll(
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+    @Query("status") status?: string,
+    @Query("codeType") codeType?: string,
+    @Query("skipStats") skipStats?: string
+  ) {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const sizeNum = pageSize ? parseInt(pageSize, 10) : 30;
+    return this.redeemCodeService.findAll(pageNum, sizeNum, status, codeType, skipStats === "true");
   }
 
   @Post("batch-create")
@@ -108,5 +117,21 @@ export class RedeemCodeController {
     });
 
     return code;
+  }
+
+  @Delete(":id")
+  @Roles("ADMIN", "OPERATIONS")
+  async remove(@Param("id") id: string, @Request() req: any) {
+    const result = await this.redeemCodeService.remove(id);
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "DELETE_CODE",
+      targetType: "RedeemCode",
+      targetId: id,
+      detail: { code: result.code }
+    });
+
+    return result;
   }
 }

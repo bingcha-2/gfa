@@ -90,3 +90,28 @@ export function generateTOTP(secret: string, label?: string): string {
 export function totpSecondsRemaining(): number {
   return 30 - (Math.floor(Date.now() / 1000) % 30);
 }
+
+/**
+ * Track the last TOTP window that was successfully submitted.
+ *
+ * Google rejects re-use of the same TOTP code within a single session,
+ * even if it's still valid. When a processor needs re-authentication
+ * (e.g. removing a member triggers a second TOTP challenge), it must
+ * wait for the next 30-second window to generate a different code.
+ */
+let _lastUsedTotpWindow = 0;
+
+/** Return the current 30-second TOTP window counter. */
+export function currentTotpWindow(): number {
+  return Math.floor(Date.now() / 1000 / 30);
+}
+
+/** Mark the current TOTP window as used (call after successful submission). */
+export function markTotpUsed(): void {
+  _lastUsedTotpWindow = currentTotpWindow();
+}
+
+/** Get the last TOTP window counter that was used. */
+export function lastUsedTotpWindow(): number {
+  return _lastUsedTotpWindow;
+}

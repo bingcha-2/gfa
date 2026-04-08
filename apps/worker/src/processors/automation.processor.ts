@@ -23,7 +23,7 @@ import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin, type LoginCredentials } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
-import { generateTOTP, totpSecondsRemaining } from "../totp";
+import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
 
 /** Max time for the entire accept-invite flow (5 min), well under BullMQ lockDuration (10 min). */
 const ACCEPT_INVITE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -286,18 +286,25 @@ async function handleOAuth(
 
     // TOTP re-auth during OAuth
     if (nowUrl.includes("challenge/totp") && credentials.totpSecret) {
-      const { generateTOTP, totpSecondsRemaining } = await import("../totp");
-      const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
+      const { generateTOTP: genTOTP, totpSecondsRemaining: totpRemaining, currentTotpWindow: curWin, lastUsedTotpWindow: lastWin, markTotpUsed: markUsed } = await import("../totp");
+      const cw = curWin();
+      if (cw <= lastWin()) {
+        const remaining = totpRemaining();
         await page.waitForTimeout((remaining + 1) * 1000);
+      } else {
+        const remaining = totpRemaining();
+        if (remaining < 5) {
+          await page.waitForTimeout((remaining + 1) * 1000);
+        }
       }
       const totpInput = page.locator(
         'input[type="tel"], input[type="text"][name="totpPin"], input[name="Pin"]'
       );
       if ((await totpInput.count()) > 0) {
-        const code = generateTOTP(credentials.totpSecret!);
+        const code = genTOTP(credentials.totpSecret!);
         await totpInput.first().fill(code);
         await logger.log("INFO", `TOTP re-auth submitted: ${code.substring(0, 2)}****`);
+        markUsed();
         const nextBtn = page.locator(
           'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
           'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
@@ -539,9 +546,15 @@ async function handleReAuth(
       await logger.log("WARN", "[accept-invite] TOTP challenge but no totpSecret configured");
       return false;
     }
-    const remaining = totpSecondsRemaining();
-    if (remaining < 5) {
+    const curWin = currentTotpWindow();
+    if (curWin <= lastUsedTotpWindow()) {
+      const remaining = totpSecondsRemaining();
       await page.waitForTimeout((remaining + 1) * 1000);
+    } else {
+      const remaining = totpSecondsRemaining();
+      if (remaining < 5) {
+        await page.waitForTimeout((remaining + 1) * 1000);
+      }
     }
     const totpInput = page.locator(
       'input[type="tel"], input[type="text"][name="totpPin"], input[name="Pin"]'
@@ -550,6 +563,7 @@ async function handleReAuth(
       const code = generateTOTP(credentials.totpSecret!);
       await totpInput.first().fill(code);
       await logger.log("INFO", `[accept-invite] Re-auth: TOTP submitted (${code.substring(0, 2)}****)`);
+      markTotpUsed();
       const nextBtn = page.locator(
         'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
         'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'
@@ -763,14 +777,21 @@ async function handleAcceptInvite(
           const inlineTotp = page.locator(
             'input[type="tel"]:visible, input[name="totpPin"]:visible, input[name="Pin"]:visible'
           );
-          if ((await inlineTotp.count()) > 0) {
-            const remaining = totpSecondsRemaining();
-            if (remaining < 5) {
+           if ((await inlineTotp.count()) > 0) {
+            const curWin2 = currentTotpWindow();
+            if (curWin2 <= lastUsedTotpWindow()) {
+              const remaining = totpSecondsRemaining();
               await page.waitForTimeout((remaining + 1) * 1000);
+            } else {
+              const remaining = totpSecondsRemaining();
+              if (remaining < 5) {
+                await page.waitForTimeout((remaining + 1) * 1000);
+              }
             }
             const code = generateTOTP(credentials.totpSecret!);
             await inlineTotp.first().fill(code);
             await logger.log("INFO", `[leave-family] Inline TOTP submitted (${code.substring(0, 2)}****)`);
+            markTotpUsed();
             const inlineSubmit = page.locator(
               'button[type="submit"], #totpNext, div[id="totpNext"] button, ' +
               'button[jsname="LgbsSe"], div[role="button"][jsname="LgbsSe"]'

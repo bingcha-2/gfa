@@ -16,7 +16,7 @@
  */
 
 import type { Page } from "playwright";
-import { generateTOTP, totpSecondsRemaining } from "./totp";
+import { generateTOTP, totpSecondsRemaining, markTotpUsed } from "./totp";
 import type { TaskLogger } from "./task-logger";
 
 const GOOGLE_LOGIN_URL = "https://accounts.google.com?hl=en";
@@ -85,6 +85,39 @@ async function waitForNextState(page: Page, timeoutMs = 6000): Promise<void> {
   await page.waitForTimeout(200);
 }
 
+/**
+ * Detect if Google's login page is in a loading/transitioning state.
+ * During transitions, the page may show a progress indicator, disable inputs,
+ * or hide the email field. Re-clicking Next during this state can disrupt navigation.
+ */
+async function detectPageLoading(page: Page): Promise<boolean> {
+  try {
+    // Check for Google's material progress bar / spinner
+    const progressVisible = await page.locator(
+      '[role="progressbar"], .progress-bar, .eLNT1d, .sZwd7c, .OZJlec'
+    ).first().isVisible().catch(() => false);
+    if (progressVisible) return true;
+
+    // Check if the identifier Next button is disabled (Google disables it during processing)
+    const nextBtnDisabled = await page.locator('#identifierNext').evaluate(
+      (el) => el.getAttribute('disabled') !== null || el.classList.contains('is-disabled')
+    ).catch(() => false);
+    if (nextBtnDisabled) return true;
+
+    // Check if email input is no longer interactive (removed or hidden = page transitioning)
+    const emailInput = page.locator('input[type="email"], input[id="identifierId"]');
+    const emailCount = await emailInput.count();
+    if (emailCount === 0) return true;
+
+    const emailVisible = await emailInput.first().isVisible().catch(() => false);
+    if (!emailVisible) return true;
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export type GmailLoginResult =
   | { success: true }
   | { success: false; reason: "VERIFICATION_REQUIRED" | "UNKNOWN" | "TRANSIENT" | "PHONE_CHALLENGE" | "ACCOUNT_LOCKED" | "CAPTCHA"; detail: string };
@@ -141,8 +174,22 @@ export async function gmailLogin(
 
     // Verify the page actually advanced past the email step.
     // If still on identifier page, retry with escalating click methods.
-    for (let nextRetry = 0; nextRetry < 3; nextRetry++) {
+    for (let nextRetry = 0; nextRetry < 4; nextRetry++) {
       if (!page.url().includes("/identifier")) break;
+
+      // Before re-clicking, detect if the page is already transitioning.
+      // Google shows a progress indicator or hides the email input during transition.
+      // Re-clicking during a transition can disrupt the ongoing navigation.
+      const isPageTransitioning = await detectPageLoading(page);
+
+      if (isPageTransitioning) {
+        await logger.log("INFO", `[gmail-login] Page is transitioning — waiting for navigation to complete...`);
+        await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 15_000 }).catch(() => {});
+        await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+        if (!page.url().includes("/identifier")) break;
+        // If still on identifier after patient wait, fall through to retry click
+      }
+
       await logger.log("WARN", `[gmail-login] Still on identifier page after Next click — retry ${nextRetry + 1}`);
       const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
       if ((await retryEmailInput.count()) > 0) {
@@ -150,8 +197,8 @@ export async function gmailLogin(
       }
       // Escalate: retry 0 = Enter, retry 1 = JS click, retry 2 = button click
       await clickNext(page, logger, nextRetry + 1, "identifier");
-      await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 3000 }).catch(() => { });
-      await page.waitForLoadState("domcontentloaded", { timeout: 2000 }).catch(() => { });
+      await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 8_000 }).catch(() => { });
+      await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
     }
 
     // Handle "Something went wrong" error popup (up to 2 rounds).
@@ -175,7 +222,7 @@ export async function gmailLogin(
       'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
     );
     try {
-      await passwordInput.first().waitFor({ state: "visible", timeout: 5_000 });
+      await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
     } catch {
       // Password field never appeared — check if page redirected to a known challenge
       const url = page.url();
@@ -573,6 +620,7 @@ async function handleTotp(
   await page.keyboard.press("Enter");
 
   await logger.log("INFO", "[gmail-login] TOTP submitted");
+  markTotpUsed();
   return { success: true }; // Provisional — outer loop will verify URL
 }
 

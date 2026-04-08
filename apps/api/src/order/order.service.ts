@@ -121,7 +121,7 @@ export class OrderService {
   }
 
 
-  async findAll(status?: string) {
+  async findAll(status?: string, page = 1, pageSize = 50) {
     const VALID_STATUSES = [
       "CREATED", "CODE_VERIFIED", "GROUP_ASSIGNED", "TASK_QUEUED", "TASK_RUNNING",
       "INVITE_SENT", "WAIT_USER_ACCEPT", "COMPLETED", "FAILED", "MANUAL_REVIEW", "EXPIRED"
@@ -131,26 +131,25 @@ export class OrderService {
       ? { status: status as any }
       : {};
 
-    return this.prisma.order.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        familyGroup: { select: { id: true, groupName: true } },
-        redeemCode: { select: { id: true, code: true } },
-        _count: { select: { tasks: true } },
-        swapRecords: {
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            oldEmail: true,
-            newEmail: true,
-            status: true,
-            taskId: true,
-            createdAt: true,
-          },
-        },
-      }
-    });
+    const safePage = Math.max(page, 1);
+    const safeSize = Math.min(Math.max(pageSize, 1), 200);
+
+    const [items, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (safePage - 1) * safeSize,
+        take: safeSize,
+        include: {
+          familyGroup: { select: { id: true, groupName: true } },
+          redeemCode: { select: { id: true, code: true } },
+          _count: { select: { tasks: true } },
+        }
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {
@@ -841,6 +840,7 @@ export class OrderService {
         resultMessage: true,
         createdAt: true,
         updatedAt: true,
+        orderType: true,
         tasks: {
           where: { type: "REPLACE_MEMBER" },
           orderBy: { createdAt: "desc" },
@@ -848,6 +848,7 @@ export class OrderService {
           select: {
             id: true,
             status: true,
+            lastErrorCode: true,
             lastErrorMessage: true,
             startedAt: true,
             finishedAt: true
@@ -868,6 +869,15 @@ export class OrderService {
       updatedAt: order.updatedAt
     });
 
+    // Determine if the user can re-submit this swap
+    // Only when order is FAILED (BullMQ exhausted all retries)
+    const canRetry = order.status === "FAILED";
+
+    // Task is still being retried by BullMQ (not yet given up)
+    const isRetrying = latestTask
+      && (latestTask.status === "FAILED_RETRYABLE" || latestTask.status === "PENDING" || latestTask.status === "RUNNING")
+      && order.status !== "FAILED";
+
     return {
       ...publicOrder,
       task: latestTask
@@ -875,10 +885,37 @@ export class OrderService {
           status: latestTask.status,
           startedAt: latestTask.startedAt,
           finishedAt: latestTask.finishedAt,
-          hasError: !!latestTask.lastErrorMessage
+          hasError: !!latestTask.lastErrorMessage,
+          errorHint: latestTask.lastErrorMessage
+            ? this.humanizeTaskError(latestTask.lastErrorCode, latestTask.lastErrorMessage)
+            : null,
         }
-        : null
+        : null,
+      canRetry,
+      isRetrying: !!isRetrying,
     };
+  }
+
+  /**
+   * Convert internal error codes/messages to user-friendly Chinese hints.
+   */
+  private humanizeTaskError(code: string | null, message: string): string {
+    if (code === "ACCOUNT_UNAVAILABLE") {
+      return "系统账号暂时不可用，正在自动重试中，请稍候。";
+    }
+    if (message.includes("Target page, context or browser has been closed")) {
+      return "浏览器连接意外中断，系统正在自动重试。";
+    }
+    if (message.includes("LOGIN_FAILED:TRANSIENT")) {
+      return "登录暂时失败，系统将自动重试。";
+    }
+    if (message.includes("Cannot find member")) {
+      return "未能在家庭组中找到指定成员，请确认邮箱是否正确。";
+    }
+    if (message.includes("MAX_RETRIES_EXCEEDED")) {
+      return "自动重试次数已用完，您可以重新提交换号申请。";
+    }
+    return "任务执行遇到问题，您可以重新提交换号申请。";
   }
 
   /**

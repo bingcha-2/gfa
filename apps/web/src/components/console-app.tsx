@@ -1,17 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import {
   AccountSummary,
   FamilyGroupSummary,
-  OrderSummary,
-  RedeemCodeSummary,
   SessionUser,
-  TaskSummary
 } from "../lib/types";
 import { AccountPanel } from "./account-panel";
 import { GroupPanel } from "./group-panel";
@@ -27,11 +24,9 @@ import { SchedulerPanel } from "./scheduler-panel";
 
 type ConsoleData = {
   user: SessionUser;
-  accounts: AccountSummary[];
-  groups: FamilyGroupSummary[];
-  orders: OrderSummary[];
-  tasks: TaskSummary[];
-  redeemCodes: RedeemCodeSummary[];
+  stats?: any;
+  accounts: AccountSummary[] | null;
+  groups: FamilyGroupSummary[] | null;
 };
 
 type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings";
@@ -102,7 +97,7 @@ export type MigrateResult = {
 const orderTerminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
 type ConsoleAppProps = {
-  initialData: ConsoleData;
+  initialData: { user: SessionUser; stats: any };
 };
 
 function isUnauthorized(message: string) {
@@ -116,7 +111,7 @@ function isUnauthorized(message: string) {
 
 export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const router = useRouter();
-  const [data, setData] = useState<ConsoleData>(initialData);
+  const [data, setData] = useState<ConsoleData>({ ...initialData, accounts: null, groups: null });
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<ConsoleSection>("overview");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -130,40 +125,56 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     setTimeout(() => setToast(null), 3800);
   }
 
-  async function loadDashboard() {
+  async function loadModule(section: ConsoleSection, force = false) {
     try {
-      const [user, accounts, groups, orders, tasks, redeemCodes] = await Promise.all([
-        apiRequest<SessionUser>("auth/me"),
-        apiRequest<AccountSummary[]>("accounts"),
-        apiRequest<FamilyGroupSummary[]>("family-groups"),
-        apiRequest<OrderSummary[]>("orders"),
-        apiRequest<TaskSummary[]>("tasks"),
-        apiRequest<RedeemCodeSummary[]>("redeem-codes")
-      ]);
-
-      setData({ user, accounts, groups, orders, tasks, redeemCodes });
+      if (section === "accounts" && (force || !data.accounts)) {
+        const accounts = await apiRequest<AccountSummary[]>("accounts");
+        setData(prev => ({ ...prev, accounts }));
+      } else if (section === "groups" && (force || !data.groups)) {
+        const groups = await apiRequest<FamilyGroupSummary[]>("family-groups");
+        setData(prev => ({ ...prev, groups }));
+      } else if (section === "overview" && force) {
+        const stats = await apiRequest<any>("stats");
+        setData(prev => ({ ...prev, stats }));
+      }
+      // tasks, orders, codes, expire — self-managed panels, no central loading needed
       setError(null);
     } catch (requestError) {
       const message = getErrorMessage(requestError);
-
       if (isUnauthorized(message)) {
         const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
         router.push(`/${prefix}/login`);
         router.refresh();
         return;
       }
-
       setError(message);
     }
   }
 
+  useEffect(() => {
+    setIsRefreshing(true);
+    loadModule(activeSection).finally(() => setIsRefreshing(false));
+  }, [activeSection]);
+
+  async function loadDashboard() {
+    // For self-managed panels (tasks, orders, codes, expire), only refresh stats
+    const refreshCurrent = ["accounts", "groups", "overview"].includes(activeSection)
+      ? loadModule(activeSection, true)
+      : Promise.resolve();
+    const refreshStats = activeSection !== "overview"
+      ? loadModule("overview", true)
+      : Promise.resolve();
+    await Promise.all([refreshCurrent, refreshStats]);
+  }
+
   async function runAction(action: () => Promise<unknown>) {
     setIsActioning(true);
-    const minDelay = new Promise<void>((res) => setTimeout(res, 600));
+    const minDelay = new Promise<void>((res) => setTimeout(res, 200));
     try {
       const [result] = await Promise.allSettled([action(), minDelay]);
       if (result.status === "rejected") throw result.reason;
-      await loadDashboard();
+      // Only refresh stats (lightweight), self-managed panels refresh themselves
+      await loadModule("overview", true);
       setError(null);
       return true;
     } catch (actionError) {
@@ -280,39 +291,6 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         body: payload
       })
     );
-  }
-
-  async function createCodes(payload: {
-    count: number;
-    product: string;
-    codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
-    validDays?: number;
-    swapLimit?: number;
-    swapWindowHours?: number;
-  }): Promise<string[] | null> {
-    setIsActioning(true);
-    try {
-      // Returns the created RedeemCode records; we extract the code strings
-      const created = await apiRequest<{ code: string }[]>("redeem-codes/batch-create", {
-        method: "POST",
-        body: payload
-      });
-      await loadDashboard();
-      return created.map((c) => c.code);
-    } catch (err) {
-      const message = getErrorMessage(err);
-      if (isUnauthorized(message)) {
-        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
-        router.push(`/${prefix}/login`);
-        router.refresh();
-        return null;
-      }
-      setError(message);
-      showToast("error", message);
-      return null;
-    } finally {
-      setIsActioning(false);
-    }
   }
 
   async function syncGroup(groupId: string): Promise<{ taskId: string } | null> {
@@ -499,93 +477,17 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     }
   }
 
-  async function retryTask(taskId: string) {
-    return runAction(() =>
-      apiRequest(`tasks/${taskId}/retry`, {
-        method: "POST"
-      })
-    );
-  }
+  // Task and Order actions are now handled internally by their self-managing panels.
+  // Only group/account actions that need central state refresh remain here.
 
-  async function manualComplete(taskId: string, resultMessage: string) {
-    return runAction(() =>
-      apiRequest(`tasks/${taskId}/manual-complete`, {
-        method: "POST",
-        body: { resultMessage }
-      })
-    );
-  }
-
-  async function manualFail(taskId: string, reason: string) {
-    return runAction(() =>
-      apiRequest(`tasks/${taskId}/manual-fail`, {
-        method: "POST",
-        body: { reason }
-      })
-    );
-  }
-
-  async function cancelTask(taskId: string, reason: string) {
-    return runAction(() =>
-      apiRequest(`tasks/${taskId}/cancel`, {
-        method: "POST",
-        body: { reason }
-      })
-    );
-  }
-
-  async function disableCode(codeId: string) {
-    return runAction(() =>
-      apiRequest(`redeem-codes/${codeId}/disable`, {
-        method: "PATCH"
-      })
-    );
-  }
-
-  async function replaceMember(payload: {
-    orderId: string;
-    targetMemberEmail: string;
-    newUserEmail: string;
-  }) {
-    return runAction(() =>
-      apiRequest(`orders/${payload.orderId}/replace-member`, {
-        method: "POST",
-        body: {
-          targetMemberEmail: payload.targetMemberEmail,
-          newUserEmail: payload.newUserEmail
-        }
-      })
-    );
-  }
-
-  async function retryOrder(orderId: string) {
-    return runAction(() =>
-      apiRequest(`orders/${orderId}/retry`, {
-        method: "POST"
-      })
-    );
-  }
-
-  const availableSlots =
-    data.groups
-      .filter((group) =>
-        group.account?.status === "HEALTHY" &&
-        group.status === "ACTIVE" &&
-        group.account?.subscriptionStatus !== "SUSPENDED"
-      )
-      .reduce((sum, group) => sum + group.availableSlots, 0) ?? 0;
-  const activeOrders =
-    data.orders.filter((order) => !orderTerminalStatuses.has(order.status)).length ?? 0;
-  const manualReviewTasks =
-    data.tasks.filter((task) => task.status === "MANUAL_REVIEW").length ?? 0;
-  const disabledAccounts =
-    data.accounts.filter((account) => account.status !== "HEALTHY").length ?? 0;
-  const pendingInvites =
-    data.groups.reduce((sum, group) => sum + (group.pendingMemberCount ?? 0), 0) ?? 0;
-  const unusedCodes =
-    data.redeemCodes.filter((code) => code.status === "UNUSED").length ?? 0;
-  const recentOrders = data.orders.slice(0, 5);
-  const reviewQueue = data.tasks.filter((task) => task.status === "MANUAL_REVIEW").slice(0, 5);
+  const availableSlots = data.stats?.availableSlots ?? 0;
+  const activeOrders = data.stats?.activeOrders ?? 0;
+  const manualReviewTasks = data.stats?.manualReviewTasks ?? 0;
+  const disabledAccounts = data.stats?.disabledAccounts ?? 0;
+  const pendingInvites = data.stats?.pendingInvites ?? 0;
+  const unusedCodes = data.stats?.unusedCodes ?? 0;
+  const recentOrders = data.stats?.recentOrders ?? [];
+  const reviewQueue = data.stats?.reviewQueue ?? [];
 
   const isAdminOrOps = data.user.role === "ADMIN" || data.user.role === "OPERATIONS";
 
@@ -600,7 +502,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       id: "accounts" as const,
       label: "母号池",
       caption: "账号管理",
-      metric: `${data.accounts.length} 个`
+      metric: `${data.stats?.totals?.accounts ?? 0} 个`
     },
     {
       id: "groups" as const,
@@ -612,7 +514,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       id: "orders" as const,
       label: "订单",
       caption: "订单管理",
-      metric: `${data.orders.length} 条`
+      metric: `${data.stats?.totals?.orders ?? 0} 条`
     },
     {
       id: "tasks" as const,
@@ -630,7 +532,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       id: "expire" as const,
       label: "到期扫描",
       caption: "过期订单",
-      metric: `${data.orders.filter((o) => o.status === "EXPIRED").length} 已过期`
+      metric: `${data.stats?.totals?.expiredOrders ?? 0} 已过期`
     },
     // Scheduler requires ADMIN/OPERATIONS — hide from SUPPORT to avoid 403 errors
     ...(isAdminOrOps ? [{
@@ -702,7 +604,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
                   {recentOrders.length ? (
                     <div className="list-stack">
-                      {recentOrders.map((order) => (
+                      {recentOrders.map((order: any) => (
                         <div className="list-card" key={order.id}>
                           <div className="split-head">
                             <div>
@@ -730,7 +632,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
                   {reviewQueue.length ? (
                     <div className="list-stack">
-                      {reviewQueue.map((task) => (
+                      {reviewQueue.map((task: any) => (
                         <div className="list-card" key={task.id}>
                           <div className="split-head">
                             <div>
@@ -755,7 +657,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       case "accounts":
         return (
             <AccountPanel
-            accounts={data.accounts}
+            accounts={data.accounts || []}
             onCreate={createAccount}
             onBulkImport={bulkImport}
             onDelete={deleteAccount}
@@ -768,8 +670,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       case "groups":
         return (
           <GroupPanel
-            accounts={data.accounts}
-            groups={data.groups}
+            accounts={data.accounts || []}
+            groups={data.groups || []}
             onCreate={createGroup}
             onSync={syncGroup}
             onRemoveMember={removeMember}
@@ -789,37 +691,24 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       case "orders":
         return (
           <OrdersPanel
-            orders={data.orders}
-            onReplace={replaceMember}
-            onRetry={retryOrder}
             role={data.user.role}
+            showToast={showToast}
           />
         );
       case "tasks":
         return (
           <TasksPanel
-            tasks={data.tasks}
-            onManualComplete={manualComplete}
-            onManualFail={manualFail}
-            onCancel={cancelTask}
-            onRetry={retryTask}
             role={data.user.role}
+            showToast={showToast}
           />
         );
       case "codes":
         return (
-          <RedeemCodesPanel
-            codes={data.redeemCodes}
-            onCreate={createCodes}
-            onDisable={disableCode}
-            role={data.user.role}
-          />
+          <RedeemCodesPanel role={data.user.role} />
         );
       case "expire":
         return (
-          <ExpireScanPanel
-            expiredOrders={data.orders.filter((o) => o.status === "EXPIRED")}
-          />
+          <ExpireScanPanel />
         );
       case "scheduler":
         return (
@@ -829,8 +718,21 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         return (
           <MemberLookupPanel
             onRemoveMember={removeMember}
-            onRetryOrder={retryOrder}
-            onReplaceMember={replaceMember}
+            onRetryOrder={async (orderId: string) => {
+              try {
+                await apiRequest(`orders/${orderId}/retry`, { method: "POST" });
+                return true;
+              } catch { return false; }
+            }}
+            onReplaceMember={async (payload: { orderId: string; targetMemberEmail: string; newUserEmail: string }) => {
+              try {
+                await apiRequest(`orders/${payload.orderId}/replace-member`, {
+                  method: "POST",
+                  body: { targetMemberEmail: payload.targetMemberEmail, newUserEmail: payload.newUserEmail },
+                });
+                return true;
+              } catch { return false; }
+            }}
             showToast={showToast}
           />
         );

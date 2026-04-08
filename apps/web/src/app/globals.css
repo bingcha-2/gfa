@@ -1,21 +1,21 @@
 :root {
-  --background: #050a15;
-  --foreground: #e0faff;
-  --foreground-muted: rgba(224, 250, 255, 0.68);
-  --line: rgba(0, 240, 255, 0.2);
-  --line-strong: rgba(0, 240, 255, 0.4);
-  --accent: #00f0ff;
-  --accent-strong: #00c3d9;
-  --accent-soft: rgba(0, 240, 255, 0.15);
-  --warm: #ff0055;
-  --surface: rgba(10, 15, 30, 0.74);
-  --surface-strong: rgba(10, 15, 30, 0.9);
-  --shadow: 0 0 30px rgba(0, 240, 255, 0.15);
-  --shadow-soft: 0 0 15px rgba(0, 240, 255, 0.08);
-  --radius-xl: 4px;
-  --radius-lg: 4px;
-  --radius-md: 4px;
-  --radius-sm: 2px;
+  --background: #f5efe5;
+  --foreground: #1f1a17;
+  --foreground-muted: rgba(31, 26, 23, 0.68);
+  --line: rgba(31, 26, 23, 0.1);
+  --line-strong: rgba(31, 26, 23, 0.18);
+  --accent: #ea580c;
+  --accent-strong: #c2410c;
+  --accent-soft: rgba(234, 88, 12, 0.14);
+  --warm: #cb5d16;
+  --surface: rgba(255, 252, 248, 0.74);
+  --surface-strong: rgba(255, 252, 248, 0.9);
+  --shadow: 0 22px 72px rgba(56, 39, 30, 0.12);
+  --shadow-soft: 0 16px 36px rgba(56, 39, 30, 0.08);
+  --radius-xl: 32px;
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 14px;
 }
 
 * {
@@ -32,12 +32,15 @@ body {
   min-height: 100%;
   color: var(--foreground);
   background:
-    radial-gradient(circle at top left, rgba(0, 240, 255, 0.15), transparent 33%),
-    radial-gradient(circle at 90% 12%, rgba(255, 0, 85, 0.15), transparent 20%),
-    linear-gradient(135deg, #02050a 0%, #050a15 52%, #010308 100%);
+    radial-gradient(circle at top left, rgba(234, 88, 12, 0.12), transparent 33%),
+    radial-gradient(circle at 90% 12%, rgba(203, 93, 22, 0.18), transparent 20%),
+    linear-gradient(135deg, #f8f2e9 0%, #efe3d3 52%, #eadcc9 100%);
   font-family:
-    "Cascadia Code", "JetBrains Mono",
-    "Aptos", "Segoe UI", "PingFang SC", sans-serif;
+    "Aptos",
+    "Segoe UI",
+    "PingFang SC",
+    "Hiragino Sans GB",
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -48,10 +51,10 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(0, 240, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 240, 255, 0.05) 1px, transparent 1px);
-  background-size: 40px 40px;
-  mask-image: radial-gradient(circle at center, black 40%, transparent 92%);
+    linear-gradient(rgba(31, 26, 23, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 26, 23, 0.03) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(circle at center, black 35%, transparent 92%);
 }
 
 body::after {
@@ -59,12 +62,10 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: 
-    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
-    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-  background-size: 100% 3px, 6px 100%;
-  z-index: 100;
-  opacity: 0.15;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.26), transparent 24%),
+    linear-gradient(340deg, rgba(15, 118, 110, 0.06), transparent 24%);
+  mix-blend-mode: soft-light;
 }
 
 ::selection {
@@ -109,10 +110,10 @@ img {
   margin-bottom: 18px;
   padding: 14px 18px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: rgba(10, 15, 30, 0.54);
+  border-radius: 999px;
+  background: rgba(255, 252, 248, 0.54);
   backdrop-filter: blur(14px);
-  box-shadow: 0 0 10px rgba(0,240,255,0.1);
+  box-shadow: var(--shadow-soft);
 }
 
 .nav-brand {
@@ -130,16 +131,14 @@ img {
   height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: 14px;
   background:
-    linear-gradient(145deg, rgba(0, 240, 255, 0.18), rgba(0, 240, 255, 0.04)),
-    rgba(5, 10, 20, 0.75);
-  border: 1px solid var(--accent);
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
-  font-family: "Cascadia Code", monospace;
+    linear-gradient(145deg, rgba(234, 88, 12, 0.18), rgba(234, 88, 12, 0.04)),
+    rgba(255, 252, 248, 0.75);
+  border: 1px solid rgba(234, 88, 12, 0.18);
+  font-family: "Iowan Old Style", "Baskerville Old Face", "STSong", serif;
   font-size: 20px;
-  color: var(--accent);
-  text-shadow: 0 0 5px var(--accent);
+  color: var(--accent-strong);
 }
 
 .nav-links {
@@ -156,11 +155,12 @@ img {
   position: relative;
   overflow: hidden;
   padding: 24px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  background: rgba(5, 10, 20, 0.85);
-  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1);
-  backdrop-filter: blur(20px);
+  border: 1px solid rgba(31, 26, 23, 0.1);
+  border-radius: 36px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 252, 248, 0.92)),
+    rgba(255, 252, 248, 0.92);
+  box-shadow: var(--shadow);
 }
 
 .public-frame::before {
@@ -169,9 +169,8 @@ img {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(130deg, rgba(0, 240, 255, 0.05), transparent 26%),
-    radial-gradient(circle at top right, rgba(255, 0, 85, 0.08), transparent 24%);
-  border-top: 2px solid var(--accent);
+    linear-gradient(130deg, rgba(255, 255, 255, 0.48), transparent 26%),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.08), transparent 24%);
 }
 
 .public-topbar,
@@ -228,23 +227,25 @@ img {
   gap: 8px;
   margin-top: 18px;
   padding: 6px;
-  border-radius: 4px;
-  background: rgba(10, 15, 30, 0.78);
-  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 252, 248, 0.78);
+  border: 1px solid rgba(31, 26, 23, 0.08);
 }
 
 .tab-chip {
   min-height: 42px;
   padding: 0 16px;
-  border: 1px solid transparent;
-  border-radius: 2px;
+  border: 0;
+  border-radius: 999px;
   background: transparent;
-  color: var(--foreground-muted);
-  font-family: "Cascadia Code", monospace;
+  color: rgba(31, 26, 23, 0.68);
   font-weight: 700;
   cursor: pointer;
-  transition: all 180ms ease;
-  position: relative;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .tab-chip:hover {
@@ -253,11 +254,9 @@ img {
 }
 
 .tab-chip.active {
-  background: rgba(0, 240, 255, 0.1);
-  border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
-  text-shadow: 0 0 8px var(--accent);
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 12px 26px rgba(234, 88, 12, 0.3);
 }
 
 .public-grid {
@@ -297,14 +296,40 @@ img {
   height: 48px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
-  background: rgba(0, 240, 255, 0.1);
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  box-shadow: 0 0 10px rgba(0,240,255,0.2) inset;
-  font-family: "Cascadia Code", monospace;
+  border-radius: 16px;
+  background: rgba(234, 88, 12, 0.15);
+  color: var(--accent-strong);
+  font-family: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", monospace;
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+@keyframes sweep-line {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.success-scanner {
+  position: relative;
+  overflow: hidden;
+}
+
+.success-scanner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(234, 88, 12, 0.15) 50%,
+    transparent 100%
+  );
+  animation: sweep-line 2.5s infinite linear;
+  pointer-events: none;
 }
 
 .plain-item h3,
@@ -341,19 +366,21 @@ img {
   display: grid;
   gap: 10px;
   padding: 16px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: 20px;
+  border: 1px solid rgba(31, 26, 23, 0.08);
+  background: rgba(255, 252, 248, 0.74);
   text-align: left;
   cursor: pointer;
-  transition: all 180ms ease;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .recent-card:hover {
   transform: translateY(-1px);
-  border-color: var(--accent);
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
-  background: rgba(0, 240, 255, 0.05);
+  border-color: rgba(15, 118, 110, 0.18);
+  box-shadow: 0 14px 28px rgba(56, 39, 30, 0.08);
 }
 
 .recent-card.active {
@@ -380,54 +407,61 @@ img {
   align-items: center;
   min-height: 28px;
   padding: 0 10px;
-  border-radius: 2px;
-  background: rgba(0, 240, 255, 0.15);
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(31, 26, 23, 0.06);
+  color: rgba(31, 26, 23, 0.72);
   font-size: 11px;
   font-weight: 800;
-  font-family: "Cascadia Code", monospace;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .pill-link,
 .button {
-  border-color: var(--accent);
-  background: rgba(0, 240, 255, 0.1);
-  color: var(--accent);
-  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(255, 252, 248, 0.86);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+  box-shadow: 0 8px 20px rgba(56, 39, 30, 0.06);
+  cursor: pointer;
 }
 
 .pill-link:hover,
 .button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.3), inset 0 0 10px rgba(0, 240, 255, 0.2);
-  background: rgba(0, 240, 255, 0.15);
-  color: #fff;
-  text-shadow: 0 0 5px #fff, 0 0 10px var(--accent);
+  box-shadow: 0 12px 28px rgba(56, 39, 30, 0.1);
 }
 
 .button {
-  border-color: rgba(15, 118, 110, 0.18);
+  border-color: rgba(234, 88, 12, 0.2);
   background:
-    linear-gradient(135deg, rgba(15, 118, 110, 0.96), rgba(17, 82, 77, 0.96));
+    linear-gradient(135deg, #f97316, #ea580c);
   color: white;
   font-weight: 700;
 }
 
 .button.secondary {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: transparent;
-  color: var(--foreground-muted);
-  box-shadow: none;
+  border-color: var(--line-strong);
+  background: rgba(255, 252, 248, 0.92);
+  color: var(--foreground);
+  box-shadow: 0 4px 12px rgba(56, 39, 30, 0.05);
 }
 
 .button.secondary:hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  color: var(--foreground);
-  box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+  border-color: rgba(234, 88, 12, 0.3);
+  color: var(--accent-strong);
 }
 
 .button.ghost {
@@ -438,7 +472,7 @@ img {
 }
 
 .button.ghost:hover {
-  background: rgba(15, 118, 110, 0.06);
+  background: rgba(234, 88, 12, 0.06);
   color: var(--foreground);
   box-shadow: none;
   transform: none;
@@ -1677,344 +1711,25 @@ button[title="修改到期时间"]:hover {
   background: rgba(15, 118, 110, 0.03);
 }
 
-/* ── Global Animations for Public Portal ──────────────────────── */
-@keyframes fade-in-up {
-  0% {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in-up {
-  animation: fade-in-up 500ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.animate-fade-in-up.delay-100 { animation-delay: 100ms; opacity: 0; }
-.animate-fade-in-up.delay-200 { animation-delay: 200ms; opacity: 0; }
-.animate-fade-in-up.delay-300 { animation-delay: 300ms; opacity: 0; }
-
-@keyframes spin-slow {
-  to { transform: rotate(360deg); }
-}
-
-.animate-spin {
-  animation: spin-slow 1s linear infinite;
-}
-
-/* ── Enhanced Glassmorphism & Depth ──────────────────────────── */
-.glass-panel.premium-shadow,
-.form-card.premium-shadow {
-  box-shadow: 
-    0 4px 24px -6px rgba(15, 118, 110, 0.08),
-    0 16px 56px -12px rgba(56, 39, 30, 0.12),
-    0 0 0 1px rgba(255, 252, 248, 0.9) inset;
-  transition: box-shadow 300ms ease, transform 300ms ease;
-}
-
-.glass-panel.premium-shadow:hover,
-.form-card.premium-shadow:hover {
-  box-shadow: 
-    0 8px 32px -8px rgba(15, 118, 110, 0.12),
-    0 24px 72px -16px rgba(56, 39, 30, 0.16),
-    0 0 0 1px rgba(255, 252, 248, 0.9) inset;
-  transform: translateY(-2px);
-}
-
-/* ── Redesigned Form Fields ──────────────────────────────────── */
-.field-grid .field input[type="text"],
-.field-grid .field input[type="email"] {
-  min-height: 48px;
-  padding: 12px 18px;
-  border-radius: 14px;
-  font-size: 15px;
-  background: rgba(255, 252, 248, 0.85);
-  box-shadow: 0 1px 2px rgba(31, 26, 23, 0.04) inset;
-  border: 1px solid rgba(31, 26, 23, 0.14);
-}
-
-.field-grid .field input[type="text"]:focus,
-.field-grid .field input[type="email"]:focus {
-  background: #ffffff;
-  border-color: var(--accent);
-  box-shadow: 
-    0 0 0 4px rgba(15, 118, 110, 0.12),
-    0 2px 4px rgba(31, 26, 23, 0.02) inset;
-}
-
-/* ── Premium Primary Buttons ─────────────────────────────────── */
-.button.premium-primary {
-  min-height: 48px;
-  padding: 0 24px;
-  font-size: 16px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
-  border: none;
-  box-shadow: 
-    0 6px 16px -4px rgba(15, 118, 110, 0.4),
-    0 2px 0 rgba(255, 255, 255, 0.2) inset;
-  transition: all 250ms ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.button.premium-primary::after {
-  content: '';
-  position: absolute;
-  top: 0; left: -100%; width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transform: skewX(-20deg);
-  transition: left 0.5s ease;
-}
-
-.button.premium-primary:hover:not(:disabled)::after {
-  left: 150%;
-}
-
-.button.premium-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 
-    0 10px 24px -6px rgba(15, 118, 110, 0.5),
-    0 2px 0 rgba(255, 255, 255, 0.25) inset;
-}
-
-.button.premium-primary:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 2px 8px -2px rgba(15, 118, 110, 0.4);
-}
-
-/* ── Tech / Cyber Processing Animation ───────────────────────── */
-.processing-hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 40px;
-  min-height: 50vh;
-  padding: 40px;
-  background: radial-gradient(circle at center, rgba(15, 118, 110, 0.05) 0%, transparent 70%);
-  border-radius: var(--radius-xl);
-  overflow: hidden;
-  position: relative;
-}
-
-.processing-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: 
-    linear-gradient(rgba(15, 118, 110, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px);
-  background-size: 40px 40px;
-  mask-image: radial-gradient(circle at center, black 20%, transparent 80%);
-  pointer-events: none;
-}
-
-.cyber-scanner-container {
-  position: relative;
-  width: 160px;
-  height: 160px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.cyber-circle {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1px solid rgba(15, 118, 110, 0.3);
-  box-shadow: 0 0 20px rgba(15, 118, 110, 0.2) inset;
-}
-
-.cyber-circle.pulsing {
-  animation: cyber-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-.cyber-circle.outer {
-  inset: -20px;
-  border: 2px dashed rgba(15, 118, 110, 0.4);
-  opacity: 0.7;
-}
-
-.cyber-circle.reverse-spin {
-  animation: spin-slow 15s linear infinite reverse;
-}
-
-.cyber-radar {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  overflow: hidden;
-  border: 1px solid var(--accent);
-  box-shadow: 0 0 15px var(--accent), 0 0 30px var(--accent) inset;
-}
-
-.radar-beam {
-  position: absolute;
-  top: 50%;
-  left: 50%;
+/* ── Swap progress bar ── */
+.swap-progress-bar {
   width: 100%;
-  height: 100%;
-  background: conic-gradient(from 0deg, transparent 70%, rgba(15, 118, 110, 0.8) 100%);
-  transform-origin: 0 0;
-  animation: radar-spin 2s linear infinite;
-}
-
-.center-node {
-  position: relative;
-  z-index: 2;
-  width: 48px;
-  height: 48px;
-  background: var(--surface);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent-strong);
-  box-shadow: 0 0 15px rgba(15, 118, 110, 0.5);
-  border: 2px solid var(--accent);
-}
-
-.cyber-text-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  z-index: 2;
-  text-align: center;
-}
-
-.cyber-status-badge {
-  font-family: "Cascadia Code", "JetBrains Mono", monospace;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.15em;
-  padding: 6px 12px;
-  background: rgba(15, 118, 110, 0.1);
-  border: 1px solid rgba(15, 118, 110, 0.3);
-  border-radius: 4px;
-}
-
-.cyber-glitch-text {
-  font-family: "Cascadia Code", "JetBrains Mono", monospace;
-  font-size: 18px;
-  font-weight: bold;
-  color: var(--foreground);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  position: relative;
-}
-
-.cyber-progress-bar {
-  width: 240px;
   height: 4px;
-  background: rgba(15, 118, 110, 0.15);
-  border-radius: 2px;
+  border-radius: 999px;
+  background: rgba(31, 26, 23, 0.08);
   overflow: hidden;
-  position: relative;
 }
 
-.cyber-progress-fill {
+.swap-progress-fill {
+  width: 40%;
   height: 100%;
-  background: var(--accent);
-  width: 30%;
-  box-shadow: 0 0 10px var(--accent);
-  animation: progress-scan 2s ease-in-out infinite alternate;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--warm));
+  animation: swap-progress-slide 1.6s ease-in-out infinite;
 }
 
-.cyber-terminal-text {
-  font-family: "Cascadia Code", "JetBrains Mono", monospace;
-  font-size: 12px;
-  color: rgba(31, 26, 23, 0.5);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.blinking-cursor {
-  animation: blink 1s step-end infinite;
-}
-
-@keyframes cyber-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.05); }
-}
-
-@keyframes radar-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes progress-scan {
-  0% { transform: translateX(-100%); width: 30%; }
-  100% { transform: translateX(300%); width: 60%; }
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-.slide-up-enter {
-  animation: slide-up-fade 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes slide-up-fade {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-
-/* Cyberpunk Transitions */
-.cyber-viewport {
-  position: relative;
-  overflow: hidden;
-}
-
-.cyber-slide-enter {
-  animation: cyber-slide 0.5s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
-}
-
-@keyframes cyber-slide {
-  0% {
-    opacity: 0;
-    transform: translateX(40px) skewX(-10deg);
-    filter: brightness(2) contrast(1.5) hue-rotate(90deg);
-  }
-  50% {
-    opacity: 1;
-    transform: translateX(-5px) skewX(2deg);
-    filter: brightness(1.5) contrast(1.2) hue-rotate(20deg);
-  }
-  100% {
-    opacity: 1;
-    transform: translateX(0) skewX(0deg);
-    filter: brightness(1) contrast(1) hue-rotate(0deg);
-  }
-}
-
-.cyber-progress-fill {
-  background: var(--accent);
-  box-shadow: 0 0 10px var(--accent);
-}
-
-.cyber-text-box {
-  background: rgba(5, 10, 20, 0.8) !important;
-  border: 1px solid var(--accent) !important;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.2) inset !important;
-}
-
-.cyber-status-badge {
-  background: rgba(0, 240, 255, 0.1) !important;
-  color: var(--accent) !important;
-  border: 1px solid var(--accent) !important;
-}
-
-.cyber-glitch-text {
-  text-shadow: 0 0 8px var(--accent) !important;
+@keyframes swap-progress-slide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(350%); }
 }

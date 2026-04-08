@@ -132,6 +132,7 @@ model Account {
   appPassword         String?
   adspowerProfileId   String        @unique
   status              AccountStatus @default(HEALTHY)
+  syncError           String?
   riskScore           Int           @default(0)
   dailyOperationCount Int           @default(0)
   dailyOperationLimit Int           @default(20)
@@ -224,6 +225,9 @@ model RedeemCode {
   createdById     String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+
+  @@index([status])
+  @@index([codeType])
 }
 
 model Order {
@@ -248,6 +252,8 @@ model Order {
   updatedAt     DateTime     @updatedAt
 
   @@index([userEmail])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Task {
@@ -278,6 +284,12 @@ model Task {
   logs                 TaskLog[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([accountId, status])
+  @@index([source, status])
+  @@index([familyGroupId])
 }
 
 model TaskLog {

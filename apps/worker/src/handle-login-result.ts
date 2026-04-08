@@ -116,13 +116,29 @@ export async function handleLoginResult(
         ? "VERIFICATION_REQUIRED"
         : (ctx.unknownAccountStatus ?? "RISKY");
 
+    let syncError: string | null = null;
+    if (loginResult.reason === "CAPTCHA") {
+      syncError = "CAPTCHA_REQUIRED";
+    } else if (loginResult.reason === "UNKNOWN" || loginResult.reason === "VERIFICATION_REQUIRED") {
+      syncError = "PASSWORD_ERROR";
+    }
+
     await prisma.account.update({
       where: { id: accountId },
       data: {
         status: accountStatus as any,
+        syncError,
         ...(ctx.extraAccountUpdate ?? {}),
       },
     });
+
+    if (syncError) {
+      await prisma.familyGroup.updateMany({
+        where: { accountId },
+        data: { status: "MANUAL_ONLY" }
+      });
+      await logger.log("INFO", `Set all family groups for account ${accountId} to MANUAL_ONLY due to auto-sync failure (${syncError})`);
+    }
 
     await logger.log(
       "ERROR",

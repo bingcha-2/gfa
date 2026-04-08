@@ -33,8 +33,18 @@ export class TaskController {
   ) {}
 
   @Get()
-  findAll(@Query("status") status?: string, @Query("type") type?: string) {
-    return this.taskService.findAll({ status, type });
+  findAll(
+    @Query("status") status?: string,
+    @Query("type") type?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string
+  ) {
+    return this.taskService.findAll({
+      status,
+      type,
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+    });
   }
 
   @Get(":id")

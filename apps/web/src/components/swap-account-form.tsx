@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
@@ -74,22 +73,16 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
   return (
     <section className="form-card">
       <div className="panel-stack">
-        <div>
-          <p className="label">换号申请</p>
-          <h2 className="public-panel-title">填写换号信息</h2>
-          <p className="muted">
-            提交后系统会自动移除旧账号并向新邮箱重新发送邀请。
-          </p>
-        </div>
 
-        <form className="field-grid" onSubmit={onSubmit}>
+
+        <form className="field-grid" onSubmit={onSubmit} style={{ marginTop: '16px' }}>
           <div className="field">
             <label htmlFor="swap-code">换号卡密</label>
             <input
               id="swap-code"
               autoComplete="off"
               className="mono"
-              placeholder="例如 SWAP1234ABCD5678"
+              placeholder="例如 HH1234... 或 CX5678..."
               required
               value={swapCode}
               onChange={(event) => setSwapCode(event.target.value.toUpperCase())}
@@ -127,11 +120,19 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
             <small>邀请将发送到此新邮箱，请确认邮箱拼写正确。</small>
           </div>
 
-          <div className="field-actions">
-            <button className="button" disabled={isPending} type="submit">
-              {isPending ? "提交中..." : "提交换号申请"}
+          <div className="field-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
+            <button className="button" disabled={isPending} type="submit" style={{ flex: 1, padding: '8px 16px', background: '#ea580c', color: 'white', border: 'none' }}>
+              {isPending ? (
+                <>
+                  <svg className="animate-spin" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
+                    <path d="M12 2v4"></path>
+                  </svg>
+                  <span>正在提交换号任务...</span>
+                </>
+              ) : "提交换号请求"}
             </button>
-            <Link className="button secondary" href="/status">
+            <Link className="button secondary" href="/status" style={{ padding: '8px 16px' }}>
               查询订单
             </Link>
           </div>
@@ -139,20 +140,22 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
 
         {error ? <div className="notice error">{error}</div> : null}
 
-        {result ? (
-          <div className="notice">
-            <div className="panel-stack">
+        {!onSuccess && result ? (
+          <div className="notice" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '18px' }}>⚡</span>
               <div>
-                <strong>换号任务已创建:</strong>{" "}
-                <span className="mono strong">{result.orderNo}</span>
-              </div>
-              <div className="muted">{result.message}</div>
-              <div className="inline-actions" style={{ justifyContent: "flex-start" }}>
-                <Link className="button small" href={`/status/${result.orderNo}`}>
-                  查看换号进度
-                </Link>
+                <strong style={{ fontSize: '14px', color: 'var(--foreground)' }}>换号任务已排队</strong>
               </div>
             </div>
+            <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="muted" style={{ fontSize: '12px' }}>订单号</span>
+              <span className="mono strong" style={{ color: 'var(--accent)', fontSize: '13px' }}>{result.orderNo}</span>
+            </div>
+            <div className="muted">{result.message}</div>
+            <Link className="button" href={`/status/${result.orderNo}`} style={{ alignSelf: 'flex-start' }}>
+              查看换号执行进度
+            </Link>
           </div>
         ) : null}
       </div>

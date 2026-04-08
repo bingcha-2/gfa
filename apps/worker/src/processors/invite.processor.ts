@@ -341,7 +341,7 @@ export async function processInvite(
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       }
       await page.waitForTimeout(1500);
-      capturedGaiaId = await scanPageForMemberGaiaId(page, userEmail);
+      capturedGaiaId = await scanPageForMemberGaiaId(page, userEmail, prisma, familyGroupId);
       if (capturedGaiaId) {
         await logger.log("INFO", `Captured gaiaId=${capturedGaiaId} for ${userEmail}`);
       } else {
@@ -383,7 +383,9 @@ export async function processInvite(
     }
 
     // Post-task sync: scrape the family page to reconcile DB with actual state
-    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
+    await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger, {
+      justInvitedEmail: userEmail,
+    });
 
     // Guard: postTaskSync may incorrectly mark the just-invited member as REMOVED
     // when Google hides the email on the family page (shows name only).
@@ -501,7 +503,7 @@ export async function processInvite(
               await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
             }
             await page.waitForTimeout(1500);
-            batchGaiaId = await scanPageForMemberGaiaId(page, nextUserEmail);
+            batchGaiaId = await scanPageForMemberGaiaId(page, nextUserEmail, prisma, familyGroupId);
           } catch { /* non-fatal */ }
 
           // Upsert member record
@@ -532,7 +534,9 @@ export async function processInvite(
           }
 
           // Sync after each batch invite
-          await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", batchLogger);
+          await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", batchLogger, {
+            justInvitedEmail: nextUserEmail,
+          });
 
           // Guard: protect just-invited member from incorrect REMOVED marking
           const batchPostSyncMember = await prisma.familyMember.findFirst({
@@ -578,12 +582,17 @@ export async function processInvite(
       await logger.log("INFO", `[batch] Processed ${batchCount} additional invite(s) in this session`);
     }
   } catch (error) {
-    // --- Auto-reassign: intercept MANUAL_REVIEW and FAMILY_FULL for order-backed invite tasks ---
+    // --- Auto-reassign: intercept MANUAL_REVIEW and FAMILY_FULL ---
+    // FAMILY_FULL always triggers reassign (with or without orderId).
+    // MANUAL_REVIEW only triggers reassign when orderId exists (order-backed tasks).
     const isManualReview = error instanceof UnrecoverableError && error.message === "MANUAL_REVIEW";
     const isFamilyFull = error instanceof UnrecoverableError && (error.message ?? "").startsWith("FAMILY_FULL");
     const shouldAutoReassign = isManualReview || isFamilyFull;
+    const canReassign = isFamilyFull
+      ? (shouldAutoReassign && deps.inviteQueue != null)
+      : (shouldAutoReassign && orderId != null && deps.inviteQueue != null);
 
-    if (shouldAutoReassign && orderId && deps.inviteQueue) {
+    if (canReassign) {
       try {
         // 1. Resolve the old familyGroupId
         const currentTask = await prisma.task.findUnique({
@@ -636,15 +645,17 @@ export async function processInvite(
             },
           });
 
-          // 5. Update Order to point to new group
-          await prisma.order.update({
-            where: { id: orderId },
-            data: {
-              familyGroupId: newGroup.id,
-              status: "TASK_QUEUED" as any,
-              resultMessage: null,
-            },
-          });
+          // 5. Update Order to point to new group (skip if no order — bulkInvite tasks)
+          if (orderId) {
+            await prisma.order.update({
+              where: { id: orderId },
+              data: {
+                familyGroupId: newGroup.id,
+                status: "TASK_QUEUED" as any,
+                resultMessage: null,
+              },
+            });
+          }
 
           // 6. Mark current task as FAILED_FINAL
           await logger.updateStatus("FAILED_FINAL", {
@@ -656,11 +667,11 @@ export async function processInvite(
           const newTask = await prisma.task.create({
             data: {
               type: "INVITE_MEMBER",
-              orderId,
+              ...(orderId ? { orderId } : {}),
               familyGroupId: newGroup.id,
               accountId: newGroup.accountId,
               payload: JSON.stringify({
-                orderId,
+                ...(orderId ? { orderId } : {}),
                 familyGroupId: newGroup.id,
                 accountId: newGroup.accountId,
                 userEmail,
@@ -668,11 +679,11 @@ export async function processInvite(
             },
           });
 
-          await deps.inviteQueue.add(
+          await deps.inviteQueue!.add(
             "invite-member",
             {
               taskId: newTask.id,
-              orderId,
+              ...(orderId ? { orderId } : {}),
               familyGroupId: newGroup.id,
               accountId: newGroup.accountId,
               userEmail,
@@ -681,27 +692,32 @@ export async function processInvite(
           );
 
           await logger.log("INFO",
-            `Auto-reassigned order ${orderId} from group ${oldGroupId} to group ${newGroup.id} (new task ${newTask.id})`
+            `Auto-reassigned ${orderId ? `order ${orderId}` : `task ${taskId}`} from group ${oldGroupId} to group ${newGroup.id} (new task ${newTask.id})`
           );
 
           // Task has been auto-handled — do NOT rethrow
           return;
         }
-        // else: no healthy group available → fall through
+        // else: no healthy group available → mark FAILED_FINAL immediately
         await logger.log("WARN",
-          `Auto-reassign: no healthy group available — falling back to ${isFamilyFull ? "FAMILY_FULL" : "MANUAL_REVIEW"}`
+          `Auto-reassign: no healthy group available — marking FAILED_FINAL (${isFamilyFull ? "FAMILY_FULL" : "MANUAL_REVIEW"})`
         );
+        await logger.updateStatus("FAILED_FINAL", {
+          code: isFamilyFull ? "FAMILY_FULL_NO_ALT" : "MANUAL_REVIEW_NO_ALT",
+          message: `No healthy family group available for reassignment`,
+        });
+        return;
       } catch (reassignErr) {
         // Reassign process failed → log and fall through
         await logger.log("ERROR",
           `Auto-reassign failed: ${reassignErr instanceof Error ? reassignErr.message : String(reassignErr)}`
         );
       }
-      // No healthy group / reassign error → rethrow original error
+      // Reassign errored → rethrow original error
       throw error;
     }
 
-    // UnrecoverableError that we don't auto-reassign (e.g. LOGIN_COOLDOWN, FAMILY_FULL with no orderId)
+    // UnrecoverableError that we don't auto-reassign (e.g. LOGIN_COOLDOWN)
     if (error instanceof UnrecoverableError) throw error;
 
     const errMsg = error instanceof Error ? error.message : String(error);
@@ -986,7 +1002,9 @@ async function executeInviteOnPage(
 
 async function scanPageForMemberGaiaId(
   page: import("playwright").Page,
-  email: string
+  email: string,
+  prisma: PrismaClient,
+  familyGroupId: string
 ): Promise<string | undefined> {
   const result = await page.evaluate((targetEmail: string) => {
     const links = document.querySelectorAll('a[href*="family/member/"]');
@@ -1005,5 +1023,37 @@ async function scanPageForMemberGaiaId(
     }
     return null;
   }, email);
-  return result ?? undefined;
+
+  if (result) return result;
+
+  // Fallback: If Google hid the email text entirely, look for any new GAIA ID on the page 
+  // that we don't already know about in the DB.
+  const allIds = await page.evaluate(() => {
+    const links = document.querySelectorAll('a[href*="family/member/"]');
+    const ids: string[] = [];
+    for (const link of Array.from(links)) {
+      const href = link.getAttribute("href") ?? "";
+      const match =
+        href.match(/\/g\/(\d+)/) ??
+        href.match(/\/member\/i\/([-\d]+)/) ??
+        href.match(/\/member\/([-\d]+)/);
+      if (match?.[1]) ids.push(match[1]);
+    }
+    return ids;
+  });
+
+  if (allIds.length > 0) {
+    const existing = await prisma.familyMember.findMany({
+      where: { familyGroupId, googleMemberId: { in: allIds } },
+      select: { googleMemberId: true }
+    });
+    const existingSet = new Set(existing.map(e => e.googleMemberId!));
+    const newIds = allIds.filter(id => !existingSet.has(id));
+    if (newIds.length > 0) {
+      // Pick the first new ID, assuming this is the one we just invited
+      return newIds[0];
+    }
+  }
+
+  return undefined;
 }

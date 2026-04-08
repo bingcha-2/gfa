@@ -62,15 +62,9 @@ export function RedeemForm({
   }
 
   return (
-    <section className="form-card">
+    <section className="form-card premium-shadow">
       <div className="panel-stack">
-        <div>
-          <p className="label">提交邀请</p>
-          <h2 className="public-panel-title">填写卡密和 Gmail</h2>
-          <p className="muted">
-            提交后会立即创建订单并进入自动处理队列。
-          </p>
-        </div>
+
 
         <form className="field-grid" onSubmit={onSubmit}>
           <div className="field">
@@ -79,7 +73,7 @@ export function RedeemForm({
               id="redeem-code"
               autoComplete="off"
               className="mono"
-              placeholder="例如 ABCD1234EFGH5678"
+              placeholder="例如 JZ12345678..."
               required
               value={code}
               onChange={(event) => setCode(event.target.value.toUpperCase())}
@@ -101,29 +95,40 @@ export function RedeemForm({
             />
           </div>
 
-          <div className="field-actions">
-            <button className="button" disabled={isPending} type="submit">
-              {isPending ? "正在排队..." : "提交并开始处理"}
+          <div className="field-actions" style={{ marginTop: '12px' }}>
+            <button className="button premium-primary" disabled={isPending} type="submit" style={{ flex: 1, backgroundColor: '#ea580c', color: 'white' }}>
+              {isPending ? (
+                <>
+                  <svg className="animate-spin" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                  </svg>
+                  <span>正在排队处理中...</span>
+                </>
+              ) : "立即提交"}
             </button>
-            <Link className="button secondary" href={secondaryHref}>
-              {secondaryLabel}
-            </Link>
           </div>
         </form>
 
         {error ? <div className="notice error">{error}</div> : null}
 
-        {result ? (
-          <div className="notice">
+        {!onSuccess && result ? (
+          <div className="notice success-scanner" style={{ background: 'rgba(234, 88, 12, 0.08)', borderColor: 'rgba(234, 88, 12, 0.2)', padding: '24px', borderRadius: '16px' }}>
             <div className="panel-stack">
-              <div>
-                <strong>订单已创建:</strong>{" "}
-                <span className="mono strong">{result.orderNo}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '24px' }}>🎉</span>
+                <div>
+                  <div style={{ fontSize: '13px', color: 'var(--accent-strong)', fontWeight: 700, letterSpacing: '0.05em' }}>SUCCESS</div>
+                  <strong style={{ fontSize: '1.2rem', color: 'var(--foreground)' }}>订单已成功排队并创建</strong>
+                </div>
               </div>
-              <div className="muted">{result.message}</div>
-              <div className="inline-actions" style={{ justifyContent: "flex-start" }}>
-                <Link className="button small" href={`/status/${result.orderNo}`}>
-                  打开独立状态页
+              <div style={{ background: 'white', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="muted">您的专属追踪订单号:</span>
+                <span className="mono strong" style={{ color: 'var(--accent)', fontSize: '1.1rem' }}>{result.orderNo}</span>
+              </div>
+              <div className="muted" style={{ lineHeight: 1.6 }}>{result.message}</div>
+              <div className="inline-actions" style={{ justifyContent: "flex-start", marginTop: '8px' }}>
+                <Link className="button premium-primary" href={`/status/${result.orderNo}`} style={{ minHeight: '40px' }}>
+                  查看实时追踪进度 →
                 </Link>
               </div>
             </div>

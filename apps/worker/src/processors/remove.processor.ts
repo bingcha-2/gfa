@@ -23,7 +23,7 @@ import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
-import { generateTOTP, totpSecondsRemaining } from "../totp";
+import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
 import { checkTransferBatchProgress } from "../check-transfer-progress";
 import { Queue } from "bullmq";
 import { postTaskSync } from "../post-task-sync";
@@ -134,12 +134,19 @@ export async function processRemove(
     await logger.log("INFO", `Cross-validation set: ${otherGaiaIds.size} other member GAIA IDs loaded`);
 
     // Execute remove on page using gaiaId (S0) when available, falling back to S1/S2/S3
-    await removeMemberOnPage(page, memberEmail, logger, {
+    const removeResult = await removeMemberOnPage(page, memberEmail, logger, {
       password: account.loginPassword ?? undefined,
       totpSecret: account.totpSecret ?? undefined,
       googleMemberId: memberRecord?.googleMemberId ?? undefined,
       displayName: memberRecord?.displayName ?? undefined,
     }, otherGaiaIds);
+
+    // Idempotent success: member was already removed (e.g. previous attempt succeeded
+    // but was reported as failed due to confirm button timeout)
+    if (removeResult === "ALREADY_REMOVED") {
+      await logger.log("INFO", `Member ${memberEmail} already removed from Google page (idempotent success)`);
+      // Still run post-sync to reconcile DB state
+    }
 
     // ── Post-removal sync ──
     // Reuse the shared postTaskSync which handles: dedup, reconcile, slot
@@ -283,7 +290,7 @@ async function removeMemberOnPage(
   logger: TaskLogger,
   credentials?: { password?: string; totpSecret?: string; googleMemberId?: string; displayName?: string },
   otherMemberGaiaIds?: Set<string>
-): Promise<void> {
+): Promise<"REMOVED" | "ALREADY_REMOVED"> {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   const googleMemberId = credentials?.googleMemberId;
@@ -338,18 +345,21 @@ async function removeMemberOnPage(
         // Clear SPA state: navigate to blank page first to prevent stale DOM content
         await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-        await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
+        const found = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
+        if (!found) return "ALREADY_REMOVED";
       }
     } else {
       await logger.log("WARN", `S0: No action button found, falling back to list page matching`);
       // Clear SPA state before fallback
       await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
+      const found = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
+      if (!found) return "ALREADY_REMOVED";
     }
   } else {
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await fallbackFindMember(page, email, displayName, logger, undefined, otherMemberGaiaIds);
+    const found = await fallbackFindMember(page, email, displayName, logger, undefined, otherMemberGaiaIds);
+    if (!found) return "ALREADY_REMOVED";
   }
 
   await logger.log("INFO", `On detail page for member ${email}`);
@@ -505,9 +515,20 @@ async function removeMemberOnPage(
         if (!credentials?.totpSecret) {
           throw new Error(`Google requires TOTP to remove member ${email}, but no totpSecret configured`);
         }
-        const remaining = totpSecondsRemaining();
-        if (remaining < 5) {
+
+        // Ensure we use a different TOTP code than the one submitted during login.
+        // Google rejects same-code reuse within a session, even if still valid.
+        const curWindow = currentTotpWindow();
+        if (curWindow <= lastUsedTotpWindow()) {
+          const remaining = totpSecondsRemaining();
+          await logger.log("INFO", `[remove] Waiting ${remaining + 1}s to avoid TOTP code reuse (same window as login)`);
           await page.waitForTimeout((remaining + 1) * 1000);
+        } else {
+          const remaining = totpSecondsRemaining();
+          if (remaining < 5) {
+            await logger.log("INFO", `[remove] Waiting ${remaining + 1}s for fresh TOTP code`);
+            await page.waitForTimeout((remaining + 1) * 1000);
+          }
         }
         const totpCode = generateTOTP(credentials.totpSecret);
 
@@ -519,7 +540,7 @@ async function removeMemberOnPage(
         } catch {
           // Try clicking Authenticator option first
           const authOption = page.locator(
-            'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("验证器")'
+            'div:has-text("Google Authenticator"), div:has-text("驗證器"), div:has-text("验证器"), div:has-text("Authenticator")'
           );
           if ((await authOption.count()) > 0) {
             await authOption.first().click();
@@ -529,44 +550,83 @@ async function removeMemberOnPage(
             'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
           );
         }
-        if ((await totpInput.count()) > 0) {
-          await totpInput.first().fill(totpCode);
-          const verifyBtn = page.locator(
-            'button:has-text("Next"), button:has-text("Verify"), button:has-text("下一步"), button:has-text("驗證"), button:has-text("验证")'
-          );
-          if ((await verifyBtn.count()) > 0) await verifyBtn.first().click();
-          else await page.keyboard.press("Enter");
-          await logger.log("INFO", `[remove] TOTP submitted (${totpCode.slice(0, 2)}****)`);
-          await page.waitForTimeout(5000);
-          await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-
-          // Retry with fresh code if still on TOTP page
-          const postTotpUrl = page.url();
-          if (postTotpUrl.includes("challenge/totp") || postTotpUrl.includes("challenge/az")) {
-            await logger.log("WARN", "[remove] Still on TOTP page, retrying with fresh code");
-            const retryRemaining = totpSecondsRemaining();
-            if (retryRemaining < 8) await page.waitForTimeout((retryRemaining + 1) * 1000);
-            const freshCode = generateTOTP(credentials.totpSecret!);
-            const retryInput = page.locator(
-              'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-            );
-            if ((await retryInput.count()) > 0) {
-              await retryInput.first().fill("");
-              await page.waitForTimeout(300);
-              await retryInput.first().fill(freshCode);
-              const retryBtn = page.locator(
-                'button:has-text("Next"), button:has-text("Verify"), button:has-text("下一步")'
-              );
-              if ((await retryBtn.count()) > 0) await retryBtn.first().click();
-              else await page.keyboard.press("Enter");
-              await logger.log("INFO", `[remove] TOTP retry submitted (${freshCode.slice(0, 2)}****)`);
-              await page.waitForTimeout(5000);
-              await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-            }
-          }
-        } else {
+        if ((await totpInput.count()) === 0) {
           throw new Error("Cannot find TOTP input field on 2FA challenge page");
         }
+
+        await totpInput.first().fill(totpCode);
+        await totpInput.first().press("Enter");
+        await logger.log("INFO", `[remove] TOTP submitted (${totpCode.slice(0, 2)}****)`);
+        markTotpUsed();
+
+        // Poll for URL change instead of fixed wait.
+        // Google's TOTP verification + redirect takes 8-12s (observed in gmail-login logs).
+        // Check every 1s for up to 15s before concluding the code was rejected.
+        const TOTP_POLL_INTERVAL_MS = 1000;
+        const TOTP_POLL_MAX_MS = 15000;
+        let totpPassed = false;
+
+        for (let elapsed = 0; elapsed < TOTP_POLL_MAX_MS; elapsed += TOTP_POLL_INTERVAL_MS) {
+          await page.waitForTimeout(TOTP_POLL_INTERVAL_MS);
+          const pollUrl = page.url();
+          const stillOnChallenge = pollUrl.includes("challenge/totp") ||
+            pollUrl.includes("challenge/az") ||
+            (pollUrl.includes("accounts.google.com") && pollUrl.includes("challenge"));
+
+          if (!stillOnChallenge) {
+            await logger.log("INFO", `[remove] TOTP verified — URL changed after ${elapsed + TOTP_POLL_INTERVAL_MS}ms. URL: ${pollUrl}`);
+            totpPassed = true;
+            break;
+          }
+        }
+
+        if (!totpPassed) {
+          // Still on challenge page after full polling window — retry with a guaranteed-fresh code.
+          await logger.log("WARN", `[remove] Still on TOTP page after ${TOTP_POLL_MAX_MS}ms polling, retrying with fresh code. URL: ${page.url()}`);
+
+          // Always wait for the next 30s TOTP window to ensure a different code
+          const retryRemaining = totpSecondsRemaining();
+          await logger.log("INFO", `[remove] Waiting ${retryRemaining + 1}s for next TOTP window`);
+          await page.waitForTimeout((retryRemaining + 1) * 1000);
+
+          const freshCode = generateTOTP(credentials.totpSecret!);
+          await logger.log("INFO", `[remove] Retry TOTP code: ${freshCode.slice(0, 2)}****`);
+
+          const retryInput = page.locator(
+            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+          );
+          if ((await retryInput.count()) > 0) {
+            await retryInput.first().fill("");
+            await page.waitForTimeout(300);
+            await retryInput.first().fill(freshCode);
+            await retryInput.first().press("Enter");
+
+            // Poll again after retry submission
+            let retryPassed = false;
+            for (let elapsed = 0; elapsed < TOTP_POLL_MAX_MS; elapsed += TOTP_POLL_INTERVAL_MS) {
+              await page.waitForTimeout(TOTP_POLL_INTERVAL_MS);
+              const retryUrl = page.url();
+              const stillOnChallenge = retryUrl.includes("challenge/totp") ||
+                retryUrl.includes("challenge/az") ||
+                (retryUrl.includes("accounts.google.com") && retryUrl.includes("challenge"));
+              if (!stillOnChallenge) {
+                await logger.log("INFO", `[remove] TOTP retry verified — URL changed after ${elapsed + TOTP_POLL_INTERVAL_MS}ms. URL: ${retryUrl}`);
+                retryPassed = true;
+                break;
+              }
+            }
+
+            if (!retryPassed) {
+              throw new Error(
+                `TOTP verification failed after retry — still on challenge page after ${TOTP_POLL_MAX_MS}ms polling. URL: ${page.url()}`
+              );
+            }
+          } else {
+            throw new Error("TOTP input field disappeared during retry — cannot re-submit code");
+          }
+        }
+
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
         continue;
       }
 
@@ -588,9 +648,7 @@ async function removeMemberOnPage(
           const visiblePwd = page.locator('input[type="password"]:visible');
           if ((await visiblePwd.count()) > 0) {
             await visiblePwd.first().fill(credentials.password);
-            const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步")');
-            if ((await nextBtn.count()) > 0) await nextBtn.first().click();
-            else await page.keyboard.press("Enter");
+            await visiblePwd.first().press("Enter");
             await logger.log("INFO", "[remove] Password submitted for re-auth");
             await page.waitForTimeout(5000);
             await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
@@ -608,13 +666,10 @@ async function removeMemberOnPage(
       // Identifier/email page — LAST resort (only when no password/TOTP input present)
       const identifierInput = page.locator('input[type="email"]');
       if ((await identifierInput.count()) > 0) {
-        const nextBtn = page.locator('button:has-text("Next"), button:has-text("下一步"), button:has-text("繼續")');
-        if ((await nextBtn.count()) > 0) {
-          await nextBtn.first().click();
-          await logger.log("INFO", "[remove] Clicked Next on identifier page");
-          await page.waitForTimeout(3000);
-          await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-        }
+        await identifierInput.first().press("Enter");
+        await logger.log("INFO", "[remove] Pressed Enter on identifier page");
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
         continue;
       }
 
@@ -633,10 +688,47 @@ async function removeMemberOnPage(
         'button:has-text("Xóa"), button:has-text("Xác nhận")'
       );
       if ((await removeFinalBtn.count()) > 0) {
-        await removeFinalBtn.last().click();
+        // Use force:true to click even if the button is disabled.
+        // Google may disable the button immediately after it starts processing,
+        // which causes Playwright's default click to wait forever for 'enabled' state.
+        await removeFinalBtn.last().click({ force: true }).catch(async () => {
+          await logger.log("WARN", `[remove] Force-click on confirm button failed — removal may already be done`);
+        });
         await logger.log("INFO", `[remove] Clicked confirm on /family/remove/ page`);
-        await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+
+        // Wait for either:
+        //   (a) Page navigates away from /family/remove/ (normal success), OR
+        //   (b) Confirm button becomes disabled/hidden (Google processed it server-side)
+        // Use 30s timeout to handle slow networks.
+        const navigationDone = page.waitForURL(
+          url => !url.toString().includes('/family/remove/'),
+          { timeout: 30_000 }
+        ).then(() => "navigated" as const);
+
+        const buttonDisabled = (async (): Promise<"disabled"> => {
+          // Poll button state every 1s for up to 30s
+          for (let i = 0; i < 30; i++) {
+            await page.waitForTimeout(1000);
+            const count = await removeFinalBtn.count().catch(() => 0);
+            if (count === 0) return "disabled"; // button removed from DOM
+            const disabled = await removeFinalBtn.last().isDisabled().catch(() => true);
+            if (disabled) return "disabled";
+          }
+          throw new Error("timeout");
+        })();
+
+        try {
+          const result = await Promise.race([navigationDone, buttonDisabled]);
+          if (result === "navigated") {
+            await logger.log("INFO", `[remove] Page navigated away from /family/remove/ — removal confirmed`);
+          } else {
+            await logger.log("INFO", `[remove] Confirm button disabled/hidden — Google processed the removal`);
+          }
+          break; // Removal complete
+        } catch {
+          // Button still enabled — continue the loop for another attempt
+          await logger.log("WARN", `[remove] Still on /family/remove/ page, button still enabled — retrying`);
+        }
         continue;
       }
     }
@@ -703,6 +795,7 @@ async function removeMemberOnPage(
   }
 
   await logger.log("INFO", `Removal verified: ${email} no longer on family page ✓`);
+  return "REMOVED";
 }
 
 /**
@@ -716,7 +809,7 @@ async function fallbackFindMember(
   logger: TaskLogger,
   knownGaiaId?: string,
   otherMemberGaiaIds?: Set<string>
-): Promise<void> {
+): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
   // S1: email visible directly on list page (pending invites)
@@ -725,7 +818,7 @@ async function fallbackFindMember(
     await logger.log("INFO", `S1: Found email text on list page, clicking`);
     await emailLocator.first().click();
     await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
-    return;
+    return true;
   }
 
   // S2: displayName match (accepted members show display name)
@@ -749,7 +842,7 @@ async function fallbackFindMember(
       await logger.log("INFO", `S2: Leaf emails on detail page: [${s2LeafEmails.join(", ")}]`);
       if (s2LeafEmails.some((e) => e.toLowerCase() === email.toLowerCase())) {
         await logger.log("INFO", `S2 verified: leaf email matches target ${email}`);
-        return;
+        return true;
       }
       // Mismatch: displayName was ambiguous, fall through to S3
       await logger.log("WARN", `S2: displayName matched on list but detail page does not contain "${email}" — falling to S3`);
@@ -774,7 +867,7 @@ async function fallbackFindMember(
       await page.goto(gaiaHref, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await page.waitForTimeout(1500);
-      return;
+      return true;
     }
     await logger.log("WARN", `S3-fast: Known GAIA ${knownGaiaId} not found in ${memberHrefs.length} hrefs, falling to blind iteration`);
   }
@@ -849,7 +942,7 @@ async function fallbackFindMember(
           continue;
         }
         await logger.log("INFO", `S3: Matched on detail page for card #${i}`);
-        return;
+        return true;
       }
     } catch (err) {
       await logger.log("WARN", `S3: Card #${i} error: ${err instanceof Error ? err.message : String(err)}`);
@@ -857,8 +950,8 @@ async function fallbackFindMember(
   }
 
   await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
-  throw new Error(
-    `Cannot find member "${email}" on family page. ` +
-    `Checked ${memberHrefs.length} cards via S1/S2/S3.`
+  await logger.log("WARN",
+    `Member "${email}" not found on family page after checking ${memberHrefs.length} cards via S1/S2/S3 — may already be removed`
   );
+  return false;
 }

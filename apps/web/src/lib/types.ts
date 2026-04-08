@@ -17,6 +17,7 @@ export type AccountSummary = {
   loginEmail: string;
   adspowerProfileId: string;
   status: string;
+  syncError?: string | null;
   riskScore: number;
   dailyOperationCount: number;
   dailyOperationLimit: number;
@@ -53,6 +54,7 @@ export type FamilyGroupSummary = {
     name: string;
     loginEmail: string;
     status?: string;
+    syncError?: string | null;
     subscriptionExpiresAt?: string | null;
     subscriptionStatus?: string | null;
     subscriptionStatusUpdatedAt?: string | null;

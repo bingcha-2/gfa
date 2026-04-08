@@ -5,6 +5,33 @@ import { CONSOLE_AUTH_COOKIE } from "../../../../lib/auth-cookie";
 const BACKEND_BASE_URL =
   process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api";
 
+/**
+ * Path whitelist — only these API path prefixes are allowed through the proxy.
+ * This prevents abuse if an XSS vulnerability is exploited on the frontend.
+ * Add new prefixes here as the frontend adds new API integrations.
+ */
+const ALLOWED_PATH_PREFIXES = [
+  "auth",
+  "stats",
+  "family-groups",
+  "orders",
+  "tasks",
+  "accounts",
+  "redeem-codes",
+  "scheduler",
+  "queue",
+  "expire-scan",
+  "audit-logs",
+  "public",
+];
+
+function isPathAllowed(pathSegments: string[]): boolean {
+  const fullPath = pathSegments.join("/");
+  return ALLOWED_PATH_PREFIXES.some(
+    (prefix) => fullPath === prefix || fullPath.startsWith(prefix + "/") || fullPath.startsWith(prefix + "?")
+  );
+}
+
 type RouteContext = {
   params: Promise<{
     path: string[];
@@ -18,6 +45,11 @@ async function forward(request: NextRequest, context: RouteContext) {
 
   if (!path?.length) {
     return NextResponse.json({ message: "Missing target path" }, { status: 400 });
+  }
+
+  // Security: reject paths not in the whitelist
+  if (!isPathAllowed(path)) {
+    return NextResponse.json({ message: "Forbidden" }, { status: 403 });
   }
 
   const upstream = new URL(`${BACKEND_BASE_URL}/${path.join("/")}`);

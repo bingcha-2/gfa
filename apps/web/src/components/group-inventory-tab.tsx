@@ -252,6 +252,9 @@ export function InventoryTab({
             <option value="FULL">🔴 满员</option>
             <option value="NEVER_SYNCED">⚠️ 未同步</option>
             <option value="HAS_DUPLICATES">🔁 重复成员</option>
+            <option value="PASSWORD_ERROR">🔴 密码错误</option>
+            <option value="CAPTCHA_REQUIRED">🤖 人机验证</option>
+            <option value="SUBSCRIPTION_SUSPENDED">⚠️ 订阅暂停</option>
           </select>
         </>)}
         {(searchEmail || filterStatus !== 'ALL' || filterExtra !== 'ALL') && (
@@ -289,6 +292,9 @@ export function InventoryTab({
                   d.groups.some((dg) => dg.groupId === g.id)
                 );
               }
+              else if (filterExtra === 'PASSWORD_ERROR') matchExtra = g.account?.syncError === 'PASSWORD_ERROR';
+              else if (filterExtra === 'CAPTCHA_REQUIRED') matchExtra = g.account?.syncError === 'CAPTCHA_REQUIRED';
+              else if (filterExtra === 'SUBSCRIPTION_SUSPENDED') matchExtra = g.account?.subscriptionStatus === 'SUSPENDED' || g.account?.syncError === 'SUBSCRIPTION_SUSPENDED';
               return matchEmail && matchStatus && matchExtra;
             })
           : source;
@@ -366,21 +372,25 @@ export function InventoryTab({
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <StatusBadge value={group.status} />
-                            {!group.lastSyncedAt && (
-                              <span 
-                                style={{ 
-                                  background: 'rgba(239,68,68,0.12)', 
-                                  color: '#dc2626', 
-                                  fontSize: '0.7rem', 
-                                  fontWeight: 600,
-                                  padding: '1px 6px',
-                                  borderRadius: '4px'
-                                }}
-                                title="该组尚未同步"
-                              >
-                                ⚠️ 未同步
-                              </span>
-                            )}
+                            {(() => {
+                              const syncErr = group.account?.syncError;
+                              if (syncErr === 'PASSWORD_ERROR') {
+                                return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="密码错误或验证阻断">⚠️ 密码错误</span>;
+                              }
+                              if (syncErr === 'CAPTCHA_REQUIRED') {
+                                return <span style={{ background: 'rgba(245,158,11,0.12)', color: '#d97706', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="需要处理人机验证 (CAPTCHA)">⚠️ 人机验证</span>;
+                              }
+                              if (syncErr === 'SUBSCRIPTION_SUSPENDED' || group.account?.subscriptionStatus === 'SUSPENDED') {
+                                return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="订阅已暂停">⚠️ 订阅暂停</span>;
+                              }
+                              if (syncErr && syncErr.trim() !== '') {
+                                return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="其它异常">⚠️ {syncErr}</span>;
+                              }
+                              if (!group.lastSyncedAt) {
+                                return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="该组尚未同步">⚠️ 未同步</span>;
+                              }
+                              return null;
+                            })()}
                           </div>
                           {group.lastSyncedAt && (
                             <div className="muted" style={{ fontSize: '0.75rem', marginTop: '2px' }}
@@ -425,6 +435,11 @@ export function InventoryTab({
                             }}>
                               {group.account?.subscriptionStatus === 'ACTIVE' ? '✅ 订阅中' : group.account?.subscriptionStatus === 'EXPIRED' ? '❌ 已过期' : group.account?.subscriptionStatus === 'SUSPENDED' ? '⚠️ 已暂停' : '❓ 未知'}
                             </span>
+                            {group.account?.subscriptionStatus === 'SUSPENDED' && group.account.subscriptionStatusUpdatedAt && (
+                              <span className="muted" style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', marginLeft: '4px' }}>
+                                (暂停于 {formatDate(group.account.subscriptionStatusUpdatedAt)})
+                              </span>
+                            )}
                             <span className="muted" style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               · 到期 
                               {editingDateGroupId === group.id ? (
@@ -789,9 +804,34 @@ export function InventoryTab({
             </table>
 
             {totalGroupPages > 1 && (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px 0 4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '12px 0 4px', flexWrap: 'wrap' }}>
                 <button className="button secondary small" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
-                <span style={{ fontSize: '0.85rem' }}>{currentGroupPage} / {totalGroupPages}</span>
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  const delta = 2;
+                  for (let i = 1; i <= totalGroupPages; i++) {
+                    if (i === 1 || i === totalGroupPages || (i >= currentGroupPage - delta && i <= currentGroupPage + delta)) {
+                      pages.push(i);
+                    } else if (pages.length > 0 && pages[pages.length - 1] !== '...') {
+                      pages.push('...');
+                    }
+                  }
+                  return pages.map((p, idx) =>
+                    p === '...' ? (
+                      <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        className={`button small ${p === currentGroupPage ? '' : 'secondary'}`}
+                        onClick={() => setCurrentGroupPage(p as number)}
+                        type="button"
+                        style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentGroupPage ? 700 : 400 }}
+                      >
+                        {p}
+                      </button>
+                    )
+                  );
+                })()}
                 <button className="button secondary small" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
               </div>
             )}

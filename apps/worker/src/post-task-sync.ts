@@ -27,6 +27,15 @@ import { scrapeMembersFromPage, dedupeAndUpdateGroupCounts } from "./processors/
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
 /**
+ * Context hints from the calling processor.
+ * Helps reconciliation correctly link gaiaOnly members that were just invited.
+ */
+export interface PostTaskSyncHints {
+  /** Email of the member that was just invited — gaiaOnly members should prefer this. */
+  justInvitedEmail?: string;
+}
+
+/**
  * @returns true if sync succeeded, false if it failed (non-fatal).
  */
 export async function postTaskSync(
@@ -34,7 +43,8 @@ export async function postTaskSync(
   prisma: PrismaClient,
   familyGroupId: string,
   adminEmail: string,
-  logger: TaskLogger
+  logger: TaskLogger,
+  hints?: PostTaskSyncHints
 ): Promise<boolean> {
   try {
     await logger.log("INFO", "[post-task-sync] Starting post-task family sync...");
@@ -50,7 +60,7 @@ export async function postTaskSync(
     await logger.log("INFO", `[post-task-sync] Scraped ${members.length} members, ${availableSlots} available slots`);
 
     // Deduplicate, reconcile, compute slots, and update FamilyGroup — all in one shared call
-    await dedupeAndUpdateGroupCounts(prisma, familyGroupId, members, availableSlots, logger);
+    await dedupeAndUpdateGroupCounts(prisma, familyGroupId, members, availableSlots, logger, { hints });
 
     await logger.log("INFO", "[post-task-sync] Complete");
     return true;

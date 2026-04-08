@@ -41,6 +41,7 @@ export class FamilyGroupService {
             name: true,
             loginEmail: true,
             status: true,
+            syncError: true,
             subscriptionExpiresAt: true,
             subscriptionStatus: true,
             subscriptionStatusUpdatedAt: true,
@@ -87,7 +88,7 @@ export class FamilyGroupService {
   }
 
   /**
-   * Find members that appear in multiple family groups (ACTIVE/PENDING only).
+   * Find members that appear in multiple family groups (ACTIVE members in ACTIVE groups only).
    * Returns each duplicate email with all the groups they belong to.
    */
   async findDuplicateMembers(): Promise<Array<{
@@ -95,15 +96,17 @@ export class FamilyGroupService {
     count: number;
     groups: Array<{ groupId: string; groupName: string; memberStatus: string; joinedAt: string | null }>;
   }>> {
-    // Step 1: find emails that appear in more than one group
+    // Step 1: find emails that appear in more than one ACTIVE group (only ACTIVE members)
     const duplicates = await this.prisma.$queryRaw<
       { email: string; cnt: number }[]
     >`
-      SELECT LOWER(email) as email, COUNT(DISTINCT familyGroupId) as cnt
-      FROM FamilyMember
-      WHERE status IN ('ACTIVE', 'PENDING')
-      GROUP BY LOWER(email)
-      HAVING COUNT(DISTINCT familyGroupId) > 1
+      SELECT LOWER(fm.email) as email, COUNT(DISTINCT fm.familyGroupId) as cnt
+      FROM FamilyMember fm
+      JOIN FamilyGroup fg ON fg.id = fm.familyGroupId
+      WHERE fm.status = 'ACTIVE'
+        AND fg.status = 'ACTIVE'
+      GROUP BY LOWER(fm.email)
+      HAVING COUNT(DISTINCT fm.familyGroupId) > 1
       ORDER BY cnt DESC, email ASC
     `;
 
@@ -114,7 +117,8 @@ export class FamilyGroupService {
     const members = await this.prisma.familyMember.findMany({
       where: {
         email: { in: dupEmails },
-        status: { in: ["ACTIVE", "PENDING"] },
+        status: "ACTIVE",
+        familyGroup: { status: "ACTIVE" },
       },
       select: {
         email: true,
@@ -381,7 +385,7 @@ export class FamilyGroupService {
             { taskId: outcome.taskId, familyGroupId: groupId, accountId: group.accountId, memberEmail: normEmail, ignoreCooldown: true },
             {
               ...JOB_DEFAULTS,
-              jobId: `remove:${groupId}:${normEmail}` // deduplication key
+              jobId: outcome.taskId, // use unique DB task ID — fixed dedup key caused repeated removes to be silently swallowed
             }
           );
           result.queued.push(normEmail);
@@ -494,7 +498,7 @@ export class FamilyGroupService {
           { taskId, familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt, ignoreCooldown: true },
           {
             ...JOB_DEFAULTS,
-            jobId: `invite:${groupId}:${email}` // deduplication key
+            jobId: taskId, // use unique DB task ID — fixed dedup key caused re-invites after removal to be silently swallowed
           }
         );
         result.queued.push(email);
@@ -992,6 +996,7 @@ export class FamilyGroupService {
         id: true,
         name: true,
         loginEmail: true,
+        syncError: true,
         subscriptionExpiresAt: true,
         subscriptionStatus: true,
         subscriptionPlan: true

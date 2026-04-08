@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useEffect, useTransition } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { OrderSummary } from "../lib/types";
+import { Spinner } from "./spinner";
 
 type ScanStatus = {
   pendingCount: number;
@@ -24,15 +25,29 @@ type RunResult = {
   orders: ProcessedOrder[];
 };
 
-type ExpireScanPanelProps = {
-  expiredOrders: OrderSummary[];
-};
-
-export function ExpireScanPanel({ expiredOrders }: ExpireScanPanelProps) {
+export function ExpireScanPanel() {
+  const [expiredOrders, setExpiredOrders] = useState<OrderSummary[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, startTransition] = useTransition();
+
+  async function loadExpiredOrders() {
+    setIsLoadingOrders(true);
+    try {
+      const res = await apiRequest<{ items: OrderSummary[]; total: number }>("orders?status=EXPIRED&pageSize=100");
+      setExpiredOrders(res.items);
+    } catch (err) {
+      console.error("Failed to load expired orders:", err);
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }
+
+  useEffect(() => {
+    loadExpiredOrders();
+  }, []);
 
   async function loadStatus() {
     try {

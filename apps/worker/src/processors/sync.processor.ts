@@ -8,6 +8,7 @@
 import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { SyncFamilyGroupPayload } from "@gfa/shared";
+import type { PostTaskSyncHints } from "../post-task-sync";
 
 import { AdsPowerClient } from "../adspower-client";
 import { BrowserPool } from "../browser-pool";
@@ -118,13 +119,24 @@ export async function processSync(
       `Sync complete: ${memberCount} non-admin members, ${finalSlots} slots available`);
 
     // If account was previously marked as unhealthy or risky, heal it since sync succeeded
-    if (account.status !== "HEALTHY") {
+    if (account.status !== "HEALTHY" || (account as any).syncError) {
       await prisma.account.update({
         where: { id: accountId },
-        data: { status: "HEALTHY" },
+        data: { status: "HEALTHY", syncError: null },
       });
-      await logger.log("INFO", `Reset account status to HEALTHY after successful sync`);
+      await logger.log("INFO", `Reset account status to HEALTHY and cleared syncError after successful sync`);
     }
+
+    // Automatically restore any associated MANUAL_ONLY groups back to ACTIVE
+    // since this successful sync proves the account is accessible again.
+    const restoredGroups = await prisma.familyGroup.updateMany({
+      where: { accountId, status: "MANUAL_ONLY" },
+      data: { status: "ACTIVE" },
+    });
+    if (restoredGroups.count > 0) {
+      await logger.log("INFO", `Auto-restored ${restoredGroups.count} family group(s) from MANUAL_ONLY to ACTIVE after successful sync`);
+    }
+
 
     // Clear any accumulated failures or cooldowns
     await pool.clearAccountTaskFailures(accountId);
@@ -140,6 +152,7 @@ export async function processSync(
           select: { subscriptionStatus: true },
         });
         const statusChanged = currentAccount?.subscriptionStatus !== subInfo.status;
+        const isSuspended = subInfo.status === "SUSPENDED";
 
         await prisma.account.update({
           where: { id: accountId },
@@ -147,9 +160,19 @@ export async function processSync(
             subscriptionExpiresAt: subInfo.expiresAt,
             subscriptionStatus: subInfo.status,
             subscriptionPlan: subInfo.planName,
+            syncError: isSuspended ? "SUBSCRIPTION_SUSPENDED" : null,
             ...(statusChanged ? { subscriptionStatusUpdatedAt: new Date() } : {}),
           },
         });
+
+        if (isSuspended) {
+          await prisma.familyGroup.updateMany({
+            where: { accountId },
+            data: { status: "MANUAL_ONLY" }
+          });
+          await logger.log("WARN", `Subscription is SUSPENDED. Set account syncError and forced all family groups to MANUAL_ONLY`);
+        }
+
         await logger.log("INFO", `Subscription refreshed: ${subInfo.status}${statusChanged ? " (status changed)" : ""}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
       }
     } catch {
@@ -380,13 +403,30 @@ export async function reconcileMembers(
   prisma: PrismaClient,
   familyGroupId: string,
   scrapedMembers: ScrapedMember[],
-  logger: TaskLogger
+  logger: TaskLogger,
+  hints?: PostTaskSyncHints
 ): Promise<void> {
   const emailMembers = scrapedMembers.filter((m) => !!m.email);
   const gaiaOnlyMembers = scrapedMembers.filter((m) => !m.email && !!m.googleMemberId);
 
   if (emailMembers.length === 0 && gaiaOnlyMembers.length === 0) {
-    await logger.log("WARN", "No members scraped — skipping reconciliation");
+    // Zero members scraped — mark all existing ACTIVE/PENDING members as REMOVED
+    // so DB stays consistent with the actual Google family group state.
+    const staleMembers = await prisma.familyMember.findMany({
+      where: { familyGroupId, status: { in: ["ACTIVE", "PENDING"] } },
+      select: { id: true, email: true },
+    });
+    if (staleMembers.length > 0) {
+      await prisma.familyMember.updateMany({
+        where: { familyGroupId, status: { in: ["ACTIVE", "PENDING"] } },
+        data: { status: "REMOVED", removedAt: new Date() },
+      });
+      const emails = staleMembers.map((m) => m.email).join(", ");
+      await logger.log("INFO",
+        `Marked ${staleMembers.length} member(s) as REMOVED (0 members on page): ${emails}`);
+    } else {
+      await logger.log("INFO", "No members scraped and no active members in DB — nothing to reconcile");
+    }
     return;
   }
 
@@ -437,6 +477,7 @@ export async function reconcileMembers(
       const updatedOrders = await prisma.order.updateMany({
         where: {
           familyGroupId,
+          userEmail: scraped.email,
           status: { in: ["INVITE_SENT", "WAIT_USER_ACCEPT", "TASK_QUEUED"] },
         },
         data: {
@@ -479,6 +520,43 @@ export async function reconcileMembers(
   // --- Step 2: Link gaiaOnly members to existing DB records ---
   // These are members whose email Google hides (e.g. accepted invite shows display name only).
   // Also match REMOVED records — they may have been re-invited.
+
+  // --- Tier 0: Context-aware match (justInvitedEmail) ---
+  // When a processor just invited someone and we know their email, but the page
+  // shows them as gaiaOnly (pending invite, email hidden by Google), we can
+  // directly link the gaiaOnly member to the known email record.
+  if (hints?.justInvitedEmail && !scrapedEmails.has(hints.justInvitedEmail)) {
+    const invitedRecord = await prisma.familyMember.findUnique({
+      where: { familyGroupId_email: { familyGroupId, email: hints.justInvitedEmail } },
+    });
+    if (invitedRecord && !claimedIds.has(invitedRecord.id)) {
+      // Find pending gaiaOnly members that aren't yet claimed
+      const unclaimedPendingGaia = gaiaOnlyMembers.filter(
+        (m) => m.isPending && !claimedIds.has(m.googleMemberId)
+      );
+      if (unclaimedPendingGaia.length === 1) {
+        const scrape = unclaimedPendingGaia[0];
+        await prisma.familyMember.update({
+          where: { id: invitedRecord.id },
+          data: {
+            googleMemberId: scrape.googleMemberId,
+            status: "PENDING",
+            displayName: scrape.displayName || invitedRecord.displayName || undefined,
+          },
+        });
+        claimedIds.add(invitedRecord.id);
+        // Remove from gaiaOnlyMembers so T1-T4 don't process it again
+        const idx = gaiaOnlyMembers.indexOf(scrape);
+        if (idx >= 0) gaiaOnlyMembers.splice(idx, 1);
+        await logger.log("INFO",
+          `T0 context-match: gaia=${scrape.googleMemberId} → ${hints.justInvitedEmail} (just invited, pending)`);
+      } else if (unclaimedPendingGaia.length > 1) {
+        await logger.log("INFO",
+          `T0: ${unclaimedPendingGaia.length} pending gaiaOnly members — cannot disambiguate, falling to T1+`);
+      }
+    }
+  }
+
   for (const scrape of gaiaOnlyMembers) {
     const newStatus = scrape.isPending ? "PENDING" : "ACTIVE";
     await logger.log("INFO", `Linking gaiaOnly member: gaia=${scrape.googleMemberId}, name="${scrape.displayName}", pending=${scrape.isPending}`);
@@ -488,6 +566,43 @@ export async function reconcileMembers(
       where: { familyGroupId, googleMemberId: scrape.googleMemberId },
     });
     if (byGaia) {
+      // T1-fix: If matched record is a placeholder (@gaia.unknown), try to find the
+      // REAL member record that should own this GAIA ID and merge into it instead.
+      // This resolves the "split identity" problem where a real email record and a
+      // placeholder record point to the same person.
+      const isPlaceholder = byGaia.email.endsWith("@gaia.unknown");
+      if (isPlaceholder) {
+        // Look for a single real-email member that has no gaiaId and wasn't matched by scraping
+        const realCandidates = existing.filter(
+          (m) =>
+            !m.email.endsWith("@gaia.unknown") &&
+            !m.googleMemberId &&
+            !scrapedEmails.has(m.email) &&
+            !claimedIds.has(m.id) &&
+            m.status !== "REMOVED"
+        );
+        if (realCandidates.length === 1) {
+          // Found exactly one real candidate — transfer GAIA ID from placeholder to real record
+          const realMember = realCandidates[0];
+          await prisma.familyMember.update({
+            where: { id: realMember.id },
+            data: {
+              googleMemberId: scrape.googleMemberId,
+              status: newStatus,
+              displayName: scrape.displayName || realMember.displayName || undefined,
+            },
+          });
+          // Delete the placeholder record — it's now merged
+          await prisma.familyMember.delete({ where: { id: byGaia.id } }).catch(() => {});
+          claimedIds.add(realMember.id);
+          await logger.log("INFO",
+            `T1-merge: gaia=${scrape.googleMemberId} transferred from placeholder ${byGaia.email} → real member ${realMember.email} (status=${newStatus})`);
+          continue;
+        }
+        // Multiple or zero real candidates — keep updating the placeholder as before
+        await logger.log("INFO",
+          `T1: gaia=${scrape.googleMemberId} matched placeholder ${byGaia.email}, ${realCandidates.length} real candidate(s) — keeping placeholder`);
+      }
       await prisma.familyMember.update({
         where: { id: byGaia.id },
         data: {
@@ -519,17 +634,20 @@ export async function reconcileMembers(
       }
     }
 
-    // Tier 3: Elimination — single unlinked non-scraped member (any status except already-claimed)
-    const unlinked = existing.filter(
+    // Tier 3: Elimination — prioritize REAL email members over placeholders.
+    // Split unlinked candidates into real-email vs placeholder pools.
+    const allUnlinked = existing.filter(
       (m) =>
         !m.googleMemberId &&
         !scrapedEmails.has(m.email) &&
         !claimedIds.has(m.id)
     );
-    if (unlinked.length === 1) {
-      // Fix #1: Cross-validate displayName before binding.
-      // Without this, T3 may bind the wrong GAIA ID when members have been swapped.
-      const candidate = unlinked[0];
+    // T3: Prefer real-email candidates (not @gaia.unknown)
+    const realUnlinked = allUnlinked.filter((m) => !m.email.endsWith("@gaia.unknown"));
+
+    if (realUnlinked.length === 1) {
+      // Single real-email candidate — high confidence merge
+      const candidate = realUnlinked[0];
       const nameMatches = !scrape.displayName || !candidate.displayName ||
         scrape.displayName === candidate.displayName;
 
@@ -543,57 +661,62 @@ export async function reconcileMembers(
           },
         });
         claimedIds.add(candidate.id);
-        await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${candidate.email} by elimination (status=${newStatus})`);
+        await logger.log("INFO", `T3 linked: gaia=${scrape.googleMemberId} → ${candidate.email} by elimination (${realUnlinked.length} real, ${allUnlinked.length} total unlinked, status=${newStatus})`);
+        continue;
       } else {
         await logger.log("WARN",
-          `T3 skipped: sole unlinked candidate ${candidate.email} has displayName="${candidate.displayName}" ` +
-          `but scraped displayName="${scrape.displayName}" — mismatch, creating placeholder instead`
+          `T3 skipped: sole real candidate ${candidate.email} displayName="${candidate.displayName}" ` +
+          `vs scraped="${scrape.displayName}" — mismatch`
         );
-        // Fall through to T4 placeholder creation
-        const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
-        await prisma.familyMember.upsert({
-          where: { familyGroupId_email: { familyGroupId, email: placeholder } },
-          update: {
-            displayName: scrape.displayName || undefined,
+      }
+    } else if (realUnlinked.length > 1) {
+      await logger.log("INFO",
+        `T3: ${realUnlinked.length} real unlinked candidates — cannot disambiguate, trying T3b`);
+    }
+
+    // T3b: Among multiple real candidates, try displayName match
+    if (realUnlinked.length > 1 && scrape.displayName) {
+      const byNameInUnlinked = realUnlinked.filter(
+        (m) => m.displayName && m.displayName === scrape.displayName
+      );
+      if (byNameInUnlinked.length === 1) {
+        const candidate = byNameInUnlinked[0];
+        await prisma.familyMember.update({
+          where: { id: candidate.id },
+          data: {
             googleMemberId: scrape.googleMemberId,
             status: newStatus,
-          },
-          create: {
-            familyGroupId,
-            email: placeholder,
-            displayName: scrape.displayName || undefined,
-            googleMemberId: scrape.googleMemberId,
-            role: scrape.role ?? "member",
-            status: newStatus,
-            joinedAt: new Date(),
           },
         });
+        claimedIds.add(candidate.id);
+        await logger.log("INFO", `T3b linked: gaia=${scrape.googleMemberId} → ${candidate.email} via displayName among ${realUnlinked.length} candidates (status=${newStatus})`);
+        continue;
       }
-    } else {
-      // Tier 4: No match found (multiple unlinked candidates) — create placeholder
-      const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
-      await prisma.familyMember.upsert({
-        where: { familyGroupId_email: { familyGroupId, email: placeholder } },
-        update: {
-          displayName: scrape.displayName || undefined,
-          googleMemberId: scrape.googleMemberId,
-          status: newStatus,
-        },
-        create: {
-          familyGroupId,
-          email: placeholder,
-          displayName: scrape.displayName || undefined,
-          googleMemberId: scrape.googleMemberId,
-          role: scrape.role ?? "member",
-          status: newStatus,
-          joinedAt: new Date(),
-        },
-      });
-      await logger.log("WARN",
-        `T4 created placeholder for gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
-        `real email unknown. ${unlinked.length} unmatched candidates.`
-      );
     }
+
+    // Tier 4 (last resort): create placeholder — but only if no real candidate exists
+    const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
+    await prisma.familyMember.upsert({
+      where: { familyGroupId_email: { familyGroupId, email: placeholder } },
+      update: {
+        displayName: scrape.displayName || undefined,
+        googleMemberId: scrape.googleMemberId,
+        status: newStatus,
+      },
+      create: {
+        familyGroupId,
+        email: placeholder,
+        displayName: scrape.displayName || undefined,
+        googleMemberId: scrape.googleMemberId,
+        role: scrape.role ?? "member",
+        status: newStatus,
+        joinedAt: new Date(),
+      },
+    });
+    await logger.log("WARN",
+      `T4 created placeholder for gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
+      `real email unknown. ${realUnlinked.length} real / ${allUnlinked.length} total unmatched.`
+    );
   }
 
   // --- Step 3: Mark stale members as REMOVED ---
@@ -634,7 +757,7 @@ export async function dedupeAndUpdateGroupCounts(
   members: ScrapedMember[],       // raw scraped (may contain duplicates)
   pageSlots: number,              // availableSlots from scrapeMembersFromPage
   logger: TaskLogger,
-  opts?: { skipReconcile?: boolean }
+  opts?: { skipReconcile?: boolean; hints?: PostTaskSyncHints }
 ): Promise<{ memberCount: number; availableSlots: number }> {
   // --- Deduplicate by email ---
   const seenEmails = new Set<string>();
@@ -653,7 +776,7 @@ export async function dedupeAndUpdateGroupCounts(
 
   // --- Reconcile with DB ---
   if (!opts?.skipReconcile) {
-    await reconcileMembers(prisma, familyGroupId, dedupedMembers, logger);
+    await reconcileMembers(prisma, familyGroupId, dedupedMembers, logger, opts?.hints);
   }
 
   // --- Compute slot counts ---

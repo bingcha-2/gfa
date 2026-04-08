@@ -124,7 +124,7 @@ export function BatchTab({
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="button" type="button" disabled={transferLoading || !transferSourceId || !transferTargetId} onClick={submitTransfer}>
-              {transferLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '🚀 开始迁移'}
+              {transferLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '开始迁移'}
             </button>
           </div>
           {transferStatus && (

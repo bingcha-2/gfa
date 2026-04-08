@@ -3,12 +3,14 @@
 import React from "react";
 
 import Link from "next/link";
-import { useDeferredValue, useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 import { formatDateTime } from "../lib/format";
 import { canReplaceMember } from "../lib/permissions";
 import { OrderSummary } from "../lib/types";
+import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { StatusBadge } from "./status-badge";
+import { Spinner } from "./spinner";
 
 /** Check if an order was cancelled by the scheduler (not a real failure) */
 function isSchedulerCancelled(order: OrderSummary): boolean {
@@ -40,14 +42,8 @@ function OrderStatusBadge({ order }: { order: OrderSummary }) {
 }
 
 type OrdersPanelProps = {
-  orders: OrderSummary[];
   role?: string;
-  onReplace: (payload: {
-    orderId: string;
-    targetMemberEmail: string;
-    newUserEmail: string;
-  }) => Promise<boolean>;
-  onRetry?: (orderId: string) => Promise<boolean>;
+  showToast?: (type: "success" | "error" | "info", msg: string) => void;
 };
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
@@ -56,25 +52,77 @@ const ORDER_TYPE_LABEL: Record<string, string> = {
   SUBSCRIPTION: "订阅",
 };
 
-export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelProps) {
+const PAGE_SIZE = 50;
+
+export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
+  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "active" | "manual">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const PAGE_SIZE = 20;
-  const deferredFilter = useDeferredValue(filter);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const getStatusParam = useCallback(() => {
+    if (activeTab === "manual") return "MANUAL_REVIEW";
+    // "active" tab filters client-side (excludes terminal statuses)
+    return undefined;
+  }, [activeTab]);
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const status = getStatusParam();
+      const params = new URLSearchParams();
+      params.set("page", String(currentPage));
+      params.set("pageSize", String(PAGE_SIZE));
+      if (status) params.set("status", status);
+      const res = await apiRequest<{ items: OrderSummary[]; total: number }>(`orders?${params.toString()}`);
+      setOrders(res.items);
+      setTotalItems(res.total);
+    } catch (err) {
+      console.error("Failed to load orders:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, activeTab, getStatusParam]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const totalPages = Math.ceil(totalItems / PAGE_SIZE);
 
   async function handleReplace(orderId: string) {
     const targetMemberEmail = window.prompt("要移除的成员邮箱")?.trim().toLowerCase();
     const newUserEmail = window.prompt("新用户邮箱")?.trim().toLowerCase();
     if (!targetMemberEmail || !newUserEmail) return;
-    await onReplace({ orderId, targetMemberEmail, newUserEmail });
+    try {
+      await apiRequest(`orders/${orderId}/replace-member`, {
+        method: "POST",
+        body: { targetMemberEmail, newUserEmail },
+      });
+      showToast?.("success", "替换任务已提交");
+      await loadData();
+    } catch (err) {
+      showToast?.("error", getErrorMessage(err));
+    }
   }
 
-  const filteredOrders = orders.filter((order) => {
+  async function handleRetry(orderId: string) {
+    try {
+      await apiRequest(`orders/${orderId}/retry`, { method: "POST" });
+      showToast?.("success", "订单重试已提交");
+      await loadData();
+    } catch (err) {
+      showToast?.("error", getErrorMessage(err));
+    }
+  }
+
+  // Client-side filtering for search and "active" tab
+  const displayOrders = orders.filter((order) => {
     if (activeTab === "active" && ["INVITE_SENT", "COMPLETED", "FAILED"].includes(order.status)) return false;
-    if (activeTab === "manual" && order.status !== "MANUAL_REVIEW") return false;
-    const query = deferredFilter.trim().toLowerCase();
+    const query = filter.trim().toLowerCase();
     if (!query) return true;
     return (
       order.orderNo.toLowerCase().includes(query) ||
@@ -83,9 +131,6 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
       order.familyGroup?.groupName?.toLowerCase().includes(query)
     );
   });
-
-  const paginated = filteredOrders.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const totalPages = Math.ceil(filteredOrders.length / PAGE_SIZE);
 
   function renderDetailRow(order: OrderSummary) {
     const swaps = order.swapRecords ?? [];
@@ -187,14 +232,28 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
             <h2 className="panel-title">订单流水</h2>
             <p className="muted">按订单号、邮箱、状态和归属家庭组快速检索。</p>
           </div>
-          <div className="filter-row">
+          <div className="filter-row" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <input
               className="search-field"
               placeholder="筛选订单号 / 邮箱 / 状态"
               value={filter}
-              onChange={(e) => { setFilter(e.target.value); setCurrentPage(1); }}
+              onChange={(e) => setFilter(e.target.value)}
             />
+            <button
+              className="button secondary small"
+              onClick={loadData}
+              disabled={isLoading}
+              type="button"
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {isLoading ? "刷新中..." : "刷新"}
+            </button>
           </div>
+        </div>
+
+        <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
+          共 {totalItems} 条
+          {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
         </div>
 
         <div className="panel-tabs">
@@ -210,7 +269,12 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
           ))}
         </div>
 
-        <div className="table-wrap workspace-table-wrap">
+        <div className="table-wrap workspace-table-wrap" style={{ minHeight: '200px', position: 'relative' }}>
+          {isLoading && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', zIndex: 10 }}>
+              <Spinner />
+            </div>
+          )}
           <table className="data-table data-table-orders">
             <thead>
               <tr>
@@ -224,7 +288,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
               </tr>
             </thead>
             <tbody>
-              {paginated.length === 0 ? (
+              {displayOrders.length === 0 ? (
                 <tr>
                   <td colSpan={7}>
                     <div className="empty-state">没有匹配的订单。</div>
@@ -232,7 +296,7 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                 </tr>
               ) : (
                 <>
-                  {paginated.map((order) => {
+                  {displayOrders.map((order) => {
                     const isExpanded = expandedId === order.id;
                     return (
                       <React.Fragment key={order.id}>
@@ -277,11 +341,11 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                                   换成员
                                 </button>
                               ) : null}
-                              {onRetry && (order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
+                              {(order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
                                 <button
                                   className="button small"
                                   style={{ background: "var(--accent)", color: "#fff", whiteSpace: "nowrap", padding: "0 10px", minHeight: 32, fontSize: 13 }}
-                                  onClick={() => void onRetry(order.id)}
+                                  onClick={() => void handleRetry(order.id)}
                                   type="button"
                                 >
                                   重试
@@ -299,12 +363,38 @@ export function OrdersPanel({ orders, onReplace, onRetry, role }: OrdersPanelPro
                   {totalPages > 1 && (
                     <tr>
                       <td colSpan={7}>
-                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, padding: "8px 0" }}>
-                          <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, padding: "8px 0", flexWrap: "wrap" }}>
+                          <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
                             ← 上页
                           </button>
-                          <span style={{ fontSize: "0.85rem" }}>{currentPage} / {totalPages}</span>
-                          <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
+                          {(() => {
+                            const pages: (number | string)[] = [];
+                            const delta = 2;
+                            for (let i = 1; i <= totalPages; i++) {
+                              if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+                                pages.push(i);
+                              } else if (pages.length > 0 && pages[pages.length - 1] !== '...') {
+                                pages.push('...');
+                              }
+                            }
+                            return pages.map((p, idx) =>
+                              p === '...' ? (
+                                <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
+                              ) : (
+                                <button
+                                  key={p}
+                                  className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                                  disabled={isLoading}
+                                  onClick={() => setCurrentPage(p as number)}
+                                  type="button"
+                                  style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                                >
+                                  {p}
+                                </button>
+                              )
+                            );
+                          })()}
+                          <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
                             下页 →
                           </button>
                         </div>

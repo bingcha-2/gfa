@@ -35,7 +35,9 @@ async function bootstrap() {
     })
   );
 
-  // --- Default Account Initialization (matches seed.mjs & startup banner) ---
+  // --- Default Account Initialization ---
+  // Only CREATE accounts if they don't exist. Never overwrite passwordHash
+  // so that password changes via change-password API persist across restarts.
   const prisma = app.get(PrismaService);
   const defaultPassword = "admin123";
   const passwordHash = await bcrypt.hash(defaultPassword, 10);
@@ -50,7 +52,7 @@ async function bootstrap() {
   for (const user of defaultUsers) {
     await prisma.user.upsert({
       where: { email: user.email },
-      update: { passwordHash },
+      update: {},  // Don't overwrite anything — preserves changed passwords
       create: {
         email: user.email,
         passwordHash,

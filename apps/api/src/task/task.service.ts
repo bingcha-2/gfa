@@ -31,7 +31,7 @@ export class TaskService {
     }
   }
 
-  async findAll(params?: { status?: string; type?: string }) {
+  async findAll(params?: { status?: string; type?: string; page?: number; pageSize?: number }) {
     const where: Record<string, unknown> = {
       // Exclude scheduler and expire-scan tasks from regular task list
       source: { notIn: ["scheduler", "expire-scan"] },
@@ -40,28 +40,38 @@ export class TaskService {
     if (params?.status) where.status = params.status;
     if (params?.type) where.type = params.type;
 
-    return this.prisma.task.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        priority: true,
-        retryCount: true,
-        maxRetryCount: true,
-        payload: true,
-        lastErrorCode: true,
-        lastErrorMessage: true,
-        startedAt: true,
-        finishedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        order: { select: { id: true, orderNo: true, userEmail: true } },
-        familyGroup: { select: { id: true, groupName: true } },
-        account: { select: { id: true, name: true } },
-      }
-    });
+    const page = Math.max(params?.page ?? 1, 1);
+    const pageSize = Math.min(Math.max(params?.pageSize ?? 50, 1), 200);
+
+    const [items, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          priority: true,
+          retryCount: true,
+          maxRetryCount: true,
+          payload: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
+          startedAt: true,
+          finishedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          order: { select: { id: true, orderNo: true, userEmail: true } },
+          familyGroup: { select: { id: true, groupName: true } },
+          account: { select: { id: true, name: true } },
+        }
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   async findOne(id: string) {

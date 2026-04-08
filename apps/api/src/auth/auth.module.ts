@@ -24,7 +24,7 @@ import { JwtStrategy } from "./jwt.strategy";
 
         return {
           secret,
-          signOptions: { expiresIn: "24h" }
+          signOptions: { expiresIn: "12h" }  // Must match CONSOLE_AUTH_MAX_AGE (12h)
         };
       }
     })

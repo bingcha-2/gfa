@@ -44,7 +44,7 @@ export function StatusLookupForm({
   const fieldId = compact ? `status-lookup-${kind}-compact` : `status-lookup-${kind}`;
   const label = kind === "code" ? "输入卡密" : "输入订单号";
   const placeholder =
-    kind === "code" ? "例如 ABCD1234EFGH5678" : "例如 GFA-MA3L7Q-9K2W";
+    kind === "code" ? "例如 JZ...，或者 HH / CX 开头卡密" : "例如 GFA-MA3L7Q-9K2W";
   const helperText =
     kind === "code"
       ? "当前公开查询会直接按卡密读取订单状态，支持跨浏览器和跨设备查询。"
