@@ -88,8 +88,10 @@ interface AppState {
 
   // GFA API
   gfaApiUrl: string;
+  automationApiKey: string;
   loadSettings: () => Promise<void>;
   updateGfaApiUrl: (url: string) => Promise<void>;
+  updateAutomationApiKey: (key: string) => Promise<void>;
 
   // Antigravity
   startAntigravityOAuth: (email: string) => Promise<void>;
@@ -247,10 +249,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 
   gfaApiUrl: "https://bcai.site",
+  automationApiKey: "gfa-local-dev-key-2026",
   loadSettings: async () => {
     try {
       const url = await invoke<string>("get_gfa_api_url");
       set({ gfaApiUrl: url });
+    } catch {
+      /* ignore */
+    }
+    try {
+      const key = await invoke<string>("get_setting", { key: "automation_api_key" });
+      if (key) set({ automationApiKey: key });
     } catch {
       /* ignore */
     }
@@ -259,6 +268,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateGfaApiUrl: async (url: string) => {
     await invoke("update_gfa_api_url", { url });
     set({ gfaApiUrl: url });
+  },
+
+  updateAutomationApiKey: async (key: string) => {
+    await invoke("set_setting", { key: "automation_api_key", value: key });
+    set({ automationApiKey: key });
   },
 
   startAntigravityOAuth: async (email: string) => {
