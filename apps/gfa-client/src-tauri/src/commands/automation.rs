@@ -13,6 +13,12 @@ fn get_api_url(db: &Database) -> String {
     url
 }
 
+fn get_api_key(db: &Database) -> Option<String> {
+    db.get_setting("automation_api_key")
+        .ok()
+        .flatten()
+}
+
 // ============================================================
 // API response types
 // ============================================================
@@ -93,11 +99,12 @@ pub async fn poll_automation_status(task_id: String, db: State<'_, Database>) ->
     let api_url = get_api_url(&db);
     let client = reqwest::Client::new();
 
-    let response = client
-        .get(format!("{}/api/automation/status/{}", api_url, urlencoding::encode(&task_id)))
-        .send()
-        .await
-        .map_err(|e| format!("Request error: {}", e))?;
+    let mut req = client
+        .get(format!("{}/api/automation/status/{}", api_url, urlencoding::encode(&task_id)));
+    if let Some(key) = get_api_key(&db) {
+        req = req.header("X-Api-Key", key);
+    }
+    let response = req.send().await.map_err(|e| format!("Request error: {}", e))?;
 
     if response.status().is_success() {
         response.json::<AutomationStatusResponse>().await.map_err(|e| format!("Parse error: {}", e))
@@ -127,12 +134,13 @@ pub async fn batch_automation_oauth(emails: Vec<String>, db: State<'_, Database>
 
     let payload = serde_json::json!({ "accounts": accounts });
 
-    let response = client
+    let mut req = client
         .post(format!("{}/api/automation/batch-oauth", api_url))
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Request error: {}", e))?;
+        .json(&payload);
+    if let Some(key) = get_api_key(&db) {
+        req = req.header("X-Api-Key", key);
+    }
+    let response = req.send().await.map_err(|e| format!("Request error: {}", e))?;
 
     if response.status().is_success() {
         response.json::<BatchOAuthResponse>().await.map_err(|e| format!("Parse error: {}", e))
@@ -159,12 +167,13 @@ async fn start_automation(email: &str, action: &str, db: &Database) -> Result<Au
         "totpSecret": account.totp_secret
     });
 
-    let response = client
+    let mut req = client
         .post(format!("{}/api/automation/start", api_url))
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Request error: {}", e))?;
+        .json(&payload);
+    if let Some(key) = get_api_key(db) {
+        req = req.header("X-Api-Key", key);
+    }
+    let response = req.send().await.map_err(|e| format!("Request error: {}", e))?;
 
     if response.status().is_success() {
         response.json::<AutomationStartResponse>().await.map_err(|e| format!("Parse error: {}", e))

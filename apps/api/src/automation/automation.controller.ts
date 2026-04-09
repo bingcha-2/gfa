@@ -25,7 +25,7 @@ export class AutomationController {
    * Body: { action, email, password, recoveryEmail?, totpSecret? }
    */
   @Post("start")
-  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Throttle({ default: { ttl: 60000, limit: 500 } })
   async start(@Body() dto: StartAutomationDto) {
     return this.automationService.startAutomation(dto.action, {
       email: dto.email,
@@ -42,7 +42,7 @@ export class AutomationController {
    * Body: { accounts: [{ email, password, recoveryEmail?, totpSecret? }] }
    */
   @Post("batch-oauth")
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 500 } })
   async batchOAuth(@Body() dto: BatchOAuthDto) {
     return this.automationService.batchOAuth(dto.accounts);
   }
@@ -53,7 +53,7 @@ export class AutomationController {
    * Headers: X-Api-Key: <AUTOMATION_API_KEY>
    */
   @Get("status/:taskId")
-  @Throttle({ default: { ttl: 60000, limit: 30 } })
+  @Throttle({ default: { ttl: 60000, limit: 5000 } })
   async getStatus(@Param("taskId") taskId: string) {
     return this.automationService.getTaskStatus(taskId);
   }
