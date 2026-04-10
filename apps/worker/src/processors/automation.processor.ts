@@ -1466,14 +1466,16 @@ async function probeCloudCodeAPI(
             projectId = project.id;
           }
 
-          // If no project, try onboardUser
+          // If no project, try onboardUser (matches Cockpit's pick_onboard_tier logic)
           if (!projectId) {
             const allowedTiers = loadData?.allowedTiers ?? [];
             const paidTierId = loadData?.paidTier?.id;
             const currentTierId = loadData?.currentTier?.id;
-            const tierId = paidTierId || currentTierId ||
+            // Cockpit priority: allowedTiers default → allowedTiers[0] → subscription_tier
+            const tierId =
               allowedTiers.find((t: any) => t.isDefault)?.id ||
-              allowedTiers[0]?.id || "LEGACY";
+              allowedTiers.find((t: any) => t.id)?.id ||
+              paidTierId || currentTierId;
 
             if (tierId) {
               await logger.log("INFO", `[phone-verify] No project_id, trying onboardUser with tier=${tierId}`);
