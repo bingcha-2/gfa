@@ -93,7 +93,7 @@ export async function handlePhoneVerification(
         await logger.log("WARN", `[phone-verify] Phone ${maskPhone(phone.phoneNumber)} failed: ${result.error}`);
         // Only disable if Google explicitly rejected the number (hard failure)
         // Soft failures (selector bug, timeout, network) are NOT the phone's fault
-        const isHardFail = result.error && /too many|can.t use|unable to|invalid number|banned|blocked|not.*valid|quota|limit/i.test(result.error);
+        const isHardFail = result.error && /too many|can.t use|unable to|invalid number|banned|blocked|not.*valid|not.*recogni|didn.t recogni|quota|limit/i.test(result.error);
         if (isHardFail) {
           disabledPhones.push(phone.phoneNumber);
           await logger.log("INFO", `[phone-verify] Hard failure — disabling phone ${maskPhone(phone.phoneNumber)}`);
@@ -156,9 +156,12 @@ async function resetToVerificationPage(page: Page, logger: TaskLogger): Promise<
     await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1500);
 
-    // If we're back on a verification page, good
+    // If we're back on a verification page, wait for content to load
     if (isVerificationPage(page.url())) {
       await forceEnglish(page, logger);
+      // Wait for the "Verify your phone number" option to appear
+      await page.getByText("Verify your phone number", { exact: false }).first()
+        .waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
       await logger.log("DEBUG", "[phone-verify] Reset to verification page via back navigation");
       return;
     }
