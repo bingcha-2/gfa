@@ -23,6 +23,7 @@ import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin, type LoginCredentials } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
+import { handlePhoneVerification, isVerificationPage } from "../phone-verification";
 import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
 
 /** Max time for the entire accept-invite flow (5 min), well under BullMQ lockDuration (10 min). */
@@ -58,7 +59,7 @@ export async function processAutomation(
   deps: AutomationProcessorDeps
 ): Promise<void> {
   const { prisma, adspower, pool, workerId } = deps;
-  const { action, credentials } = job.data;
+  const { action, credentials, phones } = job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
 
   if (!taskId) {
@@ -161,6 +162,18 @@ export async function processAutomation(
         } else {
           await logger.log("WARN", "accept-invite did not succeed — skipping Order/FamilyMember sync");
         }
+
+        // ── Post-accept: proactive phone verification (if phones available) ──
+        // setTaskStatus=false: this is a bonus step, must NOT overwrite the accept-invite result
+        if (phones && phones.length > 0) {
+          await logger.log("INFO", "[accept-invite] Starting proactive phone verification...");
+          await doProactivePhoneVerification(page, loginCreds, logger, prisma, taskId, phones, false);
+        }
+        break;
+      }
+      case "phone-verify": {
+        // Dedicated phone verification flow
+        await handlePhoneVerifyAction(page, loginCreds, logger, prisma, taskId, phones);
         break;
       }
     }
@@ -1222,4 +1235,126 @@ async function syncOrderAfterAccept(
       `Post-accept DB sync failed for ${email}: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+// ============================================================
+// Shared proactive phone verification logic
+// Used by both accept-invite (post-accept) and phone-verify
+// ============================================================
+
+/**
+ * Proactively navigate to the Google verification page and complete
+ * phone verification. Used as a post-step in accept-invite and as
+ * the main step in phone-verify.
+ * @param setTaskStatus  If true, set the task to SUCCESS/FAILED_FINAL.
+ *                       Pass false when called as a sub-step (e.g. accept-invite)
+ *                       so the parent action's status is preserved.
+ */
+async function doProactivePhoneVerification(
+  page: import("playwright").Page,
+  credentials: LoginCredentials,
+  logger: TaskLogger,
+  prisma: PrismaClient,
+  taskId: string,
+  phones: import("@gfa/shared").PhoneInfo[],
+  setTaskStatus: boolean
+): Promise<void> {
+  // Navigate to the verification trigger page
+  const triggerUrl = "https://accounts.google.com/uplevelingstep/selection" +
+    "?continue=https%3A%2F%2Fdevelopers.google.com%2Fgemini-code-assist%2Fauth%2Fauth_success_gemini" +
+    "&flowName=GlifWebSignIn&hl=en";
+
+  await logger.log("INFO", `[phone-verify] Navigating to verification page...`);
+  await page.goto(triggerUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+  await page.waitForTimeout(3000);
+
+  const currentUrl = page.url();
+
+  if (isVerificationPage(currentUrl)) {
+    const result = await handlePhoneVerification(page, phones, logger);
+
+    // Store result under `.result` so getTaskStatus() can return it to the client
+    // Merge into existing payload to avoid overwriting parent action data
+    const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
+    let payloadObj: Record<string, unknown> = {};
+    try { payloadObj = JSON.parse(existingPayload?.payload ?? "{}"); } catch {}
+    payloadObj.phoneVerifyResult = {
+      needed: result.needed,
+      resolved: result.resolved,
+      usedPhone: result.usedPhone,
+      disabledPhones: result.disabledPhones,
+    };
+    // Also put under `result` for dedicated phone-verify tasks
+    if (setTaskStatus) {
+      payloadObj.result = payloadObj.phoneVerifyResult;
+    }
+
+    await prisma.task.update({
+      where: { id: taskId },
+      data: { payload: JSON.stringify(payloadObj) },
+    });
+
+    if (result.resolved) {
+      if (setTaskStatus) await logger.updateStatus("SUCCESS");
+      await logger.log("INFO", `[phone-verify] ✅ Verification completed for ${credentials.loginEmail}`);
+    } else {
+      if (setTaskStatus) {
+        await logger.updateStatus("FAILED_FINAL", {
+          code: "PHONE_VERIFY_FAILED",
+          message: result.error ?? "Phone verification failed",
+        });
+      }
+      await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
+    }
+  } else {
+    // Not on verification page — account already verified
+    if (setTaskStatus) {
+      const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
+      let payloadObj: Record<string, unknown> = {};
+      try { payloadObj = JSON.parse(existingPayload?.payload ?? "{}"); } catch {}
+      payloadObj.result = {
+        needed: false,
+        resolved: true,
+        message: "Account does not require phone verification",
+      };
+      await prisma.task.update({
+        where: { id: taskId },
+        data: { payload: JSON.stringify(payloadObj) },
+      });
+      await logger.updateStatus("SUCCESS");
+    }
+    await logger.log("INFO", `[phone-verify] Account ${credentials.loginEmail} does not require verification (at: ${currentUrl})`);
+  }
+}
+
+// ============================================================
+// Dedicated phone verification handler
+// ============================================================
+
+/**
+ * Handle the dedicated phone-verify action.
+ * Delegates to the shared doProactivePhoneVerification.
+ */
+async function handlePhoneVerifyAction(
+  page: import("playwright").Page,
+  credentials: LoginCredentials,
+  logger: TaskLogger,
+  prisma: PrismaClient,
+  taskId: string,
+  phones?: import("@gfa/shared").PhoneInfo[]
+): Promise<void> {
+  await logger.log("INFO", "Starting dedicated phone verification flow");
+
+  if (!phones || phones.length === 0) {
+    await logger.updateStatus("FAILED_FINAL", {
+      code: "NO_PHONES",
+      message: "No phone numbers provided for verification",
+    });
+    return;
+  }
+
+  await doProactivePhoneVerification(page, credentials, logger, prisma, taskId, phones, true);
 }

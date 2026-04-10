@@ -3,7 +3,7 @@ import { useAppStore, type QuotaInfo, type ModelQuota } from "../stores/useAppSt
 import {
   Upload, Trash2, Copy, Zap, Key, RefreshCw, Terminal,
   ChevronDown, ChevronUp, CheckCircle, XCircle, Loader,
-  Download, Search, LayoutGrid, List, ShieldAlert,
+  Download, Search, LayoutGrid, List, ShieldAlert, Phone,
 } from "lucide-react";
 
 type ViewMode = "grid" | "list";
@@ -91,6 +91,7 @@ export function Accounts() {
     accounts, importAccounts, deleteAccount, loadAccounts,
     isRunning,
     startAntigravityOAuth, switchAntigravityAccount, batchAntigravityOAuth,
+    startPhoneVerify, phones,
     oauthProgress, fetchQuota, quotaCache,
     logs, clearLogs,
   } = useAppStore();
@@ -543,6 +544,15 @@ export function Accounts() {
                       <Key size={13} /> 授权认证
                     </button>
                   )}
+                  <button
+                    className="btn btn-secondary btn-sm w-full"
+                    onClick={() => startPhoneVerify(account.email)}
+                    disabled={isRunning || phones.length === 0}
+                    style={{ marginTop: 2, borderColor: "rgba(34,197,94,0.4)", color: "var(--success)", fontSize: 12 }}
+                    title={phones.length === 0 ? "请先在手机号池添加号码" : "手机号认证"}
+                  >
+                    <Phone size={12} /> 📱认证
+                  </button>
                 </div>
               );
             })}
@@ -613,6 +623,9 @@ export function Accounts() {
                               <Key size={14} />
                             </button>
                           )}
+                          <button className="action-btn" onClick={() => startPhoneVerify(account.email)} disabled={isRunning || phones.length === 0} title={phones.length === 0 ? "请先在手机号池添加号码" : "手机号认证"}>
+                            <Phone size={14} />
+                          </button>
                           <button className="action-btn is-danger" onClick={() => deleteAccount(account.email)} title="删除"><Trash2 size={13} /></button>
                         </div>
                       </td>

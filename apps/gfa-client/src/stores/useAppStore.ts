@@ -62,6 +62,18 @@ interface AutomationStatus {
   logs?: Array<{ level: string; message: string; createdAt?: string }>;
 }
 
+export interface PhoneEntry {
+  id: string;
+  phone_number: string;
+  country_code: string;
+  sms_url: string;
+  status: string;
+  used_count: number;
+  last_used_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
 interface AppState {
   // Navigation
   currentPage: string;
@@ -98,6 +110,14 @@ interface AppState {
   oauthProgress: { current: number; total: number; email: string } | null;
   fetchQuota: (email: string) => Promise<QuotaInfo | null>;
   quotaCache: Record<string, QuotaInfo>;
+
+  // Phone pool
+  phones: PhoneEntry[];
+  loadPhones: () => Promise<void>;
+  importPhones: (text: string) => Promise<void>;
+  deletePhone: (id: string) => Promise<void>;
+  updatePhoneStatus: (id: string, status: string) => Promise<void>;
+  startPhoneVerify: (email: string) => Promise<void>;
 
   // Sidecar event listener (kept for backward compat, but mostly unused now)
   initEventListener: () => Promise<void>;
@@ -199,6 +219,72 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
   },
 
+  // Phone pool
+  phones: [],
+  loadPhones: async () => {
+    try {
+      const phones = await invoke<PhoneEntry[]>("list_phones");
+      set({ phones });
+    } catch (e) {
+      console.error("Failed to load phones:", e);
+    }
+  },
+  importPhones: async (text: string) => {
+    await invoke<PhoneEntry[]>("import_phones", { text });
+    await get().loadPhones();
+    get().addToast({ type: "success", message: "手机号已导入" });
+  },
+  deletePhone: async (id: string) => {
+    await invoke("delete_phone", { id });
+    await get().loadPhones();
+  },
+  updatePhoneStatus: async (id: string, status: string) => {
+    await invoke("update_phone_status", { id, status });
+    await get().loadPhones();
+  },
+  startPhoneVerify: async (email: string) => {
+    set({ isRunning: true, runningEmail: email, logs: [] });
+    try {
+      const { taskId } = await invoke<{ taskId: string }>(
+        "start_phone_verify",
+        { email }
+      );
+
+      const result = await pollUntilDone(taskId, (entry) => {
+        set((s) => ({ logs: [...s.logs, entry] }));
+      });
+
+      // Handle disabled phones from result
+      if (result.result) {
+        const parsed = result.result as Record<string, unknown>;
+        const disabledPhones = parsed.disabledPhones as string[] | undefined;
+        if (disabledPhones?.length) {
+          // Mark disabled phones locally
+          for (const phone of disabledPhones) {
+            const local = get().phones.find((p) => p.phone_number === phone);
+            if (local) {
+              await invoke("update_phone_status", { id: local.id, status: "disabled" });
+            }
+          }
+          await get().loadPhones();
+        }
+      }
+
+      if (result.status === "SUCCESS") {
+        get().addToast({ type: "success", message: `${email} 手机号认证成功` });
+      } else {
+        get().addToast({ type: "error", message: result.lastErrorMessage ?? "手机号认证失败" });
+      }
+    } catch (e) {
+      set((s) => ({
+        logs: [...s.logs, { id: logCounter++, level: "ERROR", message: String(e), timestamp: Date.now() }],
+      }));
+      get().addToast({ type: "error", message: `认证错误: ${String(e)}` });
+    } finally {
+      set({ isRunning: false, runningEmail: null });
+    }
+  },
+
   runAcceptInvite: async (email: string) => {
     set({ isRunning: true, runningEmail: email, logs: [] });
     try {
@@ -212,6 +298,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await pollUntilDone(taskId, (entry) => {
         set((s) => ({ logs: [...s.logs, entry] }));
       });
+
+      // Handle disabled phones from post-accept phone verification
+      if (result.result) {
+        const parsed = result.result as Record<string, unknown>;
+        // For accept-invite, disabledPhones may be in phoneVerifyResult
+        const phoneResult = (parsed.phoneVerifyResult ?? parsed) as Record<string, unknown>;
+        const disabledPhones = phoneResult.disabledPhones as string[] | undefined;
+        if (disabledPhones?.length) {
+          for (const phone of disabledPhones) {
+            const local = get().phones.find((p) => p.phone_number === phone);
+            if (local) {
+              await invoke("update_phone_status", { id: local.id, status: "disabled" });
+            }
+          }
+          await get().loadPhones();
+        }
+      }
 
       if (result.status !== "SUCCESS") {
         set((s) => ({

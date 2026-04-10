@@ -29,7 +29,11 @@ export class AutomationController {
       password: dto.password,
       recoveryEmail: dto.recoveryEmail,
       totpSecret: dto.totpSecret
-    });
+    }, dto.phones?.map(p => ({
+      phoneNumber: p.phoneNumber,
+      countryCode: p.countryCode ?? "+1",
+      smsUrl: p.smsUrl,
+    })));
   }
 
   /**

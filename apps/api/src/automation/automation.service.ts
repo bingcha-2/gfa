@@ -19,7 +19,8 @@ import {
   QUEUE_NAMES,
   TASK_TYPES,
   JOB_DEFAULTS,
-  type AutomationPayload
+  type AutomationPayload,
+  type PhoneInfo
 } from "@gfa/shared";
 
 /** OAuth constants — moved from gfa-client Rust code */
@@ -49,13 +50,15 @@ export class AutomationService {
    * Creates a Task record, enqueues BullMQ job, returns taskId for polling.
    */
   async startAutomation(
-    action: "oauth" | "accept-invite",
-    credentials: AccountCredentials
+    action: "oauth" | "accept-invite" | "phone-verify",
+    credentials: AccountCredentials,
+    phones?: PhoneInfo[]
   ) {
     // Map action to TaskType enum
     const typeMap: Record<string, string> = {
       oauth: TASK_TYPES.oauthAuthorize,
-      "accept-invite": TASK_TYPES.acceptInvite
+      "accept-invite": TASK_TYPES.acceptInvite,
+      "phone-verify": TASK_TYPES.phoneVerify
     };
 
     const taskType = typeMap[action] as any;
@@ -98,7 +101,8 @@ export class AutomationService {
         password: credentials.password,
         recoveryEmail: credentials.recoveryEmail,
         totpSecret: credentials.totpSecret
-      }
+      },
+      phones: phones?.length ? phones : undefined
     };
 
     // Create Task record (no accountId — credentials are in payload)
@@ -172,12 +176,16 @@ export class AutomationService {
     });
     if (!task) throw new NotFoundException("Task not found");
 
-    // Parse result from payload if completed
+    // Parse result from payload if task reached a terminal state
     let result: Record<string, unknown> | undefined;
-    if (task.status === "SUCCESS" && task.payload) {
+    if ((task.status === "SUCCESS" || task.status === "FAILED_FINAL") && task.payload) {
       try {
         const parsed = JSON.parse(task.payload);
         result = parsed.result;
+        // Also include phoneVerifyResult (from accept-invite with phone verification sub-step)
+        if (parsed.phoneVerifyResult) {
+          result = { ...result, phoneVerifyResult: parsed.phoneVerifyResult };
+        }
       } catch {
         // ignore parse errors
       }

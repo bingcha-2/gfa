@@ -1,6 +1,7 @@
 use rusqlite::{Connection, params};
 use std::sync::Mutex;
 use crate::models::{Account, AccountStatus, AntigravityToken, DeviceProfile};
+use crate::commands::phone_pool::PhoneEntry;
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -36,6 +37,21 @@ impl Database {
                 value TEXT NOT NULL
             );
         ").map_err(|e| format!("Init tables error: {}", e))?;
+
+        // Hot-migrate: phone_pool table
+        conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS phone_pool (
+                id TEXT PRIMARY KEY,
+                phone_number TEXT NOT NULL UNIQUE,
+                country_code TEXT NOT NULL DEFAULT '+1',
+                sms_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available',
+                used_count INTEGER NOT NULL DEFAULT 0,
+                last_used_at TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL
+            );
+        ").map_err(|e| format!("Init phone_pool table error: {}", e))?;
 
         // 热迁移：新增设备指纹列（忽略已存在错误）
         let _ = conn.execute("ALTER TABLE accounts ADD COLUMN ag_device_profile TEXT", []);
@@ -213,6 +229,117 @@ impl Database {
             "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         ).map_err(|e| format!("Setting update error: {}", e))?;
+        Ok(())
+    }
+
+    // ── Phone Pool CRUD ──
+
+    pub fn add_phone(&self, phone_number: &str, country_code: &str, sms_url: &str, notes: Option<&str>) -> Result<PhoneEntry, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO phone_pool (id, phone_number, country_code, sms_url, notes, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(phone_number) DO UPDATE SET
+                country_code = excluded.country_code,
+                sms_url = excluded.sms_url,
+                notes = COALESCE(excluded.notes, phone_pool.notes)",
+            params![id, phone_number, country_code, sms_url, notes, now],
+        ).map_err(|e| format!("Add phone error: {}", e))?;
+
+        // Return the entry (may be existing on conflict)
+        conn.query_row(
+            "SELECT id, phone_number, country_code, sms_url, status, used_count, last_used_at, notes, created_at
+             FROM phone_pool WHERE phone_number = ?1",
+            params![phone_number],
+            |row| Ok(PhoneEntry {
+                id: row.get(0)?,
+                phone_number: row.get(1)?,
+                country_code: row.get(2)?,
+                sms_url: row.get(3)?,
+                status: row.get(4)?,
+                used_count: row.get(5)?,
+                last_used_at: row.get(6)?,
+                notes: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        ).map_err(|e| format!("Query phone error: {}", e))
+    }
+
+    pub fn list_phones(&self) -> Result<Vec<PhoneEntry>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT id, phone_number, country_code, sms_url, status, used_count, last_used_at, notes, created_at
+             FROM phone_pool ORDER BY created_at DESC"
+        ).map_err(|e| format!("Prepare error: {}", e))?;
+
+        let phones = stmt.query_map([], |row| {
+            Ok(PhoneEntry {
+                id: row.get(0)?,
+                phone_number: row.get(1)?,
+                country_code: row.get(2)?,
+                sms_url: row.get(3)?,
+                status: row.get(4)?,
+                used_count: row.get(5)?,
+                last_used_at: row.get(6)?,
+                notes: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        }).map_err(|e| format!("Query error: {}", e))?;
+
+        phones.collect::<Result<Vec<_>, _>>().map_err(|e| format!("Collect error: {}", e))
+    }
+
+    pub fn delete_phone(&self, id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM phone_pool WHERE id = ?1", params![id])
+            .map_err(|e| format!("Delete phone error: {}", e))?;
+        Ok(())
+    }
+
+    pub fn update_phone_status(&self, id: &str, status: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE phone_pool SET status = ?1 WHERE id = ?2",
+            params![status, id],
+        ).map_err(|e| format!("Update phone status error: {}", e))?;
+        Ok(())
+    }
+
+    /// Get available phones ordered by usage (least used first)
+    pub fn get_available_phones(&self) -> Result<Vec<PhoneEntry>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT id, phone_number, country_code, sms_url, status, used_count, last_used_at, notes, created_at
+             FROM phone_pool WHERE status = 'available' ORDER BY used_count ASC"
+        ).map_err(|e| format!("Prepare error: {}", e))?;
+
+        let phones = stmt.query_map([], |row| {
+            Ok(PhoneEntry {
+                id: row.get(0)?,
+                phone_number: row.get(1)?,
+                country_code: row.get(2)?,
+                sms_url: row.get(3)?,
+                status: row.get(4)?,
+                used_count: row.get(5)?,
+                last_used_at: row.get(6)?,
+                notes: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        }).map_err(|e| format!("Query error: {}", e))?;
+
+        phones.collect::<Result<Vec<_>, _>>().map_err(|e| format!("Collect error: {}", e))
+    }
+
+    /// Mark a phone as disabled by phone_number
+    pub fn disable_phone_by_number(&self, phone_number: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE phone_pool SET status = 'disabled' WHERE phone_number = ?1",
+            params![phone_number],
+        ).map_err(|e| format!("Disable phone error: {}", e))?;
         Ok(())
     }
 }

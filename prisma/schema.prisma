@@ -101,6 +101,7 @@ enum TaskType {
   OAUTH_AUTHORIZE
   ACCEPT_INVITE
   TEST_LOGIN
+  PHONE_VERIFY
 }
 
 enum TransferPhase {
@@ -365,4 +366,23 @@ model SystemSchedulerConfig {
   lastRunSummary              String?
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
+}
+
+/// Phone number pool for automated Google phone verification.
+/// Phones are uploaded from GFA Clients (single direction: client → server).
+model PhonePool {
+  id             String    @id @default(cuid())
+  phoneNumber    String    @unique
+  countryCode    String    @default("+1")
+  smsUrl         String
+  status         String    @default("available") // available / in_use / disabled
+  usedCount      Int       @default(0)
+  lastUsedAt     DateTime?
+  lastCode       String?
+  disabledReason String?
+  source         String?   // client identifier
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
 }

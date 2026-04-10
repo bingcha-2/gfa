@@ -18,6 +18,7 @@ import { TaskModule } from "./task/task.module";
 import { ExpireScanModule } from "./expire-scan/expire-scan.module";
 import { AutomationModule } from "./automation/automation.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
+import { PhonePoolModule } from "./phone-pool/phone-pool.module";
 import { HealthController } from "./health.controller";
 
 import { StatsController } from "./stats.controller";
@@ -61,6 +62,7 @@ import { StatsController } from "./stats.controller";
     ExpireScanModule,
     AutomationModule,
     SchedulerModule,
+    PhonePoolModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [

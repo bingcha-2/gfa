@@ -7,6 +7,7 @@ import { Redeem } from "./pages/Redeem";
 import { Swap } from "./pages/Swap";
 import { Settings } from "./pages/Settings";
 import { Dashboard } from "./pages/Dashboard";
+import { PhonePool } from "./pages/PhonePool";
 import {
   LayoutDashboard,
   Users,
@@ -17,6 +18,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Zap,
+  Phone,
 } from "lucide-react";
 import { ToastContainer } from "./components/Toast";
 
@@ -24,13 +26,14 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { id: "accounts", label: "账号管理", icon: Users },
   { id: "accept-invite", label: "接受邀请", icon: Mail },
+  { id: "phone-pool", label: "手机号池", icon: Phone },
   { id: "redeem", label: "兑换码", icon: Gift },
   { id: "swap", label: "账号置换", icon: ArrowLeftRight },
   { id: "settings", label: "设置", icon: SettingsIcon },
 ];
 
 function App() {
-  const { currentPage, setCurrentPage, loadAccounts, loadSettings, initEventListener } = useAppStore();
+  const { currentPage, setCurrentPage, loadAccounts, loadSettings, loadPhones, initEventListener } = useAppStore();
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem("sidebar-collapsed") === "true";
   });
@@ -38,6 +41,7 @@ function App() {
   useEffect(() => {
     loadAccounts();
     loadSettings();
+    loadPhones();
     initEventListener();
   }, []);
 
@@ -54,6 +58,7 @@ function App() {
       case "dashboard": return <Dashboard />;
       case "accounts": return <Accounts />;
       case "accept-invite": return <AcceptInvite />;
+      case "phone-pool": return <PhonePool />;
       case "redeem": return <Redeem />;
       case "swap": return <Swap />;
       case "settings": return <Settings />;

@@ -69,6 +69,14 @@ pub struct BatchOAuthResult {
     pub error: Option<String>,
 }
 
+/// Server response from POST /api/phone-pool/sync
+#[derive(Debug, Serialize, Deserialize)]
+struct PhoneSyncStatus {
+    #[serde(rename = "phoneNumber")]
+    pub phone_number: String,
+    pub status: String,
+}
+
 // ============================================================
 // Commands — call GFA API for automation
 // ============================================================
@@ -85,6 +93,13 @@ pub async fn run_accept_invite(email: String, db: State<'_, Database>) -> Result
 #[tauri::command]
 pub async fn start_antigravity_oauth(email: String, db: State<'_, Database>) -> Result<AutomationStartResponse, String> {
     start_automation(&email, "oauth", &db).await
+}
+
+/// Start phone verification for an account.
+/// Attaches available phone numbers from local pool.
+#[tauri::command]
+pub async fn start_phone_verify(email: String, db: State<'_, Database>) -> Result<AutomationStartResponse, String> {
+    start_automation(&email, "phone-verify", &db).await
 }
 
 /// Poll automation task status.
@@ -151,13 +166,79 @@ async fn start_automation(email: &str, action: &str, db: &Database) -> Result<Au
     let account = db.get_account_by_email(email)?;
     let client = reqwest::Client::new();
 
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "action": action,
         "email": account.email,
         "password": account.password,
         "recoveryEmail": account.recovery_email,
         "totpSecret": account.totp_secret
     });
+
+    // Attach local phone numbers for accept-invite and phone-verify actions
+    if action == "accept-invite" || action == "phone-verify" {
+        if let Ok(phones) = db.get_available_phones() {
+            if !phones.is_empty() {
+                let phone_list: Vec<serde_json::Value> = phones.iter().map(|p| {
+                    serde_json::json!({
+                        "phoneNumber": p.phone_number,
+                        "countryCode": p.country_code,
+                        "smsUrl": p.sms_url
+                    })
+                }).collect();
+                payload["phones"] = serde_json::Value::Array(phone_list.clone());
+
+                // Sync to server at most once every 5 minutes to avoid excessive requests
+                use std::sync::atomic::{AtomicI64, Ordering};
+                static LAST_SYNC: AtomicI64 = AtomicI64::new(0);
+                const SYNC_COOLDOWN_SECS: i64 = 300; // 5 minutes
+
+                let now = chrono::Utc::now().timestamp();
+                let last = LAST_SYNC.load(Ordering::Relaxed);
+
+                if now - last > SYNC_COOLDOWN_SECS {
+                    let sync_url = format!("{}/api/phone-pool/sync", api_url);
+                    let sync_payload = serde_json::json!({
+                        "phones": phone_list,
+                        "source": "gfa-client"
+                    });
+                    if let Ok(sync_resp) = client
+                        .post(&sync_url)
+                        .json(&sync_payload)
+                        .send()
+                        .await
+                    {
+                        // Only update cooldown timestamp after a successful request
+                        LAST_SYNC.store(now, Ordering::Relaxed);
+
+                        // Server returns [{phoneNumber, status}] — update local disabled status
+                        if let Ok(server_statuses) = sync_resp.json::<Vec<PhoneSyncStatus>>().await {
+                            for ps in &server_statuses {
+                                if ps.status == "disabled" {
+                                    let _ = db.disable_phone_by_number(&ps.phone_number);
+                                }
+                            }
+                            // Remove disabled phones from payload
+                            let disabled_set: std::collections::HashSet<&str> = server_statuses
+                                .iter()
+                                .filter(|s| s.status == "disabled")
+                                .map(|s| s.phone_number.as_str())
+                                .collect();
+                            if !disabled_set.is_empty() {
+                                let filtered: Vec<serde_json::Value> = phone_list
+                                    .into_iter()
+                                    .filter(|p| {
+                                        let num = p["phoneNumber"].as_str().unwrap_or("");
+                                        !disabled_set.contains(num)
+                                    })
+                                    .collect();
+                                payload["phones"] = serde_json::Value::Array(filtered);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     let response = client
         .post(format!("{}/api/automation/start", api_url))

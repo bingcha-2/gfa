@@ -17,7 +17,8 @@ export const TASK_TYPES = {
   syncFamilyGroup: "SYNC_FAMILY_GROUP",
   healthCheckAccount: "HEALTH_CHECK_ACCOUNT",
   oauthAuthorize: "OAUTH_AUTHORIZE",
-  acceptInvite: "ACCEPT_INVITE"
+  acceptInvite: "ACCEPT_INVITE",
+  phoneVerify: "PHONE_VERIFY"
 } as const;
 
 export type TaskType = (typeof TASK_TYPES)[keyof typeof TASK_TYPES];
@@ -68,9 +69,15 @@ export type HealthCheckAccountPayload = {
   ignoreCooldown?: boolean;
 };
 
+export type PhoneInfo = {
+  phoneNumber: string;
+  countryCode: string;
+  smsUrl: string;
+};
+
 export type AutomationPayload = {
   taskId?: string;
-  action: "oauth" | "accept-invite";
+  action: "oauth" | "accept-invite" | "phone-verify";
   /** Account credentials — passed from client, not stored server-side */
   credentials: {
     email: string;
@@ -82,6 +89,8 @@ export type AutomationPayload = {
   redirectUri?: string;
   /** OAuth-specific: state parameter */
   oauthState?: string;
+  /** Phone numbers for verification (accept-invite & phone-verify only) */
+  phones?: PhoneInfo[];
 };
 
 // Redis key prefixes used by worker infrastructure

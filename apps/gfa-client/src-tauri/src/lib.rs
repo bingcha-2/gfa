@@ -34,6 +34,13 @@ pub fn run() {
             commands::automation::start_antigravity_oauth,
             commands::automation::poll_automation_status,
             commands::automation::batch_automation_oauth,
+            commands::automation::start_phone_verify,
+            // Phone pool commands (local SQLite)
+            commands::phone_pool::add_phone,
+            commands::phone_pool::import_phones,
+            commands::phone_pool::list_phones,
+            commands::phone_pool::delete_phone,
+            commands::phone_pool::update_phone_status,
             // GFA API commands
             commands::gfa_api::redeem_code,
             commands::gfa_api::get_order_status,

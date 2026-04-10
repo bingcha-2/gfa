@@ -1,8 +1,21 @@
-import { IsString, IsIn, IsOptional } from "class-validator";
+import { IsString, IsIn, IsOptional, IsArray, ValidateNested } from "class-validator";
+import { Type } from "class-transformer";
+
+export class PhoneInfoDto {
+  @IsString()
+  phoneNumber!: string;
+
+  @IsOptional()
+  @IsString()
+  countryCode?: string;
+
+  @IsString()
+  smsUrl!: string;
+}
 
 export class StartAutomationDto {
-  @IsIn(["oauth", "accept-invite"])
-  action!: "oauth" | "accept-invite";
+  @IsIn(["oauth", "accept-invite", "phone-verify"])
+  action!: "oauth" | "accept-invite" | "phone-verify";
 
   /** Account credentials — passed from client's local SQLite */
   @IsString()
@@ -18,6 +31,12 @@ export class StartAutomationDto {
   @IsOptional()
   @IsString()
   totpSecret?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PhoneInfoDto)
+  phones?: PhoneInfoDto[];
 }
 
 export class BatchOAuthDto {
