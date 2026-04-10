@@ -1394,71 +1394,61 @@ async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
 ): Promise<{ needsVerification: boolean; validationUrl?: string }> {
-  // Use the same endpoint fallback order as Antigravity-Manager
-  const CLOUDCODE_ENDPOINTS = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
-    "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
-    "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
-  ];
+  // Use the public Gemini API — it accepts a plain OAuth bearer token
+  // without needing project_id or v1internal wrapper format.
+  // The VALIDATION_REQUIRED 403 is triggered at the auth/account level,
+  // so it applies to all Gemini endpoints equally.
+  const endpoint =
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
-  // Minimal probe body — just enough to trigger the API check
   const probeBody = {
-    model: "models/gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: "hi" }] }],
     generationConfig: { maxOutputTokens: 1 },
   };
 
-  for (const endpoint of CLOUDCODE_ENDPOINTS) {
-    try {
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(probeBody),
-        signal: AbortSignal.timeout(15000),
-      });
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(probeBody),
+      signal: AbortSignal.timeout(15000),
+    });
 
-      if (resp.ok) {
-        await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
-        return { needsVerification: false };
-      }
-
-      if (resp.status === 403) {
-        const errorText = await resp.text();
-
-        if (
-          errorText.includes("VALIDATION_REQUIRED") ||
-          errorText.includes("verify your account") ||
-          errorText.includes("validation_url")
-        ) {
-          await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
-          const validationUrl = extractValidationUrl(errorText);
-          return { needsVerification: true, validationUrl: validationUrl ?? undefined };
-        }
-
-        // 403 but not validation — might be region/quota issue, try next
-        await logger.log("DEBUG", `[phone-verify] API probe 403 at ${endpoint} (not validation)`);
-        continue;
-      }
-
-      if (resp.status === 429) {
-        await logger.log("DEBUG", `[phone-verify] API probe 429 at ${endpoint}, trying next`);
-        continue;
-      }
-
-      await logger.log("DEBUG", `[phone-verify] API probe ${resp.status} at ${endpoint}, trying next`);
-      continue;
-
-    } catch (err) {
-      await logger.log("DEBUG", `[phone-verify] API probe error at ${endpoint}: ${err}`);
-      continue;
+    if (resp.ok) {
+      await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
+      return { needsVerification: false };
     }
-  }
 
-  await logger.log("WARN", "[phone-verify] All cloudcode endpoints failed — assuming no verification needed");
-  return { needsVerification: false };
+    const errorText = await resp.text();
+    await logger.log("DEBUG", `[phone-verify] API probe ${resp.status}: ${errorText.substring(0, 300)}`);
+
+    if (resp.status === 403) {
+      if (
+        errorText.includes("VALIDATION_REQUIRED") ||
+        errorText.includes("verify your account") ||
+        errorText.includes("validation_url")
+      ) {
+        await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
+        const validationUrl = extractValidationUrl(errorText);
+        return { needsVerification: true, validationUrl: validationUrl ?? undefined };
+      }
+
+      // 403 but not validation-related
+      await logger.log("WARN", "[phone-verify] API probe 403 but not VALIDATION_REQUIRED");
+      return { needsVerification: false };
+    }
+
+    // Any other error (400, 429, 500, etc.) — not a validation issue
+    await logger.log("WARN", `[phone-verify] API probe returned ${resp.status} — assuming no verification needed`);
+    return { needsVerification: false };
+
+  } catch (err) {
+    await logger.log("WARN", `[phone-verify] API probe network error: ${err}`);
+    return { needsVerification: false };
+  }
 }
 
 /**
