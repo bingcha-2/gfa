@@ -342,6 +342,17 @@ impl Database {
         ).map_err(|e| format!("Disable phone error: {}", e))?;
         Ok(())
     }
+
+    /// Increment used_count and update last_used_at for a phone by phone_number
+    pub fn increment_phone_used(&self, phone_number: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE phone_pool SET used_count = used_count + 1, last_used_at = ?1 WHERE phone_number = ?2",
+            params![now, phone_number],
+        ).map_err(|e| format!("Increment phone used error: {}", e))?;
+        Ok(())
+    }
 }
 
 fn parse_status(s: &str) -> AccountStatus {

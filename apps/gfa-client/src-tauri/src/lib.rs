@@ -41,6 +41,7 @@ pub fn run() {
             commands::phone_pool::list_phones,
             commands::phone_pool::delete_phone,
             commands::phone_pool::update_phone_status,
+            commands::phone_pool::increment_phone_used,
             // GFA API commands
             commands::gfa_api::redeem_code,
             commands::gfa_api::get_order_status,

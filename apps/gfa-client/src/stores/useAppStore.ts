@@ -254,18 +254,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         set((s) => ({ logs: [...s.logs, entry] }));
       });
 
-      // Handle disabled phones from result
+      // Handle phone usage from result
       if (result.result) {
         const parsed = result.result as Record<string, unknown>;
+
+        // Increment used_count for the successfully used phone
+        const usedPhone = parsed.usedPhone as string | undefined;
+        if (usedPhone) {
+          await invoke("increment_phone_used", { phoneNumber: usedPhone }).catch(() => {});
+        }
+
+        // Mark disabled phones locally (hard failures only)
         const disabledPhones = parsed.disabledPhones as string[] | undefined;
         if (disabledPhones?.length) {
-          // Mark disabled phones locally
           for (const phone of disabledPhones) {
+            // Also increment used_count for disabled phones (they were attempted)
+            await invoke("increment_phone_used", { phoneNumber: phone }).catch(() => {});
             const local = get().phones.find((p) => p.phone_number === phone);
             if (local) {
               await invoke("update_phone_status", { id: local.id, status: "disabled" });
             }
           }
+        }
+
+        if (usedPhone || disabledPhones?.length) {
           await get().loadPhones();
         }
       }

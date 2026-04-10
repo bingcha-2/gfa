@@ -90,3 +90,12 @@ pub async fn update_phone_status(
 ) -> Result<(), String> {
     db.update_phone_status(&id, &status)
 }
+
+/// Increment used_count for a phone by phone_number
+#[tauri::command]
+pub async fn increment_phone_used(
+    phone_number: String,
+    db: State<'_, Database>,
+) -> Result<(), String> {
+    db.increment_phone_used(&phone_number)
+}
