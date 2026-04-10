@@ -515,6 +515,7 @@ export function Accounts() {
                   <div className="card-footer">
                     <span className="card-date">{new Date(account.created_at).toLocaleDateString("zh-CN")}</span>
                     <div className="card-actions">
+                      <button className="card-action-btn" onClick={() => startPhoneVerify(account.email)} disabled={isRunning || phones.length === 0} title={phones.length === 0 ? "请先在手机号池添加号码" : "手机号认证"} style={{ color: "var(--success)" }}><Phone size={11} /></button>
                       <button className="card-action-btn" onClick={() => navigator.clipboard.writeText(account.email)} title="复制邮箱"><Copy size={11} /></button>
                       {hasToken && (
                         <button className="card-action-btn" onClick={() => {
@@ -544,15 +545,6 @@ export function Accounts() {
                       <Key size={13} /> 授权认证
                     </button>
                   )}
-                  <button
-                    className="btn btn-secondary btn-sm w-full"
-                    onClick={() => startPhoneVerify(account.email)}
-                    disabled={isRunning || phones.length === 0}
-                    style={{ marginTop: 2, borderColor: "rgba(34,197,94,0.4)", color: "var(--success)", fontSize: 12 }}
-                    title={phones.length === 0 ? "请先在手机号池添加号码" : "手机号认证"}
-                  >
-                    <Phone size={12} /> 📱认证
-                  </button>
                 </div>
               );
             })}
