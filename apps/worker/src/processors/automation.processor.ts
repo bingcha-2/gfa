@@ -1543,7 +1543,59 @@ async function probeCloudCodeAPI(
     return { needsVerification: false };
   }
 
-  // ── Step 2: fetchAvailableModels → get real model name + check 403 ──
+  // ── Step 1.5: fetchUserInfo → the LS calls this on startup to check verification status ──
+  // API: cloudcode-pa.googleapis.com/v1internal:fetchUserInfo
+  // This is the API the Antigravity LS calls first — it returns user verification state
+  const userInfoBases = isGcpTos ? [PROD, DAILY] : [DAILY, PROD];
+  for (const base of userInfoBases) {
+    try {
+      const uiResp = await fetch(`${base}/v1internal:fetchUserInfo`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": CLOUD_CODE_UA,
+          "Accept-Encoding": "gzip",
+        },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(15000),
+      });
+      const uiText = await uiResp.text();
+      await logger.log("DEBUG", `[phone-verify] fetchUserInfo ${uiResp.status} at ${base}: ${uiText.substring(0, 2000)}`);
+
+      if (uiResp.status === 403) {
+        // Check for VALIDATION_REQUIRED in the 403 response
+        if (uiText.includes("VALIDATION_REQUIRED") || uiText.includes("validation_url")) {
+          await logger.log("INFO", "[phone-verify] fetchUserInfo 403 → VALIDATION_REQUIRED!");
+          const validationUrl = extractValidationUrl(uiText);
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
+        }
+        await logger.log("INFO", `[phone-verify] fetchUserInfo 403 (possibly verification required)`);
+        // Even without explicit VALIDATION_REQUIRED, a 403 on fetchUserInfo is suspicious
+        const validationUrl = extractValidationUrl(uiText);
+        return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
+      }
+
+      if (uiResp.ok) {
+        // Check response body for verification-related fields
+        try {
+          const uiData = JSON.parse(uiText);
+          // Look for any verification/validation flags in the response
+          const hasValidation = uiText.includes("validation") || uiText.includes("verification") || uiText.includes("VALIDATION");
+          if (hasValidation) {
+            await logger.log("INFO", `[phone-verify] fetchUserInfo contains validation-related data`);
+          }
+        } catch {}
+        await logger.log("INFO", "[phone-verify] fetchUserInfo 200 — proceeding to model check");
+        break;
+      }
+    } catch (err) {
+      await logger.log("DEBUG", `[phone-verify] fetchUserInfo error at ${base}: ${err}`);
+      continue;
+    }
+  }
+
+  // ── Step 2: fetchAvailableModels → check 403 ──
   // GcpTos → prod first; else → daily first (matches resolve_cloud_code_base_url)
   const probeBases = isGcpTos ? [PROD, DAILY, SANDBOX] : [DAILY, PROD, SANDBOX];
 
