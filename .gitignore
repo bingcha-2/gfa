@@ -34,3 +34,7 @@ runtime/
 apps/*/vitest.config.ts
 
 backups/
+
+# Remote data (sensitive)
+scripts/remote-data/
+scripts/active-*.txt

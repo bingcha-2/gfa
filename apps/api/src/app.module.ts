@@ -32,8 +32,8 @@ import { StatsController } from "./stats.controller";
     ThrottlerModule.forRoot([
       {
         name: "default",
-        ttl: 60000, // 60 seconds window
-        limit: 60   // 60 requests per window
+        ttl: 60000,
+        limit: 10000 // basically disabled for local dev
       }
     ]),
     BullModule.forRootAsync({

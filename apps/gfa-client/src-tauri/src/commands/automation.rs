@@ -173,3 +173,4 @@ async fn start_automation(email: &str, action: &str, db: &Database) -> Result<Au
         Err(format!("API error: {}", text))
     }
 }
+
