@@ -1399,7 +1399,7 @@ async function probeCloudCodeAPI(
   // The VALIDATION_REQUIRED 403 is triggered at the auth/account level,
   // so it applies to all Gemini endpoints equally.
   const endpoint =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent";
 
   const probeBody = {
     contents: [{ role: "user", parts: [{ text: "hi" }] }],
