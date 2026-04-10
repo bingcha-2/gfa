@@ -1557,7 +1557,7 @@ async function probeCloudCodeAPI(
           "User-Agent": CLOUD_CODE_UA,
           "Accept-Encoding": "gzip",
         },
-        body: JSON.stringify({ project: projectId }),
+        body: JSON.stringify({}),
         signal: AbortSignal.timeout(15000),
       });
 
