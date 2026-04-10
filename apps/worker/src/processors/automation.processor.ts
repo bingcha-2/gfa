@@ -1416,7 +1416,7 @@ async function probeCloudCodeAPI(
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
   ];
   // loadCodeAssist UA must include google-api-nodejs-client (matches Cockpit)
-  const LOAD_UA = "antigravity/1.20.5 windows/amd64 google-api-nodejs-client/10.3.0";
+  const LOAD_UA = "antigravity/1.21.6 windows/amd64 google-api-nodejs-client/10.3.0";
   // streamGenerateContent UA is just "antigravity" (matches Cockpit wakeup.rs USER_AGENT)
   const STREAM_UA = "antigravity";
 
@@ -1424,8 +1424,8 @@ async function probeCloudCodeAPI(
   const METADATA = {
     ideName: "antigravity",
     ideType: "ANTIGRAVITY",
-    ideVersion: "1.20.5",
-    pluginVersion: "1.20.5",
+    ideVersion: "1.21.6",
+    pluginVersion: "1.21.6",
     platform: "WINDOWS_AMD64",
     updateChannel: "stable",
     pluginType: "GEMINI",
