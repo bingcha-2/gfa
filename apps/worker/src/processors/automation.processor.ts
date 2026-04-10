@@ -42,6 +42,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/cclog",
   "https://www.googleapis.com/auth/experimentsandconfigs",
+  "https://www.googleapis.com/auth/generative-language",
 ].join(" ");
 
 const FAMILY_URL = "https://families.google.com/families?hl=en";
