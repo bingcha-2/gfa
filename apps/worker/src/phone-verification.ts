@@ -135,7 +135,8 @@ async function forceEnglish(page: Page, logger: TaskLogger): Promise<void> {
     if (url.hostname.includes("google") && url.searchParams.get("hl") !== "en") {
       url.searchParams.set("hl", "en");
       await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
-      await page.waitForTimeout(2000);
+      // Wait for page content to actually render after language switch
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
       await logger.log("DEBUG", "[phone-verify] Switched page language to English");
     }
   } catch {
@@ -252,6 +253,12 @@ async function attemptVerification(
  */
 async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Promise<boolean> {
   // Strategy 1: Use Playwright's getByText to find the exact text element, then click it
+  // Wait for the page content to be ready before looking for options
+  await page.getByText("Verify your phone number", { exact: false }).first()
+    .waitFor({ state: "visible", timeout: 15000 }).catch(() => {
+    // If main text not found, try alternative
+  });
+
   // This is more precise than div:has-text() which matches all ancestor elements
   const textPatterns = [
     "Verify your phone number",
