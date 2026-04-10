@@ -1394,27 +1394,17 @@ async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
 ): Promise<{ needsVerification: boolean; validationUrl?: string }> {
-  // Use cloudcode-pa v1internal endpoint with the correct wrapper format.
-  // VALIDATION_REQUIRED is checked at the auth/account level BEFORE project
-  // validation, so a probe project_id is sufficient.
+  // Use fetchAvailableModels — same approach as Cockpit.
+  // This endpoint doesn't need project_id or complex wrapper format,
+  // just a bearer token + empty JSON body. VALIDATION_REQUIRED 403
+  // fires at the auth layer before any model logic.
   const CLOUDCODE_ENDPOINTS = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
-    "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
-    "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
   ];
 
-  // v1internal requires the wrapper format: { project, requestId, request, model, userAgent, requestType }
-  const probeBody = {
-    project: "gfa-probe",
-    requestId: `agent/antigravity/probe/${Date.now()}`,
-    request: {
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-      generationConfig: { maxOutputTokens: 1 },
-    },
-    model: "gemini-3.0-flash",
-    userAgent: "antigravity",
-    requestType: "agent",
-  };
+  const probeBody = {};
 
   for (const endpoint of CLOUDCODE_ENDPOINTS) {
     try {
@@ -1423,6 +1413,8 @@ async function probeCloudCodeAPI(
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": "antigravity",
+          "Accept-Encoding": "gzip",
         },
         body: JSON.stringify(probeBody),
         signal: AbortSignal.timeout(15000),
