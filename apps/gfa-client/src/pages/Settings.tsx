@@ -1,16 +1,14 @@
 import { useState } from "react";
 import { useAppStore } from "../stores/useAppStore";
-import { Server, Save, Info, Key } from "lucide-react";
+import { Server, Save, Info } from "lucide-react";
 
 export function Settings() {
-  const { gfaApiUrl, updateGfaApiUrl, automationApiKey, updateAutomationApiKey } = useAppStore();
+  const { gfaApiUrl, updateGfaApiUrl } = useAppStore();
   const [url, setUrl] = useState(gfaApiUrl);
-  const [apiKey, setApiKey] = useState(automationApiKey);
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
     updateGfaApiUrl(url);
-    updateAutomationApiKey(apiKey);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -31,10 +29,6 @@ export function Settings() {
             <div className="form-group">
               <label>API Base URL</label>
               <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bcai.site" />
-            </div>
-            <div className="form-group">
-              <label><Key size={12} style={{ display: 'inline', marginRight: 4 }} />Automation API Key</label>
-              <input className="input" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="gfa-local-dev-key-2026" type="password" />
             </div>
             <div className="flex items-center gap-2">
               <button className="btn btn-primary btn-sm" onClick={handleSave}>
@@ -72,3 +66,4 @@ export function Settings() {
     </>
   );
 }
+
