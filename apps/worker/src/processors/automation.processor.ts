@@ -1546,7 +1546,6 @@ async function probeCloudCodeAPI(
   // ── Step 2: fetchAvailableModels → get real model name + check 403 ──
   // GcpTos → prod first; else → daily first (matches resolve_cloud_code_base_url)
   const probeBases = isGcpTos ? [PROD, DAILY, SANDBOX] : [DAILY, PROD, SANDBOX];
-  let modelName: string | undefined;
 
   for (const base of probeBases) {
     try {
@@ -1576,23 +1575,9 @@ async function probeCloudCodeAPI(
       }
 
       if (resp.ok) {
-        // Extract a model name from the response for streamGenerateContent probe
-        try {
-          const modelsData = JSON.parse(respText);
-          const models = modelsData?.models ?? modelsData?.availableModels ?? [];
-          // Pick first flash model, or any model
-          const flashModel = models.find((m: any) =>
-            (m.name || m.id || "").toLowerCase().includes("flash")
-          );
-          modelName = flashModel?.name || flashModel?.id || models[0]?.name || models[0]?.id;
-          if (modelName) {
-            await logger.log("INFO", `[phone-verify] fetchModels OK, using model: ${modelName}`);
-          } else {
-            await logger.log("WARN", "[phone-verify] fetchModels OK but no model names found");
-          }
-        } catch {
-          await logger.log("WARN", "[phone-verify] fetchModels OK but could not parse models");
-        }
+        // fetchAvailableModels returned 200 — account not blocked at model listing level.
+        // Proceed to streamGenerateContent for definitive check.
+        await logger.log("INFO", "[phone-verify] fetchModels 200 — proceeding to generation probe");
         break;
       }
 
@@ -1605,19 +1590,13 @@ async function probeCloudCodeAPI(
     }
   }
 
-  // If fetchAvailableModels didn't detect VALIDATION_REQUIRED AND we got a model name,
-  // do the real generation probe (matches Cockpit's trigger_wakeup_direct).
-  if (!modelName) {
-    await logger.log("INFO", "[phone-verify] No model name available — fetchModels passed, assuming account is OK");
-    return { needsVerification: false, projectId };
-  }
-
   // ── Step 3: streamGenerateContent → definitive VALIDATION_REQUIRED check ──
+  // Model name: "gemini-3-flash" confirmed from Cockpit's modelNames.ts / antigravityModels.ts
   const sessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
   const probeBody = {
     project: projectId,
     requestId: `agent/antigravity/probe/${Date.now()}`,
-    model: modelName,
+    model: "gemini-3-flash",
     userAgent: "antigravity",
     requestType: "agent",
     request: {
