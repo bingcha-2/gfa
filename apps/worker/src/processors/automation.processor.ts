@@ -1356,17 +1356,23 @@ async function doProactivePhoneVerification(
   const currentUrl = page.url();
   await logger.log("INFO", `[phone-verify] Landed on: ${currentUrl}`);
 
-  // If we ended up on a success page, the account might have auto-verified
-  if (currentUrl.includes("auth_success") || currentUrl.includes("myaccount.google.com")) {
-    await logger.log("INFO", "[phone-verify] Landed on success/myaccount page — verification may have auto-completed");
-    if (setTaskStatus) {
-      await logger.updateStatus("SUCCESS");
-    }
-    return;
-  }
+  // Check if we're on a verification page FIRST (before success check)
+  if (isVerificationPage(currentUrl)) {
+    await logger.log("INFO", "[phone-verify] Reached verification page — proceeding with phone verification");
+  } else {
+    // Check if we ended up on a success page (check pathname, not query params to avoid false positive from continue= param)
+    try {
+      const urlObj = new URL(currentUrl);
+      if (urlObj.pathname.includes("auth_success") || urlObj.hostname.includes("myaccount.google.com")) {
+        await logger.log("INFO", "[phone-verify] Landed on success page — verification may have auto-completed");
+        if (setTaskStatus) {
+          await logger.updateStatus("SUCCESS");
+        }
+        return;
+      }
+    } catch {}
 
-  if (!isVerificationPage(currentUrl)) {
-    // Log page content for debugging but still try to proceed
+    // Unknown page — log details but still try to proceed
     await logger.log("WARN", `[phone-verify] URL doesn't match known verification patterns, will try anyway: ${currentUrl}`);
     const pageTitle = await page.title();
     const pageText = await page.textContent("body").catch(() => "");
