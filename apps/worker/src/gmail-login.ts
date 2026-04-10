@@ -282,6 +282,14 @@ export async function gmailLogin(
         return { success: true };
       }
 
+      // Browser-level navigation error (e.g. proxy disconnected, AdsPower crash)
+      // This is unrecoverable in the current session — mark TRANSIENT for BullMQ retry.
+      if (roundUrl.startsWith("chrome-error://") || roundUrl.startsWith("about:neterror")) {
+        const detail = `Browser navigation error during login: ${roundUrl}`;
+        await logger.log("WARN", `[gmail-login] ${detail}`);
+        return { success: false, reason: "TRANSIENT", detail };
+      }
+
       // --- Challenge detection ---
 
       // Password page still showing (e.g. Google needed extra time to process)

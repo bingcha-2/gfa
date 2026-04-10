@@ -257,15 +257,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Handle phone usage from result
       if (result.result) {
         const parsed = result.result as Record<string, unknown>;
+        // phoneVerifyResult is nested when returned from API
+        const phoneResult = (parsed.phoneVerifyResult ?? parsed) as Record<string, unknown>;
 
         // Increment used_count for the successfully used phone
-        const usedPhone = parsed.usedPhone as string | undefined;
+        const usedPhone = phoneResult.usedPhone as string | undefined;
         if (usedPhone) {
           await invoke("increment_phone_used", { phoneNumber: usedPhone }).catch(() => {});
         }
 
         // Mark disabled phones locally (hard failures only)
-        const disabledPhones = parsed.disabledPhones as string[] | undefined;
+        const disabledPhones = phoneResult.disabledPhones as string[] | undefined;
         if (disabledPhones?.length) {
           for (const phone of disabledPhones) {
             // Also increment used_count for disabled phones (they were attempted)

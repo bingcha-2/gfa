@@ -513,32 +513,54 @@ async function clickVerifyButton(page: Page, logger: TaskLogger): Promise<void> 
 }
 
 async function checkVerificationSuccess(page: Page, logger: TaskLogger): Promise<boolean> {
-  // Wait a bit for the page to settle
-  await page.waitForTimeout(3000);
+  // After clicking verify, Google shows "Unlocking access / This might take
+  // a few seconds" while processing, then either:
+  //   a) Redirects to auth_success URL (from the continue= param)
+  //   b) Shows "Authentication successful" text
+  //   c) Navigates away from the verification page
+  //   d) Shows an error (handled by caller)
+  //
+  // Use Promise.race to wait for whichever signal fires first.
 
-  const currentUrl = page.url();
-  const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
+  const startUrl = page.url();
 
-  // Success indicators
-  if (
-    bodyText.includes("Authentication successful") ||
-    bodyText.includes("authentication successful") ||
-    bodyText.includes("Xác minh thành công") ||
-    bodyText.includes("验证成功") ||
-    bodyText.includes("認證成功") ||
-    bodyText.includes("確認成功")
-  ) {
-    await logger.log("INFO", "[phone-verify] 🎉 Authentication successful detected");
+  try {
+    const signal = await Promise.race([
+      // Signal 1: URL contains auth_success (Google's redirect after verification)
+      page.waitForURL((url) => url.toString().includes("auth_success"), { timeout: 30000 })
+        .then(() => "auth_success_url"),
+
+      // Signal 2: Page navigated away from verification / accounts.google.com entirely
+      page.waitForURL((url) => {
+        const u = url.toString();
+        return u !== startUrl && !isVerificationPage(u) && !u.includes("accounts.google.com/signin");
+      }, { timeout: 30000 })
+        .then(() => "left_verification"),
+
+      // Signal 3: "Authentication successful" text appears on page
+      page.getByText("Authentication successful", { exact: false }).first()
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "auth_success_text"),
+
+      // Signal 4: Chinese/Vietnamese variants of success text
+      page.getByText(/验证成功|認證成功|確認成功|Xác minh thành công/).first()
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "auth_success_i18n"),
+
+      // Timeout fallback (shouldn't trigger before the 30s above, but just in case)
+      page.waitForTimeout(32000).then(() => "timeout"),
+    ]);
+
+    if (signal === "timeout") {
+      return false;
+    }
+
+    await logger.log("INFO", `[phone-verify] 🎉 Verification success detected (signal: ${signal})`);
     return true;
+  } catch {
+    // All promises rejected/timed out
+    return false;
   }
-
-  // If we've left the verification page, that's also success
-  if (!isVerificationPage(currentUrl)) {
-    await logger.log("INFO", `[phone-verify] Left verification page → success (now at: ${currentUrl})`);
-    return true;
-  }
-
-  return false;
 }
 
 async function getPageError(page: Page): Promise<string | null> {

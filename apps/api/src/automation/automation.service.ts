@@ -171,7 +171,7 @@ export class AutomationService {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       include: {
-        logs: { orderBy: { createdAt: "desc" }, take: 50 }
+        logs: { orderBy: { createdAt: "asc" }, take: 200 }
       }
     });
     if (!task) throw new NotFoundException("Task not found");

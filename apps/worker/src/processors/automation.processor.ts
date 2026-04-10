@@ -133,10 +133,16 @@ export async function processAutomation(
         "WARN",
         `Login failed: ${loginResult.reason} — ${loginResult.detail}`
       );
-      await logger.updateStatus("FAILED_FINAL", {
+      // TRANSIENT errors (network, browser crash) → FAILED_RETRYABLE for BullMQ retry
+      // All other failures → FAILED_FINAL (permanent)
+      const status = loginResult.reason === "TRANSIENT" ? "FAILED_RETRYABLE" : "FAILED_FINAL";
+      await logger.updateStatus(status, {
         code: loginResult.reason,
         message: loginResult.detail,
       });
+      if (loginResult.reason === "TRANSIENT") {
+        throw new Error(`Login transient failure: ${loginResult.detail}`);
+      }
       return;
     }
     await logger.log("INFO", "Google login successful");
@@ -269,6 +275,7 @@ async function doOAuthForToken(
     }
 
     const nowUrl = page.url();
+    await logger.log("DEBUG", `[oauth] Consent loop attempt ${attempt + 1}, URL: ${nowUrl.substring(0, 120)}`);
 
     // Fallback: check page.url() in case route interception didn't fire
     if (
@@ -387,40 +394,8 @@ async function doOAuthForToken(
       }
     }
 
-    // First-party native app consent
-    if (
-      nowUrl.includes("firstparty/nativeapp") ||
-      nowUrl.includes("signin/oauth")
-    ) {
-      const signInBtn = page.locator(
-        'button:has-text("Sign in"), button:has-text("Continue")'
-      );
-      if ((await signInBtn.count()) > 0) {
-        await signInBtn.last().evaluate((el: HTMLElement) => el.click());
-        await logger.log("INFO", "Clicked 'Sign in' on consent page");
-        await page.waitForTimeout(5000);
-        continue;
-      }
-    }
-
-    // Consent buttons
-    const consentBtn = page.locator(
-      [
-        '#submit_approve_access',
-        'input[id="submit_approve_access"]',
-        'button[type="submit"]',
-        'button:has-text("Allow")',
-        'button:has-text("Continue")',
-      ].join(", ")
-    );
-    if ((await consentBtn.count()) > 0) {
-      await consentBtn.first().evaluate((el: HTMLElement) => el.click());
-      await logger.log("INFO", "Clicked consent/allow button");
-      await page.waitForTimeout(3000);
-      continue;
-    }
-
-    // Checkboxes
+    // ── Checkboxes (must come BEFORE consent buttons — Google requires
+    //    selecting scopes before the Allow button becomes enabled) ──
     const checkboxes = page.locator('input[type="checkbox"]:not(:checked)');
     if ((await checkboxes.count()) > 0) {
       for (let i = 0; i < (await checkboxes.count()); i++) {
@@ -431,6 +406,29 @@ async function doOAuthForToken(
       continue;
     }
 
+    // ── Consent / Allow / Continue / Sign-in buttons ──
+    // Covers: firstparty/nativeapp, signin/oauth/consent, standard consent screens.
+    // Unified selector so signin/oauth pages fall through to generic consent buttons.
+    const consentBtn = page.locator(
+      [
+        '#submit_approve_access',
+        'input[id="submit_approve_access"]',
+        'button:has-text("Allow")',
+        'button:has-text("Continue")',
+        'button:has-text("Sign in")',
+        'button[type="submit"]',
+        'div[role="button"][jsname="LgbsSe"]',
+      ].join(", ")
+    );
+    if ((await consentBtn.count()) > 0) {
+      // Prefer Allow/Continue/Sign-in over generic submit
+      await consentBtn.last().evaluate((el: HTMLElement) => el.click());
+      await logger.log("INFO", `Clicked consent button (${await consentBtn.last().textContent().catch(() => "?")})`);
+      await page.waitForTimeout(5000);
+      continue;
+    }
+
+    await logger.log("DEBUG", `[oauth] No actionable elements found on page, waiting...`);
     await page.waitForTimeout(2000);
   }
 
