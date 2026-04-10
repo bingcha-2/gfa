@@ -1479,14 +1479,15 @@ async function probeCloudCodeAPI(
 
             if (tierId) {
               await logger.log("INFO", `[phone-verify] No project_id, trying onboardUser with tier=${tierId}`);
+              const onboardHeaders = {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+                "User-Agent": LOAD_UA,
+                "Accept-Encoding": "gzip",
+              };
               const onboardResp = await fetch(`${base}/v1internal:onboardUser`, {
                 method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${accessToken}`,
-                  "User-Agent": LOAD_UA,
-                  "Accept-Encoding": "gzip",
-                },
+                headers: onboardHeaders,
                 body: JSON.stringify({
                   tierId,
                   metadata: METADATA,
@@ -1496,7 +1497,32 @@ async function probeCloudCodeAPI(
               const onboardText = await onboardResp.text();
               await logger.log("DEBUG", `[phone-verify] onboardUser ${onboardResp.status}: ${onboardText.substring(0, 300)}`);
               if (onboardResp.ok) {
-                const onboardData = JSON.parse(onboardText);
+                let onboardData = JSON.parse(onboardText);
+
+                // Poll until done (matches Cockpit's try_onboard_user loop)
+                while (!onboardData?.done) {
+                  const opName = onboardData?.name?.trim();
+                  if (!opName) {
+                    await logger.log("WARN", "[phone-verify] onboardUser pending but no operation name");
+                    break;
+                  }
+                  await logger.log("DEBUG", `[phone-verify] onboardUser polling: ${opName}`);
+                  await new Promise(r => setTimeout(r, 500));
+                  const pollResp = await fetch(`${base}/v1internal/${opName}`, {
+                    method: "GET",
+                    headers: onboardHeaders,
+                    signal: AbortSignal.timeout(15000),
+                  });
+                  if (!pollResp.ok) {
+                    const pollText = await pollResp.text();
+                    await logger.log("WARN", `[phone-verify] onboardUser poll failed ${pollResp.status}: ${pollText.substring(0, 200)}`);
+                    break;
+                  }
+                  onboardData = await pollResp.json();
+                  await logger.log("DEBUG", `[phone-verify] onboardUser poll result: done=${onboardData?.done}`);
+                }
+
+                // Extract project_id from final response
                 const onboardProject = onboardData?.response?.cloudaicompanionProject;
                 if (typeof onboardProject === "string" && onboardProject) {
                   projectId = onboardProject;
@@ -1587,8 +1613,8 @@ async function probeCloudCodeAPI(
         return { needsVerification: false, projectId };
       }
 
-      // 429/500 → try next endpoint
-      if (resp.status === 429 || resp.status >= 500) {
+      // 404/429/500 → try next endpoint (404 = project not propagated yet after fresh onboard)
+      if (resp.status === 404 || resp.status === 429 || resp.status >= 500) {
         await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
         continue;
       }
