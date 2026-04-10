@@ -1259,17 +1259,27 @@ async function doProactivePhoneVerification(
   phones: import("@gfa/shared").PhoneInfo[],
   setTaskStatus: boolean
 ): Promise<void> {
-  // Navigate to the verification trigger page
-  const triggerUrl = "https://accounts.google.com/uplevelingstep/selection" +
-    "?continue=https%3A%2F%2Fdevelopers.google.com%2Fgemini-code-assist%2Fauth%2Fauth_success_gemini" +
-    "&flowName=GlifWebSignIn&hl=en";
+  // Navigate to Google services that commonly trigger verification.
+  // Google auto-redirects to uplevelingstep/selection if the account needs verification.
+  // We do NOT hardcode the uplevelingstep URL — it's per-account and dynamically generated.
+  const triggerPages = [
+    "https://myaccount.google.com/?hl=en",
+    "https://one.google.com/?hl=en",
+  ];
 
-  await logger.log("INFO", `[phone-verify] Navigating to verification page...`);
-  await page.goto(triggerUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
-  });
-  await page.waitForTimeout(3000);
+  await logger.log("INFO", `[phone-verify] Navigating to Google services to check if verification is needed...`);
+
+  for (const triggerUrl of triggerPages) {
+    await page.goto(triggerUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.waitForTimeout(3000);
+
+    if (isVerificationPage(page.url())) {
+      break; // Google redirected us to verification
+    }
+  }
 
   const currentUrl = page.url();
 

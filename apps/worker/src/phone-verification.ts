@@ -137,15 +137,30 @@ async function forceEnglish(page: Page, logger: TaskLogger): Promise<void> {
 /**
  * Navigate back to the verification selection page so the next phone attempt
  * starts from a clean state (phone input step, not code input step).
+ * Uses browser back to return to the selection step within the verification flow.
  */
 async function resetToVerificationPage(page: Page, logger: TaskLogger): Promise<void> {
   try {
-    const resetUrl = "https://accounts.google.com/uplevelingstep/selection" +
-      "?continue=https%3A%2F%2Fdevelopers.google.com%2Fgemini-code-assist%2Fauth%2Fauth_success_gemini" +
-      "&flowName=GlifWebSignIn&hl=en";
-    await page.goto(resetUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    // Try going back twice to get past the "enter code" and "enter phone" steps
+    await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+
+    // If we're back on a verification page, good
+    if (isVerificationPage(page.url())) {
+      await forceEnglish(page, logger);
+      await logger.log("DEBUG", "[phone-verify] Reset to verification page via back navigation");
+      return;
+    }
+
+    // Fallback: navigate to Google account page to re-trigger verification
+    await page.goto("https://myaccount.google.com/?hl=en", {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
     await page.waitForTimeout(3000);
-    await logger.log("DEBUG", "[phone-verify] Reset to verification selection page");
+    await logger.log("DEBUG", `[phone-verify] Reset via myaccount, now at: ${page.url()}`);
   } catch {
     // ignore — best effort
   }
