@@ -17,7 +17,7 @@ import type { TaskLogger } from "./task-logger";
 import type { PhoneInfo } from "@gfa/shared";
 
 /** How long to poll for SMS code (ms) */
-const SMS_POLL_TIMEOUT_MS = 90_000;
+const SMS_POLL_TIMEOUT_MS = 30_000;
 /** Interval between SMS polls */
 const SMS_POLL_INTERVAL_MS = 3_000;
 
