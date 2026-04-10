@@ -1452,7 +1452,7 @@ async function probeCloudCodeAPI(
       });
 
       const loadText = await loadResp.text();
-      await logger.log("DEBUG", `[phone-verify] loadCodeAssist ${loadResp.status} at ${base}: ${loadText.substring(0, 300)}`);
+      await logger.log("DEBUG", `[phone-verify] loadCodeAssist ${loadResp.status} at ${base}: ${loadText.substring(0, 2000)}`);
 
       if (loadResp.ok) {
         try {
