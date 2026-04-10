@@ -383,26 +383,42 @@ async function pollSmsCode(smsUrl: string, logger: TaskLogger): Promise<string |
   while (Date.now() < deadline) {
     try {
       const resp = await fetch(smsUrl, { signal: AbortSignal.timeout(10000) });
-      const data = await resp.json() as { message?: string; status?: string };
+      const text = await resp.text();
 
-      if (data.status === "success" && data.message) {
-        // Check if this is a new message (not the same as last one)
-        if (data.message !== lastMessage) {
-          lastMessage = data.message;
+      let message = "";
 
-          // Extract G-XXXXXX code
-          const match = data.message.match(/G-(\d{6})/);
-          if (match) {
-            return match[1];
-          }
-
-          // Fallback: try any 6-digit code
-          const fallback = data.message.match(/(\d{6})/);
-          if (fallback) {
-            await logger.log("DEBUG", `[phone-verify] Using fallback 6-digit code: ${fallback[1]}`);
-            return fallback[1];
-          }
+      // Try parsing as JSON first
+      try {
+        const data = JSON.parse(text) as { message?: string; status?: string; code?: string; sms?: string };
+        if (data.code) {
+          message = data.code;
+        } else if (data.message) {
+          message = data.message;
+        } else if (data.sms) {
+          message = data.sms;
         }
+      } catch {
+        // Not JSON — treat entire response as the SMS text
+        message = text.trim();
+      }
+
+      if (message && message !== lastMessage) {
+        lastMessage = message;
+
+        // Extract G-XXXXXX code
+        const match = message.match(/G-(\d{6})/);
+        if (match) {
+          return match[1];
+        }
+
+        // Fallback: try any 6-digit code
+        const fallback = message.match(/(\d{6})/);
+        if (fallback) {
+          await logger.log("DEBUG", `[phone-verify] Using fallback 6-digit code: ${fallback[1]}`);
+          return fallback[1];
+        }
+
+        await logger.log("DEBUG", `[phone-verify] SMS response has no code: ${message.substring(0, 80)}`);
       }
     } catch (err) {
       // Network error — continue polling
