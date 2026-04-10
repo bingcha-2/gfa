@@ -1410,15 +1410,10 @@ async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
 ): Promise<{ needsVerification: boolean; validationUrl?: string; projectId?: string }> {
-  const CLOUDCODE_BASES = [
-    "https://daily-cloudcode-pa.googleapis.com",
-    "https://cloudcode-pa.googleapis.com",
-    "https://daily-cloudcode-pa.sandbox.googleapis.com",
-  ];
-  // loadCodeAssist UA must include google-api-nodejs-client (matches Cockpit)
+  // ── Constants matching Cockpit ──
   const LOAD_UA = "antigravity/1.21.6 windows/amd64 google-api-nodejs-client/10.3.0";
-
-  // Shared metadata for loadCodeAssist and onboardUser (matches build_cloud_code_metadata)
+  const STREAM_UA = "antigravity";
+  const CLOUD_CODE_UA = "antigravity/1.21.6 windows/amd64";
   const METADATA = {
     ideName: "antigravity",
     ideType: "ANTIGRAVITY",
@@ -1429,9 +1424,18 @@ async function probeCloudCodeAPI(
     pluginType: "GEMINI",
   };
 
-  // ── Step 1: loadCodeAssist → get project_id ──────────────────────────
+  // Endpoint ordering: GCP TOS accounts use prod, others use daily (matches resolve_cloud_code_base_url)
+  const DAILY = "https://daily-cloudcode-pa.googleapis.com";
+  const PROD = "https://cloudcode-pa.googleapis.com";
+  const SANDBOX = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+
+  // ── Step 1: loadCodeAssist → get project_id + detect GcpTos ──
   let projectId: string | undefined;
-  for (const base of CLOUDCODE_BASES) {
+  let isGcpTos = false;
+
+  // Try daily first for initial probe (Cockpit default)
+  const loadCodeAssistBases = [DAILY, PROD, SANDBOX];
+  for (const base of loadCodeAssistBases) {
     try {
       const loadResp = await fetch(`${base}/v1internal:loadCodeAssist`, {
         method: "POST",
@@ -1443,10 +1447,7 @@ async function probeCloudCodeAPI(
           "Accept": "*/*",
           "Accept-Encoding": "gzip, deflate, br",
         },
-        body: JSON.stringify({
-          metadata: METADATA,
-          mode: "FULL_ELIGIBILITY_CHECK",
-        }),
+        body: JSON.stringify({ metadata: METADATA, mode: "FULL_ELIGIBILITY_CHECK" }),
         signal: AbortSignal.timeout(15000),
       });
 
@@ -1456,7 +1457,14 @@ async function probeCloudCodeAPI(
       if (loadResp.ok) {
         try {
           const loadData = JSON.parse(loadText);
-          // Extract project_id from response
+
+          // Detect GcpTos from currentTier or allowedTiers
+          const currentTier = loadData?.currentTier;
+          if (currentTier?.usesGcpTos) isGcpTos = true;
+          const allowedTiers = loadData?.allowedTiers ?? [];
+          if (!isGcpTos && allowedTiers.some((t: any) => t.usesGcpTos)) isGcpTos = true;
+
+          // Extract project_id
           const project = loadData?.cloudaicompanionProject;
           if (typeof project === "string" && project) {
             projectId = project;
@@ -1464,84 +1472,64 @@ async function probeCloudCodeAPI(
             projectId = project.id;
           }
 
-          // If no project, try onboardUser (matches Cockpit's pick_onboard_tier logic)
+          // If no project, try onboardUser
           if (!projectId) {
-            const allowedTiers = loadData?.allowedTiers ?? [];
-            const paidTierId = loadData?.paidTier?.id;
-            const currentTierId = loadData?.currentTier?.id;
-            // Cockpit priority: allowedTiers default → allowedTiers[0] → subscription_tier
             const tierId =
               allowedTiers.find((t: any) => t.isDefault)?.id ||
               allowedTiers.find((t: any) => t.id)?.id ||
-              paidTierId || currentTierId;
+              loadData?.paidTier?.id || currentTier?.id;
 
             if (tierId) {
-              await logger.log("INFO", `[phone-verify] No project_id, trying onboardUser with tier=${tierId}`);
+              await logger.log("INFO", `[phone-verify] No project_id, onboarding with tier=${tierId} (gcpTos=${isGcpTos})`);
               const onboardHeaders = {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${accessToken}`,
                 "User-Agent": LOAD_UA,
                 "Accept-Encoding": "gzip",
               };
-              const onboardResp = await fetch(`${base}/v1internal:onboardUser`, {
+              // For GcpTos accounts, onboard on prod endpoint
+              const onboardBase = isGcpTos ? PROD : base;
+              const onboardResp = await fetch(`${onboardBase}/v1internal:onboardUser`, {
                 method: "POST",
                 headers: onboardHeaders,
-                body: JSON.stringify({
-                  tierId,
-                  metadata: METADATA,
-                }),
+                body: JSON.stringify({ tierId, metadata: METADATA }),
                 signal: AbortSignal.timeout(30000),
               });
               const onboardText = await onboardResp.text();
               await logger.log("DEBUG", `[phone-verify] onboardUser ${onboardResp.status}: ${onboardText.substring(0, 300)}`);
               if (onboardResp.ok) {
                 let onboardData = JSON.parse(onboardText);
-
-                // Poll until done (matches Cockpit's try_onboard_user loop)
+                // Poll until done
                 while (!onboardData?.done) {
                   const opName = onboardData?.name?.trim();
-                  if (!opName) {
-                    await logger.log("WARN", "[phone-verify] onboardUser pending but no operation name");
-                    break;
-                  }
+                  if (!opName) break;
                   await logger.log("DEBUG", `[phone-verify] onboardUser polling: ${opName}`);
                   await new Promise(r => setTimeout(r, 500));
-                  const pollResp = await fetch(`${base}/v1internal/${opName}`, {
+                  const pollResp = await fetch(`${onboardBase}/v1internal/${opName}`, {
                     method: "GET",
                     headers: onboardHeaders,
                     signal: AbortSignal.timeout(15000),
                   });
-                  if (!pollResp.ok) {
-                    const pollText = await pollResp.text();
-                    await logger.log("WARN", `[phone-verify] onboardUser poll failed ${pollResp.status}: ${pollText.substring(0, 200)}`);
-                    break;
-                  }
+                  if (!pollResp.ok) break;
                   onboardData = await pollResp.json();
-                  await logger.log("DEBUG", `[phone-verify] onboardUser poll result: done=${onboardData?.done}`);
                 }
-
-                // Extract project_id from final response
                 const onboardProject = onboardData?.response?.cloudaicompanionProject;
-                if (typeof onboardProject === "string" && onboardProject) {
-                  projectId = onboardProject;
-                } else if (onboardProject?.id) {
-                  projectId = onboardProject.id;
-                }
+                if (typeof onboardProject === "string" && onboardProject) projectId = onboardProject;
+                else if (onboardProject?.id) projectId = onboardProject.id;
               }
             }
           }
 
           if (projectId) {
-            await logger.log("INFO", `[phone-verify] Got project_id: ${projectId}`);
+            await logger.log("INFO", `[phone-verify] Got project_id: ${projectId}, gcpTos=${isGcpTos}`);
             break;
           }
         } catch (parseErr) {
           await logger.log("WARN", `[phone-verify] loadCodeAssist parse error: ${parseErr}`);
         }
       }
-      // 401/403 from loadCodeAssist → don't retry, report issue
       if (loadResp.status === 401 || loadResp.status === 403) {
-        await logger.log("WARN", `[phone-verify] loadCodeAssist returned ${loadResp.status}`);
+        await logger.log("WARN", `[phone-verify] loadCodeAssist ${loadResp.status}`);
         break;
       }
     } catch (err) {
@@ -1551,17 +1539,16 @@ async function probeCloudCodeAPI(
   }
 
   if (!projectId) {
-    await logger.log("WARN", "[phone-verify] Could not get project_id — skipping generation probe");
+    await logger.log("WARN", "[phone-verify] Could not get project_id — cannot probe");
     return { needsVerification: false };
   }
 
-  // ── Step 2: fetchAvailableModels with project_id → detect VALIDATION_REQUIRED ──
-  // Matches Cockpit's quota.rs fetch_quota_with_context: sends { "project": id }
-  // to fetchAvailableModels. 403 = VALIDATION_REQUIRED or TOS_VIOLATION.
-  // Unlike streamGenerateContent, this doesn't consume any tokens.
-  const CLOUD_CODE_UA = "antigravity/1.21.6 windows/amd64";
+  // ── Step 2: fetchAvailableModels → get real model name + check 403 ──
+  // GcpTos → prod first; else → daily first (matches resolve_cloud_code_base_url)
+  const probeBases = isGcpTos ? [PROD, DAILY, SANDBOX] : [DAILY, PROD, SANDBOX];
+  let modelName: string | undefined;
 
-  for (const base of CLOUDCODE_BASES) {
+  for (const base of probeBases) {
     try {
       const resp = await fetch(`${base}/v1internal:fetchAvailableModels`, {
         method: "POST",
@@ -1578,49 +1565,123 @@ async function probeCloudCodeAPI(
       const respText = await resp.text();
       await logger.log("DEBUG", `[phone-verify] fetchModels ${resp.status} at ${base}: ${respText.substring(0, 500)}`);
 
-      if (resp.ok) {
-        await logger.log("INFO", "[phone-verify] fetchModels 200 — account is good, no verification needed");
-        return { needsVerification: false, projectId };
-      }
-
       if (resp.status === 403) {
-        if (
-          respText.includes("VALIDATION_REQUIRED") ||
-          respText.includes("verify your account") ||
-          respText.includes("validation_url")
-        ) {
-          await logger.log("INFO", "[phone-verify] fetchModels 403 VALIDATION_REQUIRED — verification needed!");
+        if (respText.includes("VALIDATION_REQUIRED") || respText.includes("validation_url")) {
+          await logger.log("INFO", "[phone-verify] fetchModels 403 VALIDATION_REQUIRED!");
           const validationUrl = extractValidationUrl(respText);
           return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
         }
-
-        // 403 but not VALIDATION_REQUIRED (e.g. TOS_VIOLATION)
-        await logger.log("WARN", `[phone-verify] fetchModels 403 (not VALIDATION_REQUIRED): ${respText.substring(0, 200)}`);
+        await logger.log("WARN", `[phone-verify] fetchModels 403 (not VALIDATION_REQUIRED)`);
         return { needsVerification: false, projectId };
       }
 
-      if (resp.status === 401) {
-        await logger.log("WARN", "[phone-verify] fetchModels 401 — token expired");
-        return { needsVerification: false, projectId };
+      if (resp.ok) {
+        // Extract a model name from the response for streamGenerateContent probe
+        try {
+          const modelsData = JSON.parse(respText);
+          const models = modelsData?.models ?? modelsData?.availableModels ?? [];
+          // Pick first flash model, or any model
+          const flashModel = models.find((m: any) =>
+            (m.name || m.id || "").toLowerCase().includes("flash")
+          );
+          modelName = flashModel?.name || flashModel?.id || models[0]?.name || models[0]?.id;
+          if (modelName) {
+            await logger.log("INFO", `[phone-verify] fetchModels OK, using model: ${modelName}`);
+          } else {
+            await logger.log("WARN", "[phone-verify] fetchModels OK but no model names found");
+          }
+        } catch {
+          await logger.log("WARN", "[phone-verify] fetchModels OK but could not parse models");
+        }
+        break;
       }
 
-      // 429/500 → retry next endpoint
-      if (resp.status === 429 || resp.status >= 500) {
-        await logger.log("DEBUG", `[phone-verify] fetchModels ${resp.status}, trying next endpoint`);
-        continue;
-      }
-
-      // Other errors (400/404 etc.)
-      await logger.log("INFO", `[phone-verify] fetchModels ${resp.status} — not blocked by validation`);
-      return { needsVerification: false, projectId };
-
+      if (resp.status === 429 || resp.status >= 500) continue;
+      // 401, 404, etc. — break
+      break;
     } catch (err) {
       await logger.log("DEBUG", `[phone-verify] fetchModels error at ${base}: ${err}`);
       continue;
     }
   }
 
-  await logger.log("WARN", "[phone-verify] All fetchModels endpoints failed — assuming no verification needed");
+  // If fetchAvailableModels didn't detect VALIDATION_REQUIRED AND we got a model name,
+  // do the real generation probe (matches Cockpit's trigger_wakeup_direct).
+  if (!modelName) {
+    await logger.log("INFO", "[phone-verify] No model name available — fetchModels passed, assuming account is OK");
+    return { needsVerification: false, projectId };
+  }
+
+  // ── Step 3: streamGenerateContent → definitive VALIDATION_REQUIRED check ──
+  const sessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+  const probeBody = {
+    project: projectId,
+    requestId: `agent/antigravity/probe/${Date.now()}`,
+    model: modelName,
+    userAgent: "antigravity",
+    requestType: "agent",
+    request: {
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      session_id: sessionId,
+      systemInstruction: {
+        parts: [{ text: "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding." }],
+      },
+      generationConfig: { temperature: 0, maxOutputTokens: 1 },
+    },
+  };
+
+  for (const base of probeBases) {
+    try {
+      const resp = await fetch(`${base}/v1internal:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": STREAM_UA,
+          "Accept-Encoding": "gzip",
+        },
+        body: JSON.stringify(probeBody),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      const respText = await resp.text();
+      await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status} at ${base}: ${respText.substring(0, 500)}`);
+
+      if (resp.ok) {
+        await logger.log("INFO", "[phone-verify] generateContent 200 — account verified OK");
+        return { needsVerification: false, projectId };
+      }
+
+      if (resp.status === 403) {
+        if (respText.includes("VALIDATION_REQUIRED") || respText.includes("validation_url")) {
+          await logger.log("INFO", "[phone-verify] generateContent 403 VALIDATION_REQUIRED!");
+          const validationUrl = extractValidationUrl(respText);
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
+        }
+        await logger.log("WARN", `[phone-verify] generateContent 403 (not VALIDATION_REQUIRED): ${respText.substring(0, 200)}`);
+        return { needsVerification: false, projectId };
+      }
+
+      if (resp.status === 401) {
+        await logger.log("WARN", "[phone-verify] generateContent 401 — token expired");
+        return { needsVerification: false, projectId };
+      }
+
+      // 404/429/500 → try next endpoint
+      if (resp.status === 404 || resp.status === 429 || resp.status >= 500) {
+        await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
+        continue;
+      }
+
+      await logger.log("INFO", `[phone-verify] generateContent ${resp.status} — not blocked`);
+      return { needsVerification: false, projectId };
+    } catch (err) {
+      await logger.log("DEBUG", `[phone-verify] generateContent error at ${base}: ${err}`);
+      continue;
+    }
+  }
+
+  await logger.log("WARN", "[phone-verify] All generateContent endpoints failed");
   return { needsVerification: false, projectId };
 }
 
