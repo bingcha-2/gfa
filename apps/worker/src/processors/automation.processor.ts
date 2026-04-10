@@ -1340,12 +1340,19 @@ async function doProactivePhoneVerification(
 
   await logger.log("INFO", `[phone-verify] Opening validation URL: ${validationUrl.substring(0, 100)}...`);
   await page.goto(validationUrl, {
-    waitUntil: "networkidle",
+    waitUntil: "domcontentloaded",
     timeout: 30000,
   });
-  await page.waitForTimeout(5000);
 
-  // Check where we landed — the validation URL may redirect through multiple pages
+  // Wait for redirect — validation URL goes through signin/continue → actual verification page
+  const gotoUrl = page.url();
+  await Promise.race([
+    page.waitForURL((url) => url.toString() !== gotoUrl, { timeout: 15000 }).catch(() => {}),
+    page.locator('text=/verify|phone|number|验证/i').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
+    page.locator('input[type="tel"]').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
+  ]);
+
+  // Check where we landed
   const currentUrl = page.url();
   await logger.log("INFO", `[phone-verify] Landed on: ${currentUrl}`);
 
@@ -1359,12 +1366,11 @@ async function doProactivePhoneVerification(
   }
 
   if (!isVerificationPage(currentUrl)) {
-    // Don't immediately fail — log the page content and try to proceed anyway
-    await logger.log("WARN", `[phone-verify] URL doesn't match known verification patterns, but will try anyway: ${currentUrl}`);
-    // Take a screenshot of what the page looks like for debugging
+    // Log page content for debugging but still try to proceed
+    await logger.log("WARN", `[phone-verify] URL doesn't match known verification patterns, will try anyway: ${currentUrl}`);
     const pageTitle = await page.title();
     const pageText = await page.textContent("body").catch(() => "");
-    await logger.log("DEBUG", `[phone-verify] Page title: ${pageTitle}, body preview: ${(pageText ?? "").substring(0, 200)}`);
+    await logger.log("DEBUG", `[phone-verify] Page title: ${pageTitle}, body preview: ${(pageText ?? "").substring(0, 300)}`);
   }
 
   // ── Step 4: Do phone verification ──
