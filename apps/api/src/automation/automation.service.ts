@@ -186,6 +186,10 @@ export class AutomationService {
         if (parsed.phoneVerifyResult) {
           result = { ...result, phoneVerifyResult: parsed.phoneVerifyResult };
         }
+        // Include OAuth token data so client can save it
+        if (parsed.token) {
+          result = { ...result, ...parsed.token };
+        }
       } catch {
         // ignore parse errors
       }

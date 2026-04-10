@@ -271,9 +271,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       if (result.status === "SUCCESS") {
-        get().addToast({ type: "success", message: `${email} 手机号认证成功` });
+        // Save returned OAuth token to local DB (same as OAuth flow)
+        if (result.result?.access_token) {
+          const expiresAt =
+            Math.floor(Date.now() / 1000) + (result.result.expires_in ?? 3600);
+          await invoke("save_antigravity_token", {
+            email,
+            accessToken: result.result.access_token,
+            refreshToken: result.result.refresh_token ?? "",
+            expiresAt,
+          });
+          await get().loadAccounts();
+        }
+        get().addToast({ type: "success", message: `${email} 认证完成` });
       } else {
-        get().addToast({ type: "error", message: result.lastErrorMessage ?? "手机号认证失败" });
+        get().addToast({ type: "error", message: result.lastErrorMessage ?? "认证失败" });
       }
     } catch (e) {
       set((s) => ({
