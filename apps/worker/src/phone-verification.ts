@@ -178,7 +178,13 @@ async function attemptVerification(
     if (!selected) {
       return { success: false, error: "Could not find phone verification option" };
     }
-    await page.waitForTimeout(3000);
+    // Wait for navigation to phone input page after clicking the option
+    const selectionUrl = page.url();
+    await Promise.race([
+      page.waitForURL((url) => url.toString() !== selectionUrl, { timeout: 15000 }).catch(() => {}),
+      page.locator('input[type="tel"]').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
+      page.locator('#phoneNumberId').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
+    ]);
   }
 
   // Step 2: Enter phone number
