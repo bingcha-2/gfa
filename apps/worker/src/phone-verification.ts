@@ -91,7 +91,15 @@ export async function handlePhoneVerification(
         };
       } else {
         await logger.log("WARN", `[phone-verify] Phone ${maskPhone(phone.phoneNumber)} failed: ${result.error}`);
-        disabledPhones.push(phone.phoneNumber);
+        // Only disable if Google explicitly rejected the number (hard failure)
+        // Soft failures (selector bug, timeout, network) are NOT the phone's fault
+        const isHardFail = result.error && /too many|can.t use|unable to|invalid number|banned|blocked|not.*valid|quota|limit/i.test(result.error);
+        if (isHardFail) {
+          disabledPhones.push(phone.phoneNumber);
+          await logger.log("INFO", `[phone-verify] Hard failure — disabling phone ${maskPhone(phone.phoneNumber)}`);
+        } else {
+          await logger.log("INFO", `[phone-verify] Soft failure — keeping phone ${maskPhone(phone.phoneNumber)} available`);
+        }
 
         // Navigate back to the verification selection page so the next phone
         // starts from the "enter phone number" step, not the "enter code" step.
@@ -100,7 +108,8 @@ export async function handlePhoneVerification(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await logger.log("WARN", `[phone-verify] Error with ${maskPhone(phone.phoneNumber)}: ${errMsg}`);
-      disabledPhones.push(phone.phoneNumber);
+      // Exceptions are always soft failures — don't disable
+      await logger.log("INFO", `[phone-verify] Exception (soft) — keeping phone ${maskPhone(phone.phoneNumber)} available`);
 
       // Also reset page for next attempt
       await resetToVerificationPage(page, logger);
