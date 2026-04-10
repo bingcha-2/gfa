@@ -60,6 +60,7 @@ export async function processAutomation(
 ): Promise<void> {
   const { prisma, adspower, pool, workerId } = deps;
   const { action, credentials, phones } = job.data;
+  console.log(`[worker:${workerId}] job.data keys: ${Object.keys(job.data).join(",")}, phones: ${phones?.length ?? "undefined"}, action: ${action}`);
   const taskId = job.data.taskId ?? job.id ?? job.name;
 
   if (!taskId) {
