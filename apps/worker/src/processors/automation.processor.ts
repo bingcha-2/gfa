@@ -1585,6 +1585,11 @@ async function probeCloudCodeAPI(
     return { needsVerification: false };
   }
 
+  // loadCodeAssist succeeded with a project_id and NO VALIDATION_REQUIRED
+  // → account is verified, no need for fallback probes
+  await logger.log("INFO", `[phone-verify] loadCodeAssist OK — account verified (project: ${projectId})`);
+  return { needsVerification: false, projectId };
+
   // ── Step 1.5: fetchUserInfo → the LS calls this on startup to check verification status ──
   // API: cloudcode-pa.googleapis.com/v1internal:fetchUserInfo
   // This is the API the Antigravity LS calls first — it returns user verification state
