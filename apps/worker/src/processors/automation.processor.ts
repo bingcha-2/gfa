@@ -1417,8 +1417,6 @@ async function probeCloudCodeAPI(
   ];
   // loadCodeAssist UA must include google-api-nodejs-client (matches Cockpit)
   const LOAD_UA = "antigravity/1.21.6 windows/amd64 google-api-nodejs-client/10.3.0";
-  // streamGenerateContent UA is just "antigravity" (matches Cockpit wakeup.rs USER_AGENT)
-  const STREAM_UA = "antigravity";
 
   // Shared metadata for loadCodeAssist and onboardUser (matches build_cloud_code_metadata)
   const METADATA = {
@@ -1557,79 +1555,72 @@ async function probeCloudCodeAPI(
     return { needsVerification: false };
   }
 
-  // ── Step 2: streamGenerateContent → real probe for VALIDATION_REQUIRED ──
-  const probeBody = {
-    project: projectId,
-    requestId: `agent/antigravity/probe/${Date.now()}`,
-    model: "gemini-3.0-flash",
-    userAgent: "antigravity",
-    requestType: "agent",
-    request: {
-      contents: [{ role: "user", parts: [{ text: "hi" }] }],
-      generationConfig: { temperature: 0, maxOutputTokens: 1 },
-    },
-  };
+  // ── Step 2: fetchAvailableModels with project_id → detect VALIDATION_REQUIRED ──
+  // Matches Cockpit's quota.rs fetch_quota_with_context: sends { "project": id }
+  // to fetchAvailableModels. 403 = VALIDATION_REQUIRED or TOS_VIOLATION.
+  // Unlike streamGenerateContent, this doesn't consume any tokens.
+  const CLOUD_CODE_UA = "antigravity/1.21.6 windows/amd64";
 
   for (const base of CLOUDCODE_BASES) {
     try {
-      const resp = await fetch(`${base}/v1internal:streamGenerateContent?alt=sse`, {
+      const resp = await fetch(`${base}/v1internal:fetchAvailableModels`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${accessToken}`,
-          "User-Agent": STREAM_UA,
+          "User-Agent": CLOUD_CODE_UA,
           "Accept-Encoding": "gzip",
         },
-        body: JSON.stringify(probeBody),
-        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({ project: projectId }),
+        signal: AbortSignal.timeout(15000),
       });
 
-      const errorText = await resp.text();
-      await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status} at ${base}: ${errorText.substring(0, 500)}`);
+      const respText = await resp.text();
+      await logger.log("DEBUG", `[phone-verify] fetchModels ${resp.status} at ${base}: ${respText.substring(0, 500)}`);
 
       if (resp.ok) {
-        await logger.log("INFO", "[phone-verify] generateContent 200 — no verification needed");
+        await logger.log("INFO", "[phone-verify] fetchModels 200 — account is good, no verification needed");
         return { needsVerification: false, projectId };
       }
 
       if (resp.status === 403) {
         if (
-          errorText.includes("VALIDATION_REQUIRED") ||
-          errorText.includes("verify your account") ||
-          errorText.includes("validation_url")
+          respText.includes("VALIDATION_REQUIRED") ||
+          respText.includes("verify your account") ||
+          respText.includes("validation_url")
         ) {
-          await logger.log("INFO", "[phone-verify] generateContent 403 VALIDATION_REQUIRED — verification needed!");
-          const validationUrl = extractValidationUrl(errorText);
+          await logger.log("INFO", "[phone-verify] fetchModels 403 VALIDATION_REQUIRED — verification needed!");
+          const validationUrl = extractValidationUrl(respText);
           return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
         }
 
         // 403 but not VALIDATION_REQUIRED (e.g. TOS_VIOLATION)
-        await logger.log("WARN", `[phone-verify] generateContent 403 (not VALIDATION_REQUIRED)`);
+        await logger.log("WARN", `[phone-verify] fetchModels 403 (not VALIDATION_REQUIRED): ${respText.substring(0, 200)}`);
         return { needsVerification: false, projectId };
       }
 
       if (resp.status === 401) {
-        await logger.log("WARN", "[phone-verify] generateContent 401 — token expired");
+        await logger.log("WARN", "[phone-verify] fetchModels 401 — token expired");
         return { needsVerification: false, projectId };
       }
 
-      // 404/429/500 → try next endpoint (404 = project not propagated yet after fresh onboard)
-      if (resp.status === 404 || resp.status === 429 || resp.status >= 500) {
-        await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
+      // 429/500 → retry next endpoint
+      if (resp.status === 429 || resp.status >= 500) {
+        await logger.log("DEBUG", `[phone-verify] fetchModels ${resp.status}, trying next endpoint`);
         continue;
       }
 
-      // Other errors (400 etc.) → auth passed, not blocked by validation
-      await logger.log("INFO", `[phone-verify] generateContent ${resp.status} — not blocked by validation`);
+      // Other errors (400/404 etc.)
+      await logger.log("INFO", `[phone-verify] fetchModels ${resp.status} — not blocked by validation`);
       return { needsVerification: false, projectId };
 
     } catch (err) {
-      await logger.log("DEBUG", `[phone-verify] generateContent error at ${base}: ${err}`);
+      await logger.log("DEBUG", `[phone-verify] fetchModels error at ${base}: ${err}`);
       continue;
     }
   }
 
-  await logger.log("WARN", "[phone-verify] All generateContent endpoints failed — assuming no verification needed");
+  await logger.log("WARN", "[phone-verify] All fetchModels endpoints failed — assuming no verification needed");
   return { needsVerification: false, projectId };
 }
 
