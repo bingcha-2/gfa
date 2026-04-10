@@ -42,7 +42,6 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/cclog",
   "https://www.googleapis.com/auth/experimentsandconfigs",
-  "https://www.googleapis.com/auth/generative-language",
 ].join(" ");
 
 const FAMILY_URL = "https://families.google.com/families?hl=en";
@@ -1395,61 +1394,83 @@ async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
 ): Promise<{ needsVerification: boolean; validationUrl?: string }> {
-  // Use the public Gemini API — it accepts a plain OAuth bearer token
-  // without needing project_id or v1internal wrapper format.
-  // The VALIDATION_REQUIRED 403 is triggered at the auth/account level,
-  // so it applies to all Gemini endpoints equally.
-  const endpoint =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent";
+  // Use cloudcode-pa v1internal endpoint with the correct wrapper format.
+  // VALIDATION_REQUIRED is checked at the auth/account level BEFORE project
+  // validation, so a probe project_id is sufficient.
+  const CLOUDCODE_ENDPOINTS = [
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
+    "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+  ];
 
+  // v1internal requires the wrapper format: { project, requestId, request, model, userAgent, requestType }
   const probeBody = {
-    contents: [{ role: "user", parts: [{ text: "hi" }] }],
-    generationConfig: { maxOutputTokens: 1 },
+    project: "gfa-probe",
+    requestId: `agent/antigravity/probe/${Date.now()}`,
+    request: {
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      generationConfig: { maxOutputTokens: 1 },
+    },
+    model: "gemini-3.0-flash",
+    userAgent: "antigravity",
+    requestType: "agent",
   };
 
-  try {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(probeBody),
-      signal: AbortSignal.timeout(15000),
-    });
+  for (const endpoint of CLOUDCODE_ENDPOINTS) {
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(probeBody),
+        signal: AbortSignal.timeout(15000),
+      });
 
-    if (resp.ok) {
-      await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
-      return { needsVerification: false };
-    }
+      const errorText = await resp.text();
+      await logger.log("DEBUG", `[phone-verify] API probe ${resp.status} at ${endpoint}: ${errorText.substring(0, 300)}`);
 
-    const errorText = await resp.text();
-    await logger.log("DEBUG", `[phone-verify] API probe ${resp.status}: ${errorText.substring(0, 300)}`);
-
-    if (resp.status === 403) {
-      if (
-        errorText.includes("VALIDATION_REQUIRED") ||
-        errorText.includes("verify your account") ||
-        errorText.includes("validation_url")
-      ) {
-        await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
-        const validationUrl = extractValidationUrl(errorText);
-        return { needsVerification: true, validationUrl: validationUrl ?? undefined };
+      if (resp.ok) {
+        await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
+        return { needsVerification: false };
       }
 
-      // 403 but not validation-related
-      await logger.log("WARN", "[phone-verify] API probe 403 but not VALIDATION_REQUIRED");
+      if (resp.status === 403) {
+        if (
+          errorText.includes("VALIDATION_REQUIRED") ||
+          errorText.includes("verify your account") ||
+          errorText.includes("validation_url")
+        ) {
+          await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
+          const validationUrl = extractValidationUrl(errorText);
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined };
+        }
+
+        // 403 but not validation — could be project not found, which means account is OK
+        await logger.log("INFO", "[phone-verify] API probe 403 (not VALIDATION_REQUIRED) — account is OK");
+        return { needsVerification: false };
+      }
+
+      // 429/500 — try next endpoint
+      if (resp.status === 429 || resp.status >= 500) {
+        await logger.log("DEBUG", `[phone-verify] API probe ${resp.status}, trying next endpoint`);
+        continue;
+      }
+
+      // 400 or other — v1internal accepted the auth but rejected the request,
+      // meaning the account is NOT blocked by VALIDATION_REQUIRED
+      await logger.log("INFO", `[phone-verify] API probe ${resp.status} — account auth is OK (no validation block)`);
       return { needsVerification: false };
+
+    } catch (err) {
+      await logger.log("DEBUG", `[phone-verify] API probe error at ${endpoint}: ${err}`);
+      continue;
     }
-
-    // Any other error (400, 429, 500, etc.) — not a validation issue
-    await logger.log("WARN", `[phone-verify] API probe returned ${resp.status} — assuming no verification needed`);
-    return { needsVerification: false };
-
-  } catch (err) {
-    await logger.log("WARN", `[phone-verify] API probe network error: ${err}`);
-    return { needsVerification: false };
   }
+
+  await logger.log("WARN", "[phone-verify] All cloudcode endpoints failed — assuming no verification needed");
+  return { needsVerification: false };
 }
 
 /**
