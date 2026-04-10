@@ -1464,6 +1464,20 @@ async function probeCloudCodeAPI(
           const allowedTiers = loadData?.allowedTiers ?? [];
           if (!isGcpTos && allowedTiers.some((t: any) => t.usesGcpTos)) isGcpTos = true;
 
+          // ★ Check ineligibleTiers for VALIDATION_REQUIRED — this is the definitive check!
+          const ineligibleTiers = loadData?.ineligibleTiers ?? [];
+          const validationEntry = ineligibleTiers.find(
+            (t: any) => t.reasonCode === "VALIDATION_REQUIRED"
+          );
+          if (validationEntry) {
+            const vUrl = validationEntry.validationUrl ?? null;
+            await logger.log("INFO", `[phone-verify] loadCodeAssist → VALIDATION_REQUIRED detected! validationUrl=${vUrl ? vUrl.substring(0, 80) + "..." : "none"}`);
+            // Extract project_id even if validation is required (for later use)
+            const project = loadData?.cloudaicompanionProject;
+            const pid = typeof project === "string" ? project : project?.id;
+            return { needsVerification: true, validationUrl: vUrl ?? undefined, projectId: pid };
+          }
+
           // Extract project_id
           const project = loadData?.cloudaicompanionProject;
           if (typeof project === "string" && project) {
