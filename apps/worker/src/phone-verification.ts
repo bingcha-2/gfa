@@ -239,33 +239,49 @@ async function attemptVerification(
  * On the selection page, click "Verify your phone number" option.
  */
 async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Promise<boolean> {
-  // Look for the phone verification option using multiple strategies
-  const selectors = [
-    // Text-based (English)
-    'div:has-text("Verify your phone number")',
-    'li:has-text("Verify your phone number")',
-    'button:has-text("Verify your phone number")',
-    'a:has-text("Verify your phone number")',
-    // Text-based (various)
-    'div:has-text("phone number")',
-    'li:has-text("phone number")',
-    // Data attribute based
+  // Strategy 1: Use Playwright's getByText to find the exact text element, then click it
+  // This is more precise than div:has-text() which matches all ancestor elements
+  const textPatterns = [
+    "Verify your phone number",
+    "phone number",
+    "SMS",
+    "text message",
+  ];
+
+  for (const pattern of textPatterns) {
+    try {
+      const el = page.getByText(pattern, { exact: false }).first();
+      if ((await el.count()) > 0 && (await el.isVisible())) {
+        await el.click();
+        await logger.log("INFO", `[phone-verify] Clicked text element: "${pattern}"`);
+        // Log post-click state
+        await page.waitForTimeout(1000);
+        await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
+        return true;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Strategy 2: data-challengetype attributes (Google's internal markers)
+  const challengeSelectors = [
     'div[data-challengetype="12"]',
     'li[data-challengetype="12"]',
     'div[data-challengetype="9"]',
     'li[data-challengetype="9"]',
   ];
 
-  for (const selector of selectors) {
+  for (const selector of challengeSelectors) {
     try {
       const el = page.locator(selector).first();
       if ((await el.count()) > 0 && (await el.isVisible())) {
         await el.click();
-        await logger.log("INFO", `[phone-verify] Selected phone verification option via: ${selector}`);
+        await logger.log("INFO", `[phone-verify] Selected phone option via: ${selector}`);
         return true;
       }
     } catch {
-      // continue to next selector
+      // continue
     }
   }
 
