@@ -1304,6 +1304,12 @@ async function doProactivePhoneVerification(
         resolved: true,
         message: "Account does not require phone verification",
       };
+      // Return token info so the client can use it
+      payloadObj.token = {
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        project_id: probeResult.projectId ?? null,
+      };
       await prisma.task.update({
         where: { id: taskId },
         data: { payload: JSON.stringify(payloadObj) },
@@ -1359,6 +1365,12 @@ async function doProactivePhoneVerification(
     usedPhone: result.usedPhone,
     disabledPhones: result.disabledPhones,
   };
+  // Return token info so the client can use it
+  payloadObj.token = {
+    access_token: token.access_token,
+    refresh_token: token.refresh_token,
+    project_id: probeResult.projectId ?? null,
+  };
   if (setTaskStatus) {
     payloadObj.result = payloadObj.phoneVerifyResult;
   }
@@ -1388,44 +1400,153 @@ async function doProactivePhoneVerification(
 
 /**
  * Call cloudcode-pa.googleapis.com to check if the account needs validation.
- * Returns { needsVerification, validationUrl } based on the API response.
+ * Returns { needsVerification, validationUrl, projectId } based on the API response.
+ *
+ * Two-step flow (matches Cockpit's wakeup_verification):
+ *   1. loadCodeAssist → get project_id (+ auto-onboard if needed)
+ *   2. streamGenerateContent → real generation probe to trigger VALIDATION_REQUIRED
  */
 async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
-): Promise<{ needsVerification: boolean; validationUrl?: string }> {
-  // Use fetchAvailableModels — same approach as Cockpit.
-  // This endpoint doesn't need project_id or complex wrapper format,
-  // just a bearer token + empty JSON body. VALIDATION_REQUIRED 403
-  // fires at the auth layer before any model logic.
-  const CLOUDCODE_ENDPOINTS = [
-    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+): Promise<{ needsVerification: boolean; validationUrl?: string; projectId?: string }> {
+  const CLOUDCODE_BASES = [
+    "https://daily-cloudcode-pa.googleapis.com",
+    "https://cloudcode-pa.googleapis.com",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com",
   ];
+  const UA = "antigravity/1.20.5 windows/amd64";
+  const HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${accessToken}`,
+    "User-Agent": UA,
+    "Accept-Encoding": "gzip",
+  };
 
-  const probeBody = {};
-
-  for (const endpoint of CLOUDCODE_ENDPOINTS) {
+  // ── Step 1: loadCodeAssist → get project_id ──────────────────────────
+  let projectId: string | undefined;
+  for (const base of CLOUDCODE_BASES) {
     try {
-      const resp = await fetch(endpoint, {
+      const loadResp = await fetch(`${base}/v1internal:loadCodeAssist`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-          "User-Agent": "antigravity",
-          "Accept-Encoding": "gzip",
-        },
-        body: JSON.stringify(probeBody),
+        headers: { ...HEADERS, "User-Agent": `${UA} google-api-nodejs-client/10.3.0` },
+        body: JSON.stringify({
+          metadata: {
+            ide: "vscode",
+            extensionVersion: "1.20.5",
+            clientOs: "windows",
+            clientArch: "amd64",
+          },
+          mode: "FULL_ELIGIBILITY_CHECK",
+        }),
         signal: AbortSignal.timeout(15000),
       });
 
+      const loadText = await loadResp.text();
+      await logger.log("DEBUG", `[phone-verify] loadCodeAssist ${loadResp.status} at ${base}: ${loadText.substring(0, 300)}`);
+
+      if (loadResp.ok) {
+        try {
+          const loadData = JSON.parse(loadText);
+          // Extract project_id from response
+          const project = loadData?.cloudaicompanionProject;
+          if (typeof project === "string" && project) {
+            projectId = project;
+          } else if (project?.id) {
+            projectId = project.id;
+          }
+
+          // If no project, try onboardUser
+          if (!projectId) {
+            const allowedTiers = loadData?.allowedTiers ?? [];
+            const paidTierId = loadData?.paidTier?.id;
+            const currentTierId = loadData?.currentTier?.id;
+            const tierId = paidTierId || currentTierId ||
+              allowedTiers.find((t: any) => t.isDefault)?.id ||
+              allowedTiers[0]?.id || "LEGACY";
+
+            if (tierId) {
+              await logger.log("INFO", `[phone-verify] No project_id, trying onboardUser with tier=${tierId}`);
+              const onboardResp = await fetch(`${base}/v1internal:onboardUser`, {
+                method: "POST",
+                headers: HEADERS,
+                body: JSON.stringify({
+                  tierId,
+                  metadata: {
+                    ide: "vscode",
+                    extensionVersion: "1.20.5",
+                    clientOs: "windows",
+                    clientArch: "amd64",
+                  },
+                }),
+                signal: AbortSignal.timeout(30000),
+              });
+              const onboardText = await onboardResp.text();
+              await logger.log("DEBUG", `[phone-verify] onboardUser ${onboardResp.status}: ${onboardText.substring(0, 300)}`);
+              if (onboardResp.ok) {
+                const onboardData = JSON.parse(onboardText);
+                const onboardProject = onboardData?.response?.cloudaicompanionProject;
+                if (typeof onboardProject === "string" && onboardProject) {
+                  projectId = onboardProject;
+                } else if (onboardProject?.id) {
+                  projectId = onboardProject.id;
+                }
+              }
+            }
+          }
+
+          if (projectId) {
+            await logger.log("INFO", `[phone-verify] Got project_id: ${projectId}`);
+            break;
+          }
+        } catch (parseErr) {
+          await logger.log("WARN", `[phone-verify] loadCodeAssist parse error: ${parseErr}`);
+        }
+      }
+      // 401/403 from loadCodeAssist → don't retry, report issue
+      if (loadResp.status === 401 || loadResp.status === 403) {
+        await logger.log("WARN", `[phone-verify] loadCodeAssist returned ${loadResp.status}`);
+        break;
+      }
+    } catch (err) {
+      await logger.log("DEBUG", `[phone-verify] loadCodeAssist error at ${base}: ${err}`);
+      continue;
+    }
+  }
+
+  if (!projectId) {
+    await logger.log("WARN", "[phone-verify] Could not get project_id — skipping generation probe");
+    return { needsVerification: false };
+  }
+
+  // ── Step 2: streamGenerateContent → real probe for VALIDATION_REQUIRED ──
+  const probeBody = {
+    project: projectId,
+    requestId: `agent/antigravity/probe/${Date.now()}`,
+    model: "gemini-3.0-flash",
+    userAgent: "antigravity",
+    requestType: "agent",
+    request: {
+      contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 1 },
+    },
+  };
+
+  for (const base of CLOUDCODE_BASES) {
+    try {
+      const resp = await fetch(`${base}/v1internal:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: HEADERS,
+        body: JSON.stringify(probeBody),
+        signal: AbortSignal.timeout(30000),
+      });
+
       const errorText = await resp.text();
-      await logger.log("DEBUG", `[phone-verify] API probe ${resp.status} at ${endpoint}: ${errorText.substring(0, 300)}`);
+      await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status} at ${base}: ${errorText.substring(0, 500)}`);
 
       if (resp.ok) {
-        await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
-        return { needsVerification: false };
+        await logger.log("INFO", "[phone-verify] generateContent 200 — no verification needed");
+        return { needsVerification: false, projectId };
       }
 
       if (resp.status === 403) {
@@ -1434,35 +1555,39 @@ async function probeCloudCodeAPI(
           errorText.includes("verify your account") ||
           errorText.includes("validation_url")
         ) {
-          await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
+          await logger.log("INFO", "[phone-verify] generateContent 403 VALIDATION_REQUIRED — verification needed!");
           const validationUrl = extractValidationUrl(errorText);
-          return { needsVerification: true, validationUrl: validationUrl ?? undefined };
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
         }
 
-        // 403 but not validation — could be project not found, which means account is OK
-        await logger.log("INFO", "[phone-verify] API probe 403 (not VALIDATION_REQUIRED) — account is OK");
-        return { needsVerification: false };
+        // 403 but not VALIDATION_REQUIRED (e.g. TOS_VIOLATION)
+        await logger.log("WARN", `[phone-verify] generateContent 403 (not VALIDATION_REQUIRED)`);
+        return { needsVerification: false, projectId };
       }
 
-      // 429/500 — try next endpoint
+      if (resp.status === 401) {
+        await logger.log("WARN", "[phone-verify] generateContent 401 — token expired");
+        return { needsVerification: false, projectId };
+      }
+
+      // 429/500 → try next endpoint
       if (resp.status === 429 || resp.status >= 500) {
-        await logger.log("DEBUG", `[phone-verify] API probe ${resp.status}, trying next endpoint`);
+        await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
         continue;
       }
 
-      // 400 or other — v1internal accepted the auth but rejected the request,
-      // meaning the account is NOT blocked by VALIDATION_REQUIRED
-      await logger.log("INFO", `[phone-verify] API probe ${resp.status} — account auth is OK (no validation block)`);
-      return { needsVerification: false };
+      // Other errors (400 etc.) → auth passed, not blocked by validation
+      await logger.log("INFO", `[phone-verify] generateContent ${resp.status} — not blocked by validation`);
+      return { needsVerification: false, projectId };
 
     } catch (err) {
-      await logger.log("DEBUG", `[phone-verify] API probe error at ${endpoint}: ${err}`);
+      await logger.log("DEBUG", `[phone-verify] generateContent error at ${base}: ${err}`);
       continue;
     }
   }
 
-  await logger.log("WARN", "[phone-verify] All cloudcode endpoints failed — assuming no verification needed");
-  return { needsVerification: false };
+  await logger.log("WARN", "[phone-verify] All generateContent endpoints failed — assuming no verification needed");
+  return { needsVerification: false, projectId };
 }
 
 /**
