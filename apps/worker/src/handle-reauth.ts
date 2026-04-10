@@ -14,7 +14,7 @@
  */
 
 import type { Page } from "playwright";
-import { generateTOTP, totpSecondsRemaining, isTotpWindowUsed, markTotpUsed } from "./totp";
+import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "./totp";
 import type { TaskLogger } from "./task-logger";
 
 export interface ReAuthCredentials {
@@ -488,11 +488,11 @@ async function _handleTotp(
   // (Google rejects reuse of the same code within the same 30s period)
   const remaining = totpSecondsRemaining();
   const secret = credentials.totpSecret!;
-  if (isTotpWindowUsed(secret) || remaining < 5) {
+  if (lastUsedTotpWindow() === currentTotpWindow() || remaining < 5) {
     const waitSecs = remaining + 1;
     await logger.log(
       "INFO",
-      `${logPrefix} Waiting ${waitSecs}s for fresh TOTP (${isTotpWindowUsed(secret) ? "window already used" : "about to expire"})`
+      `${logPrefix} Waiting ${waitSecs}s for fresh TOTP (${lastUsedTotpWindow() === currentTotpWindow() ? "window already used" : "about to expire"})`
     );
     await page.waitForTimeout(waitSecs * 1000);
   }
@@ -534,7 +534,7 @@ async function _handleTotp(
   }
 
   await logger.log("INFO", `${logPrefix} TOTP submitted`);
-  markTotpUsed(secret);
+  markTotpUsed();
   await page.waitForTimeout(5000);
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
 
@@ -569,7 +569,7 @@ async function _handleTotp(
       } else {
         await page.keyboard.press("Enter");
       }
-      markTotpUsed(secret);
+      markTotpUsed();
       await page.waitForTimeout(5000);
       await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
     }

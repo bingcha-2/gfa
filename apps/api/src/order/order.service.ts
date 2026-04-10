@@ -12,7 +12,7 @@ import { nanoid } from "nanoid";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedeemCodeService } from "../redeem-code/redeem-code.service";
 import { FamilyGroupService } from "../family-group/family-group.service";
-import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
+import { QUEUE_NAMES, TASK_TYPES, JOB_DEFAULTS, SyncFamilyGroupPayload } from "@gfa/shared";
 
 type PublicOrderPayload = {
   orderNo: string;
@@ -35,7 +35,9 @@ export class OrderService {
     @InjectQueue(QUEUE_NAMES.invite)
     private readonly inviteQueue: Queue,
     @InjectQueue(QUEUE_NAMES.replace)
-    private readonly replaceQueue: Queue
+    private readonly replaceQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.sync)
+    private readonly syncQueue: Queue
   ) { }
 
   private toPublicOrder(order: PublicOrderPayload) {
@@ -1016,5 +1018,271 @@ export class OrderService {
 
     // 4. Delegate to subscriptionReuse
     return this.subscriptionReuse({ redeemCode, oldEmail, newEmail });
+  }
+
+  // ========== Public Self-Service Migration ==========
+
+  /**
+   * Check whether a member's parent account is unhealthy and migration is available.
+   *
+   * Returns sanitised status info; never exposes account credentials or IDs.
+   *
+   * Business rules:
+   *  - expiresAt === null OR expiresAt <= now → EXPIRED (ineligible)
+   *  - subscriptionStatus SUSPENDED / syncError CAPTCHA / account VERIFICATION_REQUIRED → needsMigration
+   *  - subscriptionStatus ACTIVE + synced < 5h → NORMAL
+   *  - subscriptionStatus ACTIVE + synced >= 5h → trigger async sync, return needsSync
+   */
+  async checkMigration(email: string): Promise<{
+    eligible: boolean;
+    needsMigration: boolean;
+    needsSync: boolean;
+    syncTaskId?: string;
+    reason: string;
+    message: string;
+    memberInfo?: {
+      groupName: string;
+      expiresAt: string | null;
+      accountStatus: string;
+    };
+  }> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes("@")) {
+      return { eligible: false, needsMigration: false, needsSync: false, reason: "INVALID_EMAIL", message: "请输入有效的邮箱地址。" };
+    }
+
+    // 1. Lookup member
+    const lookup = await this.familyGroupService.lookupByMemberEmail(normalizedEmail);
+
+    if (!lookup.found) {
+      return { eligible: false, needsMigration: false, needsSync: false, reason: "NOT_FOUND", message: "未查找到该邮箱的会员记录，请确认邮箱是否正确。如有疑问请联系客服。" };
+    }
+
+    // 2. Determine expiry — null expiresAt = expired
+    const memberExpiresAt = lookup.member?.expiresAt ?? lookup.order?.expiresAt ?? null;
+    const now = new Date();
+
+    if (!memberExpiresAt) {
+      // No expiry set → treat as expired
+      return {
+        eligible: false, needsMigration: false, needsSync: false,
+        reason: "EXPIRED_NO_DATE",
+        message: "您的会员记录未设置有效期，无法使用迁移功能。如有疑问请联系客服确认。"
+      };
+    }
+
+    if (new Date(memberExpiresAt) <= now) {
+      const expDate = new Date(memberExpiresAt).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+      return {
+        eligible: false, needsMigration: false, needsSync: false,
+        reason: "EXPIRED",
+        message: `您的会员权益已于 ${expDate} 到期，如需续费请前往冰茶商店购买。`
+      };
+    }
+
+    // 3. Check parent account status
+    if (!lookup.familyGroup || !lookup.account) {
+      return { eligible: false, needsMigration: false, needsSync: false, reason: "NO_GROUP", message: "未找到关联的家庭组信息。如有疑问请联系客服。" };
+    }
+
+    const { account, familyGroup } = lookup;
+    const subStatus = account.subscriptionStatus;
+    const syncError = account.syncError;
+    const acctStatus = account.status;
+
+    // Determine whether account is "unhealthy"
+    const isSuspended = subStatus === "SUSPENDED";
+    const isCaptcha = syncError === "CAPTCHA_REQUIRED";
+    const isVerificationRequired = acctStatus === "VERIFICATION_REQUIRED";
+
+    if (isSuspended || isCaptcha || isVerificationRequired) {
+      return {
+        eligible: true, needsMigration: true, needsSync: false,
+        reason: isSuspended ? "SUSPENDED" : isCaptcha ? "CAPTCHA" : "VERIFICATION",
+        message: "检测到您当前所在家庭组异常，建议立即迁移到正常组。迁移不会影响您的到期时间。",
+        memberInfo: {
+          groupName: familyGroup.groupName,
+          expiresAt: memberExpiresAt,
+          accountStatus: "异常",
+        }
+      };
+    }
+
+    // 4. Account looks ACTIVE — check sync freshness
+    const SYNC_WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
+    const lastSyncedAt = familyGroup.lastSyncedAt ? new Date(familyGroup.lastSyncedAt) : null;
+    const isFresh = lastSyncedAt && (now.getTime() - lastSyncedAt.getTime() < SYNC_WINDOW_MS);
+
+    if (isFresh) {
+      return {
+        eligible: true, needsMigration: false, needsSync: false,
+        reason: "NORMAL",
+        message: `您的会员权益正常，当前无需操作。到期时间：${new Date(memberExpiresAt).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}。`,
+        memberInfo: {
+          groupName: familyGroup.groupName,
+          expiresAt: memberExpiresAt,
+          accountStatus: "正常",
+        }
+      };
+    }
+
+    // 5. Sync not fresh — trigger async sync and return needsSync
+    // Find the account via family group to get accountId
+    const group = await this.prisma.familyGroup.findUnique({
+      where: { id: familyGroup.id },
+      select: { accountId: true },
+    });
+
+    if (!group) {
+      return { eligible: true, needsMigration: false, needsSync: false, reason: "NORMAL", message: "会员状态正常。" };
+    }
+
+    // Check if there's already a pending/running sync for this group (avoid duplicates during polling)
+    const existingSync = await this.prisma.task.findFirst({
+      where: {
+        type: "SYNC_FAMILY_GROUP",
+        familyGroupId: familyGroup.id,
+        status: { in: ["PENDING", "RUNNING"] },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingSync) {
+      return {
+        eligible: true, needsMigration: false, needsSync: true,
+        syncTaskId: existingSync.id,
+        reason: "SYNCING",
+        message: "正在检测母号状态，请稍候...",
+        memberInfo: {
+          groupName: familyGroup.groupName,
+          expiresAt: memberExpiresAt,
+          accountStatus: "检测中",
+        }
+      };
+    }
+
+    // Create sync task
+    const task = await this.prisma.task.create({
+      data: {
+        type: "SYNC_FAMILY_GROUP",
+        familyGroupId: familyGroup.id,
+        accountId: group.accountId,
+        source: "public-migration-check",
+        payload: JSON.stringify({
+          familyGroupId: familyGroup.id,
+          accountId: group.accountId,
+          ignoreCooldown: true,
+        }),
+      },
+    });
+
+    const payload: SyncFamilyGroupPayload = {
+      taskId: task.id,
+      familyGroupId: familyGroup.id,
+      accountId: group.accountId,
+      ignoreCooldown: true,
+    };
+
+    try {
+      await this.syncQueue.add(TASK_TYPES.syncFamilyGroup, payload, {
+        ...JOB_DEFAULTS,
+        jobId: `sync-${familyGroup.id}-${Date.now()}-migration-check`,
+      });
+    } catch {
+      // Queue add failed — clean up task, return as normal to avoid blocking user
+      await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+      return {
+        eligible: true, needsMigration: false, needsSync: false,
+        reason: "NORMAL",
+        message: "会员状态正常。",
+        memberInfo: { groupName: familyGroup.groupName, expiresAt: memberExpiresAt, accountStatus: "正常" }
+      };
+    }
+
+    return {
+      eligible: true, needsMigration: false, needsSync: true,
+      syncTaskId: task.id,
+      reason: "SYNCING",
+      message: "正在检测母号状态，请稍候...",
+      memberInfo: {
+        groupName: familyGroup.groupName,
+        expiresAt: memberExpiresAt,
+        accountStatus: "检测中",
+      }
+    };
+  }
+
+  /**
+   * Public self-service migrate: re-validates all conditions, then delegates
+   * to FamilyGroupService.migrateMember().
+   *
+   * Rate-limit: per-email 24h cooldown enforced via DB query.
+   */
+  async selfMigrate(email: string): Promise<{
+    success: boolean;
+    message: string;
+    targetGroupName?: string;
+    taskId?: string;
+  }> {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // 1. Re-run full check (TOCTOU guard: never trust client-side check result)
+    const check = await this.checkMigration(normalizedEmail);
+
+    if (!check.eligible) {
+      throw new BadRequestException(check.message);
+    }
+
+    if (!check.needsMigration) {
+      // Also handle needsSync: user shouldn't call selfMigrate while sync is pending
+      if (check.needsSync) {
+        throw new BadRequestException("正在检测母号状态，请等待检测完成后再操作。");
+      }
+      throw new BadRequestException("会员状态正常，无需迁移。");
+    }
+
+    // 2. 24h per-email cooldown: check recent TransferBatch or migrateMember audit
+    const cooldownMs = 24 * 60 * 60 * 1000;
+    const cooldownStart = new Date(Date.now() - cooldownMs);
+
+    // Check if a migration (TransferBatch with this email) happened recently
+    const recentBatch = await this.prisma.transferBatch.findFirst({
+      where: {
+        memberEmails: { contains: normalizedEmail },
+        createdAt: { gte: cooldownStart },
+      },
+    });
+    if (recentBatch) {
+      throw new BadRequestException("该邮箱在24小时内已执行过迁移，请稍后再试。");
+    }
+
+    // 3. Find the member's current group
+    const lookup = await this.familyGroupService.lookupByMemberEmail(normalizedEmail);
+    if (!lookup.found || !lookup.familyGroup) {
+      throw new BadRequestException("未找到有效的会员记录。");
+    }
+
+    // 4. Execute migration via existing service
+    const result = await this.familyGroupService.migrateMember(
+      lookup.familyGroup.id,
+      normalizedEmail
+    );
+
+    if (result.error) {
+      return {
+        success: false,
+        message: result.error === "No available family group with open slots"
+          ? "当前暂无可用位置，请稍后再试或联系客服。"
+          : result.error,
+      };
+    }
+
+    return {
+      success: true,
+      message: `迁移成功！已从「${result.removedFromGroupName}」迁移到「${result.inviteResult?.targetGroupName}」，请注意查收邀请邮件。`,
+      targetGroupName: result.inviteResult?.targetGroupName,
+      taskId: result.inviteResult?.taskId,
+    };
   }
 }

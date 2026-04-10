@@ -1733,3 +1733,231 @@ button[title="修改到期时间"]:hover {
   50%  { transform: translateX(150%); }
   100% { transform: translateX(350%); }
 }
+
+/* ======================================================
+   Daily Stats Panel
+   ====================================================== */
+
+.daily-stats-header {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.daily-stats-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.daily-date-input {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 252, 248, 0.92);
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+  cursor: pointer;
+}
+
+.daily-date-input:hover {
+  border-color: rgba(234, 88, 12, 0.3);
+}
+
+.daily-date-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12);
+}
+
+/* Summary bar */
+.daily-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 18px 24px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(234, 88, 12, 0.06), rgba(15, 118, 110, 0.04)),
+    var(--surface);
+  box-shadow: var(--shadow-soft);
+  flex-wrap: wrap;
+}
+
+.daily-summary-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 90px;
+  padding: 6px 0;
+}
+
+.daily-summary-item.accent .daily-summary-num {
+  color: var(--accent-strong);
+}
+
+.daily-summary-num {
+  font-family: "Iowan Old Style", "Baskerville Old Face", "STSong", serif;
+  font-size: 1.85rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.daily-summary-label {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--foreground-muted);
+}
+
+.daily-summary-divider {
+  width: 1px;
+  height: 40px;
+  background: var(--line-strong);
+  flex-shrink: 0;
+  margin: 0 8px;
+}
+
+/* Metric cards grid */
+.daily-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.daily-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.daily-stat-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(234, 88, 12, 0.2);
+  box-shadow: 0 14px 32px rgba(56, 39, 30, 0.1);
+}
+
+.daily-stat-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  font-size: 1.6rem;
+  flex-shrink: 0;
+}
+
+.daily-stat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.daily-stat-label {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.daily-stat-value {
+  font-family: "Iowan Old Style", "Baskerville Old Face", "STSong", serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.daily-stat-unit {
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: var(--foreground-muted);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+
+/* Quick navigation */
+.daily-quick-nav {
+  display: grid;
+  gap: 12px;
+}
+
+.daily-quick-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.daily-quick-btn {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 252, 248, 0.88);
+  color: var(--foreground-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.daily-quick-btn:hover {
+  color: var(--foreground);
+  border-color: rgba(234, 88, 12, 0.28);
+  transform: translateY(-1px);
+}
+
+.daily-quick-btn.active {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 8px 20px rgba(234, 88, 12, 0.28);
+}
+
+/* Loading state */
+.daily-stats-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 48px 0;
+}
+
+.daily-stats-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: daily-spin 0.7s linear infinite;
+}
+
+@keyframes daily-spin {
+  to { transform: rotate(360deg); }
+}

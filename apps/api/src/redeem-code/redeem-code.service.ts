@@ -22,10 +22,19 @@ export class RedeemCodeService {
     return prefix ? `${prefix}-${body}` : body;
   }
 
-  async findAll(page = 1, pageSize = 30, status?: string, codeType?: string, skipStats = false) {
+  async findAll(page = 1, pageSize = 30, status?: string, codeType?: string, skipStats = false, search?: string) {
     const where: any = {};
     if (status && status !== 'ALL') where.status = status;
     if (codeType && codeType !== 'ALL') where.codeType = codeType;
+
+    // Search by code or associated order userEmail
+    if (search) {
+      where.OR = [
+        { code: { contains: search, mode: "insensitive" } },
+        { order: { userEmail: { contains: search, mode: "insensitive" } } },
+        { order: { orderNo: { contains: search, mode: "insensitive" } } }
+      ];
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.redeemCode.findMany({
@@ -42,7 +51,8 @@ export class RedeemCodeService {
       this.prisma.redeemCode.count({ where })
     ]);
 
-    if (skipStats) {
+    // When searching, skip global stats to keep query fast
+    if (skipStats || search) {
       return { items, total, stats: null };
     }
 

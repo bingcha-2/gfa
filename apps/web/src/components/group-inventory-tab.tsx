@@ -440,6 +440,11 @@ export function InventoryTab({
                                 (暂停于 {formatDate(group.account.subscriptionStatusUpdatedAt)})
                               </span>
                             )}
+                            {(group.account as any)?.notes && (
+                              <div className="muted" style={{ width: '100%', fontSize: '0.75rem', marginTop: '2px', backgroundColor: 'var(--surface-2, #f5f5f4)', padding: '2px 6px', borderRadius: '4px', display: 'inline-block' }}>
+                                备注: {(group.account as any).notes}
+                              </div>
+                            )}
                             <span className="muted" style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               · 到期 
                               {editingDateGroupId === group.id ? (

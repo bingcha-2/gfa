@@ -46,6 +46,7 @@ export class FamilyGroupService {
             subscriptionStatus: true,
             subscriptionStatusUpdatedAt: true,
             subscriptionPlan: true,
+            notes: true,
           },
         },
         _count: {
@@ -417,7 +418,8 @@ export class FamilyGroupService {
   async bulkInvite(
     groupId: string,
     emails: string[],
-    validDays: number = 30
+    validDays: number = 30,
+    inheritedExpiresAt?: Date | null
   ): Promise<{
     queued: string[];
     rejected: string[];
@@ -440,7 +442,9 @@ export class FamilyGroupService {
     const uniqueEmails = [...new Set(normEmails)];
 
     // Compute member expiry date
-    const memberExpiresAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
+    const memberExpiresAt = inheritedExpiresAt 
+      ? new Date(inheritedExpiresAt).toISOString()
+      : new Date(Date.now() + validDays * 24 * 60 * 60 * 1000).toISOString();
 
     // Atomically check slots and reserve them using a DB transaction.
     // This prevents two concurrent requests both seeing the same availableSlots value.
@@ -638,7 +642,7 @@ export class FamilyGroupService {
    * Groups are filled in createdAt-ASC order (earliest first).
    * Returns per-group allocation and any emails that could not be placed.
    */
-  async crossBulkInvite(emails: string[], validDays: number = 30): Promise<{
+  async crossBulkInvite(emails: string[], validDays: number = 30, inheritedExpiresAt?: Date | null): Promise<{
     allocated: Array<{ groupId: string; accountId: string; queued: string[] }>;
     unplaceable: string[];
     alreadyActive: string[];
@@ -703,7 +707,7 @@ export class FamilyGroupService {
       if (remaining.length === 0) break;
 
       const chunk = remaining.splice(0, group.availableSlots);
-      const partial = await this.bulkInvite(group.id, chunk, validDays);
+      const partial = await this.bulkInvite(group.id, chunk, validDays, inheritedExpiresAt);
 
       if (partial.queued.length > 0) {
         allocated.push({ groupId: group.id, accountId: group.accountId, queued: partial.queued });
@@ -778,6 +782,12 @@ export class FamilyGroupService {
       status: string;
       memberCount: number;
       maxMembers: number;
+      lastSyncedAt: string | null;
+    };
+    account?: {
+      subscriptionStatus: string | null;
+      syncError: string | null;
+      status: string;
     };
     order?: {
       id: string;
@@ -798,7 +808,7 @@ export class FamilyGroupService {
       include: {
         familyGroup: {
           include: {
-            account: { select: { loginEmail: true } }
+            account: { select: { loginEmail: true, subscriptionStatus: true, syncError: true, status: true } }
           }
         }
       },
@@ -817,7 +827,7 @@ export class FamilyGroupService {
           include: {
             familyGroup: {
               include: {
-                account: { select: { loginEmail: true } }
+                account: { select: { loginEmail: true, subscriptionStatus: true, syncError: true, status: true } }
               }
             }
           },
@@ -874,6 +884,14 @@ export class FamilyGroupService {
               status: fg.status,
               memberCount: fg.memberCount,
               maxMembers: fg.maxMembers,
+              lastSyncedAt: fg.lastSyncedAt?.toISOString() ?? null,
+            }
+          : undefined,
+        account: fg?.account
+          ? {
+              subscriptionStatus: fg.account.subscriptionStatus ?? null,
+              syncError: fg.account.syncError ?? null,
+              status: fg.account.status,
             }
           : undefined,
         order: order
@@ -900,7 +918,7 @@ export class FamilyGroupService {
       include: {
         redeemCode: { select: { code: true, codeType: true } },
         familyGroup: {
-          include: { account: { select: { loginEmail: true } } }
+          include: { account: { select: { loginEmail: true, subscriptionStatus: true, syncError: true, status: true } } }
         }
       },
       orderBy: { createdAt: "desc" }
@@ -918,7 +936,7 @@ export class FamilyGroupService {
           include: {
             redeemCode: { select: { code: true, codeType: true } },
             familyGroup: {
-              include: { account: { select: { loginEmail: true } } }
+              include: { account: { select: { loginEmail: true, subscriptionStatus: true, syncError: true, status: true } } }
             }
           }
         });
@@ -941,6 +959,14 @@ export class FamilyGroupService {
             status: fg.status,
             memberCount: fg.memberCount,
             maxMembers: fg.maxMembers,
+            lastSyncedAt: fg.lastSyncedAt?.toISOString() ?? null,
+          }
+        : undefined,
+      account: fg?.account
+        ? {
+            subscriptionStatus: fg.account.subscriptionStatus ?? null,
+            syncError: fg.account.syncError ?? null,
+            status: fg.account.status,
           }
         : undefined,
       order: {
@@ -1160,7 +1186,7 @@ export class FamilyGroupService {
     // 4. Use crossBulkInvite to auto-find a group and enqueue invite
     //    This reuses existing logic: finds ACTIVE groups, excludes the source group's account
     //    if it's suspended, reserves slots atomically, etc.
-    const inviteResult = await this.crossBulkInvite([memberEmail], validDays);
+    const inviteResult = await this.crossBulkInvite([memberEmail], validDays, member.expiresAt);
 
     // Extract the invite target info
     if (inviteResult.allocated.length > 0) {
@@ -1182,6 +1208,27 @@ export class FamilyGroupService {
         orderBy: { createdAt: "desc" },
         select: { id: true },
       });
+
+      if (task) {
+        // Create a tracking TransferBatch so this migration is counted in stats
+        const batch = await this.prisma.transferBatch.create({
+          data: {
+            sourceGroupId: groupId,
+            targetGroupId: alloc.groupId,
+            memberEmails: JSON.stringify([memberEmail]),
+            totalMembers: 1,
+            phase: "COMPLETED",
+            removedCount: 1,
+            invitedCount: 1,
+          },
+        });
+
+        // Link the task to the batch so it's excluded from "Console Invites"
+        await this.prisma.task.update({
+          where: { id: task.id },
+          data: { transferBatchId: batch.id },
+        });
+      }
 
       return {
         removedFromGroupId: groupId,

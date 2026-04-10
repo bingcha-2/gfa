@@ -557,6 +557,11 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                         <div className="account-primary">
                           <div className="strong account-name">{account.name}</div>
                           <div className="muted mono account-meta">{account.adspowerProfileId}</div>
+                          {(account as any).notes && (
+                            <div className="muted" style={{ fontSize: "0.80rem", marginTop: "4px", backgroundColor: "var(--surface-2, #f5f5f4)", padding: "2px 6px", borderRadius: "4px", display: "inline-block" }}>
+                              备注: {(account as any).notes}
+                            </div>
+                          )}
                         </div>
                       </td>
                       <td>

@@ -11,7 +11,8 @@ import { OrderService } from "./order.service";
   imports: [
     BullModule.registerQueue(
       { name: QUEUE_NAMES.invite },
-      { name: QUEUE_NAMES.replace }
+      { name: QUEUE_NAMES.replace },
+      { name: QUEUE_NAMES.sync }
     ),
     RedeemCodeModule,
     FamilyGroupModule

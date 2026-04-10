@@ -68,11 +68,12 @@ export class RedeemCodeController {
     @Query("pageSize") pageSize?: string,
     @Query("status") status?: string,
     @Query("codeType") codeType?: string,
-    @Query("skipStats") skipStats?: string
+    @Query("skipStats") skipStats?: string,
+    @Query("search") search?: string
   ) {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 30;
-    return this.redeemCodeService.findAll(pageNum, sizeNum, status, codeType, skipStats === "true");
+    return this.redeemCodeService.findAll(pageNum, sizeNum, status, codeType, skipStats === "true", search?.trim());
   }
 
   @Post("batch-create")

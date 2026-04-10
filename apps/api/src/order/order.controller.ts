@@ -133,6 +133,7 @@ export class OrderController {
     return this.orderService.findSwapStatus(orderNo);
   }
 
+
   /** SUBSCRIPTION code holder self-service swap (no extra code needed) */
   @Public()
   @Throttle({ default: { ttl: 60000, limit: 5 } })
@@ -144,7 +145,21 @@ export class OrderController {
     });
   }
 
+  /** Public self-service: check if member needs migration */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post("public/check-migration")
+  checkMigration(@Body() dto: { email: string }) {
+    return this.orderService.checkMigration(dto.email ?? "");
+  }
 
+  /** Public self-service: execute migration */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @Post("public/self-migrate")
+  selfMigrate(@Body() dto: { email: string }) {
+    return this.orderService.selfMigrate(dto.email ?? "");
+  }
 
 
   // ---- Admin endpoints ----

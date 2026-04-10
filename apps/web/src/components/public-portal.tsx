@@ -15,9 +15,10 @@ import { OrderStatusPanel } from "./order-status-panel";
 import { RedeemForm, type RedeemSuccessPayload } from "./redeem-form";
 import { StatusLookupForm } from "./status-lookup-form";
 import { SwapAccountForm, type SwapSuccessPayload } from "./swap-account-form";
+import { MigrationCheckForm } from "./migration-check-form";
 
 type PublicPortalProps = {
-  defaultTab?: "submit" | "track" | "swap";
+  defaultTab?: "submit" | "track" | "swap" | "migrate";
 };
 
 const submitChecklist = [
@@ -50,8 +51,23 @@ const swapChecklist = [
   }
 ];
 
+const migrateChecklist = [
+  {
+    title: "输入邮箱",
+    detail: "输入你之前开通会员时使用的 Gmail 邮箱。"
+  },
+  {
+    title: "自动检测",
+    detail: "系统会检测你所在家庭组的母号状态，如果母号异常会自动开放迁移入口。"
+  },
+  {
+    title: "一键迁移",
+    detail: "点击迁移后系统自动将你转移到正常的家庭组，到期时间不受影响。"
+  }
+];
+
 export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
-  const [activeTab, setActiveTab] = useState<"submit" | "track" | "swap">(defaultTab);
+  const [activeTab, setActiveTab] = useState<"submit" | "track" | "swap" | "migrate">(defaultTab);
   const [recentOrders, setRecentOrders] = useState<PublicOrderRecord[]>([]);
   const [trackedOrderNo, setTrackedOrderNo] = useState<string | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -146,19 +162,23 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
     recentOrders.find((item) => item.orderNo === trackedOrderNo) ?? null;
 
   const sideLabel =
-    activeTab === "submit" ? "提交说明" : activeTab === "swap" ? "换号说明" : "最近记录";
+    activeTab === "submit" ? "提交说明" : activeTab === "swap" ? "换号说明" : activeTab === "migrate" ? "售后说明" : "最近记录";
   const sideTitle =
     activeTab === "submit"
       ? "提交前确认这三项"
       : activeTab === "swap"
         ? "换号前确认这三项"
-        : "最近查询过的订单";
+        : activeTab === "migrate"
+          ? "自助售后三步骤"
+          : "最近查询过的订单";
   const sideNotice =
     activeTab === "submit"
       ? "提交成功后会自动切到「查询进度」，并开始刷新订单状态。"
       : activeTab === "swap"
         ? "换号成功后会跳到「查询进度」，追踪换号任务执行情况。"
-        : "最近记录会留在当前浏览器里，但按卡密查询本身已经支持跨设备。";
+        : activeTab === "migrate"
+          ? "检测到异常后可一键迁移，迁移不会影响您的到期时间。"
+          : "最近记录会留在当前浏览器里，但按卡密查询本身已经支持跨设备。";
 
   return (
     <main className="page-shell compact public-shell">
@@ -206,7 +226,16 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
             role="tab"
             type="button"
           >
-            切换账号
+            无限额度
+          </button>
+          <button
+            aria-selected={activeTab === "migrate"}
+            className={`tab-chip${activeTab === "migrate" ? " active" : ""}`}
+            onClick={() => setActiveTab("migrate")}
+            role="tab"
+            type="button"
+          >
+            自助售后
           </button>
           <button
             aria-selected={activeTab === "track"}
@@ -242,6 +271,18 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
               ) : activeTab === "swap" ? (
                 <div className="plain-list">
                   {swapChecklist.map((item, index) => (
+                    <div className="plain-item" key={item.title}>
+                      <div className="plain-index" style={{ color: '#000' }}>0{index + 1}</div>
+                      <div>
+                        <h3>{item.title}</h3>
+                        <p>{item.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeTab === "migrate" ? (
+                <div className="plain-list">
+                  {migrateChecklist.map((item, index) => (
                     <div className="plain-item" key={item.title}>
                       <div className="plain-index" style={{ color: '#000' }}>0{index + 1}</div>
                       <div>
@@ -290,6 +331,8 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
               />
             ) : activeTab === "swap" ? (
               <SwapAccountForm onSuccess={handleSwapSuccess} />
+            ) : activeTab === "migrate" ? (
+              <MigrationCheckForm />
             ) : (
               <section className="form-card">
                 <div className="panel-stack">

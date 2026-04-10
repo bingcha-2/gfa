@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 
 import { formatDateTime } from "../lib/format";
 import { canManageCodes } from "../lib/permissions";
@@ -33,6 +33,9 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
   const [activeTab, setActiveTab] = useState<"inventory" | "create">("inventory");
   const [typeFilter, setTypeFilter] = useState<CodeTypeFilter>("ALL");
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canManage = canManageCodes(role);
 
   // Server state
@@ -58,11 +61,14 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
   async function loadData() {
     setIsLoading(true);
     try {
-      const url = `redeem-codes?page=${currentPage}&pageSize=${PAGE_SIZE}${typeFilter !== "ALL" ? `&codeType=${typeFilter}` : ""}`;
+      let url = `redeem-codes?page=${currentPage}&pageSize=${PAGE_SIZE}${typeFilter !== "ALL" ? `&codeType=${typeFilter}` : ""}`;
+      if (searchTerm) {
+        url += `&search=${encodeURIComponent(searchTerm)}`;
+      }
       const res = await apiRequest<{ items: RedeemCodeSummary[], total: number, stats: any }>(url);
       setCodes(res.items);
       setTotalItems(res.total);
-      setStats(res.stats);
+      if (res.stats) setStats(res.stats);
     } catch (err) {
       console.error(err);
     } finally {
@@ -70,11 +76,26 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
     }
   }
 
+  function handleSearchInput(value: string) {
+    setSearchInput(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearchTerm(value.trim());
+      setCurrentPage(1);
+    }, 400);
+  }
+
+  function clearSearch() {
+    setSearchInput("");
+    setSearchTerm("");
+    setCurrentPage(1);
+  }
+
   useEffect(() => {
     if (activeTab === "inventory") {
       loadData();
     }
-  }, [currentPage, typeFilter, activeTab]);
+  }, [currentPage, typeFilter, activeTab, searchTerm]);
 
   const totalPages = Math.ceil(totalItems / PAGE_SIZE);
 
@@ -356,48 +377,109 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
           )
         ) : (
           <div className="panel-stack">
-            <div className="split-head" style={{ alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
-              <div className="panel-tabs" style={{ marginTop: 0 }}>
-                {typeTabLabels.map(({ key, label }) => (
+            {/* Search bar */}
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  id="code-search"
+                  type="text"
+                  placeholder="搜索卡密编号、订单号或用户邮箱…"
+                  value={searchInput}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "0.5rem 2.25rem 0.5rem 0.75rem",
+                    background: "var(--surface-1, rgba(255,255,255,0.06))",
+                    border: "1px solid var(--border, rgba(255,255,255,0.12))",
+                    borderRadius: "0.5rem",
+                    color: "inherit",
+                    fontSize: "0.875rem",
+                  }}
+                />
+                {searchInput && (
                   <button
-                    key={key}
-                    className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-green" : key === "SUBSCRIPTION" ? " tab-green" : ""}`}
-                    onClick={() => { setTypeFilter(key); setCurrentPage(1); }}
                     type="button"
+                    onClick={clearSearch}
+                    style={{
+                      position: "absolute",
+                      right: "0.5rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "none",
+                      border: "none",
+                      color: "var(--foreground-muted, #a3a3a3)",
+                      cursor: "pointer",
+                      fontSize: "1rem",
+                      lineHeight: 1,
+                      padding: "2px"
+                    }}
+                    title="清除搜索"
                   >
-                    {label}
-                    <span className="muted" style={{ marginLeft: "0.35em", fontSize: "0.8em" }}>
-                      ({stats.types[key] ?? 0})
-                    </span>
+                    ✕
                   </button>
-                ))}
-              </div>
-
-              <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
-                <button
-                  className="button secondary small"
-                  onClick={loadData}
-                  disabled={isLoading}
-                  type="button"
-                >
-                  {isLoading ? '刷新中...' : '刷新这页'}
-                </button>
-                <button
-                  className="button secondary small"
-                  disabled={!codes.length}
-                  onClick={handleExportCsv}
-                  title="导出当前页视图为 CSV"
-                  type="button"
-                >
-                  导出本页 CSV
-                </button>
+                )}
               </div>
             </div>
 
-            <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
-              共 {totalItems} 条 · 未使用 {stats.unused} 条
-              {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
-            </div>
+            {searchTerm ? (
+              <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
+                搜索 "{searchTerm}" · 找到 {totalItems} 条结果
+                {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
+                <button
+                  type="button"
+                  onClick={clearSearch}
+                  className="button secondary small"
+                  style={{ marginLeft: "0.5rem", fontSize: "0.75rem", padding: "2px 8px" }}
+                >
+                  清除搜索
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="split-head" style={{ alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+                  <div className="panel-tabs" style={{ marginTop: 0 }}>
+                    {typeTabLabels.map(({ key, label }) => (
+                      <button
+                        key={key}
+                        className={`panel-tab${typeFilter === key ? " active" : ""}${key === "JOIN_GROUP" ? " tab-sky" : key === "ACCOUNT_SWAP" ? " tab-green" : key === "SUBSCRIPTION" ? " tab-green" : ""}`}
+                        onClick={() => { setTypeFilter(key); setCurrentPage(1); }}
+                        type="button"
+                      >
+                        {label}
+                        <span className="muted" style={{ marginLeft: "0.35em", fontSize: "0.8em" }}>
+                          ({stats.types[key] ?? 0})
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
+                    <button
+                      className="button secondary small"
+                      onClick={loadData}
+                      disabled={isLoading}
+                      type="button"
+                    >
+                      {isLoading ? '刷新中...' : '刷新这页'}
+                    </button>
+                    <button
+                      className="button secondary small"
+                      disabled={!codes.length}
+                      onClick={handleExportCsv}
+                      title="导出当前页视图为 CSV"
+                      type="button"
+                    >
+                      导出本页 CSV
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
+                  共 {totalItems} 条 · 未使用 {stats.unused} 条
+                  {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
+                </div>
+              </>
+            )}
 
             <div className="table-wrap workspace-table-wrap" style={{ minHeight: '300px', position: 'relative' }}>
               {isLoading && (

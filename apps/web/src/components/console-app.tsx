@@ -21,6 +21,7 @@ import { TasksPanel } from "./tasks-panel";
 import { ExpireScanPanel } from "./expire-scan-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";
 import { SchedulerPanel } from "./scheduler-panel";
+import { DailyStatsPanel } from "./daily-stats-panel";
 
 type ConsoleData = {
   user: SessionUser;
@@ -29,7 +30,7 @@ type ConsoleData = {
   groups: FamilyGroupSummary[] | null;
 };
 
-type ConsoleSection = "overview" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings";
+type ConsoleSection = "overview" | "daily-stats" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings";
 
 // --- Bulk operation result types ---
 export type CrossInviteResult = {
@@ -499,6 +500,12 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       metric: `${activeOrders} 处理中`
     },
     {
+      id: "daily-stats" as const,
+      label: "数据汇总",
+      caption: "每日数据",
+      metric: "今日"
+    },
+    {
       id: "accounts" as const,
       label: "母号池",
       caption: "账号管理",
@@ -705,6 +712,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       case "codes":
         return (
           <RedeemCodesPanel role={data.user.role} />
+        );
+      case "daily-stats":
+        return (
+          <DailyStatsPanel />
         );
       case "expire":
         return (
