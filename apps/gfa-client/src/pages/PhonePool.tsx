@@ -181,11 +181,7 @@ export function PhonePool() {
                       <button
                         className="btn btn-ghost btn-xs"
                         title="删除"
-                        onClick={() => {
-                          if (confirm("确定删除此手机号？")) {
-                            deletePhone(phone.id);
-                          }
-                        }}
+                        onClick={() => deletePhone(phone.id)}
                       >
                         <Trash2 size={14} />
                       </button>

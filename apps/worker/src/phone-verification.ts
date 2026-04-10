@@ -215,13 +215,19 @@ async function attemptVerification(
   const errorText = await getPageError(page);
   if (errorText) {
     await logger.log("WARN", `[phone-verify] Page error after sending: ${errorText}`);
-    return { success: false, error: `Phone rejected: ${errorText}` };
+    return { success: false, error: errorText };
   }
 
   // Step 4: Poll for SMS code
   await logger.log("INFO", `[phone-verify] Polling SMS from ${phone.smsUrl}`);
   const code = await pollSmsCode(phone.smsUrl, logger);
   if (!code) {
+    // Before giving up, check if Google showed an error while we were polling
+    const lateError = await getPageError(page);
+    if (lateError) {
+      await logger.log("WARN", `[phone-verify] Page error detected after SMS timeout: ${lateError}`);
+      return { success: false, error: lateError };
+    }
     return { success: false, error: "SMS code not received within timeout" };
   }
 
@@ -243,8 +249,12 @@ async function attemptVerification(
     return { success: true };
   }
 
-  // Check for error
+  // Check for error — include page body for debugging
   const postError = await getPageError(page);
+  if (!postError) {
+    const bodyPreview = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    await logger.log("DEBUG", `[phone-verify] No error element found. Page body: ${bodyPreview.substring(0, 500)}`);
+  }
   return { success: false, error: postError ?? "Verification did not succeed" };
 }
 
@@ -389,6 +399,7 @@ async function clickSendCode(page: Page, logger: TaskLogger): Promise<void> {
 async function pollSmsCode(smsUrl: string, logger: TaskLogger): Promise<string | null> {
   const deadline = Date.now() + SMS_POLL_TIMEOUT_MS;
   let lastMessage = "";
+  let consecutiveFailCount = 0;
 
   while (Date.now() < deadline) {
     try {
@@ -396,13 +407,28 @@ async function pollSmsCode(smsUrl: string, logger: TaskLogger): Promise<string |
       const text = await resp.text();
 
       let message = "";
+      let isApiError = false;
 
       // Try parsing as JSON first
       try {
         const data = JSON.parse(text) as { message?: string; status?: string; code?: string; sms?: string };
+
+        // Detect SMS API returning explicit failure/error status
+        if (data.status === "fail" || data.status === "error") {
+          consecutiveFailCount++;
+          if (consecutiveFailCount >= 3) {
+            await logger.log("WARN", `[phone-verify] SMS API returned fail/error ${consecutiveFailCount} times — number may not receive SMS`);
+            // Don't return null immediately on first fail; Google might be slow to send
+            // But after 3 consecutive fails, keep polling (the deadline will handle timeout)
+          }
+          isApiError = true;
+        } else {
+          consecutiveFailCount = 0;
+        }
+
         if (data.code) {
           message = data.code;
-        } else if (data.message) {
+        } else if (data.message && !isApiError) {
           message = data.message;
         } else if (data.sms) {
           message = data.sms;
@@ -410,6 +436,7 @@ async function pollSmsCode(smsUrl: string, logger: TaskLogger): Promise<string |
       } catch {
         // Not JSON — treat entire response as the SMS text
         message = text.trim();
+        consecutiveFailCount = 0;
       }
 
       if (message && message !== lastMessage) {
@@ -516,14 +543,46 @@ async function checkVerificationSuccess(page: Page, logger: TaskLogger): Promise
 
 async function getPageError(page: Page): Promise<string | null> {
   try {
-    // Google shows errors in specific elements
+    // Strategy 1: Google shows errors in specific elements
     const errorEl = page.locator(
       '[role="alert"], .OyEIQ, .dEOOab, .o6cuMc, ' +
-      'div[jsname="B34EJ"], span[jsname="B34EJ"]'
+      'div[jsname="B34EJ"], span[jsname="B34EJ"], ' +
+      // Additional selectors for Google's verification error messages
+      '.LXRPh, .GQ8Pzc, .EjBTad, ' +
+      'div[class*="error" i], span[class*="error" i], ' +
+      'div[aria-live="polite"][class*="err" i], div[aria-live="assertive"]'
     );
     if ((await errorEl.count()) > 0) {
       const text = await errorEl.first().innerText();
       if (text.trim()) return text.trim();
+    }
+
+    // Strategy 2: Scan page body for known error patterns
+    // This catches errors displayed in elements we don't have selectors for
+    const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    const errorPatterns = [
+      /this phone number has already been used too many times/i,
+      /too many (failed )?attempts/i,
+      /phone number .* not valid/i,
+      /couldn.t verify .* number/i,
+      /number .* can.t be used/i,
+      /try again later/i,
+      /temporarily blocked/i,
+      /unusual activity/i,
+      /sorry.*couldn.t verify/i,
+      /didn.t recogni[sz]e the number/i,
+      /check the country and number/i,
+    ];
+
+    for (const pattern of errorPatterns) {
+      const match = bodyText.match(pattern);
+      if (match) {
+        // Extract the sentence containing the error for better context
+        const idx = bodyText.indexOf(match[0]);
+        const start = Math.max(0, bodyText.lastIndexOf('.', idx) + 1);
+        const end = Math.min(bodyText.length, bodyText.indexOf('.', idx + match[0].length) + 1 || idx + 200);
+        return bodyText.substring(start, end).trim() || match[0];
+      }
     }
   } catch {
     // ignore
