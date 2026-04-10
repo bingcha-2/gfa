@@ -1415,12 +1415,20 @@ async function probeCloudCodeAPI(
     "https://cloudcode-pa.googleapis.com",
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
   ];
-  const UA = "antigravity/1.20.5 windows/amd64";
-  const HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${accessToken}`,
-    "User-Agent": UA,
-    "Accept-Encoding": "gzip",
+  // loadCodeAssist UA must include google-api-nodejs-client (matches Cockpit)
+  const LOAD_UA = "antigravity/1.20.5 windows/amd64 google-api-nodejs-client/10.3.0";
+  // streamGenerateContent UA is just "antigravity" (matches Cockpit wakeup.rs USER_AGENT)
+  const STREAM_UA = "antigravity";
+
+  // Shared metadata for loadCodeAssist and onboardUser (matches build_cloud_code_metadata)
+  const METADATA = {
+    ideName: "antigravity",
+    ideType: "ANTIGRAVITY",
+    ideVersion: "1.20.5",
+    pluginVersion: "1.20.5",
+    platform: "WINDOWS_AMD64",
+    updateChannel: "stable",
+    pluginType: "GEMINI",
   };
 
   // ── Step 1: loadCodeAssist → get project_id ──────────────────────────
@@ -1429,17 +1437,16 @@ async function probeCloudCodeAPI(
     try {
       const loadResp = await fetch(`${base}/v1internal:loadCodeAssist`, {
         method: "POST",
-        headers: { ...HEADERS, "User-Agent": `${UA} google-api-nodejs-client/10.3.0` },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": LOAD_UA,
+          "x-goog-api-client": "gl-node/22.21.1",
+          "Accept": "*/*",
+          "Accept-Encoding": "gzip, deflate, br",
+        },
         body: JSON.stringify({
-          metadata: {
-            ideName: "antigravity",
-            ideType: "ANTIGRAVITY",
-            ideVersion: "1.100.0",
-            pluginVersion: "1.20.5",
-            platform: "WINDOWS_AMD64",
-            updateChannel: "stable",
-            pluginType: "GEMINI",
-          },
+          metadata: METADATA,
           mode: "FULL_ELIGIBILITY_CHECK",
         }),
         signal: AbortSignal.timeout(15000),
@@ -1472,18 +1479,15 @@ async function probeCloudCodeAPI(
               await logger.log("INFO", `[phone-verify] No project_id, trying onboardUser with tier=${tierId}`);
               const onboardResp = await fetch(`${base}/v1internal:onboardUser`, {
                 method: "POST",
-                headers: HEADERS,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${accessToken}`,
+                  "User-Agent": LOAD_UA,
+                  "Accept-Encoding": "gzip",
+                },
                 body: JSON.stringify({
                   tierId,
-                  metadata: {
-                    ideName: "antigravity",
-                    ideType: "ANTIGRAVITY",
-                    ideVersion: "1.100.0",
-                    pluginVersion: "1.20.5",
-                    platform: "WINDOWS_AMD64",
-                    updateChannel: "stable",
-                    pluginType: "GEMINI",
-                  },
+                  metadata: METADATA,
                 }),
                 signal: AbortSignal.timeout(30000),
               });
@@ -1542,7 +1546,12 @@ async function probeCloudCodeAPI(
     try {
       const resp = await fetch(`${base}/v1internal:streamGenerateContent?alt=sse`, {
         method: "POST",
-        headers: HEADERS,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+          "User-Agent": STREAM_UA,
+          "Accept-Encoding": "gzip",
+        },
         body: JSON.stringify(probeBody),
         signal: AbortSignal.timeout(30000),
       });
