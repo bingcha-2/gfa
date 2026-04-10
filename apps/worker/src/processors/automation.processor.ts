@@ -206,15 +206,16 @@ export async function processAutomation(
 // OAuth handler
 // ============================================================
 
-async function handleOAuth(
+/**
+ * Run the OAuth consent flow and exchange the code for tokens.
+ * Returns { access_token, refresh_token, ... } or null on failure.
+ * Separated from handleOAuth so phone-verify can also obtain a token.
+ */
+async function doOAuthForToken(
   page: import("playwright").Page,
   credentials: LoginCredentials,
-  logger: TaskLogger,
-  prisma: PrismaClient,
-  taskId: string
-): Promise<void> {
-  await logger.log("INFO", "Starting Antigravity OAuth flow");
-
+  logger: TaskLogger
+): Promise<{ access_token: string; refresh_token: string; expires_in: number; email: string } | null> {
   const REDIRECT_URI = "http://127.0.0.1:19876/oauth-callback";
 
   // Build OAuth URL
@@ -226,19 +227,11 @@ async function handleOAuth(
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
-    state: `automation-${taskId}`,
+    state: `automation-${Date.now()}`,
     hl: "en",
   });
   const oauthUrl = `${AUTH_URL}?${oauthParams.toString()}`;
 
-  // ── Route interception ──────────────────────────────────────────
-  // Google will redirect the browser to our redirect_uri after consent.
-  // No local server is listening on 127.0.0.1:19876, so the browser would
-  // show ERR_CONNECTION_REFUSED and page.url() may NOT contain the code.
-  //
-  // Fix: intercept the request via Playwright's page.route() BEFORE it
-  // hits the network, extract the auth code from the URL, and fulfill
-  // the request with a simple HTML page so the browser doesn't error out.
   let authCode: string | null = null;
 
   await page.route("**/oauth-callback**", async (route) => {
@@ -254,7 +247,6 @@ async function handleOAuth(
     } catch {
       // URL parse error — ignore
     }
-    // Fulfill with a simple page so the browser doesn't show an error
     await route.fulfill({
       status: 200,
       contentType: "text/html",
@@ -271,7 +263,6 @@ async function handleOAuth(
 
   // Handle OAuth consent flow (up to 15 attempts)
   for (let attempt = 0; attempt < 15; attempt++) {
-    // If the route handler already captured the code, we're done
     if (authCode) {
       await logger.log("INFO", "Auth code already captured, breaking out of consent loop");
       break;
@@ -385,7 +376,6 @@ async function handleOAuth(
         await page.waitForTimeout(3000);
         continue;
       }
-      // Fallback: click first account
       const firstAccount = page.locator(
         'ul li[role="presentation"], div[data-authuser], div.JDAKTe'
       );
@@ -397,7 +387,7 @@ async function handleOAuth(
       }
     }
 
-    // First-party native app consent: "Sign in" on native app page
+    // First-party native app consent
     if (
       nowUrl.includes("firstparty/nativeapp") ||
       nowUrl.includes("signin/oauth")
@@ -462,11 +452,8 @@ async function handleOAuth(
   }
 
   if (!authCode) {
-    await logger.updateStatus("FAILED_FINAL", {
-      code: "OAUTH_INCOMPLETE",
-      message: `OAuth did not complete. Final URL: ${page.url()}`,
-    });
-    return;
+    await logger.log("WARN", "OAuth consent flow did not produce an auth code");
+    return null;
   }
 
   // Exchange code for tokens
@@ -487,20 +474,40 @@ async function handleOAuth(
 
   if (!tokenResp.ok) {
     const errText = await tokenResp.text();
-    await logger.updateStatus("FAILED_FINAL", {
-      code: "TOKEN_EXCHANGE_FAILED",
-      message: `Token exchange failed: ${errText}`,
-    });
-    return;
+    await logger.log("WARN", `Token exchange failed: ${errText}`);
+    return null;
   }
 
   const tokenData = await tokenResp.json();
-  const token = {
+  return {
     access_token: tokenData.access_token,
     refresh_token: tokenData.refresh_token ?? "",
     expires_in: tokenData.expires_in ?? 3600,
     email: credentials.loginEmail,
   };
+}
+
+/**
+ * Full OAuth task handler — gets token and stores in task payload.
+ */
+async function handleOAuth(
+  page: import("playwright").Page,
+  credentials: LoginCredentials,
+  logger: TaskLogger,
+  prisma: PrismaClient,
+  taskId: string
+): Promise<void> {
+  await logger.log("INFO", "Starting Antigravity OAuth flow");
+
+  const token = await doOAuthForToken(page, credentials, logger);
+
+  if (!token) {
+    await logger.updateStatus("FAILED_FINAL", {
+      code: "OAUTH_INCOMPLETE",
+      message: `OAuth did not complete. Final URL: ${page.url()}`,
+    });
+    return;
+  }
 
   // Store result in task payload so client can retrieve it
   await prisma.task.update({
@@ -1243,12 +1250,19 @@ async function syncOrderAfterAccept(
 // ============================================================
 
 /**
- * Proactively navigate to the Google verification page and complete
- * phone verification. Used as a post-step in accept-invite and as
- * the main step in phone-verify.
+ * Proactively check if a Google account requires phone verification by
+ * probing the cloudcode API with an OAuth token. If VALIDATION_REQUIRED
+ * is returned, extract the validation_url and complete verification in Playwright.
+ *
+ * Flow:
+ *   1. OAuth consent → get access_token (browser is already logged in, fast)
+ *   2. Call cloudcode-pa.googleapis.com/v1internal:generateContent with token
+ *   3. If 403 + VALIDATION_REQUIRED → extract validation_url from error body
+ *   4. Open validation_url in Playwright → phone verification
+ *   5. If 200 or non-validation 403 → account doesn't need verification
+ *
  * @param setTaskStatus  If true, set the task to SUCCESS/FAILED_FINAL.
- *                       Pass false when called as a sub-step (e.g. accept-invite)
- *                       so the parent action's status is preserved.
+ *                       Pass false when called as a sub-step (e.g. accept-invite).
  */
 async function doProactivePhoneVerification(
   page: import("playwright").Page,
@@ -1259,68 +1273,28 @@ async function doProactivePhoneVerification(
   phones: import("@gfa/shared").PhoneInfo[],
   setTaskStatus: boolean
 ): Promise<void> {
-  // Navigate to Google services that commonly trigger verification.
-  // Google auto-redirects to uplevelingstep/selection if the account needs verification.
-  // We do NOT hardcode the uplevelingstep URL — it's per-account and dynamically generated.
-  const triggerPages = [
-    "https://myaccount.google.com/?hl=en",
-    "https://one.google.com/?hl=en",
-  ];
+  // ── Step 1: OAuth to get access_token ──
+  await logger.log("INFO", "[phone-verify] Running OAuth to get access token for API probe...");
+  const token = await doOAuthForToken(page, credentials, logger);
 
-  await logger.log("INFO", `[phone-verify] Navigating to Google services to check if verification is needed...`);
-
-  for (const triggerUrl of triggerPages) {
-    await page.goto(triggerUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    await page.waitForTimeout(3000);
-
-    if (isVerificationPage(page.url())) {
-      break; // Google redirected us to verification
+  if (!token) {
+    await logger.log("WARN", "[phone-verify] OAuth failed — cannot probe API for verification status");
+    if (setTaskStatus) {
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "OAUTH_FAILED",
+        message: "Could not obtain OAuth token for verification probe",
+      });
     }
+    return;
   }
 
-  const currentUrl = page.url();
+  await logger.log("INFO", "[phone-verify] Got access token, probing cloudcode API...");
 
-  if (isVerificationPage(currentUrl)) {
-    const result = await handlePhoneVerification(page, phones, logger);
+  // ── Step 2: Probe cloudcode API ──
+  const probeResult = await probeCloudCodeAPI(token.access_token, logger);
 
-    // Store result under `.result` so getTaskStatus() can return it to the client
-    // Merge into existing payload to avoid overwriting parent action data
-    const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
-    let payloadObj: Record<string, unknown> = {};
-    try { payloadObj = JSON.parse(existingPayload?.payload ?? "{}"); } catch {}
-    payloadObj.phoneVerifyResult = {
-      needed: result.needed,
-      resolved: result.resolved,
-      usedPhone: result.usedPhone,
-      disabledPhones: result.disabledPhones,
-    };
-    // Also put under `result` for dedicated phone-verify tasks
-    if (setTaskStatus) {
-      payloadObj.result = payloadObj.phoneVerifyResult;
-    }
-
-    await prisma.task.update({
-      where: { id: taskId },
-      data: { payload: JSON.stringify(payloadObj) },
-    });
-
-    if (result.resolved) {
-      if (setTaskStatus) await logger.updateStatus("SUCCESS");
-      await logger.log("INFO", `[phone-verify] ✅ Verification completed for ${credentials.loginEmail}`);
-    } else {
-      if (setTaskStatus) {
-        await logger.updateStatus("FAILED_FINAL", {
-          code: "PHONE_VERIFY_FAILED",
-          message: result.error ?? "Phone verification failed",
-        });
-      }
-      await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
-    }
-  } else {
-    // Not on verification page — account already verified
+  if (!probeResult.needsVerification) {
+    // Account is fine — no verification needed
     if (setTaskStatus) {
       const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
       let payloadObj: Record<string, unknown> = {};
@@ -1336,8 +1310,191 @@ async function doProactivePhoneVerification(
       });
       await logger.updateStatus("SUCCESS");
     }
-    await logger.log("INFO", `[phone-verify] Account ${credentials.loginEmail} does not require verification (at: ${currentUrl})`);
+    await logger.log("INFO", `[phone-verify] Account ${credentials.loginEmail} does not require verification`);
+    return;
   }
+
+  // ── Step 3: Need verification — open validation_url ──
+  if (!probeResult.validationUrl) {
+    await logger.log("WARN", "[phone-verify] VALIDATION_REQUIRED but no validation_url found in error response");
+    if (setTaskStatus) {
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "NO_VALIDATION_URL",
+        message: "VALIDATION_REQUIRED detected but could not extract validation_url",
+      });
+    }
+    return;
+  }
+
+  await logger.log("INFO", `[phone-verify] Opening validation URL: ${probeResult.validationUrl.substring(0, 80)}...`);
+  await page.goto(probeResult.validationUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+  await page.waitForTimeout(3000);
+
+  // Verify we landed on a verification page
+  const currentUrl = page.url();
+  if (!isVerificationPage(currentUrl)) {
+    await logger.log("WARN", `[phone-verify] validation_url did not lead to verification page (at: ${currentUrl})`);
+    if (setTaskStatus) {
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "VALIDATION_REDIRECT_FAILED",
+        message: `validation_url redirected to unexpected page: ${currentUrl}`,
+      });
+    }
+    return;
+  }
+
+  // ── Step 4: Do phone verification ──
+  const result = await handlePhoneVerification(page, phones, logger);
+
+  // Store result — merge into existing payload
+  const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
+  let payloadObj: Record<string, unknown> = {};
+  try { payloadObj = JSON.parse(existingPayload?.payload ?? "{}"); } catch {}
+  payloadObj.phoneVerifyResult = {
+    needed: result.needed,
+    resolved: result.resolved,
+    usedPhone: result.usedPhone,
+    disabledPhones: result.disabledPhones,
+  };
+  if (setTaskStatus) {
+    payloadObj.result = payloadObj.phoneVerifyResult;
+  }
+
+  await prisma.task.update({
+    where: { id: taskId },
+    data: { payload: JSON.stringify(payloadObj) },
+  });
+
+  if (result.resolved) {
+    if (setTaskStatus) await logger.updateStatus("SUCCESS");
+    await logger.log("INFO", `[phone-verify] ✅ Verification completed for ${credentials.loginEmail}`);
+  } else {
+    if (setTaskStatus) {
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "PHONE_VERIFY_FAILED",
+        message: result.error ?? "Phone verification failed",
+      });
+    }
+    await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
+  }
+}
+
+// ============================================================
+// Cloudcode API probe — detect VALIDATION_REQUIRED
+// ============================================================
+
+/**
+ * Call cloudcode-pa.googleapis.com to check if the account needs validation.
+ * Returns { needsVerification, validationUrl } based on the API response.
+ */
+async function probeCloudCodeAPI(
+  accessToken: string,
+  logger: TaskLogger
+): Promise<{ needsVerification: boolean; validationUrl?: string }> {
+  // Use the same endpoint fallback order as Antigravity-Manager
+  const CLOUDCODE_ENDPOINTS = [
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
+    "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+  ];
+
+  // Minimal probe body — just enough to trigger the API check
+  const probeBody = {
+    model: "models/gemini-2.0-flash",
+    contents: [{ role: "user", parts: [{ text: "hi" }] }],
+    generationConfig: { maxOutputTokens: 1 },
+  };
+
+  for (const endpoint of CLOUDCODE_ENDPOINTS) {
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(probeBody),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (resp.ok) {
+        await logger.log("INFO", "[phone-verify] API probe returned 200 — no verification needed");
+        return { needsVerification: false };
+      }
+
+      if (resp.status === 403) {
+        const errorText = await resp.text();
+
+        if (
+          errorText.includes("VALIDATION_REQUIRED") ||
+          errorText.includes("verify your account") ||
+          errorText.includes("validation_url")
+        ) {
+          await logger.log("INFO", "[phone-verify] API probe returned 403 VALIDATION_REQUIRED");
+          const validationUrl = extractValidationUrl(errorText);
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined };
+        }
+
+        // 403 but not validation — might be region/quota issue, try next
+        await logger.log("DEBUG", `[phone-verify] API probe 403 at ${endpoint} (not validation)`);
+        continue;
+      }
+
+      if (resp.status === 429) {
+        await logger.log("DEBUG", `[phone-verify] API probe 429 at ${endpoint}, trying next`);
+        continue;
+      }
+
+      await logger.log("DEBUG", `[phone-verify] API probe ${resp.status} at ${endpoint}, trying next`);
+      continue;
+
+    } catch (err) {
+      await logger.log("DEBUG", `[phone-verify] API probe error at ${endpoint}: ${err}`);
+      continue;
+    }
+  }
+
+  await logger.log("WARN", "[phone-verify] All cloudcode endpoints failed — assuming no verification needed");
+  return { needsVerification: false };
+}
+
+/**
+ * Extract validation_url from a Google API error response body.
+ * Matches the extraction logic in Antigravity-Manager's token_manager.rs.
+ */
+function extractValidationUrl(errorText: string): string | null {
+  try {
+    const parsed = JSON.parse(errorText);
+
+    // Structured path: error.details[].metadata.validation_url
+    const details = parsed?.error?.details;
+    if (Array.isArray(details)) {
+      for (const detail of details) {
+        const url = detail?.metadata?.validation_url;
+        if (url && typeof url === "string") {
+          return url.replace(/\\u0026/g, "&");
+        }
+      }
+    }
+
+    // Top-level fallback
+    if (parsed?.validation_url) {
+      return String(parsed.validation_url).replace(/\\u0026/g, "&");
+    }
+  } catch {
+    // Not JSON — try regex
+  }
+
+  // Regex fallback: any Google accounts URL
+  const urlMatch = errorText.match(/https:\/\/accounts\.google\.com\/[^\s"'\\]+/);
+  if (urlMatch) {
+    return urlMatch[0].replace(/\\u0026/g, "&");
+  }
+
+  return null;
 }
 
 // ============================================================
@@ -1346,7 +1503,6 @@ async function doProactivePhoneVerification(
 
 /**
  * Handle the dedicated phone-verify action.
- * Delegates to the shared doProactivePhoneVerification.
  */
 async function handlePhoneVerifyAction(
   page: import("playwright").Page,
@@ -1368,3 +1524,4 @@ async function handlePhoneVerifyAction(
 
   await doProactivePhoneVerification(page, credentials, logger, prisma, taskId, phones, true);
 }
+
