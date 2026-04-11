@@ -368,6 +368,7 @@ export async function processInvite(
           role: "member",
           status: "PENDING",
           expiresAt: memberExpiresAt,
+          joinedAt: new Date(),
           googleMemberId: capturedGaiaId ?? undefined,
         },
       });
@@ -522,6 +523,7 @@ export async function processInvite(
               role: "member",
               status: "PENDING",
               expiresAt: nextMemberExpiresAt,
+              joinedAt: new Date(),
               googleMemberId: batchGaiaId ?? undefined,
             },
           }).catch((e) => batchLogger.log("WARN", `DB upsert failed: ${e instanceof Error ? e.message : String(e)}`));

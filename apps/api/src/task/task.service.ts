@@ -94,6 +94,7 @@ export class TaskService {
     const task = await this.findOne(id);
 
     if (
+      task.status !== "PENDING" &&
       task.status !== "FAILED_RETRYABLE" &&
       task.status !== "FAILED_FINAL" &&
       task.status !== "MANUAL_REVIEW"

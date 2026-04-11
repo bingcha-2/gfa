@@ -440,10 +440,11 @@ export async function reconcileMembers(
   for (const scraped of emailMembers) {
     const newStatus = scraped.isPending ? "PENDING" : "ACTIVE";
 
-    // Check previous status BEFORE upsert to detect PENDING → ACTIVE transitions
+    // Check previous record BEFORE upsert to detect PENDING → ACTIVE transitions
+    // and to preserve joinedAt (should only be set once on first join)
     const previousRecord = await prisma.familyMember.findUnique({
       where: { familyGroupId_email: { familyGroupId, email: scraped.email } },
-      select: { status: true },
+      select: { status: true, joinedAt: true },
     });
 
     await prisma.familyMember.upsert({
@@ -455,7 +456,8 @@ export async function reconcileMembers(
         // Fix #2: Only overwrite googleMemberId if scraped value is valid.
         // Prevents a failed scrape from clearing a previously correct GAIA ID.
         ...(scraped.googleMemberId ? { googleMemberId: scraped.googleMemberId } : {}),
-        ...(newStatus === "ACTIVE" ? { joinedAt: new Date() } : {}),
+        // Only set joinedAt on first activation — never overwrite an existing value
+        ...(newStatus === "ACTIVE" && !previousRecord?.joinedAt ? { joinedAt: new Date() } : {}),
       },
       create: {
         familyGroupId,
@@ -530,17 +532,22 @@ export async function reconcileMembers(
       where: { familyGroupId_email: { familyGroupId, email: hints.justInvitedEmail } },
     });
     if (invitedRecord && !claimedIds.has(invitedRecord.id)) {
-      // Find pending gaiaOnly members that aren't yet claimed
-      const unclaimedPendingGaia = gaiaOnlyMembers.filter(
-        (m) => m.isPending && !claimedIds.has(m.googleMemberId)
+      // Find gaiaOnly members that aren't yet claimed
+      const unclaimedGaia = gaiaOnlyMembers.filter(
+        (m) => !claimedIds.has(m.googleMemberId)
       );
-      if (unclaimedPendingGaia.length === 1) {
-        const scrape = unclaimedPendingGaia[0];
+      // Prioritize pending ones, but if none are pending, just use the unclaimed ones
+      const candidates = unclaimedGaia.filter((m) => m.isPending).length > 0 
+        ? unclaimedGaia.filter((m) => m.isPending) 
+        : unclaimedGaia;
+
+      if (candidates.length === 1) {
+        const scrape = candidates[0];
         await prisma.familyMember.update({
           where: { id: invitedRecord.id },
           data: {
             googleMemberId: scrape.googleMemberId,
-            status: "PENDING",
+            status: scrape.isPending ? "PENDING" : "ACTIVE",
             displayName: scrape.displayName || invitedRecord.displayName || undefined,
           },
         });
@@ -549,10 +556,11 @@ export async function reconcileMembers(
         const idx = gaiaOnlyMembers.indexOf(scrape);
         if (idx >= 0) gaiaOnlyMembers.splice(idx, 1);
         await logger.log("INFO",
-          `T0 context-match: gaia=${scrape.googleMemberId} → ${hints.justInvitedEmail} (just invited, pending)`);
-      } else if (unclaimedPendingGaia.length > 1) {
+          `T0 context-match: gaia=${scrape.googleMemberId} → ${hints.justInvitedEmail} ` +
+          `(just invited, pending=${scrape.isPending})`);
+      } else if (candidates.length > 1) {
         await logger.log("INFO",
-          `T0: ${unclaimedPendingGaia.length} pending gaiaOnly members — cannot disambiguate, falling to T1+`);
+          `T0: ${candidates.length} gaiaOnly members — cannot disambiguate, falling to T1+`);
       }
     }
   }

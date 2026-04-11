@@ -22,6 +22,7 @@ import { ExpireScanPanel } from "./expire-scan-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";
 import { SchedulerPanel } from "./scheduler-panel";
 import { DailyStatsPanel } from "./daily-stats-panel";
+import { UserManagementPanel } from "./user-management-panel";
 
 type ConsoleData = {
   user: SessionUser;
@@ -30,7 +31,7 @@ type ConsoleData = {
   groups: FamilyGroupSummary[] | null;
 };
 
-type ConsoleSection = "overview" | "daily-stats" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings";
+type ConsoleSection = "overview" | "daily-stats" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings" | "users";
 
 // --- Bulk operation result types ---
 export type CrossInviteResult = {
@@ -490,77 +491,52 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const recentOrders = data.stats?.recentOrders ?? [];
   const reviewQueue = data.stats?.reviewQueue ?? [];
 
-  const isAdminOrOps = data.user.role === "ADMIN" || data.user.role === "OPERATIONS";
+  const isSuperAdmin = data.user.role === "SUPER_ADMIN";
+  const isAdminOrOps = isSuperAdmin || data.user.role === "ADMIN" || data.user.role === "OPERATIONS";
 
-  const navigation = [
-    {
-      id: "overview" as const,
-      label: "总览",
-      caption: "运营概览",
-      metric: `${activeOrders} 处理中`
-    },
-    {
-      id: "daily-stats" as const,
-      label: "数据汇总",
-      caption: "每日数据",
-      metric: "今日"
-    },
-    {
-      id: "accounts" as const,
-      label: "母号池",
-      caption: "账号管理",
-      metric: `${data.stats?.totals?.accounts ?? 0} 个`
-    },
-    {
-      id: "groups" as const,
-      label: "家庭组",
-      caption: "家庭组管理",
-      metric: `${availableSlots} 空位`
-    },
-    {
-      id: "orders" as const,
-      label: "订单",
-      caption: "订单管理",
-      metric: `${data.stats?.totals?.orders ?? 0} 条`
-    },
-    {
-      id: "tasks" as const,
-      label: "任务",
-      caption: "自动化任务",
-      metric: `${manualReviewTasks} 待处理`
-    },
-    {
-      id: "codes" as const,
-      label: "卡密",
-      caption: "卡密管理",
-      metric: `${unusedCodes} 未使用`
-    },
-    {
-      id: "expire" as const,
-      label: "到期扫描",
-      caption: "过期订单",
-      metric: `${data.stats?.totals?.expiredOrders ?? 0} 已过期`
-    },
-    // Scheduler requires ADMIN/OPERATIONS — hide from SUPPORT to avoid 403 errors
-    ...(isAdminOrOps ? [{
-      id: "scheduler" as const,
-      label: "自动维护",
-      caption: "定时调度",
-      metric: ""
-    }] : []),
-    {
-      id: "lookup" as const,
-      label: "成员管理",
-      caption: "查询 & 操作",
-      metric: ""
-    },
-    {
-      id: "settings" as const,
-      label: "修改密码",
-      caption: "安全设置",
-      metric: ""
-    }
+  // Permission-based section visibility
+  const userPerms: string[] | null = (data.user as any).permissions ?? null;
+  function hasPermission(permKey: string): boolean {
+    if (isSuperAdmin) return true;
+    if (!userPerms || userPerms.length === 0) return true; // null/empty = all permissions
+    return userPerms.includes(permKey);
+  }
+
+  // Permission-to-section mapping
+  const SECTION_PERM_MAP: Record<string, string> = {
+    overview: "overview",
+    "daily-stats": "daily_stats",
+    accounts: "accounts",
+    groups: "groups",
+    orders: "orders",
+    tasks: "tasks",
+    codes: "codes",
+    expire: "expire",
+    scheduler: "scheduler",
+    lookup: "lookup",
+  };
+
+  const allNavItems = [
+    { id: "overview" as const, label: "总览", caption: "运营概览", metric: `${activeOrders} 处理中` },
+    { id: "daily-stats" as const, label: "数据汇总", caption: "每日数据", metric: "今日" },
+    { id: "accounts" as const, label: "母号池", caption: "账号管理", metric: `${data.stats?.totals?.accounts ?? 0} 个` },
+    { id: "groups" as const, label: "家庭组", caption: "家庭组管理", metric: `${availableSlots} 空位` },
+    { id: "orders" as const, label: "订单", caption: "订单管理", metric: `${data.stats?.totals?.orders ?? 0} 条` },
+    { id: "tasks" as const, label: "任务", caption: "自动化任务", metric: `${manualReviewTasks} 待处理` },
+    { id: "codes" as const, label: "卡密", caption: "卡密管理", metric: `${unusedCodes} 未使用` },
+    { id: "expire" as const, label: "到期扫描", caption: "过期订单", metric: `${data.stats?.totals?.expiredOrders ?? 0} 已过期` },
+    ...(isAdminOrOps ? [{ id: "scheduler" as const, label: "自动维护", caption: "定时调度", metric: "" }] : []),
+    { id: "lookup" as const, label: "成员管理", caption: "查询 & 操作", metric: "" },
+    ...(isSuperAdmin ? [{ id: "users" as const, label: "用户管理", caption: "管理员账号", metric: "" }] : []),
+    { id: "settings" as const, label: "修改密码", caption: "安全设置", metric: "" },
   ];
+
+  // Filter navigation by permissions
+  const navigation = allNavItems.filter((item) => {
+    const permKey = SECTION_PERM_MAP[item.id];
+    if (!permKey) return true; // settings, users — always visible (users already guarded by isSuperAdmin)
+    return hasPermission(permKey);
+  });
 
   function renderWorkspace() {
     switch (activeSection) {
@@ -715,7 +691,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         );
       case "daily-stats":
         return (
-          <DailyStatsPanel />
+          <DailyStatsPanel role={data.user.role} />
         );
       case "expire":
         return (
@@ -826,6 +802,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               </button>
             </form>
           </div>
+        );
+      case "users":
+        return (
+          <UserManagementPanel showToast={showToast} />
         );
       default:
         return null;

@@ -233,11 +233,11 @@ export class AccountService {
       let appPassword: string | undefined;
       let notes: string | undefined;
 
-      if (line.includes("----")) {
-        // Format A: ---- separator, fields 3+4 auto-detected
-        const parts = line.split("----").map((p) => p.trim());
+      if (line.includes("---")) {
+        // Format A: --- or ---- separator, fields 3+4 auto-detected
+        const parts = line.split(/-{3,}/).map((p) => p.trim());
         if (parts.length < 2) {
-          errors.push(`Line ${i + 1}: not enough fields (need at least email----password)`);
+          errors.push(`Line ${i + 1}: not enough fields (need at least email---password)`);
           continue;
         }
         loginEmail = parts[0];
@@ -267,7 +267,7 @@ export class AccountService {
         loginPassword = parts[1];
         totpSecret = parts[2] ? this.extractTotp(parts[2]) : undefined;
       } else {
-        errors.push(`Line ${i + 1}: unrecognized format (expected ---- or —— separator)`);
+        errors.push(`Line ${i + 1}: unrecognized format (expected ---, ---- or —— separator)`);
         continue;
       }
 

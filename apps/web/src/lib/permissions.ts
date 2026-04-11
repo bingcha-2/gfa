@@ -1,6 +1,6 @@
-const adminRoles = new Set(["ADMIN"]);
-const operatorRoles = new Set(["ADMIN", "OPERATIONS"]);
-const supportRoles = new Set(["ADMIN", "OPERATIONS", "SUPPORT"]);
+const adminRoles = new Set(["SUPER_ADMIN", "ADMIN"]);
+const operatorRoles = new Set(["SUPER_ADMIN", "ADMIN", "OPERATIONS"]);
+const supportRoles = new Set(["SUPER_ADMIN", "ADMIN", "OPERATIONS", "SUPPORT"]);
 
 export function canCreateAccount(role?: string | null) {
   return adminRoles.has(role ?? "");

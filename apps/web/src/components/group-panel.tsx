@@ -45,7 +45,7 @@ export function GroupPanel({
   const [activeTab, setActiveTab] = useState<"inventory" | "create" | "batch" | "expiry">("inventory");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
-  const canManage = role === "ADMIN";
+  const canManage = role === "SUPER_ADMIN" || role === "ADMIN";
 
   // --- Expiry tab state ---
   const [expiryFilter, setExpiryFilter] = useState<"expired" | "expiring_soon" | "all">("all");

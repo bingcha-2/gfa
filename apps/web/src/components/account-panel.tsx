@@ -181,10 +181,10 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <p className="muted">每行一个账号，支持以下两种格式：</p>
               </div>
               <div className="bulk-format-hint" style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '12px 16px', fontSize: '0.875rem', fontFamily: 'monospace', lineHeight: 1.8 }}>
-                <div><strong>格式 1：</strong>邮箱----密码----辅助邮箱----2FA密钥</div>
+                <div><strong>格式 1：</strong>邮箱---密码---辅助邮箱---2FA密钥 (支持3个或4个减号)</div>
                 <div><strong>格式 2：</strong>邮箱——密码——2FA密钥</div>
-                <div><strong>格式 3：</strong>邮箱----密码----辅助邮箱----2FA链接</div>
-                <div><strong>格式 4：</strong>邮箱----密码----2FA密钥----辅助邮箱</div>
+                <div><strong>格式 3：</strong>邮箱---密码---辅助邮箱---2FA链接</div>
+                <div><strong>格式 4：</strong>邮箱---密码---2FA密钥---辅助邮箱</div>
                 <div style={{ marginTop: '8px', color: 'var(--text-muted, #888)' }}>字段 3、4 自动识别（含 @ 为辅助邮箱，否则为 2FA 密钥/链接）</div>
               </div>
               <div className="field">

@@ -108,6 +108,173 @@ export class StatsController {
     };
   }
 
+  /**
+   * GET /stats/daily-detail?date=YYYY-MM-DD
+   * Returns per-operation breakdown with operator info. SUPER_ADMIN only.
+   */
+  @Get("daily-detail")
+  @Roles("SUPER_ADMIN")
+  async getDailyDetail(@QueryParam("date") dateStr?: string) {
+    const now = new Date();
+    let year: number, month: number, day: number;
+
+    if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const parts = dateStr.split("-").map(Number);
+      year = parts[0]; month = parts[1] - 1; day = parts[2];
+    } else {
+      const offset = now.getTime() + 8 * 60 * 60 * 1000;
+      const local = new Date(offset);
+      year = local.getUTCFullYear(); month = local.getUTCMonth(); day = local.getUTCDate();
+    }
+
+    const gte = new Date(Date.UTC(year, month, day,     0, 0, 0) - 8 * 60 * 60 * 1000);
+    const lt  = new Date(Date.UTC(year, month, day + 1, 0, 0, 0) - 8 * 60 * 60 * 1000);
+
+    // 1. Console invites with source info
+    const consoleInviteTasks = await this.prisma.task.findMany({
+      where: {
+        type: "INVITE_MEMBER",
+        orderId: null,
+        transferBatchId: null,
+        createdAt: { gte, lt },
+      },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        status: true,
+        payload: true,
+        source: true,
+        createdAt: true,
+        finishedAt: true,
+        familyGroup: { select: { groupName: true } },
+        account: { select: { loginEmail: true } },
+      },
+    });
+
+    // 2. Transfer batches
+    const transfers = await this.prisma.transferBatch.findMany({
+      where: { createdAt: { gte, lt } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        phase: true,
+        totalMembers: true,
+        memberEmails: true,
+        removedCount: true,
+        invitedCount: true,
+        createdAt: true,
+        sourceGroup: { select: { groupName: true } },
+        targetGroup: { select: { groupName: true } },
+      },
+    });
+
+    // 3. Redeem orders (front-end user self-service)
+    const redeemOrders = await this.prisma.order.findMany({
+      where: {
+        orderType: "JOIN",
+        createdAt: { gte, lt },
+      },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        orderNo: true,
+        userEmail: true,
+        status: true,
+        createdAt: true,
+        familyGroup: { select: { groupName: true } },
+      },
+    });
+
+    // 4. Audit logs for the day — to attribute operations to operators
+    const auditLogs = await this.prisma.auditLog.findMany({
+      where: { createdAt: { gte, lt } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        action: true,
+        targetType: true,
+        targetId: true,
+        detail: true,
+        createdAt: true,
+        operator: { select: { displayName: true, email: true, role: true } },
+      },
+    });
+
+    // Parse audit log details
+    const parsedAuditLogs = auditLogs.map((a) => ({
+      ...a,
+      detail: a.detail ? (() => { try { return JSON.parse(a.detail!); } catch { return a.detail; } })() : null,
+      operatorName: a.operator?.displayName ?? "系统",
+      operatorEmail: a.operator?.email ?? null,
+      operatorRole: a.operator?.role ?? null,
+    }));
+
+    // Build console invite detail — match audit logs to tasks for operator attribution
+    const consoleInviteDetail = consoleInviteTasks.map((t) => {
+      const payload = t.payload ? (() => { try { return JSON.parse(t.payload); } catch { return {}; } })() : {};
+      const userEmail = payload.userEmail ?? "";
+      const groupId = payload.familyGroupId ?? t.familyGroup?.groupName ?? "";
+      const taskTime = new Date(t.createdAt).getTime();
+
+      // Strategy 1: Find audit log that references this task ID directly in its detail
+      //   (MIGRATE_MEMBER stores taskId in detail JSON)
+      let matchingAudit = parsedAuditLogs.find((a) => {
+        if (!a.detail || typeof a.detail !== "object") return false;
+        return a.detail.taskId === t.id;
+      });
+
+      // Strategy 2: Match BULK_INVITE by targetId (groupId) + time window
+      if (!matchingAudit) {
+        matchingAudit = parsedAuditLogs.find(
+          (a) => (a.action === "BULK_INVITE") &&
+          a.targetId === (payload.familyGroupId ?? "") &&
+          Math.abs(new Date(a.createdAt).getTime() - taskTime) < 10000
+        );
+      }
+
+      // Strategy 3: Match CROSS_BULK_INVITE by time window (targetId is "*")
+      if (!matchingAudit) {
+        matchingAudit = parsedAuditLogs.find(
+          (a) => a.action === "CROSS_BULK_INVITE" &&
+          Math.abs(new Date(a.createdAt).getTime() - taskTime) < 10000
+        );
+      }
+
+      // Strategy 4: Match any invite-related audit that mentions this email in detail
+      if (!matchingAudit && userEmail) {
+        matchingAudit = parsedAuditLogs.find(
+          (a) => (a.action === "MIGRATE_MEMBER" || a.action === "INVITE_MEMBER" || a.action === "REPLACE_MEMBER") &&
+          a.detail && typeof a.detail === "object" && a.detail.memberEmail === userEmail &&
+          Math.abs(new Date(a.createdAt).getTime() - taskTime) < 30000
+        );
+      }
+
+      return {
+        taskId: t.id,
+        status: t.status,
+        userEmail,
+        groupName: t.familyGroup?.groupName ?? "",
+        account: t.account?.loginEmail ?? "",
+        createdAt: t.createdAt,
+        finishedAt: t.finishedAt,
+        source: t.source,
+        operator: matchingAudit?.operatorName ?? "未知",
+        operatorEmail: matchingAudit?.operatorEmail ?? null,
+      };
+    });
+
+    return {
+      date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      consoleInvites: consoleInviteDetail,
+      transfers: transfers.map((t) => ({
+        ...t,
+        memberEmails: t.memberEmails ? (() => { try { return JSON.parse(t.memberEmails); } catch { return []; } })() : [],
+      })),
+      redeemOrders,
+      auditLogs: parsedAuditLogs,
+    };
+  }
+
   @Get()
   @Roles("ADMIN", "OPERATIONS", "SUPPORT")
   async getOverviewStats() {

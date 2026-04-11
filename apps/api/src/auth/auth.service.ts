@@ -8,6 +8,7 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  permissions: string[] | null;
 }
 
 @Injectable()
@@ -16,6 +17,11 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService
   ) {}
+
+  private parsePermissions(raw: string | null): string[] | null {
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
 
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
@@ -30,10 +36,13 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
+    const permissions = this.parsePermissions(user.permissions);
+
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
+      permissions
     };
 
     return {
@@ -42,7 +51,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         displayName: user.displayName,
-        role: user.role
+        role: user.role,
+        permissions
       }
     };
   }
@@ -55,6 +65,7 @@ export class AuthService {
         email: true,
         displayName: true,
         role: true,
+        permissions: true,
         createdAt: true
       }
     });
@@ -63,7 +74,10 @@ export class AuthService {
       throw new UnauthorizedException("User not found");
     }
 
-    return user;
+    return {
+      ...user,
+      permissions: this.parsePermissions(user.permissions)
+    };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
@@ -89,3 +103,4 @@ export class AuthService {
     return { message: "Password changed successfully" };
   }
 }
+

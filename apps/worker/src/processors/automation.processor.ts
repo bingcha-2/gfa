@@ -1211,6 +1211,7 @@ async function syncOrderAfterAccept(
     }
 
     // Update FamilyMember: PENDING → ACTIVE
+    // Only set joinedAt if it's not already set — preserve original invite timestamp
     const memberUpdate = await prisma.familyMember.updateMany({
       where: {
         email: normalized,
@@ -1218,15 +1219,29 @@ async function syncOrderAfterAccept(
       },
       data: {
         status: "ACTIVE",
-        joinedAt: new Date(),
       },
     });
+
+    // Also set joinedAt for records that don't have one yet
+    if (memberUpdate.count > 0) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE FamilyMember SET joinedAt = datetime('now'), updatedAt = datetime('now')
+         WHERE LOWER(email) = ? AND status = 'ACTIVE' AND joinedAt IS NULL`,
+        normalized
+      ).catch(() => {});
+    }
 
     // Case-insensitive fallback for FamilyMember
     if (memberUpdate.count === 0) {
       await prisma.$executeRawUnsafe(
-        `UPDATE FamilyMember SET status = 'ACTIVE', joinedAt = datetime('now'), updatedAt = datetime('now')
+        `UPDATE FamilyMember SET status = 'ACTIVE', updatedAt = datetime('now')
          WHERE LOWER(email) = ? AND status = 'PENDING'`,
+        normalized
+      ).catch(() => {});
+      // Set joinedAt only if not already set
+      await prisma.$executeRawUnsafe(
+        `UPDATE FamilyMember SET joinedAt = datetime('now'), updatedAt = datetime('now')
+         WHERE LOWER(email) = ? AND status = 'ACTIVE' AND joinedAt IS NULL`,
         normalized
       ).catch(() => {});
     }

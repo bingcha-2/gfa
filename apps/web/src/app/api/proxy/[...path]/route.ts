@@ -22,6 +22,7 @@ const ALLOWED_PATH_PREFIXES = [
   "queue",
   "expire-scan",
   "audit-logs",
+  "users",
   "public",
 ];
 
