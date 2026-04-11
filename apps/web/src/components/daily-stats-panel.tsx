@@ -22,7 +22,11 @@ function todayDateStr(): string {
   return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
 }
 
-export function DailyStatsPanel() {
+type DailyStatsPanelProps = {
+  role?: string;
+};
+
+export function DailyStatsPanel({ role }: DailyStatsPanelProps = {}) {
   const [date, setDate] = useState(todayDateStr());
   const [stats, setStats] = useState<DailyStatsData | null>(null);
   const [error, setError] = useState<string | null>(null);
