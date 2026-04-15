@@ -1,10 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import { startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-import { getErrorMessage } from "../lib/client-api";
+import { getErrorMessage } from "@/lib/client-api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
+import { CircleAlertIcon } from "lucide-react";
 
 function safeParseJson(raw: string) {
   try {
@@ -17,16 +30,9 @@ function safeParseJson(raw: string) {
 function getLoginErrorMessage(payload: unknown, fallback: string) {
   if (payload && typeof payload === "object" && "message" in payload) {
     const message = (payload as { message?: unknown }).message;
-
-    if (Array.isArray(message)) {
-      return message.join(", ");
-    }
-
-    if (typeof message === "string") {
-      return message;
-    }
+    if (Array.isArray(message)) return message.join(", ");
+    if (typeof message === "string") return message;
   }
-
   return fallback;
 }
 
@@ -49,10 +55,10 @@ export function LoginForm() {
         method: "POST",
         headers: {
           accept: "application/json",
-          "content-type": "application/json"
+          "content-type": "application/json",
         },
         body: JSON.stringify({ email: normalizedEmail, password }),
-        cache: "no-store"
+        cache: "no-store",
       });
 
       const raw = await response.text();
@@ -63,7 +69,10 @@ export function LoginForm() {
       }
 
       startTransition(() => {
-        const prefix = (process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "") || "console";
+        const prefix =
+          (
+            process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console"
+          ).replace(/^\/|\/$/g, "") || "console";
         router.push(`/${prefix}`);
         router.refresh();
       });
@@ -77,54 +86,66 @@ export function LoginForm() {
   }
 
   return (
-    <section className="form-card">
-      <div className="panel-stack">
-        <div>
-          <p className="label" suppressHydrationWarning>Credentials</p>
-          <h2 className="public-panel-title" suppressHydrationWarning>后台登录</h2>
-          <p className="muted" suppressHydrationWarning>输入运营账号和密码。</p>
-        </div>
+    <div className="flex min-h-svh flex-col items-center justify-center bg-muted p-6 md:p-10">
+      <div className="w-full max-w-sm">
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">运营控制台</CardTitle>
+            <CardDescription>输入运营账号和密码登录</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={onSubmit}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="login-email">邮箱</FieldLabel>
+                  <Input
+                    id="login-email"
+                    type="email"
+                    placeholder="ops@example.com"
+                    required
+                    autoComplete="email"
+                    inputMode="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value.trimStart())}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="login-password">密码</FieldLabel>
+                  <Input
+                    id="login-password"
+                    type="password"
+                    placeholder="请输入密码"
+                    required
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </Field>
 
-        <form className="field-grid" onSubmit={onSubmit}>
-          <div className="field">
-            <label htmlFor="login-email">邮箱</label>
-            <input
-              id="login-email"
-              autoComplete="email"
-              inputMode="email"
-              placeholder="ops@example.com"
-              required
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value.trimStart())}
-            />
-          </div>
+                {error && (
+                  <Alert variant="destructive">
+                    <CircleAlertIcon />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
 
-          <div className="field">
-            <label htmlFor="login-password">密码</label>
-            <input
-              id="login-password"
-              autoComplete="current-password"
-              placeholder="请输入密码"
-              required
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </div>
+                <Field>
+                  <Button type="submit" className="w-full" disabled={isPending}>
+                    {isPending && <Spinner />}
+                    {isPending ? "登录中…" : "进入控制台"}
+                  </Button>
+                </Field>
 
-          <div className="field-actions">
-            <button className="button" disabled={isPending} type="submit">
-              {isPending ? "登录中..." : "进入控制台"}
-            </button>
-            <Link className="button secondary" href="/">
-              返回首页
-            </Link>
-          </div>
-        </form>
-
-        {error ? <div className="notice error">{error}</div> : null}
+                <Field className="text-center">
+                  <Button variant="link" nativeButton={false} render={<Link href="/" />}>
+                    返回首页
+                  </Button>
+                </Field>
+              </FieldGroup>
+            </form>
+          </CardContent>
+        </Card>
       </div>
-    </section>
+    </div>
   );
 }

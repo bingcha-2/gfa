@@ -8,7 +8,11 @@
     ],
     "jsx": "preserve",
     "incremental": true,
-    "allowJs": true
+    "allowJs": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": [
     "next-env.d.ts",
