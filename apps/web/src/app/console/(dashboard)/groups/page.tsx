@@ -44,6 +44,7 @@ import {
   RefreshCw, Plus, ChevronDown, ChevronRight, UserMinus, ArrowLeftRight, Loader2,
   RotateCcw, ToggleLeft, ToggleRight, Users, Search,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type MemberInfo = { id: string; email: string; displayName?: string | null; role: string; status: string; isInGroup?: boolean; joinedAt?: string | null; expiresAt?: string | null; googleMemberId?: string | null };
 type GroupDetail = { members?: MemberInfo[]; invites?: { id: string; email: string; status: string; createdAt: string }[] };
@@ -320,12 +321,18 @@ export default function GroupsPage() {
                                               {canManage && m.role !== "OWNER" && (
                                                 <TableCell className="text-right">
                                                   <div className="flex items-center justify-end gap-1">
-                                                    <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => { setRemoveGroupId(g.id); setRemoveEmail(m.email); setRemoveDialogOpen(true); }}>
-                                                      <UserMinus className="h-3 w-3" />
-                                                    </Button>
-                                                    <Button variant="ghost" size="sm" className="h-7" onClick={() => { setReplaceGroupId(g.id); setReplaceTargetEmail(m.email); setReplaceNewEmail(""); setReplaceDialogOpen(true); }}>
-                                                      <ArrowLeftRight className="h-3 w-3" />
-                                                    </Button>
+                                                    <Tooltip>
+                                                      <TooltipTrigger render={<Button variant="ghost" size="sm" className="h-7 text-destructive hover:bg-destructive/10" onClick={() => { setRemoveGroupId(g.id); setRemoveEmail(m.email); setRemoveDialogOpen(true); }} />}>
+                                                        <UserMinus className="h-3 w-3" />
+                                                      </TooltipTrigger>
+                                                      <TooltipContent>移除成员</TooltipContent>
+                                                    </Tooltip>
+                                                    <Tooltip>
+                                                      <TooltipTrigger render={<Button variant="ghost" size="sm" className="h-7 text-violet-600 hover:text-violet-700 hover:bg-violet-50" onClick={() => { setReplaceGroupId(g.id); setReplaceTargetEmail(m.email); setReplaceNewEmail(""); setReplaceDialogOpen(true); }} />}>
+                                                        <ArrowLeftRight className="h-3 w-3" />
+                                                      </TooltipTrigger>
+                                                      <TooltipContent>替换成员</TooltipContent>
+                                                    </Tooltip>
                                                   </div>
                                                 </TableCell>
                                               )}

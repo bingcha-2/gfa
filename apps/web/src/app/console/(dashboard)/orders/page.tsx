@@ -29,6 +29,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 import { RefreshCw, Eye, ExternalLink, ArrowLeftRight, RotateCcw } from "lucide-react";
 
@@ -257,29 +258,44 @@ export default function OrdersPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => setDetailOrder(order)}>
-                              <Eye className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href={`/status/${order.orderNo}`} target="_blank" />}>
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </Button>
+                            <Tooltip>
+                              <TooltipTrigger render={<Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-700 hover:bg-blue-50" onClick={() => setDetailOrder(order)} />}>
+                                <Eye className="h-3.5 w-3.5" />
+                              </TooltipTrigger>
+                              <TooltipContent>查看订单详情</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={<Button variant="ghost" size="sm" className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" nativeButton={false} render={<Link href={`/status/${order.orderNo}`} target="_blank" />} />}>
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </TooltipTrigger>
+                              <TooltipContent>在新标签查看状态</TooltipContent>
+                            </Tooltip>
                             {canReplaceMember(user.role) && order.familyGroup && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setReplaceOrderId(order.id);
-                                  setReplaceDialogOpen(true);
-                                }}
-                              >
-                                <ArrowLeftRight className="h-3.5 w-3.5" />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger render={
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                                    onClick={() => {
+                                      setReplaceOrderId(order.id);
+                                      setReplaceDialogOpen(true);
+                                    }}
+                                  />
+                                }>
+                                  <ArrowLeftRight className="h-3.5 w-3.5" />
+                                </TooltipTrigger>
+                                <TooltipContent>替换成员</TooltipContent>
+                              </Tooltip>
                             )}
                             {(order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
                               <AlertDialog>
-                                <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600" />}>
-                                  <RotateCcw className="h-3.5 w-3.5" />
-                                </AlertDialogTrigger>
+                                <Tooltip>
+                                  <TooltipTrigger render={<AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600 hover:bg-orange-50" />} />}>
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>重试订单</TooltipContent>
+                                </Tooltip>
                                 <AlertDialogContent>
                                   <AlertDialogHeader>
                                     <AlertDialogTitle>确认重试订单？</AlertDialogTitle>
