@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Fragment } from "react";
+import React, { Fragment, useState, useEffect } from "react";
 import { ConfirmButton } from "./confirm-button";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
@@ -73,6 +73,7 @@ type InventoryTabProps = {
   setEditExpiresAt: (val: string) => void;
   savingMemberDates: boolean;
   handleSaveMemberDates: (memberId: string, groupId: string) => Promise<void>;
+  showToast: (type: 'success' | 'error', msg: string) => void;
   pageSize: number;
 };
 
@@ -136,8 +137,14 @@ export function InventoryTab({
   setEditExpiresAt,
   savingMemberDates,
   handleSaveMemberDates,
+  showToast,
   pageSize
 }: InventoryTabProps) {
+  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+
+  // Clear selection when switching groups
+  useEffect(() => { setSelectedMembers(new Set()); }, [expandedGroupId]);
+
   return (
     <div className="table-wrap workspace-table-wrap">
       {/* ----- Search bar ----- */}
@@ -254,6 +261,7 @@ export function InventoryTab({
             <option value="HAS_DUPLICATES">🔁 重复成员</option>
             <option value="PASSWORD_ERROR">🔴 密码错误</option>
             <option value="CAPTCHA_REQUIRED">🤖 人机验证</option>
+            <option value="INVITE_COOLDOWN">🚫 邀请受限</option>
             <option value="SUBSCRIPTION_SUSPENDED">⚠️ 订阅暂停</option>
           </select>
         </>)}
@@ -294,6 +302,7 @@ export function InventoryTab({
               }
               else if (filterExtra === 'PASSWORD_ERROR') matchExtra = g.account?.syncError === 'PASSWORD_ERROR';
               else if (filterExtra === 'CAPTCHA_REQUIRED') matchExtra = g.account?.syncError === 'CAPTCHA_REQUIRED';
+              else if (filterExtra === 'INVITE_COOLDOWN') matchExtra = g.account?.syncError === 'INVITE_COOLDOWN';
               else if (filterExtra === 'SUBSCRIPTION_SUSPENDED') matchExtra = g.account?.subscriptionStatus === 'SUSPENDED' || g.account?.syncError === 'SUBSCRIPTION_SUSPENDED';
               return matchEmail && matchStatus && matchExtra;
             })
@@ -379,6 +388,9 @@ export function InventoryTab({
                               }
                               if (syncErr === 'CAPTCHA_REQUIRED') {
                                 return <span style={{ background: 'rgba(245,158,11,0.12)', color: '#d97706', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="需要处理人机验证 (CAPTCHA)">⚠️ 人机验证</span>;
+                              }
+                              if (syncErr === 'INVITE_COOLDOWN') {
+                                return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="该母号邀请频率受限，24小时后自动解除">🚫 邀请受限</span>;
                               }
                               if (syncErr === 'SUBSCRIPTION_SUSPENDED' || group.account?.subscriptionStatus === 'SUSPENDED') {
                                 return <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600, padding: '1px 6px', borderRadius: '4px' }} title="订阅已暂停">⚠️ 订阅暂停</span>;
@@ -554,13 +566,52 @@ export function InventoryTab({
                               ) : (
                                 <>
                                   <div style={{ marginBottom: '12px' }}>
-                                    <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px' }}>
-                                      成员列表 ({groupDetail?.members?.length ?? 0})
+                                    <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                      <span>成员列表 ({groupDetail?.members?.length ?? 0})</span>
+                                      {selectedMembers.size > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 500 }}>
+                                          <span className="muted">已选 <strong>{selectedMembers.size}</strong> 个</span>
+                                          <button
+                                            className="button secondary small"
+                                            type="button"
+                                            style={{ fontSize: '0.75rem', padding: '2px 10px', gap: 4 }}
+                                            onClick={() => {
+                                              const emails = (groupDetail?.members ?? []).filter(m => selectedMembers.has(m.id)).map(m => m.email);
+                                              navigator.clipboard.writeText(emails.join('\n'));
+                                              showToast('success', `已复制 ${emails.length} 个邮箱`);
+                                            }}
+                                          >
+                                            📋 复制邮箱
+                                          </button>
+                                          <button
+                                            className="button secondary small"
+                                            type="button"
+                                            style={{ fontSize: '0.75rem', padding: '2px 10px' }}
+                                            onClick={() => setSelectedMembers(new Set())}
+                                          >
+                                            取消选择
+                                          </button>
+                                        </span>
+                                      )}
                                     </div>
                                     {groupDetail?.members?.length ? (
                                       <table className="data-table" style={{ fontSize: '0.875rem' }}>
                                         <thead>
                                           <tr>
+                                            <th style={{ width: 32 }}>
+                                              <input
+                                                type="checkbox"
+                                                checked={selectedMembers.size === (groupDetail?.members?.length ?? 0) && (groupDetail?.members?.length ?? 0) > 0}
+                                                onChange={() => {
+                                                  if (selectedMembers.size === (groupDetail?.members?.length ?? 0)) {
+                                                    setSelectedMembers(new Set());
+                                                  } else {
+                                                    setSelectedMembers(new Set((groupDetail?.members ?? []).map(m => m.id)));
+                                                  }
+                                                }}
+                                                style={{ accentColor: 'var(--accent, #2563eb)', cursor: 'pointer' }}
+                                              />
+                                            </th>
                                             <th>邮箱</th>
                                             <th>显示名</th>
                                             <th>角色</th>
@@ -578,7 +629,22 @@ export function InventoryTab({
                                             const dupInfo = isDuplicate ? duplicateMembers.find((d) => d.email === m.email.toLowerCase()) : null;
                                             return (
                                               <Fragment key={m.id}>
-                                                <tr style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : isDuplicate ? { background: 'rgba(251,191,36,0.08)' } : undefined}>
+                                                <tr style={isOwner ? { background: 'rgba(56,189,248,0.06)' } : isDuplicate ? { background: 'rgba(251,191,36,0.08)' } : selectedMembers.has(m.id) ? { background: 'rgba(37,99,235,0.06)' } : undefined}>
+                                                  <td>
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={selectedMembers.has(m.id)}
+                                                      onChange={() => {
+                                                        setSelectedMembers(prev => {
+                                                          const next = new Set(prev);
+                                                          if (next.has(m.id)) next.delete(m.id);
+                                                          else next.add(m.id);
+                                                          return next;
+                                                        });
+                                                      }}
+                                                      style={{ accentColor: 'var(--accent, #2563eb)', cursor: 'pointer' }}
+                                                    />
+                                                  </td>
                                                   <td style={{ fontFamily: 'monospace' }}>
                                                     {m.email}
                                                     {isOwner && (
@@ -643,9 +709,25 @@ export function InventoryTab({
                                                               <ConfirmButton
                                                                 className="button danger small"
                                                                 disabled={removingMemberId === m.id || replacingMemberId !== null || migratingMemberId !== null || !!memberTaskMap[m.id]}
-                                                                confirmLabel="确定移除？"
+                                                                confirmLabel={(() => {
+                                                                  if (m.expiresAt && new Date(m.expiresAt) > new Date()) {
+                                                                    const days = Math.ceil((new Date(m.expiresAt).getTime() - Date.now()) / 86400000);
+                                                                    return `⚠️ 该成员还有 ${days} 天到期！确定移除 ${m.email}？`;
+                                                                  }
+                                                                  return `确定移除 ${m.email}？`;
+                                                                })()}
+                                                                confirmStyle={m.expiresAt && new Date(m.expiresAt) > new Date() ? {
+                                                                  background: '#dc2626', color: '#fff', fontWeight: 700, border: '2px solid #b91c1c',
+                                                                  animation: 'pulse 1.5s infinite',
+                                                                } : undefined}
                                                                 loadingLabel="提交中..."
                                                                 onConfirm={async () => {
+                                                                  if (m.expiresAt && new Date(m.expiresAt) > new Date()) {
+                                                                    const days = Math.ceil((new Date(m.expiresAt).getTime() - Date.now()) / 86400000);
+                                                                    if (!window.confirm(`⚠️ 严重警告！\n\n该成员 ${m.email} 的权益还有 ${days} 天才到期 (${new Date(m.expiresAt).toLocaleDateString('zh-CN')})!\n\n移除后用户将无法使用 Ultra 权益。确定要移除吗？`)) {
+                                                                      return;
+                                                                    }
+                                                                  }
                                                                   setRemovingMemberId(m.id);
                                                                   try {
                                                                     const result = await onRemoveMember(group.id, m.email);
@@ -673,7 +755,7 @@ export function InventoryTab({
                                                                 className="button small"
                                                                 style={{ background: 'rgba(139,92,246,0.15)', color: '#7c3aed', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                                                 disabled={migratingMemberId === m.id || removingMemberId !== null || replacingMemberId !== null || !!memberTaskMap[m.id]}
-                                                                confirmLabel="确定迁移？"
+                                                                confirmLabel={`确定迁移 ${m.email}？将从当前组移除并邀请到新组`}
                                                                 loadingLabel={<><Spinner size={12} color="currentColor" /> 迁移中</>}
                                                                 onConfirm={async () => {
                                                                   setMigratingMemberId(m.id);
@@ -710,11 +792,17 @@ export function InventoryTab({
                                                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
                                                               <input type="email" placeholder="新邮箱" value={replaceEmail} onChange={(e) => setReplaceEmail(e.target.value)} style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }} autoFocus />
                                                               <ConfirmButton className="button" style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer' }} disabled={!replaceEmail.trim() || removingMemberId !== null}
-                                                                confirmLabel="确定？"
+                                                                confirmLabel={`确定将 ${m.email} 替换为 ${replaceEmail.trim() || '...'}？`}
                                                                 loadingLabel="提交中..."
                                                                 onConfirm={async () => {
                                                                   const newE = replaceEmail.trim().toLowerCase();
                                                                   if (!newE) return;
+                                                                  if (m.expiresAt && new Date(m.expiresAt) > new Date()) {
+                                                                    const days = Math.ceil((new Date(m.expiresAt).getTime() - Date.now()) / 86400000);
+                                                                    if (!window.confirm(`该成员 ${m.email} 权益还有 ${days} 天到期。\n替换后 ${newE} 将继承该到期时间。\n\n确定替换？`)) {
+                                                                      return;
+                                                                    }
+                                                                  }
                                                                   setRemovingMemberId(m.id);
                                                                   try {
                                                                     const result = await onReplaceMember(group.id, m.email, newE);
@@ -733,7 +821,7 @@ export function InventoryTab({
                                                 </tr>
                                                 {editingMemberId === m.id && (
                                                   <tr style={{ background: 'rgba(37,99,235,0.04)' }}>
-                                                    <td colSpan={canManage ? 7 : 6} style={{ padding: '10px 16px' }}>
+                                                    <td colSpan={canManage ? 8 : 7} style={{ padding: '10px 16px' }}>
                                                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', fontSize: '0.8rem' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                           <label style={{ fontWeight: 600, color: 'var(--foreground-muted, #737373)', whiteSpace: 'nowrap' }}>加入时间</label>
@@ -845,10 +933,4 @@ export function InventoryTab({
       })()}
     </div>
   );
-}
-
-function showToast(type: 'success' | 'error', msg: string) {
-    // This is a placeholder since showToast needs to be passed in or handled via context/callback
-    // In the main component we will pass it. 
-    // Actually, it's better to just use a callback.
 }

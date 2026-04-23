@@ -29,7 +29,7 @@ import type { TaskLogger } from "./task-logger";
 import type { GmailLoginResult } from "./gmail-login";
 
 /** Threshold: after this many cumulative failures, mark account RISKY */
-const ACCOUNT_FAILURE_THRESHOLD = 3;
+const ACCOUNT_FAILURE_THRESHOLD = 5;
 
 export interface HandleLoginResultContext {
   job: Job;
@@ -106,7 +106,7 @@ export async function handleLoginResult(
   const failureCount = await pool.recordAccountTaskFailure(accountId);
   await logger.log(
     "WARN",
-    `Account ${accountId} login failed (reason: ${loginResult.reason}), cumulative failures: ${failureCount}/${ACCOUNT_FAILURE_THRESHOLD}`
+    `账号 ${accountId} 登录失败（原因: ${loginResult.reason}），累计失败: ${failureCount}/${ACCOUNT_FAILURE_THRESHOLD}`
   );
 
   // Check if we've hit the threshold → mark account RISKY for human intervention
@@ -142,12 +142,22 @@ export async function handleLoginResult(
 
     await logger.log(
       "ERROR",
-      `Account ${accountId} reached ${failureCount} failures — marked as ${accountStatus}, needs human intervention`
+      `账号 ${accountId} 累计失败 ${failureCount} 次 — 已标记为 ${accountStatus}，需要人工干预`
     );
+
+    const reasonMap: Record<string, string> = {
+      TRANSIENT: "登录页加载超时",
+      PHONE_CHALLENGE: "Google要求手机验证",
+      CAPTCHA: "Google要求验证码",
+      ACCOUNT_LOCKED: "账号已被锁定",
+      VERIFICATION_REQUIRED: "需要身份验证",
+      UNKNOWN: "密码错误或登录异常",
+    };
+    const reasonCN = reasonMap[loginResult.reason] ?? loginResult.reason;
 
     await logger.updateStatus("MANUAL_REVIEW", {
       code: `ACCOUNT_${accountStatus}`,
-      message: `Account hit ${failureCount} cumulative failures. Reason: ${loginResult.detail}`,
+      message: `登录失败 ${failureCount} 次（${reasonCN}），请手动检查账号`,
     });
 
     if (ctx.returnOnFinal) {

@@ -1,0 +1,17 @@
+{
+  "name": "antigravity-rosetta",
+  "private": true,
+  "version": "0.5.0",
+  "description": "Antigravity Rosetta: multi-account token proxy + OpenAI/Anthropic-compatible reverse proxy for Google Cloud Code.",
+  "scripts": {
+    "start:token-proxy": "node token-proxy/index.js",
+    "start:reverse-proxy": "node reverse-proxy/index.js",
+    "start": "node token-proxy/index.js",
+    "add-account": "node token-proxy/add-account.js",
+    "check": "node -c shared/utils.js && node -c shared/paths.js && node -c shared/logger.js && node -c token-proxy/index.js && node -c token-proxy/token-proxy.js && node -c token-proxy/token-manager.js && node -c token-proxy/quota-tracker.js && node -c token-proxy/quota-poller.js && node -c token-proxy/add-account.js && node -c reverse-proxy/index.js && node -c reverse-proxy/config.js && node -c reverse-proxy/logger.js && node -c reverse-proxy/session.js && node -c reverse-proxy/rate-limiter.js && node -c reverse-proxy/middleware.js && node -c reverse-proxy/prompt-builder.js && node -c reverse-proxy/prompt-window.js && node -c reverse-proxy/tool-bridge.js && node -c reverse-proxy/response-format.js && node -c reverse-proxy/direct-backend.js && node -c reverse-proxy/openai-to-google.js && node -c reverse-proxy/google-to-openai.js && node -c reverse-proxy/anthropic-to-google.js && node -c reverse-proxy/google-to-anthropic.js && node -c reverse-proxy/thought-signature-cache.js && node -c manager-extension/extension.js && node -c manager-extension/media/panel.js && node -c manager-extension/lib/repo-state.js",
+    "test": "node tests/config.test.js && node tests/tool-bridge.test.js && node tests/prompt-window.test.js && node tests/quota-poller.test.js && node tests/quota-tracker.test.js && node tests/token-manager.test.js && node tests/token-proxy.test.js && node tests/manager-extension.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
+  }
+}

@@ -1,0 +1,356 @@
+{
+  "user": {
+    "id": "cmnt3s0g9000fxk00wph1dwxp",
+    "email": "admin2@gmail.com",
+    "displayName": "admin2@gmail.com"
+  },
+  "totalActions": 48,
+  "actionBreakdown": {
+    "CROSS_BULK_INVITE": 12,
+    "REMOVE_MEMBER": 3,
+    "REPLACE_MEMBER": 10,
+    "UPDATE_MEMBER_DATES": 11,
+    "MIGRATE_MEMBER": 3,
+    "CANCEL_TASK": 1,
+    "BATCH_CREATE_CODES": 2,
+    "TRIGGER_SYNC": 6
+  },
+  "logs": [
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T12:36:59.196Z"
+    },
+    {
+      "action": "REMOVE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmne9fuvu00sxxkqglsbusru2",
+      "detail": "{\"memberEmail\":\"feestkennedi541@gmail.com\"}",
+      "createdAt": "2026-04-21T12:36:51.290Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T12:22:42.893Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnpng3jm00nrxk9kuvo49aiv",
+      "detail": "{\"targetMemberEmail\":\"savarinosherryl@gmail.com\",\"newUserEmail\":\"lochtesarnacki@gmail.com\"}",
+      "createdAt": "2026-04-21T12:11:29.942Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnflzq340089xkdkas694ini",
+      "detail": "{\"groupId\":\"cmnfiz45200afxkb0rw8vpb0z\",\"joinedAt\":\"2026-04-02T11:28\",\"expiresAt\":\"2026-04-23T00:00\"}",
+      "createdAt": "2026-04-21T11:22:47.947Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnshe6t7000hxkj8anl3h4j4",
+      "detail": "{\"targetMemberEmail\":\"marionwolff650@gmail.com\",\"newUserEmail\":\"cornersarouri169@gmail.com\"}",
+      "createdAt": "2026-04-21T10:47:16.457Z"
+    },
+    {
+      "action": "MIGRATE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnpng3h600nixk9kvxd17yji",
+      "detail": "{\"memberEmail\":\"savarinosherryl@gmail.com\",\"removedFromGroup\":\"HamelersZacharie\",\"targetGroup\":\"OgbonnayaBrose\",\"taskId\":\"cmo8g56qe00v4xkq0em627ahf\",\"error\":null}",
+      "createdAt": "2026-04-21T09:53:51.485Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T08:54:29.631Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnflzq220081xkdk3hnvufma",
+      "detail": "{\"groupId\":\"cmnfiz45200afxkb0rw8vpb0z\",\"joinedAt\":\"2026-04-02T11:28\",\"expiresAt\":\"2026-04-28T00:00\"}",
+      "createdAt": "2026-04-21T08:09:43.290Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmo8br1vm0bltxkh87uqadd1i",
+      "detail": "{\"groupId\":\"cmo6z0x6b00usxkxw4pjyfcse\",\"joinedAt\":\"2026-04-21T07:50\",\"expiresAt\":\"2026-04-25T07:49\"}",
+      "createdAt": "2026-04-21T07:59:20.967Z"
+    },
+    {
+      "action": "REMOVE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmna088f600drxkos0t6qy1qi",
+      "detail": "{\"memberEmail\":\"liuhr0406@gmail.com\"}",
+      "createdAt": "2026-04-21T07:50:07.194Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T07:49:56.333Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T07:46:09.776Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmna088f600drxkos0t6qy1qi",
+      "detail": "{\"targetMemberEmail\":\"liuhr0406@gmail.com\",\"newUserEmail\":\"liuhr0604@gmail.com\"}",
+      "createdAt": "2026-04-21T07:41:21.796Z"
+    },
+    {
+      "action": "CANCEL_TASK",
+      "targetType": "Task",
+      "targetId": "cmo8as09000kxxkq0d74gx3qv",
+      "detail": "{\"reason\":\"Cancelled by operator\"}",
+      "createdAt": "2026-04-21T07:40:10.144Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmna088f600drxkos0t6qy1qi",
+      "detail": "{\"targetMemberEmail\":\"liuhr0406@gmail.com\",\"newUserEmail\":\"liuhr0604@gmail.com\"}",
+      "createdAt": "2026-04-21T07:23:38.450Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnsctvhh007wxkbk7o9cli24",
+      "detail": "{\"targetMemberEmail\":\"as01055306443@gmail.com\",\"newUserEmail\":\"eunt43721@gmail.com\"}",
+      "createdAt": "2026-04-21T07:18:17.720Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnva9z460agbxkggb1x4p8d5",
+      "detail": "{\"groupId\":\"cmna088f600drxkos0t6qy1qi\",\"joinedAt\":\"2026-04-12T09:05\",\"expiresAt\":\"2026-04-25T23:22\"}",
+      "createdAt": "2026-04-21T07:07:38.138Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmna088f600drxkos0t6qy1qi",
+      "detail": "{\"targetMemberEmail\":\"liuguangzhong83@gmail.com\",\"newUserEmail\":\"liuhr0406@gmail.com\"}",
+      "createdAt": "2026-04-21T07:04:42.819Z"
+    },
+    {
+      "action": "BATCH_CREATE_CODES",
+      "targetType": "RedeemCode",
+      "targetId": "batch",
+      "detail": "{\"count\":1,\"product\":\"GOOGLE_ONE\",\"codeType\":\"ACCOUNT_SWAP\"}",
+      "createdAt": "2026-04-21T07:02:13.188Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T06:27:55.926Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnj2y8bh05efxk2chcwjgh6q",
+      "detail": "{\"groupId\":\"cmnj15y4v00azxk8sjvt39m7f\",\"joinedAt\":\"2026-04-04T02:52\",\"expiresAt\":null}",
+      "createdAt": "2026-04-21T06:23:35.226Z"
+    },
+    {
+      "action": "BATCH_CREATE_CODES",
+      "targetType": "RedeemCode",
+      "targetId": "batch",
+      "detail": "{\"count\":1,\"product\":\"GOOGLE_ONE\",\"codeType\":\"ACCOUNT_SWAP\"}",
+      "createdAt": "2026-04-21T06:06:49.014Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmng0s85u002dxk08r03jteo7",
+      "detail": "{\"targetMemberEmail\":\"wenqisplisteser@gmail.com\",\"newUserEmail\":\"rodzamiichel922@gmail.com\"}",
+      "createdAt": "2026-04-21T05:52:19.406Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnwok0i20u2pxkgg6dy3z3bt",
+      "detail": "{\"groupId\":\"cmng0s85u002dxk08r03jteo7\",\"joinedAt\":\"2026-04-14T12:52\",\"expiresAt\":\"2026-04-26T00:00\"}",
+      "createdAt": "2026-04-21T05:52:08.373Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T05:41:54.169Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnj7fjw10057xkoo86vo0m2m",
+      "detail": null,
+      "createdAt": "2026-04-21T05:40:37.893Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnj7fjw10057xkoo86vo0m2m",
+      "detail": null,
+      "createdAt": "2026-04-21T05:35:26.708Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnyemeup01agxkxckb3n54wj",
+      "detail": "{\"targetMemberEmail\":\"xiaoyao2925@gmail.com\",\"newUserEmail\":\"lightsource.electronic@gmail.com\"}",
+      "createdAt": "2026-04-21T05:23:33.837Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmo868qze0635xkh8e1usbpcs",
+      "detail": "{\"groupId\":\"cmo6z1zjv00v4xkxw92blvmoh\",\"joinedAt\":\"2026-04-21T05:16\",\"expiresAt\":\"2026-05-13T22:22\"}",
+      "createdAt": "2026-04-21T05:17:51.009Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmo1pgtvn024rxkcczv19xap8",
+      "detail": null,
+      "createdAt": "2026-04-21T05:17:34.457Z"
+    },
+    {
+      "action": "REMOVE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmo1pgtvn024rxkcczv19xap8",
+      "detail": "{\"memberEmail\":\"anabeluribe145@gmail.com\"}",
+      "createdAt": "2026-04-21T05:17:28.712Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmo6z1zjv00v4xkxw92blvmoh",
+      "detail": null,
+      "createdAt": "2026-04-21T05:16:03.328Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmo1pgtvn024rxkcczv19xap8",
+      "detail": "{\"targetMemberEmail\":\"kersoney@gmail.com\",\"newUserEmail\":\"anabeluribe145@gmail.com\"}",
+      "createdAt": "2026-04-21T04:41:41.968Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmo6z0x2y00uaxkxwogop78dc",
+      "detail": null,
+      "createdAt": "2026-04-21T03:49:20.504Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmo82riz003ebxkh81lk3n13m",
+      "detail": "{\"groupId\":\"cmo6z0x2y00uaxkxwogop78dc\",\"joinedAt\":\"2026-04-21T03:39\",\"expiresAt\":\"2026-05-20T03:37\"}",
+      "createdAt": "2026-04-21T03:44:04.479Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T03:37:09.728Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T03:25:47.043Z"
+    },
+    {
+      "action": "MIGRATE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnj0k9s30067xk8sz5gstks1",
+      "detail": "{\"memberEmail\":\"hdongh659@gmail.com\",\"removedFromGroup\":\"JohnnieSola889\",\"targetGroup\":\"lucegeorges5083wy\",\"taskId\":\"cmo825jp1005fxkq0uofweot9\",\"error\":null}",
+      "createdAt": "2026-04-21T03:22:13.650Z"
+    },
+    {
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnbbyr3j00c8xk6k37g861mb",
+      "detail": "{\"targetMemberEmail\":\"s01055426339@gmail.com\",\"newUserEmail\":\"t01094761530@gmail.com\"}",
+      "createdAt": "2026-04-21T03:03:55.289Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmng3qb5500pvxkl4keut9g6v",
+      "detail": "{\"groupId\":\"cmng0tume002mxk08120w2kj3\",\"joinedAt\":\"2026-04-08T04:39\",\"expiresAt\":\"2026-05-21T00:00\"}",
+      "createdAt": "2026-04-21T02:55:44.283Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmne9i1is08anxkockau0wlvb",
+      "detail": "{\"groupId\":\"cmne9fuvu00sxxkqglsbusru2\",\"joinedAt\":\"2026-04-02T11:35\",\"expiresAt\":\"2026-05-21T00:00\"}",
+      "createdAt": "2026-04-21T02:34:11.941Z"
+    },
+    {
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmne9fuvu00sxxkqglsbusru2",
+      "detail": null,
+      "createdAt": "2026-04-21T02:33:57.773Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":0,\"groups\":0,\"unplaceable\":0,\"alreadyActive\":1}",
+      "createdAt": "2026-04-21T02:33:33.578Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T02:27:56.112Z"
+    },
+    {
+      "action": "MIGRATE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnfiz44400a6xkb0mqzbemsq",
+      "detail": "{\"memberEmail\":\"jasonuioc@gmail.com\",\"removedFromGroup\":\"charisemelbyib662\",\"targetGroup\":\"chamerschristiane\",\"taskId\":\"cmo7yvwyw0026xkq08x1pmhgt\",\"error\":null}",
+      "createdAt": "2026-04-21T01:50:45.452Z"
+    },
+    {
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmng93vf800llxkrwsfwagzvu",
+      "detail": "{\"groupId\":\"cmnfiz44400a6xkb0mqzbemsq\",\"joinedAt\":\"2026-04-02T13:09\",\"expiresAt\":\"2026-05-02T00:00\"}",
+      "createdAt": "2026-04-21T01:50:29.484Z"
+    },
+    {
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "detail": "{\"totalQueued\":1,\"groups\":1,\"unplaceable\":0,\"alreadyActive\":0}",
+      "createdAt": "2026-04-21T01:37:18.681Z"
+    }
+  ]
+}

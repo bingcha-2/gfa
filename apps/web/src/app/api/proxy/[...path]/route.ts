@@ -17,6 +17,7 @@ const ALLOWED_PATH_PREFIXES = [
   "orders",
   "tasks",
   "accounts",
+  "agent-accounts",
   "redeem-codes",
   "scheduler",
   "queue",
@@ -24,6 +25,9 @@ const ALLOWED_PATH_PREFIXES = [
   "audit-logs",
   "users",
   "public",
+  "automation",
+  "faq",
+  "faq-images",
 ];
 
 function isPathAllowed(pathSegments: string[]): boolean {
@@ -40,6 +44,9 @@ type RouteContext = {
 };
 
 export const dynamic = "force-dynamic";
+
+// Increase body size limit for FAQ image uploads (base64 payloads can be large)
+export const maxDuration = 30;
 
 async function forward(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
@@ -75,6 +82,14 @@ async function forward(request: NextRequest, context: RouteContext) {
   }
 
   headers.set("accept", "application/json");
+
+  // Forward real client IP so backend ThrottlerGuard rate-limits per real user,
+  // not per proxy (which would make all users share one bucket as 127.0.0.1).
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  const realIp = request.headers.get("x-real-ip");
+  const clientIp = forwardedFor?.split(",")[0].trim() || realIp || request.headers.get("cf-connecting-ip") || "unknown";
+  headers.set("x-forwarded-for", clientIp);
+  headers.set("x-real-ip", clientIp);
 
   const init: RequestInit = {
     method: request.method,

@@ -71,6 +71,8 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
   const [filterAccountStatus, setFilterAccountStatus] = useState("ALL");
   const [filterSubStatus, setFilterSubStatus] = useState("ALL");
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [copyToast, setCopyToast] = useState("");
   const PAGE_SIZE = 20;
 
   function startEdit(account: AccountSummary) {
@@ -131,16 +133,33 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
       matchStatus = (a as any).syncError === 'PASSWORD_ERROR' || a.status === 'MANUAL_ONLY';
     } else if (filterAccountStatus === 'CAPTCHA') {
       matchStatus = (a as any).syncError === 'CAPTCHA_REQUIRED' || a.status === 'VERIFICATION_REQUIRED';
+    } else if (filterAccountStatus === 'INVITE_COOLDOWN') {
+      matchStatus = (a as any).syncError === 'INVITE_COOLDOWN';
     }
     const matchSub = filterSubStatus === 'ALL' || (a.subscriptionStatus ?? '未知') === filterSubStatus;
     return matchSearch && matchStatus && matchSub;
   });
   const totalPages = Math.ceil(filteredAccounts.length / PAGE_SIZE);
   const paginatedAccounts = filteredAccounts.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const riskyToday = accounts.filter(a => a.status === "RISKY" && new Date(a.updatedAt) >= todayStart);
+  const riskyCount = riskyToday.length;
 
   return (
     <section id="accounts" className="glass-panel account-panel">
       <div className="panel-stack">
+        {riskyCount > 0 && (
+          <div className="notice warning" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+              <span>⚠️ 检测到 {riskyCount} 个账号处于“风控 (RISKY)”状态</span>
+            </div>
+            <div style={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
+              账号发生过多连续错误被挂起以防封号。系统已升级为：<strong>允许自动冷却 30 分钟。</strong><br />
+              在此期间暂不派发新任务，冷却期结束后系统会自动对其尝试健康检查并同步，若恢复正常则该状态将被自动解除。<br />
+              如果您通过手动“确认已登录”或“强制同步”功能处理了异常，状态也会立刻重置。
+            </div>
+          </div>
+        )}
         <div className="section-head">
           <div className="section-copy">
             <p className="label">账号列表</p>
@@ -511,7 +530,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </span>
               <select
                 value={filterAccountStatus}
-                onChange={(e) => { setFilterAccountStatus(e.target.value); setCurrentPage(1); }}
+                onChange={(e) => { setFilterAccountStatus(e.target.value); setCurrentPage(1); setSelectedIds(new Set()); }}
                 style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
               >
                 <option value="ALL">全部状态</option>
@@ -524,10 +543,11 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <option value="DISABLED">🚫 禁用</option>
                 <option value="PASSWORD_ERROR">🔴 密码错误</option>
                 <option value="CAPTCHA">🤖 人机验证</option>
+                <option value="INVITE_COOLDOWN">🚫 邀请受限</option>
               </select>
               <select
                 value={filterSubStatus}
-                onChange={(e) => { setFilterSubStatus(e.target.value); setCurrentPage(1); }}
+                onChange={(e) => { setFilterSubStatus(e.target.value); setCurrentPage(1); setSelectedIds(new Set()); }}
                 style={{ flex: '0 0 auto', minWidth: 120, height: '36px', borderRadius: '8px', border: '1px solid var(--border, #e5e5e5)', fontSize: '0.875rem' }}
               >
                 <option value="ALL">全部订阅</option>
@@ -536,12 +556,67 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <option value="EXPIRED">🔴 已过期</option>
               </select>
               {(searchTerm || filterAccountStatus !== 'ALL' || filterSubStatus !== 'ALL') && (
-                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setFilterAccountStatus('ALL'); setFilterSubStatus('ALL'); setCurrentPage(1); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
+                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setFilterAccountStatus('ALL'); setFilterSubStatus('ALL'); setCurrentPage(1); setSelectedIds(new Set()); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
               )}
             </div>
+            {/* Multi-select action bar */}
+            {selectedIds.size > 0 && (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px', padding: '8px 12px', background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>已选 {selectedIds.size} 个</span>
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    const emails = filteredAccounts.filter(a => selectedIds.has(a.id)).map(a => a.loginEmail).join('\n');
+                    navigator.clipboard.writeText(emails);
+                    setCopyToast(`已复制 ${selectedIds.size} 个邮箱`);
+                    setTimeout(() => setCopyToast(''), 2000);
+                  }}
+                  style={{ background: 'var(--accent, #6366f1)', color: 'white' }}
+                >
+                  📋 复制邮箱
+                </button>
+                <button
+                  className="button secondary small"
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds(new Set(filteredAccounts.map(a => a.id)));
+                  }}
+                >
+                  全选当前 ({filteredAccounts.length})
+                </button>
+                <button
+                  className="button secondary small"
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  取消全选
+                </button>
+                {copyToast && (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--emerald, #059669)', fontWeight: 600, animation: 'fadeIn 0.3s ease' }}>✅ {copyToast}</span>
+                )}
+              </div>
+            )}
             <table className="data-table data-table-accounts">
               <thead>
                 <tr>
+                  <th style={{ width: 30 }}>
+                    <input
+                      type="checkbox"
+                      checked={paginatedAccounts.length > 0 && paginatedAccounts.every(a => selectedIds.has(a.id))}
+                      onChange={(e) => {
+                        setSelectedIds(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) {
+                            paginatedAccounts.forEach(a => next.add(a.id));
+                          } else {
+                            paginatedAccounts.forEach(a => next.delete(a.id));
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </th>
                   <th>名称</th>
                   <th>登录邮箱</th>
                   <th>状态</th>
@@ -552,7 +627,21 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               <tbody>
                 {paginatedAccounts.length ? (<>
                   {paginatedAccounts.map((account) => (
-                    <tr key={account.id}>
+                    <tr key={account.id} style={selectedIds.has(account.id) ? { background: 'rgba(99, 102, 241, 0.06)' } : undefined}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(account.id)}
+                          onChange={(e) => {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(account.id);
+                              else next.delete(account.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
                       <td>
                         <div className="account-primary">
                           <div className="strong account-name">{account.name}</div>
@@ -649,7 +738,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 {/* Pagination */}
                 {totalPages > 1 && (
                   <tr>
-                    <td colSpan={canManage ? 5 : 4}>
+                    <td colSpan={canManage ? 6 : 5}>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '8px 0', flexWrap: 'wrap' }}>
                         <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
                         {(() => {
@@ -685,7 +774,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 )}
                 </>) : (
                   <tr>
-                    <td colSpan={canManage ? 5 : 4}>
+                    <td colSpan={canManage ? 6 : 5}>
                       <div className="empty-state">{searchTerm ? "没有匹配的母号。" : "还没有录入任何母号。"}</div>
                     </td>
                   </tr>

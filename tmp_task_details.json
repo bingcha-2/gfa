@@ -1,0 +1,267 @@
+{
+  "Task": {
+    "id": "cmng7aeqe0004xkg8dnq4b3vm",
+    "type": "SYNC_FAMILY_GROUP",
+    "orderId": null,
+    "familyGroupId": "cmna03zan00aixkosji1kemer",
+    "accountId": "cmna03zai00agxkos71jwmjs7",
+    "workerId": "worker-1",
+    "transferBatchId": null,
+    "status": "SUCCESS",
+    "priority": 0,
+    "retryCount": 0,
+    "maxRetryCount": 3,
+    "payload": "{\"familyGroupId\":\"cmna03zan00aixkosji1kemer\",\"accountId\":\"cmna03zai00agxkos71jwmjs7\"}",
+    "lastErrorCode": null,
+    "lastErrorMessage": null,
+    "beforeScreenshotPath": null,
+    "afterScreenshotPath": "C:\\Users\\Administrator\\Desktop\\GFA\\apps\\worker\\screenshots\\cmng7aeqe0004xkg8dnq4b3vm\\sync-1775057447817.png",
+    "errorScreenshotPath": null,
+    "startedAt": "2026-04-01T15:28:26.743Z",
+    "finishedAt": "2026-04-01T15:30:48.112Z",
+    "createdAt": "2026-04-01T15:28:25.622Z",
+    "updatedAt": "2026-04-01T15:30:48.113Z"
+  },
+  "TaskLogs": [
+    {
+      "id": "cmng7aflc0001xkd82umffdn1",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Status → RUNNING",
+      "extra": null,
+      "createdAt": "2026-04-01T15:28:26.736Z"
+    },
+    {
+      "id": "cmng7aktc0003xkd86ajl7tt9",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Starting login for DabhadeSamir403@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-01T15:28:33.504Z"
+    },
+    {
+      "id": "cmng7artv0005xkd8zxofafc4",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "WARN",
+      "message": "[gmail-login] Still on identifier page after Next click — retry 1",
+      "extra": null,
+      "createdAt": "2026-04-01T15:28:42.595Z"
+    },
+    {
+      "id": "cmng7biw60007xkd8o791iiuz",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "WARN",
+      "message": "[gmail-login] Both click methods failed, used Enter key",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:17.670Z"
+    },
+    {
+      "id": "cmng7bp8i0009xkd81frjfhs9",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/selection?TL=AIgtPP2KIbDRU0KfH_v4ehBVWvqSQ0nYeJt2Nts-FDIBtlBzlGnOVmgB1iATrrM4&checkConnection=youtube%3A486&checkedDomains=youtube&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S689490503%3A1775057314251253&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_UNUlz1rwpHgXLgnr7rNAt35Rv9w-BziRLi1ZUX5qQbcnQOJ_ZnwgShGD4mkNgx_CDZeLsv1g&lid=2&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:25.891Z"
+    },
+    {
+      "id": "cmng7bp9j000bxkd88d3gj5cs",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Challenge selection page detected — scanning options",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:25.928Z"
+    },
+    {
+      "id": "cmng7bqvu000dxkd8eruxdbfl",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Selected TOTP (Google Authenticator) challenge option",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:28.026Z"
+    },
+    {
+      "id": "cmng7bt7e000fxkd8xedpvnqq",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP2KIbDRU0KfH_v4ehBVWvqSQ0nYeJt2Nts-FDIBtlBzlGnOVmgB1iATrrM4&checkConnection=youtube%3A486&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S689490503%3A1775057314251253&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_UNUlz1rwpHgXLgnr7rNAt35Rv9w-BziRLi1ZUX5qQbcnQOJ_ZnwgShGD4mkNgx_CDZeLsv1g&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:31.034Z"
+    },
+    {
+      "id": "cmng7bt7s000hxkd8evowqvb4",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP 2FA challenge detected",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:31.049Z"
+    },
+    {
+      "id": "cmng7bt80000jxkd83djyju39",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Generated TOTP: 49****",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:31.057Z"
+    },
+    {
+      "id": "cmng7btaj000lxkd81hfpbscx",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP submitted",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:31.147Z"
+    },
+    {
+      "id": "cmng7bvm4000nxkd8u15sd9n6",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Round 3, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP2KIbDRU0KfH_v4ehBVWvqSQ0nYeJt2Nts-FDIBtlBzlGnOVmgB1iATrrM4&checkConnection=youtube%3A486&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S689490503%3A1775057314251253&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_UNUlz1rwpHgXLgnr7rNAt35Rv9w-BziRLi1ZUX5qQbcnQOJ_ZnwgShGD4mkNgx_CDZeLsv1g&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:34.156Z"
+    },
+    {
+      "id": "cmng7c31j000pxkd86id9w56m",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Round 4, URL: https://myaccount.google.com/?hl=en&pli=1",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:43.784Z"
+    },
+    {
+      "id": "cmng7c31w000rxkd8yl9ib72q",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[gmail-login] Login successful",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:43.796Z"
+    },
+    {
+      "id": "cmng7c322000txkd856d9bi86",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[ensure-family-group] Checking family group status",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:43.802Z"
+    },
+    {
+      "id": "cmng7c6lp000vxkd8dml11fut",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[ensure-family-group] Family group already exists",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:48.397Z"
+    },
+    {
+      "id": "cmng7c6lu000xxkd8txn4i6wq",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[google-one-sharing] Checking Google One family sharing status",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:48.403Z"
+    },
+    {
+      "id": "cmng7cbwb000zxkd883yeg4at",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle found, aria-checked=\"true\"",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:55.259Z"
+    },
+    {
+      "id": "cmng7cbwh0011xkd8t0zzvcps",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle is already ON — nothing to do",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:55.265Z"
+    },
+    {
+      "id": "cmng7cbwo0013xkd8frsa1h3k",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmna03zan00aixkosji1kemer",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:55.273Z"
+    },
+    {
+      "id": "cmng7cdgr0015xkd8zdxopzfy",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Navigated to Family page for sync",
+      "extra": null,
+      "createdAt": "2026-04-01T15:29:57.291Z"
+    },
+    {
+      "id": "cmng7dgg40017xkd86g8t2koi",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Found 5 members on page",
+      "extra": "{\"members\":[{\"email\":\"aaa01077248553@gmail.com\",\"displayName\":\"\",\"role\":\"member\",\"googleMemberId\":\"115995628500174031675\",\"isPending\":false},{\"email\":\"aaa01072329775@gmail.com\",\"displayName\":\"\",\"role\":\"member\",\"googleMemberId\":\"106835300689663177862\",\"isPending\":false},{\"email\":\"t01083943369@gmail.com\",\"displayName\":\"\",\"role\":\"member\",\"googleMemberId\":\"114358747163093099599\",\"isPending\":false},{\"email\":\"t01085784757@gmail.com\",\"displayName\":\"\",\"role\":\"member\",\"googleMemberId\":\"102063661259274110192\",\"isPending\":false},{\"email\":\"aaa01075586537@gmail.com\",\"displayName\":\"\",\"role\":\"member\",\"googleMemberId\":\"108052895193218746745\",\"isPending\":false}]}",
+      "createdAt": "2026-04-01T15:30:47.812Z"
+    },
+    {
+      "id": "cmng7dgm3001bxkd8vcdbi93k",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Upserted member: aaa01077248553@gmail.com status=ACTIVE (gaia=115995628500174031675)",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.027Z"
+    },
+    {
+      "id": "cmng7dgmn001fxkd8e9a1j7sl",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Upserted member: aaa01072329775@gmail.com status=ACTIVE (gaia=106835300689663177862)",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.047Z"
+    },
+    {
+      "id": "cmng7dgn1001jxkd8rff8s5nh",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Upserted member: t01083943369@gmail.com status=ACTIVE (gaia=114358747163093099599)",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.062Z"
+    },
+    {
+      "id": "cmng7dgnh001nxkd8m4ljb66s",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Upserted member: t01085784757@gmail.com status=ACTIVE (gaia=102063661259274110192)",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.077Z"
+    },
+    {
+      "id": "cmng7dgny001rxkd81r8nlcme",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Upserted member: aaa01075586537@gmail.com status=ACTIVE (gaia=108052895193218746745)",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.095Z"
+    },
+    {
+      "id": "cmng7dgoc001txkd8t0l3n4bm",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Status → SUCCESS",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.109Z"
+    },
+    {
+      "id": "cmng7dgom001vxkd8m62c57ac",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Sync complete: 5 non-admin members (deduped), 5 raw slots used (Google view), 0 slots available",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:48.119Z"
+    },
+    {
+      "id": "cmng7dl38001xxkd8mkhhiywl",
+      "taskId": "cmng7aeqe0004xkg8dnq4b3vm",
+      "level": "INFO",
+      "message": "Subscription refreshed: ACTIVE, plan: Google AI Ultra 30 TB, expires: unknown",
+      "extra": null,
+      "createdAt": "2026-04-01T15:30:53.828Z"
+    }
+  ]
+}

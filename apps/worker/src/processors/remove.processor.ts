@@ -55,7 +55,7 @@ export async function processRemove(
 
   const account = await prisma.account.findUnique({ where: { id: job.data.accountId } });
   if (!account) {
-    await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `Account not found` });
+    await logger.updateStatus("FAILED_FINAL", { code: "ACCOUNT_NOT_FOUND", message: `账号不存在` });
     return;
   }
 
@@ -79,10 +79,10 @@ export async function processRemove(
 
     // Skip if member is already removed (duplicate task or retry after another task succeeded)
     if (memberRecord?.status === "REMOVED") {
-      await logger.log("INFO", `Member ${memberEmail} is already REMOVED in DB — skipping removal`);
+      await logger.log("INFO", `成员 ${memberEmail} 在数据库中已是 REMOVED 状态，跳过移除`);
       await logger.updateStatus("SUCCESS", {
         code: "ALREADY_REMOVED",
-        message: `Member ${memberEmail} was already removed`,
+        message: `成员 ${memberEmail} 已被移除`,
       });
       return;
     }
@@ -91,8 +91,8 @@ export async function processRemove(
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(account.id);
       if (cooldownSecs > 0) {
-        await logger.log("WARN", `[remove] Account ${account.id} in login cooldown (${cooldownSecs}s remaining), skipping`);
-        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        await logger.log("WARN", `[remove] 主号登录冷却中（剩余 ${cooldownSecs} 秒），跳过本次执行`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `主号登录冷却中，剩余 ${cooldownSecs} 秒` });
         throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
       }
     }
@@ -194,26 +194,34 @@ export async function processRemove(
     );
 
     // Fix #3: Sync Order status so frontend shows consistent data.
-    // Find orders tied to this member email in this family group and mark them.
-    try {
-      const relatedOrder = await prisma.order.findFirst({
-        where: {
-          userEmail: memberEmail,
-          familyGroupId,
-          status: { notIn: ["FAILED", "CREATED", "EXPIRED"] },
-        },
-        select: { id: true },
-      });
-      if (relatedOrder) {
-        await prisma.order.update({
-          where: { id: relatedOrder.id },
-          data: { status: "EXPIRED", resultMessage: `Member ${memberEmail} removed from family group` },
+    // ONLY mark order EXPIRED when removal is due to membership expiry
+    // (triggered by expire-scan cron). Swap-related removals and manual
+    // operations should NOT change the order status.
+    const removalReason = (job.data as any).reason || "";
+    const isExpiryRemoval = removalReason === "EXPIRED" || removalReason === "MEMBER_EXPIRED" || removalReason === "SCHEDULER_EXPIRED";
+    if (isExpiryRemoval) {
+      try {
+        const relatedOrder = await prisma.order.findFirst({
+          where: {
+            userEmail: memberEmail,
+            familyGroupId,
+            status: { notIn: ["FAILED", "CREATED", "EXPIRED"] },
+          },
+          select: { id: true, orderType: true },
         });
-        await logger.log("INFO", `Updated Order ${relatedOrder.id} status to MEMBER_REMOVED`);
+        if (relatedOrder) {
+          await prisma.order.update({
+            where: { id: relatedOrder.id },
+            data: { status: "EXPIRED", resultMessage: `Member ${memberEmail} removed from family group (expired)` },
+          });
+          await logger.log("INFO", `Updated Order ${relatedOrder.id} status to EXPIRED (reason=${removalReason})`);
+        }
+      } catch (orderErr) {
+        // Non-fatal: member removal itself succeeded
+        await logger.log("WARN", `Failed to sync Order status after removal: ${orderErr instanceof Error ? orderErr.message : String(orderErr)}`);
       }
-    } catch (orderErr) {
-      // Non-fatal: member removal itself succeeded
-      await logger.log("WARN", `Failed to sync Order status after removal: ${orderErr instanceof Error ? orderErr.message : String(orderErr)}`);
+    } else {
+      await logger.log("INFO", `Skipped order status sync (removal reason=${removalReason || "manual"}, not expiry)`);
     }
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status and don't rollback member status
@@ -239,7 +247,7 @@ export async function processRemove(
       message: errMsg,
     });
 
-    await logger.log("ERROR", `Remove error (will retry): ${errMsg}`);
+    await logger.log("ERROR", `移除失败（将重试）: ${errMsg}`);
 
     // Transfer batch callback on terminal failure:
     // Mark task FAILED_FINAL first so the callback sees a terminal status
@@ -366,15 +374,26 @@ async function removeMemberOnPage(
 
   // Safety net: detect if we accidentally landed on the family manager's page.
   // The manager page shows "Delete Family Group" instead of "Remove member".
+  // This means the stored googleMemberId is WRONG — it belongs to the manager, not the target member.
   const deleteGroupBtn = page.locator(
     'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組"), ' +
     'button:has-text("가족 그룹 삭제"), button:has-text("ファミリーグループを削除"), button:has-text("Xóa nhóm gia đình")'
   );
   if ((await deleteGroupBtn.count()) > 0) {
-    await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
+    await logger.log("WARN",
+      `Landed on manager page (Delete Family Group detected). ` +
+      `Member ${email} has a WRONG googleMemberId=${googleMemberId ?? "?"} that points to the manager account. ` +
+      `Clearing bad GAIA ID and retrying with list-page matching only.`
+    );
+    // Go back to list page and retry WITHOUT the bad GAIA ID
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
-    await logger.log("INFO", `After fallback, now on: ${page.url()}`);
+    // Pass undefined for googleMemberId so S3-fast won't re-match the bad ID
+    const found = await fallbackFindMember(page, email, displayName, logger, undefined, otherMemberGaiaIds);
+    if (!found) {
+      await logger.log("WARN", `Member ${email} not found after clearing bad GAIA ID — may be already removed`);
+      return "ALREADY_REMOVED";
+    }
+    await logger.log("INFO", `After manager-page fallback, now on: ${page.url()}`);
   }
 
   const memberDetailUrl = page.url();
@@ -738,14 +757,34 @@ async function removeMemberOnPage(
       const confirmBtn = page.locator(CONFIRM_SELECTORS);
       const btnCount = await confirmBtn.count();
       if (btnCount > 0) {
-        // Use last() to prefer dialog's confirm button over the original action button behind it
-        await confirmBtn.last().click();
+        // Use last() to prefer dialog's confirm button over the original action button behind it.
+        // Use short timeout + catch: clicking may trigger navigation to /family/remove/ which
+        // can redirect to TOTP/password re-auth. If that happens, click() will throw because
+        // the button element gets detached during navigation. That's fine — the main loop's
+        // next iteration will detect the TOTP/password page and handle it.
+        try {
+          await confirmBtn.last().click({ timeout: 10_000 });
+        } catch (clickErr) {
+          const clickErrMsg = clickErr instanceof Error ? clickErr.message : String(clickErr);
+          // Check if page already navigated (TOTP redirect, /family/remove/, etc.)
+          const postClickUrl = page.url();
+          if (postClickUrl !== stepUrl) {
+            await logger.log("INFO",
+              `[remove] Confirm click threw (likely navigation/redirect), page moved to: ${postClickUrl}. Will handle in next loop.`
+            );
+          } else {
+            await logger.log("WARN",
+              `[remove] Confirm click failed without navigation: ${clickErrMsg}`
+            );
+          }
+        }
         await logger.log("INFO", `[remove] Clicked confirm/remove at step ${step + 1} (${btnCount} matching buttons)`);
         await page.waitForTimeout(3000);
-        await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+        await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
         continue;
       }
     }
+
 
     // Nothing matched — wait and try again
     await logger.log("DEBUG", `[remove] No action matched at step ${step + 1}, waiting...`);

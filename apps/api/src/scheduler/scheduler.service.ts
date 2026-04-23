@@ -123,12 +123,31 @@ export class SchedulerService implements OnModuleInit {
 
   // ─── Scheduler Tasks ──────────────────────────────────
 
-  async getSchedulerTasks(page = 1, pageSize = 20) {
+  async getSchedulerTasks(
+    page = 1,
+    pageSize = 20,
+    filters: { search?: string; type?: string; status?: string } = {},
+  ) {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    const where = {
-      source: { in: ["scheduler", "expire-scan"] as string[] },
+    const where: any = {
+      source: { in: ["scheduler", "expire-scan", "manual", "auto", "webhook"] as string[] },
       createdAt: { gte: threeDaysAgo },
     };
+
+    // Search by email in payload (JSON string contains)
+    if (filters.search) {
+      where.payload = { contains: filters.search, mode: "insensitive" };
+    }
+
+    // Filter by task type
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
+    // Filter by task status
+    if (filters.status) {
+      where.status = filters.status;
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({
@@ -326,7 +345,7 @@ export class SchedulerService implements OnModuleInit {
     // Find HEALTHY accounts that have at least one reason to maintain
     const accounts = await this.prisma.account.findMany({
       where: {
-        status: "HEALTHY",
+        status: { in: ["HEALTHY", "RISKY"] },
         OR: [
           { lastAutoMaintenanceAt: null },
           { lastAutoMaintenanceAt: { lte: cooldownThreshold } },
@@ -334,6 +353,7 @@ export class SchedulerService implements OnModuleInit {
       },
       select: {
         id: true,
+        status: true,
         lastAutoMaintenanceAt: true,
         familyGroups: {
           where: { status: "ACTIVE" },
@@ -368,11 +388,10 @@ export class SchedulerService implements OnModuleInit {
 
     const candidates = accounts.filter((account) => {
       for (const group of account.familyGroups) {
-        // Reason 1: stale sync (only when sync is enabled)
+        // Reason 1: stale sync (only when sync is enabled), or RISKY account auto-recovery
         if (
           config.syncEnabled &&
-          (!group.lastSyncedAt ||
-          group.lastSyncedAt <= syncThreshold)
+          (account.status === "RISKY" || !group.lastSyncedAt || group.lastSyncedAt <= syncThreshold)
         ) {
           return true;
         }

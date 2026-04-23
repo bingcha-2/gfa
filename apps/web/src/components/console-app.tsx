@@ -18,11 +18,13 @@ import { RedeemCodesPanel } from "./redeem-codes-panel";
 import { Spinner } from "./spinner";
 import { StatusBadge } from "./status-badge";
 import { TasksPanel } from "./tasks-panel";
-import { ExpireScanPanel } from "./expire-scan-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";
+
 import { SchedulerPanel } from "./scheduler-panel";
 import { DailyStatsPanel } from "./daily-stats-panel";
 import { UserManagementPanel } from "./user-management-panel";
+import { AgentServicePanel } from "./agent-service-panel";
+import { FaqPanel } from "./faq-panel";
 
 type ConsoleData = {
   user: SessionUser;
@@ -31,7 +33,7 @@ type ConsoleData = {
   groups: FamilyGroupSummary[] | null;
 };
 
-type ConsoleSection = "overview" | "daily-stats" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "expire" | "scheduler" | "lookup" | "settings" | "users";
+type ConsoleSection = "daily-stats" | "accounts" | "groups" | "orders" | "tasks" | "codes" | "scheduler" | "lookup" | "agent-service" | "faq" | "settings" | "users";
 
 // --- Bulk operation result types ---
 export type CrossInviteResult = {
@@ -115,7 +117,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   const router = useRouter();
   const [data, setData] = useState<ConsoleData>({ ...initialData, accounts: null, groups: null });
   const [error, setError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<ConsoleSection>("overview");
+  const [activeSection, setActiveSection] = useState<ConsoleSection>("daily-stats");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
@@ -127,7 +129,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
     setTimeout(() => setToast(null), 3800);
   }
 
-  async function loadModule(section: ConsoleSection, force = false) {
+  async function loadModule(section: ConsoleSection | "_stats", force = false) {
     try {
       if (section === "accounts" && (force || !data.accounts)) {
         const accounts = await apiRequest<AccountSummary[]>("accounts");
@@ -135,7 +137,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       } else if (section === "groups" && (force || !data.groups)) {
         const groups = await apiRequest<FamilyGroupSummary[]>("family-groups");
         setData(prev => ({ ...prev, groups }));
-      } else if (section === "overview" && force) {
+      } else if (section === "_stats" && force) {
         const stats = await apiRequest<any>("stats");
         setData(prev => ({ ...prev, stats }));
       }
@@ -159,13 +161,11 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
   }, [activeSection]);
 
   async function loadDashboard() {
-    // For self-managed panels (tasks, orders, codes, expire), only refresh stats
-    const refreshCurrent = ["accounts", "groups", "overview"].includes(activeSection)
+    // For self-managed panels (tasks, orders, codes), only refresh stats
+    const refreshCurrent = ["accounts", "groups"].includes(activeSection)
       ? loadModule(activeSection, true)
       : Promise.resolve();
-    const refreshStats = activeSection !== "overview"
-      ? loadModule("overview", true)
-      : Promise.resolve();
+    const refreshStats = loadModule("_stats", true);
     await Promise.all([refreshCurrent, refreshStats]);
   }
 
@@ -176,7 +176,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
       const [result] = await Promise.allSettled([action(), minDelay]);
       if (result.status === "rejected") throw result.reason;
       // Only refresh stats (lightweight), self-managed panels refresh themselves
-      await loadModule("overview", true);
+      await loadModule("_stats", true);
       setError(null);
       return true;
     } catch (actionError) {
@@ -504,29 +504,29 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
   // Permission-to-section mapping
   const SECTION_PERM_MAP: Record<string, string> = {
-    overview: "overview",
     "daily-stats": "daily_stats",
     accounts: "accounts",
     groups: "groups",
     orders: "orders",
     tasks: "tasks",
     codes: "codes",
-    expire: "expire",
     scheduler: "scheduler",
     lookup: "lookup",
+    "agent-service": "agent_service",
+    faq: "faq",
   };
 
   const allNavItems = [
-    { id: "overview" as const, label: "总览", caption: "运营概览", metric: `${activeOrders} 处理中` },
     { id: "daily-stats" as const, label: "数据汇总", caption: "每日数据", metric: "今日" },
     { id: "accounts" as const, label: "母号池", caption: "账号管理", metric: `${data.stats?.totals?.accounts ?? 0} 个` },
     { id: "groups" as const, label: "家庭组", caption: "家庭组管理", metric: `${availableSlots} 空位` },
     { id: "orders" as const, label: "订单", caption: "订单管理", metric: `${data.stats?.totals?.orders ?? 0} 条` },
     { id: "tasks" as const, label: "任务", caption: "自动化任务", metric: `${manualReviewTasks} 待处理` },
     { id: "codes" as const, label: "卡密", caption: "卡密管理", metric: `${unusedCodes} 未使用` },
-    { id: "expire" as const, label: "到期扫描", caption: "过期订单", metric: `${data.stats?.totals?.expiredOrders ?? 0} 已过期` },
     ...(isAdminOrOps ? [{ id: "scheduler" as const, label: "自动维护", caption: "定时调度", metric: "" }] : []),
     { id: "lookup" as const, label: "成员管理", caption: "查询 & 操作", metric: "" },
+    { id: "agent-service" as const, label: "代理服务", caption: "进组 & 验证", metric: "" },
+    { id: "faq" as const, label: "FAQ管理", caption: "常见问题", metric: "" },
     ...(isSuperAdmin ? [{ id: "users" as const, label: "用户管理", caption: "管理员账号", metric: "" }] : []),
     { id: "settings" as const, label: "修改密码", caption: "安全设置", metric: "" },
   ];
@@ -540,103 +540,6 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
   function renderWorkspace() {
     switch (activeSection) {
-      case "overview":
-        return (
-          <div className="panel-stack">
-            <section className="surface-grid three-up">
-              <MetricTile
-                title="可用空位"
-                value={String(availableSlots)}
-                description="当前所有家庭组剩余可发邀请空位。"
-              />
-              <MetricTile
-                title="待接受邀请"
-                value={String(pendingInvites)}
-                description="已发出但还没完成接受的邀请数量。"
-              />
-              <MetricTile
-                title="待人工处理"
-                value={String(manualReviewTasks)}
-                description="已经进入人工处理队列的任务数量。"
-              />
-              <MetricTile
-                title="异常母号"
-                value={String(disabledAccounts)}
-                description="非正常状态的母号数量，用于快速发现异常。"
-              />
-              <MetricTile
-                title="可用卡密"
-                value={String(unusedCodes)}
-                description="当前仍可兑换、未被消耗的卡密库存。"
-              />
-              <MetricTile
-                title="进行中订单"
-                value={String(activeOrders)}
-                description="仍在排队、执行或等待用户接受邀请的订单。"
-              />
-            </section>
-
-            <section className="surface-grid two-up">
-              <article className="glass-panel">
-                <div className="panel-stack">
-                  <div className="section-copy">
-                    <p className="label">最近订单</p>
-                    <h2 className="panel-title">最近订单</h2>
-                    <p className="muted">优先看最新提交是否已经进入正确状态。</p>
-                  </div>
-
-                  {recentOrders.length ? (
-                    <div className="list-stack">
-                      {recentOrders.map((order: any) => (
-                        <div className="list-card" key={order.id}>
-                          <div className="split-head">
-                            <div>
-                              <div className="strong mono">{order.orderNo}</div>
-                              <div className="muted">{order.userEmail}</div>
-                            </div>
-                            <StatusBadge value={order.status} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state">还没有订单。</div>
-                  )}
-                </div>
-              </article>
-
-              <article className="glass-panel">
-                <div className="panel-stack">
-                  <div className="section-copy">
-                    <p className="label">待处理队列</p>
-                    <h2 className="panel-title">人工接管队列</h2>
-                    <p className="muted">这里保留最近需要人处理的任务，先处理最紧急的。</p>
-                  </div>
-
-                  {reviewQueue.length ? (
-                    <div className="list-stack">
-                      {reviewQueue.map((task: any) => (
-                        <div className="list-card" key={task.id}>
-                          <div className="split-head">
-                            <div>
-                              <div className="strong mono">{task.order?.orderNo ?? task.id.slice(0, 12)}</div>
-                              <div className="muted">
-                                {task.familyGroup?.groupName ?? "-"} · {task.type}
-                              </div>
-                            </div>
-                            <StatusBadge value={task.status} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state">当前没有待人工任务。</div>
-                  )}
-                </div>
-              </article>
-            </section>
-          </div>
-        );
       case "accounts":
         return (
             <AccountPanel
@@ -693,10 +596,7 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         return (
           <DailyStatsPanel role={data.user.role} />
         );
-      case "expire":
-        return (
-          <ExpireScanPanel />
-        );
+
       case "scheduler":
         return (
           <SchedulerPanel showToast={showToast} />
@@ -722,6 +622,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             }}
             showToast={showToast}
           />
+        );
+      case "agent-service":
+        return (
+          <AgentServicePanel showToast={showToast} />
         );
       case "settings":
         return (
@@ -802,6 +706,10 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               </button>
             </form>
           </div>
+        );
+      case "faq":
+        return (
+          <FaqPanel showToast={showToast} />
         );
       case "users":
         return (

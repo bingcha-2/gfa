@@ -1,0 +1,8 @@
+{
+  "id": "cmnfxhykg001axkng57aivxiw",
+  "type": "SYNC_FAMILY_GROUP",
+  "status": "FAILED_RETRYABLE",
+  "lastErrorCode": "PROFILE_ACQUIRE_FAILED",
+  "lastErrorMessage": "LOGIN_COOLDOWN: 20s remaining",
+  "updatedAt": "2026-04-01T10:58:52.075Z"
+}

@@ -12,9 +12,10 @@
  * 8. Release lock, close profile
  */
 
-import { Job, UnrecoverableError, DelayedError } from "bullmq";
+import { Job, Queue, UnrecoverableError, DelayedError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { ReplaceMemberPayload } from "@gfa/shared";
+import { JOB_DEFAULTS } from "@gfa/shared";
 
 import { AdsPowerClient } from "../adspower-client";
 import { BrowserPool } from "../browser-pool";
@@ -24,6 +25,7 @@ import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
 import { postTaskSync } from "../post-task-sync";
+import { InviteCooldownError, countMemberCardsOnPage, checkInviteResultPage } from "./invite.processor";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -32,6 +34,7 @@ export interface ReplaceProcessorDeps {
   adspower: AdsPowerClient;
   pool: BrowserPool;
   workerId: string;
+  inviteQueue?: Queue;
 }
 
 export async function processReplace(
@@ -56,13 +59,14 @@ export async function processReplace(
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", {
       code: "ACCOUNT_NOT_FOUND",
-      message: `Account ${accountId} not found`,
+      message: `账号 ${accountId} 不存在`,
     });
     return;
   }
 
   let profileId: string | null = null;
   let stopHeartbeat: (() => void) | null = null;
+  let removeConfirmed = false; // tracks whether remove step succeeded (for failure recovery)
 
   try {
     // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → delay/fail ──
@@ -71,14 +75,14 @@ export async function processReplace(
       const priorFailures = await pool.getAccountTaskFailureCount(accountId);
 
       // Account truly unhealthy (too many failures or bad status) → unrecoverable, needs human
-      if (priorFailures >= 3 || (account.status !== "HEALTHY" && account.status !== "LOGIN_REQUIRED")) {
+      if (priorFailures >= 5 || (account.status !== "HEALTHY" && account.status !== "LOGIN_REQUIRED")) {
+        const statusDesc = account.status === "RISKY" ? "风险" : account.status === "DISABLED" ? "已禁用" : account.status;
         await logger.log("WARN",
-          `[replace] Account ${accountId} unhealthy (failures=${priorFailures}, status=${account.status}). ` +
-          `Replace tasks require the group's own account — cannot switch. Failing task.`
+          `[replace] 主号不可用：累计登录失败 ${priorFailures} 次，状态=${statusDesc}。替换任务必须使用家庭组自身主号，无法切换。`
         );
         await logger.updateStatus("FAILED_RETRYABLE", {
           code: "ACCOUNT_UNAVAILABLE",
-          message: `Account unhealthy (failures=${priorFailures}, status=${account.status})`,
+          message: `主号不可用（累计失败 ${priorFailures} 次，状态: ${statusDesc}），请手动检查账号登录情况`,
         });
         throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: failures=${priorFailures}, status=${account.status}`);
       }
@@ -87,11 +91,28 @@ export async function processReplace(
       if (cooldownSecs > 0) {
         const delayMs = (cooldownSecs + 5) * 1000; // add 5s buffer
         await logger.log("INFO",
-          `[replace] Account ${accountId} in cooldown (${cooldownSecs}s remaining). ` +
-          `Delaying job by ${Math.ceil(delayMs / 1000)}s instead of failing.`
+          `[replace] 主号登录冷却中（剩余 ${cooldownSecs} 秒），任务将延迟 ${Math.ceil(delayMs / 1000)} 秒后重试`
         );
         await job.moveToDelayed(Date.now() + delayMs, job.token);
         throw new DelayedError(`Delayed by ${cooldownSecs}s cooldown`);
+      }
+
+      // Account in invite cooldown (Google rate limit) → fail immediately with user-facing message
+      const inviteCooldownSecs = await pool.isInviteCoolingDown(accountId);
+      if (inviteCooldownSecs > 0) {
+        const hoursRemaining = Math.ceil(inviteCooldownSecs / 3600);
+        await logger.log("WARN",
+          `[replace] Account ${accountId} in invite cooldown (${inviteCooldownSecs}s / ~${hoursRemaining}h remaining). ` +
+          `Replace tasks require the group's own account — cannot switch.`
+        );
+        await logger.updateStatus("FAILED_FINAL", {
+          code: "INVITE_COOLDOWN",
+          message: `主号邀请次数过多，约${hoursRemaining}小时后可继续替换`,
+        });
+        if (orderId) {
+          await logger.updateOrderStatus(orderId, "FAILED", `主号邀请次数过多，约${hoursRemaining}小时后可继续替换`);
+        }
+        throw new UnrecoverableError(`INVITE_COOLDOWN: ${inviteCooldownSecs}s remaining`);
       }
     }
 
@@ -209,6 +230,7 @@ export async function processReplace(
     }
 
     let discoveredGaiaId: string | undefined;
+    let preRemoveCardCount: number | undefined;
     if (!skipRemove) {
       // Query other members' GAIA IDs for cross-validation safety check
       // This prevents S3 from accidentally removing a card that belongs to another known member
@@ -223,6 +245,13 @@ export async function processReplace(
       });
       const otherGaiaIds = new Set(otherMembers.map((m) => m.googleMemberId!).filter(Boolean));
       await logger.log("INFO", `Cross-validation set: ${otherGaiaIds.size} other member GAIA IDs loaded`);
+
+      // Capture card count BEFORE removal for replace-flow verification.
+      // After replace (remove + invite), the count should stay the same (N - 1 + 1 = N).
+      // This avoids the Google page-lag problem: we don't need to wait for the removal
+      // to reflect on the page before counting.
+      preRemoveCardCount = await countMemberCardsOnPage(page);
+      await logger.log("INFO", `Pre-remove card count: ${preRemoveCardCount}`);
 
       // Step 1: Remove the target member on page
       // Wrap in try-catch: if this is a retry and the member was already removed by a previous
@@ -239,45 +268,76 @@ export async function processReplace(
       } catch (removeErr) {
         const msg = removeErr instanceof Error ? removeErr.message : String(removeErr);
         if (msg.includes("Cannot find member")) {
+          const isFirstAttempt = (job.attemptsMade ?? 0) === 0;
           await logger.log("WARN",
-            `Member ${targetMemberEmail} not found on page. Verifying if slot is available...`
+            `Member ${targetMemberEmail} not found on page (attempt=${job.attemptsMade ?? 0}). Verifying if slot is available...`
           );
           
           await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
           await page.waitForTimeout(2000);
-          
-          const inviteLinkCount = await page.locator('a[href*="invitemembers"]').count();
-          if (inviteLinkCount > 0) {
-            await logger.log("INFO", "Invite slot is available. Proceeding to invite.");
+
+          // Check if newUserEmail is already on the page (previous attempt or manual action completed the full replace)
+          const bodyText = await page.evaluate(() => document.body.innerText).catch(() => "");
+          const newEmailOnPage = bodyText.toLowerCase().includes(newUserEmail.toLowerCase());
+          const newMemberInDb = newEmailOnPage ? { email: newUserEmail } : await prisma.familyMember.findFirst({
+            where: {
+              familyGroupId,
+              email: newUserEmail,
+              status: { in: ["ACTIVE", "PENDING"] },
+            },
+          });
+
+          if (newMemberInDb) {
+            // Idempotency: new member already present → previous attempt or manual action completed the replace.
+            // Safe to skip both remove and invite regardless of attempt number.
+            await logger.log("INFO",
+              `Idempotency check: ${newUserEmail} already found on family page! ` +
+              `Previous attempt likely completed. Skipping remove+invite, proceeding to DB update.`
+            );
+            skipRemove = true;
+            skipInvite = true;
           } else {
-            // No invite slots AND old member not found.
-            // Possible scenarios:
-            //   A) Previous attempt already completed the full replace (removed old + invited new)
-            //      but crashed before updating DB. → newUserEmail is already on the page.
-            //   B) Identification genuinely failed — member IS on page but S0-S4 all missed it.
-            //
-            // Check for scenario A first: run a quick sync to get the actual page state
-            // into the DB, then query the DB for newUserEmail — much more reliable than UI text matching.
-            await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
+            // New member is NOT on the page yet.
+            const inviteLinkCount = await page.locator('a[href*="invitemembers"]').count();
 
-            const newMemberInDb = await prisma.familyMember.findFirst({
-              where: {
-                familyGroupId,
-                email: newUserEmail,
-                status: { in: ["ACTIVE", "PENDING"] },
-              },
-            });
-
-            if (newMemberInDb) {
-              await logger.log("INFO",
-                `Idempotency check: ${newUserEmail} already found on family page! ` +
-                `Previous attempt likely completed. Skipping remove+invite, proceeding to DB update.`
+            if (inviteLinkCount > 0 && isFirstAttempt) {
+              // CRITICAL SAFETY CHECK: First attempt + member not found + slot available.
+              // This means the target member was removed externally (admin, user left, or different task)
+              // but NOT by this task. Proceeding to invite would waste a seat because the removal
+              // was not part of this replace operation.
+              const userMessage = `原号 ${targetMemberEmail} 不在家庭组中，无法执行替换。请检查家庭组成员后重试。`;
+              await logger.log("ERROR",
+                `SAFETY BLOCK: First attempt but target member ${targetMemberEmail} not found, ` +
+                `yet invite slot exists. The member was likely removed externally (admin/manual/other task). ` +
+                `Refusing to invite ${newUserEmail} to prevent seat waste.`
               );
-              // skipRemove is already false here, but we need to skip the entire remove+invite flow.
-              // Set flags and break out of the catch to let execution continue to DB update.
-              skipRemove = true;
-              skipInvite = true;
+              await logger.updateStatus("FAILED_FINAL", {
+                code: "MEMBER_NOT_IN_GROUP",
+                message: userMessage,
+              });
+              if (orderId) {
+                await logger.updateOrderStatus(orderId, "FAILED", userMessage);
+                await prisma.swapRecord.updateMany({
+                  where: { orderId, taskId, status: "PENDING" },
+                  data: { status: "FAILED" },
+                }).catch(() => {});
+              }
+              throw new UnrecoverableError(userMessage);
+            } else if (inviteLinkCount > 0 && !isFirstAttempt) {
+              // Retry attempt + member not found + slot available.
+              // This is the legitimate retry scenario: previous attempt removed the member
+              // but crashed before inviting. Safe to proceed.
+              await logger.log("INFO",
+                `Retry scenario: member not found but invite slot available (attempt=${job.attemptsMade}). ` +
+                `Previous attempt likely removed the member. Proceeding to invite.`
+              );
             } else {
+              // No invite slots AND old member not found.
+              // Possible scenarios:
+              //   A) Previous attempt already completed the full replace (removed old + invited new)
+              //      but crashed before updating DB. → newUserEmail should be on the page (handled above).
+              //   B) Identification genuinely failed — member IS on page but S0-S4 all missed it.
+              //
               // Scenario B: genuinely can't find the member. Reload and retry once.
               await logger.log("WARN",
                 `No invite slots, newUserEmail not on page → member must be present but identification failed. Reloading and retrying...`
@@ -325,18 +385,30 @@ export async function processReplace(
     }
 
     await logger.log("INFO", `Remove step complete. Current URL: ${page.url()}`);
+    removeConfirmed = true; // removal verified — safe to update DB on failure
 
-    // Step 2: Always navigate back to family details before inviting.
-    // removeMemberOnPage may leave the page on /family/remove/ or /family/member/ path.
+    // Step 2: Navigate back to family details before inviting.
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    // Wait a few seconds for Google to reflect the slot becoming available
     await page.waitForTimeout(3000);
     await logger.log("INFO", `Back on family details, now inviting ${newUserEmail}`);
 
     // Step 3: Invite the new member on page (skip if previous attempt already invited)
     let newMemberGaiaId: string | undefined;
     if (!skipInvite) {
-      await inviteMemberOnPage(page, newUserEmail, logger);
+      // Use preRemoveCardCount for invite verification.
+      // In a replace flow: remove(-1) + invite(+1) = net 0 change.
+      // So if postInviteCount >= preRemoveCount, the invite succeeded.
+      // This avoids the Google page-lag false positive where preInviteCount
+      // after removal was still showing the old count (e.g. 6→6 = false cooldown).
+      const preInviteCardCount = skipRemove
+        ? await countMemberCardsOnPage(page)  // no removal happened, count normally
+        : Math.max(0, preRemoveCardCount! - 1);  // removal happened: expect N-1
+      await logger.log("INFO",
+        `Pre-invite card count for replace: ${preInviteCardCount} ` +
+        `(preRemove=${preRemoveCardCount ?? 'N/A'}, skipRemove=${skipRemove})`
+      );
+
+      await inviteMemberOnPage(page, newUserEmail, logger, preInviteCardCount);
 
       // --- Verify invite by checking new member appears on family page ---
       try {
@@ -462,9 +534,12 @@ export async function processReplace(
       });
     }
 
-    // Post-task sync: scrape the family page to reconcile DB with actual state
+    // Post-task sync: full scrape to reconcile DB with actual page state.
+    // skipPlaceholders=true prevents creating @gaia.unknown records for the
+    // just-invited member (whose email may not be visible on the page yet).
     await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger, {
       justInvitedEmail: newUserEmail,
+      skipPlaceholders: true,
     });
 
     await logger.log("INFO", "Replace completed successfully");
@@ -473,6 +548,180 @@ export async function processReplace(
     if (error instanceof UnrecoverableError) throw error;
     // DelayedError = job was rescheduled via moveToDelayed, not a real failure
     if (error instanceof DelayedError) throw error;
+
+    // ── INVITE_COOLDOWN: Google rate-limited this account's invite capability ──
+    // For REPLACE tasks, we cannot auto-reassign (must use same group's account).
+    // Notify user that the account needs 24h cooldown.
+    if (error instanceof InviteCooldownError) {
+      await pool.recordInviteCooldown(accountId);
+      // Mark family groups as MANUAL_ONLY so API won't assign new tasks to this account
+      await prisma.familyGroup.updateMany({
+        where: { accountId, status: "ACTIVE" },
+        data: { status: "MANUAL_ONLY" },
+      }).catch(() => {});
+      await prisma.account.update({
+        where: { id: accountId },
+        data: { syncError: "INVITE_COOLDOWN" },
+      }).catch(() => {});
+      await logger.log("ERROR",
+        `账号 ${accountId} 在替换过程中触发 Google 邀请频率限制 — 已设置 24 小时冷却，家庭组已标记为 MANUAL_ONLY`
+      );
+
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "INVITE_COOLDOWN",
+        message: `主号邀请次数过多，24小时后可继续替换`,
+      });
+
+      if (orderId) {
+        await logger.updateOrderStatus(orderId, "FAILED", `主号邀请次数过多，24小时后可继续替换`);
+
+        // Mark SwapRecord as FAILED
+        await prisma.swapRecord.updateMany({
+          where: { orderId, taskId, status: "PENDING" },
+          data: { status: "FAILED" },
+        }).catch((err: any) => {
+          logger.log("WARN", `Failed to update SwapRecord: ${err instanceof Error ? err.message : String(err)}`);
+        });
+
+        // Roll back ACCOUNT_SWAP code so user can retry after cooldown
+        try {
+          const order = await prisma.order.findUnique({
+            where: { id: orderId },
+            select: { redeemCodeId: true },
+          });
+          if (order?.redeemCodeId) {
+            await prisma.redeemCode.updateMany({
+              where: { id: order.redeemCodeId, codeType: "ACCOUNT_SWAP", status: "USED" },
+              data: { status: "UNUSED", usedAt: null },
+            });
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // If old member was already removed, sync DB so the slot is reclaimed.
+      // Without this, DB still shows old member as ACTIVE but Google already removed them.
+      if (removeConfirmed) {
+        try {
+          await logger.log("INFO", `旧成员已移除但邀请触发冷却 — 同步数据库标记 ${targetMemberEmail} 为 REMOVED`);
+          await prisma.familyMember.updateMany({
+            where: { familyGroupId, email: targetMemberEmail, status: { not: "REMOVED" } },
+            data: { status: "REMOVED", removedAt: new Date() },
+          });
+          await prisma.familyGroup.update({
+            where: { id: familyGroupId },
+            data: {
+              availableSlots: { increment: 1 },
+              memberCount: { decrement: 1 },
+            },
+          }).catch(() => {});
+          await logger.log("INFO", `数据库已同步：${targetMemberEmail} 标记为 REMOVED，位置已回收`);
+        } catch (syncErr: any) {
+          await logger.log("WARN", `同步数据库失败: ${syncErr.message}`);
+        }
+      }
+
+      // Auto-reassign the new member to a different healthy family group
+      if (deps.inviteQueue) {
+        try {
+          const newGroup = await prisma.familyGroup.findFirst({
+            where: {
+              status: "ACTIVE",
+              availableSlots: { gt: 0 },
+              account: { status: "HEALTHY" },
+              id: { not: familyGroupId }, // exclude current (cooldown) group
+            },
+            include: { account: { select: { id: true, loginEmail: true } } },
+            orderBy: { createdAt: "asc" },
+          });
+
+          if (newGroup) {
+            // Check this account is not also in invite cooldown
+            const altCooldown = await pool.isInviteCoolingDown(newGroup.accountId);
+            if (altCooldown > 0) {
+              await logger.log("WARN", `替代家庭组 ${newGroup.id} 的主号也在邀请冷却中（${altCooldown}秒），无法重新分配`);
+            } else {
+              // Reserve slot in new group
+              await prisma.familyGroup.update({
+                where: { id: newGroup.id },
+                data: {
+                  availableSlots: { decrement: 1 },
+                  pendingInviteCount: { increment: 1 },
+                },
+              });
+
+              // Update Order to point to new group
+              if (orderId) {
+                await prisma.order.update({
+                  where: { id: orderId },
+                  data: {
+                    familyGroupId: newGroup.id,
+                    status: "TASK_QUEUED" as any,
+                    resultMessage: null,
+                  },
+                });
+              }
+
+              // Create new INVITE_MEMBER task for the new member — include transfer note
+              const oldAcctInfo = await prisma.account.findUnique({
+                where: { id: accountId },
+                select: { loginEmail: true },
+              });
+              const transferNote = `原母号 ${oldAcctInfo?.loginEmail ?? accountId} 邀请受限，已转移至母号 ${newGroup.account.loginEmail}`;
+              const newTask = await prisma.task.create({
+                data: {
+                  type: "INVITE_MEMBER",
+                  ...(orderId ? { orderId } : {}),
+                  familyGroupId: newGroup.id,
+                  accountId: newGroup.accountId,
+                  lastErrorCode: "TRANSFERRED",
+                  lastErrorMessage: transferNote,
+                  payload: JSON.stringify({
+                    ...(orderId ? { orderId } : {}),
+                    familyGroupId: newGroup.id,
+                    accountId: newGroup.accountId,
+                    userEmail: newUserEmail,
+                  }),
+                },
+              });
+
+              await deps.inviteQueue.add(
+                "invite-member",
+                {
+                  taskId: newTask.id,
+                  ...(orderId ? { orderId } : {}),
+                  familyGroupId: newGroup.id,
+                  accountId: newGroup.accountId,
+                  userEmail: newUserEmail,
+                },
+                { ...JOB_DEFAULTS }
+              );
+
+              // Update current task status to reflect reassignment
+              await logger.updateStatus("FAILED_FINAL", {
+                code: "INVITE_COOLDOWN_REASSIGNED",
+                message: `主号邀请冷却，新成员 ${newUserEmail} 已自动分配到家庭组 ${newGroup.id}`,
+              });
+              if (orderId) {
+                await logger.updateOrderStatus(orderId, "TASK_QUEUED", `主号邀请冷却，已自动切换到其他家庭组`);
+              }
+
+              await logger.log("INFO",
+                `新成员 ${newUserEmail} 已自动分配到家庭组 ${newGroup.id}（账号 ${newGroup.accountId}），新任务 ${newTask.id}`
+              );
+              return;
+            }
+          } else {
+            await logger.log("WARN", `没有可用的替代家庭组，无法重新分配新成员`);
+          }
+        } catch (reassignErr) {
+          await logger.log("ERROR",
+            `自动重新分配失败: ${reassignErr instanceof Error ? reassignErr.message : String(reassignErr)}`
+          );
+        }
+      }
+
+      return;
+    }
 
     const errMsg = error instanceof Error ? error.message : String(error);
 
@@ -504,9 +753,33 @@ export async function processReplace(
         }).catch((rollbackErr: any) => {
           logger.log("WARN", `Failed to update SwapRecord: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
         });
+
+        // Roll back ACCOUNT_SWAP redeem code from USED → UNUSED so user can retry.
+        // SUBSCRIPTION codes don't need rollback — they support reuse via subscriptionReuse().
+        try {
+          const order = await prisma.order.findUnique({
+            where: { id: orderId },
+            select: { redeemCodeId: true },
+          });
+          if (order?.redeemCodeId) {
+            const rolledBack = await prisma.redeemCode.updateMany({
+              where: {
+                id: order.redeemCodeId,
+                codeType: "ACCOUNT_SWAP",
+                status: "USED",
+              },
+              data: { status: "UNUSED", usedAt: null },
+            });
+            if (rolledBack.count > 0) {
+              await logger.log("INFO", `Rolled back ACCOUNT_SWAP code to UNUSED for retry`);
+            }
+          }
+        } catch (codeErr: any) {
+          await logger.log("WARN", `Failed to roll back redeem code: ${codeErr.message}`);
+        }
       }
 
-      await logger.log("ERROR", `Replace failed permanently: ${errMsg}`);
+      await logger.log("ERROR", `替换最终失败: ${errMsg}`);
       throw new UnrecoverableError(errMsg);
     }
 
@@ -516,7 +789,31 @@ export async function processReplace(
     });
 
     // Don't mark order FAILED here — BullMQ will retry
-    await logger.log("ERROR", `Replace error (will retry): ${errMsg}`);
+    await logger.log("ERROR", `替换失败（将重试）: ${errMsg}`);
+
+    // If removal was confirmed but invite failed, sync DB so the old member
+    // is marked REMOVED and the slot is reclaimed. Without this, DB keeps
+    // the old member as ACTIVE indefinitely while Google already removed them.
+    if (removeConfirmed) {
+      try {
+        await logger.log("INFO", `Remove was confirmed but invite failed — syncing DB to mark ${targetMemberEmail} as REMOVED`);
+        await prisma.familyMember.updateMany({
+          where: { familyGroupId, email: targetMemberEmail, status: { not: "REMOVED" } },
+          data: { status: "REMOVED", removedAt: new Date() },
+        });
+        // Reclaim slot: removal freed 1 slot, but invite didn't consume it
+        await prisma.familyGroup.update({
+          where: { id: familyGroupId },
+          data: {
+            availableSlots: { increment: 1 },
+            memberCount: { decrement: 1 },
+          },
+        }).catch(() => {});
+        await logger.log("INFO", `DB synced: ${targetMemberEmail} marked REMOVED, slot reclaimed`);
+      } catch (syncErr: any) {
+        await logger.log("WARN", `Failed to sync DB after partial replace: ${syncErr.message}`);
+      }
+    }
 
     throw error;
   } finally {
@@ -628,15 +925,26 @@ async function removeMemberOnPage(
 
   // Safety net: detect if we accidentally landed on the family manager's page.
   // The manager page shows "Delete Family Group" instead of "Remove member".
+  // This means the stored googleMemberId is WRONG — it belongs to the manager, not the target member.
   const deleteGroupBtn = page.locator(
     'button:has-text("Delete Family Group"), button:has-text("删除家庭群组"), button:has-text("刪除家庭群組"), ' +
     'button:has-text("가족 그룹 삭제"), button:has-text("ファミリーグループを削除"), button:has-text("Xóa nhóm gia đình")'
   );
   if ((await deleteGroupBtn.count()) > 0) {
-    await logger.log("WARN", `Landed on manager page (Delete Family Group detected) — falling back to list page`);
+    await logger.log("WARN",
+      `Landed on manager page (Delete Family Group detected). ` +
+      `Member ${email} has a WRONG googleMemberId=${googleMemberId ?? "?"} that points to the manager account. ` +
+      `Clearing bad GAIA ID and retrying with list-page matching only.`
+    );
+    // Go back to list page and retry WITHOUT the bad GAIA ID
     await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
-    await logger.log("INFO", `After fallback, now on: ${page.url()}`);
+    // Pass undefined for googleMemberId so S3-fast won't re-match the bad ID
+    discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, undefined, otherMemberGaiaIds);
+    if (!discoveredGaiaId) {
+      await logger.log("WARN", `Member ${email} not found after clearing bad GAIA ID — may be already removed`);
+      return "ALREADY_REMOVED";
+    }
+    await logger.log("INFO", `After manager-page fallback, now on: ${page.url()}`);
   }
 
   // Save the member detail URL for potential re-navigation after password auth
@@ -1031,13 +1339,68 @@ async function removeMemberOnPage(
     if ((await removeFinalBtn.count()) > 0) {
       await removeFinalBtn.last().click();
       await logger.log("INFO", `Clicked Remove on confirmation page for ${email}`);
+    } else {
+      throw new Error(
+        `REMOVE_CONFIRM_FAILED: On /family/remove/ page but no confirm button found for ${email}. ` +
+        `URL: ${page.url()}. Aborting to prevent inviting without removing.`
+      );
     }
+  } else {
+    // CRITICAL: Neither confirm dialog nor /family/remove/ page detected.
+    // This means the removal flow did not proceed as expected.
+    // DO NOT silently continue — throw to prevent inviting without removing.
+    throw new Error(
+      `REMOVE_CONFIRM_FAILED: No confirmation dialog or remove page detected for ${email}. ` +
+      `URL: ${page.url()}. Aborting to prevent inviting without removing.`
+    );
   }
 
   await page.waitForTimeout(3000);
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
-  return discoveredGaiaId;
+  // --- CRITICAL SAFETY CHECK: Verify the member was actually removed ---
+  // Navigate back to family details and confirm the member is gone.
+  // Without this, a failed removal (e.g. button click ignored, network error)
+  // would silently proceed to the invite step, wasting a seat.
+  const VERIFY_MAX_RETRIES = 4;
+  const VERIFY_DELAY_MS = 3000;
+  for (let vr = 0; vr < VERIFY_MAX_RETRIES; vr++) {
+    try {
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(2000);
+
+      // Check if the removed member's email is still visible on the page (leaf nodes only)
+      const stillPresent = await page.evaluate((targetEmail: string) => {
+        const leafEls = Array.from(document.querySelectorAll("*"))
+          .filter((el) => el.children.length === 0);
+        return leafEls.some((el) => {
+          const text = el.textContent?.trim().toLowerCase() ?? "";
+          return text === targetEmail.toLowerCase();
+        });
+      }, email);
+
+      if (!stillPresent) {
+        await logger.log("INFO", `Removal verified: ${email} no longer on family page (attempt ${vr + 1})`);
+        return discoveredGaiaId;
+      }
+
+      // Still showing — could be Google page cache lag
+      if (vr < VERIFY_MAX_RETRIES - 1) {
+        await logger.log("WARN",
+          `Removal not yet reflected: ${email} still on page (attempt ${vr + 1}/${VERIFY_MAX_RETRIES}), waiting...`
+        );
+        await page.waitForTimeout(VERIFY_DELAY_MS);
+      }
+    } catch (verifyErr: any) {
+      await logger.log("WARN", `Removal verify navigation error (attempt ${vr + 1}): ${verifyErr.message}`);
+    }
+  }
+
+  // After all retries, member is still on the page — removal likely failed
+  throw new Error(
+    `REMOVE_NOT_CONFIRMED: ${email} still appears on family page after ${VERIFY_MAX_RETRIES} checks. ` +
+    `Removal may have failed. Aborting to prevent inviting without removing.`
+  );
 }
 
 /**
@@ -1299,7 +1662,8 @@ async function fallbackFindMember(
 async function inviteMemberOnPage(
   page: import("playwright").Page,
   email: string,
-  logger: TaskLogger
+  logger: TaskLogger,
+  preInviteCardCount?: number
 ): Promise<void> {
   // Always navigate to family details to ensure a clean starting state
   await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -1386,44 +1750,47 @@ async function inviteMemberOnPage(
 
   await sendButton.first().click();
   await logger.log("INFO", `Clicked send for ${email}`);
-  await page.waitForTimeout(3000);
-  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
 
-  // Check for Google error messages after sending
-  // Google shows inline errors like "can't be invited", "already a member", etc.
-  const errorSelectors = [
-    'div[role="alert"]',
-    'div.GQ8Pzc',  // Google's error message container
-    'div.o6cuMc',  // Another error container
-    'span.k1V3Ic',  // Error text span
-    'div[aria-live="assertive"]',
-  ];
-  for (const sel of errorSelectors) {
-    const errEl = page.locator(sel);
-    if ((await errEl.count()) > 0) {
-      const errText = (await errEl.first().textContent())?.trim();
-      if (errText && errText.length > 3) {
-        // Only treat as error if it looks like an actual error message
-        const isError = /can'?t|error|fail|unable|already|invalid|不能|无法|已经|錯誤|错误/i.test(errText);
-        if (isError) {
-          throw new Error(`Google invite error for ${email}: "${errText}"`);
-        }
-      }
+  // Wait for page to navigate away from invitemembers
+  try {
+    await page.waitForURL(
+      (url) => !url.toString().includes("invitemembers"),
+      { timeout: 15_000 }
+    );
+  } catch {
+    const postSendUrl = page.url();
+    if (postSendUrl.includes("invitemembers")) {
+      const bodyText = await page.locator("body").textContent().catch(() => "");
+      const snippet = bodyText?.substring(0, 200) || "";
+      throw new Error(`Invite may have failed — still on invite page after send. URL: ${postSendUrl}. Page snippet: ${snippet}`);
     }
   }
+  await page.waitForTimeout(2000);
 
-  // Verify we navigated away from the invite page
-  // If still on invitemembers page, the invite likely failed silently
-  const postSendUrl = page.url();
-  if (postSendUrl.includes("invitemembers")) {
-    // Still on invite page — try to capture any visible error text
-    const bodyText = await page.locator("body").textContent().catch(() => "");
-    const snippet = bodyText?.substring(0, 500) || "";
-    throw new Error(`Invite may have failed — still on invite page after send. URL: ${postSendUrl}. Page snippet: ${snippet.substring(0, 200)}`);
+  // ── Post-send: check result page for success or failure ──
+  const inviteResult = await checkInviteResultPage(page, logger);
+
+  if (inviteResult.outcome === "rate_limited") {
+    await logger.log("ERROR",
+      `[replace] Invite RATE LIMITED by Google backend. Detail: ${inviteResult.errorDetail ?? "unknown"}`
+    );
+    throw new InviteCooldownError("unknown");
   }
 
-  await logger.log("INFO", `Sent invite to ${email}`);
+  if (inviteResult.outcome === "error") {
+    await logger.log("ERROR",
+      `[replace] Invite FAILED (non-rate-limit). Detail: ${inviteResult.errorDetail ?? "unknown"}. ` +
+      `Page: ${inviteResult.pageText.slice(0, 200)}`
+    );
+    throw new Error(
+      `INVITE_FAILED: ${inviteResult.errorDetail ?? "Google returned an error on the result page"}`
+    );
+  }
+
+  // outcome === "success"
+  await logger.log("INFO", `[replace] Invite result: SUCCESS (result page confirmed) for ${email}`);
 }
+
 
 /**
  * Scan the family details page for a member card matching the given email.

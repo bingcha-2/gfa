@@ -3,7 +3,8 @@ import { APP_GUARD } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { RealIpThrottlerGuard } from "./common/real-ip-throttler.guard";
 
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
@@ -19,6 +20,7 @@ import { ExpireScanModule } from "./expire-scan/expire-scan.module";
 import { AutomationModule } from "./automation/automation.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
 import { PhonePoolModule } from "./phone-pool/phone-pool.module";
+import { FaqModule } from "./faq/faq.module";
 import { HealthController } from "./health.controller";
 
 import { StatsController } from "./stats.controller";
@@ -63,11 +65,12 @@ import { StatsController } from "./stats.controller";
     AutomationModule,
     SchedulerModule,
     PhonePoolModule,
+    FaqModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [
-    // ThrottlerGuard must be first so rate-limit is checked before auth
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // RealIpThrottlerGuard must be first so rate-limit is checked before auth
+    { provide: APP_GUARD, useClass: RealIpThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard }
   ]

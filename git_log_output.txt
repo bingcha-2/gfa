@@ -1,0 +1,14 @@
+﻿f9ff1fa feat(web): apply dark sci-fi UI redesign to portal and remove manual refresh
+24482e4 Merge branch 'main' of https://github.com/bingcha135-sys/GFA-per
+eabb814 chore: Update browser-pool, processors and login flow
+ea166f5 chore(gfa-client): bump version to 2.0.2 and clean up Swap.tsx
+c9a81cd feat(gfa-client): 浼樺寲璐﹀彿绠＄悊涓庣疆鎹㈠姛鑳?ed23c08 fix: add raw HTML fallback for member detection in FAMILY_FULL check
+120a7eb fix: detect already-invited member before throwing FAMILY_FULL
+a5b1ee3 fix: retry with page refreshes when invite link not found after removal
+8259173 feat: 鑷姩娓呯悊杩囨椂鐨勫け璐ヤ换鍔★紙supersede siblings锛?2e7143d fix: handle spaces in filenames when creating GitHub Release
+4a8438b fix: ad-hoc codesign macOS build to prevent Gatekeeper 'damaged app' error
+1f61da8 refactor: 鎷嗗垎 group-panel 涓哄瓙缁勪欢 + 鏂板鍙栨秷閭€璇峰姛鑳?a07c367 release: v2.0.0 鈥?UI/UX 澶х増鏈噸鏋?246434a feat(client): v1.1.0 鈥?鍏ㄩ潰閲嶆瀯 UI/UX
+a43ff99 chore: clean up data files and update project
+0785061 fix(worker): refine replace.processor logic
+be787e8 feat: enhance UI filtering and pending invite tracking
+7630798 feat: 鎺掗櫎宸叉殏鍋?宸茶繃鏈熻闃呰处鍙风殑瀹跺涵缁勶紝闃绘鍚戝叾鍙戦€侀個璇?52b74d6 feat: UI浼樺寲銆亀orker浠诲姟娴佺▼鏀硅繘鍙婅处鎴锋湇鍔″寮?17d930e feat: track active-account slots, subscription suspension date, and last sync time

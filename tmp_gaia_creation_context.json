@@ -1,0 +1,190 @@
+{
+  "totalTasks": 17,
+  "tasks": [
+    {
+      "id": "cmnj003w8002",
+      "type": "SYNC_FAMILY_GROUP",
+      "status": "SUCCESS",
+      "created": "2026-04-03T14:27:46",
+      "started": "2026-04-03T14:27:50",
+      "finished": "2026-04-03T14:28:31",
+      "targetEmail": "-"
+    },
+    {
+      "id": "cmnj3bc5r00s",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:00:29",
+      "started": "2026-04-03T16:00:29",
+      "finished": "2026-04-03T16:01:40",
+      "targetEmail": "darkhe@gmail.com"
+    },
+    {
+      "id": "cmnj3ecrf00s",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:02:49",
+      "started": "2026-04-03T16:03:15",
+      "finished": "2026-04-03T16:03:15",
+      "targetEmail": "as01090045436@gmail.com"
+    },
+    {
+      "id": "cmnj3mufs00u",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:09:25",
+      "started": "2026-04-03T16:19:34",
+      "finished": "2026-04-03T16:19:42",
+      "targetEmail": "darkhe@gmail.com"
+    },
+    {
+      "id": "cmnj3qz0b00u",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:12:38",
+      "started": "2026-04-03T16:19:56",
+      "finished": "2026-04-03T16:19:56",
+      "targetEmail": "darkhe@gmail.com"
+    },
+    {
+      "id": "cmnj3y0v400w",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:18:07",
+      "started": "2026-04-03T16:18:07",
+      "finished": "2026-04-03T16:19:23",
+      "targetEmail": "t01091519463@gmail.com"
+    },
+    {
+      "id": "cmnj495kv00x",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:26:46",
+      "started": "2026-04-03T16:26:46",
+      "finished": "2026-04-03T16:27:47",
+      "targetEmail": "nicegames334@gmail.com"
+    },
+    {
+      "id": "cmnj4f9bp00y",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:31:31",
+      "started": "2026-04-03T16:31:31",
+      "finished": "2026-04-03T16:32:38",
+      "targetEmail": "t01094558304@gmail.com"
+    },
+    {
+      "id": "cmnj4f9bz00y",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-03T16:31:31",
+      "started": "2026-04-03T16:33:05",
+      "finished": "2026-04-03T16:33:13",
+      "targetEmail": "as01047813019@gmail.com"
+    },
+    {
+      "id": "cmnjokgem009",
+      "type": "SYNC_FAMILY_GROUP",
+      "status": "SUCCESS",
+      "created": "2026-04-04T01:55:26",
+      "started": "2026-04-04T01:55:27",
+      "finished": "2026-04-04T01:56:25",
+      "targetEmail": "-"
+    },
+    {
+      "id": "cmnjonpd900a",
+      "type": "SYNC_FAMILY_GROUP",
+      "status": "SUCCESS",
+      "created": "2026-04-04T01:57:57",
+      "started": "2026-04-04T01:57:59",
+      "finished": "2026-04-04T01:58:46",
+      "targetEmail": "-"
+    },
+    {
+      "id": "cmnjpx3rm00g",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-04T02:33:16",
+      "started": "2026-04-04T02:33:16",
+      "finished": "2026-04-04T02:34:19",
+      "targetEmail": "t01085275400@gmail.com"
+    },
+    {
+      "id": "cmnjq7lqo00i",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-04T02:41:25",
+      "started": "2026-04-04T02:41:25",
+      "finished": "2026-04-04T02:42:44",
+      "targetEmail": "tmimi9666@gmail.com"
+    },
+    {
+      "id": "cmnjqfa6400i",
+      "type": "REMOVE_MEMBER",
+      "status": "FAILED_RETRYABLE",
+      "created": "2026-04-04T02:47:24",
+      "started": "2026-04-04T02:51:31",
+      "finished": "2026-04-04T02:53:24",
+      "targetEmail": "tmimi9666@gmail.com"
+    },
+    {
+      "id": "cmnjsbogq00k",
+      "type": "SYNC_FAMILY_GROUP",
+      "status": "SUCCESS",
+      "created": "2026-04-04T03:40:35",
+      "started": "2026-04-04T03:40:36",
+      "finished": "2026-04-04T03:41:40",
+      "targetEmail": "-"
+    },
+    {
+      "id": "cmnjshu0o00k",
+      "type": "INVITE_MEMBER",
+      "status": "INVITE_SENT",
+      "created": "2026-04-04T03:45:22",
+      "started": "2026-04-04T03:45:22",
+      "finished": "2026-04-04T03:46:35",
+      "targetEmail": "sbgdfgdsdfsdgvssfgdsfg@gmail.com"
+    },
+    {
+      "id": "cmnjsi93o00k",
+      "type": "REMOVE_MEMBER",
+      "status": "FAILED_RETRYABLE",
+      "created": "2026-04-04T03:45:42",
+      "started": "2026-04-04T03:50:51",
+      "finished": "2026-04-04T03:51:51",
+      "targetEmail": "t01085275400@gmail.com"
+    }
+  ],
+  "invitesBefore": [
+    {
+      "id": "cmnj3bc5r00s",
+      "status": "INVITE_SENT",
+      "userEmail": "darkhe@gmail.com",
+      "created": "2026-04-03T16:00:29"
+    },
+    {
+      "id": "cmnj3ecrf00s",
+      "status": "INVITE_SENT",
+      "userEmail": "as01090045436@gmail.com",
+      "created": "2026-04-03T16:02:49"
+    },
+    {
+      "id": "cmnj3mufs00u",
+      "status": "INVITE_SENT",
+      "userEmail": "darkhe@gmail.com",
+      "created": "2026-04-03T16:09:25"
+    },
+    {
+      "id": "cmnj3qz0b00u",
+      "status": "INVITE_SENT",
+      "userEmail": "darkhe@gmail.com",
+      "created": "2026-04-03T16:12:38"
+    },
+    {
+      "id": "cmnj3y0v400w",
+      "status": "INVITE_SENT",
+      "userEmail": "t01091519463@gmail.com",
+      "created": "2026-04-03T16:18:07"
+    }
+  ]
+}

@@ -33,6 +33,8 @@ const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 export interface PostTaskSyncHints {
   /** Email of the member that was just invited — gaiaOnly members should prefer this. */
   justInvitedEmail?: string;
+  /** If true, reconcileMembers will NOT create @gaia.unknown placeholder records (Tier 4). */
+  skipPlaceholders?: boolean;
 }
 
 /**

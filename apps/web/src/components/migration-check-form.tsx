@@ -200,18 +200,18 @@ export function MigrationCheckForm() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {info.groupName ? (
-                  <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="muted" style={{ fontSize: '12px' }}>家庭组</span>
                     <span className="mono strong" style={{ fontSize: '13px' }}>{info.groupName}</span>
                   </div>
                 ) : null}
                 {info.expiresAt ? (
-                  <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="muted" style={{ fontSize: '12px' }}>到期时间</span>
                     <span className="mono strong" style={{ fontSize: '13px' }}>{new Date(info.expiresAt).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}</span>
                   </div>
                 ) : null}
-                <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="muted" style={{ fontSize: '12px' }}>母号状态</span>
                   <span className="mono strong" style={{ fontSize: '13px', color: checkResult.needsMigration ? '#ef4444' : '#22c55e' }}>{info.accountStatus}</span>
                 </div>
@@ -266,7 +266,7 @@ export function MigrationCheckForm() {
             </div>
             <div className="muted">{migrateResult.message}</div>
             {migrateResult.success && migrateResult.targetGroupName ? (
-              <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="muted" style={{ fontSize: '12px' }}>新家庭组</span>
                 <span className="mono strong" style={{ color: '#22c55e', fontSize: '13px' }}>{migrateResult.targetGroupName}</span>
               </div>

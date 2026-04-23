@@ -41,9 +41,16 @@ export class SchedulerController {
   getTasks(
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string,
+    @Query("search") search?: string,
+    @Query("type") type?: string,
+    @Query("status") status?: string,
   ) {
     const p = Math.max(1, parseInt(page || "1", 10) || 1);
     const ps = Math.min(100, Math.max(1, parseInt(pageSize || "20", 10) || 20));
-    return this.scheduler.getSchedulerTasks(p, ps);
+    return this.scheduler.getSchedulerTasks(p, ps, {
+      search: search?.trim() || undefined,
+      type: type?.trim() || undefined,
+      status: status?.trim() || undefined,
+    });
   }
 }

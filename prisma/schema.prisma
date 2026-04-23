@@ -148,6 +148,9 @@ model Account {
   subscriptionStatusUpdatedAt DateTime? // timestamp when subscriptionStatus last changed
   subscriptionPlan         String?   // e.g. "Google AI Ultra 30 TB"
   lastAutoMaintenanceAt    DateTime?
+  refreshToken             String?       // OAuth refresh_token (extracted via phone-verify)
+  tokenObtainedAt          DateTime?     // when the token was obtained
+  tokenStatus              String?       // "unused" | "used"
   familyGroups             FamilyGroup[]
   tasks               Task[]
   createdAt           DateTime      @default(now())
@@ -377,7 +380,7 @@ model PhonePool {
   phoneNumber    String    @unique
   countryCode    String    @default("+1")
   smsUrl         String
-  status         String    @default("available") // available / in_use / disabled
+  status         String    @default("available") // available / used / in_use / disabled
   usedCount      Int       @default(0)
   lastUsedAt     DateTime?
   lastCode       String?
@@ -387,4 +390,64 @@ model PhonePool {
   updatedAt      DateTime  @updatedAt
 
   @@index([status])
+}
+
+/// Lifecycle status for agent-managed child accounts.
+enum AgentAccountStatus {
+  REGISTERED       // 已录入凭证
+  PHONE_VERIFIED   // 已过手机验证（有refresh_token）
+  IN_GROUP         // 已进组
+  UPLOADED         // 已上号到CLIProxy
+  REMOVED          // 已从号池删除
+}
+
+/// Child accounts managed through the Agent Service panel.
+/// Separate from Account (母号). Tracks the full lifecycle:
+///   REGISTERED → PHONE_VERIFIED → IN_GROUP → UPLOADED → REMOVED
+model AgentAccount {
+  id              String              @id @default(cuid())
+  loginEmail      String              @unique
+  loginPassword   String
+  totpSecret      String?
+  recoveryEmail   String?
+  status          AgentAccountStatus  @default(REGISTERED)
+  refreshToken    String?             // OAuth refresh_token (auto-captured)
+  tokenObtainedAt DateTime?           // when refresh_token was last obtained
+  familyGroupId   String?             // which family group this account joined
+  uploadedAt      DateTime?           // when uploaded to CLIProxy
+  removedAt       DateTime?           // when removed from CLIProxy
+  lastTaskId      String?             // most recent automation task ID
+  notes           String?
+  pool            String              @default("pending")  // "pending" | "no_ban" | "ban_risk"
+  banned          Boolean             @default(false)       // 已封/未封
+  uploadedToPool  DateTime?           // 上号时间（移入已上号池的时间）
+  motherAccountId String?             // 关联母号 Account ID
+  motherGroupId   String?             // 关联家庭组 FamilyGroup ID
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([status])
+  @@index([loginEmail])
+  @@index([pool])
+  @@index([pool, banned])
+}
+
+/// FAQ items editable from the admin console, displayed on /faq public page.
+model FaqItem {
+  id        String   @id @default(cuid())
+  category  String                  // Category label, e.g. "加入家庭组", "反重力使用"
+  question  String                  // Question title
+  answer    String                  // Answer content (rich HTML)
+  sortOrder Int      @default(0)    // Display order (lower = first)
+  published Boolean  @default(true) // Whether visible on public page
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, sortOrder])
+}
+
+model SiteSetting {
+  key       String   @id               // e.g. "contact_wechat", "contact_qrcode_url"
+  value     String                     // Value (text, URL, etc.)
+  updatedAt DateTime @updatedAt
 }

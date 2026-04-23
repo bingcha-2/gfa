@@ -89,7 +89,8 @@ export class FamilyGroupService {
   }
 
   /**
-   * Find members that appear in multiple family groups (ACTIVE members in ACTIVE groups only).
+   * Find members that appear in multiple family groups.
+   * Checks ACTIVE and PENDING members in ACTIVE groups only (MANUAL_ONLY excluded).
    * Returns each duplicate email with all the groups they belong to.
    */
   async findDuplicateMembers(): Promise<Array<{
@@ -97,14 +98,14 @@ export class FamilyGroupService {
     count: number;
     groups: Array<{ groupId: string; groupName: string; memberStatus: string; joinedAt: string | null }>;
   }>> {
-    // Step 1: find emails that appear in more than one ACTIVE group (only ACTIVE members)
+    // Step 1: find emails that appear in more than one ACTIVE group (ACTIVE + PENDING members)
     const duplicates = await this.prisma.$queryRaw<
       { email: string; cnt: number }[]
     >`
       SELECT LOWER(fm.email) as email, COUNT(DISTINCT fm.familyGroupId) as cnt
       FROM FamilyMember fm
       JOIN FamilyGroup fg ON fg.id = fm.familyGroupId
-      WHERE fm.status = 'ACTIVE'
+      WHERE fm.status IN ('ACTIVE', 'PENDING')
         AND fg.status = 'ACTIVE'
       GROUP BY LOWER(fm.email)
       HAVING COUNT(DISTINCT fm.familyGroupId) > 1
@@ -114,11 +115,11 @@ export class FamilyGroupService {
     if (duplicates.length === 0) return [];
 
     // Step 2: fetch group details for each duplicate email
+    // Use raw SQL for case-insensitive matching (Prisma `in` is case-sensitive on SQLite)
     const dupEmails = duplicates.map((d) => d.email);
     const members = await this.prisma.familyMember.findMany({
       where: {
-        email: { in: dupEmails },
-        status: "ACTIVE",
+        status: { in: ["ACTIVE", "PENDING"] },
         familyGroup: { status: "ACTIVE" },
       },
       select: {
@@ -129,10 +130,12 @@ export class FamilyGroupService {
       },
     });
 
-    // Group by email
+    // Filter to only duplicate emails (case-insensitive) and group by email
+    const dupEmailSet = new Set(dupEmails);
     const emailMap = new Map<string, Array<{ groupId: string; groupName: string; memberStatus: string; joinedAt: string | null }>>();
     for (const m of members) {
       const key = m.email.toLowerCase();
+      if (!dupEmailSet.has(key)) continue;
       if (!emailMap.has(key)) emailMap.set(key, []);
       emailMap.get(key)!.push({
         groupId: m.familyGroup.id,
@@ -419,7 +422,8 @@ export class FamilyGroupService {
     groupId: string,
     emails: string[],
     validDays: number = 30,
-    inheritedExpiresAt?: Date | null
+    inheritedExpiresAt?: Date | null,
+    source?: string
   ): Promise<{
     queued: string[];
     rejected: string[];
@@ -439,7 +443,27 @@ export class FamilyGroupService {
     }
 
     const normEmails = emails.map((e) => e.trim().toLowerCase());
-    const uniqueEmails = [...new Set(normEmails)];
+    const allUniqueEmails = [...new Set(normEmails)];
+
+    // Cross-group duplicate check: filter out emails already ACTIVE/PENDING in any group
+    const existingInAnyGroup = await this.prisma.familyMember.findMany({
+      where: {
+        email: { in: allUniqueEmails },
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: { email: true },
+    });
+    const existingEmailSet = new Set(existingInAnyGroup.map((m) => m.email));
+    const uniqueEmails = allUniqueEmails.filter((e) => !existingEmailSet.has(e));
+    const skippedActive = allUniqueEmails.filter((e) => existingEmailSet.has(e));
+
+    if (uniqueEmails.length === 0) {
+      return {
+        queued: [],
+        rejected: skippedActive,
+        reason: `所有邮箱已是活跃/待处理成员: ${skippedActive.join(', ')}`,
+      };
+    }
 
     // Compute member expiry date
     const memberExpiresAt = inheritedExpiresAt 
@@ -492,6 +516,7 @@ export class FamilyGroupService {
             type: "INVITE_MEMBER",
             familyGroupId: groupId,
             accountId: group.accountId,
+            source: source ?? "manual",
             payload: JSON.stringify({ familyGroupId: groupId, accountId: group.accountId, userEmail: email, memberExpiresAt })
           }
         });
@@ -653,7 +678,7 @@ export class FamilyGroupService {
     // R3-C: filter out emails that already have an ACTIVE member record in any group
     // to avoid double-inviting existing members.
     const existingMembers = await this.prisma.familyMember.findMany({
-      where: { email: { in: normEmails }, status: "ACTIVE" },
+      where: { email: { in: normEmails }, status: { in: ["ACTIVE", "PENDING"] } },
       select: { email: true }
     });
     const existingEmails = new Set(existingMembers.map((m) => m.email));
@@ -837,8 +862,12 @@ export class FamilyGroupService {
     }
 
     if (members.length > 0) {
-      // Pick ACTIVE first, fallback to latest record
-      const member = members.find((m) => m.status === "ACTIVE") ?? members[0];
+      // Pick best member: ACTIVE > PENDING > latest record
+      // This prevents a newer REMOVED record from overshadowing a valid PENDING one
+      const member =
+        members.find((m) => m.status === "ACTIVE") ??
+        members.find((m) => m.status === "PENDING") ??
+        members[0];
       const fg = member.familyGroup;
 
       // Find the most recent order tied to this email & group
@@ -1059,6 +1088,20 @@ export class FamilyGroupService {
     // Unsynced groups cannot be used for replacement — slot data is unreliable
     if (!group.lastSyncedAt) {
       throw new BadRequestException("Family group has never been synced. Please sync first before replacing members.");
+    }
+
+    // Cross-group duplicate check: reject if newUserEmail is already in any group
+    const existingMember = await this.prisma.familyMember.findFirst({
+      where: {
+        email: newUserEmail,
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: { email: true, status: true, familyGroup: { select: { groupName: true } } },
+    });
+    if (existingMember) {
+      throw new BadRequestException(
+        `${newUserEmail} 已在组 ${existingMember.familyGroup?.groupName ?? '未知'} 中（状态: ${existingMember.status}），不能重复邀请`
+      );
     }
 
     // Atomic: check member + create task in one transaction
@@ -1739,6 +1782,218 @@ export class FamilyGroupService {
       email: updated.email,
       joinedAt: updated.joinedAt?.toISOString() ?? null,
       expiresAt: updated.expiresAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * Get a complete chronological timeline of all operations involving a member email.
+   * Aggregates Tasks, Orders, SwapRecords, and FamilyMember records.
+   */
+  async getMemberTimeline(email: string) {
+    const emailLower = email.trim().toLowerCase();
+
+    // 1. All tasks involving this email (in payload)
+    const tasks = await this.prisma.task.findMany({
+      where: { payload: { contains: emailLower } },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        source: true,
+        payload: true,
+        familyGroupId: true,
+        orderId: true,
+        lastErrorMessage: true,
+        lastErrorCode: true,
+        createdAt: true,
+        finishedAt: true,
+        familyGroup: { select: { groupName: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // 2. All orders for this email
+    const orders = await this.prisma.order.findMany({
+      where: { userEmail: emailLower },
+      select: {
+        id: true,
+        orderNo: true,
+        orderType: true,
+        status: true,
+        userEmail: true,
+        swapCount: true,
+        lastSwapAt: true,
+        expiresAt: true,
+        familyGroupId: true,
+        familyGroup: { select: { groupName: true } },
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // 3. All swap records involving this email
+    const swaps = await this.prisma.swapRecord.findMany({
+      where: {
+        OR: [
+          { oldEmail: emailLower },
+          { newEmail: emailLower },
+        ],
+      },
+      select: {
+        id: true,
+        oldEmail: true,
+        newEmail: true,
+        status: true,
+        orderId: true,
+        taskId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // 4. All member records (including REMOVED)
+    const members = await this.prisma.familyMember.findMany({
+      where: { email: emailLower },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        joinedAt: true,
+        expiresAt: true,
+        familyGroupId: true,
+        familyGroup: { select: { groupName: true, status: true } },
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // 5. Build unified timeline
+    type TimelineEvent = {
+      time: string;
+      category: "task" | "order" | "swap" | "member";
+      type: string;
+      status: string;
+      source: string;
+      detail: string;
+      groupName: string | null;
+      extra?: Record<string, any>;
+    };
+
+    const events: TimelineEvent[] = [];
+
+    // Tasks
+    for (const t of tasks) {
+      let detail = "";
+      try {
+        const pl = JSON.parse(t.payload);
+        if (t.type === "REPLACE_MEMBER") {
+          detail = `${pl.targetMemberEmail || "?"} → ${pl.newUserEmail || "?"}`;
+        } else if (t.type === "INVITE_MEMBER") {
+          detail = `邀请 ${pl.userEmail || "?"}`;
+        } else if (t.type === "REMOVE_MEMBER") {
+          detail = `移除 ${pl.memberEmail || "?"}`;
+        } else if (t.type === "SYNC_FAMILY_GROUP") {
+          detail = "同步家庭组";
+        } else if (t.type === "ACCEPT_INVITE") {
+          detail = `接受邀请 ${pl.userEmail || ""}`;
+        } else {
+          detail = t.type;
+        }
+      } catch {
+        detail = t.type;
+      }
+
+      events.push({
+        time: t.createdAt.toISOString(),
+        category: "task",
+        type: t.type,
+        status: t.status,
+        source: t.source || "unknown",
+        detail,
+        groupName: t.familyGroup?.groupName ?? null,
+        extra: {
+          taskId: t.id,
+          orderId: t.orderId,
+          errorMessage: t.lastErrorMessage,
+          errorCode: t.lastErrorCode,
+          finishedAt: t.finishedAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    // Orders
+    for (const o of orders) {
+      events.push({
+        time: o.createdAt.toISOString(),
+        category: "order",
+        type: o.orderType,
+        status: o.status,
+        source: "system",
+        detail: `订单 ${o.orderNo} (换号${o.swapCount}次)`,
+        groupName: o.familyGroup?.groupName ?? null,
+        extra: {
+          orderId: o.id,
+          orderNo: o.orderNo,
+          swapCount: o.swapCount,
+          expiresAt: o.expiresAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    // Swaps
+    for (const s of swaps) {
+      const direction = s.oldEmail === emailLower ? "被替换出" : "替换入";
+      const otherEmail = s.oldEmail === emailLower ? s.newEmail : s.oldEmail;
+      events.push({
+        time: s.createdAt.toISOString(),
+        category: "swap",
+        type: "SWAP",
+        status: s.status,
+        source: "system",
+        detail: `${direction} (${direction === "被替换出" ? `新号: ${otherEmail}` : `替换: ${otherEmail}`})`,
+        groupName: null,
+        extra: {
+          swapId: s.id,
+          oldEmail: s.oldEmail,
+          newEmail: s.newEmail,
+          orderId: s.orderId,
+          taskId: s.taskId,
+        },
+      });
+    }
+
+    // Member records
+    for (const m of members) {
+      events.push({
+        time: (m.joinedAt ?? m.createdAt).toISOString(),
+        category: "member",
+        type: m.status === "REMOVED" ? "MEMBER_REMOVED" : "MEMBER_RECORD",
+        status: m.status,
+        source: "record",
+        detail: `成员记录: ${m.status}`,
+        groupName: m.familyGroup?.groupName ?? null,
+        extra: {
+          memberId: m.id,
+          groupStatus: m.familyGroup?.status,
+          expiresAt: m.expiresAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    // Sort by time
+    events.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+    return {
+      email: emailLower,
+      totalEvents: events.length,
+      summary: {
+        tasks: tasks.length,
+        orders: orders.length,
+        swaps: swaps.length,
+        memberRecords: members.length,
+      },
+      timeline: events,
     };
   }
 }

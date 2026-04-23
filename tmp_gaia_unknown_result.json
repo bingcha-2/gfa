@@ -1,0 +1,383 @@
+{
+  "account": {
+    "id": "cmnizzuay001dxk8s16s0okxa",
+    "loginEmail": "VanbellinghenBaldassare269@gmail.com"
+  },
+  "groups": [
+    {
+      "id": "cmnizzub3001fxk8szt8soqt4",
+      "groupName": "VanbellinghenBaldassare269",
+      "status": "MANUAL_ONLY",
+      "memberCount": 4,
+      "availableSlots": 1
+    }
+  ],
+  "membersByGroup": {
+    "cmnizzub3001fxk8szt8soqt4": [
+      {
+        "id": "cmnj3cysq06elxk2clvchmn31",
+        "email": "darkhe@gmail.com",
+        "displayName": "darkhe",
+        "status": "REMOVED",
+        "googleMemberId": "1680817960227350182",
+        "createdAt": "2026-04-03T16:01:45.002Z"
+      },
+      {
+        "id": "cmnj3enan06l9xk2c9abdd4a6",
+        "email": "as01090045436@gmail.com",
+        "displayName": "as01090045436",
+        "status": "REMOVED",
+        "googleMemberId": "5789726356774012602",
+        "createdAt": "2026-04-03T16:03:03.407Z"
+      },
+      {
+        "id": "cmnj3zqge08alxk2c6ktwinbw",
+        "email": "t01091519463@gmail.com",
+        "displayName": "t01091519463",
+        "status": "PENDING",
+        "googleMemberId": "-5132322204943513891",
+        "createdAt": "2026-04-03T16:19:27.278Z"
+      },
+      {
+        "id": "cmnj40cm708czxk2c07q2phxt",
+        "email": "pending-8348647433419558945@gaia.unknown",
+        "displayName": null,
+        "status": "PENDING",
+        "googleMemberId": "8348647433419558945",
+        "createdAt": "2026-04-03T16:19:55.999Z"
+      },
+      {
+        "id": "cmnj4aitm08rpxk2calhsuxst",
+        "email": "nicegames334@gmail.com",
+        "displayName": "nicegames334",
+        "status": "ACTIVE",
+        "googleMemberId": "115941690162555882273",
+        "createdAt": "2026-04-03T16:27:50.602Z"
+      },
+      {
+        "id": "cmnj4grba09anxk2c3tq0erhf",
+        "email": "t01094558304@gmail.com",
+        "displayName": "t01094558304",
+        "status": "REMOVED",
+        "googleMemberId": "4483075732464097138",
+        "createdAt": "2026-04-03T16:32:41.542Z"
+      },
+      {
+        "id": "cmnj4hje609dhxk2cifimg92f",
+        "email": "as01047813019@gmail.com",
+        "displayName": "as01047813019",
+        "status": "REMOVED",
+        "googleMemberId": "-9185058961122317373",
+        "createdAt": "2026-04-03T16:33:17.933Z"
+      },
+      {
+        "id": "cmnjpyj6t055txk8cf2zjo5og",
+        "email": "t01085275400@gmail.com",
+        "displayName": "t01085275400",
+        "status": "PENDING",
+        "googleMemberId": "110811047569461020891",
+        "createdAt": "2026-04-04T02:34:22.757Z"
+      },
+      {
+        "id": "cmnjq9cwa062rxk8corqlzvlv",
+        "email": "tmimi9666@gmail.com",
+        "displayName": "tmimi9666",
+        "status": "REMOVED",
+        "googleMemberId": "4808910392767374509",
+        "createdAt": "2026-04-04T02:42:47.818Z"
+      },
+      {
+        "id": "cmnjsjgqs07e9xk8c59ew4xil",
+        "email": "sbgdfgdsdfsdgvssfgdsfg@gmail.com",
+        "displayName": "sbgdfgdsdfsdgvssfgdsfg",
+        "status": "REMOVED",
+        "googleMemberId": "1362969683590072165",
+        "createdAt": "2026-04-04T03:46:38.596Z"
+      }
+    ]
+  },
+  "logsGaia": [
+    {
+      "createdAt": "2026-04-04T03:51:39.284Z",
+      "level": "DEBUG",
+      "message": "S3: Card #2 (href=https://myaccount.google.com/family/member/i/8348647433419558945), target=t01085275400@gmail.com, matched=false. Leaf emails: [vanbellinghenbaldassare269@gmail.com]",
+      "type": "REMOVE_MEMBER",
+      "taskStatus": "FAILED_RETRYABLE"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:54.877Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:54.867Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:27.410Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:27.400Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:41:40.245Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T03:41:40.234Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T02:53:07.877Z",
+      "level": "DEBUG",
+      "message": "S3: Card #2 (href=https://myaccount.google.com/family/member/i/8348647433419558945), target=tmimi9666@gmail.com, matched=false. Leaf emails: [vanbellinghenbaldassare269@gmail.com]",
+      "type": "REMOVE_MEMBER",
+      "taskStatus": "FAILED_RETRYABLE"
+    },
+    {
+      "createdAt": "2026-04-04T02:50:10.298Z",
+      "level": "DEBUG",
+      "message": "S3: Card #2 (href=https://myaccount.google.com/family/member/i/8348647433419558945), target=tmimi9666@gmail.com, matched=false. Leaf emails: [vanbellinghenbaldassare269@gmail.com]",
+      "type": "REMOVE_MEMBER",
+      "taskStatus": "FAILED_RETRYABLE"
+    },
+    {
+      "createdAt": "2026-04-04T02:48:26.398Z",
+      "level": "DEBUG",
+      "message": "S3: Card #2 (href=https://myaccount.google.com/family/member/i/8348647433419558945), target=tmimi9666@gmail.com, matched=false. Leaf emails: [vanbellinghenbaldassare269@gmail.com]",
+      "type": "REMOVE_MEMBER",
+      "taskStatus": "FAILED_RETRYABLE"
+    },
+    {
+      "createdAt": "2026-04-04T02:43:07.910Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:43:07.900Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:42:35.298Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:42:35.286Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:35:16.727Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:35:16.714Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:34:11.636Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:34:11.625Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T01:58:46.372Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T01:58:46.360Z",
+      "level": "INFO",
+      "message": "Linking gaiaOnly member: gaia=8348647433419558945, name=\"\", pending=true",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    }
+  ],
+  "logsPlaceholder": [
+    {
+      "createdAt": "2026-04-04T03:46:54.877Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:27.410Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:46:11.499Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T03:41:40.245Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T03:41:16.889Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T02:43:07.910Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:42:35.298Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:42:12.249Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:35:16.727Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:34:11.636Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T02:33:57.284Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-04T01:58:46.372Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T01:58:34.800Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T01:56:25.771Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-04T01:56:09.976Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "SYNC_FAMILY_GROUP",
+      "taskStatus": "SUCCESS"
+    },
+    {
+      "createdAt": "2026-04-03T16:33:34.402Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-03T16:33:05.481Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-03T16:32:30.086Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-03T16:32:11.503Z",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmnizzub3001fxk8szt8soqt4",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    },
+    {
+      "createdAt": "2026-04-03T16:28:03.915Z",
+      "level": "INFO",
+      "message": "T1 linked: gaia=8348647433419558945 → pending-8348647433419558945@gaia.unknown (status=PENDING)",
+      "type": "INVITE_MEMBER",
+      "taskStatus": "INVITE_SENT"
+    }
+  ]
+}

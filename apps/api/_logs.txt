@@ -1,0 +1,14 @@
+Tasks for mathangijor679 (cmo1pgttl) after cooldown:
+
+2026-04-23T02:15:25.265Z | cmoaunc5t005 | FAILED_FINAL | email=y01044363328@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zm400vgxkxwzkouce60 due to in
+2026-04-23T02:18:32.930Z | cmoaurcyq006 | FAILED_FINAL | email=k01062968002@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmi00vjxkxwauplbwp1 due to in
+2026-04-23T02:18:55.345Z | cmoauru9d006 | FAILED_FINAL | email=09023071999t@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmi00vjxkxwauplbwp1 due to in
+2026-04-23T02:19:23.913Z | cmoausgax006 | FAILED_FINAL | email=k01094839792@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmi00vjxkxwauplbwp1 due to in
+2026-04-23T02:20:55.356Z | cmoauuev0006 | FAILED_FINAL | email=aa01073373724@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmi00vjxkxwauplbwp1 due to in
+2026-04-23T02:23:31.664Z | cmoauxrgw006 | FAILED_FINAL | email=zimingwang507@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmt00vmxkxwq7nw6icx due to in
+2026-04-23T02:34:14.462Z | cmoavbjge007 | FAILED_FINAL | email=k01092807644@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmt00vmxkxwq7nw6icx due to in
+2026-04-23T02:35:36.183Z | cmoavdaif007 | FAILED_FINAL | email=k01050008345@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1zmt00vmxkxwq7nw6icx due to in
+2026-04-23T02:43:54.793Z | cmoavnz8p007 | FAILED_FINAL | email=dinhhoa3682@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1znc00vpxkxwi776hqbg due to in
+2026-04-23T03:02:43.867Z | cmoawc6fv009 | FAILED_FINAL | email=li5473617@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo5mlkru00q8xkiwhq1i3cui due to in
+2026-04-23T03:04:44.300Z | cmoawerd8009 | FAILED_FINAL | email=s01090347880@gmail.com | err=INVITE_COOLDOWN_REASSIGNED | msg=Auto-reassigned to group cmo6z1znz00vsxkxw4slby9h4 due to in
+2026-04-23T03:11:21.373Z | cmoawn9r100a | INVITE_SENT | email=jiangtaoniu6@gmail.com | err=- | msg=-

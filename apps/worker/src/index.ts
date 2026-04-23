@@ -33,6 +33,7 @@ import { processReplace } from "./processors/replace.processor";
 import { processSync } from "./processors/sync.processor";
 import { processHealth } from "./processors/health.processor";
 import { processAutomation } from "./processors/automation.processor";
+import { processAgentReplace, processAgentMigrate } from "./processors/agent-pool.processor";
 
 // ---- Configuration ----
 
@@ -108,7 +109,7 @@ const removeWorker = new Worker<RemoveMemberPayload & { taskId: string }>(
 
 const replaceWorker = new Worker<ReplaceMemberPayload>(
   QUEUE_NAMES.replace,
-  (job) => processReplace(job, deps),
+  (job) => processReplace(job, depsWithInviteQueue),
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
@@ -141,12 +142,18 @@ const healthWorker = new Worker<HealthCheckAccountPayload>(
 
 const automationWorker = new Worker<AutomationPayload>(
   QUEUE_NAMES.automation,
-  (job) => processAutomation(job, deps),
+  (job) => {
+    // Route agent-pool compound tasks to their dedicated processors
+    const action = (job.data as any)?.action;
+    if (action === "agent-replace") return processAgentReplace(job as any, deps);
+    if (action === "agent-migrate") return processAgentMigrate(job as any, deps);
+    return processAutomation(job, deps);
+  },
   {
     connection,
     concurrency: WORKER_CONCURRENCY,
-    lockDuration: 600_000, // 10 min — OAuth flow with multiple TOTP rounds can exceed 5 min
-    stalledInterval: 120_000, // check every 2 min instead of default 30s
+    lockDuration: 600_000, // 10 min — compound tasks with multiple logins need extra time
+    stalledInterval: 120_000,
   }
 );
 

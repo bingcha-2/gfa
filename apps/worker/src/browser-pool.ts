@@ -486,6 +486,37 @@ export class BrowserPool {
   }
 
   /**
+   * Record an invite cooldown for an account.
+   * Called when Google rejects an invite due to rate limiting
+   * ("Your invitation wasn't sent" / card count unchanged after send).
+   * Default TTL: 24 hours.
+   */
+  async recordInviteCooldown(accountId: string, cooldownMs = 24 * 60 * 60 * 1000): Promise<void> {
+    await this.redis.set(
+      `gfa:invite-cooldown:${accountId}`,
+      Date.now().toString(),
+      "PX",
+      cooldownMs
+    );
+  }
+
+  /**
+   * Check if an account is in invite cooldown (Google rate limit).
+   * Returns remaining seconds if cooling down, or 0 if safe to invite.
+   */
+  async isInviteCoolingDown(accountId: string): Promise<number> {
+    const ttl = await this.redis.pttl(`gfa:invite-cooldown:${accountId}`);
+    return ttl > 0 ? Math.ceil(ttl / 1000) : 0;
+  }
+
+  /**
+   * Clear the invite cooldown for an account completely.
+   */
+  async clearInviteCooldown(accountId: string): Promise<void> {
+    await this.redis.del(`gfa:invite-cooldown:${accountId}`);
+  }
+
+  /**
    * Start a heartbeat that periodically extends the Redis lock TTL for both
    * the profile and account locks.  Prevents lock expiration while a task is
    * still actively using the browser.
@@ -556,12 +587,16 @@ export class BrowserPool {
    *   - The lock is held by a different workerId
    */
   createForceCloseGuard(
-    workerId: string
+    _workerId: string
   ): (profileId: string) => Promise<boolean> {
     return async (profileId: string) => {
       const key = `${POOL_KEY_PREFIX}${profileId}`;
       const holder = await this.redis.get(key);
-      return !holder || holder === workerId;
+      // Only allow force-close if NO lock exists (truly stale/abandoned browser).
+      // If any lock exists — even from the same workerId — another task may be
+      // actively using this profile. In a single-worker setup all tasks share
+      // the same workerId, so checking `holder === workerId` is not sufficient.
+      return !holder;
     };
   }
 

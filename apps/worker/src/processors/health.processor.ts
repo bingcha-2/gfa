@@ -48,7 +48,7 @@ export async function processHealth(
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", {
       code: "ACCOUNT_NOT_FOUND",
-      message: `Account ${accountId} not found`,
+      message: `账号 ${accountId} 不存在`,
     });
     return;
   }
@@ -61,8 +61,8 @@ export async function processHealth(
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(accountId);
       if (cooldownSecs > 0) {
-        await logger.log("WARN", `[health] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        await logger.log("WARN", `[health] 主号登录冷却中（剩余 ${cooldownSecs} 秒），跳过本次健康检查`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `主号登录冷却中，剩余 ${cooldownSecs} 秒` });
         throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
       }
     }
@@ -100,19 +100,48 @@ export async function processHealth(
     await logger.log("INFO", `Health status: ${healthStatus}`, { currentUrl });
 
     // Attempt to scrape subscription info from Google One page (non-fatal)
-    let subUpdate: { subscriptionExpiresAt?: Date | null; subscriptionStatus?: string; subscriptionPlan?: string | null } = {};
+    let subUpdate: { subscriptionExpiresAt?: Date | null; subscriptionStatus?: string; subscriptionPlan?: string | null; syncError?: string | null } = {};
     if (healthStatus === "HEALTHY") {
       const subInfo = await scrapeSubscriptionInfo(page).catch(() => null);
       if (subInfo) {
+        let finalExpiresAt = subInfo.expiresAt;
+        let finalStatus = subInfo.status;
+
+        // When SUSPENDED and scrape returns no expiresAt, preserve the DB's existing value.
+        // If the preserved date has already passed, re-classify as EXPIRED.
+        if (subInfo.status === "SUSPENDED" && !subInfo.expiresAt) {
+          const currentAccount = await prisma.account.findUnique({
+            where: { id: accountId },
+            select: { subscriptionExpiresAt: true },
+          });
+          if (currentAccount?.subscriptionExpiresAt) {
+            finalExpiresAt = currentAccount.subscriptionExpiresAt;
+            if (currentAccount.subscriptionExpiresAt <= new Date()) {
+              finalStatus = "EXPIRED";
+            }
+          }
+        }
+
         subUpdate = {
-          subscriptionExpiresAt: subInfo.expiresAt,
-          subscriptionStatus: subInfo.status,
+          subscriptionExpiresAt: finalExpiresAt,
+          subscriptionStatus: finalStatus,
           subscriptionPlan: subInfo.planName,
+          syncError: finalStatus === "SUSPENDED" ? "SUBSCRIPTION_SUSPENDED" : null,
         };
-        await logger.log("INFO", `Subscription: ${subInfo.status}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+        await logger.log("INFO", `Subscription: ${finalStatus}, plan: ${subInfo.planName ?? "unknown"}, expires: ${finalExpiresAt?.toISOString() ?? "unknown"}`);
       } else {
         await logger.log("WARN", "Could not scrape subscription info — skipping");
       }
+    }
+
+    // Determine whether subscription is healthy to decide if MANUAL_ONLY groups can be restored
+    const isFinalSuspended = subUpdate.subscriptionStatus === "SUSPENDED";
+    const isFinalExpired = subUpdate.subscriptionStatus === "EXPIRED";
+    const subscriptionIsHealthy = !isFinalSuspended && !isFinalExpired;
+
+    // Fix: also set syncError for EXPIRED subscriptions
+    if (isFinalExpired && !subUpdate.syncError) {
+      subUpdate.syncError = "SUBSCRIPTION_EXPIRED";
     }
 
     // Update account status + subscription fields
@@ -124,6 +153,16 @@ export async function processHealth(
         ...subUpdate,
       },
     });
+
+    // If subscription is unhealthy, force all groups to MANUAL_ONLY
+    if (!subscriptionIsHealthy) {
+      await prisma.familyGroup.updateMany({
+        where: { accountId },
+        data: { status: "MANUAL_ONLY" },
+      });
+      await logger.log("WARN",
+        `Subscription is ${subUpdate.subscriptionStatus}. Forced all family groups to MANUAL_ONLY`);
+    }
 
     // Opportunistic family sync: since we already have a logged-in session,
     // sync the family group state to DB.
@@ -137,14 +176,15 @@ export async function processHealth(
       }
     }
 
-    // Automatically restore any associated MANUAL_ONLY groups back to ACTIVE
-    // since a successful health check proves the account is accessible.
-    const restoredGroups = await prisma.familyGroup.updateMany({
-      where: { accountId, status: "MANUAL_ONLY" },
-      data: { status: "ACTIVE" },
-    });
-    if (restoredGroups.count > 0) {
-      await logger.log("INFO", `Auto-restored ${restoredGroups.count} family group(s) from MANUAL_ONLY to ACTIVE after successful health check`);
+    // Restore MANUAL_ONLY groups back to ACTIVE only when subscription is confirmed healthy.
+    if (subscriptionIsHealthy) {
+      const restoredGroups = await prisma.familyGroup.updateMany({
+        where: { accountId, status: "MANUAL_ONLY" },
+        data: { status: "ACTIVE" },
+      });
+      if (restoredGroups.count > 0) {
+        await logger.log("INFO", `Auto-restored ${restoredGroups.count} family group(s) from MANUAL_ONLY to ACTIVE (subscription healthy)`);
+      }
     }
 
     await logger.updateStatus("SUCCESS");

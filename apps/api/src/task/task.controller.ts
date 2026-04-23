@@ -36,12 +36,14 @@ export class TaskController {
   findAll(
     @Query("status") status?: string,
     @Query("type") type?: string,
+    @Query("search") search?: string,
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string
   ) {
     return this.taskService.findAll({
       status,
       type,
+      search,
       page: page ? parseInt(page, 10) : undefined,
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
     });

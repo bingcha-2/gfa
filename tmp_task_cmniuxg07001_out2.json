@@ -1,0 +1,667 @@
+{
+  "id": "cmniuxg07001sxkxgfhs26uef",
+  "type": "INVITE_MEMBER",
+  "orderId": null,
+  "familyGroupId": "cmni7uzp70051xkfoxncn4vi3",
+  "accountId": "cmni7uzp2004zxkfopiy99qio",
+  "workerId": "worker-1",
+  "transferBatchId": null,
+  "source": "manual",
+  "status": "INVITE_SENT",
+  "priority": 0,
+  "retryCount": 1,
+  "maxRetryCount": 3,
+  "payload": "{\"familyGroupId\":\"cmni7uzom004vxkfoio2kwggs\",\"accountId\":\"cmni7uzoh004txkfohgy7cuiu\",\"userEmail\":\"as01054640239@gmail.com\",\"memberExpiresAt\":\"2026-05-03T12:05:43.864Z\"}",
+  "lastErrorCode": null,
+  "lastErrorMessage": null,
+  "beforeScreenshotPath": "C:\\Users\\Administrator\\Desktop\\GFA\\apps\\worker\\screenshots\\cmniuxg07001sxkxgfhs26uef\\before-1775219469181.png",
+  "afterScreenshotPath": "C:\\Users\\Administrator\\Desktop\\GFA\\apps\\worker\\screenshots\\cmniuxg07001sxkxgfhs26uef\\after-1775219483293.png",
+  "errorScreenshotPath": "C:\\Users\\Administrator\\Desktop\\GFA\\apps\\worker\\screenshots\\cmniuxg07001sxkxgfhs26uef\\error-1775217991778.png",
+  "startedAt": "2026-04-03T12:30:34.807Z",
+  "finishedAt": "2026-04-03T12:31:23.402Z",
+  "createdAt": "2026-04-03T12:05:43.879Z",
+  "updatedAt": "2026-04-03T12:31:23.404Z",
+  "logs": [
+    {
+      "id": "cmniuxg1000njxks0yv30b3r9",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → RUNNING",
+      "extra": null,
+      "createdAt": "2026-04-03T12:05:43.908Z"
+    },
+    {
+      "id": "cmniuxhhd00nlxks018y8oy9j",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Starting invite for as01054640239@gmail.com",
+      "extra": "{\"profileId\":\"k1ax57w4\"}",
+      "createdAt": "2026-04-03T12:05:45.793Z"
+    },
+    {
+      "id": "cmniuxl9b00nnxks0i7742lvi",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Browser connected via CDP",
+      "extra": null,
+      "createdAt": "2026-04-03T12:05:50.687Z"
+    },
+    {
+      "id": "cmniuxl9h00npxks0rd6hv9sz",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Starting login for KuttlerComeauy@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:05:50.693Z"
+    },
+    {
+      "id": "cmniuxvir00nrxks0u7wy6sxz",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP0FT16s36oNKJcCfQkqVgkfj2LMz0aE9vRz4GgdxRvoycwTI-f8h58168oo&checkConnection=youtube%3A483&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-1490772704%3A1775217951066623&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_VFA_ryZRRy3aQPcRtphB-MBEuG_LrdaRE9o7q_4FLfD-FUGqRke18ClvIQ2PIOkipxkMvJeA&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:03.987Z"
+    },
+    {
+      "id": "cmniuxw6r00ntxks0qm4vfmy6",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP0FT16s36oNKJcCfQkqVgkfj2LMz0aE9vRz4GgdxRvoycwTI-f8h58168oo&checkConnection=youtube%3A483&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-1490772704%3A1775217951066623&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_VFA_ryZRRy3aQPcRtphB-MBEuG_LrdaRE9o7q_4FLfD-FUGqRke18ClvIQ2PIOkipxkMvJeA&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:04.851Z"
+    },
+    {
+      "id": "cmniuxw7600nvxks0w7cmle3v",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP 2FA challenge detected",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:04.866Z"
+    },
+    {
+      "id": "cmniuxw7k00nxxks01czlwm1d",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Generated TOTP: 31****",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:04.880Z"
+    },
+    {
+      "id": "cmniuxw9s00nzxks0b4qcnxnj",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP submitted",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:04.960Z"
+    },
+    {
+      "id": "cmniuy2wc00o1xks07a837m8m",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 3, URL: https://myaccount.google.com/?hl=en&pli=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:13.549Z"
+    },
+    {
+      "id": "cmniuy2y400o3xks0lf0iym2v",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Login successful",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:13.612Z"
+    },
+    {
+      "id": "cmniuy2ye00o5xks01gkhm6j4",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Checking family group status",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:13.622Z"
+    },
+    {
+      "id": "cmniuy48a00o7xks06uu4k7cm",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Family group already exists",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:15.274Z"
+    },
+    {
+      "id": "cmniuy48j00o9xks06hakiicd",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Checking Google One family sharing status",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:15.283Z"
+    },
+    {
+      "id": "cmniuy98b00obxks02l1napjp",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle found, aria-checked=\"true\"",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:21.755Z"
+    },
+    {
+      "id": "cmniuy98g00odxks0v7jpeou4",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle is already ON — nothing to do",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:21.761Z"
+    },
+    {
+      "id": "cmniuy98m00ofxks0ws4h5p9b",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmni7uzom004vxkfoio2kwggs",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:21.766Z"
+    },
+    {
+      "id": "cmniuyivy00ohxks0opvek1s6",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → FAILED_RETRYABLE",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:34.270Z"
+    },
+    {
+      "id": "cmniuyiwa00ojxks0z69ht7z8",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "ERROR",
+      "message": "Invite error (will retry): page.screenshot: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n",
+      "extra": null,
+      "createdAt": "2026-04-03T12:06:34.283Z"
+    },
+    {
+      "id": "cmniuzcxi00olxks0s7gfiqbl",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → RUNNING",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:13.207Z"
+    },
+    {
+      "id": "cmniuzfeu00onxks0y6supt6z",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Starting invite for as01054640239@gmail.com",
+      "extra": "{\"profileId\":\"k1ax57w4\"}",
+      "createdAt": "2026-04-03T12:07:16.422Z"
+    },
+    {
+      "id": "cmniuzlze00opxks07jhj8gdo",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Browser connected via CDP",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:24.939Z"
+    },
+    {
+      "id": "cmniuzlzm00orxks0jsjvq8b2",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Starting login for KuttlerComeauy@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:24.946Z"
+    },
+    {
+      "id": "cmniuzxhn00otxks0plal3bch",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "[gmail-login] Still on identifier page after Next click — retry 1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:39.851Z"
+    },
+    {
+      "id": "cmniuzzwq00ovxks0pb27s2j0",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "[gmail-login] Still on identifier page after Next click — retry 2",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:42.986Z"
+    },
+    {
+      "id": "cmniv000t00oxxks0xq4eaax9",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Used JS click for Next button",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:43.134Z"
+    },
+    {
+      "id": "cmniv02cd00ozxks0zauwcrwc",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "[gmail-login] Still on identifier page after Next click — retry 3",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:46.142Z"
+    },
+    {
+      "id": "cmniv02fn00p1xks098ep6t6b",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Used JS click for Next button",
+      "extra": null,
+      "createdAt": "2026-04-03T12:07:46.259Z"
+    },
+    {
+      "id": "cmniv0efk00p3xks0rpe1920d",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "Login failed for account cmni7uzoh004txkfohgy7cuiu (failures: 1/3). Searching for alternative...",
+      "extra": null,
+      "createdAt": "2026-04-03T12:08:01.808Z"
+    },
+    {
+      "id": "cmniv0efu00p5xks0wlkf67eb",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[invite] Switching to alternative account cmni7uzp2004zxkfopiy99qio (group=cmni7uzp70051xkfoxncn4vi3)",
+      "extra": null,
+      "createdAt": "2026-04-03T12:08:01.819Z"
+    },
+    {
+      "id": "cmniv0eg500p7xks0gdxhqudn",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → FAILED_RETRYABLE",
+      "extra": null,
+      "createdAt": "2026-04-03T12:08:01.829Z"
+    },
+    {
+      "id": "cmniv0egg00p9xks0hhgy1kfv",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "ERROR",
+      "message": "Invite error (will retry): LOGIN_FAILED_SWITCHED:cmni7uzp2004zxkfopiy99qio|Switched to alternative account, will retry",
+      "extra": null,
+      "createdAt": "2026-04-03T12:08:01.840Z"
+    },
+    {
+      "id": "cmniv1pn700pbxks0ucemh2p5",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → RUNNING",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:02.995Z"
+    },
+    {
+      "id": "cmniv1t7s00pdxks0xjc1rcer",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Starting invite for as01054640239@gmail.com",
+      "extra": "{\"profileId\":\"k1ax57w4\"}",
+      "createdAt": "2026-04-03T12:09:07.625Z"
+    },
+    {
+      "id": "cmniv1ztg00pfxks00tgo5vxp",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Browser connected via CDP",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:16.180Z"
+    },
+    {
+      "id": "cmniv1ztr00phxks01buew7ve",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Starting login for KuttlerComeauy@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:16.191Z"
+    },
+    {
+      "id": "cmniv2nfv00pjxks0w7y4w9u8",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "Login failed for account cmni7uzoh004txkfohgy7cuiu (failures: 2/3). Searching for alternative...",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:46.795Z"
+    },
+    {
+      "id": "cmniv2nga00plxks03404fw5e",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[invite] Switching to alternative account cmni7uzp2004zxkfopiy99qio (group=cmni7uzp70051xkfoxncn4vi3)",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:46.810Z"
+    },
+    {
+      "id": "cmniv2ngn00pnxks00sex1v5i",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → FAILED_RETRYABLE",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:46.823Z"
+    },
+    {
+      "id": "cmniv2ngz00ppxks037suk67b",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "ERROR",
+      "message": "Invite error (will retry): LOGIN_FAILED_SWITCHED:cmni7uzp2004zxkfopiy99qio|Switched to alternative account, will retry",
+      "extra": null,
+      "createdAt": "2026-04-03T12:09:46.835Z"
+    },
+    {
+      "id": "cmnivteem007hxkiszn4j8u8e",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → RUNNING",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:34.799Z"
+    },
+    {
+      "id": "cmnivtfg4007jxkisx5cumiub",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Starting invite for as01054640239@gmail.com",
+      "extra": "{\"profileId\":\"k1aryykr\"}",
+      "createdAt": "2026-04-03T12:30:36.149Z"
+    },
+    {
+      "id": "cmnivtkj6007lxkisfaeix5hc",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Browser connected via CDP",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:42.739Z"
+    },
+    {
+      "id": "cmnivtkjb007nxkisw1png9hf",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Starting login for nickelsonmestayer@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:42.744Z"
+    },
+    {
+      "id": "cmnivttpy0081xkisnsfg2y28",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1r881iMfk5ThIthWJM_1VurCW_WvfJip8ZMuueVv0cVovm9DplwA2w-fmH&checkConnection=youtube%3A451&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S2048878236%3A1775219443248341&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_Ub75RyWzjkMKbeX1705no7-4Ci2K68zGLahkWg_FB2VhkGKypVb06c8bVEwLDSy22d24cOkA&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:54.646Z"
+    },
+    {
+      "id": "cmnivtudq0083xkisow9s6ima",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1r881iMfk5ThIthWJM_1VurCW_WvfJip8ZMuueVv0cVovm9DplwA2w-fmH&checkConnection=youtube%3A451&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S2048878236%3A1775219443248341&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_Ub75RyWzjkMKbeX1705no7-4Ci2K68zGLahkWg_FB2VhkGKypVb06c8bVEwLDSy22d24cOkA&pstMsg=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:55.502Z"
+    },
+    {
+      "id": "cmnivtue90085xkis5anqq2ox",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP 2FA challenge detected",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:55.521Z"
+    },
+    {
+      "id": "cmnivtueg0087xkiss459to9b",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Generated TOTP: 38****",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:55.528Z"
+    },
+    {
+      "id": "cmnivtugb0089xkisjx3pou8p",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] TOTP submitted",
+      "extra": null,
+      "createdAt": "2026-04-03T12:30:55.595Z"
+    },
+    {
+      "id": "cmnivu0zu008lxkiszuz0gljx",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Round 3, URL: https://myaccount.google.com/?hl=en&pli=1",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:04.074Z"
+    },
+    {
+      "id": "cmnivu13j008nxkisxc0tttj6",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[gmail-login] Login successful",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:04.208Z"
+    },
+    {
+      "id": "cmnivu13p008pxkis2rncvqfw",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Checking family group status",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:04.214Z"
+    },
+    {
+      "id": "cmnivu2lg008xxkisdl4u7s9k",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Family group already exists",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:06.148Z"
+    },
+    {
+      "id": "cmnivu2ln008zxkisc941bb6f",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Checking Google One family sharing status",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:06.155Z"
+    },
+    {
+      "id": "cmnivu4wv0095xkisguq5qxzb",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle found, aria-checked=\"true\"",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:09.152Z"
+    },
+    {
+      "id": "cmnivu4x50097xkisv79v99f5",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[google-one-sharing] Toggle is already ON — nothing to do",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:09.161Z"
+    },
+    {
+      "id": "cmnivu4xd0099xkisyev6ppca",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[ensure-family-group] Using existing DB record: cmni7uzp70051xkfoxncn4vi3",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:09.169Z"
+    },
+    {
+      "id": "cmnivu6km009bxkisvbvr5rf7",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Navigated to Google Family page",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:11.302Z"
+    },
+    {
+      "id": "cmnivu6ks009dxkisp5ctdkmz",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Starting post-task family sync...",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:11.309Z"
+    },
+    {
+      "id": "cmnivu7yx009fxkiscizlh2wv",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Scraped 0 members, 5 available slots",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:13.114Z"
+    },
+    {
+      "id": "cmnivu7z6009hxkis9e28m690",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "WARN",
+      "message": "No members scraped — skipping reconciliation",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:13.123Z"
+    },
+    {
+      "id": "cmnivu7zm009jxkis2wsq3vln",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Group counts updated: 0 members, 5 slots available",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:13.139Z"
+    },
+    {
+      "id": "cmnivu7zt009lxkis33se2mgw",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Complete",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:13.145Z"
+    },
+    {
+      "id": "cmnivu9kz009zxkisvixs478q",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Clicked invite link",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:15.203Z"
+    },
+    {
+      "id": "cmnivub6f00a1xkis1dooxi6h",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Filled email: as01054640239@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:17.271Z"
+    },
+    {
+      "id": "cmnivud8x00a5xkisxqw5vp5a",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Clicked send invite button",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:19.953Z"
+    },
+    {
+      "id": "cmnivue9p00a9xkis4nd3iojz",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Invite page navigated away — invite confirmed",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:21.277Z"
+    },
+    {
+      "id": "cmnivufwo00adxkis9l0fprl3",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Status → INVITE_SENT",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:23.400Z"
+    },
+    {
+      "id": "cmnivuiet00ahxkisbyuzrvn8",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Captured gaiaId=-6429974218135886869 for as01054640239@gmail.com",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:26.645Z"
+    },
+    {
+      "id": "cmnivuifd00anxkiszpmvthh4",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Starting post-task family sync...",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:26.666Z"
+    },
+    {
+      "id": "cmnivumq700axxkis0luowhy8",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Scraped 1 members, 4 available slots",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:32.240Z"
+    },
+    {
+      "id": "cmnivumqu00b1xkise3n5fim1",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Upserted member: as01054640239@gmail.com status=PENDING (gaia=-6429974218135886869)",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:32.262Z"
+    },
+    {
+      "id": "cmnivumr600b3xkis9f1ukd35",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Group counts updated: 1 members, 4 slots available",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:32.274Z"
+    },
+    {
+      "id": "cmnivumrg00b5xkis2ssnfiou",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "[post-task-sync] Complete",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:32.285Z"
+    },
+    {
+      "id": "cmnivumro00b7xkish8204wow",
+      "taskId": "cmniuxg07001sxkxgfhs26uef",
+      "level": "INFO",
+      "message": "Invite completed successfully",
+      "extra": null,
+      "createdAt": "2026-04-03T12:31:32.293Z"
+    }
+  ],
+  "account": {
+    "id": "cmni7uzp2004zxkfopiy99qio",
+    "name": "nickelsonmestayer",
+    "loginEmail": "nickelsonmestayer@gmail.com",
+    "loginPassword": "5vfyxaw37k",
+    "totpSecret": "3EV532KRWHYHZ3VVG2AHBB5KO2TCPVIL",
+    "recoveryEmail": "sx117dtd78qtfcrvv9sm@anhnhat.online-$124.99",
+    "appPassword": null,
+    "adspowerProfileId": "pending-dc44dc84-240e-4b08-874e-5ed6b81946c7",
+    "status": "HEALTHY",
+    "riskScore": 0,
+    "dailyOperationCount": 0,
+    "dailyOperationLimit": 20,
+    "lastOperationDate": null,
+    "notes": null,
+    "lastLoginAt": null,
+    "lastHealthCheckAt": null,
+    "subscriptionExpiresAt": "2026-05-01T16:00:00.000Z",
+    "subscriptionStatus": "ACTIVE",
+    "subscriptionStatusUpdatedAt": "2026-04-03T01:28:23.143Z",
+    "subscriptionPlan": null,
+    "lastAutoMaintenanceAt": null,
+    "createdAt": "2026-04-03T01:19:58.262Z",
+    "updatedAt": "2026-04-03T10:47:37.010Z"
+  },
+  "familyGroup": {
+    "id": "cmni7uzp70051xkfoxncn4vi3",
+    "accountId": "cmni7uzp2004zxkfopiy99qio",
+    "groupName": "nickelsonmestayer",
+    "maxMembers": 5,
+    "memberCount": 1,
+    "availableSlots": 4,
+    "pendingInviteCount": 0,
+    "yearlyChangeCount": 0,
+    "yearlyChangeLimit": 6,
+    "status": "ACTIVE",
+    "riskScore": 0,
+    "lastSyncedAt": "2026-04-03T12:31:32.267Z",
+    "createdAt": "2026-04-03T01:19:58.268Z",
+    "updatedAt": "2026-04-03T12:31:32.269Z"
+  }
+}

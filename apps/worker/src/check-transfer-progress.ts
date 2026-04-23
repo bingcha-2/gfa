@@ -96,8 +96,27 @@ export async function checkTransferBatchProgress(
     }
 
     // Decision #3: allow partial invite — invite as many as slots allow
-    const invitableEmails = successEmails.slice(0, targetGroup.availableSlots);
+    const invitableBySlot = successEmails.slice(0, targetGroup.availableSlots);
     const unplaceableEmails = successEmails.slice(targetGroup.availableSlots);
+
+    // Cross-group duplicate check: between REMOVING and INVITING phases,
+    // an email could have been re-added to another group (via card swap, console, etc.)
+    // Filter those out to prevent duplicate seat allocation.
+    const existingMembers = await prisma.familyMember.findMany({
+      where: {
+        email: { in: invitableBySlot },
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: { email: true },
+    });
+    const alreadyActiveEmails = new Set(existingMembers.map((m) => m.email));
+    const invitableEmails = invitableBySlot.filter((e) => !alreadyActiveEmails.has(e));
+    const skippedDuplicates = invitableBySlot.filter((e) => alreadyActiveEmails.has(e));
+    if (skippedDuplicates.length > 0) {
+      console.log(
+        `[transfer] Batch ${batchId}: skipped ${skippedDuplicates.length} emails already active in other groups: ${skippedDuplicates.join(", ")}`
+      );
+    }
 
     // Record existing errors from remove phase
     const existingErrors: { email: string; error: string }[] = [];

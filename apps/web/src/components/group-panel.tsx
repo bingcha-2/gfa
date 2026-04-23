@@ -597,6 +597,7 @@ export function GroupPanel({
               editJoinedAt={editJoinedAt} setEditJoinedAt={setEditJoinedAt}
               editExpiresAt={editExpiresAt} setEditExpiresAt={setEditExpiresAt}
               savingMemberDates={savingMemberDates} handleSaveMemberDates={handleSaveMemberDates}
+              showToast={showToast}
               pageSize={20}
             />
           )}

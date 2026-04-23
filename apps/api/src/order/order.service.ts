@@ -51,6 +51,7 @@ export class OrderService {
 
     return { ...order, userEmail: masked };
   }
+
   /**
    * Find an active/pending family member by email.
    * Tries exact match first, then case-insensitive fallback.
@@ -91,6 +92,26 @@ export class OrderService {
   }
 
   /**
+   * Guard: reject if email is already an ACTIVE/PENDING member in any group.
+   * Prevents duplicate seat allocation across all entry points (join, swap, replace).
+   */
+  private async guardDuplicateMember(email: string, label: string = "该邮箱") {
+    const normalized = email.trim().toLowerCase();
+    const existing = await this.prisma.familyMember.findFirst({
+      where: {
+        email: normalized,
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: { email: true, status: true, familyGroup: { select: { groupName: true } } },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `${label} ${normalized} 已在组 ${existing.familyGroup?.groupName ?? '未知'} 中（状态: ${existing.status}），不能重复邀请。`
+      );
+    }
+  }
+
+  /**
    * Validate an ACCOUNT_SWAP or SUBSCRIPTION redeem code.
    */
   private async validateSwapCode(codeStr: string) {
@@ -101,21 +122,21 @@ export class OrderService {
 
     const SWAP_TYPES = ["ACCOUNT_SWAP", "SUBSCRIPTION"];
     if (!redeemCode || !SWAP_TYPES.includes(redeemCode.codeType)) {
-      throw new ForbiddenException("This code cannot be used for account swap");
+      throw new ForbiddenException("该卡密无法用于换号操作，请确认卡密类型是否正确。");
     }
 
     const isSubscription = redeemCode.codeType === "SUBSCRIPTION";
 
     if (isSubscription) {
       if (redeemCode.status !== "UNUSED" && redeemCode.status !== "USED") {
-        throw new BadRequestException("Invalid or expired subscription code");
+        throw new BadRequestException("该长效卡密无效或已过期。");
       }
       if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
-        throw new BadRequestException("This subscription code has expired");
+        throw new BadRequestException("该长效卡密已过期，请联系客服。");
       }
     } else {
       if (redeemCode.status !== "UNUSED") {
-        throw new BadRequestException("Invalid or already used swap code");
+        throw new BadRequestException("该换号卡密无效或已使用过。");
       }
     }
 
@@ -248,6 +269,9 @@ export class OrderService {
 
     // Normalize email to lowercase for consistent storage and lookup
     const normalizedEmail = email.trim().toLowerCase();
+
+    // Cross-group duplicate check: reject if email is already in a group
+    await this.guardDuplicateMember(normalizedEmail, "邮箱");
 
     // 2. Create order
     const orderNo = `GFA-${Date.now().toString(36).toUpperCase()}-${nanoid(4).toUpperCase()}`;
@@ -458,6 +482,9 @@ export class OrderService {
     newUserEmail = newUserEmail.trim().toLowerCase();
     const order = await this.findOne(orderId);
 
+    // Cross-group duplicate check
+    await this.guardDuplicateMember(newUserEmail, "新邮箱");
+
     if (!order.familyGroupId) {
       throw new BadRequestException("Order has no assigned family group");
     }
@@ -523,9 +550,12 @@ export class OrderService {
     const newEmail = params.newEmail.trim().toLowerCase();
     const oldEmail = params.oldEmail.trim().toLowerCase();
 
-    if (!newEmail) throw new BadRequestException("New email cannot be empty");
-    if (!oldEmail) throw new BadRequestException("Old email cannot be empty");
-    if (newEmail === oldEmail) throw new BadRequestException("New email is the same as old email");
+    if (!newEmail) throw new BadRequestException("新邮箱不能为空。");
+    if (!oldEmail) throw new BadRequestException("原账号邮箱不能为空。");
+    if (newEmail === oldEmail) throw new BadRequestException("新邮箱不能与原邮箱相同，请重新填写。");
+
+    // Cross-group duplicate check: reject if newEmail is already in a group
+    await this.guardDuplicateMember(newEmail, "新邮箱");
 
     // 1. Validate swap code
     const redeemCode = await this.validateSwapCode(params.swapCode);
@@ -537,21 +567,57 @@ export class OrderService {
     }
 
     // 3. First-time use: find member by oldEmail
-    const member = await this.findActiveMember(oldEmail);
+    let member = await this.findActiveMember(oldEmail);
+
+    // Retry scenario: if oldEmail was already removed by a previous failed swap
+    // (removal succeeded but invite failed), findActiveMember returns null.
+    // In that case, find the REMOVED record and its group, then create an
+    // INVITE_MEMBER task instead of a full REPLACE_MEMBER.
+    let isRetryAfterRemoval = false;
+    let retryGroupId: string | null = null;
+
     if (!member) {
-      throw new NotFoundException(
-        "No active member found for this email. The account may not be in any family group."
-      );
+      // Check if oldEmail was recently removed with a failed swap record
+      const removedMember = await this.prisma.familyMember.findFirst({
+        where: { email: oldEmail, status: "REMOVED" },
+        orderBy: { removedAt: "desc" },
+        select: { familyGroupId: true, removedAt: true },
+      });
+
+      if (removedMember) {
+        // Check if there's a recent failed swap for this email+code combination
+        const failedSwap = await this.prisma.swapRecord.findFirst({
+          where: {
+            oldEmail,
+            status: "FAILED",
+            order: { redeemCodeId: redeemCode.id },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
+        if (failedSwap) {
+          isRetryAfterRemoval = true;
+          retryGroupId = removedMember.familyGroupId;
+        }
+      }
+
+      if (!isRetryAfterRemoval) {
+        throw new NotFoundException(
+          "未找到该邮箱的活跃成员记录，该账号可能不在任何家庭组中。请确认邮箱是否正确。"
+        );
+      }
     }
 
+    const groupId = member?.familyGroupId ?? retryGroupId!;
     const group = await this.prisma.familyGroup.findUnique({
-      where: { id: member.familyGroupId },
+      where: { id: groupId },
     });
-    if (!group) throw new BadRequestException("Family group not found");
+    if (!group) throw new BadRequestException("未找到关联的家庭组，请联系客服。");
 
     // 4. Atomic: lock code + create Order + SwapRecord + Task
     const orderType = isSubscription ? "SUBSCRIPTION" : "SWAP";
     const swapReason = isSubscription ? "SUBSCRIPTION_SWAP" : "SWAP_REQUEST";
+    const taskType = isRetryAfterRemoval ? "INVITE_MEMBER" : "REPLACE_MEMBER";
 
     const { order, task } = await this.prisma.$transaction(async (tx) => {
       // Lock the redeem code
@@ -561,7 +627,7 @@ export class OrderService {
           data: { status: "USED", usedAt: new Date() },
         });
         if (locked.count === 0) {
-          throw new BadRequestException("Code already in use (concurrent request)");
+          throw new BadRequestException("卡密正在被使用中（并发请求），请稍后重试。");
         }
       } else {
         const locked = await tx.redeemCode.updateMany({
@@ -569,7 +635,7 @@ export class OrderService {
           data: { status: "RESERVED" },
         });
         if (locked.count === 0) {
-          throw new BadRequestException("Swap code already in use (concurrent request)");
+          throw new BadRequestException("换号卡密正在被使用中（并发请求），请稍后重试。");
         }
       }
 
@@ -581,26 +647,35 @@ export class OrderService {
           orderType: orderType as any,
           redeemCodeId: redeemCode.id,
           userEmail: newEmail,
-          familyGroupId: member.familyGroupId,
+          familyGroupId: groupId,
           status: "TASK_QUEUED",
         },
       });
 
-      // Create Task
-      const task = await tx.task.create({
-        data: {
-          type: "REPLACE_MEMBER",
-          orderId: order.id,
-          familyGroupId: member.familyGroupId,
-          accountId: group!.accountId,
-          payload: JSON.stringify({
+      // Create Task (INVITE_MEMBER for retry-after-removal, REPLACE_MEMBER otherwise)
+      const taskPayload = isRetryAfterRemoval
+        ? {
             orderId: order.id,
-            familyGroupId: member.familyGroupId,
+            familyGroupId: groupId,
+            accountId: group!.accountId,
+            userEmail: newEmail,
+          }
+        : {
+            orderId: order.id,
+            familyGroupId: groupId,
             accountId: group!.accountId,
             targetMemberEmail: oldEmail,
             newUserEmail: newEmail,
             reason: swapReason,
-          }),
+          };
+
+      const task = await tx.task.create({
+        data: {
+          type: taskType,
+          orderId: order.id,
+          familyGroupId: groupId,
+          accountId: group!.accountId,
+          payload: JSON.stringify(taskPayload),
         },
       });
 
@@ -618,22 +693,30 @@ export class OrderService {
     });
 
     // 5. Enqueue — rollback if queue fails
-    try {
-      await this.replaceQueue.add(
-        "replace-member",
-        {
+    const targetQueue = isRetryAfterRemoval ? this.inviteQueue : this.replaceQueue;
+    const jobName = isRetryAfterRemoval ? "invite-member" : "replace-member";
+    const jobPayload = isRetryAfterRemoval
+      ? {
           taskId: task.id,
           orderId: order.id,
-          familyGroupId: member.familyGroupId,
+          familyGroupId: groupId,
+          accountId: group!.accountId,
+          userEmail: newEmail,
+        }
+      : {
+          taskId: task.id,
+          orderId: order.id,
+          familyGroupId: groupId,
           accountId: group!.accountId,
           targetMemberEmail: oldEmail,
           newUserEmail: newEmail,
           reason: swapReason,
-        },
-        { ...JOB_DEFAULTS, jobId: task.id }
-      );
+        };
+
+    try {
+      await targetQueue.add(jobName, jobPayload, { ...JOB_DEFAULTS, jobId: task.id });
     } catch (error) {
-      const existingJob = await this.replaceQueue.getJob(task.id).catch(() => null);
+      const existingJob = await targetQueue.getJob(task.id).catch(() => null);
       if (!existingJob) {
         await this.prisma.$transaction(async (tx) => {
           await tx.swapRecord.deleteMany({ where: { orderId: order.id } });
@@ -663,11 +746,21 @@ export class OrderService {
       });
     }
 
+    // 7. Reserve slot for invite-only retry (removal already freed the slot earlier)
+    if (isRetryAfterRemoval) {
+      await this.prisma.familyGroup.update({
+        where: { id: groupId },
+        data: { availableSlots: { decrement: 1 } },
+      }).catch(() => {});
+    }
+
     return {
       orderNo: order.orderNo,
       taskId: task.id,
       status: "TASK_QUEUED",
-      message: "Account swap task queued. Your new account will be invited shortly.",
+      message: isRetryAfterRemoval
+        ? "检测到上次换号已移除旧账号，系统将直接邀请新账号。"
+        : "换号任务已排队，系统将自动为您的新账号发送邀请。",
     };
   }
 
@@ -684,6 +777,9 @@ export class OrderService {
   }) {
     const { redeemCode, oldEmail, newEmail } = params;
 
+    // Cross-group duplicate check: reject if newEmail is already in a group
+    await this.guardDuplicateMember(newEmail, "新邮箱");
+
     // 1. Find existing SUBSCRIPTION Order
     const order = await this.prisma.order.findUnique({
       where: { redeemCodeId: redeemCode.id },
@@ -691,7 +787,7 @@ export class OrderService {
     });
 
     if (!order) {
-      throw new NotFoundException("Subscription code has no associated order");
+      throw new NotFoundException("未找到该长效卡密关联的订单。");
     }
 
     // 2. Binding check: last successful swap's newEmail must == oldEmail
@@ -702,8 +798,9 @@ export class OrderService {
 
     if (lastSuccessSwap) {
       if (lastSuccessSwap.newEmail.toLowerCase() !== oldEmail) {
+        const boundEmail = this.maskEmail(lastSuccessSwap.newEmail);
         throw new ForbiddenException(
-          "This subscription code is bound to a different account"
+          `该长效卡密已绑定账号 ${boundEmail}，与您输入的原账号邮箱不匹配。请在「原账号邮箱」中填写 ${boundEmail} 对应的完整邮箱后重试。`
         );
       }
     } else {
@@ -713,8 +810,9 @@ export class OrderService {
         orderBy: { createdAt: "asc" },
       });
       if (firstSwap && firstSwap.oldEmail.toLowerCase() !== oldEmail) {
+        const boundEmail = this.maskEmail(firstSwap.oldEmail);
         throw new ForbiddenException(
-          "This subscription code is bound to a different account"
+          `该长效卡密已绑定账号 ${boundEmail}，与您输入的原账号邮箱不匹配。请在「原账号邮箱」中填写 ${boundEmail} 对应的完整邮箱后重试。`
         );
       }
     }
@@ -731,7 +829,7 @@ export class OrderService {
       });
       if (recentSwaps >= swapLimit) {
         throw new BadRequestException(
-          `Swap rate limit exceeded: maximum ${swapLimit} swaps per ${swapWindowHours} hours.`
+          `换号频率超出限制：每 ${swapWindowHours} 小时最多换号 ${swapLimit} 次，请稍后再试。`
         );
       }
     }
@@ -739,30 +837,45 @@ export class OrderService {
     // 4. Verify oldEmail is still in a group
     const member = await this.findActiveMember(oldEmail);
     if (!member) {
-      throw new NotFoundException("The account is not currently in any family group");
+      throw new NotFoundException("该账号当前不在任何家庭组中，无法执行换号。");
     }
 
-    if (!order.familyGroupId || !order.familyGroup) {
-      throw new BadRequestException("Order has no assigned family group");
+    // ── BUG FIX: member may have been migrated to a different group ──
+    // If admin migrated the member to a new group, order.familyGroupId is stale.
+    // Always use the member's CURRENT group, and update the order if they differ.
+    const actualGroupId = member.familyGroupId;
+    const actualGroup = await this.prisma.familyGroup.findUnique({
+      where: { id: actualGroupId },
+    });
+    if (!actualGroup) {
+      throw new BadRequestException("未找到成员当前所在的家庭组，请联系客服。");
     }
-    const group = order.familyGroup;
+
+    if (order.familyGroupId && order.familyGroupId !== actualGroupId) {
+      console.warn(
+        `[subscriptionReuse] Member ${oldEmail} migrated: order group=${order.familyGroupId} → actual group=${actualGroupId}. Updating order.`,
+      );
+    }
+
+    const group = actualGroup;
 
     // 5. Atomic: CAS order + create SwapRecord + Task
     const { task, swapRecord } = await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.order.updateMany({
         where: {
           id: order.id,
-          status: { in: ["COMPLETED", "INVITE_SENT", "WAIT_USER_ACCEPT", "FAILED"] as any },
+          status: { in: ["COMPLETED", "INVITE_SENT", "WAIT_USER_ACCEPT", "FAILED", "MANUAL_REVIEW"] as any },
         },
         data: {
           userEmail: newEmail,
+          familyGroupId: group.id,  // sync to member's actual group
           status: "TASK_QUEUED",
           swapCount: { increment: 1 },
           lastSwapAt: new Date(),
         },
       });
       if (claimed.count === 0) {
-        throw new BadRequestException("Order is already being swapped or not eligible");
+        throw new BadRequestException("该订单正在换号中或不符合换号条件，请稍后重试。");
       }
 
       const task = await tx.task.create({
@@ -977,19 +1090,19 @@ export class OrderService {
       where: { code: normalizedCode },
     });
 
-    if (!redeemCode) throw new NotFoundException("Code not found");
+    if (!redeemCode) throw new NotFoundException("未找到该卡密，请检查是否输入正确。");
     if (redeemCode.codeType !== "SUBSCRIPTION") {
-      throw new ForbiddenException("This code is not a subscription code");
+      throw new ForbiddenException("该卡密不是长效卡密类型，无法使用此功能。");
     }
     if (redeemCode.status !== "USED") {
       throw new BadRequestException(
         redeemCode.status === "UNUSED"
-          ? "This subscription code has not been used yet. Use swap-by-email for first use."
-          : "Invalid or expired subscription code"
+          ? "该长效卡密尚未首次使用，请先通过换号页面完成首次绑定。"
+          : "该长效卡密无效或已过期。"
       );
     }
     if (redeemCode.expiresAt && redeemCode.expiresAt < new Date()) {
-      throw new BadRequestException("This subscription code has expired");
+      throw new BadRequestException("该长效卡密已过期，请联系客服。");
     }
 
     // 2. Find the SUBSCRIPTION Order
@@ -997,7 +1110,7 @@ export class OrderService {
       where: { redeemCodeId: redeemCode.id },
     });
     if (!order) {
-      throw new NotFoundException("No order found for this subscription code");
+      throw new NotFoundException("未找到该长效卡密关联的订单，请联系客服。");
     }
 
     // 3. Get oldEmail from last successful swap
@@ -1007,13 +1120,13 @@ export class OrderService {
     });
     if (!lastSwap) {
       throw new BadRequestException(
-        "No successful swap found for this subscription. Contact support."
+        "该长效卡密尚未有成功的换号记录，请联系客服处理。"
       );
     }
 
     const oldEmail = lastSwap.newEmail.toLowerCase();
     if (oldEmail === newEmail) {
-      throw new BadRequestException("New email is the same as current email");
+      throw new BadRequestException("新邮箱与当前绑定的邮箱相同，无需换号。");
     }
 
     // 4. Delegate to subscriptionReuse
@@ -1058,6 +1171,16 @@ export class OrderService {
       return { eligible: false, needsMigration: false, needsSync: false, reason: "NOT_FOUND", message: "未查找到该邮箱的会员记录，请确认邮箱是否正确。如有疑问请联系客服。" };
     }
 
+    // 1.5 Check if member has been REMOVED from the group
+    if (lookup.memberStatus === "REMOVED") {
+      const removalMessage = await this.determineRemovalReason(normalizedEmail, lookup.familyGroup?.id);
+      return {
+        eligible: false, needsMigration: false, needsSync: false,
+        reason: "REMOVED",
+        message: removalMessage,
+      };
+    }
+
     // 2. Determine expiry — null expiresAt = expired
     const memberExpiresAt = lookup.member?.expiresAt ?? lookup.order?.expiresAt ?? null;
     const now = new Date();
@@ -1092,13 +1215,15 @@ export class OrderService {
 
     // Determine whether account is "unhealthy"
     const isSuspended = subStatus === "SUSPENDED";
+    const isExpired = subStatus === "EXPIRED";
     const isCaptcha = syncError === "CAPTCHA_REQUIRED";
     const isVerificationRequired = acctStatus === "VERIFICATION_REQUIRED";
 
-    if (isSuspended || isCaptcha || isVerificationRequired) {
+    if (isSuspended || isExpired || isCaptcha || isVerificationRequired) {
+      const reason = isSuspended ? "SUSPENDED" : isExpired ? "EXPIRED" : isCaptcha ? "CAPTCHA" : "VERIFICATION";
       return {
         eligible: true, needsMigration: true, needsSync: false,
-        reason: isSuspended ? "SUSPENDED" : isCaptcha ? "CAPTCHA" : "VERIFICATION",
+        reason,
         message: "检测到您当前所在家庭组异常，建议立即迁移到正常组。迁移不会影响您的到期时间。",
         memberInfo: {
           groupName: familyGroup.groupName,
@@ -1214,6 +1339,90 @@ export class OrderService {
   }
 
   /**
+   * Determine why a member was removed from a family group.
+   *
+   * Checks task history to distinguish:
+   *   1. REPLACE_MEMBER (swap) — removed as part of account replacement
+   *   2. SYNC_FAMILY_GROUP — user left the group themselves, detected by sync
+   *   3. REMOVE_MEMBER (manual) — admin manually removed
+   *   4. Unknown — no matching task found
+   *
+   * Note: by the time this runs, lookupByMemberEmail already picked the "best"
+   * record (ACTIVE > PENDING > latest). If the user was swapped out then swapped
+   * back in, the ACTIVE record would be picked, so we'd never reach this code.
+   * This only runs when *all* records for the user are REMOVED.
+   */
+  private async determineRemovalReason(email: string, familyGroupId?: string): Promise<string> {
+    if (!familyGroupId) {
+      return "您的账号已被移出家庭组。如有疑问请联系人工客服。";
+    }
+
+    // Find the most recent task that involved this email in this group.
+    // Use createdAt DESC to get the latest action — handles swap-out then swap-in scenarios.
+    const removalTask = await this.prisma.task.findFirst({
+      where: {
+        familyGroupId,
+        type: { in: ["REMOVE_MEMBER", "REPLACE_MEMBER"] },
+        payload: { contains: email },
+        status: "SUCCESS",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { type: true, source: true, orderId: true, payload: true },
+    });
+
+    if (removalTask) {
+      if (removalTask.type === "REPLACE_MEMBER") {
+        // Parse payload to find who replaced this user
+        try {
+          const payload = JSON.parse(removalTask.payload ?? "{}");
+          // Only show "replaced" if this email is the targetMemberEmail (the one being removed).
+          // If this email is the newUserEmail, it means they were invited in by a replace but later removed.
+          if (payload.targetMemberEmail?.toLowerCase() === email && payload.newUserEmail) {
+            const masked = this.maskEmail(payload.newUserEmail);
+            return `您的账号已通过换号操作被替换移出家庭组。请使用替换后的账号（${masked}）查询权益。`;
+          }
+        } catch { /* ignore parse error */ }
+        return "您的账号已通过换号操作被替换移出家庭组。请使用替换后的账号查询权益。";
+      }
+      // REMOVE_MEMBER — manual admin removal
+      return "您的账号已被管理员移出家庭组。如果是错误移除，请联系人工客服处理。";
+    }
+
+    // Check if a SYNC task detected the removal (user left themselves)
+    const syncRemoval = await this.prisma.task.findFirst({
+      where: {
+        familyGroupId,
+        type: "SYNC_FAMILY_GROUP",
+        status: "SUCCESS",
+        logs: { some: { message: { contains: `${email} as REMOVED` } } },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { type: true },
+    });
+
+    if (syncRemoval) {
+      return "您的账号已退出家庭组（系统同步检测到）。如果您并未主动退出，请联系人工客服处理。";
+    }
+
+    // Fallback
+    return "您的账号已被移出家庭组。如有疑问请联系人工客服。";
+  }
+
+  /** Mask email for display: show first 3 chars + ***@domain */
+  private maskEmail(email: string): string {
+    const [local, domain] = email.split("@");
+    if (!domain) return "***";
+    if (local.length <= 4) {
+      // Short local part: show first 2 + mask rest
+      return `${local.slice(0, 2)}***@${domain}`;
+    }
+    // Show first 4 and last 2 chars for better identification
+    const head = local.slice(0, 4);
+    const tail = local.slice(-2);
+    return `${head}***${tail}@${domain}`;
+  }
+
+  /**
    * Public self-service migrate: re-validates all conditions, then delegates
    * to FamilyGroupService.migrateMember().
    *
@@ -1242,20 +1451,7 @@ export class OrderService {
       throw new BadRequestException("会员状态正常，无需迁移。");
     }
 
-    // 2. 24h per-email cooldown: check recent TransferBatch or migrateMember audit
-    const cooldownMs = 24 * 60 * 60 * 1000;
-    const cooldownStart = new Date(Date.now() - cooldownMs);
-
-    // Check if a migration (TransferBatch with this email) happened recently
-    const recentBatch = await this.prisma.transferBatch.findFirst({
-      where: {
-        memberEmails: { contains: normalizedEmail },
-        createdAt: { gte: cooldownStart },
-      },
-    });
-    if (recentBatch) {
-      throw new BadRequestException("该邮箱在24小时内已执行过迁移，请稍后再试。");
-    }
+    // (24h per-email cooldown removed — users can migrate again immediately if needed)
 
     // 3. Find the member's current group
     const lookup = await this.familyGroupService.lookupByMemberEmail(normalizedEmail);

@@ -521,6 +521,13 @@ async function checkVerificationSuccess(page: Page, logger: TaskLogger): Promise
   //   d) Shows an error (handled by caller)
   //
   // Use Promise.race to wait for whichever signal fires first.
+  //
+  // IMPORTANT: After detecting the success signal, we must wait for the
+  // FINAL page redirect to complete. Google's verification flow has a
+  // multi-step redirect chain:
+  //   uplevelingstep → auth_success_gemini → final landing page
+  // If the browser closes before the final redirect finishes, the
+  // verification state may NOT persist on Google's side.
 
   const startUrl = page.url();
 
@@ -556,6 +563,47 @@ async function checkVerificationSuccess(page: Page, logger: TaskLogger): Promise
     }
 
     await logger.log("INFO", `[phone-verify] 🎉 Verification success detected (signal: ${signal})`);
+
+    // ── Wait for the FINAL redirect chain to complete ──
+    // Google's verification has a multi-step redirect:
+    //   1. accounts.google.com/uplevelingstep → submit code
+    //   2. Redirect to auth_success_gemini URL
+    //   3. Final redirect to landing page (developers.google.com or other)
+    // We need to wait for step 3 to finish for verification to persist.
+    const urlAfterSignal = page.url();
+    await logger.log("DEBUG", `[phone-verify] URL after success signal: ${urlAfterSignal}`);
+
+    // Wait for the page to finish loading (networkidle = no network activity for 500ms)
+    await logger.log("DEBUG", "[phone-verify] Waiting for final redirect chain to complete...");
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+
+    // If the URL is still an auth_success or accounts.google.com URL,
+    // there may be further redirects. Wait for the page to leave Google auth.
+    const urlAfterIdle = page.url();
+    await logger.log("DEBUG", `[phone-verify] URL after networkidle: ${urlAfterIdle}`);
+
+    if (
+      urlAfterIdle.includes("auth_success") ||
+      urlAfterIdle.includes("accounts.google.com/signin")
+    ) {
+      // Still on an intermediate page — wait for the final navigation
+      await logger.log("DEBUG", "[phone-verify] Still on intermediate page, waiting for final redirect...");
+      await page.waitForURL(
+        (url) => {
+          const u = url.toString();
+          return !u.includes("accounts.google.com/signin") && !u.includes("uplevelingstep");
+        },
+        { timeout: 15000 }
+      ).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    }
+
+    // Final stabilization wait — ensure cookies and server-side state are fully persisted
+    const finalUrl = page.url();
+    await logger.log("INFO", `[phone-verify] Final landing page: ${finalUrl}`);
+    await logger.log("DEBUG", "[phone-verify] Waiting 5s for Google to finalize verification state...");
+    await page.waitForTimeout(5000);
+
     return true;
   } catch {
     // All promises rejected/timed out

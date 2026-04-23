@@ -1,0 +1,107 @@
+{
+  "totalGroups": 345,
+  "totalSlots": 26,
+  "totalMembers": 1732,
+  "totalPendingInvites": 1667,
+  "todayTasksByType": {
+    "SYNC_FAMILY_GROUP": {
+      "total": 83,
+      "statuses": {
+        "SUCCESS": 78,
+        "CANCELLED": 1,
+        "MANUAL_REVIEW": 2,
+        "FAILED_RETRYABLE": 2
+      }
+    },
+    "REPLACE_MEMBER": {
+      "total": 108,
+      "statuses": {
+        "REPLACED_AND_INVITE_SENT": 85,
+        "CANCELLED": 5,
+        "MANUAL_REVIEW": 1,
+        "FAILED_FINAL": 14,
+        "FAILED_RETRYABLE": 3
+      }
+    },
+    "PHONE_VERIFY": {
+      "total": 52,
+      "statuses": {
+        "SUCCESS": 41,
+        "FAILED_FINAL": 5,
+        "MANUAL_REVIEW": 4,
+        "FAILED_RETRYABLE": 2
+      }
+    },
+    "ACCEPT_INVITE": {
+      "total": 16,
+      "statuses": {
+        "SUCCESS": 6,
+        "FAILED_RETRYABLE": 2,
+        "FAILED_FINAL": 8
+      }
+    },
+    "INVITE_MEMBER": {
+      "total": 92,
+      "statuses": {
+        "INVITE_SENT": 90,
+        "CANCELLED": 2
+      }
+    },
+    "REMOVE_MEMBER": {
+      "total": 27,
+      "statuses": {
+        "MANUAL_REVIEW": 4,
+        "SUCCESS": 22,
+        "FAILED_RETRYABLE": 1
+      }
+    }
+  },
+  "todayOrdersByType": {
+    "SWAP": {
+      "total": 30,
+      "statuses": {
+        "COMPLETED": 6,
+        "INVITE_SENT": 23,
+        "FAILED": 1
+      }
+    },
+    "JOIN": {
+      "total": 23,
+      "statuses": {
+        "INVITE_SENT": 15,
+        "COMPLETED": 8
+      }
+    },
+    "SUBSCRIPTION": {
+      "total": 10,
+      "statuses": {
+        "INVITE_SENT": 7,
+        "FAILED": 3
+      }
+    }
+  },
+  "todayOrdersCount": 63,
+  "todayNewMembers": 147,
+  "todayMembersByStatus": {
+    "ACTIVE": 36,
+    "REMOVED": 36,
+    "PENDING": 75
+  },
+  "todayRemovedMembers": 136,
+  "todayInvites": 139,
+  "todayInvitesByStatus": {
+    "SENT": 139
+  },
+  "fullGroups": 333,
+  "slotDistribution": {
+    "0 slots": 333,
+    "1 slots": 7,
+    "2 slots": 1,
+    "4 slots": 1,
+    "5 slots": 2,
+    "3 slots": 1
+  },
+  "netSeatChange": -11,
+  "totalPendingMembers": 423,
+  "todayUsedCodes": 63
+}

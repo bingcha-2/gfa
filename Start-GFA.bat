@@ -7,7 +7,7 @@ echo  ====================================
 echo   Google Family Automation
 echo  ====================================
 echo.
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\private-hosting\launcher.ps1" start
+call pnpm start:daemon
 set EXIT_CODE=%ERRORLEVEL%
 popd
 if %EXIT_CODE% NEQ 0 (

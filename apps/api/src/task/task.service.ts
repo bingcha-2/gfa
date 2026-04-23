@@ -31,7 +31,7 @@ export class TaskService {
     }
   }
 
-  async findAll(params?: { status?: string; type?: string; page?: number; pageSize?: number }) {
+  async findAll(params?: { status?: string; type?: string; search?: string; page?: number; pageSize?: number }) {
     const where: Record<string, unknown> = {
       // Exclude scheduler and expire-scan tasks from regular task list
       source: { notIn: ["scheduler", "expire-scan"] },
@@ -39,6 +39,22 @@ export class TaskService {
 
     if (params?.status) where.status = params.status;
     if (params?.type) where.type = params.type;
+
+    // Server-side fuzzy search across key fields
+    if (params?.search?.trim()) {
+      const q = params.search.trim();
+      where.OR = [
+        { id: { contains: q } },
+        { payload: { contains: q } },
+        { lastErrorCode: { contains: q } },
+        { lastErrorMessage: { contains: q } },
+        { order: { orderNo: { contains: q } } },
+        { order: { userEmail: { contains: q } } },
+        { account: { name: { contains: q } } },
+        { account: { loginEmail: { contains: q } } },
+        { familyGroup: { groupName: { contains: q } } },
+      ];
+    }
 
     const page = Math.max(params?.page ?? 1, 1);
     const pageSize = Math.min(Math.max(params?.pageSize ?? 50, 1), 200);

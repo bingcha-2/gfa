@@ -2,14 +2,27 @@ import "reflect-metadata";
 
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import helmet from "helmet";
 import * as bcrypt from "bcrypt";
+import { join } from "path";
+import { existsSync, mkdirSync } from "fs";
 
 import { AppModule } from "./app.module";
 import { PrismaService } from "./prisma/prisma.service";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Increase JSON body size limit for FAQ rich-text content with images
+  app.useBodyParser("json", { limit: "20mb" });
+
+  // Ensure faq-images directory exists and serve static files
+  const faqImagesDir = join(process.cwd(), "data", "faq-images");
+  if (!existsSync(faqImagesDir)) {
+    mkdirSync(faqImagesDir, { recursive: true });
+  }
+  app.useStaticAssets(faqImagesDir, { prefix: "/api/faq-images" });
   const port = Number(process.env.API_PORT ?? 3001);
 
   // S-01: HTTP security headers

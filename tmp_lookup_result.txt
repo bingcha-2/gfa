@@ -1,0 +1,110 @@
+﻿
+=== 鎵€鏈変换鍔?(1) 鈥?鎸夋椂闂村崌搴?===
+
+  浠诲姟ID: cmnsg7eob003oxkb8rc9enl1p
+  绫诲瀷: INVITE_MEMBER | 鐘舵€? INVITE_SENT | 鏉ユ簮: manual
+  瀹跺涵缁? aa01074087457 (cmnsdtuen000xxkb8blzzo9cr)
+  姣嶅彿: aa01074087457@gmail.com
+  璁㈠崟: -
+  杩佺Щ鎵规: cmnsg7eoq003qxkb8czmulizw (闃舵: COMPLETED)
+  鍒涘缓: 2026-04-10T05:11:16.235Z | 瀹屾垚: 2026-04-10T05:17:29.595Z
+  閲嶈瘯: 0/3
+  Payload: {"familyGroupId":"cmnsctvid0082xkbkdlx6xfe1","accountId":"cmnsctvi50080xkbkrmq53icc","userEmail":"a506328730@gmail.com","memberExpiresAt":"2026-04-22T14:22:00.000Z"}
+  閿欒鐮? PROFILE_ACQUIRE_FAILED
+  閿欒: LOGIN_FAILED_SWITCHED:cmnsdtueg000vxkb8zjcm5mxh|Switched to alternative account, will retry
+  --- 鏃ュ織 (77) ---
+    [INFO] 2026-04-10T05:11:16.301Z Status 鈫?RUNNING
+    [INFO] 2026-04-10T05:11:17.582Z Starting invite for a506328730@gmail.com
+    [INFO] 2026-04-10T05:11:24.256Z Browser connected via CDP
+    [INFO] 2026-04-10T05:11:24.263Z [gmail-login] Starting login for aa01093875699@gmail.com
+    [INFO] 2026-04-10T05:11:34.619Z [gmail-login] Page is transitioning 鈥?waiting for navigation to complete...
+    [WARN] 2026-04-10T05:11:49.627Z [gmail-login] Still on identifier page after Next click 鈥?retry 1
+    [WARN] 2026-04-10T05:11:52.770Z [gmail-login] Playwright click failed, used JS click fallback
+    [INFO] 2026-04-10T05:12:00.784Z [gmail-login] Page is transitioning 鈥?waiting for navigation to complete...
+    [WARN] 2026-04-10T05:12:15.798Z [gmail-login] Still on identifier page after Next click 鈥?retry 2
+    [INFO] 2026-04-10T05:12:15.951Z [gmail-login] Used JS click for Next button
+    [INFO] 2026-04-10T05:12:23.973Z [gmail-login] Page is transitioning 鈥?waiting for navigation to complete...
+    [WARN] 2026-04-10T05:12:38.990Z [gmail-login] Still on identifier page after Next click 鈥?retry 3
+    [INFO] 2026-04-10T05:12:39.102Z [gmail-login] Used JS click for Next button
+    [INFO] 2026-04-10T05:12:47.124Z [gmail-login] Page is transitioning 鈥?waiting for navigation to complete...
+    [WARN] 2026-04-10T05:13:02.131Z [gmail-login] Still on identifier page after Next click 鈥?retry 4
+    [INFO] 2026-04-10T05:13:02.215Z [gmail-login] Used JS click for Next button
+    [WARN] 2026-04-10T05:13:33.699Z Login failed for account cmnsctvi50080xkbkrmq53icc (failures: 1/3). Searching for alternative...
+    [INFO] 2026-04-10T05:13:33.709Z [invite] Switching to alternative account cmnsdtueg000vxkb8zjcm5mxh (group=cmnsdtuen000xxkb8blzzo9cr)
+    [INFO] 2026-04-10T05:13:33.721Z Status 鈫?FAILED_RETRYABLE
+    [ERROR] 2026-04-10T05:13:33.792Z Invite error (will retry): LOGIN_FAILED_SWITCHED:cmnsdtueg000vxkb8zjcm5mxh|Switched to alternative account, will retry
+    [INFO] 2026-04-10T05:16:16.940Z Status 鈫?RUNNING
+    [INFO] 2026-04-10T05:16:18.752Z Starting invite for a506328730@gmail.com
+    [INFO] 2026-04-10T05:16:25.881Z Browser connected via CDP
+    [INFO] 2026-04-10T05:16:25.891Z [gmail-login] Starting login for aa01093875699@gmail.com
+    [WARN] 2026-04-10T05:16:44.056Z [gmail-login] Playwright click failed, used JS click fallback
+    [INFO] 2026-04-10T05:16:44.993Z [gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP2jSI6fYSsXvnIi9SPSPtXWPkJbXrjULWyG1EP_OFqYDSyEI7-wheboOfgI&checkConnection=youtube%3A355&checkedDomains=youtub
+    [INFO] 2026-04-10T05:16:45.865Z [gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP2jSI6fYSsXvnIi9SPSPtXWPkJbXrjULWyG1EP_OFqYDSyEI7-wheboOfgI&checkConnection=youtube%3A355&checkedDomains=youtub
+    [INFO] 2026-04-10T05:16:45.898Z [gmail-login] TOTP 2FA challenge detected
+    [INFO] 2026-04-10T05:16:45.912Z [gmail-login] Generated TOTP: 22****
+    [INFO] 2026-04-10T05:16:47.816Z [gmail-login] TOTP submitted
+    [INFO] 2026-04-10T05:16:55.828Z [gmail-login] Round 3, URL: https://myaccount.google.com/?hl=en&pli=1
+    [INFO] 2026-04-10T05:16:56.586Z [gmail-login] Login successful
+    [INFO] 2026-04-10T05:16:56.595Z [ensure-family-group] Checking family group status
+    [INFO] 2026-04-10T05:16:58.832Z Status 鈫?RUNNING
+    [INFO] 2026-04-10T05:16:58.844Z [batch] Processing as part of batch (DB Takeover)
+    [INFO] 2026-04-10T05:16:59.056Z Clicked invite link
+    [INFO] 2026-04-10T05:16:59.191Z [ensure-family-group] Family group already exists
+    [INFO] 2026-04-10T05:16:59.196Z [google-one-sharing] Checking Google One family sharing status
+    [INFO] 2026-04-10T05:17:01.490Z Filled email: a506328730@gmail.com
+    [INFO] 2026-04-10T05:17:01.554Z [google-one-sharing] Toggle found, aria-checked="true"
+    [INFO] 2026-04-10T05:17:01.560Z [google-one-sharing] Toggle is already ON 鈥?nothing to do
+    [INFO] 2026-04-10T05:17:01.569Z [ensure-family-group] Using existing DB record: cmnsctvid0082xkbkdlx6xfe1
+    [INFO] 2026-04-10T05:17:03.800Z Navigated to Google Family page
+    [INFO] 2026-04-10T05:17:03.900Z [post-task-sync] Starting post-task family sync...
+    [INFO] 2026-04-10T05:17:04.356Z Clicked send invite button
+    [INFO] 2026-04-10T05:17:05.086Z Invite page navigated away 鈥?invite confirmed
+    [INFO] 2026-04-10T05:17:07.094Z Status 鈫?INVITE_SENT
+    [INFO] 2026-04-10T05:17:11.508Z [post-task-sync] Starting post-task family sync...
+    [INFO] 2026-04-10T05:17:15.958Z [post-task-sync] Scraped 3 members, 2 available slots
+    [INFO] 2026-04-10T05:17:15.997Z Upserted member: zhuxiujie23@gmail.com status=ACTIVE (gaia=116347670141810086107)
+    [INFO] 2026-04-10T05:17:16.013Z Upserted member: k01047349432@gmail.com status=ACTIVE (gaia=6338599117531857205)
+    [INFO] 2026-04-10T05:17:16.027Z Upserted member: 18810509066@163.com status=ACTIVE (gaia=-393394043929987637)
+    [INFO] 2026-04-10T05:17:16.040Z Group counts updated: 3 members, 2 slots available
+    [INFO] 2026-04-10T05:17:16.051Z [post-task-sync] Complete
+    [INFO] 2026-04-10T05:17:19.189Z Clicked invite link
+    [INFO] 2026-04-10T05:17:21.253Z Filled email: a506328730@gmail.com
+    [INFO] 2026-04-10T05:17:26.527Z Clicked send invite button
+    [INFO] 2026-04-10T05:17:27.077Z [post-task-sync] Scraped 2 members, 3 available slots
+    [INFO] 2026-04-10T05:17:27.092Z Upserted member: a506328730@gmail.com status=ACTIVE (gaia=-5780763369102400603)
+    [INFO] 2026-04-10T05:17:27.119Z Upserted member: pengfyu920824@gmail.com status=ACTIVE (gaia=-7684261209265968790)
+    [INFO] 2026-04-10T05:17:27.128Z Group counts updated: 2 members, 3 slots available
+    [INFO] 2026-04-10T05:17:27.133Z [post-task-sync] Complete
+    [INFO] 2026-04-10T05:17:27.157Z [batch] Invite completed successfully
+    [INFO] 2026-04-10T05:17:27.569Z Invite page navigated away 鈥?invite confirmed
+    [INFO] 2026-04-10T05:17:29.591Z Status 鈫?INVITE_SENT
+    [INFO] 2026-04-10T05:17:33.373Z Captured gaiaId=4548032583117340790 for a506328730@gmail.com
+    [INFO] 2026-04-10T05:17:33.392Z [post-task-sync] Starting post-task family sync...
+    [INFO] 2026-04-10T05:17:47.178Z [post-task-sync] Scraped 4 members, 1 available slots
+    [INFO] 2026-04-10T05:17:47.194Z Upserted member: zhuxiujie23@gmail.com status=ACTIVE (gaia=116347670141810086107)
+    [INFO] 2026-04-10T05:17:47.211Z Upserted member: k01047349432@gmail.com status=ACTIVE (gaia=6338599117531857205)
+    [INFO] 2026-04-10T05:17:47.224Z Upserted member: a506328730@gmail.com status=ACTIVE (gaia=4548032583117340790)
+    [INFO] 2026-04-10T05:17:47.244Z Upserted member: 18810509066@163.com status=ACTIVE (gaia=-393394043929987637)
+    [INFO] 2026-04-10T05:17:47.257Z Group counts updated: 4 members, 1 slots available
+    [INFO] 2026-04-10T05:17:47.267Z [post-task-sync] Complete
+    [INFO] 2026-04-10T05:17:47.273Z Invite completed successfully
+    [INFO] 2026-04-10T05:18:28.907Z [batch] No available slots 鈥?stopping batch
+    [INFO] 2026-04-10T05:18:28.914Z [batch] Processed 1 additional invite(s) in this session
+
+
+=== 瀹跺涵缁勬垚鍛樿褰?(3) ===
+  缁? WolbertLank | 鐘舵€? REMOVED | 瑙掕壊: member
+    鍒版湡: 2026-04-22T14:22:00.000Z | 鍔犲叆: 2026-04-09T19:41:00.000Z | 绉婚櫎: 2026-04-10T05:11:16.209Z
+    缁勬渶鍚庡悓姝? 2026-04-10T03:41:02.355Z
+  缁? aa01074087457 | 鐘舵€? ACTIVE | 瑙掕壊: member
+    鍒版湡: 2026-04-22T14:22:00.000Z | 鍔犲叆: 2026-04-10T08:54:13.272Z | 绉婚櫎: -
+    缁勬渶鍚庡悓姝? 2026-04-11T03:56:12.540Z
+  缁? aa01093875699 | 鐘舵€? ACTIVE | 瑙掕壊: member
+    鍒版湡: 2026-04-22T14:22:00.000Z | 鍔犲叆: 2026-04-10T05:19:34.740Z | 绉婚櫎: -
+    缁勬渶鍚庡悓姝? 2026-04-11T03:52:49.645Z
+
+=== REMOVE_MEMBER 浠诲姟 (0) ===
+
+=== 閭€璇疯褰曡鎯?(2) ===
+  缁? aa01074087457 | 鐘舵€? SENT | 鍙戦€? 2026-04-10T05:17:11.503Z | 鍝嶅簲: 鏃?| 杩囨湡: -
+  缁? aa01093875699 | 鐘舵€? SENT | 鍙戦€? 2026-04-10T05:17:33.386Z | 鍝嶅簲: 鏃?| 杩囨湡: -

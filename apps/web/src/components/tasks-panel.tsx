@@ -102,10 +102,17 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
   const [currentPage, setCurrentPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"all" | "manual" | "retryable">("all");
   const [filter, setFilter] = useState("");
+  const [debouncedFilter, setDebouncedFilter] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [actioning, setActioning] = useState<ActioningState>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [expandedErrors, setExpandedErrors] = useState<Set<string>>(new Set());
+
+  // Debounce filter input: wait 500ms after user stops typing
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedFilter(filter), 500);
+    return () => clearTimeout(timer);
+  }, [filter]);
 
   function showToast(type: "success" | "error", msg: string) {
     if (externalToast) { externalToast(type, msg); return; }
@@ -129,6 +136,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
       params.set("page", String(currentPage));
       params.set("pageSize", String(PAGE_SIZE));
       if (status) params.set("status", status);
+      if (debouncedFilter.trim()) params.set("search", debouncedFilter.trim());
       const res = await apiRequest<{ items: TaskSummary[]; total: number }>(`tasks?${params.toString()}`);
       setTasks(res.items);
       setTotalItems(res.total);
@@ -137,7 +145,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, activeTab, getStatusParam]);
+  }, [currentPage, activeTab, debouncedFilter, getStatusParam]);
 
   useEffect(() => {
     loadData();
@@ -145,7 +153,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
 
   const totalPages = Math.ceil(totalItems / PAGE_SIZE);
 
-  // Client-side filtering for search and "retryable" tab
+  // Server-side search — for "retryable" tab, apply extra client-side status filter
   const displayTasks = tasks.filter((task) => {
     if (
       activeTab === "retryable" &&
@@ -153,20 +161,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
     ) {
       return false;
     }
-
-    const query = filter.trim().toLowerCase();
-    if (!query) return true;
-
-    return (
-      task.id.toLowerCase().includes(query) ||
-      task.type.toLowerCase().includes(query) ||
-      task.status.toLowerCase().includes(query) ||
-      task.order?.orderNo?.toLowerCase().includes(query) ||
-      task.order?.userEmail?.toLowerCase().includes(query) ||
-      task.familyGroup?.groupName?.toLowerCase().includes(query) ||
-      task.account?.name?.toLowerCase().includes(query) ||
-      (task.payload ?? "").toLowerCase().includes(query)
-    );
+    return true;
   });
 
   async function handleRetry(taskId: string) {
@@ -246,9 +241,15 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
           <div className="filter-row" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <input
               className="search-field"
-              placeholder="筛选邮箱 / 任务号 / 类型 / 状态"
+              placeholder="搜索 任务ID / 订单号 / 邮箱 / 母号"
               value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+              onChange={(event) => {
+                setFilter(event.target.value);
+                setCurrentPage(1);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") loadData();
+              }}
             />
             <button
               className="button secondary small"
@@ -344,7 +345,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                           </div>
                         )}
                         <div className="muted mono" style={{ fontSize: '0.75rem' }}>
-                          {task.id.slice(0, 12)} · retry {task.retryCount}/{task.maxRetryCount}
+                          {task.id} · retry {task.retryCount}/{task.maxRetryCount}
                         </div>
                         <TaskTimeMeta task={task} />
                       </td>

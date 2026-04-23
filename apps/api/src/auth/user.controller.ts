@@ -10,7 +10,7 @@ import { AuditLogService } from "../audit-log/audit-log.service";
 const VALID_ROLES = ["ADMIN", "OPERATIONS", "SUPPORT"];
 const VALID_PERMISSIONS = [
   "overview", "daily_stats", "accounts", "groups",
-  "orders", "tasks", "codes", "expire", "scheduler", "lookup"
+  "orders", "tasks", "codes", "expire", "scheduler", "lookup", "faq"
 ];
 
 @Controller("users")

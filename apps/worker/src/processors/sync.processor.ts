@@ -57,7 +57,7 @@ export async function processSync(
   if (!account) {
     await logger.updateStatus("FAILED_FINAL", {
       code: "ACCOUNT_NOT_FOUND",
-      message: `Account ${accountId} not found`,
+      message: `账号 ${accountId} 不存在`,
     });
     return;
   }
@@ -70,8 +70,8 @@ export async function processSync(
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(accountId);
       if (cooldownSecs > 0) {
-        await logger.log("WARN", `[sync] Account ${accountId} in login cooldown (${cooldownSecs}s remaining), skipping`);
-        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `Account in cooldown for ${cooldownSecs}s` });
+        await logger.log("WARN", `[sync] 主号登录冷却中（剩余 ${cooldownSecs} 秒），跳过本次同步`);
+        await logger.updateStatus("FAILED_RETRYABLE", { code: "LOGIN_COOLDOWN", message: `主号登录冷却中，剩余 ${cooldownSecs} 秒` });
         throw new Error(`LOGIN_COOLDOWN: ${cooldownSecs}s remaining`);
       }
     }
@@ -127,57 +127,99 @@ export async function processSync(
       await logger.log("INFO", `Reset account status to HEALTHY and cleared syncError after successful sync`);
     }
 
-    // Automatically restore any associated MANUAL_ONLY groups back to ACTIVE
-    // since this successful sync proves the account is accessible again.
-    const restoredGroups = await prisma.familyGroup.updateMany({
-      where: { accountId, status: "MANUAL_ONLY" },
-      data: { status: "ACTIVE" },
-    });
-    if (restoredGroups.count > 0) {
-      await logger.log("INFO", `Auto-restored ${restoredGroups.count} family group(s) from MANUAL_ONLY to ACTIVE after successful sync`);
-    }
-
-
     // Clear any accumulated failures or cooldowns
     await pool.clearAccountTaskFailures(accountId);
     await pool.clearLoginCooldown(accountId);
 
-    // Non-fatal: update subscription info while we still have an active session
+    // Non-fatal: update subscription info while we still have an active session.
+    // IMPORTANT: This must run BEFORE the MANUAL_ONLY→ACTIVE restore logic,
+    // so we don't accidentally restore groups whose subscription is expired/suspended.
+    let subscriptionIsHealthy = true;
     try {
       const subInfo = await scrapeSubscriptionInfo(page);
       if (subInfo) {
         // Only update subscriptionStatusUpdatedAt when the status actually changes
         const currentAccount = await prisma.account.findUnique({
           where: { id: accountId },
-          select: { subscriptionStatus: true },
+          select: { subscriptionStatus: true, subscriptionExpiresAt: true },
         });
-        const statusChanged = currentAccount?.subscriptionStatus !== subInfo.status;
         const isSuspended = subInfo.status === "SUSPENDED";
+
+        // When SUSPENDED and scrape returns no expiresAt, preserve the DB's existing
+        // subscriptionExpiresAt instead of overwriting with null. If the preserved
+        // date has already passed, re-classify as EXPIRED (not SUSPENDED).
+        let finalExpiresAt = subInfo.expiresAt;
+        let finalStatus = subInfo.status;
+        if (isSuspended && !subInfo.expiresAt && currentAccount?.subscriptionExpiresAt) {
+          finalExpiresAt = currentAccount.subscriptionExpiresAt;
+          if (currentAccount.subscriptionExpiresAt <= new Date()) {
+            finalStatus = "EXPIRED";
+            await logger.log("INFO",
+              `Subscription SUSPENDED but previous expiresAt (${currentAccount.subscriptionExpiresAt.toISOString()}) has passed — marking as EXPIRED`);
+          }
+        }
+
+        const statusChanged = currentAccount?.subscriptionStatus !== finalStatus;
+        const isFinalSuspended = finalStatus === "SUSPENDED";
+        const isFinalExpired = finalStatus === "EXPIRED";
+        const isUnhealthy = isFinalSuspended || isFinalExpired;
 
         await prisma.account.update({
           where: { id: accountId },
           data: {
-            subscriptionExpiresAt: subInfo.expiresAt,
-            subscriptionStatus: subInfo.status,
+            subscriptionExpiresAt: finalExpiresAt,
+            subscriptionStatus: finalStatus,
             subscriptionPlan: subInfo.planName,
-            syncError: isSuspended ? "SUBSCRIPTION_SUSPENDED" : null,
+            syncError: isFinalSuspended ? "SUBSCRIPTION_SUSPENDED" : isFinalExpired ? "SUBSCRIPTION_EXPIRED" : null,
             ...(statusChanged ? { subscriptionStatusUpdatedAt: new Date() } : {}),
           },
         });
 
-        if (isSuspended) {
+        if (isUnhealthy) {
+          subscriptionIsHealthy = false;
           await prisma.familyGroup.updateMany({
             where: { accountId },
             data: { status: "MANUAL_ONLY" }
           });
-          await logger.log("WARN", `Subscription is SUSPENDED. Set account syncError and forced all family groups to MANUAL_ONLY`);
+          await logger.log("WARN", `Subscription is ${finalStatus}. Set syncError and forced all family groups to MANUAL_ONLY`);
         }
 
-        await logger.log("INFO", `Subscription refreshed: ${subInfo.status}${statusChanged ? " (status changed)" : ""}, plan: ${subInfo.planName ?? "unknown"}, expires: ${subInfo.expiresAt?.toISOString() ?? "unknown"}`);
+        await logger.log("INFO", `Subscription refreshed: ${finalStatus}${statusChanged ? " (status changed)" : ""}, plan: ${subInfo.planName ?? "unknown"}, expires: ${finalExpiresAt?.toISOString() ?? "unknown"}`);
       }
     } catch {
-      // Fully silent: even the WARN log failing must not bubble to the outer catch
-      await logger.log("WARN", "Subscription refresh failed during sync — skipping").catch(() => {});
+      // Fully silent: even the WARN log failing must not bubble to the outer catch.
+      // When subscription check fails, do NOT restore MANUAL_ONLY groups — keep them safe.
+      subscriptionIsHealthy = false;
+      await logger.log("WARN", "Subscription refresh failed during sync — keeping groups in current state").catch(() => {});
+    }
+
+    // Restore MANUAL_ONLY groups back to ACTIVE only when subscription is confirmed healthy
+    // AND account is not in invite cooldown (Google rate limit still active).
+    if (subscriptionIsHealthy) {
+      const inviteCooldownSecs = await pool.isInviteCoolingDown(accountId);
+      if (inviteCooldownSecs > 0) {
+        await logger.log("INFO",
+          `跳过恢复 MANUAL_ONLY 家庭组：账号仍在邀请冷却中（剩余 ${Math.ceil(inviteCooldownSecs / 3600)} 小时）`
+        );
+      } else {
+        // Also clear INVITE_COOLDOWN syncError since cooldown has expired
+        const acct = await prisma.account.findUnique({ where: { id: accountId }, select: { syncError: true } });
+        if (acct?.syncError === "INVITE_COOLDOWN") {
+          await prisma.account.update({
+            where: { id: accountId },
+            data: { syncError: null },
+          });
+          await logger.log("INFO", `邀请冷却已过期，已清除 INVITE_COOLDOWN syncError`);
+        }
+
+        const restoredGroups = await prisma.familyGroup.updateMany({
+          where: { accountId, status: "MANUAL_ONLY" },
+          data: { status: "ACTIVE" },
+        });
+        if (restoredGroups.count > 0) {
+          await logger.log("INFO", `已自动恢复 ${restoredGroups.count} 个家庭组从 MANUAL_ONLY 到 ACTIVE（订阅健康，邀请冷却已过）`);
+        }
+      }
     }
   } catch (error) {
     // Don't overwrite MANUAL_REVIEW status if login challenge was detected
@@ -305,9 +347,16 @@ export async function scrapeMembersFromPage(
   const baseUrl = "https://myaccount.google.com/";
 
   for (const card of uniqueCards) {
-    const detailUrl = card.href.startsWith("http")
+    let detailUrl = card.href.startsWith("http")
       ? card.href
       : `${baseUrl}${card.href}`;
+      
+    // Force English UI to reliably match "Cancel invitation" / "Revoke" button texts
+    if (detailUrl.includes("?")) {
+      detailUrl += "&hl=en";
+    } else {
+      detailUrl += "?hl=en";
+    }
 
     try {
       console.log(`${_ts()} [scrape] visiting detail page ${uniqueCards.indexOf(card)+1}/${uniqueCards.length}: ${card.gaiaId}`);
@@ -703,6 +752,15 @@ export async function reconcileMembers(
     }
 
     // Tier 4 (last resort): create placeholder — but only if no real candidate exists
+    // Skip placeholder creation when caller opts out (e.g., replace processor
+    // where the just-invited member may appear as a new gaiaOnly entry)
+    if (hints?.skipPlaceholders) {
+      await logger.log("INFO",
+        `T4 skipped (skipPlaceholders): gaia=${scrape.googleMemberId} ("${scrape.displayName}") — ` +
+        `will be resolved on next full sync.`
+      );
+      continue;
+    }
     const placeholder = `pending-${scrape.googleMemberId}@gaia.unknown`;
     await prisma.familyMember.upsert({
       where: { familyGroupId_email: { familyGroupId, email: placeholder } },

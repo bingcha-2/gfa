@@ -28,11 +28,13 @@ export class RedeemCodeService {
     if (codeType && codeType !== 'ALL') where.codeType = codeType;
 
     // Search by code or associated order userEmail
+    // Note: SQLite does not support Prisma's `mode: "insensitive"`.
+    // SQLite's default LIKE is already case-insensitive for ASCII characters.
     if (search) {
       where.OR = [
-        { code: { contains: search, mode: "insensitive" } },
-        { order: { userEmail: { contains: search, mode: "insensitive" } } },
-        { order: { orderNo: { contains: search, mode: "insensitive" } } }
+        { code: { contains: search } },
+        { order: { userEmail: { contains: search } } },
+        { order: { orderNo: { contains: search } } }
       ];
     }
 

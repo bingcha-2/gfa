@@ -183,6 +183,15 @@ export class FamilyGroupController {
     return this.familyGroupService.lookupByMemberEmail(email);
   }
 
+  @Get("member-timeline")
+  @Roles("ADMIN", "OPERATIONS")
+  getMemberTimeline(@Query("email") email: string) {
+    if (!email || !email.includes("@")) {
+      return { email: "", totalEvents: 0, summary: {}, timeline: [] };
+    }
+    return this.familyGroupService.getMemberTimeline(email);
+  }
+
   @Get("search-members")
   @Roles("ADMIN", "OPERATIONS")
   searchMembers(
@@ -393,7 +402,7 @@ export class FamilyGroupController {
     @Body() dto: BulkInviteDto,
     @Request() req: any
   ) {
-    const result = await this.familyGroupService.bulkInvite(id, dto.emails, dto.validDays);
+    const result = await this.familyGroupService.bulkInvite(id, dto.emails, dto.validDays, null, dto.source);
 
     await this.auditLog.log({
       operatorId: req.user.id,

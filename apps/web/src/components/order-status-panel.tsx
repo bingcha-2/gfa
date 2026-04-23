@@ -10,11 +10,12 @@ import { StatusBadge } from "./status-badge";
 type OrderStatusPanelProps = {
   orderNo: string;
   onOrderLoaded?: (order: PublicOrder) => void;
+  onRequestRetry?: () => void;
 };
 
 const terminalStatuses = new Set(["INVITE_SENT", "COMPLETED", "FAILED"]);
 
-export function OrderStatusPanel({ orderNo, onOrderLoaded }: OrderStatusPanelProps) {
+export function OrderStatusPanel({ orderNo, onOrderLoaded, onRequestRetry }: OrderStatusPanelProps) {
   const [order, setOrder] = useState<PublicOrder | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -62,6 +63,25 @@ export function OrderStatusPanel({ orderNo, onOrderLoaded }: OrderStatusPanelPro
         {error ? <div className="notice error">{error}</div> : null}
 
         {!error && !order ? <div className="empty-state">正在读取订单状态...</div> : null}
+
+        {order && (order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
+          <div className="notice warning">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, marginBottom: '8px' }}>
+              <span>⚠️ 任务正在排队等待重试 / 需要干预</span>
+            </div>
+            <div style={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
+              执行该任务的底层节点目前遇到网络或风控限制。系统在此期间会进入保护状态（冷却约30分钟）。<br />
+              冷却期结束后，系统会自动重试您的换绑/加入请求，您不需要做任何额外操作。
+              {onRequestRetry && (
+                <div style={{ marginTop: '12px' }}>
+                  <button className="button secondary small" onClick={onRequestRetry}>
+                    或者，点此换个邮箱重新提交
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {order ? (
           <div className="panel-stack">

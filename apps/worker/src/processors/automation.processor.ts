@@ -155,25 +155,94 @@ export async function processAutomation(
       case "accept-invite": {
         // Wrap with overall timeout to prevent the task from running forever
         // and exceeding BullMQ lockDuration (10 min).
+        // IMPORTANT: We must clear the timer after Promise.race resolves,
+        // otherwise the dangling setTimeout fires a reject() that becomes an
+        // unhandled promise rejection and can crash the Node.js process.
+        let acceptTimeoutHandle: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("ACCEPT_INVITE_TIMEOUT: exceeded 5 min")), ACCEPT_INVITE_TIMEOUT_MS)
+          acceptTimeoutHandle = setTimeout(() => reject(new Error("ACCEPT_INVITE_TIMEOUT: exceeded 5 min")), ACCEPT_INVITE_TIMEOUT_MS)
         );
-        const acceptResult = await Promise.race([
-          handleAcceptInvite(page, loginCreds, logger),
-          timeoutPromise,
-        ]);
+        let acceptResult: boolean;
+        try {
+          acceptResult = await Promise.race([
+            handleAcceptInvite(page, loginCreds, logger),
+            timeoutPromise,
+          ]);
+        } finally {
+          clearTimeout(acceptTimeoutHandle!);
+        }
         // Only sync Order + FamilyMember status when accept-invite actually succeeded
         if (acceptResult === true) {
           await syncOrderAfterAccept(prisma, credentials.email, logger);
+
+          // ── Agent-account FamilyMember sync ──
+          // If this email belongs to an AgentAccount, upsert FamilyMember so the
+          // family group member list and availableSlots stay in sync with the
+          // order system's seat calculations.
+          try {
+            const agentAcc = await prisma.agentAccount.findUnique({
+              where: { loginEmail: credentials.email },
+              select: { id: true, familyGroupId: true, status: true },
+            });
+            if (agentAcc && agentAcc.familyGroupId) {
+              // Upsert FamilyMember
+              await prisma.familyMember.upsert({
+                where: {
+                  familyGroupId_email: {
+                    familyGroupId: agentAcc.familyGroupId,
+                    email: credentials.email.toLowerCase(),
+                  },
+                },
+                update: { status: "ACTIVE", joinedAt: new Date(), removedAt: null },
+                create: {
+                  familyGroupId: agentAcc.familyGroupId,
+                  email: credentials.email.toLowerCase(),
+                  role: "member",
+                  status: "ACTIVE",
+                  joinedAt: new Date(),
+                },
+              });
+              // Decrement available slots + increment member count
+              await prisma.familyGroup.update({
+                where: { id: agentAcc.familyGroupId },
+                data: {
+                  availableSlots: { decrement: 1 },
+                  memberCount: { increment: 1 },
+                },
+              }).catch(() => {});
+              // Update AgentAccount status
+              if (agentAcc.status !== "IN_GROUP" && agentAcc.status !== "UPLOADED") {
+                await prisma.agentAccount.update({
+                  where: { id: agentAcc.id },
+                  data: { status: "IN_GROUP" },
+                });
+              }
+              await logger.log("INFO",
+                `[accept-invite] Agent FamilyMember upserted for ${credentials.email} in group ${agentAcc.familyGroupId}`);
+            }
+          } catch (agentErr) {
+            await logger.log("WARN",
+              `[accept-invite] Agent FamilyMember sync failed (non-fatal): ${agentErr instanceof Error ? agentErr.message : String(agentErr)}`);
+          }
         } else {
           await logger.log("WARN", "accept-invite did not succeed — skipping Order/FamilyMember sync");
         }
 
         // ── Post-accept: proactive phone verification (if phones available) ──
-        // setTaskStatus=false: this is a bonus step, must NOT overwrite the accept-invite result
+        // setTaskStatus=false: this is a bonus step, must NOT overwrite the accept-invite result.
+        // IMPORTANT: Wrapped in try-catch so a phone-verification failure does NOT
+        // propagate to the outer catch block and overwrite the accept-invite SUCCESS
+        // status with FAILED_RETRYABLE. The invite was already accepted — phone
+        // verification is best-effort only.
         if (phones && phones.length > 0) {
-          await logger.log("INFO", "[accept-invite] Starting proactive phone verification...");
-          await doProactivePhoneVerification(page, loginCreds, logger, prisma, taskId, phones, false);
+          try {
+            await logger.log("INFO", "[accept-invite] Starting proactive phone verification...");
+            await doProactivePhoneVerification(page, loginCreds, logger, prisma, taskId, phones, false);
+          } catch (pvErr) {
+            await logger.log("WARN",
+              `[accept-invite] Proactive phone verification failed (non-fatal): ${pvErr instanceof Error ? pvErr.message : String(pvErr)}`
+            );
+          }
         }
         break;
       }
@@ -406,9 +475,24 @@ async function doOAuthForToken(
       continue;
     }
 
+    // ── Force English on non-English OAuth/consent pages if still on Google ──
+    if (nowUrl.includes("google.com")) {
+      try {
+        const urlObj = new URL(nowUrl);
+        if (urlObj.searchParams.get("hl") !== "en" && !nowUrl.includes("oauth-callback")) {
+          urlObj.searchParams.set("hl", "en");
+          await page.goto(urlObj.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
+          await page.waitForTimeout(2000);
+          await logger.log("DEBUG", `[oauth] Forced English on consent page`);
+          continue;
+        }
+      } catch {}
+    }
+
     // ── Consent / Allow / Continue / Sign-in buttons ──
     // Covers: firstparty/nativeapp, signin/oauth/consent, standard consent screens.
     // Unified selector so signin/oauth pages fall through to generic consent buttons.
+    // Includes multi-language button labels for non-English pages.
     const consentBtn = page.locator(
       [
         '#submit_approve_access',
@@ -416,6 +500,22 @@ async function doOAuthForToken(
         'button:has-text("Allow")',
         'button:has-text("Continue")',
         'button:has-text("Sign in")',
+        // Multi-language: Chinese, Japanese, Korean, Vietnamese, etc.
+        'button:has-text("允许")',
+        'button:has-text("允許")',
+        'button:has-text("继续")',
+        'button:has-text("繼續")',
+        'button:has-text("登录")',
+        'button:has-text("登入")',
+        'button:has-text("許可")',
+        'button:has-text("続行")',
+        'button:has-text("ログイン")',
+        'button:has-text("허용")',
+        'button:has-text("계속")',
+        'button:has-text("로그인")',
+        'button:has-text("Cho phép")',
+        'button:has-text("Tiếp tục")',
+        'button:has-text("Đăng nhập")',
         'button[type="submit"]',
         'div[role="button"][jsname="LgbsSe"]',
       ].join(", ")
@@ -428,7 +528,9 @@ async function doOAuthForToken(
       continue;
     }
 
-    await logger.log("DEBUG", `[oauth] No actionable elements found on page, waiting...`);
+    // ── Log page body for debugging when nothing is found ──
+    const pageBodyPreview = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    await logger.log("DEBUG", `[oauth] No actionable elements found on page, body preview: ${pageBodyPreview.substring(0, 300)}`);
     await page.waitForTimeout(2000);
   }
 
@@ -487,6 +589,7 @@ async function doOAuthForToken(
 
 /**
  * Full OAuth task handler — gets token and stores in task payload.
+ * After obtaining the token, probes the cloudcode API to detect RESTRICTED_AGE.
  */
 async function handleOAuth(
   page: import("playwright").Page,
@@ -507,6 +610,12 @@ async function handleOAuth(
     return;
   }
 
+  // ── Probe cloudcode API to check for RESTRICTED_AGE ──
+  await logger.log("INFO", "[oauth] Probing cloudcode API for account restrictions...");
+  const probeResult = await probeCloudCodeAPI(token.access_token, logger);
+
+  const isRestricted = probeResult.hasRestrictedAge === true;
+
   // Store result in task payload so client can retrieve it
   await prisma.task.update({
     where: { id: taskId },
@@ -515,12 +624,46 @@ async function handleOAuth(
         action: "oauth",
         email: credentials.loginEmail,
         result: token,
+        ...(isRestricted ? { restrictedAge: true } : {}),
+        ...(probeResult.projectId ? { projectId: probeResult.projectId } : {}),
       }),
     },
   });
 
-  await logger.updateStatus("SUCCESS");
-  await logger.log("INFO", `OAuth completed for ${credentials.loginEmail}`);
+  if (isRestricted) {
+    // RESTRICTED_AGE detected — mark as MANUAL_REVIEW, not SUCCESS
+    await logger.updateStatus("MANUAL_REVIEW", {
+      code: "RESTRICTED_AGE",
+      message: `Account ${credentials.loginEmail} has RESTRICTED_AGE — token obtained but account has age restrictions`,
+    });
+    await logger.log("WARN", `[oauth] ${credentials.loginEmail} has RESTRICTED_AGE — marked as MANUAL_REVIEW`);
+  } else {
+    await logger.updateStatus("SUCCESS");
+    await logger.log("INFO", `OAuth completed for ${credentials.loginEmail}`);
+  }
+
+  // ── Auto-capture to AgentAccount ──
+  try {
+    if (token.refresh_token) {
+      const agentAcc = await prisma.agentAccount.findFirst({ where: { loginEmail: credentials.loginEmail } });
+      if (agentAcc) {
+        // If restricted, don't upgrade status; if normal, upgrade REGISTERED → PHONE_VERIFIED
+        const newStatus = isRestricted
+          ? agentAcc.status
+          : (agentAcc.status === "REGISTERED" ? "PHONE_VERIFIED" : agentAcc.status);
+        await prisma.agentAccount.update({
+          where: { id: agentAcc.id },
+          data: {
+            refreshToken: token.refresh_token,
+            tokenObtainedAt: new Date(),
+            status: newStatus as any,
+            lastTaskId: taskId,
+          },
+        });
+        await logger.log("INFO", `[agent-account] Token captured for ${credentials.loginEmail}, status → ${newStatus}${isRestricted ? ' (RESTRICTED_AGE)' : ''}`);
+      }
+    }
+  } catch { /* best-effort, don't fail the task */ }
 }
 
 // ============================================================
@@ -1249,6 +1392,14 @@ async function syncOrderAfterAccept(
     if (memberUpdate.count > 0) {
       await logger.log("INFO", `FamilyMember status synced to ACTIVE for ${email}`);
     }
+
+    // ── Auto-update AgentAccount status to IN_GROUP ──
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE AgentAccount SET status = 'IN_GROUP', updatedAt = datetime('now') WHERE LOWER(loginEmail) = LOWER(?)`,
+        email
+      );
+    } catch { /* best-effort */ }
   } catch (err) {
     // Non-fatal: accept-invite itself succeeded, DB sync is best-effort
     await logger.log("WARN",
@@ -1301,12 +1452,80 @@ async function doProactivePhoneVerification(
     return;
   }
 
+  // ── Step 1.5: Restore browser to Google domain after OAuth ──
+  // OAuth redirect leaves browser on http://127.0.0.1:19876/oauth-callback
+  // (a dead localhost page). Navigating to Google restores cookie session
+  // and prevents cross-domain issues when opening validation_url later.
+  try {
+    const currentBrowserUrl = page.url();
+    if (!currentBrowserUrl.includes("google.com")) {
+      await logger.log("INFO", "[phone-verify] Restoring browser to Google domain after OAuth...");
+      await page.goto("https://myaccount.google.com/?hl=en", {
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
+      });
+      await page.waitForTimeout(2000);
+      await logger.log("DEBUG", `[phone-verify] Browser restored to: ${page.url()}`);
+    }
+  } catch (restoreErr) {
+    await logger.log("WARN", `[phone-verify] Failed to restore browser to Google domain: ${restoreErr}`);
+    // Non-fatal — will try validation URL navigation anyway
+  }
+
   await logger.log("INFO", "[phone-verify] Got access token, probing cloudcode API...");
 
   // ── Step 2: Probe cloudcode API ──
   const probeResult = await probeCloudCodeAPI(token.access_token, logger);
 
   if (!probeResult.needsVerification) {
+    // ── RESTRICTED_AGE: API works but account has age/identity restrictions ──
+    if (probeResult.hasRestrictedAge) {
+      await logger.log("WARN", `[phone-verify] Account ${credentials.loginEmail} has RESTRICTED_AGE — API works but account is age-restricted`);
+      if (setTaskStatus) {
+        const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
+        let payloadObj: Record<string, unknown> = {};
+        try { payloadObj = JSON.parse(existingPayload?.payload ?? "{}"); } catch {}
+        payloadObj.result = {
+          needed: true,
+          resolved: false,
+          message: "Account has RESTRICTED_AGE — requires age/phone verification despite API responding 200",
+          restrictedAge: true,
+        };
+        payloadObj.token = {
+          access_token: token.access_token,
+          refresh_token: token.refresh_token,
+          project_id: probeResult.projectId ?? null,
+        };
+        await prisma.task.update({
+          where: { id: taskId },
+          data: { payload: JSON.stringify(payloadObj) },
+        });
+        await logger.updateStatus("MANUAL_REVIEW", {
+          code: "RESTRICTED_AGE",
+          message: `Account ${credentials.loginEmail} has RESTRICTED_AGE — needs manual age/phone verification`,
+        });
+      }
+      // Still capture token (it works, just restricted)
+      if (token.refresh_token) {
+        try {
+          const agentAcc = await prisma.agentAccount.findFirst({ where: { loginEmail: credentials.loginEmail } });
+          if (agentAcc) {
+            await prisma.agentAccount.update({
+              where: { id: agentAcc.id },
+              data: {
+                refreshToken: token.refresh_token,
+                tokenObtainedAt: new Date(),
+                lastTaskId: taskId,
+                // Do NOT upgrade status — keep as-is to indicate restriction
+              },
+            });
+            await logger.log("INFO", `[agent-account] Token captured for ${credentials.loginEmail} (RESTRICTED_AGE, status unchanged)`);
+          }
+        } catch { /* best-effort */ }
+      }
+      return;
+    }
+
     // Account is fine — no verification needed
     if (setTaskStatus) {
       const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
@@ -1330,32 +1549,76 @@ async function doProactivePhoneVerification(
       await logger.updateStatus("SUCCESS");
     }
     await logger.log("INFO", `[phone-verify] Account ${credentials.loginEmail} does not require verification`);
+
+    // Auto-capture token to AgentAccount
+    if (token.refresh_token) {
+      try {
+        const agentAcc = await prisma.agentAccount.findFirst({ where: { loginEmail: credentials.loginEmail } });
+        if (agentAcc) {
+          const newStatus = agentAcc.status === "REGISTERED" ? "PHONE_VERIFIED" : agentAcc.status;
+          await prisma.agentAccount.update({
+            where: { id: agentAcc.id },
+            data: {
+              refreshToken: token.refresh_token,
+              tokenObtainedAt: new Date(),
+              status: newStatus as any,
+              lastTaskId: taskId,
+            },
+          });
+          await logger.log("INFO", `[agent-account] Token captured after phone verify for ${credentials.loginEmail}, status → ${newStatus}`);
+        }
+      } catch { /* best-effort */ }
+    }
+
     return;
   }
 
   // ── Step 3: Need verification — open validation_url ──
-  if (!probeResult.validationUrl) {
-    await logger.log("WARN", "[phone-verify] VALIDATION_REQUIRED but no validation_url found in error response");
-    if (setTaskStatus) {
-      await logger.updateStatus("FAILED_FINAL", {
-        code: "NO_VALIDATION_URL",
-        message: "VALIDATION_REQUIRED detected but could not extract validation_url",
-      });
-    }
-    return;
+  let validationUrl = probeResult.validationUrl;
+  if (!validationUrl) {
+    await logger.log("WARN", "[phone-verify] VALIDATION_REQUIRED but no validation_url found, using age-verification fallback");
+    // Use the Gemini auth landing page rather than myaccount — it more reliably
+    // triggers the uplevelingstep verification flow for RESTRICTED_AGE accounts
+    validationUrl = "https://accounts.google.com/signin/continue?sarp=1&scc=1&continue=https://developers.google.com/gemini-code-assist/auth/auth_success_gemini";
   }
 
   // Fix incomplete validationUrl — API sometimes returns &authuser without =0
-  let validationUrl = probeResult.validationUrl;
   if (validationUrl.endsWith("&authuser")) {
     validationUrl += "=0";
   }
 
   await logger.log("INFO", `[phone-verify] Opening validation URL: ${validationUrl.substring(0, 100)}...`);
-  await page.goto(validationUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
-  });
+  try {
+    await page.goto(validationUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+  } catch (navErr) {
+    // Navigation may fail due to ERR_ABORTED (redirect chain) — wait and check
+    await logger.log("WARN", `[phone-verify] Navigation to validation URL error: ${navErr}`);
+    await page.waitForTimeout(3000);
+    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  }
+
+  // ── Handle re-auth challenges after navigation ──
+  // Google may redirect to signin/challenge pages when navigating to the
+  // validation URL, especially after an OAuth flow that changed session state.
+  const { handleReAuthLoop, isReAuthPage } = await import("../handle-reauth");
+  const reAuthCreds = {
+    loginEmail: credentials.loginEmail,
+    password: credentials.loginPassword,
+    totpSecret: credentials.totpSecret,
+  };
+
+  const postNavUrl = page.url();
+  if (isReAuthPage(postNavUrl)) {
+    await logger.log("INFO", `[phone-verify] Re-auth challenge detected after validation URL: ${postNavUrl.substring(0, 100)}`);
+    await handleReAuthLoop(page, reAuthCreds, logger, {
+      maxRounds: 4,
+      logPrefix: "[phone-verify-reauth]",
+    });
+    await page.waitForTimeout(2000);
+  }
 
   // Wait for redirect — validation URL goes through signin/continue → actual verification page
   const gotoUrl = page.url();
@@ -1376,8 +1639,10 @@ async function doProactivePhoneVerification(
     // Check if we ended up on a success page (check pathname, not query params to avoid false positive from continue= param)
     try {
       const urlObj = new URL(currentUrl);
-      if (urlObj.pathname.includes("auth_success") || urlObj.hostname.includes("myaccount.google.com")) {
-        await logger.log("INFO", "[phone-verify] Landed on success page — verification may have auto-completed");
+      // Only treat auth_success as success — do NOT treat myaccount.google.com as success
+      // because that could be a redirect from a failed validation URL navigation
+      if (urlObj.pathname.includes("auth_success")) {
+        await logger.log("INFO", "[phone-verify] Landed on auth_success page — verification auto-completed");
         if (setTaskStatus) {
           await logger.updateStatus("SUCCESS");
         }
@@ -1385,11 +1650,33 @@ async function doProactivePhoneVerification(
       }
     } catch {}
 
+    // If we ended up on myaccount after a RESTRICTED_AGE probe, this is likely
+    // a failed navigation — not a success. Try a different approach.
+    try {
+      const urlObj = new URL(currentUrl);
+      if (urlObj.hostname.includes("myaccount.google.com")) {
+        await logger.log("WARN", "[phone-verify] Landed on myaccount instead of verification page — trying direct age verification URL");
+        await page.goto("https://myaccount.google.com/age-verification?utm_source=p0&hl=en", {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+        await page.waitForTimeout(3000);
+        const retryUrl = page.url();
+        await logger.log("INFO", `[phone-verify] Retry landed on: ${retryUrl}`);
+        if (isVerificationPage(retryUrl)) {
+          await logger.log("INFO", "[phone-verify] Reached verification page via retry — proceeding");
+        }
+      }
+    } catch {}
+
     // Unknown page — log details but still try to proceed
-    await logger.log("WARN", `[phone-verify] URL doesn't match known verification patterns, will try anyway: ${currentUrl}`);
-    const pageTitle = await page.title();
-    const pageText = await page.textContent("body").catch(() => "");
-    await logger.log("DEBUG", `[phone-verify] Page title: ${pageTitle}, body preview: ${(pageText ?? "").substring(0, 300)}`);
+    const finalUrl = page.url();
+    if (!isVerificationPage(finalUrl)) {
+      await logger.log("WARN", `[phone-verify] URL doesn't match known verification patterns, will try anyway: ${finalUrl}`);
+      const pageTitle = await page.title();
+      const pageText = await page.textContent("body").catch(() => "");
+      await logger.log("DEBUG", `[phone-verify] Page title: ${pageTitle}, body preview: ${(pageText ?? "").substring(0, 300)}`);
+    }
   }
 
   // ── Step 4: Do phone verification ──
@@ -1423,6 +1710,41 @@ async function doProactivePhoneVerification(
   if (result.resolved) {
     if (setTaskStatus) await logger.updateStatus("SUCCESS");
     await logger.log("INFO", `[phone-verify] ✅ Verification completed for ${credentials.loginEmail}`);
+
+    // ── Mark used phone as "used" in PhonePool (prevent reuse) ──
+    if (result.usedPhone) {
+      try {
+        await prisma.phonePool.update({
+          where: { phoneNumber: result.usedPhone },
+          data: {
+            status: "used",
+            usedCount: { increment: 1 },
+            lastUsedAt: new Date(),
+          },
+        });
+        await logger.log("INFO", `[phone-verify] Phone ${result.usedPhone.slice(-4)} marked as used in pool`);
+      } catch { /* best-effort */ }
+    }
+
+    // Auto-capture token to AgentAccount
+    if (token.refresh_token) {
+      try {
+        const agentAcc = await prisma.agentAccount.findFirst({ where: { loginEmail: credentials.loginEmail } });
+        if (agentAcc) {
+          const newStatus = agentAcc.status === "REGISTERED" ? "PHONE_VERIFIED" : agentAcc.status;
+          await prisma.agentAccount.update({
+            where: { id: agentAcc.id },
+            data: {
+              refreshToken: token.refresh_token,
+              tokenObtainedAt: new Date(),
+              status: newStatus as any,
+              lastTaskId: taskId,
+            },
+          });
+          await logger.log("INFO", `[agent-account] Token captured after phone verify for ${credentials.loginEmail}, status → ${newStatus}`);
+        }
+      } catch { /* best-effort */ }
+    }
   } else {
     if (setTaskStatus) {
       await logger.updateStatus("FAILED_FINAL", {
@@ -1431,6 +1753,20 @@ async function doProactivePhoneVerification(
       });
     }
     await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
+  }
+
+  // ── Mark disabled phones in PhonePool ──
+  for (const disabledPhone of result.disabledPhones) {
+    try {
+      await prisma.phonePool.update({
+        where: { phoneNumber: disabledPhone },
+        data: {
+          status: "disabled",
+          disabledReason: "verification_hard_failure",
+        },
+      });
+      await logger.log("INFO", `[phone-verify] Phone ${disabledPhone.slice(-4)} disabled in pool`);
+    } catch { /* best-effort */ }
   }
 }
 
@@ -1449,7 +1785,7 @@ async function doProactivePhoneVerification(
 async function probeCloudCodeAPI(
   accessToken: string,
   logger: TaskLogger
-): Promise<{ needsVerification: boolean; validationUrl?: string; projectId?: string }> {
+): Promise<{ needsVerification: boolean; hasRestrictedAge?: boolean; validationUrl?: string; projectId?: string }> {
   // ── Constants matching Cockpit ──
   const LOAD_UA = "antigravity/1.21.6 windows/amd64 google-api-nodejs-client/10.3.0";
   const STREAM_UA = "antigravity";
@@ -1472,6 +1808,7 @@ async function probeCloudCodeAPI(
   // ── Step 1: loadCodeAssist → get project_id + detect GcpTos ──
   let projectId: string | undefined;
   let isGcpTos = false;
+  let hasRestrictedAge = false;
 
   // Try daily first for initial probe (Cockpit default)
   const loadCodeAssistBases = [DAILY, PROD, SANDBOX];
@@ -1504,18 +1841,32 @@ async function probeCloudCodeAPI(
           const allowedTiers = loadData?.allowedTiers ?? [];
           if (!isGcpTos && allowedTiers.some((t: any) => t.usesGcpTos)) isGcpTos = true;
 
-          // ★ Check ineligibleTiers for VALIDATION_REQUIRED — this is the definitive check!
+          // ★ Check ineligibleTiers — log ALL reason codes for debugging
           const ineligibleTiers = loadData?.ineligibleTiers ?? [];
+          if (ineligibleTiers.length > 0) {
+            const reasons = ineligibleTiers.map((t: any) => `${t.reasonCode}(tier=${t.tierId})`).join(", ");
+            await logger.log("INFO", `[phone-verify] ineligibleTiers: ${reasons}`);
+          }
+
+          // Check for VALIDATION_REQUIRED — definitive check
           const validationEntry = ineligibleTiers.find(
             (t: any) => t.reasonCode === "VALIDATION_REQUIRED"
           );
           if (validationEntry) {
             const vUrl = validationEntry.validationUrl ?? null;
             await logger.log("INFO", `[phone-verify] loadCodeAssist → VALIDATION_REQUIRED detected! validationUrl=${vUrl ? vUrl.substring(0, 80) + "..." : "none"}`);
-            // Extract project_id even if validation is required (for later use)
             const project = loadData?.cloudaicompanionProject;
             const pid = typeof project === "string" ? project : project?.id;
             return { needsVerification: true, validationUrl: vUrl ?? undefined, projectId: pid };
+          }
+
+          // ★ Check for RESTRICTED_AGE — this means the account needs phone/age verification
+          const restrictedAgeEntry = ineligibleTiers.find(
+            (t: any) => t.reasonCode === "RESTRICTED_AGE"
+          );
+          if (restrictedAgeEntry) {
+            hasRestrictedAge = true;
+            await logger.log("INFO", `[phone-verify] RESTRICTED_AGE detected — account needs phone/age verification`);
           }
 
           // Extract project_id
@@ -1592,18 +1943,27 @@ async function probeCloudCodeAPI(
     }
   }
 
-  if (!projectId) {
-    await logger.log("WARN", "[phone-verify] Could not get project_id — cannot probe");
+  // ★ If RESTRICTED_AGE was detected and no project_id → account definitely needs verification
+  if (!projectId && hasRestrictedAge) {
+    await logger.log("INFO", "[phone-verify] No project_id + RESTRICTED_AGE → account needs phone verification (will try fallback probes)");
+    // Try fallback probes (fetchUserInfo, fetchAvailableModels, streamGenerateContent)
+    // to get a validation_url. These may work without a projectId.
+  } else if (!projectId) {
+    await logger.log("WARN", "[phone-verify] Could not get project_id — cannot probe, assuming no verification needed");
     return { needsVerification: false };
+  } else if (!hasRestrictedAge) {
+    // loadCodeAssist succeeded with a project_id and NO VALIDATION_REQUIRED/RESTRICTED_AGE
+    // → account is verified, no need for fallback probes
+    await logger.log("INFO", `[phone-verify] loadCodeAssist OK — account verified (project: ${projectId})`);
+    return { needsVerification: false, projectId };
+  } else {
+    // Has project_id but also has RESTRICTED_AGE → need deeper probe
+    await logger.log("INFO", `[phone-verify] Got project_id ${projectId} but RESTRICTED_AGE present — running fallback probes`);
   }
-
-  // loadCodeAssist succeeded with a project_id and NO VALIDATION_REQUIRED
-  // → account is verified, no need for fallback probes
-  await logger.log("INFO", `[phone-verify] loadCodeAssist OK — account verified (project: ${projectId})`);
-  return { needsVerification: false, projectId };
 
   // ── Step 1.5: fetchUserInfo → the LS calls this on startup to check verification status ──
   // API: cloudcode-pa.googleapis.com/v1internal:fetchUserInfo
+  // Also used as fallback when RESTRICTED_AGE is detected but no VALIDATION_REQUIRED yet
   // This is the API the Antigravity LS calls first — it returns user verification state
   const userInfoBases = isGcpTos ? [PROD, DAILY] : [DAILY, PROD];
   for (const base of userInfoBases) {
@@ -1705,7 +2065,7 @@ async function probeCloudCodeAPI(
   // Model name: "gemini-3-flash" confirmed from Cockpit's modelNames.ts / antigravityModels.ts
   const sessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
   const probeBody = {
-    project: projectId,
+    project: projectId || "bamboo-precept-lgxtn",
     requestId: `agent/antigravity/probe/${Date.now()}`,
     model: "gemini-3-flash",
     userAgent: "antigravity",
@@ -1738,6 +2098,13 @@ async function probeCloudCodeAPI(
       await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status} at ${base}: ${respText.substring(0, 500)}`);
 
       if (resp.ok) {
+        if (hasRestrictedAge) {
+          // ★ RESTRICTED_AGE accounts may pass generateContent but have other
+          // restrictions. Return needsVerification=false (don't trigger phone flow)
+          // but flag hasRestrictedAge so the caller can mark it separately.
+          await logger.log("INFO", "[phone-verify] generateContent 200 but RESTRICTED_AGE present — marking as restricted");
+          return { needsVerification: false, hasRestrictedAge: true, projectId };
+        }
         await logger.log("INFO", "[phone-verify] generateContent 200 — account verified OK");
         return { needsVerification: false, projectId };
       }
@@ -1757,8 +2124,21 @@ async function probeCloudCodeAPI(
         return { needsVerification: false, projectId };
       }
 
-      // 404/429/500 → try next endpoint
-      if (resp.status === 404 || resp.status === 429 || resp.status >= 500) {
+      // 500 responses may contain VALIDATION_REQUIRED buried in the error body
+      // (Google returns 500 INTERNAL when the account needs age/phone verification
+      //  but the server also has a transient error processing the code assist request)
+      if (resp.status >= 500) {
+        if (respText.includes("VALIDATION_REQUIRED") || respText.includes("validation_url")) {
+          await logger.log("INFO", `[phone-verify] generateContent ${resp.status} contains VALIDATION_REQUIRED!`);
+          const validationUrl = extractValidationUrl(respText);
+          return { needsVerification: true, validationUrl: validationUrl ?? undefined, projectId };
+        }
+        await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
+        continue;
+      }
+
+      // 404/429 → try next endpoint
+      if (resp.status === 404 || resp.status === 429) {
         await logger.log("DEBUG", `[phone-verify] generateContent ${resp.status}, trying next endpoint`);
         continue;
       }
@@ -1772,6 +2152,10 @@ async function probeCloudCodeAPI(
   }
 
   await logger.log("WARN", "[phone-verify] All generateContent endpoints failed");
+  if (hasRestrictedAge) {
+    await logger.log("INFO", "[phone-verify] All probes failed but RESTRICTED_AGE present — account needs verification");
+    return { needsVerification: true, projectId };
+  }
   return { needsVerification: false, projectId };
 }
 
@@ -1787,7 +2171,7 @@ function extractValidationUrl(errorText: string): string | null {
     const details = parsed?.error?.details;
     if (Array.isArray(details)) {
       for (const detail of details) {
-        const url = detail?.metadata?.validation_url;
+        const url = detail?.metadata?.validation_url || detail?.metadata?.appeal_url;
         if (url && typeof url === "string") {
           return url.replace(/\\u0026/g, "&");
         }

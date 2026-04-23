@@ -199,13 +199,23 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
 
         <div style={{ marginBottom: '24px' }}>
           <p style={{ fontSize: '14px', color: 'var(--foreground-muted)' }}>欢迎使用冰茶AI续航系统，此系统主要用于自助邀请加入家庭组、切换会员权益等。</p>
-          <div className="notice" style={{ marginTop: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', background: 'rgba(234, 88, 12, 0.1)', border: '1px solid rgba(234, 88, 12, 0.3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ color: 'var(--foreground)', fontSize: '14px', fontWeight: 600 }}>探索更多前沿 AI 产品，欢迎选购：</span>
+          <div className="notice" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(234, 88, 12, 0.1)', border: '1px solid rgba(234, 88, 12, 0.3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+              <span style={{ color: 'var(--foreground)', fontSize: '16px', fontWeight: 700 }}>探索更多前沿 AI 产品，各类AI会员充值，欢迎选购：</span>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <a href="https://www.bcai.store/" target="_blank" rel="noopener noreferrer" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600, background: '#ea580c', color: '#fff', borderColor: '#ea580c' }}>
+                  进入冰茶商店 →
+                </a>
+                <a href="https://bcai.online/" target="_blank" rel="noopener noreferrer" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600, background: '#ea580c', color: '#fff', borderColor: '#ea580c' }}>
+                  冰茶API →
+                </a>
+              </div>
             </div>
-            <a href="https://www.bcai.store/" target="_blank" rel="noopener noreferrer" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600, background: '#ea580c', color: '#fff', borderColor: '#ea580c' }}>
-              进入冰茶商店 →
-            </a>
+            <div style={{ borderTop: '1px solid rgba(234, 88, 12, 0.2)', paddingTop: '10px' }}>
+              <Link href="/faq" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600 }}>
+                常见问题解答 →
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -226,7 +236,7 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
             role="tab"
             type="button"
           >
-            无限额度
+            替换会员
           </button>
           <button
             aria-selected={activeTab === "migrate"}

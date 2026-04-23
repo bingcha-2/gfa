@@ -24,6 +24,7 @@ const ALL_PERMISSIONS = [
   { key: "expire", label: "到期扫描" },
   { key: "scheduler", label: "自动维护" },
   { key: "lookup", label: "成员管理" },
+  { key: "faq", label: "FAQ管理" },
 ];
 
 const ROLE_LABELS: Record<string, string> = {

@@ -1,0 +1,704 @@
+{
+  "consoleTasks": [
+    {
+      "id": "cmnsz0l8b000cxkicxbhtshv4",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T13:57:50.843Z",
+      "started": "2026-04-10T13:57:50.883Z",
+      "finished": "2026-04-10T13:58:49.131Z",
+      "payload": {
+        "familyGroupId": "cmnstogbu00j4xkj8xpvmrqpu",
+        "accountId": "cmnstogbq00j2xkj8yqkanmzb",
+        "userEmail": "boltrawlinsnm@gmail.com",
+        "memberExpiresAt": "2026-05-10T13:57:50.832Z"
+      },
+      "account": "aa01093639820@gmail.com",
+      "groupName": "aa01093639820",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsvsp6700lsxkj87kphd5tv",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T12:27:43.855Z",
+      "started": "2026-04-10T12:27:43.884Z",
+      "finished": "2026-04-10T12:28:40.541Z",
+      "payload": {
+        "familyGroupId": "cmnstogb100iyxkj87nuinuek",
+        "accountId": "cmnstogau00iwxkj8f0lbfv59",
+        "userEmail": "t01085167983@gmail.com",
+        "memberExpiresAt": "2026-05-10T12:27:43.845Z"
+      },
+      "account": "aa01073554331@gmail.com",
+      "groupName": "aa01073554331",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsunqlw00kzxkj8qdfrh61x",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:55:52.821Z",
+      "started": "2026-04-10T11:55:52.846Z",
+      "finished": "2026-04-10T11:56:48.640Z",
+      "payload": {
+        "familyGroupId": "cmnstogc600j7xkj84j8euuxb",
+        "accountId": "cmnstogbz00j5xkj8s4yxmj6z",
+        "userEmail": "g01086954113@gmail.com",
+        "memberExpiresAt": "2026-05-10T11:55:52.811Z"
+      },
+      "account": "01037809027aa@gmail.com",
+      "groupName": "01037809027aa",
+      "groupMembers": 1
+    },
+    {
+      "id": "cmnsunkuw00kvxkj82ap2f9gm",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:55:45.368Z",
+      "started": "2026-04-10T11:55:45.385Z",
+      "finished": "2026-04-10T11:56:42.304Z",
+      "payload": {
+        "familyGroupId": "cmnstogbu00j4xkj8xpvmrqpu",
+        "accountId": "cmnstogbq00j2xkj8yqkanmzb",
+        "userEmail": "g01038612836@gmail.com",
+        "memberExpiresAt": "2026-05-10T11:55:45.359Z"
+      },
+      "account": "aa01093639820@gmail.com",
+      "groupName": "aa01093639820",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsunddv00krxkj8jv8ugl2e",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:55:35.683Z",
+      "started": "2026-04-10T11:55:35.698Z",
+      "finished": "2026-04-10T11:56:37.380Z",
+      "payload": {
+        "familyGroupId": "cmnstogbi00j1xkj8yw75c59l",
+        "accountId": "cmnstogbc00izxkj8m5nu58h8",
+        "userEmail": "k01099771038@gmail.com",
+        "memberExpiresAt": "2026-05-10T11:55:35.675Z"
+      },
+      "account": "aa01083673808@gmail.com",
+      "groupName": "aa01083673808",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsun06c00knxkj8iybxvt0w",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:55:18.565Z",
+      "started": "2026-04-10T11:55:18.588Z",
+      "finished": "2026-04-10T11:56:17.019Z",
+      "payload": {
+        "familyGroupId": "cmnstogb100iyxkj87nuinuek",
+        "accountId": "cmnstogau00iwxkj8f0lbfv59",
+        "userEmail": "s01049420702@gmail.com",
+        "memberExpiresAt": "2026-05-10T11:55:18.556Z"
+      },
+      "account": "aa01073554331@gmail.com",
+      "groupName": "aa01073554331",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnstx7x100kdxkj8llvwh13d",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:35:15.541Z",
+      "started": "2026-04-10T11:36:20.539Z",
+      "finished": "2026-04-10T11:36:28.684Z",
+      "payload": {
+        "familyGroupId": "cmnstogb100iyxkj87nuinuek",
+        "accountId": "cmnstogau00iwxkj8f0lbfv59",
+        "userEmail": "9612666@gmail.com",
+        "memberExpiresAt": "2026-04-23T11:35:15.532Z"
+      },
+      "account": "aa01073554331@gmail.com",
+      "groupName": "aa01073554331",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnstqgb300jzxkj85x1fwrrv",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T11:29:59.823Z",
+      "started": "2026-04-10T11:29:59.856Z",
+      "finished": "2026-04-10T11:31:31.127Z",
+      "payload": {
+        "familyGroupId": "cmnstogbi00j1xkj8yw75c59l",
+        "accountId": "cmnstogbc00izxkj8m5nu58h8",
+        "userEmail": "zcjhnb123@gmail.com",
+        "memberExpiresAt": "2026-05-10T11:29:59.808Z"
+      },
+      "account": "aa01083673808@gmail.com",
+      "groupName": "aa01083673808",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsqi41n00hfxkj80tsl2hbj",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T09:59:31.836Z",
+      "started": "2026-04-10T09:59:31.853Z",
+      "finished": "2026-04-10T10:00:23.597Z",
+      "payload": {
+        "familyGroupId": "cmnskbyri0080xkj8qvk6guge",
+        "accountId": "cmnskbyrd007yxkj8a8cwb97w",
+        "userEmail": "simulieren4@gmail.com",
+        "memberExpiresAt": "2026-05-10T09:59:31.827Z"
+      },
+      "account": "aa01094177672@gmail.com",
+      "groupName": "aa01094177672",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsp3bk907wvxk649r8a0d9e",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T09:20:02.121Z",
+      "started": "2026-04-10T09:20:02.156Z",
+      "finished": "2026-04-10T09:20:46.976Z",
+      "payload": {
+        "familyGroupId": "cmnskbyri0080xkj8qvk6guge",
+        "accountId": "cmnskbyrd007yxkj8a8cwb97w",
+        "userEmail": "tangyue0417@gmail.com"
+      },
+      "account": "aa01094177672@gmail.com",
+      "groupName": "aa01094177672",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnso71ko00f4xkj88gwzlali",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T08:54:56.184Z",
+      "started": "2026-04-10T08:54:56.203Z",
+      "finished": "2026-04-10T08:55:45.955Z",
+      "payload": {
+        "familyGroupId": "cmnskbyr8007xxkj8qxm1h7uo",
+        "accountId": "cmnskbyr4007vxkj86beec80k",
+        "userEmail": "colbyjona740@gmail.com",
+        "memberExpiresAt": "2026-05-10T08:54:56.174Z"
+      },
+      "account": "aa01083835390@gmail.com",
+      "groupName": "aa01083835390",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsnzl4m00esxkj8xe7esr8m",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T08:49:08.278Z",
+      "started": "2026-04-10T08:49:08.295Z",
+      "finished": "2026-04-10T08:50:03.770Z",
+      "payload": {
+        "familyGroupId": "cmnsctvh3007txkbkhmuj7yjc",
+        "accountId": "cmnsctvgt007rxkbkexl5pr1e",
+        "userEmail": "t01085141765@gmail.com",
+        "memberExpiresAt": "2026-04-28T08:49:08.268Z"
+      },
+      "account": "aa01084107242@gmail.com",
+      "groupName": "aa01084107242",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsnkqyx00e2xkj8juab7uky",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T08:37:36.009Z",
+      "started": "2026-04-10T08:37:36.028Z",
+      "finished": "2026-04-10T08:38:45.177Z",
+      "payload": {
+        "familyGroupId": "cmnsctvh3007txkbkhmuj7yjc",
+        "accountId": "cmnsctvgt007rxkbkexl5pr1e",
+        "userEmail": "aa01083750827@gmail.com",
+        "memberExpiresAt": "2026-04-25T08:37:36.001Z"
+      },
+      "account": "aa01084107242@gmail.com",
+      "groupName": "aa01084107242",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsn5v4s00d7xkj8f8eshz95",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T08:26:01.564Z",
+      "started": "2026-04-10T08:26:01.587Z",
+      "finished": "2026-04-10T08:26:50.135Z",
+      "payload": {
+        "familyGroupId": "cmnskbyr8007xxkj8qxm1h7uo",
+        "accountId": "cmnskbyr4007vxkj86beec80k",
+        "userEmail": "y01055960944@gmail.com",
+        "memberExpiresAt": "2026-04-29T08:26:01.552Z"
+      },
+      "account": "aa01083835390@gmail.com",
+      "groupName": "aa01083835390",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsn5h1z00d3xkj8eqh4jt6u",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T08:25:43.319Z",
+      "started": "2026-04-10T08:25:43.344Z",
+      "finished": "2026-04-10T08:26:43.350Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqz007uxkj8lc1zrw60",
+        "accountId": "cmnskbyqt007sxkj8t1ldw7gl",
+        "userEmail": "aa01073399389@gmail.com",
+        "memberExpiresAt": "2026-04-29T08:25:43.309Z"
+      },
+      "account": "aa01094160398@gmail.com",
+      "groupName": "aa01094160398",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnslv4l205jxxk648d73crcv",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T07:49:40.983Z",
+      "started": "2026-04-10T07:49:41.008Z",
+      "finished": "2026-04-10T07:50:42.724Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqz007uxkj8lc1zrw60",
+        "accountId": "cmnskbyqt007sxkj8t1ldw7gl",
+        "userEmail": "sen957107@gmail.com"
+      },
+      "account": "aa01094160398@gmail.com",
+      "groupName": "aa01094160398",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnslqq2e00buxkj8p416kvfs",
+      "status": "FAILED_FINAL",
+      "source": "manual",
+      "created": "2026-04-10T07:46:15.542Z",
+      "started": "2026-04-10T07:46:15.561Z",
+      "finished": "2026-04-10T07:49:40.977Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqp007rxkj8ank3y7yt",
+        "accountId": "cmnskbyqk007pxkj8cd1j2wm7",
+        "userEmail": "sen957107@gmail.com",
+        "memberExpiresAt": "2026-04-29T07:46:15.534Z"
+      },
+      "account": "aa01084347589@gmail.com",
+      "groupName": "aa01084347589",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnsl5f7o00adxkj8id8s4ux2",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T07:29:41.700Z",
+      "started": "2026-04-10T07:30:45.798Z",
+      "finished": "2026-04-10T07:32:00.507Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqp007rxkj8ank3y7yt",
+        "accountId": "cmnskbyqk007pxkj8cd1j2wm7",
+        "userEmail": "t01091523208@gmail.com",
+        "memberExpiresAt": "2026-05-10T07:29:41.692Z"
+      },
+      "account": "aa01094160398@gmail.com",
+      "groupName": "aa01094160398",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnskz9fh00a3xkj8qlyg4s1b",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T07:24:54.269Z",
+      "started": "2026-04-10T07:24:54.284Z",
+      "finished": "2026-04-10T07:26:13.006Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqg007oxkj8d3tiosls",
+        "accountId": "cmnskbyq8007mxkj8wbflkdgz",
+        "userEmail": "raoyan223@gmail.com",
+        "memberExpiresAt": "2026-05-10T07:24:54.261Z"
+      },
+      "account": "aa01093552599@gmail.com",
+      "groupName": "aa01093552599",
+      "groupMembers": 5
+    },
+    {
+      "id": "cmnske57s008yxkj8ayqudu3j",
+      "status": "INVITE_SENT",
+      "source": "manual",
+      "created": "2026-04-10T07:08:29.033Z",
+      "started": "2026-04-10T07:08:29.051Z",
+      "finished": "2026-04-10T07:10:44.351Z",
+      "payload": {
+        "familyGroupId": "cmnskbyqp007rxkj8ank3y7yt",
+        "accountId": "cmnskbyqk007pxkj8cd1j2wm7",
+        "userEmail": "raoyan223@gmail.com",
+        "memberExpiresAt": "2026-05-10T07:08:29.025Z"
+      },
+      "account": "aa01084347589@gmail.com",
+      "groupName": "aa01084347589",
+      "groupMembers": 5
+    }
+  ],
+  "auditLogs": [
+    {
+      "time": "2026-04-10T14:54:45.562Z",
+      "action": "RETRY_TASK",
+      "targetType": "Task",
+      "targetId": "cmnt0wv7p002wxkicgbso6ql5",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T14:54:39.356Z",
+      "action": "RETRY_TASK",
+      "targetType": "Task",
+      "targetId": "cmnt0wv7p002wxkicgbso6ql5",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T14:53:47.097Z",
+      "action": "SYNC_ACCOUNT_GROUPS",
+      "targetType": "Account",
+      "targetId": "cmnshe6sr000cxkj8hqztun3m",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupsSynced": 1
+      }
+    },
+    {
+      "time": "2026-04-10T14:53:43.573Z",
+      "action": "SYNC_ACCOUNT_GROUPS",
+      "targetType": "Account",
+      "targetId": "cmnshe6t2000fxkj8eim5gcaz",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupsSynced": 1
+      }
+    },
+    {
+      "time": "2026-04-10T14:47:40.294Z",
+      "action": "REMOVE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnsctvi0007zxkbk8feln55a",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "memberEmail": "xiongke340145815@gmail.com"
+      }
+    },
+    {
+      "time": "2026-04-10T14:35:40.003Z",
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnrbjog500d2xk60hexa5crt",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T14:35:37.224Z",
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnr9d1pj007wxk60uyrlqtl5",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T14:35:34.022Z",
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnr8wytu006lxk60ud929g4t",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T14:35:22.693Z",
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnr8bihb004oxk60m4gf76m4",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T13:58:23.158Z",
+      "action": "REMOVE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnohdv3h01pkxk1c9b5gy1va",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "memberEmail": "t01094744810@gmail.com"
+      }
+    },
+    {
+      "time": "2026-04-10T13:57:50.854Z",
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "totalQueued": 1,
+        "groups": 1,
+        "unplaceable": 0,
+        "alreadyActive": 0
+      }
+    },
+    {
+      "time": "2026-04-10T13:03:11.721Z",
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnj1fm3000ekxk8s2bg4rolo",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "targetMemberEmail": "ericksacarello@gmail.com",
+        "newUserEmail": "gulfampasha270@gmail.com"
+      }
+    },
+    {
+      "time": "2026-04-10T12:55:52.878Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnsoy0np07q3xk640z5ex6mw",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmnskbyr8007xxkj8qxm1h7uo",
+        "joinedAt": "2026-04-10T01:40",
+        "expiresAt": "2026-05-10T01:14"
+      }
+    },
+    {
+      "time": "2026-04-10T12:53:56.566Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnsoy0np07q3xk640z5ex6mw",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmnskbyr8007xxkj8qxm1h7uo",
+        "joinedAt": "2026-04-10T09:40",
+        "expiresAt": "2026-04-19T09:14"
+      }
+    },
+    {
+      "time": "2026-04-10T12:43:07.242Z",
+      "action": "BATCH_CREATE_CODES",
+      "targetType": "RedeemCode",
+      "targetId": "batch",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "count": 20,
+        "product": "GOOGLE_ONE",
+        "codeType": "JOIN_GROUP"
+      }
+    },
+    {
+      "time": "2026-04-10T12:33:48.231Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmng7sgqw002zxkrwywi2i8ov",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmng13f4d004uxk08lbx3vtb3",
+        "joinedAt": "2026-04-09T03:49",
+        "expiresAt": "2026-04-30T20:33"
+      }
+    },
+    {
+      "time": "2026-04-10T12:30:40.875Z",
+      "action": "MIGRATE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnikt6ge00g9xkh4zf7zr181",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "memberEmail": "joeafrank788@gmail.com",
+        "removedFromGroup": "TanumaYuqing391",
+        "targetGroup": "aa01083673808",
+        "taskId": "cmnsvwhqe00m2xkj8hmodeqlt",
+        "error": null
+      }
+    },
+    {
+      "time": "2026-04-10T12:30:38.390Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmniqdvbx030lxkogv5ksxsmg",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmnikt6ge00g9xkh4zf7zr181",
+        "joinedAt": "2026-04-10T12:23",
+        "expiresAt": "2026-05-10T12:22"
+      }
+    },
+    {
+      "time": "2026-04-10T12:29:25.410Z",
+      "action": "REPLACE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnr9d1pj007wxk60uyrlqtl5",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "targetMemberEmail": "t01085806360@gmail.com",
+        "newUserEmail": "keyloryoshiko@gmail.com"
+      }
+    },
+    {
+      "time": "2026-04-10T12:27:43.865Z",
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "totalQueued": 1,
+        "groups": 1,
+        "unplaceable": 0,
+        "alreadyActive": 0
+      }
+    },
+    {
+      "time": "2026-04-10T12:22:16.323Z",
+      "action": "TRIGGER_SYNC",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnikt6ge00g9xkh4zf7zr181",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": null
+    },
+    {
+      "time": "2026-04-10T12:22:15.450Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmniqdvbx030lxkogv5ksxsmg",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmnikt6ge00g9xkh4zf7zr181",
+        "joinedAt": "2026-04-03T10:01",
+        "expiresAt": "2026-04-19T20:22"
+      }
+    },
+    {
+      "time": "2026-04-10T12:10:38.777Z",
+      "action": "BATCH_CREATE_CODES",
+      "targetType": "RedeemCode",
+      "targetId": "batch",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "count": 1,
+        "product": "GOOGLE_ONE",
+        "codeType": "ACCOUNT_SWAP"
+      }
+    },
+    {
+      "time": "2026-04-10T11:55:52.828Z",
+      "action": "BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnstogc600j7xkj84j8euuxb",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "queued": 1,
+        "rejected": 0
+      }
+    },
+    {
+      "time": "2026-04-10T11:55:45.376Z",
+      "action": "BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnstogbu00j4xkj8xpvmrqpu",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "queued": 1,
+        "rejected": 0
+      }
+    },
+    {
+      "time": "2026-04-10T11:55:35.690Z",
+      "action": "BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnstogbi00j1xkj8yw75c59l",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "queued": 1,
+        "rejected": 0
+      }
+    },
+    {
+      "time": "2026-04-10T11:55:18.573Z",
+      "action": "BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnstogb100iyxkj87nuinuek",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "queued": 1,
+        "rejected": 0
+      }
+    },
+    {
+      "time": "2026-04-10T11:36:58.180Z",
+      "action": "UPDATE_MEMBER_DATES",
+      "targetType": "FamilyMember",
+      "targetId": "cmnstyhqe0a8dxk64e2lf2vw1",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "groupId": "cmnstogb100iyxkj87nuinuek",
+        "joinedAt": "2026-04-10T11:36",
+        "expiresAt": "2026-05-02T11:35"
+      }
+    },
+    {
+      "time": "2026-04-10T11:35:15.547Z",
+      "action": "CROSS_BULK_INVITE",
+      "targetType": "FamilyGroup",
+      "targetId": "*",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "totalQueued": 1,
+        "groups": 1,
+        "unplaceable": 0,
+        "alreadyActive": 0
+      }
+    },
+    {
+      "time": "2026-04-10T11:35:14.199Z",
+      "action": "MIGRATE_MEMBER",
+      "targetType": "FamilyGroup",
+      "targetId": "cmnizzubn001lxk8smbum0riv",
+      "operator": "Admin",
+      "operatorEmail": "admin@gfa.local",
+      "detail": {
+        "memberEmail": "wsir5883@gmail.com",
+        "removedFromGroup": "KausAlegi39",
+        "targetGroup": "aa01073554331",
+        "taskId": "cmnstx6uj00k7xkj8sd5s5vnj",
+        "error": null
+      }
+    }
+  ],
+  "memberStats": {
+    "active": 1789,
+    "pending": 243,
+    "total": 2032
+  }
+}

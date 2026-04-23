@@ -138,27 +138,56 @@ export function SchedulerPanel({ showToast }: Props) {
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [searching, setSearching] = useState(false);
 
-  const load = useCallback(async (page = taskPage) => {
+  const load = useCallback(async (page = taskPage, opts?: { search?: string; type?: string; status?: string }) => {
+    const search = opts?.search ?? searchQuery;
+    const type = opts?.type ?? filterType;
+    const statusFilter = opts?.status ?? filterStatus;
+    const hasFilters = !!(search || type || statusFilter);
     try {
-      const [c, s, t] = await Promise.all([
+      let taskUrl = `scheduler/tasks?page=${page}&pageSize=${PAGE_SIZE}`;
+      if (search) taskUrl += `&search=${encodeURIComponent(search)}`;
+      if (type) taskUrl += `&type=${encodeURIComponent(type)}`;
+      if (statusFilter) taskUrl += `&status=${encodeURIComponent(statusFilter)}`;
+
+      const requests: [Promise<SchedulerConfig>, Promise<SchedulerStatus>, Promise<PaginatedTasks>] = [
         apiRequest<SchedulerConfig>("scheduler/config"),
         apiRequest<SchedulerStatus>("scheduler/status"),
-        apiRequest<PaginatedTasks>(`scheduler/tasks?page=${page}&pageSize=${PAGE_SIZE}`),
-      ]);
+        apiRequest<PaginatedTasks>(taskUrl),
+      ];
+      const [c, s, t] = await Promise.all(requests);
       setConfig(c);
       setStatus(s);
       setTasks(t.data);
       setTaskTotal(t.total);
       setTaskPage(t.page);
-      setDraft({});
+      if (!hasFilters) setDraft({});
     } catch (err) {
       showToast("error", getErrorMessage(err));
     } finally {
       setLoading(false);
+      setSearching(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showToast, taskPage]);
+  }, [showToast, taskPage, searchQuery, filterType, filterStatus]);
+
+  function handleSearch() {
+    setSearching(true);
+    setTaskPage(1);
+    load(1, { search: searchQuery, type: filterType, status: filterStatus });
+  }
+
+  function handleClearFilters() {
+    setSearchQuery("");
+    setFilterType("");
+    setFilterStatus("");
+    setTaskPage(1);
+    load(1, { search: "", type: "", status: "" });
+  }
 
   useEffect(() => {
     load();
@@ -473,6 +502,72 @@ export function SchedulerPanel({ showToast }: Props) {
             <span className="sch-log-count">
               共 {taskTotal} 条
             </span>
+          )}
+        </div>
+
+        {/* ── Search & Filters ── */}
+        <div style={{
+          display: "flex",
+          gap: "0.5rem",
+          flexWrap: "wrap",
+          alignItems: "center",
+          padding: "0.75rem 0",
+          borderBottom: "1px solid var(--sch-border)",
+        }}>
+          <input
+            type="text"
+            className="sch-input"
+            placeholder="搜索邮箱..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            style={{ flex: 1, minWidth: 140 }}
+          />
+          <select
+            className="sch-input"
+            value={filterType}
+            onChange={(e) => { setFilterType(e.target.value); }}
+            style={{ width: "auto", minWidth: 100 }}
+          >
+            <option value="">全部类型</option>
+            <option value="SYNC_FAMILY_GROUP">同步</option>
+            <option value="REMOVE_MEMBER">踢人</option>
+            <option value="INVITE_MEMBER">邀请</option>
+            <option value="REPLACE_MEMBER">替换</option>
+          </select>
+          <select
+            className="sch-input"
+            value={filterStatus}
+            onChange={(e) => { setFilterStatus(e.target.value); }}
+            style={{ width: "auto", minWidth: 100 }}
+          >
+            <option value="">全部状态</option>
+            <option value="SUCCESS">成功</option>
+            <option value="INVITE_SENT">邀请已发送</option>
+            <option value="REPLACED_AND_INVITE_SENT">替换完成</option>
+            <option value="PENDING">等待中</option>
+            <option value="RUNNING">执行中</option>
+            <option value="FAILED_FINAL">失败</option>
+            <option value="FAILED_RETRYABLE">可重试</option>
+            <option value="MANUAL_REVIEW">人工审核</option>
+            <option value="CANCELLED">已取消</option>
+          </select>
+          <button
+            className="sch-page-btn"
+            onClick={handleSearch}
+            disabled={searching}
+            style={{ padding: "0.35rem 0.75rem", fontWeight: 600 }}
+          >
+            {searching ? "搜索中..." : "🔍 搜索"}
+          </button>
+          {(searchQuery || filterType || filterStatus) && (
+            <button
+              className="sch-page-btn"
+              onClick={handleClearFilters}
+              style={{ padding: "0.35rem 0.75rem", color: "var(--sch-danger, #f87171)" }}
+            >
+              ✕ 清除
+            </button>
           )}
         </div>
         {tasks.length === 0 ? (

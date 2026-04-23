@@ -248,14 +248,32 @@ export async function gmailLogin(
         return { success: false, reason: "PHONE_CHALLENGE", detail };
       }
 
-      // Dump page state for debugging unknown cases
-      const allPwd = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
-          name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
-        }))
-      );
-      // TRANSIENT: page may not have advanced past email step; safe to retry
-      return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible (15s). URL: ${url} | pwd fields: ${JSON.stringify(allPwd)}` };
+      // ── Recovery: re-navigate to login page and retry email entry once ──
+      // Google occasionally shows a transient error page after email submission.
+      // A fresh navigation typically resolves it.
+      await logger.log("WARN", `[gmail-login] Password field not visible at ${url} — attempting fresh login navigation`);
+      try {
+        await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
+        const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
+        await retryEmailInput.first().waitFor({ state: "visible", timeout: 5000 });
+        await retryEmailInput.first().fill(loginEmail);
+        await clickNext(page, logger, 0, "identifier");
+        await waitForNextState(page, 6000);
+
+        // Wait for password field after fresh navigation
+        await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
+        await logger.log("INFO", "[gmail-login] Password field appeared after fresh re-navigation — continuing");
+        // Fall through to password fill below (line after the outer catch block)
+      } catch {
+        // Fresh navigation also failed — give up with TRANSIENT
+        const retryUrl = page.url();
+        const allPwd = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
+            name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
+          }))
+        );
+        return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible after retry. URL: ${retryUrl} | pwd fields: ${JSON.stringify(allPwd)}` };
+      }
     }
 
     await passwordInput.first().fill(loginPassword);
@@ -309,7 +327,30 @@ export async function gmailLogin(
         continue;
       }
 
-      // TOTP 2FA
+      // ── URL-based intercepts (MUST come before TOTP detection) ──────────
+      // These pages may contain input[type="tel"] for phone number entry,
+      // which would falsely match the TOTP input selector below.
+
+      // Passkey enrollment / other speedbump interstitials.
+      // Google prompts users to set up passkeys after login — skip it.
+      if (roundUrl.includes("/speedbump/")) {
+        await handleSpeedbump(page, logger);
+        continue;
+      }
+
+      // GDS setup pages (gds.google.com): recovery options, welcome, home address.
+      // Google shows these on first login or periodically to prompt security settings.
+      // CRITICAL: this MUST be checked before TOTP detection because the recovery
+      // options page has input[type="tel"] for phone number, which would be
+      // falsely matched as a TOTP input — causing infinite retry loops.
+      if (roundUrl.includes("gds.google.com")) {
+        await handleRecoveryOptions(page, logger);
+        continue;
+      }
+
+      // ── DOM-based challenge detection ───────────────────────────────────
+
+      // TOTP 2FA — only check when still on accounts.google.com
       const totpInput = page.locator(
         'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
       );
@@ -369,22 +410,6 @@ export async function gmailLogin(
         await agreeButton.first().click();
         await logger.log("INFO", "[gmail-login] Accepted ToS/privacy prompt");
         await waitForNextState(page, 5000);
-        continue;
-      }
-
-      // Passkey enrollment / other speedbump interstitials.
-      // Google prompts users to set up passkeys after login — skip it.
-      if (roundUrl.includes("/speedbump/")) {
-        await handleSpeedbump(page, logger);
-        continue;
-      }
-
-      // GDS setup pages (gds.google.com): recovery options, welcome, home address.
-      // Google shows these on first login for new accounts.
-      // handleRecoveryOptions clicks through dismiss buttons and falls back to
-      // direct myaccount navigation if no dismiss button is found.
-      if (roundUrl.includes("gds.google.com")) {
-        await handleRecoveryOptions(page, logger);
         continue;
       }
 

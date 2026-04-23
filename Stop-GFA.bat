@@ -1,7 +1,7 @@
 @echo off
 setlocal
 pushd "%~dp0"
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\private-hosting\launcher.ps1" stop
+call pnpm start:stop
 set EXIT_CODE=%ERRORLEVEL%
 popd
 echo.

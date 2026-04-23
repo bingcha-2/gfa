@@ -1,0 +1,1 @@
+﻿const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();(async()=>{const a=await p.account.findUnique({where:{id:'cmo1pgttl024axkccp7qwzr6p'},select:{email:true}});console.log(a?.email??'not found');await p.$disconnect();})();

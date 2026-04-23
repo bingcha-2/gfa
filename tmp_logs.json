@@ -1,0 +1,683 @@
+{
+  "id": "cmnyemeuh01aexkxckbt48u6c",
+  "name": "zaidchalasani",
+  "loginEmail": "zaidchalasani@gmail.com",
+  "loginPassword": "dhibn0d2w",
+  "totpSecret": "7J4LEDGJ3CDXAUGHVEHFL4IMBIS5VYQR",
+  "recoveryEmail": "zaidchalasani6751@hotmail.com",
+  "appPassword": null,
+  "adspowerProfileId": "pending-d17b0aac-1532-42c5-9d4d-d0408a06093e",
+  "status": "HEALTHY",
+  "syncError": null,
+  "riskScore": 0,
+  "dailyOperationCount": 0,
+  "dailyOperationLimit": 20,
+  "lastOperationDate": null,
+  "notes": "2024; Vietnam",
+  "lastLoginAt": null,
+  "lastHealthCheckAt": null,
+  "subscriptionExpiresAt": "2026-05-12T16:00:00.000Z",
+  "subscriptionStatus": "ACTIVE",
+  "subscriptionStatusUpdatedAt": "2026-04-15T03:27:39.497Z",
+  "subscriptionPlan": null,
+  "lastAutoMaintenanceAt": null,
+  "refreshToken": null,
+  "tokenObtainedAt": null,
+  "tokenStatus": null,
+  "createdAt": "2026-04-14T09:13:34.121Z",
+  "updatedAt": "2026-04-21T12:16:53.759Z",
+  "tasks": [
+    {
+      "id": "cmo8l7xar0011xk50nv9h21vg",
+      "type": "SYNC_FAMILY_GROUP",
+      "orderId": null,
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "SUCCESS",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"ignoreCooldown\":true}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-21T12:15:58.627Z",
+      "finishedAt": "2026-04-21T12:16:50.952Z",
+      "createdAt": "2026-04-21T12:15:57.267Z",
+      "updatedAt": "2026-04-21T12:16:50.953Z",
+      "logs": [
+        {
+          "id": "cmo8l94w600hfxkpss0up8ym2",
+          "taskId": "cmo8l7xar0011xk50nv9h21vg",
+          "level": "INFO",
+          "message": "Subscription refreshed: ACTIVE, plan: unknown, expires: 2026-05-12T16:00:00.000Z",
+          "extra": null,
+          "createdAt": "2026-04-21T12:16:53.767Z"
+        },
+        {
+          "id": "cmo8l92qv00hdxkpsvbhv4ujg",
+          "taskId": "cmo8l7xar0011xk50nv9h21vg",
+          "level": "INFO",
+          "message": "Reset account status to HEALTHY and cleared syncError after successful sync",
+          "extra": null,
+          "createdAt": "2026-04-21T12:16:50.984Z"
+        },
+        {
+          "id": "cmo8l92qf00hbxkps90bko9aq",
+          "taskId": "cmo8l7xar0011xk50nv9h21vg",
+          "level": "INFO",
+          "message": "Sync complete: 5 non-admin members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-21T12:16:50.967Z"
+        },
+        {
+          "id": "cmo8l92pw00h9xkpstvqfkf99",
+          "taskId": "cmo8l7xar0011xk50nv9h21vg",
+          "level": "INFO",
+          "message": "Status → SUCCESS",
+          "extra": null,
+          "createdAt": "2026-04-21T12:16:50.948Z"
+        },
+        {
+          "id": "cmo8l92pr00h7xkpsjffcbxza",
+          "taskId": "cmo8l7xar0011xk50nv9h21vg",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-21T12:16:50.944Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo86hl4u00bkxkq0eu755ff7",
+      "type": "REPLACE_MEMBER",
+      "orderId": null,
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "FAILED_RETRYABLE",
+      "priority": 0,
+      "retryCount": 1,
+      "maxRetryCount": 3,
+      "payload": "{\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"xiaoyao2925@gmail.com\",\"newUserEmail\":\"lightsource.electronic@gmail.com\",\"reason\":\"ADMIN_REPLACE\"}",
+      "lastErrorCode": "ACCOUNT_UNAVAILABLE",
+      "lastErrorMessage": "Account unhealthy (failures=3, status=RISKY)",
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": null,
+      "finishedAt": "2026-04-21T06:48:21.026Z",
+      "createdAt": "2026-04-21T05:23:33.822Z",
+      "updatedAt": "2026-04-21T06:48:21.028Z",
+      "logs": [
+        {
+          "id": "cmo89imfz06zzxkh8hy9hutbx",
+          "taskId": "cmo86hl4u00bkxkq0eu755ff7",
+          "level": "INFO",
+          "message": "Status → FAILED_RETRYABLE",
+          "extra": null,
+          "createdAt": "2026-04-21T06:48:21.024Z"
+        },
+        {
+          "id": "cmo89imfu06zxxkh87nkm2t8y",
+          "taskId": "cmo86hl4u00bkxkq0eu755ff7",
+          "level": "WARN",
+          "message": "[replace] Account cmnyemeuh01aexkxckbt48u6c unhealthy (failures=3, status=RISKY). Replace tasks require the group's own account — cannot switch. Failing task.",
+          "extra": null,
+          "createdAt": "2026-04-21T06:48:21.018Z"
+        },
+        {
+          "id": "cmo86hl5p06a1xkh8eejeyfb6",
+          "taskId": "cmo86hl4u00bkxkq0eu755ff7",
+          "level": "INFO",
+          "message": "Status → FAILED_RETRYABLE",
+          "extra": null,
+          "createdAt": "2026-04-21T05:23:33.853Z"
+        },
+        {
+          "id": "cmo86hl5i069zxkh8v4pep738",
+          "taskId": "cmo86hl4u00bkxkq0eu755ff7",
+          "level": "WARN",
+          "message": "[replace] Account cmnyemeuh01aexkxckbt48u6c unhealthy (failures=3, status=RISKY). Replace tasks require the group's own account — cannot switch. Failing task.",
+          "extra": null,
+          "createdAt": "2026-04-21T05:23:33.847Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo823x2s0057xkq0aytnr9rh",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo71wwng011fxkxwzb08aosl",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "MANUAL_REVIEW",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo71wwng011fxkxwzb08aosl\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"xiaoyao2925@gmail.com\",\"newUserEmail\":\"xiaoyao27610@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": "ACCOUNT_RISKY",
+      "lastErrorMessage": "Account hit 3 cumulative failures. Reason: Password input never became visible (15s). URL: https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S606442352%3A1776741664927265&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&passive=1209600&flowName=GlifWebSignIn&flowEntry=ServiceLogin&ifkv=AT1y2_VL4wEABjjLtiknOuNRfP6H1PEpEd9b5Mptpb4zUC3HyXs04-WxB5k8tcXWIRPVpI1lkkd0 | pwd fields: [{\"name\":\"hiddenPassword\",\"ariaHidden\":\"true\",\"visible\":false}]",
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-21T03:21:00.264Z",
+      "finishedAt": "2026-04-21T03:23:00.271Z",
+      "createdAt": "2026-04-21T03:20:57.652Z",
+      "updatedAt": "2026-04-21T03:23:00.273Z",
+      "logs": [
+        {
+          "id": "cmo826joo02uxxkh8yrxnf4vu",
+          "taskId": "cmo823x2s0057xkq0aytnr9rh",
+          "level": "INFO",
+          "message": "Status → MANUAL_REVIEW",
+          "extra": null,
+          "createdAt": "2026-04-21T03:23:00.265Z"
+        },
+        {
+          "id": "cmo826joh02uvxkh8tl2ihfv6",
+          "taskId": "cmo823x2s0057xkq0aytnr9rh",
+          "level": "ERROR",
+          "message": "Account cmnyemeuh01aexkxckbt48u6c reached 3 failures — marked as RISKY, needs human intervention",
+          "extra": null,
+          "createdAt": "2026-04-21T03:23:00.257Z"
+        },
+        {
+          "id": "cmo826jnw02utxkh8m46yvelz",
+          "taskId": "cmo823x2s0057xkq0aytnr9rh",
+          "level": "WARN",
+          "message": "Account cmnyemeuh01aexkxckbt48u6c login failed (reason: TRANSIENT), cumulative failures: 3/3",
+          "extra": null,
+          "createdAt": "2026-04-21T03:23:00.236Z"
+        },
+        {
+          "id": "cmo8261uz02u7xkh87huzndf0",
+          "taskId": "cmo823x2s0057xkq0aytnr9rh",
+          "level": "INFO",
+          "message": "[gmail-login] Used JS click for Next button",
+          "extra": null,
+          "createdAt": "2026-04-21T03:22:37.163Z"
+        },
+        {
+          "id": "cmo8261tk02u5xkh80gayj3z7",
+          "taskId": "cmo823x2s0057xkq0aytnr9rh",
+          "level": "WARN",
+          "message": "[gmail-login] Still on identifier page after Next click — retry 4",
+          "extra": null,
+          "createdAt": "2026-04-21T03:22:37.112Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo7cygtc0088xke8lrabgz23",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo71wwng011fxkxwzb08aosl",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "REPLACED_AND_INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo71wwng011fxkxwzb08aosl\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"lightsource.electronic@gmail.com\",\"newUserEmail\":\"xiaoyao2925@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": "REPLACE_ERROR",
+      "lastErrorMessage": "LOGIN_FAILED:TRANSIENT:cmnyemeuh01aexkxckbt48u6c|Password input never became visible (15s). URL: https://accounts.google.com/v3/signin/challenge/pwd?TL=AIgtPP2yXnPbGTJXto21l-Fka8itoLpLU7FLh27wOhOJNT7AKmHkbTUDPB_GgXM9&checkConnection=youtube%3A11217&checkedDomains=youtube&cid=1&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S1846261031%3A1776699604541170&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_XtMoDMHl3MJ4BZ_dWe544cfBcgSFY9Ix3i-UvNDr4qPziUflcde68V5nYt3GAnXW6mStpbNQ&pstMsg=1 | pwd fields: [{\"name\":\"hiddenPassword\",\"ariaHidden\":\"true\",\"visible\":false},{\"name\":\"Passwd\",\"ariaHidden\":null,\"visible\":false}]",
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T15:43:15.701Z",
+      "finishedAt": "2026-04-20T15:44:48.906Z",
+      "createdAt": "2026-04-20T15:36:52.896Z",
+      "updatedAt": "2026-04-20T15:44:48.907Z",
+      "logs": [
+        {
+          "id": "cmo7d91s303tvxk04tezd7se0",
+          "taskId": "cmo7cygtc0088xke8lrabgz23",
+          "level": "INFO",
+          "message": "Replace completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T15:45:06.627Z"
+        },
+        {
+          "id": "cmo7d91ry03ttxk04sk7ygrhv",
+          "taskId": "cmo7cygtc0088xke8lrabgz23",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T15:45:06.622Z"
+        },
+        {
+          "id": "cmo7d91rt03trxk04bl1d7ytw",
+          "taskId": "cmo7cygtc0088xke8lrabgz23",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T15:45:06.618Z"
+        },
+        {
+          "id": "cmo7d91re03tpxk04bja72hud",
+          "taskId": "cmo7cygtc0088xke8lrabgz23",
+          "level": "INFO",
+          "message": "Upserted member: xiaoyao2925@gmail.com status=PENDING (gaia=-4535475944218812233)",
+          "extra": null,
+          "createdAt": "2026-04-20T15:45:06.603Z"
+        },
+        {
+          "id": "cmo7d91qx03tlxk04070l3g76",
+          "taskId": "cmo7cygtc0088xke8lrabgz23",
+          "level": "INFO",
+          "message": "Upserted member: qqy020922@gmail.com status=ACTIVE (gaia=114047679936121118913)",
+          "extra": null,
+          "createdAt": "2026-04-20T15:45:06.585Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo77rufy01ahxkxw6sbhzuxa",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo71wwng011fxkxwzb08aosl",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "REPLACED_AND_INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo71wwng011fxkxwzb08aosl\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"gorakhanathahmsd23@gmail.com\",\"newUserEmail\":\"lightsource.electronic@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T13:11:47.231Z",
+      "finishedAt": "2026-04-20T13:13:31.609Z",
+      "createdAt": "2026-04-20T13:11:45.886Z",
+      "updatedAt": "2026-04-20T13:13:31.611Z",
+      "logs": [
+        {
+          "id": "cmo77ukop0km1xknwr6j50t3i",
+          "taskId": "cmo77rufy01ahxkxw6sbhzuxa",
+          "level": "INFO",
+          "message": "Replace completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T13:13:53.210Z"
+        },
+        {
+          "id": "cmo77ukol0klzxknwlhixe7ng",
+          "taskId": "cmo77rufy01ahxkxw6sbhzuxa",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T13:13:53.206Z"
+        },
+        {
+          "id": "cmo77ukob0klxxknwog6j90rg",
+          "taskId": "cmo77rufy01ahxkxw6sbhzuxa",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T13:13:53.196Z"
+        },
+        {
+          "id": "cmo77uknv0klvxknwwgshf8vx",
+          "taskId": "cmo77rufy01ahxkxw6sbhzuxa",
+          "level": "INFO",
+          "message": "Upserted member: lightsource.electronic@gmail.com status=PENDING (gaia=-3730335162888013290)",
+          "extra": null,
+          "createdAt": "2026-04-20T13:13:53.179Z"
+        },
+        {
+          "id": "cmo77ukn80klrxknwh3q0rtpt",
+          "taskId": "cmo77rufy01ahxkxw6sbhzuxa",
+          "level": "INFO",
+          "message": "Upserted member: qqy020922@gmail.com status=ACTIVE (gaia=114047679936121118913)",
+          "extra": null,
+          "createdAt": "2026-04-20T13:13:53.156Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo71wwnl011hxkxws7z51hfh",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo71wwng011fxkxwzb08aosl",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "REPLACED_AND_INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo71wwng011fxkxwzb08aosl\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"delvallebarmes@gmail.com\",\"newUserEmail\":\"gorakhanathahmsd23@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T10:27:46.099Z",
+      "finishedAt": "2026-04-20T10:29:35.208Z",
+      "createdAt": "2026-04-20T10:27:44.336Z",
+      "updatedAt": "2026-04-20T10:29:35.209Z",
+      "logs": [
+        {
+          "id": "cmo71zp6c0hgzxknwvlht35ap",
+          "taskId": "cmo71wwnl011hxkxws7z51hfh",
+          "level": "INFO",
+          "message": "Replace completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T10:29:54.612Z"
+        },
+        {
+          "id": "cmo71zp680hgxxknwk69os146",
+          "taskId": "cmo71wwnl011hxkxws7z51hfh",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T10:29:54.608Z"
+        },
+        {
+          "id": "cmo71zp630hgvxknwqm5grqyq",
+          "taskId": "cmo71wwnl011hxkxws7z51hfh",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T10:29:54.604Z"
+        },
+        {
+          "id": "cmo71zp5n0hgtxknwrdmbt9pk",
+          "taskId": "cmo71wwnl011hxkxws7z51hfh",
+          "level": "INFO",
+          "message": "Upserted member: gorakhanathahmsd23@gmail.com status=PENDING (gaia=-797167909355039359)",
+          "extra": null,
+          "createdAt": "2026-04-20T10:29:54.587Z"
+        },
+        {
+          "id": "cmo71zp560hgpxknwmupz5136",
+          "taskId": "cmo71wwnl011hxkxws7z51hfh",
+          "level": "INFO",
+          "message": "Upserted member: qqy020922@gmail.com status=ACTIVE (gaia=114047679936121118913)",
+          "extra": null,
+          "createdAt": "2026-04-20T10:29:54.570Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo6ycvdo00sxxkxwdygo4pn2",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo1624tj01dfxkccynfwxgsd",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "REPLACED_AND_INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo1624tj01dfxkccynfwxgsd\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"xiaoyao276101@gmail.com\",\"newUserEmail\":\"delvallebarmes@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T08:48:12.094Z",
+      "finishedAt": "2026-04-20T08:49:33.414Z",
+      "createdAt": "2026-04-20T08:48:10.716Z",
+      "updatedAt": "2026-04-20T08:49:33.416Z",
+      "logs": [
+        {
+          "id": "cmo6yfc8p0edbxknwupiiljw3",
+          "taskId": "cmo6ycvdo00sxxkxwdygo4pn2",
+          "level": "INFO",
+          "message": "Replace completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T08:50:05.881Z"
+        },
+        {
+          "id": "cmo6yfc8i0ed9xknwlsiakkjn",
+          "taskId": "cmo6ycvdo00sxxkxwdygo4pn2",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T08:50:05.874Z"
+        },
+        {
+          "id": "cmo6yfc8a0ed7xknw3z2m13ti",
+          "taskId": "cmo6ycvdo00sxxkxwdygo4pn2",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T08:50:05.866Z"
+        },
+        {
+          "id": "cmo6yfc7m0ed5xknwhaukjyd2",
+          "taskId": "cmo6ycvdo00sxxkxwdygo4pn2",
+          "level": "INFO",
+          "message": "Upserted member: delvallebarmes@gmail.com status=PENDING (gaia=2827609664922000734)",
+          "extra": null,
+          "createdAt": "2026-04-20T08:50:05.842Z"
+        },
+        {
+          "id": "cmo6yfc750ed1xknwbbpw63n5",
+          "taskId": "cmo6ycvdo00sxxkxwdygo4pn2",
+          "level": "INFO",
+          "message": "Upserted member: qqy020922@gmail.com status=ACTIVE (gaia=114047679936121118913)",
+          "extra": null,
+          "createdAt": "2026-04-20T08:50:05.825Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo6umoy700l1xkxwa91f9ojz",
+      "type": "INVITE_MEMBER",
+      "orderId": null,
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"userEmail\":\"maryterealdahir@gmail.com\",\"memberExpiresAt\":\"2026-05-20T07:03:50.436Z\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T07:03:50.527Z",
+      "finishedAt": "2026-04-20T07:04:38.209Z",
+      "createdAt": "2026-04-20T07:03:50.478Z",
+      "updatedAt": "2026-04-20T07:04:38.212Z",
+      "logs": [
+        {
+          "id": "cmo6unu6a0aslxknwhqogwt7a",
+          "taskId": "cmo6umoy700l1xkxwa91f9ojz",
+          "level": "INFO",
+          "message": "Invite completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T07:04:43.906Z"
+        },
+        {
+          "id": "cmo6unu5v0asjxknw2dyzuniw",
+          "taskId": "cmo6umoy700l1xkxwa91f9ojz",
+          "level": "INFO",
+          "message": "Group counts updated: 6 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T07:04:43.892Z"
+        },
+        {
+          "id": "cmo6unu410ashxknwuzw5z55b",
+          "taskId": "cmo6umoy700l1xkxwa91f9ojz",
+          "level": "INFO",
+          "message": "Post-invite card count: 6 (was 5)",
+          "extra": null,
+          "createdAt": "2026-04-20T07:04:43.825Z"
+        },
+        {
+          "id": "cmo6unsuo0asbxknw9dqe49li",
+          "taskId": "cmo6umoy700l1xkxwa91f9ojz",
+          "level": "INFO",
+          "message": "Captured gaiaId=8244310369637339840 for maryterealdahir@gmail.com",
+          "extra": null,
+          "createdAt": "2026-04-20T07:04:42.192Z"
+        },
+        {
+          "id": "cmo6unprm0as1xknwhexfmkjp",
+          "taskId": "cmo6umoy700l1xkxwa91f9ojz",
+          "level": "INFO",
+          "message": "Status → INVITE_SENT",
+          "extra": null,
+          "createdAt": "2026-04-20T07:04:38.194Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo6uhrwj00krxkxw10v2bmvj",
+      "type": "REMOVE_MEMBER",
+      "orderId": null,
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "expire-scan",
+      "status": "SUCCESS",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"memberEmail\":\"mingtian-ag@outlook.com\",\"reason\":\"MEMBER_EXPIRED\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T07:00:12.367Z",
+      "finishedAt": "2026-04-20T07:02:05.699Z",
+      "createdAt": "2026-04-20T07:00:01.027Z",
+      "updatedAt": "2026-04-20T07:02:05.701Z",
+      "logs": [
+        {
+          "id": "cmo6ukg490alhxknwg67sog9w",
+          "taskId": "cmo6uhrwj00krxkxw10v2bmvj",
+          "level": "INFO",
+          "message": "Member mingtian-ag@outlook.com removed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T07:02:05.721Z"
+        },
+        {
+          "id": "cmo6ukg350alfxknw6gc7boh6",
+          "taskId": "cmo6uhrwj00krxkxw10v2bmvj",
+          "level": "INFO",
+          "message": "Status → SUCCESS",
+          "extra": null,
+          "createdAt": "2026-04-20T07:02:05.681Z"
+        },
+        {
+          "id": "cmo6ukg2m0aldxknw4zpkpqvu",
+          "taskId": "cmo6uhrwj00krxkxw10v2bmvj",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T07:02:05.663Z"
+        },
+        {
+          "id": "cmo6ukg260albxknwqzr603it",
+          "taskId": "cmo6uhrwj00krxkxw10v2bmvj",
+          "level": "INFO",
+          "message": "Group counts updated: 4 members, 1 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T07:02:05.647Z"
+        },
+        {
+          "id": "cmo6ukg1q0al9xknwgiy2iryy",
+          "taskId": "cmo6uhrwj00krxkxw10v2bmvj",
+          "level": "INFO",
+          "message": "Marked mingtian-ag@outlook.com as REMOVED (not on page, not linked by gaia)",
+          "extra": null,
+          "createdAt": "2026-04-20T07:02:05.630Z"
+        }
+      ]
+    },
+    {
+      "id": "cmo6txrsq00jnxkxww5ftmvn2",
+      "type": "REPLACE_MEMBER",
+      "orderId": "cmo1624tj01dfxkccynfwxgsd",
+      "familyGroupId": "cmnyemeup01agxkxckb3n54wj",
+      "accountId": "cmnyemeuh01aexkxckbt48u6c",
+      "workerId": "worker-1",
+      "transferBatchId": null,
+      "source": "manual",
+      "status": "REPLACED_AND_INVITE_SENT",
+      "priority": 0,
+      "retryCount": 0,
+      "maxRetryCount": 3,
+      "payload": "{\"orderId\":\"cmo1624tj01dfxkccynfwxgsd\",\"familyGroupId\":\"cmnyemeup01agxkxckb3n54wj\",\"accountId\":\"cmnyemeuh01aexkxckbt48u6c\",\"targetMemberEmail\":\"xiaoyao276100@gmail.com\",\"newUserEmail\":\"xiaoyao276101@gmail.com\",\"reason\":\"SUBSCRIPTION_SWAP\"}",
+      "lastErrorCode": null,
+      "lastErrorMessage": null,
+      "beforeScreenshotPath": null,
+      "afterScreenshotPath": null,
+      "errorScreenshotPath": null,
+      "startedAt": "2026-04-20T06:44:30.884Z",
+      "finishedAt": "2026-04-20T06:46:33.635Z",
+      "createdAt": "2026-04-20T06:44:27.769Z",
+      "updatedAt": "2026-04-20T06:46:33.637Z",
+      "logs": [
+        {
+          "id": "cmo6u0zca0a39xknwi85xazgk",
+          "taskId": "cmo6txrsq00jnxkxww5ftmvn2",
+          "level": "INFO",
+          "message": "Replace completed successfully",
+          "extra": null,
+          "createdAt": "2026-04-20T06:46:57.514Z"
+        },
+        {
+          "id": "cmo6u0zc20a37xknwlqx2bqth",
+          "taskId": "cmo6txrsq00jnxkxww5ftmvn2",
+          "level": "INFO",
+          "message": "[post-task-sync] Complete",
+          "extra": null,
+          "createdAt": "2026-04-20T06:46:57.505Z"
+        },
+        {
+          "id": "cmo6u0zbr0a35xknw0825yczo",
+          "taskId": "cmo6txrsq00jnxkxww5ftmvn2",
+          "level": "INFO",
+          "message": "Group counts updated: 5 members, 0 slots available",
+          "extra": null,
+          "createdAt": "2026-04-20T06:46:57.495Z"
+        },
+        {
+          "id": "cmo6u0za00a33xknwh2y62cuh",
+          "taskId": "cmo6txrsq00jnxkxww5ftmvn2",
+          "level": "INFO",
+          "message": "Upserted member: xiaoyao276101@gmail.com status=PENDING (gaia=-3268181425865878904)",
+          "extra": null,
+          "createdAt": "2026-04-20T06:46:57.432Z"
+        },
+        {
+          "id": "cmo6u0z7u0a2xxknwvzcvtvp6",
+          "taskId": "cmo6txrsq00jnxkxww5ftmvn2",
+          "level": "INFO",
+          "message": "Upserted member: mingtian-ag@outlook.com status=ACTIVE (gaia=113208042299141347443)",
+          "extra": null,
+          "createdAt": "2026-04-20T06:46:57.354Z"
+        }
+      ]
+    }
+  ]
+}

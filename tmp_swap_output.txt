@@ -1,0 +1,70 @@
+=== Recent REPLACE_MEMBER Tasks ===
+  cmo3as4pv0009xkg4nrfy010n | REPLACED_AND_INVITE_SENT | retry:0 | 2026-04-17T19:24:53.347Z
+    payload: {"orderId":"cmo3as4pt0007xkg46o63ljip","familyGroupId":"cmo1pgts60240xkccvsmg2kck","accountId":"cmo1pgtrw023yxkccsblj3c7a","targetMemberEmail":"aa01094370039@gmail.com","newUserEmail":"01055003756ss@gmail.com","reason":"SUBSCRIPTION_SWAP"}
+  cmo39ne0i000axkeo0g6oag8n | REPLACED_AND_INVITE_SENT | retry:0 | 2026-04-17T18:53:12.498Z
+    payload: {"orderId":"cmo39ne0f0008xkeon80jcnbq","familyGroupId":"cmnubujoj003qxk7w3ru328dj","accountId":"cmnubujoc003oxk7wu0fx2hm9","targetMemberEmail":"ellswortheladia@gmail.com","newUserEmail":"ecksteinschwantd@gmail.com","reason":"SWAP_REQUEST"}
+  cmo39kdke0004xkeornjx7x42 | REPLACED_AND_INVITE_SENT | retry:0 | 2026-04-17T18:50:51.950Z
+    payload: {"orderId":"cmo1ycrop0254xkccpj13j7gk","familyGroupId":"cmnfqvl1c000yxkl45h3mqhrt","accountId":"cmnfqvl15000wxkl4ql8pxjnr","targetMemberEmail":"skinnensimiskey@gmail.com","newUserEmail":"simunekcookinghamru468@gmail.com","reason":"SUBSCRIPTION_SWAP"}
+  cmo39e8nf0006xkqsllhcezdt | REPLACED_AND_INVITE_SENT | retry:0 | 2026-04-17T18:46:05.643Z
+    payload: {"orderId":"cmo39e8nb0004xkqsktjgr5ei","familyGroupId":"cmnbdmxci00dzxk6kehijomhu","accountId":"cmnbdmxc900dxxk6kqkrgw00s","targetMemberEmail":"s01055167606@gmail.com","newUserEmail":"xuehua1588@gmail.com","reason":"SWAP_REQUEST"}
+  cmo36t44i0034xkzwmshddagk | REPLACED_AND_INVITE_SENT | retry:0 | 2026-04-17T17:33:40.770Z
+    payload: {"orderId":"cmo1ycrop0254xkccpj13j7gk","familyGroupId":"cmnfqvl1c000yxkl45h3mqhrt","accountId":"cmnfqvl15000wxkl4ql8pxjnr","targetMemberEmail":"khanhanh0644@gmail.com","newUserEmail":"skinnensimiskey@gmail.com","reason":"SUBSCRIPTION_SWAP"}
+
+=== Logs for cmo3as4pv0009xkg4nrfy010n (REPLACED_AND_INVITE_SENT) ===
+[INFO ] 2026-04-17T19:24:54.860Z Replacing aa01094370039@gmail.com → 01055003756ss@gmail.com
+[INFO ] 2026-04-17T19:24:54.879Z Status → RUNNING
+[INFO ] 2026-04-17T19:25:02.426Z [gmail-login] Starting login for PierangeloDalesandre@gmail.com
+[INFO ] 2026-04-17T19:25:12.142Z [gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP3lkOYcoUOko3AuF_MuU1UFmecmbOMW-LKP-dkjdQUGeVhic9Wg3ydo8qkg&checkConnection=youtube%3A1343&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-1189189394%3A1776453902826494&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_U_7mg3vdigjCjokWNlXgv9lfQiF7reLp4Z9kOqK__ccoVmHQSmdlW93K50m5-vkQZGrCel&pstMsg=1
+[INFO ] 2026-04-17T19:25:13.054Z [gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP3lkOYcoUOko3AuF_MuU1UFmecmbOMW-LKP-dkjdQUGeVhic9Wg3ydo8qkg&checkConnection=youtube%3A1343&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-1189189394%3A1776453902826494&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_U_7mg3vdigjCjokWNlXgv9lfQiF7reLp4Z9kOqK__ccoVmHQSmdlW93K50m5-vkQZGrCel&pstMsg=1
+[INFO ] 2026-04-17T19:25:13.103Z [gmail-login] TOTP 2FA challenge detected
+[INFO ] 2026-04-17T19:25:13.120Z [gmail-login] Generated TOTP: 04****
+[INFO ] 2026-04-17T19:25:13.195Z [gmail-login] TOTP submitted
+[INFO ] 2026-04-17T19:25:21.208Z [gmail-login] Round 3, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP3lkOYcoUOko3AuF_MuU1UFmecmbOMW-LKP-dkjdQUGeVhic9Wg3ydo8qkg&checkConnection=youtube%3A1343&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-1189189394%3A1776453902826494&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_U_7mg3vdigjCjokWNlXgv9lfQiF7reLp4Z9kOqK__ccoVmHQSmdlW93K50m5-vkQZGrCel&pstMsg=1
+[INFO ] 2026-04-17T19:25:22.577Z [gmail-login] Round 4, URL: https://myaccount.google.com/?hl=en&pli=1
+[INFO ] 2026-04-17T19:25:22.602Z [gmail-login] Login successful
+[INFO ] 2026-04-17T19:25:24.258Z Target member: email=aa01094370039@gmail.com, displayName=aa01094370039, gaiaId=803996717757763274
+[INFO ] 2026-04-17T19:25:24.272Z Cross-validation set: 3 other member GAIA IDs loaded
+[INFO ] 2026-04-17T19:25:24.281Z S0: Trying /g/803996717757763274
+[INFO ] 2026-04-17T19:25:26.028Z S0: No action button on /g/ path, trying next
+[INFO ] 2026-04-17T19:25:26.033Z S0: Trying /i/803996717757763274
+[INFO ] 2026-04-17T19:25:26.837Z S0: No action button on /i/ path, trying next
+[WARN ] 2026-04-17T19:25:26.842Z S0: Landed on page but no action button found, falling back to list page matching
+[INFO ] 2026-04-17T19:25:29.191Z S2: Email not visible, trying displayName "aa01094370039"
+[WARN ] 2026-04-17T19:25:29.208Z S2: displayName "aa01094370039" not found on page either
+[INFO ] 2026-04-17T19:25:29.214Z S3: Iterating all member cards to find "aa01094370039@gmail.com"
+[INFO ] 2026-04-17T19:25:29.658Z S3: Found 5 member links on family page
+[WARN ] 2026-04-17T19:25:29.665Z S3-fast: Known GAIA 803996717757763274 not found in 5 hrefs, falling to blind iteration
+[DEBUG] 2026-04-17T19:25:36.247Z S3: Card #0 is manager page (Delete Family Group button), skipping
+[DEBUG] 2026-04-17T19:25:43.213Z S3: Card #1 (href=https://myaccount.google.com/family/member/g/100668128228003193730), target=aa01094370039@gmail.com, matched=false. Leaf emails: [k01040083615@gmail.com, pierangelodalesandre@gmail.com]
+[DEBUG] 2026-04-17T19:25:47.910Z S3: Card #2 (href=https://myaccount.google.com/family/member/g/105043547595286552799), target=aa01094370039@gmail.com, matched=false. Leaf emails: [bundyborbon@gmail.com, pierangelodalesandre@gmail.com]
+[DEBUG] 2026-04-17T19:25:52.352Z S3: Card #3 (href=https://myaccount.google.com/family/member/g/105545626938829062295), target=aa01094370039@gmail.com, matched=false. Leaf emails: [g01087306618@gmail.com, pierangelodalesandre@gmail.com]
+[DEBUG] 2026-04-17T19:25:57.218Z S3: Card #4 (href=https://myaccount.google.com/family/member/g/101766889280092434111), target=aa01094370039@gmail.com, matched=true. Leaf emails: [aa01094370039@gmail.com, pierangelodalesandre@gmail.com]
+[INFO ] 2026-04-17T19:25:57.224Z S3: Matched on detail page for card #4 (href=https://myaccount.google.com/family/member/g/101766889280092434111)
+[INFO ] 2026-04-17T19:25:57.229Z On detail page for member aa01094370039@gmail.com
+[INFO ] 2026-04-17T19:25:59.156Z Clicked remove/cancel for aa01094370039@gmail.com
+[INFO ] 2026-04-17T19:26:00.896Z Re-auth required. URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1LnUs-fm3khMUtwV0ZILeLSQEY3PUpXybUGcAVcjxbTVjobnRvg4YzyE-o&authuser=0&cid=4&continue=https%3A%2F%2Fmyaccount.google.com%2Ffamily%2Fremove%2Fg%2F101766889280092434111%3Ff.sid%3D-5614089610993782305&dsh=S-1305347178%3A1776453958055322&flowName=GlifWebSignIn&followup=https%3A%2F%2Fmyaccount.google.com%2Ffamily%2Fremove%2Fg%2F101766889280092434111%3Ff.sid%3D-5614089610993782305&rart=ANgoxceA9AR_0KEPP6L-urUlmPEUFHJDdpZ-5OehzY8PkJmoFcisonfqCEjwwvyufNT_rHow64UX6IzHkiI-PchmSIul6DCjGGkT7A1a1MF0iovUO0U_Wlk&rpbg=1&service=accountsettings
+[INFO ] 2026-04-17T19:26:01.043Z Google skipped password, directly on TOTP challenge
+[INFO ] 2026-04-17T19:26:01.057Z TOTP challenge page. URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1LnUs-fm3khMUtwV0ZILeLSQEY3PUpXybUGcAVcjxbTVjobnRvg4YzyE-o&authuser=0&cid=4&continue=https%3A%2F%2Fmyaccount.google.com%2Ffamily%2Fremove%2Fg%2F101766889280092434111%3Ff.sid%3D-5614089610993782305&dsh=S-1305347178%3A1776453958055322&flowName=GlifWebSignIn&followup=https%3A%2F%2Fmyaccount.google.com%2Ffamily%2Fremove%2Fg%2F101766889280092434111%3Ff.sid%3D-5614089610993782305&rart=ANgoxceA9AR_0KEPP6L-urUlmPEUFHJDdpZ-5OehzY8PkJmoFcisonfqCEjwwvyufNT_rHow64UX6IzHkiI-PchmSIul6DCjGGkT7A1a1MF0iovUO0U_Wlk&rpbg=1&service=accountsettings
+[INFO ] 2026-04-17T19:26:01.063Z Generated TOTP code: 39****
+[INFO ] 2026-04-17T19:26:01.129Z TOTP code submitted
+[INFO ] 2026-04-17T19:26:06.150Z TOTP verified — URL changed after 5000ms. URL: https://myaccount.google.com/family/remove/g/101766889280092434111?f.sid=-5614089610993782305&rapt=AEjHL4OyN-F1OOt2UvwthVrIEKnfiXT_KDSrwdGwG9ghoXAuotBJUYlZkGIN9_uja7nJt8QPwwY8Js3_hZ2EhVpgSgBM_P_Bjf4dkqhvt739YlwSjM4MVI0
+[INFO ] 2026-04-17T19:26:06.396Z On /family/remove/ confirmation page
+[INFO ] 2026-04-17T19:26:06.571Z Clicked Remove on confirmation page for aa01094370039@gmail.com
+[INFO ] 2026-04-17T19:26:09.578Z Remove step complete. Current URL: https://myaccount.google.com/family/remove/g/101766889280092434111?f.sid=-5614089610993782305&rapt=AEjHL4OyN-F1OOt2UvwthVrIEKnfiXT_KDSrwdGwG9ghoXAuotBJUYlZkGIN9_uja7nJt8QPwwY8Js3_hZ2EhVpgSgBM_P_Bjf4dkqhvt739YlwSjM4MVI0
+[INFO ] 2026-04-17T19:26:14.283Z Back on family details, now inviting 01055003756ss@gmail.com
+[INFO ] 2026-04-17T19:26:19.232Z Filled email: 01055003756ss@gmail.com
+[INFO ] 2026-04-17T19:26:21.999Z Clicked send for 01055003756ss@gmail.com
+[INFO ] 2026-04-17T19:26:25.029Z Sent invite to 01055003756ss@gmail.com
+[INFO ] 2026-04-17T19:26:28.610Z Verified invite: found 01055003756ss@gmail.com on family page (gaiaId=5079878959462020565)
+[INFO ] 2026-04-17T19:26:28.633Z Status → REPLACED_AND_INVITE_SENT
+[INFO ] 2026-04-17T19:26:28.660Z [post-task-sync] Starting post-task family sync...
+[INFO ] 2026-04-17T19:26:42.434Z [post-task-sync] Scraped 4 members, 1 available slots
+[INFO ] 2026-04-17T19:26:42.450Z Upserted member: k01040083615@gmail.com status=ACTIVE (gaia=100668128228003193730)
+[INFO ] 2026-04-17T19:26:42.474Z Upserted member: bundyborbon@gmail.com status=ACTIVE (gaia=105043547595286552799)
+[INFO ] 2026-04-17T19:26:42.497Z Upserted member: g01087306618@gmail.com status=ACTIVE (gaia=105545626938829062295)
+[INFO ] 2026-04-17T19:26:42.513Z Upserted member: 01055003756ss@gmail.com status=PENDING (gaia=5079878959462020565)
+[INFO ] 2026-04-17T19:26:42.528Z Group counts updated: 4 members, 1 slots available
+[INFO ] 2026-04-17T19:26:42.533Z [post-task-sync] Complete
+[INFO ] 2026-04-17T19:26:42.538Z Replace completed successfully
+
+  Order: GFA-MO3AS4PR-QARF | INVITE_SENT | 01055003756ss@gmail.com | type=SUBSCRIPTION

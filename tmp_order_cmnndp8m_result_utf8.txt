@@ -1,0 +1,32 @@
+﻿=== FAMILY GROUP ===
+ID: cmn9zv24r008exkosfi1s86xy
+Group Name: NeryBocage
+Status: ACTIVE
+Member Count: 0
+Available Slots: 5
+Pending Invite Count: 0
+Last Synced: 2026-04-06T16:03:01.797Z
+
+=== ACCOUNT ===
+ID: cmn9zv24i008cxkosesbou1wa
+Name: NeryBocage
+Email: NeryBocage@gmail.com
+Status: HEALTHY
+
+=== MEMBERS (5) ===
+  z0918504432@gmail.com | PENDING | member | Joined: null | Expires: null | ID: cmna5xpxt02obxkdsfo0kwupj
+  z0916003872@gmail.com | PENDING | member | Joined: null | Expires: null | ID: cmna5xpxg02o7xkdsof6ka5l5
+  n0955515498@gmail.com | PENDING | member | Joined: null | Expires: null | ID: cmna5xpww02o3xkdshn9gpm66
+  z0918212432@gmail.com | PENDING | member | Joined: null | Expires: null | ID: cmna5xpwh02nzxkdsqmam908m
+  s01044779834@gmail.com | ACTIVE | member | Joined: Sat Mar 28 2026 18:58:31 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Expires: null | ID: cmna5xpw102nvxkds7c4ffxhz
+
+=== RECENT ORDERS (0) ===
+
+=== RECENT SYNC TASKS (5) ===
+  cmnndp8m1000qxk1c0qialmzp | SUCCESS | Started: Tue Apr 07 2026 00:02:19 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Finished: Tue Apr 07 2026 00:03:01 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Created: Tue Apr 07 2026 00:02:18 GMT+0800 (涓浗鏍囧噯鏃堕棿)
+  cmnn0qqbz00bnxk4gb50241c9 | SUCCESS | Started: Mon Apr 06 2026 17:59:34 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Finished: Mon Apr 06 2026 18:00:13 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Created: Mon Apr 06 2026 17:59:33 GMT+0800 (涓浗鏍囧噯鏃堕棿)
+  cmnmuwzos001sxk4gykomvncv | SUCCESS | Started: Mon Apr 06 2026 15:16:28 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Finished: Mon Apr 06 2026 15:17:02 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Created: Mon Apr 06 2026 15:16:27 GMT+0800 (涓浗鏍囧噯鏃堕棿)
+  cmnk0oyh50029xk9kldj9bp6o | CANCELLED | Started: Sat Apr 04 2026 15:34:54 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Finished: Mon Apr 06 2026 15:17:02 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Created: Sat Apr 04 2026 15:34:51 GMT+0800 (涓浗鏍囧噯鏃堕棿)
+    Error: 琚柊鐨勬垚鍔熶换鍔″彇浠?(cmnmuwzos001)
+  cmnivpngq000gxkbcyl4ry4d6 | CANCELLED | Started: Fri Apr 03 2026 20:27:41 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Finished: Mon Apr 06 2026 15:17:02 GMT+0800 (涓浗鏍囧噯鏃堕棿) | Created: Fri Apr 03 2026 20:27:39 GMT+0800 (涓浗鏍囧噯鏃堕棿)
+    Error: 琚柊鐨勬垚鍔熶换鍔″彇浠?(cmnmuwzos001)

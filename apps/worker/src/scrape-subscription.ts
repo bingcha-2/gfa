@@ -73,6 +73,51 @@ async function scrapeFromSubscriptionsPage(page: Page): Promise<SubscriptionInfo
       ? planMatch[0].replace(/[\n\r]+/g, " ").replace(/\s+/g, " ").trim()
       : null;
 
+    // Detect payment failure / billing issues → treat as SUSPENDED
+    // Google shows messages like:
+    //   "Your payment was declined"
+    //   "Payment failed"
+    //   "Fix payment method"
+    //   "Action needed" (with billing context)
+    //   "付款被拒" / "付款失败" / "결제가 거부" etc.
+    const paymentFailurePatterns = [
+      /payment\s+(?:was\s+)?declined/i,
+      /payment\s+failed/i,
+      /payment\s+method\s+(?:expired|invalid|failed)/i,
+      /fix\s+(?:your\s+)?payment/i,
+      /billing\s+(?:issue|problem|error)/i,
+      /update\s+(?:your\s+)?payment\s+method/i,
+      /try\s+again\s+or\s+use\s+a\s+different\s+payment/i,
+      /subscription\s+(?:was\s+)?(?:suspended|cancelled|canceled|paused)/i,
+      /account\s+(?:is\s+)?on\s+hold/i,
+      /付款被拒/,
+      /付款失败/,
+      /支付失败/,
+      /账单问题/,
+      /更新.*付款方式/,
+      /订阅.*暂停/,
+      /결제.*거부/,
+      /결제.*실패/,
+    ];
+
+    const textToCheck = nearby + " " + pageText.slice(0, 2000);
+    const isPaymentFailed = paymentFailurePatterns.some((p) => p.test(textToCheck));
+
+    // Even with a payment warning, try to extract the renewal date first.
+    // If a valid future date exists, the subscription is still active — the warning
+    // is just about an upcoming card expiry, not an actual subscription stop.
+    // Example: "Service ending - card expiring soon" + "Renews on May 19, 2026"
+    //          → subscription is still ACTIVE, card just needs updating.
+    if (isPaymentFailed) {
+      let warnExpiresAt = parseRenewalDate(nearby) ?? parseRenewalDate(pageText) ?? parseExpiryDate(pageText);
+      if (warnExpiresAt && warnExpiresAt > new Date()) {
+        console.log(`[scrape-subscription] Payment warning detected but subscription still active (renews ${warnExpiresAt.toISOString()}). Plan: ${planName}`);
+        return { expiresAt: warnExpiresAt, status: "ACTIVE", planName };
+      }
+      console.log(`[scrape-subscription] Payment failure detected, no valid future renewal date. Plan: ${planName}. Marking as SUSPENDED.`);
+      return { expiresAt: warnExpiresAt, status: "SUSPENDED", planName };
+    }
+
     // Extract renewal date: "Renews on Apr 28, 2026" etc.
     let expiresAt = parseRenewalDate(nearby);
 
@@ -100,8 +145,10 @@ async function scrapeFromSubscriptionsPage(page: Page): Promise<SubscriptionInfo
       };
     }
 
-    // Google One found but no date — still ACTIVE (monthly billing, no renewal date shown)
-    return { expiresAt: null, status: "ACTIVE", planName };
+    // Google One found but no renewal date — likely billing issue (payment declined, etc.)
+    // A healthy active subscription always shows a renewal date.
+    console.log(`[scrape-subscription] Google One found but no renewal date. Plan: ${planName}. Marking as SUSPENDED.`);
+    return { expiresAt: null, status: "SUSPENDED", planName };
   } catch {
     // Navigation failed — return null so fallback is tried
     return null;
@@ -138,7 +185,8 @@ async function scrapeFromGoogleOnePage(page: Page): Promise<SubscriptionInfo | n
       };
     }
 
-    return { expiresAt: null, status: "ACTIVE", planName: currentPlanInfo.planName };
+    // Paid plan found but no renewal date — treat as SUSPENDED (billing issue likely)
+    return { expiresAt: null, status: "SUSPENDED", planName: currentPlanInfo.planName };
   } catch {
     return null;
   }

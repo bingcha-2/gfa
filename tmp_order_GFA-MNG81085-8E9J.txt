@@ -1,0 +1,56 @@
+Querying order GFA-MNG81085-8E9J...
+--- Order Info ---
+ID: cmng810870010xkpwp3p1rlnr
+Type: SWAP
+Status: FAILED
+User Email: k01056012673@gmail.com
+Result Message: Cannot find member and no invite slots available (当前识别失败且无可用空位)
+Created At: Wed Apr 01 2026 23:49:06 GMT+0800 (中国标准时间)
+
+--- Family Group ---
+Group Name: DonosoHomeron333
+Group Status: ACTIVE
+
+--- Tasks (1) ---
+
+Task ID: cmng810890012xkpwslt17kr0 | Type: REPLACE_MEMBER | Status: FAILED_FINAL
+Created At: Wed Apr 01 2026 23:49:06 GMT+0800 (中国标准时间) | Finished At: Wed Apr 01 2026 23:50:29 GMT+0800 (中国标准时间)
+Error: Cannot find member and no invite slots available (当前识别失败且无可用空位)
+Payload: {"orderId":"cmng810870010xkpwp3p1rlnr","familyGroupId":"cmnfsv1r3001mxku0x1l49usv","accountId":"cmnfsv1qx001kxku0vbpvl3kc","targetMemberEmail":"k01047400907@gmail.com","newUserEmail":"k01056012673@gmail.com","reason":"SWAP_REQUEST"}
+Logs (33):
+  [2026-04-01T15:49:06.551Z] [INFO] Replacing k01047400907@gmail.com → k01056012673@gmail.com (profile attempt 1/6) {"profileId":"k1at4r4b","familyGroupId":"cmnfsv1r3001mxku0x1l49usv"}
+  [2026-04-01T15:49:07.890Z] [INFO] Status → RUNNING 
+  [2026-04-01T15:49:12.298Z] [INFO] [gmail-login] Starting login for DonosoHomeron333@gmail.com 
+  [2026-04-01T15:49:20.523Z] [WARN] [gmail-login] Still on identifier page after Next click — retry 1 
+  [2026-04-01T15:49:28.698Z] [INFO] [gmail-login] Round 1, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1CvuDFDQ-DiIyLFWBoyrirZA3_9XeFNAiGbdW8Gd6e7DHVAkO38foMp_Mu&checkConnection=youtube%3A379&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-971895089%3A1775058552774784&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_WSt7KHWbNftTmsJwEUN1AnQng1D0ECvWmdA9tX6OTJG6SxKx3NAT3Ktcbm8btZIdZPqfP-rA&pstMsg=1 
+  [2026-04-01T15:49:28.714Z] [INFO] [gmail-login] TOTP 2FA challenge detected 
+  [2026-04-01T15:49:28.719Z] [INFO] [gmail-login] Waiting 3s for fresh TOTP 
+  [2026-04-01T15:49:31.735Z] [INFO] [gmail-login] Generated TOTP: 82**** 
+  [2026-04-01T15:49:31.871Z] [INFO] [gmail-login] TOTP submitted 
+  [2026-04-01T15:49:34.885Z] [INFO] [gmail-login] Round 2, URL: https://accounts.google.com/v3/signin/challenge/totp?TL=AIgtPP1CvuDFDQ-DiIyLFWBoyrirZA3_9XeFNAiGbdW8Gd6e7DHVAkO38foMp_Mu&checkConnection=youtube%3A379&checkedDomains=youtube&cid=2&continue=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&dsh=S-971895089%3A1775058552774784&flowEntry=ServiceLogin&flowName=GlifWebSignIn&followup=https%3A%2F%2Faccounts.google.com%2F%3Fhl%3Den&hl=en&ifkv=AT1y2_WSt7KHWbNftTmsJwEUN1AnQng1D0ECvWmdA9tX6OTJG6SxKx3NAT3Ktcbm8btZIdZPqfP-rA&pstMsg=1 
+  [2026-04-01T15:49:40.830Z] [INFO] [gmail-login] Round 3, URL: https://myaccount.google.com/?hl=en&pli=1 
+  [2026-04-01T15:49:40.843Z] [INFO] [gmail-login] Login successful 
+  [2026-04-01T15:49:43.082Z] [INFO] Target member: email=k01047400907@gmail.com, displayName=k01047400907, gaiaId=6224557802969656173 
+  [2026-04-01T15:49:43.089Z] [INFO] Cross-validation set: 3 other member GAIA IDs loaded 
+  [2026-04-01T15:49:43.094Z] [INFO] S0: Trying /g/6224557802969656173 
+  [2026-04-01T15:49:45.197Z] [INFO] S0: No action button on /g/ path, trying next 
+  [2026-04-01T15:49:45.203Z] [INFO] S0: Trying /i/6224557802969656173 
+  [2026-04-01T15:49:46.118Z] [INFO] S0: No action button on /i/ path, trying next 
+  [2026-04-01T15:49:46.123Z] [WARN] S0: Landed on page but no action button found, falling back to list page matching 
+  [2026-04-01T15:49:47.826Z] [INFO] S2: Email not visible, trying displayName "k01047400907" 
+  [2026-04-01T15:49:47.844Z] [WARN] S2: displayName "k01047400907" not found on page either 
+  [2026-04-01T15:49:47.850Z] [INFO] S3: Iterating all member cards to find "k01047400907@gmail.com" 
+  [2026-04-01T15:49:47.862Z] [INFO] S3: Found 6 member links on family page 
+  [2026-04-01T15:49:47.868Z] [WARN] S3-fast: Known GAIA 6224557802969656173 not found in 6 hrefs, falling to blind iteration 
+  [2026-04-01T15:49:55.346Z] [DEBUG] S3: Card #0 is manager page (Delete Family Group button), skipping 
+  [2026-04-01T15:50:02.106Z] [DEBUG] S3: Card #1 (href=https://myaccount.google.com/family/member/g/114355358648272828628), target=k01047400907@gmail.com, matched=false. Leaf emails: [lastshuaiyw@gmail.com, donosohomeron333@gmail.com] 
+  [2026-04-01T15:50:07.592Z] [DEBUG] S3: Card #2 (href=https://myaccount.google.com/family/member/g/115167664315066549606), target=k01047400907@gmail.com, matched=false. Leaf emails: [aa01083391660@gmail.com, donosohomeron333@gmail.com] 
+  [2026-04-01T15:50:12.806Z] [DEBUG] S3: Card #3 (href=https://myaccount.google.com/family/member/g/117582460904392268425), target=k01047400907@gmail.com, matched=false. Leaf emails: [balwincira@gmail.com, donosohomeron333@gmail.com] 
+  [2026-04-01T15:50:18.157Z] [DEBUG] S3: Card #4 (href=https://myaccount.google.com/family/member/g/115329779703410351052), target=k01047400907@gmail.com, matched=false. Leaf emails: [lonzhang123@gmail.com, donosohomeron333@gmail.com] 
+  [2026-04-01T15:50:24.039Z] [DEBUG] S3: Card #5 (href=https://myaccount.google.com/family/member/i/8668144666849104529), target=k01047400907@gmail.com, matched=false. Leaf emails: [donosohomeron333@gmail.com] 
+  [2026-04-01T15:50:25.832Z] [WARN] Member k01047400907@gmail.com not found on page. Verifying if slot is available... 
+  [2026-04-01T15:50:29.812Z] [INFO] Status → FAILED_FINAL 
+  [2026-04-01T15:50:29.839Z] [ERROR] Replace failed permanently: Cannot find member and no invite slots available (当前识别失败且无可用空位) 
+
+--- Swap Records (1) ---
+Swap Record ID: cmng8108b0014xkpwc2gy0xwy | Status: FAILED | Old: k01047400907@gmail.com -> New: k01056012673@gmail.com

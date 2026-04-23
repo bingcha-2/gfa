@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail, IsInt, IsOptional, Min } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEmail, IsInt, IsOptional, IsString, Min } from "class-validator";
 
 /**
  * DTO for bulk-invite: invite up to 5 emails to a family group in one request.
@@ -16,4 +16,9 @@ export class BulkInviteDto {
   @IsInt()
   @Min(1)
   validDays?: number;
+
+  /** Source tag for tracking origin (e.g. "agent-service"). */
+  @IsOptional()
+  @IsString()
+  source?: string;
 }

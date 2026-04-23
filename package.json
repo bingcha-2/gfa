@@ -37,5 +37,22 @@
     "prisma": "^6.7.0",
     "tsx": "^4.21.0",
     "typescript": "^5.8.3"
-  }
+  },
+  "description": "Google One Family 自动化管理系统，提供成员邀请、到期移除、账号换绑等全流程自动化。",
+  "main": "Extract.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bingcha135-sys/GFA-per.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/bingcha135-sys/GFA-per/issues"
+  },
+  "homepage": "https://github.com/bingcha135-sys/GFA-per#readme"
 }

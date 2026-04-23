@@ -92,11 +92,12 @@ export class PhonePoolService {
     });
   }
 
-  /** Record usage of a phone number */
+  /** Record usage of a phone number and mark it as used (no longer available) */
   async markUsed(phoneNumber: string, code?: string) {
     return this.prisma.phonePool.update({
       where: { phoneNumber },
       data: {
+        status: "used",
         usedCount: { increment: 1 },
         lastUsedAt: new Date(),
         lastCode: code,

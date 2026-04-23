@@ -44,6 +44,14 @@ export class BatchOAuthDto {
   accounts!: BatchOAuthAccount[];
 }
 
+export class ConsoleStartDto {
+  @IsString()
+  accountId!: string;
+
+  @IsIn(["accept-invite", "phone-verify"])
+  action!: "accept-invite" | "phone-verify";
+}
+
 export class BatchOAuthAccount {
   @IsString()
   email!: string;
