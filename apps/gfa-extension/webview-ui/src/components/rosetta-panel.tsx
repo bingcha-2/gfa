@@ -134,13 +134,42 @@ export function RosettaPanel() {
 // ─── Token Import Form (advanced users) ─────────────────────────────────
 
 function TokenImportForm({ onDone }: { onDone: () => void }) {
+  const [mode, setMode] = useState<"single" | "batch">("single");
   const [refreshToken, setRefreshToken] = useState("");
   const [alias, setAlias] = useState("");
+  const [batchJson, setBatchJson] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [batchDetails, setBatchDetails] = useState<Array<{ alias: string; email?: string; status: string; message: string }> | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Listen for batch import progress & result
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const data = event.data;
+      if (data?.type === "rosetta:batchImportProgress") {
+        setProgress(`(${data.payload.current}/${data.payload.total}) ${data.payload.detail}`);
+      }
+      if (data?.type === "rosetta:batchImportResult") {
+        setLoading(false);
+        setProgress(null);
+        if (data.payload?.error) {
+          setError(data.payload.error);
+        } else {
+          const r = data.payload;
+          setSuccess(`批量导入完成: ${r.success} 成功, ${r.skipped} 跳过, ${r.failed} 失败`);
+          setBatchDetails(r.details || null);
+          setBatchJson("");
+          if (r.success > 0) setTimeout(() => onDone(), 3000);
+        }
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [onDone]);
+
+  function handleSingleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const token = refreshToken.trim();
     if (!token) { setError("请输入 Refresh Token"); return; }
@@ -170,51 +199,152 @@ function TokenImportForm({ onDone }: { onDone: () => void }) {
       }
     };
     window.addEventListener("message", handler);
-
     setTimeout(() => {
       window.removeEventListener("message", handler);
       setLoading(false);
     }, 30000);
   }
 
+  function handleBatchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const text = batchJson.trim();
+    if (!text) { setError("请粘贴 JSON 数据"); return; }
+
+    let parsed: any[];
+    try {
+      parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) throw new Error("not array");
+    } catch {
+      setError("JSON 格式错误，请粘贴包含 refreshToken 字段的 JSON 数组");
+      return;
+    }
+
+    const items = parsed
+      .filter((item: any) => item.refreshToken)
+      .map((item: any) => ({
+        refreshToken: String(item.refreshToken),
+        alias: String(item.name || item.alias || item.loginEmail?.split("@")[0] || ""),
+      }));
+
+    if (items.length === 0) {
+      setError("未找到包含 refreshToken 的记录");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    setBatchDetails(null);
+    setProgress(`准备导入 ${items.length} 个账号…`);
+
+    sendRosettaAction("rosetta:batchImportTokens", { items });
+  }
+
   return (
     <div className="rosetta-add-form">
-      <div className="rosetta-add-form-title">Token 导入（高级）</div>
-      <p className="rosetta-add-form-hint">
-        适用于已有 Refresh Token 的用户。一般直接点「新增账号」通过浏览器登录即可。
-      </p>
-      <form onSubmit={handleSubmit}>
-        <div className="rosetta-form-field">
-          <label className="rosetta-form-label">Refresh Token</label>
-          <textarea
-            className="rosetta-form-input rosetta-form-textarea"
-            placeholder="粘贴 Google OAuth Refresh Token…"
-            value={refreshToken}
-            onChange={(e) => setRefreshToken(e.target.value)}
-            rows={3}
-            disabled={loading}
-          />
-        </div>
-        <div className="rosetta-form-field">
-          <label className="rosetta-form-label">别名（可选）</label>
-          <input
-            className="rosetta-form-input"
-            placeholder="例如：主号、备用号"
-            value={alias}
-            onChange={(e) => setAlias(e.target.value)}
-            disabled={loading}
-          />
-        </div>
-        {error && <div className="rosetta-form-error">{error}</div>}
-        {success && <div className="rosetta-form-success">{success}</div>}
+      <div className="rosetta-add-form-title">Token 导入</div>
+
+      {/* Mode toggle */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
         <button
-          className="rosetta-btn rosetta-btn-primary"
-          type="submit"
-          disabled={loading || !refreshToken.trim()}
+          className={`rosetta-btn ${mode === "single" ? "rosetta-btn-primary" : ""}`}
+          type="button"
+          style={{ flex: 1, fontSize: 12, padding: "4px 8px" }}
+          onClick={() => { setMode("single"); setError(null); setSuccess(null); setBatchDetails(null); }}
+          disabled={loading}
         >
-          {loading ? "正在验证…" : "导入并获取额度"}
+          单条导入
         </button>
-      </form>
+        <button
+          className={`rosetta-btn ${mode === "batch" ? "rosetta-btn-primary" : ""}`}
+          type="button"
+          style={{ flex: 1, fontSize: 12, padding: "4px 8px" }}
+          onClick={() => { setMode("batch"); setError(null); setSuccess(null); setBatchDetails(null); }}
+          disabled={loading}
+        >
+          批量导入
+        </button>
+      </div>
+
+      {mode === "single" ? (
+        <>
+          <p className="rosetta-add-form-hint">
+            适用于已有 Refresh Token 的用户。一般直接点「新增账号」通过浏览器登录即可。
+          </p>
+          <form onSubmit={handleSingleSubmit}>
+            <div className="rosetta-form-field">
+              <label className="rosetta-form-label">Refresh Token</label>
+              <textarea
+                className="rosetta-form-input rosetta-form-textarea"
+                placeholder="粘贴 Google OAuth Refresh Token…"
+                value={refreshToken}
+                onChange={(e) => setRefreshToken(e.target.value)}
+                rows={3}
+                disabled={loading}
+              />
+            </div>
+            <div className="rosetta-form-field">
+              <label className="rosetta-form-label">别名（可选）</label>
+              <input
+                className="rosetta-form-input"
+                placeholder="例如：主号、备用号"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+            {error && <div className="rosetta-form-error">{error}</div>}
+            {success && <div className="rosetta-form-success">{success}</div>}
+            <button
+              className="rosetta-btn rosetta-btn-primary"
+              type="submit"
+              disabled={loading || !refreshToken.trim()}
+            >
+              {loading ? "正在验证…" : "导入并获取额度"}
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <p className="rosetta-add-form-hint">
+            粘贴包含 <code>refreshToken</code> 字段的 JSON 数组，支持从 GFA 控制台导出的 account-tokens 格式。
+            可选字段：<code>name</code>、<code>alias</code>、<code>loginEmail</code>（用作别名）。
+          </p>
+          <form onSubmit={handleBatchSubmit}>
+            <div className="rosetta-form-field">
+              <label className="rosetta-form-label">JSON 数据</label>
+              <textarea
+                className="rosetta-form-input rosetta-form-textarea"
+                placeholder={'[\n  { "refreshToken": "1//0e...", "name": "account1" },\n  { "refreshToken": "1//0e...", "name": "account2" }\n]'}
+                value={batchJson}
+                onChange={(e) => setBatchJson(e.target.value)}
+                rows={6}
+                disabled={loading}
+                style={{ fontFamily: "monospace", fontSize: 11 }}
+              />
+            </div>
+            {progress && <div className="rosetta-form-success" style={{ opacity: 0.8 }}>{progress}</div>}
+            {error && <div className="rosetta-form-error">{error}</div>}
+            {success && <div className="rosetta-form-success">{success}</div>}
+            {batchDetails && (
+              <div style={{ fontSize: 11, marginTop: 4, maxHeight: 160, overflowY: "auto", lineHeight: 1.6 }}>
+                {batchDetails.map((d, i) => (
+                  <div key={i} style={{ color: d.status === "ok" ? "#22c55e" : d.status === "skipped" ? "#eab308" : "#ef4444" }}>
+                    {d.status === "ok" ? "✓" : d.status === "skipped" ? "⊘" : "✕"} {d.email || d.alias} — {d.message}
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              className="rosetta-btn rosetta-btn-primary"
+              type="submit"
+              disabled={loading || !batchJson.trim()}
+            >
+              {loading ? "正在批量导入…" : "批量导入"}
+            </button>
+          </form>
+        </>
+      )}
     </div>
   );
 }

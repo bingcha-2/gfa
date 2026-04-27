@@ -522,6 +522,33 @@ export async function handleRosettaMessage(
         return;
       }
 
+      case "rosetta:batchImportTokens": {
+        const state = getState();
+        const items = message.payload?.items;
+        if (!Array.isArray(items) || items.length === 0) {
+          webview.postMessage({ type: "rosetta:batchImportResult", payload: { error: "导入列表为空" } });
+          return;
+        }
+        log(`[批量导入] 开始导入 ${items.length} 个账号…`);
+        try {
+          const result = await rosettaProcess.batchImportTokens(
+            state,
+            items,
+            (current, total, detail) => {
+              log(`[批量导入] (${current}/${total}) ${detail}`);
+              webview.postMessage({ type: "rosetta:batchImportProgress", payload: { current, total, detail } });
+            }
+          );
+          log(`[批量导入] 完成: ${result.success} 成功, ${result.skipped} 跳过, ${result.failed} 失败`);
+          webview.postMessage({ type: "rosetta:batchImportResult", payload: result });
+          await refreshAndPush();
+        } catch (err: any) {
+          log(`[批量导入] 失败: ${err.message}`);
+          webview.postMessage({ type: "rosetta:batchImportResult", payload: { error: err.message || String(err) } });
+        }
+        return;
+      }
+
       case "rosetta:addAccount": {
         const state = getState();
         log(`[添加账号] 通过浏览器 OAuth 方式添加...`);
