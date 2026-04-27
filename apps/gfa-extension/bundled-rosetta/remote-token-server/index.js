@@ -72,11 +72,16 @@ function isVerificationChallengeText(value) {
   if (!text) return false;
   return (
     text.includes('please verify your account') ||
+    text.includes('verify your account to continue') ||
     text.includes('verify your info to continue') ||
     text.includes('google needs to verify') ||
     text.includes('verify some info about your device or phone number') ||
     text.includes('scan the qr code with your phone') ||
-    text.includes('account to continue using antigravity')
+    text.includes('account to continue using antigravity') ||
+    text.includes('validation_required') ||
+    text.includes('"reason":"validation_required"') ||
+    text.includes('"reason": "validation_required"') ||
+    text.includes('validation_url')
   );
 }
 
@@ -527,8 +532,8 @@ function createRemoteTokenServer(config) {
     const leaseId = String(payload.leaseId || '').trim();
     const lease = leases.get(leaseId);
     if (!lease) {
-      totalErrors++;
-      return sendJson(res, 404, { ok: false, error: 'Lease not found' });
+      log(`[remote-token] report ${leaseId || '-'} ignored: lease not found`);
+      return sendJson(res, 200, { ok: true, ignored: true, reason: 'lease_not_found', status: getStatus() });
     }
 
     const status = Number(payload.status || 0);
