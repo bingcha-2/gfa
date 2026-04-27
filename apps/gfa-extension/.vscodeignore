@@ -9,6 +9,8 @@ webview-ui/package-lock.json
 webview-ui/index.html
 node_modules/**
 bundled-rosetta/node_modules/**
+bundled-rosetta/remote-token-server/**
+bundled-rosetta/start-remote-token-server.js
 tsconfig.json
 esbuild.mjs
 **/*.map
