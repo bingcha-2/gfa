@@ -384,6 +384,13 @@ export async function gmailLogin(
         // trigger an immediate false return.
         const totpUrl = page.url();
         await page.waitForURL((url) => url.toString() !== totpUrl, { timeout: 8000 }).catch(() => {});
+        // If URL didn't change, the TOTP may still be processing. Wait a bit more
+        // before the next round to avoid false phone-challenge detection from
+        // residual DOM elements on the transitioning page.
+        if (page.url() === totpUrl) {
+          await logger.log("INFO", "[gmail-login] TOTP page URL unchanged after submit — waiting for navigation");
+          await page.waitForURL((url) => url.toString() !== totpUrl, { timeout: 8000 }).catch(() => {});
+        }
         await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
         continue;
       }
@@ -428,15 +435,20 @@ export async function gmailLogin(
       }
 
       // Phone / SMS / push notification challenge (unhandled)
-      const phoneChallenge = page.locator(
-        'div[data-challengetype="12"], div[data-challengetype="9"], ' +
-        'input[autocomplete="tel"], input[name="phoneNumberId"], ' +
-        '[aria-label*="phone" i], [aria-label*="电话" i], [aria-label*="手機" i]'
-      );
-      if ((await phoneChallenge.count()) > 0 || await isPhoneChallengePage(page)) {
-        const detail = `Phone/SMS verification required at ${roundUrl}`;
-        await logger.log("WARN", `[gmail-login] Unhandled phone challenge: ${detail}`);
-        return { success: false, reason: "PHONE_CHALLENGE", detail };
+      // IMPORTANT: Skip this check when URL is still on /challenge/totp — after TOTP
+      // submission the page may briefly show residual data-challengetype elements
+      // from the challenge selection UI, causing false positive phone detection.
+      if (!roundUrl.includes("/challenge/totp")) {
+        const phoneChallenge = page.locator(
+          'div[data-challengetype="12"], div[data-challengetype="9"], ' +
+          'input[autocomplete="tel"], input[name="phoneNumberId"], ' +
+          '[aria-label*="phone" i], [aria-label*="电话" i], [aria-label*="手機" i]'
+        );
+        if ((await phoneChallenge.count()) > 0 || await isPhoneChallengePage(page)) {
+          const detail = `Phone/SMS verification required at ${roundUrl}`;
+          await logger.log("WARN", `[gmail-login] Unhandled phone challenge: ${detail}`);
+          return { success: false, reason: "PHONE_CHALLENGE", detail };
+        }
       }
 
       // Challenge selection page — Google asks user to pick a verification method.
@@ -470,6 +482,13 @@ export async function gmailLogin(
     if (finalUrl.includes(SUCCESS_DOMAIN)) {
       await logger.log("INFO", "[gmail-login] Login successful (after all rounds)");
       return { success: true };
+    }
+
+    // If still on TOTP challenge page → TOTP secret is wrong (not a generic unknown)
+    if (finalUrl.includes("challenge/totp")) {
+      const detail = `TOTP密钥错误：连续多次验证码均被Google拒绝，请检查该账号的TOTP密钥是否正确`;
+      await logger.log("ERROR", `[gmail-login] ${detail}`);
+      return { success: false, reason: "VERIFICATION_REQUIRED", detail };
     }
 
     return {
@@ -761,13 +780,36 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
       'div[role="button"]:has-text("Cancel")',
     ].join(", "));
 
-    if ((await dismissBtn.count()) > 0) {
-      const btnText = await dismissBtn.first().textContent().catch(() => "?");
-      await dismissBtn.first().click();
-      await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on GDS card ${cardRound + 1}`);
-      await page.waitForTimeout(1500);
-      await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
-      continue;
+    const btnCount = await dismissBtn.count();
+    if (btnCount > 0) {
+      // Iterate all matched buttons to find the first VISIBLE one.
+      // GDS cards keep hidden buttons from previous/next card states in the DOM,
+      // so .first() often picks an invisible button (e.g. hidden Cancel from card 1
+      // while the current card only shows Skip).
+      let clicked = false;
+      for (let bi = 0; bi < btnCount; bi++) {
+        const btn = dismissBtn.nth(bi);
+        const isVisible = await btn.isVisible().catch(() => false);
+        if (!isVisible) continue;
+        const btnText = await btn.textContent().catch(() => "?");
+        try {
+          await btn.click({ timeout: 3000 });
+          await logger.log("INFO", `[gmail-login] Clicked "${btnText?.trim()}" on GDS card ${cardRound + 1}`);
+          clicked = true;
+          break;
+        } catch {
+          // This visible button failed to click — try next one
+          continue;
+        }
+      }
+      if (clicked) {
+        await page.waitForTimeout(1500);
+        await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
+        continue;
+      }
+      // All buttons exist but none clickable — break to fallback
+      await logger.log("WARN", `[gmail-login] ${btnCount} dismiss buttons found but none clickable on GDS card ${cardRound + 1} — breaking to fallback`);
+      break;
     }
 
     // No dismiss button found on this card (e.g. homeaddress has only ← and Save)
@@ -917,10 +959,20 @@ async function handleChallengeSelection(
       'div[data-challengetype="6"], ' +
       'li[data-challengetype="6"], ' +
       'button[data-challengetype="6"], ' +
-      '[data-challengeindex][data-challengetype="6"]'
+      '[data-challengeindex][data-challengetype="6"], ' +
+      '[data-challengetype="6"]'
     );
     if ((await totpOption.count()) > 0) {
-      await totpOption.first().click();
+      const option = totpOption.first();
+      try {
+        await option.click({ timeout: 3000 });
+      } catch {
+        await option.evaluate((el: HTMLElement) => {
+          const target =
+            el.closest('[role="link"], [role="button"], li, button, a, div[data-challengetype]') as HTMLElement | null;
+          (target ?? el).click();
+        });
+      }
       await logger.log("INFO", "[gmail-login] Selected TOTP (Google Authenticator) challenge option");
       return true;
     }

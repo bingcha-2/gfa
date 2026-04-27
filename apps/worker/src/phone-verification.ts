@@ -20,6 +20,7 @@ import type { PhoneInfo } from "@gfa/shared";
 const SMS_POLL_TIMEOUT_MS = 30_000;
 /** Interval between SMS polls */
 const SMS_POLL_INTERVAL_MS = 3_000;
+const QR_VERIFICATION_ERROR = "验证失败（扫码）";
 
 export interface PhoneVerifyResult {
   /** Whether verification was needed */
@@ -59,6 +60,11 @@ export async function handlePhoneVerification(
 ): Promise<PhoneVerifyResult> {
   const disabledPhones: string[] = [];
 
+  if (await isQrPhoneVerificationPage(page)) {
+    await logger.log("WARN", "[phone-verify] QR-code phone verification page detected — cannot automate");
+    return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
+  }
+
   // Check if we're on a verification page
   const currentUrl = page.url();
   if (!isVerificationPage(currentUrl)) {
@@ -74,6 +80,10 @@ export async function handlePhoneVerification(
 
   // Force English for consistent element detection
   await forceEnglish(page, logger);
+  if (await isQrPhoneVerificationPage(page)) {
+    await logger.log("WARN", "[phone-verify] QR-code phone verification page detected after language switch");
+    return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
+  }
 
   // Try each phone number until one works
   for (const phone of phones) {
@@ -91,6 +101,15 @@ export async function handlePhoneVerification(
         };
       } else {
         await logger.log("WARN", `[phone-verify] Phone ${maskPhone(phone.phoneNumber)} failed: ${result.error}`);
+        if (isQrVerificationError(result.error)) {
+          await logger.log("WARN", "[phone-verify] QR-code flow is not retryable with another phone; stopping verification");
+          return {
+            needed: true,
+            resolved: false,
+            disabledPhones,
+            error: QR_VERIFICATION_ERROR,
+          };
+        }
         // Only disable if Google explicitly rejected the number (hard failure)
         // Soft failures (selector bug, timeout, network) are NOT the phone's fault
         const isHardFail = result.error && /too many|can.t use|unable to|invalid number|banned|blocked|not.*valid|not.*recogni|didn.t recogni|quota|limit/i.test(result.error);
@@ -184,6 +203,10 @@ async function attemptVerification(
   phone: PhoneInfo,
   logger: TaskLogger
 ): Promise<{ success: boolean; error?: string }> {
+  if (await isQrPhoneVerificationPage(page)) {
+    return { success: false, error: QR_VERIFICATION_ERROR };
+  }
+
   // Step 1: Select "Verify your phone number" if on selection page
   const pageUrl = page.url();
   if (pageUrl.includes("selection") || pageUrl.includes("uplevelingstep")) {
@@ -198,6 +221,9 @@ async function attemptVerification(
       page.locator('input[type="tel"]').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
       page.locator('#phoneNumberId').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
     ]);
+    if (await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
   }
 
   // Step 2: Enter phone number
@@ -210,6 +236,9 @@ async function attemptVerification(
   // Step 3: Click send/next button
   await clickSendCode(page, logger);
   await page.waitForTimeout(5000);
+  if (await isQrPhoneVerificationPage(page)) {
+    return { success: false, error: QR_VERIFICATION_ERROR };
+  }
 
   // Check for errors (invalid number, etc.)
   const errorText = await getPageError(page);
@@ -228,6 +257,9 @@ async function attemptVerification(
       await logger.log("WARN", `[phone-verify] Page error detected after SMS timeout: ${lateError}`);
       return { success: false, error: lateError };
     }
+    if (await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
     return { success: false, error: "SMS code not received within timeout" };
   }
 
@@ -242,6 +274,9 @@ async function attemptVerification(
   // Step 6: Click verify/next
   await clickVerifyButton(page, logger);
   await page.waitForTimeout(5000);
+  if (await isQrPhoneVerificationPage(page)) {
+    return { success: false, error: QR_VERIFICATION_ERROR };
+  }
 
   // Step 7: Check for success
   const success = await checkVerificationSuccess(page, logger);
@@ -256,6 +291,28 @@ async function attemptVerification(
     await logger.log("DEBUG", `[phone-verify] No error element found. Page body: ${bodyPreview.substring(0, 500)}`);
   }
   return { success: false, error: postError ?? "Verification did not succeed" };
+}
+
+async function isQrPhoneVerificationPage(page: Page): Promise<boolean> {
+  try {
+    const url = page.url();
+    if (/\/challenge\/iap\/qrcode/i.test(url) || /[?&]challengeType=qrcode/i.test(url)) {
+      return true;
+    }
+    const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    return /verify your info to continue/i.test(bodyText) ||
+      /google needs to verify some info about your device or phone number/i.test(bodyText) ||
+      /image of qr code to scan/i.test(bodyText) ||
+      /scan the qr code with your phone/i.test(bodyText) ||
+      /open your camera app/i.test(bodyText) ||
+      /you.ll need to switch back to your computer/i.test(bodyText);
+  } catch {
+    return false;
+  }
+}
+
+function isQrVerificationError(value: unknown): boolean {
+  return String(value || "").includes(QR_VERIFICATION_ERROR);
 }
 
 /**
@@ -639,6 +696,12 @@ async function getPageError(page: Page): Promise<string | null> {
       /try again later/i,
       /temporarily blocked/i,
       /unusual activity/i,
+      /verify your info to continue/i,
+      /google needs to verify some info about your device or phone number/i,
+      /image of qr code to scan/i,
+      /scan the qr code with your phone/i,
+      /open your camera app/i,
+      /you.ll need to switch back to your computer/i,
       /sorry.*couldn.t verify/i,
       /didn.t recogni[sz]e the number/i,
       /check the country and number/i,

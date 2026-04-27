@@ -1,0 +1,2274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BCAI Rosetta 账号管理</title>
+  <meta name="description" content="Rosetta 账号池与远端租号服务管理">
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #0b0d12;
+      --panel: #12161f;
+      --panel-2: #171c27;
+      --line: #273040;
+      --line-2: #354155;
+      --text: #eef2f7;
+      --muted: #9aa6b7;
+      --soft: #6f7b8c;
+      --accent: #eab308;
+      --accent-2: #22c55e;
+      --danger: #ef4444;
+      --warn: #f97316;
+      --blue: #38bdf8;
+      --shadow: 0 16px 44px rgba(0,0,0,.28);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(135deg, rgba(56,189,248,.09), transparent 32%),
+        linear-gradient(315deg, rgba(234,179,8,.08), transparent 35%),
+        var(--bg);
+      color: var(--text);
+    }
+    button, input { font: inherit; }
+    .page { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 44px; }
+    .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: 0; }
+    .subtitle { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+    .workspace { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .side-nav {
+      position: sticky;
+      top: 18px;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: var(--shadow);
+    }
+    .nav-btn {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 7px;
+      cursor: pointer;
+      text-align: left;
+      padding: 0 10px;
+      margin-bottom: 6px;
+      font-weight: 650;
+    }
+    .nav-btn:hover { color: var(--text); background: rgba(255,255,255,.045); }
+    .nav-btn.active { color: #151002; background: var(--accent); border-color: #facc15; }
+    .nav-section.hidden { display: none; }
+    .panel, .stat {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 18px; margin-bottom: 16px; }
+    .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+    .panel-title { margin: 0; font-size: 16px; font-weight: 700; }
+    .panel-note { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .btn {
+      border: 1px solid var(--line-2);
+      background: var(--panel-2);
+      color: var(--text);
+      min-height: 38px;
+      padding: 0 13px;
+      border-radius: 7px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      transition: border-color .15s, background .15s, transform .15s;
+    }
+    .btn:hover { border-color: #56657d; background: #1d2431; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: var(--accent); color: #151002; border-color: #facc15; font-weight: 700; }
+    .btn.google { background: #fff; color: #202124; border-color: #fff; font-weight: 700; }
+    .btn.danger { color: #fecaca; border-color: rgba(239,68,68,.4); }
+    .btn.small { min-height: 30px; padding: 0 9px; font-size: 12px; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--soft); display: inline-block; }
+    .dot.ok { background: var(--accent-2); box-shadow: 0 0 14px rgba(34,197,94,.35); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 14px rgba(249,115,22,.35); }
+    .dot.bad { background: var(--danger); box-shadow: 0 0 14px rgba(239,68,68,.35); }
+    .accounts { display: grid; gap: 9px; }
+    .account-family-strip { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .account-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,.026);
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: 72px minmax(220px, 1.35fr) 120px 140px 140px auto;
+      gap: 12px;
+      align-items: center;
+      transition: border-color .15s, background .15s, transform .15s;
+    }
+    .account-card:hover { border-color: #56657d; background: rgba(255,255,255,.04); }
+    .account-card.expanded { border-color: rgba(234,179,8,.75); background: rgba(234,179,8,.055); }
+    .account-card.disabled { opacity: .56; }
+    .account-card.child-row { border-left: 3px solid rgba(34,197,94,.45); }
+    .account-card-head { display: flex; justify-content: flex-start; gap: 8px; align-items: center; }
+    .role-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 42px;
+      height: 22px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+      border: 1px solid var(--line-2);
+      color: var(--muted);
+    }
+    .role-chip.mother { color: #151002; background: var(--accent); border-color: #facc15; }
+    .role-chip.child { color: #bbf7d0; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.32); }
+    .account-metrics { display: contents; }
+    .metric { padding: 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 7px; background: rgba(0,0,0,.14); }
+    .metric-label { color: var(--muted); font-size: 11px; }
+    .metric-value { color: var(--text); font-size: 16px; font-weight: 760; margin-top: 3px; }
+    .metric-value.plan { font-size: 13px; overflow-wrap: anywhere; }
+    .account-detail {
+      margin-top: auto;
+      grid-column: 1 / -1;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,.08);
+      display: grid;
+      gap: 5px;
+      font-size: 12px;
+    }
+    .detail-line { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); }
+    .detail-line span:last-child { color: var(--text); overflow-wrap: anywhere; text-align: right; }
+    .quota-groups { grid-column: 1 / -1; display: grid; gap: 8px; margin-top: 4px; }
+    .quota-provider {
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 8px;
+      padding: 9px;
+      background: rgba(0,0,0,.12);
+      display: grid;
+      gap: 7px;
+    }
+    .quota-provider-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+    .quota-provider-head strong { color: var(--text); }
+    .quota-provider-percent.success { color: var(--accent-2); }
+    .quota-provider-percent.warning { color: var(--warn); }
+    .quota-provider-percent.danger { color: var(--danger); }
+    .quota-bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; height: 7px; }
+    .quota-bar span { border-radius: 999px; background: rgba(255,255,255,.08); }
+    .quota-bar.success span.filled { background: var(--accent-2); }
+    .quota-bar.warning span.filled { background: var(--warn); }
+    .quota-bar.danger span.filled { background: var(--danger); }
+    .quota-models { display: flex; gap: 5px; flex-wrap: wrap; }
+    .quota-model-tag { font-size: 11px; color: var(--muted); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 2px 7px; }
+    .quota-model-tag.blocked { color: #fecaca; border-color: rgba(239,68,68,.3); }
+    .account-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      background: rgba(255,255,255,.025);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .account-row.disabled { opacity: .56; }
+    .email { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { margin-top: 4px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-actions { display: flex; gap: 6px; align-items: center; }
+    .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) 90px 110px; gap: 8px; margin-bottom: 12px; }
+    .inline-form input, .inline-form select, .bulk-import textarea {
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--line-2);
+      border-radius: 7px;
+      background: #0e121a;
+      color: var(--text);
+      outline: none;
+    }
+    .bulk-import { display: grid; gap: 10px; margin-bottom: 14px; }
+    .bulk-import textarea { width: 100%; min-height: 118px; padding: 10px 12px; resize: vertical; line-height: 1.45; }
+    .bulk-actions { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .mother-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .family-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .family-list { display: grid; gap: 10px; }
+    .mother-card { border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); padding: 12px; }
+    .mother-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+    .sync-status { font-size: 11px; color: var(--muted); padding: 2px 0; }
+    .sync-status.syncing { color: var(--blue); }
+    .sync-status.success { color: var(--accent-2); }
+    .sync-status.error { color: var(--danger); }
+    .seat-list { display: grid; gap: 7px; }
+    .seat-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 7px; background: rgba(0,0,0,.12); }
+    .candidate-list { display: grid; gap: 6px; }
+    .candidate-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, .8fr) auto; gap: 8px; align-items: center; padding: 7px 8px; border: 1px solid var(--line-2); border-radius: 7px; font-size: 12px; background: rgba(255,255,255,.035); }
+    .candidate-row.active-child { border-color: rgba(34,197,94,.42); background: rgba(34,197,94,.08); }
+    .seat-add-form { margin-top: 8px; display: grid; gap: 6px; }
+    .seat-add-form textarea { width: 100%; min-height: 72px; padding: 8px 10px; resize: vertical; line-height: 1.4; font-size: 12px; border: 1px solid var(--line-2); border-radius: 6px; background: #0e121a; color: var(--text); font-family: inherit; }
+    .seat-add-form .seat-add-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .candidate-email { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .candidate-meta { display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); }
+    .candidate-actions { display: flex; gap: 5px; justify-content: flex-end; flex-wrap: wrap; }
+    .candidate-action { border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); min-height: 24px; padding: 0 8px; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .candidate-action.primary { background: var(--accent); color: #151002; border-color: #facc15; }
+    .candidate-action.danger { color: #fecaca; border-color: rgba(239,68,68,.4); }
+    .candidate-action:disabled { opacity: .45; cursor: not-allowed; }
+    .seat-index { color: var(--muted); font-size: 12px; }
+    .event-list { display: grid; gap: 7px; max-height: 220px; overflow: auto; }
+    .event-row { color: var(--muted); font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.06); padding-bottom: 7px; }
+    .kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 9px 12px; font-size: 13px; }
+    .kv .k { color: var(--muted); }
+    .kv .v { color: var(--text); overflow-wrap: anywhere; }
+    .load-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .load-table th, .load-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    .load-table th { color: var(--muted); font-weight: 650; }
+    .load-table td { color: var(--text); }
+    .form-view { display: none; }
+    .form-view.active { display: block; }
+    .notice {
+      background: rgba(56,189,248,.08);
+      border: 1px solid rgba(56,189,248,.18);
+      color: #c8e9fb;
+      border-radius: 8px;
+      padding: 13px;
+      font-size: 13px;
+      line-height: 1.65;
+      margin-bottom: 14px;
+    }
+    .field { margin: 14px 0; }
+    .field label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+    .field input {
+      width: 100%;
+      min-height: 42px;
+      padding: 0 12px;
+      border: 1px solid var(--line-2);
+      border-radius: 7px;
+      background: #0e121a;
+      color: var(--text);
+      outline: none;
+    }
+    .field input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(56,189,248,.12); }
+    .empty { padding: 20px; text-align: center; color: var(--soft); font-size: 13px; border: 1px dashed var(--line-2); border-radius: 8px; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translate(-50%, 12px);
+      opacity: 0;
+      pointer-events: none;
+      background: #152033;
+      border: 1px solid var(--line-2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      box-shadow: var(--shadow);
+      transition: opacity .18s, transform .18s;
+      z-index: 10;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.13); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 8px auto 14px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 920px) {
+      .grid, .workspace { grid-template-columns: 1fr; }
+      .side-nav { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .nav-btn { margin-bottom: 0; text-align: center; }
+      .account-card { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .toolbar { justify-content: flex-start; }
+      .inline-form, .seat-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div>
+        <h1>BCAI Rosetta 账号管理</h1>
+        <p class="subtitle">管理母号家庭组、子号席位与 Rosetta 账号池。</p>
+      </div>
+      <div class="toolbar">
+        <button class="btn" onclick="refreshAll()">刷新状态</button>
+        <button class="btn" onclick="refreshQuota()">刷新额度</button>
+      </div>
+    </div>
+
+    <section class="workspace">
+      <aside class="side-nav">
+        <button class="nav-btn active" data-tab="mothers" onclick="switchWorkspace('mothers')">母号池</button>
+        <button class="nav-btn" data-tab="accounts" onclick="switchWorkspace('accounts')">账号池</button>
+        <button class="nav-btn" data-tab="users" onclick="switchWorkspace('users')">用户管理</button>
+      </aside>
+
+      <div class="workspace-main">
+        <section class="grid">
+          <div>
+        <div class="panel nav-section" data-section="mothers">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">家庭额度池</h2>
+              <div class="panel-note" id="familySummary">先批量导入母号，再点开管理家庭组席位、子号和替换状态。</div>
+            </div>
+            <span class="badge"><span class="dot ok"></span><span id="familyBadge">旁路</span></span>
+          </div>
+          <div class="bulk-import">
+            <textarea id="motherBatchText" placeholder="批量导入母号，每行一个：&#10;邮箱----密码----辅助邮箱----2FA密钥&#10;邮箱---密码---辅助邮箱---2FA密钥&#10;邮箱----密码----2FA密钥"></textarea>
+            <div class="bulk-actions">
+              <div class="panel-note">格式与 GFA 控制台母号导入一致，默认每个母号创建 5 个席位。</div>
+              <button class="btn primary" onclick="batchImportMothers()">批量导入母号</button>
+            </div>
+          </div>
+          <div class="inline-form">
+            <input id="motherEmail" type="email" placeholder="单个母号邮箱">
+            <input id="motherSeats" type="number" min="0" max="20" value="5" title="席位数">
+            <button class="btn" onclick="createMother()">新增母号</button>
+          </div>
+          <div id="familyList" class="family-list">
+            <div class="empty">正在加载家庭额度池...</div>
+          </div>
+        </div>
+
+        <div class="panel nav-section hidden" data-section="accounts">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">账号池</h2>
+              <div class="panel-note" id="accountSummary">正在加载账号列表</div>
+            </div>
+            <span class="badge"><span class="dot" id="accountDot"></span><span id="accountBadge">--</span></span>
+          </div>
+          <div id="accountList" class="accounts">
+            <div class="empty">加载中...</div>
+          </div>
+        </div>
+
+        <div class="panel nav-section hidden" data-section="accounts">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">账号负载</h2>
+              <div class="panel-note">来自 Remote Token Server 调度器的 lease 与账号统计。</div>
+            </div>
+          </div>
+          <div id="loadTableWrap" class="empty">Remote Token Server 未返回调度数据</div>
+        </div>
+        <div class="panel nav-section hidden" data-section="users">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">用户管理</h2>
+              <div class="panel-note">生成卡密、查看有效期与请求数量。有效期从第一次使用开始计算。</div>
+            </div>
+          </div>
+          <div class="inline-form">
+            <input id="accessKeyName" placeholder="备注/用户名">
+            <select id="accessKeyDuration">
+              <option value="1h">1小时</option>
+              <option value="1d">一天</option>
+              <option value="1m">一个月</option>
+            </select>
+            <input id="accessKeyLimit" type="number" min="1" max="5000" value="300" title="5小时请求上限">
+            <button class="btn primary" onclick="createAccessKey()">生成卡密</button>
+          </div>
+          <div class="panel-note" id="accessKeySummary">5小时内默认限制 300 次请求；请求数按客户端上报结果累计，不实时刷新。</div>
+          <div id="accessKeyList" class="table-wrap"><div class="empty">正在加载卡密...</div></div>
+        </div>
+        <div class="panel nav-section" data-section="mothers">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">家庭组事件</h2>
+              <div class="panel-note">这里只记录 Rosetta 池内状态，不会改动现有 GFA 管理系统任务。</div>
+            </div>
+          </div>
+          <div id="familyEvents" class="event-list">
+            <div class="empty">暂无事件</div>
+          </div>
+        </div>
+
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = location.hostname === "127.0.0.1" || location.hostname === "localhost"
+      ? "/api/rosetta"
+      : "http://127.0.0.1:3000/api/rosetta";
+    const GFA_API = "/api/proxy";
+    const state = { accounts: [], proxy: null, remote: null, family: null, accessKeys: [], selectedMotherId: "", activeTab: "mothers", expandedAccountKeys: new Set(), syncingMotherId: null, activatingMotherIds: new Set(), activatingChildKeys: new Set(), joiningChildKeys: new Set(), reconcilingActivationIds: new Set(), syncStatus: {}, addingSeatId: "" };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      switchWorkspace("mothers");
+      refreshAll();
+      setInterval(refreshAll, 15000);
+    });
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, options);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+      return data;
+    }
+
+    async function refreshAll() {
+      const results = await Promise.allSettled([loadAccounts(), loadProxyStatus(), loadRemoteStatus(), loadFamilyPool(), loadAccessKeys()]);
+      await reconcilePendingChildActivations();
+      renderAccounts(state.dataDir || "");
+      renderFamilyPool();
+      renderAccessKeys();
+      if (results.some((item) => item.status === "rejected")) {
+        console.warn("Some Rosetta status requests failed", results);
+      }
+      if (state.remote) renderLoadTable(state.remote);
+      renderServiceDetails();
+    }
+
+    async function loadAccounts() {
+      try {
+        const data = await fetchJson(`${API}/accounts`);
+        state.accounts = data.accounts || [];
+        state.dataDir = data.dataDir || "";
+      } catch (error) {
+        document.getElementById("accountList").innerHTML = `<div class="empty">账号列表加载失败：${escapeHtml(error.message)}</div>`;
+        throw error;
+      }
+    }
+
+    async function loadProxyStatus() {
+      try {
+        const data = await fetchJson(`${API}/status`);
+        state.proxy = data;
+        const isRelay = data.mode === "token-passthrough" || data.mode === "relay";
+        setStatus("proxyState", isRelay ? "续杯" : "接管", "proxyFoot", `${data.mode || "token-proxy"} · ${data.totalRequests || 0} 请求`, true);
+      } catch (error) {
+        state.proxy = null;
+        setStatus("proxyState", "离线", "proxyFoot", error.message || "本地代理未运行", false);
+      }
+    }
+
+    async function loadRemoteStatus() {
+      try {
+        const data = await fetchJsonWithFallback(
+          `${API}/remote-token-status`,
+          "http://127.0.0.1:60700/status"
+        );
+        state.remote = data;
+        const running = Boolean(data.running);
+        setStatus("remoteState", running ? "在线" : "离线", "remoteFoot", running ? `:${data.port || 60700}` : (data.error || "未启动"), running);
+        const activeLeases = Number(data.activeLeases ?? Object.values(data.scheduler?.activeLeaseCounts || {}).reduce((sum, value) => sum + Number(value || 0), 0));
+        const clients = Number(data.affinityClients ?? data.scheduler?.affinityClients ?? 0);
+        const leaseCount = document.getElementById("leaseCount");
+        const leaseFoot = document.getElementById("leaseFoot");
+        const clientCount = document.getElementById("clientCount");
+        if (leaseCount) leaseCount.textContent = String(activeLeases);
+        if (leaseFoot) leaseFoot.textContent = `${data.totalLeases || 0} 次总租约 / ${data.totalReports || 0} 次上报`;
+        if (clientCount) clientCount.textContent = String(clients);
+        renderLoadTable(data);
+      } catch (error) {
+        state.remote = null;
+        setStatus("remoteState", "离线", "remoteFoot", error.message || "未启动", false);
+        const leaseCount = document.getElementById("leaseCount");
+        const clientCount = document.getElementById("clientCount");
+        const loadTableWrap = document.getElementById("loadTableWrap");
+        if (leaseCount) leaseCount.textContent = "0";
+        if (clientCount) clientCount.textContent = "0";
+        if (loadTableWrap) loadTableWrap.innerHTML = `<div class="empty">Remote Token Server 未运行</div>`;
+        throw error;
+      }
+    }
+
+    async function loadFamilyPool() {
+      try {
+        state.family = await fetchJson(`${API}/family-pool`);
+      } catch (error) {
+        state.family = null;
+        const list = document.getElementById("familyList");
+        if (list) list.innerHTML = `<div class="empty">家庭额度池加载失败：${escapeHtml(error.message)}</div>`;
+        throw error;
+      }
+    }
+
+    async function loadAccessKeys() {
+      const data = await fetchJson(`${API}/access-keys`);
+      state.accessKeys = data.keys || [];
+      state.accessKeyDefaults = data.defaults || {};
+    }
+
+    async function reconcilePendingChildActivations() {
+      const candidates = state.family?.candidates || [];
+      const pending = candidates.filter((candidate) =>
+        candidate.activationTaskId &&
+        ["PENDING", "RUNNING"].includes(String(candidate.activationStatus || "").toUpperCase()) &&
+        !state.reconcilingActivationIds.has(candidate.activationTaskId)
+      );
+      if (!pending.length) return;
+
+      for (const candidate of pending) {
+        const taskId = candidate.activationTaskId;
+        state.reconcilingActivationIds.add(taskId);
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${encodeURIComponent(taskId)}`);
+          if (status.status === "SUCCESS") {
+            await saveRosettaTokenFromActivation({ email: candidate.email }, status, { enabled: false });
+            await loadAccounts();
+            const imported = (state.accounts || []).find((account) =>
+              normalizeEmailFront(account.email) === normalizeEmailFront(candidate.email)
+            );
+            await updateSeatCandidateActivation(candidate.seatId, candidate.email, {
+              activationTaskId: taskId,
+              activationStatus: "SUCCESS",
+              activationError: "",
+              activatedAt: new Date().toISOString(),
+              rosettaAccountId: imported?.id
+            });
+            if (imported?.id) {
+              await fetchJson(`${API}/family-activate-child`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ seatId: candidate.seatId, accountId: imported.id })
+              });
+            }
+            await loadFamilyPool();
+          } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
+            const failureMessage = isQrVerificationTaskStatus(status)
+              ? "验证失败（扫码）"
+              : (status.lastErrorMessage || "激活失败");
+            await updateSeatCandidateActivation(candidate.seatId, candidate.email, {
+              activationTaskId: taskId,
+              activationStatus: status.status,
+              activationError: failureMessage
+            });
+            await loadFamilyPool();
+          }
+        } catch (error) {
+          console.warn("Failed to reconcile child activation", candidate.email, error);
+        } finally {
+          state.reconcilingActivationIds.delete(taskId);
+        }
+      }
+    }
+
+    function isQrVerificationTaskStatus(taskStatus) {
+      const haystack = [
+        taskStatus?.lastErrorCode,
+        taskStatus?.lastErrorMessage,
+        JSON.stringify(taskStatus?.result || {}),
+        ...(Array.isArray(taskStatus?.logs) ? taskStatus.logs.map((log) => log?.message || "") : [])
+      ].join("\n").toLowerCase();
+      return haystack.includes("/challenge/iap/qrcode") ||
+        haystack.includes("verify your info to continue") ||
+        haystack.includes("scan the qr code with your phone") ||
+        haystack.includes("image of qr code to scan") ||
+        haystack.includes("google needs to verify some info about your device or phone number");
+    }
+
+    async function fetchJsonWithFallback(primaryUrl, fallbackUrl) {
+      try {
+        return await fetchJson(primaryUrl);
+      } catch (primaryError) {
+        try {
+          return await fetchJson(fallbackUrl);
+        } catch {
+          throw primaryError;
+        }
+      }
+    }
+
+    function setStatus(valueId, value, footId, foot, ok) {
+      const valueNode = document.getElementById(valueId);
+      const footNode = document.getElementById(footId);
+      if (valueNode) valueNode.textContent = value;
+      if (footNode) footNode.textContent = foot;
+    }
+
+    function switchWorkspace(tab) {
+      state.activeTab = tab;
+      document.querySelectorAll(".nav-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === tab);
+      });
+      document.querySelectorAll(".nav-section").forEach((section) => {
+        section.classList.toggle("hidden", section.dataset.section !== tab);
+      });
+    }
+
+    function accountKey(account) {
+      return account?.id != null ? `id:${account.id}` : `email:${String(account?.email || "").toLowerCase()}`;
+    }
+
+    function remoteQuotaAccounts() {
+      return Array.isArray(state.remote?.quota?.accounts) ? state.remote.quota.accounts : [];
+    }
+
+    function proxyQuotaAccounts() {
+      return Array.isArray(state.proxy?.accounts) ? state.proxy.accounts : [];
+    }
+
+    function schedulerData() {
+      return state.remote?.scheduler || {};
+    }
+
+    function mergeAccounts() {
+      const merged = new Map();
+      for (const account of state.accounts || []) {
+        merged.set(accountKey(account), { ...account });
+      }
+      for (const account of proxyQuotaAccounts()) {
+        const key = accountKey(account);
+        merged.set(key, { ...(merged.get(key) || {}), ...account, source: "local" });
+      }
+      for (const account of remoteQuotaAccounts()) {
+        const key = accountKey(account);
+        merged.set(key, { ...(merged.get(key) || {}), ...account, source: "remote" });
+      }
+
+      const leaseCounts = schedulerData().activeLeaseCounts || {};
+      const stats = schedulerData().accountStats || {};
+      return [...merged.values()].map((account) => {
+        const id = String(account.id ?? "");
+        const requestStats = account.requestStats || {};
+        const schedulerStats = stats[id] || {};
+        const activeLeases = Number(leaseCounts[id] ?? (account.isActive ? 1 : 0) ?? 0);
+        const total = Number(requestStats.total ?? schedulerStats.totalLeases ?? 0);
+        const successes = Number(requestStats.successes ?? schedulerStats.successCount ?? 0);
+        const failures = Number(requestStats.failures ?? schedulerStats.errorCount ?? 0);
+        const recentResults = Array.isArray(schedulerStats.recentResults) ? schedulerStats.recentResults : [];
+        const recentSuccesses = recentResults.filter((item) => item?.ok).length;
+        const recent50SuccessRate = recentResults.length ? Math.round((recentSuccesses / recentResults.length) * 100) : null;
+        const successRate = account.successRate != null
+          ? Number(account.successRate)
+          : total > 0 ? Math.round((successes / total) * 100) : null;
+        return {
+          ...account,
+          activeLeases,
+          requestStats: { total, successes, failures },
+          successRate,
+          recent50SuccessRate,
+          recent50Sample: recentResults.length,
+          quotaGroups: Array.isArray(account.quotaGroups) && account.quotaGroups.length
+            ? account.quotaGroups
+            : (Array.isArray(schedulerStats.quotaGroups) ? schedulerStats.quotaGroups : []),
+          quotaRefreshedAt: account.quotaRefreshedAt || schedulerStats.quotaRefreshedAt || "",
+          quotaLiveBlockedCount: account.quotaLiveBlockedCount ?? schedulerStats.quotaLiveBlockedCount ?? 0,
+          qualityTier: account.qualityTier || (total ? "tracked" : "new"),
+          lastStatus: schedulerStats.lastStatus || "",
+          schedulerTotalLeases: Number(schedulerStats.totalLeases || 0),
+          schedulerErrors: Number(schedulerStats.errorCount || 0),
+          schedulerQuotaHits: Number(schedulerStats.quota429Count || 0),
+        };
+      }).sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+    }
+
+    function quotaLabel(account) {
+      const status = String(account.quotaStatus || "unknown").toLowerCase();
+      const reason = account.quotaStatusReason ? ` - ${account.quotaStatusReason}` : "";
+      if (status === "ok") return `额度正常${reason}`;
+      if (status === "exhausted") return `额度受限${reason}`;
+      if (status === "error") return `账号错误${reason}`;
+      return `额度未知${reason}`;
+    }
+
+    function quotaDot(account) {
+      const status = String(account.quotaStatus || "").toLowerCase();
+      if (account.enabled === false || status === "error") return "bad";
+      if (status === "exhausted" || !account.canRotate) return "warn";
+      return "ok";
+    }
+
+    function formatSuccessRate(value) {
+      return value == null || Number.isNaN(Number(value)) ? "无数据" : `${Math.round(Number(value))}%`;
+    }
+
+    function renderAccounts(dataDir) {
+      const list = document.getElementById("accountList");
+      const accounts = mergeAccounts();
+      const enabled = accounts.filter((a) => a.enabled !== false).length;
+      const active = accounts.filter((a) => a.isActive || a.activeLeases > 0).length;
+      const ordered = orderedFamilyAccounts(accounts);
+      document.getElementById("accountSummary").textContent = `${ordered.length} 个账号列，${enabled} 个启用，${active} 个使用中${dataDir ? ` · ${dataDir}` : ""}`;
+      document.getElementById("accountBadge").textContent = enabled > 0 ? "可用" : "空";
+      document.getElementById("accountDot").className = `dot ${enabled > 0 ? "ok" : "warn"}`;
+
+      if (!ordered.length) {
+        list.innerHTML = `<div class="empty">当前没有账号</div>`;
+        return;
+      }
+
+      list.innerHTML = `<div class="account-family-strip">${ordered.map(renderAccountCard).join("")}</div>`;
+    }
+
+    function orderedFamilyAccounts(accounts) {
+      const accountById = new Map(accounts.filter((item) => item.id != null).map((item) => [Number(item.id), item]));
+      const accountByEmail = new Map(accounts.filter((item) => item.email).map((item) => [String(item.email).toLowerCase(), item]));
+      const usedKeys = new Set();
+      const rows = [];
+      const family = state.family || { mothers: [], seats: [] };
+      const mothers = [...(family.mothers || [])].sort((a, b) => String(a.email || "").localeCompare(String(b.email || "")));
+
+      for (const mother of mothers) {
+        const motherAccount = accountById.get(Number(mother.rosettaAccountId)) || accountByEmail.get(String(mother.email || "").toLowerCase());
+        if (motherAccount) {
+          rows.push({ ...motherAccount, displayRole: "mother", familyMotherEmail: mother.email, familyMotherId: mother.id });
+          usedKeys.add(accountKey(motherAccount));
+        } else {
+          rows.push({ id: `mother:${mother.id}`, email: mother.email, enabled: mother.enabled, displayRole: "mother", familyMotherEmail: mother.email, familyMotherId: mother.id, placeholder: true });
+        }
+
+        const activeSeats = (family.seats || [])
+          .filter((seat) => seat.motherId === mother.id && seat.status === "active" && seat.currentChildEmail)
+          .sort((a, b) => Number(a.seatIndex || 0) - Number(b.seatIndex || 0));
+        for (const seat of activeSeats) {
+          const child = accountById.get(Number(seat.currentRosettaAccountId)) || accountByEmail.get(String(seat.currentChildEmail || "").toLowerCase());
+          if (child) {
+            rows.push({ ...child, displayRole: "child", familyMotherEmail: mother.email, familyMotherId: mother.id, seatIndex: seat.seatIndex });
+            usedKeys.add(accountKey(child));
+          } else {
+            rows.push({ id: `child:${seat.id}`, email: seat.currentChildEmail, enabled: false, displayRole: "child", familyMotherEmail: mother.email, familyMotherId: mother.id, seatIndex: seat.seatIndex, placeholder: true });
+          }
+        }
+      }
+
+      for (const account of accounts) {
+        if (!usedKeys.has(accountKey(account))) {
+          rows.push({ ...account, displayRole: account.familyRole || "child" });
+        }
+      }
+      return rows;
+    }
+
+    function renderAccountCard(account) {
+      const key = accountCardKey(account);
+      const expanded = state.expandedAccountKeys.has(key);
+      const role = account.displayRole || account.familyRole || "child";
+      const recent = recentSuccessLabel(account);
+      const quality = qualityLabel(account);
+      const quota = quotaLabel(account);
+      const plan = planLabel(account);
+      return `
+        <div class="account-card ${role === "child" ? "child-row" : "mother-row"} ${expanded ? "expanded" : ""} ${account.enabled === false ? "disabled" : ""}" onclick="toggleAccountDetail('${escapeJs(key)}')">
+          <div class="account-card-head">
+            <span class="role-chip ${role === "mother" ? "mother" : "child"}">${role === "mother" ? "母号" : "子号"}</span>
+          </div>
+          <div>
+            <div class="email">${escapeHtml(account.email || `#${account.id}`)}</div>
+            <div class="meta">${role === "child" ? `母号 ${escapeHtml(maskEmail(account.familyMotherEmail || ""))} · 席位 ${account.seatIndex || "-"}` : `家庭组 ${escapeHtml(shortId(account.familyMotherId || account.motherId || ""))}`}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">套餐</div>
+            <div class="metric-value plan">${escapeHtml(plan)}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">最近50成功率</div>
+            <div class="metric-value">${recent}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">账号质量</div>
+            <div class="metric-value">${escapeHtml(quality)}</div>
+          </div>
+          <div class="row-actions" onclick="event.stopPropagation()">
+            <span class="badge"><span class="dot ${!account.hasToken && !account.placeholder ? 'warn' : quotaDot(account)}"></span>${!account.hasToken && !account.placeholder ? "未激活" : (account.isActive || account.activeLeases > 0 ? "使用中" : (account.enabled === false ? "停用" : "空闲"))}</span>
+            ${account.placeholder || !account.hasToken ? "" : `<button class="btn small" onclick="toggleAcc(${Number(account.id)})">${account.enabled === false ? "启用" : "停用"}</button>`}
+          </div>
+          ${expanded ? accountQuotaDetail(account, quota) : `<div class="meta" style="grid-column: 1 / -1;">点击查看具体额度</div>`}
+        </div>
+      `;
+    }
+
+    function accountCardKey(account) {
+      const role = account?.displayRole || account?.familyRole || "account";
+      const family = account?.familyMotherId || account?.motherId || "";
+      const seat = account?.seatId || account?.seatIndex || "";
+      const identity = account?.id != null ? `id:${account.id}` : `email:${String(account?.email || "").toLowerCase()}`;
+      return [role, family, seat, identity].join(":");
+    }
+
+    function toggleAccountDetail(key) {
+      if (state.expandedAccountKeys.has(key)) state.expandedAccountKeys.delete(key);
+      else state.expandedAccountKeys.add(key);
+      renderAccounts(state.dataDir || "");
+    }
+
+    function recentSuccessLabel(account) {
+      if (account.recent50SuccessRate != null) {
+        return `${Math.round(Number(account.recent50SuccessRate))}%/${Number(account.recent50Sample || 0)}`;
+      }
+      const total = Number(account.requestStats?.total || 0);
+      const successes = Number(account.requestStats?.successes || 0);
+      if (!total) return "无数据";
+      const sample = Math.min(50, total);
+      const rate = account.successRate != null ? Number(account.successRate) : Math.round((successes / total) * 100);
+      return `${Math.round(rate)}%/${sample}`;
+    }
+
+    function qualityLabel(account) {
+      const tier = String(account.qualityTier || "new");
+      const map = { excellent: "优秀", good: "良好", fair: "一般", poor: "较差", new: "新号", tracked: "已跟踪" };
+      return map[tier] || tier;
+    }
+
+    function planLabel(account) {
+      const raw = String(account.planType || account.plan || account.subscriptionPlan || "").trim();
+      if (!raw) return "未知";
+      const lower = raw.toLowerCase();
+      if (lower === "free") return "Free";
+      if (lower.includes("ultra")) return "Ultra";
+      if (lower.includes("pro")) return "Pro";
+      if (lower.includes("premium")) return "Premium";
+      return raw;
+    }
+
+    function accountQuotaDetail(account) {
+      return renderQuotaGroups(account);
+    }
+
+    function renderQuotaGroups(account) {
+      const groups = Array.isArray(account.quotaGroups) ? account.quotaGroups : [];
+      if (!groups.length) {
+        return `<div class="quota-groups"><div class="empty">暂无额度快照。请先通过插件/本地代理刷新额度，拿到 quotaGroups 后这里会按插件样式展示消耗情况。</div></div>`;
+      }
+      return `
+        <div class="quota-groups">
+          ${groups.map((group) => {
+            const entries = Array.isArray(group.entries) ? group.entries : [];
+            const percent = clampPercent(group.percent ?? entries[0]?.percent ?? 0);
+            const tone = quotaPercentTone(percent, group.blockedCount > 0 && group.blockedCount >= entries.length);
+            const reset = humanizeResetTime(group.resetTime || entries[0]?.resetTime || "");
+            return `
+              <div class="quota-provider">
+                <div class="quota-provider-head">
+                  <strong>${escapeHtml(group.title || providerLabel(group.key || entries[0]?.provider || entries[0]?.key || "other"))}</strong>
+                  <span>${entries.length || group.modelCount || 0} 模型${reset ? ` · ${escapeHtml(reset)}` : ""} · <b class="quota-provider-percent ${tone}">${formatPercent(percent)}</b></span>
+                </div>
+                <div class="quota-bar ${tone}">
+                  ${Array.from({ length: 10 }, (_, i) => `<span class="${i < Math.round(percent / 10) ? "filled" : ""}"></span>`).join("")}
+                </div>
+                <div class="quota-models">
+                  ${entries.slice(0, 12).map((entry) => `<span class="quota-model-tag ${entry.isBlocked ? "blocked" : ""}">${escapeHtml(entry.label || entry.key || "model")}</span>`).join("")}
+                </div>
+              </div>`;
+          }).join("")}
+        </div>`;
+    }
+
+    function clampPercent(value) {
+      const n = Number(value || 0);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, Math.min(100, n));
+    }
+
+    function quotaPercentTone(percent, allBlocked) {
+      if (allBlocked || percent < 30) return "danger";
+      if (percent < 70) return "warning";
+      return "success";
+    }
+
+    function formatPercent(value) {
+      const n = Number(value || 0);
+      return Math.abs(n - Math.round(n)) < 0.01 ? `${Math.round(n)}%` : `${n.toFixed(1)}%`;
+    }
+
+    function providerLabel(value) {
+      const text = String(value || "").toLowerCase();
+      if (text.includes("claude") || text.includes("anthropic")) return "Claude";
+      if (text.includes("gpt") || text.includes("openai")) return "GPT";
+      if (text.includes("gemini")) return "Gemini";
+      return "其他";
+    }
+
+    function humanizeResetTime(resetTime) {
+      if (!resetTime) return "";
+      const date = new Date(resetTime);
+      if (Number.isNaN(date.getTime())) return "";
+      const diffMs = date.getTime() - Date.now();
+      if (diffMs <= 0) return "已重置";
+      const totalMin = Math.ceil(diffMs / 60000);
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      if (h > 0 && m > 0) return `${h}h ${m}m 后刷新`;
+      if (h > 0) return `${h}h 后刷新`;
+      return `${m}m 后刷新`;
+    }
+
+    function familyLabel(account) {
+      const role = account.familyRole || "";
+      const status = account.familyStatus || "";
+      if (!role && !status) return "未绑定";
+      const parts = [];
+      if (role === "mother") parts.push("母号");
+      else if (role === "child") parts.push("子号");
+      else if (role) parts.push(role);
+      if (status) parts.push(status);
+      if (account.seatId) parts.push(`席位 ${shortId(account.seatId)}`);
+      return parts.join(" / ") || "未绑定";
+    }
+
+    function shortId(value) {
+      const text = String(value || "");
+      return text ? text.slice(-6) : "-";
+    }
+
+    function familyAccountOptions(selectedId) {
+      const options = mergeAccounts().map((account) => {
+        const selected = Number(account.id) === Number(selectedId) ? "selected" : "";
+        return `<option value="${Number(account.id)}" ${selected}>#${Number(account.id)} ${escapeHtml(account.email || "")}</option>`;
+      }).join("");
+      return `<option value="">选择已 OAuth 导入账号</option>${options}`;
+    }
+
+    function renderFamilyPool() {
+      // Preserve textarea content if user is adding emails to a seat
+      let savedAddText = '';
+      if (state.addingSeatId) {
+        const el = document.getElementById(`seatAddText_${state.addingSeatId}`);
+        if (el) savedAddText = el.value;
+      }
+
+      const family = state.family || { mothers: [], seats: [], candidates: [], events: [] };
+      const mothers = family.mothers || [];
+      const seats = family.seats || [];
+      const events = family.events || [];
+      const list = document.getElementById("familyList");
+      const summary = document.getElementById("familySummary");
+      const badge = document.getElementById("familyBadge");
+      if (!list || !summary || !badge) return;
+
+      const activeSeats = seats.filter((seat) => seat.status === "active").length;
+      const replacingSeats = seats.filter((seat) => seat.status === "replacing").length;
+      summary.textContent = `${mothers.length} 个母号，${seats.length} 个席位，${activeSeats} 个活跃，${replacingSeats} 个替换中`;
+      badge.textContent = family.familyPoolPath ? "family-pool.json" : "旁路";
+      if (state.selectedMotherId && !mothers.some((mother) => mother.id === state.selectedMotherId)) {
+        state.selectedMotherId = "";
+      }
+
+      if (!mothers.length) {
+        list.innerHTML = `<div class="empty">还没有母号。先批量导入母号，然后像 GFA 控制台一样点开管理家庭组。</div>`;
+      } else {
+        list.innerHTML = mothers.map((mother) => {
+          const motherSeats = seats
+            .filter((seat) => seat.motherId === mother.id)
+            .sort((a, b) => Number(a.seatIndex || 0) - Number(b.seatIndex || 0));
+          const isOpen = state.selectedMotherId === mother.id;
+          const active = motherSeats.filter((seat) => seat.status === "active").length;
+          const replacing = motherSeats.filter((seat) => seat.status === "replacing").length;
+          const empty = motherSeats.filter((seat) => !seat.currentChildEmail).length;
+          const activating = state.activatingMotherIds.has(mother.id);
+          const activationLabel = mother.tokenObtainedAt || mother.activationStatus === "SUCCESS"
+            ? "已激活"
+            : activating || mother.activationStatus === "PENDING" || mother.activationStatus === "RUNNING"
+              ? "激活中..."
+              : "激活";
+          const activationTone = mother.tokenObtainedAt || mother.activationStatus === "SUCCESS"
+            ? "ok"
+            : mother.activationStatus === "FAILED_FINAL" || mother.activationStatus === "FAILED"
+              ? "bad"
+              : "warn";
+          return `
+            <div class="mother-card">
+              <div class="mother-head">
+                <div>
+                  <div class="email">${escapeHtml(mother.email)}</div>
+                  <div class="meta">母号 ${shortId(mother.id)} · 席位 ${motherSeats.length}/${Number(mother.totalSeats || motherSeats.length)} · 活跃 ${active} · 空位 ${empty} · 替换中 ${replacing}${mother.activationTaskId ? ` · 任务 ${escapeHtml(shortId(mother.activationTaskId))}` : ""}</div>
+                </div>
+                <div class="mother-actions">
+                  <span class="badge"><span class="dot ${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? 'warn' : (mother.enabled === false ? 'bad' : 'ok')}"></span>${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? '未激活' : (mother.enabled === false ? '停用' : '启用')}</span>
+                  ${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? `
+                    <span class="badge" title="${escapeHtml(mother.activationError || '')}"><span class="dot ${activationTone}"></span>${activationLabel}</span>
+                    <button class="btn small primary" onclick="activateMother('${escapeJs(mother.id)}')" ${activating ? "disabled" : ""}>${activating ? "激活中..." : "激活"}</button>
+                  ` : ''}
+                  <button class="btn small${state.syncingMotherId === mother.id ? ' primary' : ''}" onclick="syncMother('${escapeJs(mother.id)}','${escapeJs(mother.email)}')" ${state.syncingMotherId === mother.id ? 'disabled' : ''}>${state.syncingMotherId === mother.id ? '同步中...' : '同步'}</button>
+                  <button class="btn small" onclick="toggleMotherGroup('${escapeJs(mother.id)}')">${isOpen ? "收起" : "管理家庭组"}</button>
+                </div>
+                ${state.syncStatus[mother.id] ? `<div class="sync-status ${escapeHtml(state.syncStatus[mother.id].tone || '')}">${escapeHtml(state.syncStatus[mother.id].message || '')}</div>` : ''}
+              </div>
+              ${isOpen ? `
+                <div class="family-toolbar">
+                  <button class="btn small" onclick="addMotherSeats('${escapeJs(mother.id)}')">增加席位</button>
+                  <button class="btn small" onclick="copyMotherId('${escapeJs(mother.id)}')">复制母号ID</button>
+                </div>
+                <div class="seat-list">
+                  ${motherSeats.map(renderSeatRow).join("") || `<div class="empty">这个母号还没有席位</div>`}
+                </div>
+              ` : ""}
+            </div>`;
+        }).join("");
+      }
+
+      const eventBox = document.getElementById("familyEvents");
+      if (eventBox) {
+        eventBox.innerHTML = events.length
+          ? events.slice(0, 30).map((event) => `
+            <div class="event-row">
+              <div>${escapeHtml(event.message || event.type || "")}</div>
+              <div>${escapeHtml(new Date(event.createdAt || Date.now()).toLocaleString())}</div>
+            </div>
+          `).join("")
+          : `<div class="empty">暂无事件</div>`;
+      }
+
+      // Restore textarea content after re-render
+      if (state.addingSeatId && savedAddText) {
+        const el = document.getElementById(`seatAddText_${state.addingSeatId}`);
+        if (el) { el.value = savedAddText; el.focus(); }
+      }
+    }
+
+    function renderSeatRow(seat) {
+      const candidateRecords = (state.family?.candidates || []).filter((item) => item.seatId === seat.id);
+      const emails = candidateRecords.length
+        ? candidateRecords.map((item) => ({
+            email: item.email,
+            flags: [item.loginPassword ? "密码" : "", item.recoveryEmail ? "辅助邮箱" : "", item.totpSecret ? "2FA" : ""].filter(Boolean).join("/"),
+            isActive: normalizeEmailFront(item.email) === normalizeEmailFront(seat.currentChildEmail),
+            rosettaAccountId: item.rosettaAccountId,
+            isFamilyMember: item.isFamilyMember === true,
+            status: item.status || "",
+            activationTaskId: item.activationTaskId || "",
+            activationStatus: item.activationStatus || "",
+            activationError: item.activationError || "",
+            activatedAt: item.activatedAt || "",
+            inviteTaskId: item.inviteTaskId || "",
+            confirmTaskId: item.confirmTaskId || "",
+            joinStatus: item.joinStatus || "",
+            joinError: item.joinError || "",
+          }))
+        : (seat.candidateEmails || []).map((e) => ({ email: e, flags: "", isActive: normalizeEmailFront(e) === normalizeEmailFront(seat.currentChildEmail), rosettaAccountId: null }));
+
+      const emailTags = emails.length
+        ? emails.map((item) => {
+            const account = mergeAccounts().find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(item.email));
+            const imported = Boolean(account);
+            const childKey = `${seat.id}:${normalizeEmailFront(item.email)}`;
+            const activating = state.activatingChildKeys.has(childKey) || item.activationStatus === "PENDING" || item.activationStatus === "RUNNING";
+            const joining = state.joiningChildKeys.has(childKey) || item.joinStatus === "PENDING" || item.joinStatus === "RUNNING";
+            const activated = imported || item.activatedAt || item.status === "activated_pending_member" || item.status === "active";
+            const activationFailed = ["FAILED", "FAILED_FINAL"].includes(String(item.activationStatus || "").toUpperCase());
+            const failureLabel = item.activationError || (activationFailed ? "激活失败" : "");
+            const quotaExhausted = String(account?.quotaStatus || "").toLowerCase() === "exhausted" || Number(account?.quotaLiveBlockedCount || 0) > 0;
+            const seatOccupied = Boolean(seat.currentChildEmail);
+            const canJoinSeat = activated && !seatOccupied && !joining;
+            const joinTitle = !activated
+              ? "请先激活"
+              : seatOccupied
+                ? `当前席位已有 ${seat.currentChildEmail} 在组`
+                : "确认这个子号已加入家庭组并启用";
+            const statusBits = [
+              item.isActive ? "当前使用" : "",
+              item.isFamilyMember || item.isActive ? "在组" : "未确认进组",
+              quotaExhausted ? "额度耗尽" : "",
+              failureLabel,
+              activated ? "已激活" : "未激活",
+              item.flags || ""
+            ].filter(Boolean);
+            return `<div class="candidate-row${item.isActive ? ' active-child' : ''}">
+              <div class="candidate-email">${escapeHtml(item.email)}</div>
+              <div class="candidate-meta">${statusBits.map((bit) => `<span class="badge"><span class="dot ${bit === "额度耗尽" || bit.includes("失败") ? "bad" : bit === "在组" || bit === "当前使用" || bit === "已激活" ? "ok" : "warn"}"></span>${escapeHtml(bit)}</span>`).join("")}</div>
+              <div class="candidate-actions">
+                ${activated ? "" : `<button class="candidate-action primary" onclick="activateSeatCandidate('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${activating ? "disabled" : ""}>${activating ? "激活中" : "激活"}</button>`}
+                <button class="candidate-action primary" onclick="joinSeatMember('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${canJoinSeat ? "" : `disabled title='${escapeHtml(joinTitle)}'`}>${joining ? "进组中" : "进组"}</button>
+                <button class="candidate-action" onclick="switchSeatToCandidate('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${activated ? "" : "disabled title='请先激活'"}>切换</button>
+                <button class="candidate-action danger" onclick="removeSeatEmail('${escapeJs(seat.id)}','${escapeJs(item.email)}')">删除</button>
+              </div>
+            </div>`;
+          }).join("")
+        : `<span class="meta">无候选邮箱</span>`;
+
+      const isAdding = state.addingSeatId === seat.id;
+      return `
+        <div class="seat-row">
+          <div class="seat-index">#${Number(seat.seatIndex || 0)}</div>
+          <div>
+            <div class="candidate-list">${emailTags}</div>
+            ${isAdding ? `
+              <div class="seat-add-form">
+                <textarea id="seatAddText_${escapeHtml(seat.id)}" placeholder="每行一个子号，支持 GFA 格式：
+邮箱----密码----辅助邮箱----2FA密钥
+或者只填邮箱"></textarea>
+                <div class="seat-add-actions">
+                  <button class="btn small" onclick="toggleSeatAdd('')">取消</button>
+                  <button class="btn small primary" onclick="submitSeatEmails('${escapeJs(seat.id)}')">确认添加</button>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <div class="row-actions">
+            <button class="btn small${isAdding ? ' primary' : ''}" onclick="toggleSeatAdd('${escapeJs(seat.id)}')">${isAdding ? '取消' : '添加邮箱'}</button>
+            <button class="btn small" onclick="replaceSeat('${escapeJs(seat.id)}')">替换</button>
+          </div>
+        </div>`;
+    }
+
+    function renderLoadTable(remote) {
+      const scheduler = remote?.scheduler || {};
+      const leaseCounts = scheduler.activeLeaseCounts || {};
+      const stats = scheduler.accountStats || {};
+      const accounts = mergeAccounts();
+      const rows = accounts.length
+        ? accounts
+        : Object.keys({ ...leaseCounts, ...stats }).sort((a, b) => Number(a) - Number(b)).map((id) => ({ id }));
+      if (!rows.length) {
+        document.getElementById("loadTableWrap").innerHTML = `<div class="empty">暂无账号负载数据</div>`;
+        return;
+      }
+      document.getElementById("loadTableWrap").innerHTML = `
+        <table class="load-table">
+          <thead><tr><th>账号</th><th>套餐</th><th>额度</th><th>使用中</th><th>活跃 Lease</th><th>成功率</th><th>请求</th><th>429/503</th><th>最近状态</th></tr></thead>
+          <tbody>
+            ${rows.map((account) => {
+              const id = String(account.id ?? "");
+              const s = stats[id] || {};
+              const activeLeases = Number(leaseCounts[id] ?? account.activeLeases ?? 0);
+              const total = Number(account.requestStats?.total ?? s.totalLeases ?? 0);
+              const failures = Number(account.requestStats?.failures ?? s.errorCount ?? 0);
+              const successes = Number(account.requestStats?.successes ?? s.successCount ?? Math.max(0, total - failures));
+              const successRate = account.successRate != null ? account.successRate : (total ? Math.round(successes / total * 100) : null);
+              return `<tr>
+                <td>#${escapeHtml(id)}<br>${escapeHtml(maskEmail(account.email || ""))}</td>
+                <td>${escapeHtml(account.planType || "-")}</td>
+                <td><span class="badge"><span class="dot ${quotaDot(account)}"></span>${escapeHtml(account.quotaStatus || "unknown")}</span></td>
+                <td>${account.isActive || activeLeases > 0 ? "是" : "否"}</td>
+                <td>${activeLeases}</td>
+                <td>${formatSuccessRate(successRate)}</td>
+                <td>${total} / ${failures}</td>
+                <td>${Number(s.quota429Count || 0)}</td>
+                <td>${s.lastStatus || account.lastStatus || "-"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderServiceDetails() {
+      const target = document.getElementById("serviceDetails");
+      if (!target) return;
+      const proxy = state.proxy || {};
+      const remote = state.remote || {};
+      const quota = remote.quota || {};
+      const scheduler = remote.scheduler || {};
+      target.innerHTML = `
+        <div class="k">本地代理</div><div class="v">${proxy.running ? "运行中" : "离线"} ${proxy.mode ? `(${escapeHtml(proxy.mode)})` : ""}</div>
+        <div class="k">活跃账号</div><div class="v">${escapeHtml(proxy.activeEmail || proxy.remoteActiveEmailHint || "-")}</div>
+        <div class="k">Remote Token</div><div class="v">${remote.running ? `运行中 :${remote.port || 60700}` : escapeHtml(remote.error || "未运行")}</div>
+        <div class="k">服务端账号</div><div class="v">${quota.totalAccounts ?? "-"} 总数 / ${quota.okAccounts ?? "-"} 正常 / ${quota.exhaustedAccounts ?? "-"} 受限</div>
+        <div class="k">租约 TTL</div><div class="v">${formatMs(scheduler.leaseTtlMs)}</div>
+        <div class="k">亲和 TTL</div><div class="v">${formatMs(scheduler.affinityTtlMs)}</div>
+        <div class="k">单账号并发</div><div class="v">${remote.maxConcurrentPerAccount ?? "-"}</div>
+      `;
+    }
+
+    function renderAccessKeys() {
+      const wrap = document.getElementById("accessKeyList");
+      if (!wrap) return;
+      const keys = state.accessKeys || [];
+      const summary = document.getElementById("accessKeySummary");
+      if (summary) {
+        const limit = state.accessKeyDefaults?.windowLimit || 300;
+        summary.textContent = `5小时内默认限制 ${limit} 次请求；请求数按客户端上报结果累计，页面每次刷新时更新。`;
+      }
+      if (!keys.length) {
+        wrap.innerHTML = `<div class="empty">暂无卡密</div>`;
+        return;
+      }
+      wrap.innerHTML = `
+        <table>
+          <thead><tr><th>卡密</th><th>备注</th><th>状态</th><th>有效期</th><th>首次使用</th><th>到期</th><th>总请求</th><th>5小时请求</th><th>操作</th></tr></thead>
+          <tbody>
+            ${keys.map((key) => `
+              <tr>
+                <td><code>${escapeHtml(key.key || "")}</code></td>
+                <td>${escapeHtml(key.name || "-")}</td>
+                <td><span class="badge"><span class="dot ${key.status === "active" ? "ok" : "bad"}"></span>${escapeHtml(key.status || "active")}</span></td>
+                <td>${escapeHtml(formatDuration(key.durationMs))}</td>
+                <td>${escapeHtml(formatDateTime(key.firstUsedAt) || "未使用")}</td>
+                <td>${escapeHtml(formatDateTime(key.expiresAt) || "首次使用后计算")}</td>
+                <td>${Number(key.totalRequests || 0)}</td>
+                <td>${Number(key.recentWindowRequests || 0)} / ${Number(key.windowLimit || 0)}</td>
+                <td>
+                  <button class="btn small" onclick="copyAccessKey('${escapeJs(key.fullKey || "")}')">复制</button>
+                  <button class="btn small ${key.status === "active" ? "danger" : ""}" onclick="toggleAccessKey('${escapeJs(key.id)}','${key.status === "active" ? "disabled" : "active"}')">${key.status === "active" ? "禁用" : "启用"}</button>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+    }
+
+    function formatDuration(ms) {
+      const n = Number(ms || 0);
+      if (n === 60 * 60 * 1000) return "1小时";
+      if (n === 24 * 60 * 60 * 1000) return "一天";
+      if (n >= 28 * 24 * 60 * 60 * 1000) return "一个月";
+      return n ? formatMs(n) : "-";
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleString();
+    }
+
+    function parseAccountImportLine(line) {
+      const raw = String(line || "").trim();
+      if (!raw) return null;
+      const parts = raw.includes("----") || raw.includes("---") || raw.includes("——") || raw.includes("—")
+        ? raw.split(/----|---|——|—/).map((item) => item.trim())
+        : raw.split(/[,，\s]+/).map((item) => item.trim());
+      const email = String(parts[0] || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) return null;
+      const second = String(parts[1] || "").trim();
+      const third = String(parts[2] || "").trim();
+      const fourth = String(parts[3] || "").trim();
+      const recoveryEmail = [third, fourth].find((item) => item.includes("@")) || "";
+      const totpSecret = [third, fourth].find((item) => item && !item.includes("@")) || "";
+      const legacySeats = parts.length === 2 && /^\d+$/.test(second) ? Number(second) : 5;
+      return {
+        email,
+        loginPassword: /^\d+$/.test(second) && parts.length === 2 ? "" : second,
+        recoveryEmail: recoveryEmail.toLowerCase(),
+        totpSecret,
+        totalSeats: Math.max(0, Math.min(20, legacySeats)),
+      };
+    }
+
+    function parseMotherImportLine(line) {
+      return parseAccountImportLine(line);
+    }
+
+    async function batchImportMothers() {
+      const box = document.getElementById("motherBatchText");
+      const rows = String(box.value || "").split(/\r?\n/).map(parseMotherImportLine).filter(Boolean);
+      if (!rows.length) {
+        showToast("请先粘贴母号邮箱");
+        return;
+      }
+      const existingEmails = new Set((state.family?.mothers || []).map((item) => normalizeEmailFront(item.email)).filter(Boolean));
+      const unique = [];
+      const seen = new Set();
+      let duplicateCount = 0;
+      for (const row of rows) {
+        const email = normalizeEmailFront(row.email);
+        if (!email) continue;
+        if (seen.has(email) || existingEmails.has(email)) {
+          duplicateCount += 1;
+          continue;
+        }
+        row.email = email;
+        seen.add(row.email);
+        unique.push(row);
+      }
+      if (!unique.length) {
+        showToast(`没有新母号可导入，已跳过 ${duplicateCount} 个重复邮箱`);
+        return;
+      }
+      let ok = 0;
+      let failed = 0;
+      for (const row of unique) {
+        try {
+          await fetchJson(`${API}/family-mother`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: row.email,
+              totalSeats: row.totalSeats || 5,
+              loginPassword: row.loginPassword || "",
+              recoveryEmail: row.recoveryEmail || "",
+              totpSecret: row.totpSecret || ""
+            })
+          });
+          ok += 1;
+        } catch (error) {
+          if (String(error.message || "").includes("already exists")) duplicateCount += 1;
+          else failed += 1;
+        }
+      }
+      box.value = "";
+      showToast(`已导入 ${ok} 个母号，跳过 ${duplicateCount} 个重复${failed ? `，失败 ${failed} 个` : ""}`);
+      refreshAll();
+    }
+
+    function toggleMotherGroup(motherId) {
+      state.selectedMotherId = state.selectedMotherId === motherId ? "" : motherId;
+      renderFamilyPool();
+    }
+
+    async function addMotherSeats(motherId) {
+      const mother = (state.family?.mothers || []).find((item) => item.id === motherId);
+      if (!mother) return;
+      const currentSeats = (state.family?.seats || []).filter((seat) => seat.motherId === motherId).length;
+      const totalSeats = Number(prompt("设置这个母号的总席位数：", String(Math.max(currentSeats, Number(mother.totalSeats || 5))))) || currentSeats;
+      await fetchJson(`${API}/family-mother`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: motherId, email: mother.email, totalSeats })
+      });
+      showToast("母号席位已更新");
+      refreshAll();
+    }
+
+    async function updateMotherActivation(mother, patch) {
+      const seats = (state.family?.seats || []).filter((seat) => seat.motherId === mother.id);
+      return fetchJson(`${API}/family-mother`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: mother.id,
+          email: mother.email,
+          totalSeats: Number(mother.totalSeats || seats.length || 5),
+          activationTaskId: mother.activationTaskId || "",
+          activationStatus: mother.activationStatus || "",
+          activationError: mother.activationError || "",
+          tokenObtainedAt: mother.tokenObtainedAt || "",
+          ...patch
+        })
+      });
+    }
+
+    async function loadAvailablePhones() {
+      const phones = await fetchJson("/api/proxy/automation/phone-pool");
+      return (Array.isArray(phones) ? phones : [])
+        .filter((phone) => phone.status === "available" && phone.phoneNumber && phone.smsUrl)
+        .slice(0, 5)
+        .map((phone) => ({
+          phoneNumber: phone.phoneNumber,
+          countryCode: phone.countryCode || "+1",
+          smsUrl: phone.smsUrl
+        }));
+    }
+
+    async function saveRosettaTokenFromActivation(subject, taskStatus, options = {}) {
+      const result = taskStatus.result || {};
+      const refreshToken = result.refresh_token || result.refreshToken || "";
+      if (!refreshToken) throw new Error("任务成功但没有返回 refresh_token");
+      await fetchJson(`${API}/add-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: subject.email,
+          refreshToken,
+          alias: subject.alias || "",
+          oauthProfile: "antigravity",
+          enabled: options.enabled !== false
+        })
+      });
+    }
+
+    async function pollMotherActivation(mother, taskId) {
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          await updateMotherActivation(mother, {
+            activationTaskId: taskId,
+            activationStatus: status.status,
+            activationError: status.lastErrorMessage || ""
+          });
+
+          if (status.status === "SUCCESS") {
+            clearInterval(timer);
+            try {
+              await saveRosettaTokenFromActivation(mother, status);
+              await updateMotherActivation(mother, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: "",
+                tokenObtainedAt: new Date().toISOString()
+              });
+              showToast(`${mother.email} 激活完成，已写入 Rosetta 账号池`);
+            } catch (error) {
+              await updateMotherActivation(mother, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: `写入 Rosetta 失败：${error.message || error}`
+              });
+              showToast(`激活成功，但写入 Rosetta 失败：${error.message || error}`);
+            }
+            state.activatingMotherIds.delete(mother.id);
+            refreshAll();
+          } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
+            clearInterval(timer);
+            state.activatingMotherIds.delete(mother.id);
+            showToast(`${mother.email} 激活失败：${status.lastErrorMessage || "未知错误"}`);
+            refreshAll();
+          } else {
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.activatingMotherIds.delete(mother.id);
+          showToast(`激活状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function activateMother(motherId) {
+      const mother = (state.family?.mothers || []).find((item) => item.id === motherId);
+      if (!mother) return;
+      if (!mother.loginPassword) {
+        showToast("这个母号没有密码，无法自动 OAuth 登录");
+        return;
+      }
+      state.activatingMotherIds.add(motherId);
+      renderFamilyPool();
+      try {
+        const phones = await loadAvailablePhones();
+        if (!phones.length) throw new Error("GFA 手机号池没有可用号码");
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "phone-verify",
+            email: mother.email,
+            password: mother.loginPassword,
+            recoveryEmail: mother.recoveryEmail || undefined,
+            totpSecret: mother.totpSecret || undefined,
+            phones
+          })
+        });
+        await updateMotherActivation(mother, {
+          activationTaskId: result.taskId,
+          activationStatus: result.status || "PENDING",
+          activationError: ""
+        });
+        showToast(`${mother.email} 激活任务已提交`);
+        pollMotherActivation(mother, result.taskId);
+        refreshAll();
+      } catch (error) {
+        state.activatingMotherIds.delete(motherId);
+        await updateMotherActivation(mother, { activationStatus: "FAILED", activationError: error.message || String(error) }).catch(() => {});
+        showToast(`激活失败：${error.message || error}`);
+        refreshAll();
+      }
+    }
+
+    function candidateForSeat(seatId, email) {
+      return (state.family?.candidates || []).find((item) =>
+        item.seatId === seatId && normalizeEmailFront(item.email) === normalizeEmailFront(email)
+      ) || null;
+    }
+
+    async function updateSeatCandidateActivation(seatId, email, patch) {
+      const seat = (state.family?.seats || []).find((item) => item.id === seatId);
+      if (!seat) throw new Error("seat not found");
+      const candidateRecords = (state.family?.candidates || []).filter((item) => item.seatId === seatId);
+      const emailSet = new Set([...(seat.candidateEmails || []), ...candidateRecords.map((item) => item.email), email].map(normalizeEmailFront).filter(Boolean));
+      const candidateEmails = [...emailSet];
+      const candidateDetails = candidateEmails.map((candidateEmail) => {
+        const existing = candidateRecords.find((item) => normalizeEmailFront(item.email) === candidateEmail) || {};
+        return {
+          email: candidateEmail,
+          loginPassword: existing.loginPassword || "",
+          recoveryEmail: existing.recoveryEmail || "",
+          totpSecret: existing.totpSecret || "",
+          activationTaskId: existing.activationTaskId || "",
+          activationStatus: existing.activationStatus || "",
+          activationError: existing.activationError || "",
+          activatedAt: existing.activatedAt || "",
+          inviteTaskId: existing.inviteTaskId || "",
+          confirmTaskId: existing.confirmTaskId || "",
+          joinStatus: existing.joinStatus || "",
+          joinError: existing.joinError || "",
+          isFamilyMember: existing.isFamilyMember === true,
+          rosettaAccountId: existing.rosettaAccountId || undefined,
+          ...(normalizeEmailFront(candidateEmail) === normalizeEmailFront(email) ? patch : {})
+        };
+      });
+      await fetchJson(`${API}/family-seat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          seatId,
+          candidateEmails,
+          candidateDetails,
+          status: seat.status || "empty",
+          currentChildEmail: seat.currentChildEmail || "",
+          currentRosettaAccountId: seat.currentRosettaAccountId || undefined
+        })
+      });
+    }
+
+    async function pollChildActivation(seatId, email, taskId) {
+      const childKey = `${seatId}:${normalizeEmailFront(email)}`;
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          await updateSeatCandidateActivation(seatId, email, {
+            activationTaskId: taskId,
+            activationStatus: status.status,
+            activationError: status.lastErrorMessage || ""
+          });
+
+          if (status.status === "SUCCESS") {
+            clearInterval(timer);
+            try {
+              await saveRosettaTokenFromActivation({ email }, status, { enabled: false });
+              const refreshed = await fetchJson(`${API}/accounts`);
+              const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(email));
+              await updateSeatCandidateActivation(seatId, email, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: "",
+                activatedAt: new Date().toISOString(),
+                rosettaAccountId: imported?.id
+              });
+              if (imported?.id) {
+                await fetchJson(`${API}/family-activate-child`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ seatId, accountId: imported.id })
+                });
+              }
+              showToast(`${email} 已激活，等待确认进组后启用`);
+            } catch (error) {
+              await updateSeatCandidateActivation(seatId, email, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: `写入 Rosetta 失败：${error.message || error}`
+              });
+              showToast(`子号激活成功，但写入 Rosetta 失败：${error.message || error}`);
+            }
+            state.activatingChildKeys.delete(childKey);
+            refreshAll();
+          } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
+            clearInterval(timer);
+            state.activatingChildKeys.delete(childKey);
+            showToast(`${email} 激活失败：${status.lastErrorMessage || "未知错误"}`);
+            refreshAll();
+          } else {
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.activatingChildKeys.delete(childKey);
+          showToast(`子号激活状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function activateSeatCandidate(seatId, email) {
+      const candidate = candidateForSeat(seatId, email);
+      if (!candidate?.loginPassword) {
+        showToast("这个子号没有密码，无法自动 OAuth 登录");
+        return;
+      }
+      const childKey = `${seatId}:${normalizeEmailFront(email)}`;
+      state.activatingChildKeys.add(childKey);
+      renderFamilyPool();
+      try {
+        const phones = await loadAvailablePhones();
+        if (!phones.length) throw new Error("GFA 手机号池没有可用号码");
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "phone-verify",
+            email,
+            password: candidate.loginPassword,
+            recoveryEmail: candidate.recoveryEmail || undefined,
+            totpSecret: candidate.totpSecret || undefined,
+            phones
+          })
+        });
+        await updateSeatCandidateActivation(seatId, email, {
+          activationTaskId: result.taskId,
+          activationStatus: result.status || "PENDING",
+          activationError: ""
+        });
+        showToast(`${email} 子号激活任务已提交`);
+        pollChildActivation(seatId, email, result.taskId);
+        refreshAll();
+      } catch (error) {
+        state.activatingChildKeys.delete(childKey);
+        await updateSeatCandidateActivation(seatId, email, { activationStatus: "FAILED", activationError: error.message || String(error) }).catch(() => {});
+        showToast(`子号激活失败：${error.message || error}`);
+        refreshAll();
+      }
+    }
+
+    async function resolveMotherGroupId(mother) {
+      if (mother.gfaGroupId) return mother.gfaGroupId;
+      const groups = await fetchJson(`${GFA_API}/family-groups?parentEmail=${encodeURIComponent(mother.email)}`);
+      const groupList = Array.isArray(groups) ? groups : (groups.data || []);
+      if (!groupList.length) return null;
+      const group = groupList[0];
+      const groupId = group.id || group.groupId;
+      // Cache on mother for future use
+      mother.gfaGroupId = groupId;
+      mother.gfaGroupName = group.name || '';
+      return groupId;
+    }
+
+    async function pollSeatJoin(seatId, email, taskId) {
+      const childKey = `${seatId}:${normalizeEmailFront(email)}`;
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          await updateSeatCandidateActivation(seatId, email, {
+            confirmTaskId: taskId,
+            inviteTaskId: taskId,
+            joinStatus: status.status,
+            joinError: status.lastErrorMessage || ""
+          });
+
+          if (status.status === "SUCCESS") {
+            clearInterval(timer);
+            const refreshed = await fetchJson(`${API}/accounts`);
+            const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(email));
+            if (!imported?.id) throw new Error("子号已进组，但 Rosetta 账号池里找不到对应账号");
+            await fetchJson(`${API}/family-activate-child`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ seatId, accountId: imported.id, memberConfirmed: true })
+            });
+            await updateSeatCandidateActivation(seatId, email, {
+              isFamilyMember: true,
+              rosettaAccountId: imported.id,
+              joinStatus: "SUCCESS",
+              joinError: ""
+            });
+            state.joiningChildKeys.delete(childKey);
+            showToast(`${email} 已接受邀请并进组，席位已启用`);
+            refreshAll();
+          } else if (["FAILED_FINAL", "FAILED", "FAILED_RETRYABLE"].includes(status.status)) {
+            clearInterval(timer);
+            state.joiningChildKeys.delete(childKey);
+            showToast(`${email} 进组失败：${status.lastErrorMessage || "未知错误"}`);
+            refreshAll();
+          } else {
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.joiningChildKeys.delete(childKey);
+          await updateSeatCandidateActivation(seatId, email, {
+            confirmTaskId: taskId,
+            inviteTaskId: taskId,
+            joinStatus: "FAILED",
+            joinError: error.message || String(error)
+          }).catch(() => {});
+          showToast(`进组状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function joinSeatMember(seatId, email) {
+      const seat = (state.family?.seats || []).find((s) => s.id === seatId);
+      if (!seat) return;
+      const mother = (state.family?.mothers || []).find((m) => m.id === seat.motherId);
+      if (!mother) { showToast("找不到母号"); return; }
+      const candidate = candidateForSeat(seatId, email);
+      if (!mother.loginPassword) {
+        showToast("这个母号没有密码，无法自动发送家庭组邀请");
+        return;
+      }
+      if (!candidate?.loginPassword) {
+        showToast("这个子号没有密码，无法自动接受邀请");
+        return;
+      }
+      if (seat.currentChildEmail) {
+        showToast(`当前席位已有 ${seat.currentChildEmail} 在组，不能重复进组`);
+        return;
+      }
+
+      const refreshed = await fetchJson(`${API}/accounts`);
+      const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(email));
+      if (!imported?.id) {
+        showToast("这个子号还没有完成 OAuth 激活");
+        return;
+      }
+
+      const childKey = `${seatId}:${normalizeEmailFront(email)}`;
+      state.joiningChildKeys.add(childKey);
+      renderFamilyPool();
+      showToast(`正在让母号 ${mother.email} 邀请 ${email}，随后子号会自动接受邀请`);
+      try {
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "family-join",
+            email: mother.email,
+            password: mother.loginPassword,
+            recoveryEmail: mother.recoveryEmail || undefined,
+            totpSecret: mother.totpSecret || undefined,
+            childEmail: email,
+            childPassword: candidate.loginPassword,
+            childRecoveryEmail: candidate.recoveryEmail || undefined,
+            childTotpSecret: candidate.totpSecret || undefined
+          })
+        });
+        await updateSeatCandidateActivation(seatId, email, {
+          confirmTaskId: result.taskId,
+          inviteTaskId: result.taskId,
+          joinStatus: result.status || "PENDING",
+          joinError: "",
+          rosettaAccountId: imported.id
+        });
+        pollSeatJoin(seatId, email, result.taskId);
+        refreshAll();
+      } catch (err) {
+        state.joiningChildKeys.delete(childKey);
+        await updateSeatCandidateActivation(seatId, email, {
+          joinStatus: "FAILED",
+          joinError: err.message || String(err)
+        }).catch(() => {});
+        showToast(`进组失败：${err.message}`);
+        refreshAll();
+      }
+    }
+
+    async function switchSeatToCandidate(seatId, email) {
+      const refreshed = await fetchJson(`${API}/accounts`);
+      const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(email));
+      if (!imported?.id) {
+        showToast("请先激活这个账号，再切换席位");
+        return;
+      }
+      await fetchJson(`${API}/family-activate-child`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seatId, accountId: imported.id, memberConfirmed: true })
+      });
+      await updateSeatCandidateActivation(seatId, email, { isFamilyMember: true, rosettaAccountId: imported.id });
+      showToast(`席位已切换到 ${email}`);
+      refreshAll();
+    }
+
+    async function copyMotherId(motherId) {
+      try {
+        await navigator.clipboard.writeText(motherId);
+        showToast("母号ID已复制");
+      } catch {
+        showToast(motherId);
+      }
+    }
+
+    async function syncMother(motherId, motherEmail) {
+      if (state.syncingMotherId) {
+        showToast("已有同步任务进行中");
+        return;
+      }
+      state.syncingMotherId = motherId;
+      state.syncStatus[motherId] = { message: "正在准备同步...", tone: "syncing" };
+      renderFamilyPool();
+
+      try {
+        const mother = (state.family?.mothers || []).find((m) => m.id === motherId);
+        const groupId = mother ? await resolveMotherGroupId(mother) : null;
+        if (!groupId) {
+          state.syncStatus[motherId] = { message: `未找到 ${motherEmail} 的家庭组，请先在 GFA 控制台创建`, tone: "error" };
+          state.syncingMotherId = null;
+          renderFamilyPool();
+          clearSyncStatusLater(motherId);
+          return;
+        }
+
+        state.syncStatus[motherId] = { message: `正在触发同步...`, tone: "syncing" };
+        renderFamilyPool();
+
+        // 2. Trigger sync task
+        const result = await fetchJson(`${GFA_API}/family-groups/${groupId}/sync`, { method: "POST" });
+        const taskId = result?.taskId;
+        if (!taskId) {
+          state.syncStatus[motherId] = { message: "同步触发失败：未返回任务ID", tone: "error" };
+          state.syncingMotherId = null;
+          renderFamilyPool();
+          clearSyncStatusLater(motherId);
+          return;
+        }
+
+        state.syncStatus[motherId] = { message: "同步任务已入队，等待执行...", tone: "syncing" };
+        renderFamilyPool();
+
+        // 3. Poll task status
+        const terminalStatuses = new Set(["SUCCESS", "FAILED", "MANUAL_REVIEW", "CANCELLED", "REPLACED_AND_INVITE_SENT"]);
+        const statusLabels = {
+          PENDING: "排队中", QUEUED: "排队中", RUNNING: "同步执行中",
+          SUCCESS: "同步完成", FAILED: "同步失败",
+          MANUAL_REVIEW: "需人工处理", CANCELLED: "已取消"
+        };
+        let pollCount = 0;
+        const MAX_POLLS = 60;
+
+        const pollInterval = setInterval(async () => {
+          pollCount++;
+          if (pollCount > MAX_POLLS) {
+            clearInterval(pollInterval);
+            state.syncStatus[motherId] = { message: "轮询超时，请在 GFA 任务面板查看", tone: "error" };
+            state.syncingMotherId = null;
+            renderFamilyPool();
+            clearSyncStatusLater(motherId);
+            return;
+          }
+          try {
+            const task = await fetchJson(`${GFA_API}/tasks/${taskId}`);
+            const label = statusLabels[task.status] || task.status;
+            const isTerminal = terminalStatuses.has(task.status);
+            state.syncStatus[motherId] = {
+              message: isTerminal
+                ? `${label}${task.resultMessage ? ` — ${task.resultMessage}` : ""}${task.lastErrorMessage ? ` — ${task.lastErrorMessage}` : ""}`
+                : label,
+              tone: task.status === "SUCCESS" ? "success" : (isTerminal ? "error" : "syncing"),
+            };
+            renderFamilyPool();
+
+            if (isTerminal) {
+              clearInterval(pollInterval);
+              state.syncingMotherId = null;
+              if (task.status === "SUCCESS") {
+                const synced = await backfillMotherSeatsFromGfa(groupId, motherId, motherEmail);
+                showToast(`家庭组同步完成，已回填 ${synced} 个席位`);
+              }
+              else if (task.status === "FAILED") showToast(`同步失败：${task.lastErrorMessage || "未知错误"}`);
+              renderFamilyPool();
+              clearSyncStatusLater(motherId);
+              refreshAll();
+            }
+          } catch { /* ignore poll errors */ }
+        }, 3000);
+
+      } catch (err) {
+        state.syncStatus[motherId] = { message: `同步失败：${err.message}`, tone: "error" };
+        state.syncingMotherId = null;
+        renderFamilyPool();
+        clearSyncStatusLater(motherId);
+      }
+    }
+
+    function memberEmailOf(member) {
+      return normalizeEmailFront(member.email || member.loginEmail || member.userEmail || member.memberEmail || "");
+    }
+
+    function memberIsInGroup(member) {
+      const status = String(member.status || member.memberStatus || "").toUpperCase();
+      if (!status) return true;
+      return status !== "REMOVED" && status !== "REPLACED" && status !== "CANCELLED";
+    }
+
+    async function backfillMotherSeatsFromGfa(groupId, motherId, motherEmail) {
+      await loadFamilyPool();
+      const details = await fetchJson(`${GFA_API}/family-groups/${groupId}`);
+      const members = (Array.isArray(details.members) ? details.members : [])
+        .map((member) => ({ ...member, email: memberEmailOf(member) }))
+        .filter((member) => member.email && member.email !== normalizeEmailFront(motherEmail) && memberIsInGroup(member));
+      const seats = (state.family?.seats || [])
+        .filter((seat) => seat.motherId === motherId)
+        .sort((a, b) => Number(a.seatIndex || 0) - Number(b.seatIndex || 0));
+      const accounts = mergeAccounts();
+      let synced = 0;
+
+      for (let index = 0; index < Math.min(members.length, seats.length); index += 1) {
+        const member = members[index];
+        const seat = seats[index];
+        const account = accounts.find((item) => normalizeEmailFront(item.email) === member.email);
+        if (account?.id) {
+          await fetchJson(`${API}/family-activate-child`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ seatId: seat.id, accountId: account.id, memberConfirmed: true })
+          });
+        } else {
+          const candidateEmails = [...new Set([member.email, ...(seat.candidateEmails || []).map(normalizeEmailFront)].filter(Boolean))];
+          await fetchJson(`${API}/family-seat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              seatId: seat.id,
+              currentChildEmail: member.email,
+              status: "active",
+              candidateEmails,
+              candidateDetails: [{ email: member.email, isFamilyMember: true }]
+            })
+          });
+        }
+        synced += 1;
+      }
+
+      await loadFamilyPool();
+      refreshAll();
+      return synced;
+    }
+
+    function clearSyncStatusLater(motherId, delay = 10000) {
+      setTimeout(() => {
+        if (state.syncStatus[motherId] && !state.syncingMotherId) {
+          delete state.syncStatus[motherId];
+          renderFamilyPool();
+        }
+      }, delay);
+    }
+
+    function toggleSeatAdd(seatId) {
+      state.addingSeatId = state.addingSeatId === seatId ? '' : seatId;
+      renderFamilyPool();
+      if (seatId) {
+        setTimeout(() => document.getElementById(`seatAddText_${seatId}`)?.focus(), 50);
+      }
+    }
+
+    async function submitSeatEmails(seatId) {
+      const seat = (state.family?.seats || []).find((item) => item.id === seatId);
+      if (!seat) return;
+      const box = document.getElementById(`seatAddText_${seatId}`);
+      const text = box?.value || '';
+      if (!text.trim()) {
+        showToast('请先粘贴子号邮箱');
+        return;
+      }
+      const parsed = text.split(/\r?\n/).map(parseAccountImportLine).filter(Boolean);
+      if (!parsed.length) {
+        showToast('没有解析到有效邮箱');
+        return;
+      }
+      const candidateEmails = [...new Set([...(seat.candidateEmails || []), ...parsed.map((item) => item.email)].filter(Boolean))];
+      await fetchJson(`${API}/family-seat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seatId, candidateEmails, candidateDetails: parsed, status: seat.status || 'empty' })
+      });
+      state.addingSeatId = '';
+      showToast(`已添加 ${parsed.length} 个席位邮箱`);
+      refreshAll();
+    }
+
+    async function removeSeatEmail(seatId, email) {
+      const seat = (state.family?.seats || []).find((item) => item.id === seatId);
+      if (!seat) return;
+      const candidateEmails = (seat.candidateEmails || []).filter((e) => normalizeEmailFront(e) !== normalizeEmailFront(email));
+      await fetchJson(`${API}/family-seat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seatId, candidateEmails, status: seat.status || "empty" })
+      });
+      showToast(`已删除 ${email}`);
+      refreshAll();
+    }
+
+    async function createMother() {
+      const email = normalizeEmailFront(document.getElementById("motherEmail").value);
+      const totalSeats = Number(document.getElementById("motherSeats").value || 0);
+      if (!email) {
+        showToast("请输入母号邮箱");
+        return;
+      }
+      if ((state.family?.mothers || []).some((item) => normalizeEmailFront(item.email) === email)) {
+        showToast("这个母号已经存在，不能重复导入");
+        return;
+      }
+      await fetchJson(`${API}/family-mother`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, totalSeats })
+      });
+      document.getElementById("motherEmail").value = "";
+      showToast("母号已加入家庭额度池");
+      refreshAll();
+    }
+
+    async function createAccessKey() {
+      const name = document.getElementById("accessKeyName")?.value || "";
+      const duration = document.getElementById("accessKeyDuration")?.value || "1h";
+      const windowLimit = Number(document.getElementById("accessKeyLimit")?.value || 300);
+      const result = await fetchJson(`${API}/access-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, duration, windowLimit })
+      });
+      if (document.getElementById("accessKeyName")) document.getElementById("accessKeyName").value = "";
+      showToast("卡密已生成");
+      await navigator.clipboard?.writeText(result.key?.fullKey || "").catch(() => {});
+      refreshAll();
+    }
+
+    async function toggleAccessKey(id, status) {
+      await fetchJson(`${API}/access-key-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status })
+      });
+      showToast(status === "active" ? "卡密已启用" : "卡密已禁用");
+      refreshAll();
+    }
+
+    async function copyAccessKey(value) {
+      if (!value) {
+        showToast("卡密为空");
+        return;
+      }
+      await navigator.clipboard?.writeText(value).catch(() => {});
+      showToast("卡密已复制");
+    }
+
+    async function bindMother(accountId) {
+      const account = mergeAccounts().find((item) => Number(item.id) === Number(accountId));
+      const totalSeats = Number(prompt("这个母号有几个席位？", "5") || 0);
+      await fetchJson(`${API}/family-mother`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: account?.email || "",
+          rosettaAccountId: accountId,
+          totalSeats,
+          planType: account?.planType || "",
+          alias: account?.alias || ""
+        })
+      });
+      showToast("已标记为母号");
+      refreshAll();
+    }
+
+    async function bindChild(accountId) {
+      const seats = (state.family?.seats || []).filter((seat) => seat.status !== "active" || !seat.currentRosettaAccountId);
+      if (!seats.length) {
+        showToast("没有可绑定的空席位，请先新增母号");
+        return;
+      }
+      const hint = seats.map((seat, index) => `${index + 1}. ${motherEmailForSeat(seat)} / 席位 ${seat.seatIndex} / ${seat.status}`).join("\n");
+      const selected = Number(prompt(`选择要绑定的席位序号：\n${hint}`, "1") || 0);
+      const seat = seats[selected - 1];
+      if (!seat) return;
+      await fetchJson(`${API}/family-bind-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, role: "child", seatId: seat.id, familyStatus: "active" })
+      });
+      showToast("子号已绑定到席位");
+      refreshAll();
+    }
+
+    async function replaceSeat(seatId) {
+      const newEmail = prompt("输入新的子号邮箱。旧子号会标记为 replaced 并停用：", "");
+      if (!newEmail) return;
+      const data = await fetchJson(`${API}/family-replace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seatId, newEmail })
+      });
+      showToast(data.integrationStatus === "manual_required" ? "已记录替换请求，请继续在 GFA 完成邀请/确认" : "替换已提交");
+      refreshAll();
+    }
+
+    async function activateSeatChild(seatId) {
+      const select = document.getElementById(`seatAccount_${seatId}`);
+      const accountId = Number(select?.value || 0);
+      if (!accountId) {
+        showToast("请选择已经 OAuth 导入的子号");
+        return;
+      }
+      await fetchJson(`${API}/family-activate-child`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seatId, accountId })
+      });
+      showToast("子号已激活并重新进入轮询池");
+      refreshAll();
+    }
+
+    function motherEmailForSeat(seat) {
+      return (state.family?.mothers || []).find((mother) => mother.id === seat.motherId)?.email || shortId(seat.motherId);
+    }
+
+    async function toggleAcc(id) {
+      await fetchJson(`${API}/toggle-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: id })
+      });
+      showToast("账号状态已更新");
+      refreshAll();
+    }
+
+    async function deleteAcc(id) {
+      if (!confirm("确定删除这个账号吗？")) return;
+      await fetchJson(`${API}/delete-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: id })
+      });
+      showToast("账号已删除");
+      refreshAll();
+    }
+
+    async function refreshQuota() {
+      showToast("正在刷新额度...");
+      try {
+        await fetchJson(`${API}/refresh-quota`, { method: "POST" });
+        showToast("额度刷新指令已发送");
+        setTimeout(refreshAll, 1200);
+      } catch (error) {
+        showToast(`刷新失败：${error.message}`);
+      }
+    }
+
+    function normalizeEmailFront(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function buildOauthUrl(loginHint) {
+      const cid = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+      const scopes = [
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/cclog",
+        "https://www.googleapis.com/auth/experimentsandconfigs"
+      ].join(" ");
+      let url = "https://accounts.google.com/o/oauth2/v2/auth"
+        + `?client_id=${encodeURIComponent(cid)}`
+        + "&redirect_uri=http://127.0.0.1:65000/callback"
+        + "&response_type=code&access_type=offline&prompt=consent"
+        + `&scope=${encodeURIComponent(scopes)}`;
+      if (loginHint) url += `&login_hint=${encodeURIComponent(loginHint)}`;
+      return url;
+    }
+
+    function startOauthOob() {
+      state.pendingSeat = null;
+      window.open(buildOauthUrl(), "_blank", "noopener,noreferrer");
+    }
+
+    function startOauthForSeat(seatId, email) {
+      state.pendingSeat = { seatId, email };
+      showToast(`正在为 ${email} 打开 OAuth 授权...`);
+      window.open(buildOauthUrl(email), "_blank", "noopener,noreferrer");
+      // Switch to the accounts tab and scroll to the code input
+      switchWorkspace("accounts");
+      setTimeout(() => document.getElementById("codeUrl")?.focus(), 300);
+    }
+
+    function checkPaste() {
+      const value = document.getElementById("codeUrl").value.trim();
+      document.getElementById("btnSubmit").disabled = !value.includes("code=");
+    }
+
+    async function submitCode() {
+      let url = document.getElementById("codeUrl").value.trim();
+      let code = "";
+      try {
+        if (!/^https?:\/\//i.test(url)) url = `http://localhost/?${url}`;
+        code = new URL(url).searchParams.get("code") || "";
+      } catch {}
+      if (!code) {
+        showToast("无法解析 URL 中的 code");
+        return;
+      }
+
+      showView("viewProcessing");
+      try {
+        const data = await fetchJson(`${API}/exchange-oob`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code })
+        });
+        if (!data.ok) throw new Error(data.error || "导入失败");
+
+        // If this OAuth was triggered from a seat's 激活 button, auto-bind to that seat
+        const pending = state.pendingSeat;
+        if (pending && pending.seatId && data.email) {
+          try {
+            // Find the newly imported account ID
+            const refreshed = await fetchJson(`${API}/accounts`);
+            const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(data.email));
+            if (imported) {
+              await fetchJson(`${API}/family-activate-child`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ seatId: pending.seatId, accountId: imported.id })
+              });
+              showToast(`${data.email} 已激活并绑定到席位`);
+            }
+          } catch (bindErr) {
+            showToast(`账号已导入，但绑定席位失败：${bindErr.message}`);
+          }
+          state.pendingSeat = null;
+        }
+
+        document.getElementById("resMsg").innerHTML = `导入成功<br><strong>${escapeHtml(data.email || "")}</strong>`;
+        showToast("账号导入成功");
+        refreshAll();
+      } catch (error) {
+        document.getElementById("resMsg").innerHTML = `导入失败<br><strong>${escapeHtml(error.message)}</strong>`;
+      }
+      showView("viewResult");
+    }
+
+    function showView(id) {
+      document.querySelectorAll(".form-view").forEach((el) => el.classList.remove("active"));
+      document.getElementById(id).classList.add("active");
+    }
+
+    function resetForm() {
+      document.getElementById("codeUrl").value = "";
+      checkPaste();
+      showView("viewLogin");
+    }
+
+    function formatMs(ms) {
+      const n = Number(ms || 0);
+      if (!n) return "-";
+      if (n < 60000) return `${Math.round(n / 1000)} 秒`;
+      return `${Math.round(n / 60000)} 分钟`;
+    }
+
+    function formatSeconds(seconds) {
+      const n = Number(seconds || 0);
+      if (!n) return "-";
+      if (n < 60) return `${Math.round(n)} 秒`;
+      return `${Math.round(n / 60)} 分钟`;
+    }
+
+    function maskEmail(email) {
+      const text = String(email || "");
+      const at = text.indexOf("@");
+      if (at <= 2) return text;
+      return `${text.slice(0, 2)}***${text.slice(at)}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[ch]));
+    }
+
+    function escapeJs(value) {
+      return String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    let toastTimer;
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+    }
+  </script>
+</body>
+</html>

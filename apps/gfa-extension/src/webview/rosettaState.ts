@@ -72,6 +72,20 @@ export interface RosettaReverseProxy {
   toolBridge: boolean;
 }
 
+export interface RosettaRelay {
+  running: boolean;
+  url: string;
+  statusUrl: string;
+  upstream: string;
+  hasApiKey: boolean;
+  totalRequests: number;
+  totalErrors: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastError: string | null;
+  accessKeyStatus?: any;
+}
+
 export interface RosettaState {
   ready: boolean;
   problem: string;
@@ -89,6 +103,7 @@ export interface RosettaState {
     url: string;
   };
   reverseProxy: RosettaReverseProxy;
+  relay: RosettaRelay;
   ide: {
     configuredUrl: string;
     expectedUrl: string;
@@ -117,6 +132,8 @@ interface RepoPaths {
   startProcessPattern: string;
   reverseProxyScriptPath: string;
   reverseProxyProcessPattern: string;
+  relayProxyScriptPath: string;
+  relayProxyProcessPattern: string;
   diagnosePath: string;
   addAccountPath: string;
   logPath: string;
@@ -596,6 +613,8 @@ function getRepoPaths(rootPath: string, config: any = {}): RepoPaths {
   const diagnosePath = resolveScript("diagnose.js", "diagnose.js");
   const addAccountPath = resolveScript("add-account.js", path.join("token-proxy", "add-account.js"));
 
+  const relayProxyScriptPath = path.resolve(rootPath, "relay-proxy", "index.js");
+
   return {
     rootPath,
     configPath: centralPaths ? centralPaths.configPath() : path.resolve(rootPath, "proxy.config.json"),
@@ -604,6 +623,8 @@ function getRepoPaths(rootPath: string, config: any = {}): RepoPaths {
     startProcessPattern: path.relative(rootPath, startScriptPath),
     reverseProxyScriptPath,
     reverseProxyProcessPattern: path.relative(rootPath, reverseProxyScriptPath),
+    relayProxyScriptPath,
+    relayProxyProcessPattern: path.relative(rootPath, relayProxyScriptPath),
     diagnosePath,
     addAccountPath,
     logPath: centralPaths ? centralPaths.tokenProxyLogPath() : path.resolve(rootPath, "logs", "token-proxy.log"),
@@ -624,6 +645,19 @@ function getStatusPort(config: any): number {
 
 function getProxyUrl(config: any): string {
   return `http://127.0.0.1:${getTokenProxyPort(config)}`;
+}
+
+function getRelayProxyPort(config: any): number {
+  const v = Number(config?.relayProxy?.port);
+  return Number.isFinite(v) && v > 0 ? v : 60680;
+}
+
+function getRelayStatusPort(config: any): number {
+  return getStatusPort(config);
+}
+
+function getRelayProxyUrl(config: any): string {
+  return `http://127.0.0.1:${getRelayProxyPort(config)}`;
 }
 
 // ─── Main state collector ───────────────────────────────────────────────
@@ -659,6 +693,18 @@ function createEmptyState(): RosettaState {
       endpoints: [],
       routeHits: {},
       toolBridge: false,
+    },
+    relay: {
+      running: false,
+      url: "",
+      statusUrl: "",
+      upstream: "",
+      hasApiKey: false,
+      totalRequests: 0,
+      totalErrors: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      lastError: null,
     },
     ide: {
       configuredUrl: "",
@@ -776,8 +822,53 @@ export async function collectState(
     ];
   } catch { log(`reverseProxy: OFFLINE (port ${rpPort})`); }
 
+  // Relay proxy — shares the token proxy port (60670) AND status port (60671).
+  // We distinguish relay from token proxy by the `mode` field in the status response.
+  const relayStatusPort = getRelayStatusPort(config);
+  const relayStatusUrl = `http://127.0.0.1:${relayStatusPort}/status`;
+  const relayUpstream = String(config?.relayProxy?.upstream || config?.relayProxy?.tokenServerUrl || "").trim();
+  const relayHasApiKey = Boolean(
+    String(config?.relayProxy?.apiKey || config?.relayProxy?.tokenServerSecret || "").trim()
+  );
+
+  let relay: RosettaRelay = {
+    running: false,
+    url: proxyUrl,         // relay now shares the token proxy port
+    statusUrl: relayStatusUrl,
+    upstream: relayUpstream,
+    hasApiKey: relayHasApiKey,
+    totalRequests: 0,
+    totalErrors: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    lastError: null,
+    accessKeyStatus: undefined,
+  };
+  try {
+    const relayStatus = await fetchJson(relayStatusUrl);
+    log(`relay: rawStatus=${JSON.stringify(relayStatus).slice(0, 1200)}`);
+    // CRITICAL: Token Proxy and Relay Proxy share the same status port (60671).
+    // We MUST check the `mode` field to distinguish them.
+    // Relay returns mode='token-passthrough' or mode='relay'; Token Proxy has no mode field.
+    const isActuallyRelay = relayStatus?.mode === 'token-passthrough' || relayStatus?.mode === 'relay';
+    relay.running = Boolean(relayStatus?.running && isActuallyRelay);
+    if (isActuallyRelay) {
+      relay.totalRequests = Number(relayStatus?.totalRequests || 0);
+      relay.totalErrors = Number(relayStatus?.totalErrors || 0);
+      relay.totalInputTokens = Number(relayStatus?.totalInputTokens || 0);
+      relay.totalOutputTokens = Number(relayStatus?.totalOutputTokens || 0);
+      relay.lastError = relayStatus?.lastError || null;
+      relay.accessKeyStatus = relayStatus?.accessKeyStatus || null;
+      if (relayStatus?.hasApiKey !== undefined) relay.hasApiKey = Boolean(relayStatus.hasApiKey);
+    }
+    log(`relay: statusMode=${relayStatus?.mode || '(none)'} isRelay=${isActuallyRelay} running=${relay.running}`);
+  } catch { log(`relay: OFFLINE (statusPort ${relayStatusPort})`); }
+
+  // IDE detection: cloudCodeUrl always points to proxyUrl (60670) in both modes
   const ideMatch = configuredUrl === proxyUrl;
-  log(`summary: proxy=${proxyStatus.running ? "ON" : "OFF"} reverseProxy=${reverseProxy.running ? "ON" : "OFF"} IDE=${ideMatch ? "ATTACHED" : "DETACHED"} accounts=${accounts.length}`);
+  const isIdeConfigured = ideMatch;
+  const activeMode = relay.running ? "RELAY" : (proxyStatus.running ? "TAKEOVER" : "OFF");
+  log(`summary: proxy=${proxyStatus.running ? "ON" : "OFF"} reverseProxy=${reverseProxy.running ? "ON" : "OFF"} relay=${relay.running ? "ON" : "OFF"} IDE=${isIdeConfigured ? "ATTACHED" : "DETACHED"} mode=${activeMode} configuredUrl=${configuredUrl || "(empty)"} accounts=${accounts.length}`);
 
   return {
     ready: true,
@@ -798,11 +889,12 @@ export async function collectState(
       url: proxyUrl,
     },
     reverseProxy,
+    relay,
     ide: {
       configuredUrl,
       expectedUrl: proxyUrl,
-      isConfigured: ideMatch,
-      isLiveAttached: ideMatch,
+      isConfigured: isIdeConfigured,
+      isLiveAttached: isIdeConfigured,
     },
     logs,
     accounts,

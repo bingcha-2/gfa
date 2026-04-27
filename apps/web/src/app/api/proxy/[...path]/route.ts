@@ -21,6 +21,7 @@ const ALLOWED_PATH_PREFIXES = [
   "redeem-codes",
   "scheduler",
   "queue",
+  "admin",
   "expire-scan",
   "audit-logs",
   "users",

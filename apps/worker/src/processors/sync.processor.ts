@@ -106,9 +106,65 @@ export async function processSync(
 
     // Scrape current members from the page (visits each member detail page for real emails)
     const adminEmail = (account.loginEmail ?? "").trim().toLowerCase();
-    const { members, availableSlots } = await scrapeMembersFromPage(page, adminEmail);
+    let { members, availableSlots } = await scrapeMembersFromPage(page, adminEmail);
     await logger.log("INFO", `Found ${members.length} members on page`, { members });
 
+    // ── First-sync auto-removal: remove legacy members ──
+    // When lastSyncedAt is null this is the first sync for a newly imported account.
+    // Any members already in the group are "legacy" — they existed before our system
+    // managed this account and must be removed to free up slots.
+    const group = await prisma.familyGroup.findUnique({
+      where: { id: familyGroupId },
+      select: { lastSyncedAt: true },
+    });
+    const isFirstSync = !group?.lastSyncedAt;
+    const legacyMembers = isFirstSync
+      ? members.filter(m => !m.role.toLowerCase().includes("manager"))
+      : [];
+
+    if (legacyMembers.length > 0) {
+      await logger.log("INFO",
+        `[first-sync] 首次同步发现 ${legacyMembers.length} 个遗留成员，开始自动移除: ${legacyMembers.map(m => m.email || m.googleMemberId).join(", ")}`
+      );
+
+      // Import removeMemberOnPage at runtime to avoid circular dependency
+      const { removeMemberOnPage } = await import("./remove.processor");
+
+      for (const legacy of legacyMembers) {
+        const memberEmail = legacy.email || `gaia-${legacy.googleMemberId}@gaia.unknown`;
+        try {
+          // Navigate back to family page before each removal
+          await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+          await page.waitForTimeout(1000);
+
+          const result = await removeMemberOnPage(page, memberEmail, logger, {
+            password: account.loginPassword ?? undefined,
+            totpSecret: account.totpSecret ?? undefined,
+            googleMemberId: legacy.googleMemberId ?? undefined,
+            displayName: legacy.displayName ?? undefined,
+          });
+          await logger.log("INFO",
+            `[first-sync] 遗留成员 ${memberEmail} 移除结果: ${result}`
+          );
+        } catch (removeErr) {
+          await logger.log("WARN",
+            `[first-sync] 遗留成员 ${memberEmail} 移除失败: ${removeErr instanceof Error ? removeErr.message : String(removeErr)}`
+          );
+          // Continue with other members — don't let one failure block the rest
+        }
+      }
+
+      // Re-scrape after removals to get the clean state
+      await logger.log("INFO", "[first-sync] 遗留成员移除完成，重新扫描成员列表");
+      await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await page.waitForTimeout(2000);
+      const rescrape = await scrapeMembersFromPage(page, adminEmail);
+      members = rescrape.members;
+      availableSlots = rescrape.availableSlots;
+      await logger.log("INFO",
+        `[first-sync] 重新扫描: ${members.length} 个成员, ${availableSlots} 个可用位`
+      );
+    }
 
     // Deduplicate, reconcile with DB, compute slots, and update FamilyGroup
     const { memberCount, availableSlots: finalSlots } =
@@ -871,6 +927,7 @@ export async function dedupeAndUpdateGroupCounts(
     data: {
       memberCount: dedupedNonAdmin.length,
       availableSlots: computedSlots,
+      pendingInviteCount: 0,  // Reset: sync gives real state from Google
       lastSyncedAt: new Date(),
     },
   });
@@ -879,4 +936,54 @@ export async function dedupeAndUpdateGroupCounts(
     `Group counts updated: ${dedupedNonAdmin.length} members, ${computedSlots} slots available`);
 
   return { memberCount: dedupedNonAdmin.length, availableSlots: computedSlots };
+}
+
+/**
+ * Recalculate memberCount and availableSlots from actual FamilyMember records in DB.
+ *
+ * More reliable than page card counting (countMemberCardsOnPage) which can miscount
+ * the family manager card and inflate memberCount by 1, causing phantom "no slots"
+ * when slots actually exist.
+ *
+ * Used by: invite.processor, remove.processor post-operation recount.
+ * Full sync (dedupeAndUpdateGroupCounts) still uses scraped data as authoritative source.
+ */
+export async function recalcGroupCountsFromDB(
+  prisma: PrismaClient,
+  familyGroupId: string,
+  logger?: TaskLogger
+): Promise<{ memberCount: number; availableSlots: number }> {
+  // Look up admin email to exclude from count (safety: admin normally not in FamilyMember table,
+  // but scheduler applies the same guard so we stay consistent)
+  const group = await prisma.familyGroup.findUnique({
+    where: { id: familyGroupId },
+    select: { account: { select: { loginEmail: true } } },
+  });
+  const adminEmail = (group?.account?.loginEmail ?? "").trim().toLowerCase();
+
+  const activeMembers = await prisma.familyMember.count({
+    where: {
+      familyGroupId,
+      status: { in: ["ACTIVE", "PENDING"] },
+      ...(adminEmail ? { email: { not: adminEmail } } : {}),
+    },
+  });
+
+  const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - activeMembers);
+
+  await prisma.familyGroup.update({
+    where: { id: familyGroupId },
+    data: {
+      memberCount: activeMembers,
+      availableSlots: computedSlots,
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  if (logger) {
+    await logger.log("INFO",
+      `Group counts recalculated from DB: ${activeMembers} members, ${computedSlots} slots available`);
+  }
+
+  return { memberCount: activeMembers, availableSlots: computedSlots };
 }

@@ -260,7 +260,7 @@ async function getUserEmail(accessToken) {
     return data.email || null;
 }
 
-const DEFAULT_CLOUD_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
+const DEFAULT_CLOUD_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 
 /**
  * Discover projectId for an account right after login.
@@ -314,40 +314,24 @@ async function discoverProject(accessToken) {
 
 /**
  * Fetch plan type using the loadCodeAssist API.
- * Returns tier string like 'ultra', 'standard', or ''.
- * Uses full metadata aligned with Antigravity IDE / cockpit-tools.
+ * Multi-level fallback aligned with Antigravity-Manager (quota.rs):
+ *   1. paidTier.name (Google One AI Premium etc.)
+ *   2. currentTier.name (if account is NOT ineligible for free-tier)
+ *   3. allowedTiers default tier (marked as "Restricted")
+ * Uses minimal metadata for accurate tier detection.
  */
 async function fetchPlanType(accessToken, projectId) {
     try {
-        const arch = process.arch === 'arm64' ? 'ARM64' : 'AMD64';
-        const platform = process.platform === 'win32' ? `WINDOWS_${arch}`
-            : process.platform === 'darwin' ? `DARWIN_${arch}` : `LINUX_${arch}`;
-        const osArch = process.platform === 'win32' ? 'windows/amd64'
-            : process.platform === 'darwin' ? 'darwin/amd64' : 'linux/amd64';
-
         const payload = {
-            metadata: {
-                ideName: 'antigravity',
-                ideType: 'ANTIGRAVITY',
-                ideVersion: '1.99.0',
-                pluginVersion: '1.99.0',
-                platform,
-                updateChannel: 'stable',
-                pluginType: 'GEMINI',
-            },
-            mode: 'FULL_ELIGIBILITY_CHECK',
+            metadata: { ideType: 'ANTIGRAVITY' },
         };
-        if (projectId) {
-            payload.cloudaicompanionProject = projectId;
-        }
 
         const response = await fetch(`${DEFAULT_CLOUD_ENDPOINT}/v1internal:loadCodeAssist`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
-                'User-Agent': `antigravity/1.99.0 ${osArch} google-api-nodejs-client/10.3.0`,
-                'x-goog-api-client': 'gl-node/22.21.1',
+                'User-Agent': 'antigravity/1.99.0 google-api-nodejs-client/10.3.0',
             },
             body: JSON.stringify(payload),
         });
@@ -355,12 +339,36 @@ async function fetchPlanType(accessToken, projectId) {
         if (!response.ok) return '';
 
         const data = await response.json();
-        const tierId = data.paidTier?.id || data.currentTier?.id || '';
-        if (tierId.includes('ultra')) return 'ultra';
-        if (tierId.includes('premium')) return 'premium';
-        if (tierId.includes('standard')) return 'standard';
-        if (tierId.includes('free')) return 'free';
-        return tierId || '';
+
+        // Multi-level fallback for tier extraction (matches Antigravity-Manager logic)
+        // 1. Paid Tier (Google One AI Premium etc.)
+        let subscriptionTier = data.paidTier?.name || data.paidTier?.id || '';
+
+        if (!subscriptionTier) {
+            const isIneligible = Array.isArray(data.ineligibleTiers) && data.ineligibleTiers.length > 0;
+
+            if (!isIneligible) {
+                // 2. Current Tier (only if account is NOT marked ineligible)
+                subscriptionTier = data.currentTier?.name || data.currentTier?.id || '';
+            } else {
+                // 3. Account is ineligible for free-tier; fallback to allowedTiers default
+                const allowed = data.allowedTiers || [];
+                const defaultTier = allowed.find(t => t.isDefault === true);
+                if (defaultTier) {
+                    subscriptionTier = (defaultTier.name || defaultTier.id || '') + ' (Restricted)';
+                }
+            }
+        }
+
+        // Normalize to canonical plan names
+        const raw = String(subscriptionTier).toLowerCase();
+        if (raw.includes('ultra')) return 'ultra';
+        if (raw.includes('premium') || raw.includes('ai pro') || raw.includes('helium')) return 'premium';
+        if (raw.includes('standard')) return 'standard';
+        if (raw.includes('restricted')) return 'standard-restricted';
+        if (raw.includes('free')) return 'free';
+
+        return subscriptionTier || '';
     } catch {
         return '';
     }

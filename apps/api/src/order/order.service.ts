@@ -94,21 +94,44 @@ export class OrderService {
   /**
    * Guard: reject if email is already an ACTIVE/PENDING member in any group.
    * Prevents duplicate seat allocation across all entry points (join, swap, replace).
+   *
+   * Exception: members whose expiresAt has passed, or who are in groups with
+   * SUSPENDED/EXPIRED subscriptions, are NOT considered duplicates (renewal scenario).
    */
   private async guardDuplicateMember(email: string, label: string = "该邮箱") {
     const normalized = email.trim().toLowerCase();
+    const now = new Date();
     const existing = await this.prisma.familyMember.findFirst({
       where: {
         email: normalized,
         status: { in: ["ACTIVE", "PENDING"] },
       },
-      select: { email: true, status: true, familyGroup: { select: { groupName: true } } },
+      select: {
+        email: true,
+        status: true,
+        expiresAt: true,
+        familyGroup: {
+          select: {
+            groupName: true,
+            account: { select: { subscriptionStatus: true, subscriptionExpiresAt: true } },
+          },
+        },
+      },
     });
-    if (existing) {
-      throw new BadRequestException(
-        `${label} ${normalized} 已在组 ${existing.familyGroup?.groupName ?? '未知'} 中（状态: ${existing.status}），不能重复邀请。`
-      );
-    }
+    if (!existing) return;
+
+    // Allow re-invite if member's own subscription has expired
+    if (existing.expiresAt && existing.expiresAt <= now) return;
+
+    // Allow re-invite if the group's account subscription is suspended or expired
+    const subStatus = existing.familyGroup?.account?.subscriptionStatus;
+    const subExpiresAt = existing.familyGroup?.account?.subscriptionExpiresAt;
+    if (subStatus === "SUSPENDED" || subStatus === "EXPIRED") return;
+    if (subExpiresAt && new Date(subExpiresAt) <= now) return;
+
+    throw new BadRequestException(
+      `${label} ${normalized} 已在组 ${existing.familyGroup?.groupName ?? '未知'} 中（状态: ${existing.status}），不能重复邀请。`
+    );
   }
 
   /**
@@ -367,7 +390,7 @@ export class OrderService {
         userEmail: normalizedEmail,
         memberExpiresAt
       },
-      { ...JOB_DEFAULTS }
+      { ...JOB_DEFAULTS, jobId: task.id }
     );
 
     return {
@@ -461,7 +484,7 @@ export class OrderService {
         userEmail: order.userEmail,
         memberExpiresAt,
       },
-      { ...JOB_DEFAULTS }
+      { ...JOB_DEFAULTS, jobId: task.id }
     );
 
     return {
@@ -524,7 +547,7 @@ export class OrderService {
         targetMemberEmail,
         newUserEmail
       },
-      { ...JOB_DEFAULTS }
+      { ...JOB_DEFAULTS, jobId: task.id }
     );
 
     return { queued: true, taskId: task.id };
@@ -1459,7 +1482,35 @@ export class OrderService {
       throw new BadRequestException("未找到有效的会员记录。");
     }
 
-    // 4. Execute migration via existing service
+    // 4. PRE-CHECK: verify there are available seats before removing the member.
+    //    Without this, migrateMember() would remove first, then discover no slots,
+    //    leaving the member orphaned (REMOVED but not re-invited).
+    const now = new Date();
+    const availableGroups = await this.prisma.familyGroup.count({
+      where: {
+        status: "ACTIVE",
+        availableSlots: { gt: 0 },
+        // Exclude the member's current group (they're migrating away from it)
+        id: { not: lookup.familyGroup.id },
+        account: {
+          status: "HEALTHY",
+          subscriptionStatus: { notIn: ["SUSPENDED", "EXPIRED"] },
+          OR: [
+            { subscriptionExpiresAt: null },
+            { subscriptionExpiresAt: { gt: now } },
+          ],
+        },
+      },
+    });
+
+    if (availableGroups === 0) {
+      return {
+        success: false,
+        message: "当前暂无可用席位，请15分钟后再试或联系客服处理。",
+      };
+    }
+
+    // 5. Execute migration via existing service
     const result = await this.familyGroupService.migrateMember(
       lookup.familyGroup.id,
       normalizedEmail

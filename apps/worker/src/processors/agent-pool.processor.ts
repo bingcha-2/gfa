@@ -23,6 +23,8 @@ import { BrowserPool } from "../browser-pool";
 import { WorkerBrowser } from "../browser-context";
 import { TaskLogger } from "../task-logger";
 import { gmailLogin, type LoginCredentials } from "../gmail-login";
+import { handleAcceptInvite } from "./automation.processor";
+import { executeInviteOnPage } from "./invite.processor";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 const FAMILY_INVITE_URL = "https://myaccount.google.com/family/addmember?hl=en";
@@ -77,6 +79,98 @@ async function loginAndGetPage(
   await logger.log("INFO", `[${label}] Login successful for ${credentials.email}`);
 
   return { page, browser, profileId: acquired.profileId, stopHeartbeat };
+}
+
+type RosettaFamilyJoinPayload = {
+  taskId?: string;
+  action: "family-join";
+  credentials: { email: string; password: string; recoveryEmail?: string; totpSecret?: string };
+  childCredentials?: { email: string; password: string; recoveryEmail?: string; totpSecret?: string };
+};
+
+export async function processRosettaFamilyJoin(
+  job: Job<RosettaFamilyJoinPayload>,
+  deps: AgentPoolProcessorDeps
+): Promise<void> {
+  const { prisma, workerId } = deps;
+  const taskId = job.data.taskId ?? job.id ?? job.name;
+  if (!taskId) return;
+
+  const logger = new TaskLogger(prisma, taskId, workerId);
+  const motherCredentials = job.data.credentials;
+  const childCredentials = job.data.childCredentials;
+
+  if (!motherCredentials?.email || !motherCredentials.password) {
+    await logger.updateStatus("FAILED_FINAL", {
+      code: "MISSING_MOTHER_CREDENTIALS",
+      message: "Mother account credentials are required for family join",
+    });
+    return;
+  }
+  if (!childCredentials?.email || !childCredentials.password) {
+    await logger.updateStatus("FAILED_FINAL", {
+      code: "MISSING_CHILD_CREDENTIALS",
+      message: "Child account credentials are required for family join",
+    });
+    return;
+  }
+
+  let motherSession: Awaited<ReturnType<typeof loginAndGetPage>> | null = null;
+  let childSession: Awaited<ReturnType<typeof loginAndGetPage>> | null = null;
+
+  try {
+    await logger.updateStatus("RUNNING");
+    await logger.log("INFO", `[family-join] Mother ${motherCredentials.email} will invite ${childCredentials.email}`);
+
+    motherSession = await loginAndGetPage(motherCredentials, deps, logger, "family-join-mother");
+    await executeInviteOnPage(motherSession.page, childCredentials.email, logger);
+    await releaseSession(deps, motherSession.browser, motherSession.profileId, motherSession.stopHeartbeat, motherCredentials.email);
+    motherSession = null;
+
+    await logger.log("INFO", `[family-join] Invite sent, logging in child ${childCredentials.email} to accept`);
+    childSession = await loginAndGetPage(childCredentials, deps, logger, "family-join-child");
+    const accepted = await handleAcceptInvite(childSession.page, {
+      loginEmail: childCredentials.email,
+      loginPassword: childCredentials.password,
+      totpSecret: childCredentials.totpSecret,
+    }, logger);
+
+    if (!accepted) {
+      await logger.updateStatus("FAILED_RETRYABLE", {
+        code: "ACCEPT_INVITE_FAILED",
+        message: `Child ${childCredentials.email} did not accept the family invitation`,
+      });
+      throw new Error(`Child ${childCredentials.email} did not accept the family invitation`);
+    }
+
+    await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        payload: JSON.stringify({
+          action: "family-join",
+          email: motherCredentials.email,
+          childEmail: childCredentials.email,
+          result: { accepted: true, motherEmail: motherCredentials.email, childEmail: childCredentials.email },
+        }),
+      },
+    });
+    await logger.updateStatus("SUCCESS");
+    await logger.log("INFO", `[family-join] ${childCredentials.email} joined ${motherCredentials.email}'s family`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await logger.updateStatus("FAILED_RETRYABLE", {
+      code: "FAMILY_JOIN_FAILED",
+      message,
+    });
+    throw error;
+  } finally {
+    if (motherSession) {
+      await releaseSession(deps, motherSession.browser, motherSession.profileId, motherSession.stopHeartbeat, motherCredentials.email);
+    }
+    if (childSession) {
+      await releaseSession(deps, childSession.browser, childSession.profileId, childSession.stopHeartbeat, childCredentials.email);
+    }
+  }
 }
 
 /**

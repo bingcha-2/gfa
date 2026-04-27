@@ -46,12 +46,15 @@ export class ExpireScanService {
     private readonly removeQueue: Queue
   ) {}
 
-  /** Hourly cron: auto-scan and remove expired orders. */
+  /** Hourly cron: auto-scan and remove expired orders + check subscription expiry. */
   @Cron(CronExpression.EVERY_HOUR)
   async handleCron(): Promise<void> {
     this.logger.log("Cron: scanning expired orders");
     const results = await this.scanExpiredOrders();
     this.logger.log(`Cron: processed ${results.length} expired orders`);
+
+    // Phase 3: mark accounts with expired subscriptions as EXPIRED (DB-only, no browser)
+    await this.scanExpiredSubscriptions();
   }
 
   /**
@@ -250,18 +253,159 @@ export class ExpireScanService {
   }
 
   /** Return current scan statistics for the admin API. */
-  async getStatus(): Promise<ScanStatus> {
-    const pendingCount = await (this.prisma.order.count as any)({
-      where: {
-        expiresAt: { lte: new Date() },
-        status: { in: ACTIVE_STATUSES }
-      }
-    });
+  async getStatus(): Promise<ScanStatus & { expiredMemberCount: number }> {
+    const now = new Date();
+    const [pendingCount, expiredMemberCount] = await Promise.all([
+      (this.prisma.order.count as any)({
+        where: {
+          expiresAt: { lte: now },
+          status: { in: ACTIVE_STATUSES }
+        }
+      }),
+      this.prisma.familyMember.count({
+        where: {
+          expiresAt: { lte: now },
+          status: { in: ["ACTIVE", "PENDING"] },
+        },
+      }),
+    ]);
 
     return {
       pendingCount,
+      expiredMemberCount,
       lastRunAt: this.lastRunAt,
       lastRunCount: this.lastRunCount
     };
+  }
+
+  /**
+   * List all FamilyMembers whose expiresAt has passed but are still ACTIVE/PENDING.
+   * These are members that should be removed from their family group.
+   */
+  async getExpiredMembers() {
+    const now = new Date();
+    const members = await this.prisma.familyMember.findMany({
+      where: {
+        expiresAt: { lte: now },
+        status: { in: ["ACTIVE", "PENDING"] },
+      },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        status: true,
+        expiresAt: true,
+        joinedAt: true,
+        familyGroupId: true,
+        familyGroup: {
+          select: {
+            groupName: true,
+            status: true,
+            account: {
+              select: {
+                id: true,
+                name: true,
+                loginEmail: true,
+                status: true,
+                subscriptionStatus: true,
+                subscriptionExpiresAt: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { expiresAt: "asc" },
+    });
+
+    // Also check if there's already a pending/running removal task for each member
+    const memberIds = members.map((m) => m.id);
+    const existingTasks = memberIds.length > 0
+      ? await this.prisma.task.findMany({
+          where: {
+            type: "REMOVE_MEMBER",
+            status: { in: ["PENDING", "RUNNING"] },
+          },
+          select: { payload: true },
+        })
+      : [];
+
+    const pendingRemovalEmails = new Set(
+      existingTasks
+        .map((t) => {
+          try {
+            return JSON.parse(t.payload).memberEmail?.toLowerCase();
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+    );
+
+    return members.map((m) => ({
+      ...m,
+      hasRemovalTask: pendingRemovalEmails.has(m.email.toLowerCase()),
+    }));
+  }
+
+  /**
+   * Phase 3: DB-only subscription expiry check.
+   *
+   * Scans all accounts where `subscriptionExpiresAt <= now` but
+   * `subscriptionStatus` is not yet "EXPIRED". For each:
+   *   1. Mark subscriptionStatus → EXPIRED, syncError → SUBSCRIPTION_EXPIRED
+   *   2. Force all family groups to MANUAL_ONLY
+   *
+   * This catches accounts whose subscription expired while they were not
+   * being actively synced/health-checked (e.g. LOGIN_REQUIRED accounts
+   * with a manually-entered subscriptionExpiresAt).
+   */
+  async scanExpiredSubscriptions(): Promise<number> {
+    const now = new Date();
+
+    try {
+      const expiredAccounts = await this.prisma.account.findMany({
+        where: {
+          subscriptionExpiresAt: { lte: now },
+          subscriptionStatus: { not: "EXPIRED" },
+        },
+        select: { id: true, name: true, loginEmail: true, subscriptionStatus: true, subscriptionExpiresAt: true },
+      });
+
+      if (expiredAccounts.length === 0) return 0;
+
+      for (const account of expiredAccounts) {
+        try {
+          // Atomically update account subscription status
+          await this.prisma.account.update({
+            where: { id: account.id },
+            data: {
+              subscriptionStatus: "EXPIRED",
+              subscriptionStatusUpdatedAt: now,
+              syncError: "SUBSCRIPTION_EXPIRED",
+            },
+          });
+
+          // Force all family groups under this account to MANUAL_ONLY
+          const updated = await this.prisma.familyGroup.updateMany({
+            where: { accountId: account.id, status: { not: "DISABLED" } },
+            data: { status: "MANUAL_ONLY" },
+          });
+
+          this.logger.warn(
+            `Subscription expired for account ${account.name} (${account.loginEmail}): ` +
+            `was ${account.subscriptionStatus ?? "unknown"}, expired at ${account.subscriptionExpiresAt?.toISOString()}. ` +
+            `Forced ${updated.count} group(s) to MANUAL_ONLY.`
+          );
+        } catch (err) {
+          this.logger.error(`Failed to process expired subscription for account ${account.id}: ${String(err)}`);
+        }
+      }
+
+      this.logger.log(`Phase 3: marked ${expiredAccounts.length} account(s) with expired subscriptions`);
+      return expiredAccounts.length;
+    } catch (err) {
+      this.logger.error(`Phase 3 subscription expiry scan failed: ${String(err)}`);
+      return 0;
+    }
   }
 }

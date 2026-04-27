@@ -5,21 +5,20 @@
  * into a single reusable function. Each processor calls this after gmailLogin()
  * returns a failed result.
  *
- * === New strategy (v2) ===
- * On ANY login failure:
- *   1. Record cumulative failure count for the account
- *   2. If count >= 3 → mark account RISKY + MANUAL_REVIEW (needs human intervention)
- *   3. Otherwise → throw Error so BullMQ retries (processor may try a different account)
+ * === Strategy ===
+ * On login failure, behaviour depends on the failure reason:
  *
- * ACCOUNT_LOCKED is still immediately non-retryable (SUSPENDED).
+ * Immediately mark RISKY (needs human intervention):
+ *   - CAPTCHA             → mark RISKY, set syncError=CAPTCHA_REQUIRED
+ *   - PHONE_CHALLENGE     → mark RISKY, set syncError=PHONE_CHALLENGE
+ *   - VERIFICATION_REQUIRED → mark VERIFICATION_REQUIRED, set syncError=PASSWORD_ERROR
+ *   - UNKNOWN (password error) → mark RISKY, set syncError=PASSWORD_ERROR
  *
- * Behavior matrix:
- *   TRANSIENT           → record failure + throw Error (BullMQ retries with possible account switch)
- *   PHONE_CHALLENGE     → record failure + throw Error
- *   CAPTCHA             → record failure + cooldown + throw Error
- *   ACCOUNT_LOCKED      → mark SUSPENDED + throw UnrecoverableError
- *   VERIFICATION_REQUIRED / UNKNOWN
- *                       → record failure, if count >= 3 mark RISKY, else throw Error
+ * Retryable (BullMQ retries, never RISKY):
+ *   - TRANSIENT (network timeout, page load failure) → throw Error
+ *
+ * Non-retryable:
+ *   - ACCOUNT_LOCKED      → mark SUSPENDED + throw UnrecoverableError
  */
 
 import { Job, UnrecoverableError } from "bullmq";
@@ -28,8 +27,6 @@ import type { BrowserPool } from "./browser-pool";
 import type { TaskLogger } from "./task-logger";
 import type { GmailLoginResult } from "./gmail-login";
 
-/** Threshold: after this many cumulative failures, mark account RISKY */
-const ACCOUNT_FAILURE_THRESHOLD = 5;
 
 export interface HandleLoginResultContext {
   job: Job;
@@ -78,7 +75,6 @@ export async function handleLoginResult(
   if (loginResult.reason === "ACCOUNT_LOCKED") {
     const LOCKED_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
     await pool.recordLoginFailure(accountId, LOCKED_COOLDOWN_MS);
-    await pool.recordAccountTaskFailure(accountId);
     await prisma.account.update({
       where: { id: accountId },
       data: { status: "SUSPENDED" as any },
@@ -90,86 +86,94 @@ export async function handleLoginResult(
     throw new UnrecoverableError("MANUAL_REVIEW");
   }
 
-  // ── All other failures: record cumulative count and check threshold ──
-
-  // CAPTCHA → also set a short cooldown to avoid hammering Google
-  if (loginResult.reason === "CAPTCHA") {
-    const CAPTCHA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-    await pool.recordLoginFailure(accountId, CAPTCHA_COOLDOWN_MS);
-  } else {
-    // For TRANSIENT, PHONE_CHALLENGE, VERIFICATION_REQUIRED, UNKNOWN:
-    // set a shorter cooldown to avoid immediate re-login
+  // TRANSIENT (network timeout, page load failure) → never mark RISKY.
+  // Just set a short cooldown and let BullMQ retry.
+  if (loginResult.reason === "TRANSIENT") {
     await pool.recordLoginFailure(accountId, 2 * 60 * 1000); // 2 min cooldown
+    await logger.log("WARN",
+      `账号 ${accountId} 登录临时失败（网络/页面加载问题），将重试`
+    );
+    throw new Error(
+      `LOGIN_FAILED:${loginResult.reason}:${accountId}|${loginResult.detail}`
+    );
   }
 
-  // Record cumulative failure count
-  const failureCount = await pool.recordAccountTaskFailure(accountId);
-  await logger.log(
-    "WARN",
-    `账号 ${accountId} 登录失败（原因: ${loginResult.reason}），累计失败: ${failureCount}/${ACCOUNT_FAILURE_THRESHOLD}`
-  );
+  // ── Security challenges: only mark account for CONFIRMED issues ──
+  // CAPTCHA, PHONE_CHALLENGE, VERIFICATION_REQUIRED, UNKNOWN (password error)
+  // require human intervention → mark account status + set syncError.
+  // Unrecognized reasons → only set cooldown, do NOT change account status.
 
-  // Check if we've hit the threshold → mark account RISKY for human intervention
-  if (failureCount >= ACCOUNT_FAILURE_THRESHOLD) {
-    const accountStatus =
-      loginResult.reason === "VERIFICATION_REQUIRED"
-        ? "VERIFICATION_REQUIRED"
-        : (ctx.unknownAccountStatus ?? "RISKY");
+  if (loginResult.reason === "CAPTCHA") {
+    await pool.recordLoginFailure(accountId, 5 * 60 * 1000); // 5 min cooldown
+  } else {
+    await pool.recordLoginFailure(accountId, 2 * 60 * 1000);
+  }
 
-    let syncError: string | null = null;
-    if (loginResult.reason === "CAPTCHA") {
-      syncError = "CAPTCHA_REQUIRED";
-    } else if (loginResult.reason === "UNKNOWN" || loginResult.reason === "VERIFICATION_REQUIRED") {
-      syncError = "PASSWORD_ERROR";
-    }
+  // Map reason → account status (only for confirmed issues)
+  const accountStatusMap: Record<string, string> = {
+    CAPTCHA: "RISKY",
+    PHONE_CHALLENGE: "RISKY",
+    VERIFICATION_REQUIRED: "VERIFICATION_REQUIRED",
+    UNKNOWN: "RISKY",
+  };
+  const newAccountStatus = accountStatusMap[loginResult.reason] ?? null;
 
+  const syncErrorMap: Record<string, string> = {
+    CAPTCHA: "CAPTCHA_REQUIRED",
+    PHONE_CHALLENGE: "PHONE_CHALLENGE",
+    VERIFICATION_REQUIRED: "PASSWORD_ERROR",
+    UNKNOWN: "PASSWORD_ERROR",
+  };
+  const syncError = syncErrorMap[loginResult.reason] ?? null;
+
+  // Only update account status if we have a confirmed reason
+  if (newAccountStatus && syncError) {
     await prisma.account.update({
       where: { id: accountId },
       data: {
-        status: accountStatus as any,
+        status: newAccountStatus as any,
         syncError,
         ...(ctx.extraAccountUpdate ?? {}),
       },
     });
 
-    if (syncError) {
-      await prisma.familyGroup.updateMany({
-        where: { accountId },
-        data: { status: "MANUAL_ONLY" }
-      });
-      await logger.log("INFO", `Set all family groups for account ${accountId} to MANUAL_ONLY due to auto-sync failure (${syncError})`);
-    }
-
-    await logger.log(
-      "ERROR",
-      `账号 ${accountId} 累计失败 ${failureCount} 次 — 已标记为 ${accountStatus}，需要人工干预`
-    );
-
-    const reasonMap: Record<string, string> = {
-      TRANSIENT: "登录页加载超时",
-      PHONE_CHALLENGE: "Google要求手机验证",
-      CAPTCHA: "Google要求验证码",
-      ACCOUNT_LOCKED: "账号已被锁定",
-      VERIFICATION_REQUIRED: "需要身份验证",
-      UNKNOWN: "密码错误或登录异常",
-    };
-    const reasonCN = reasonMap[loginResult.reason] ?? loginResult.reason;
-
-    await logger.updateStatus("MANUAL_REVIEW", {
-      code: `ACCOUNT_${accountStatus}`,
-      message: `登录失败 ${failureCount} 次（${reasonCN}），请手动检查账号`,
+    await prisma.familyGroup.updateMany({
+      where: { accountId },
+      data: { status: "MANUAL_ONLY" }
     });
-
-    if (ctx.returnOnFinal) {
-      return true; // Caller should return (used by health.processor)
+    await logger.log("INFO", `Set all family groups for account ${accountId} to MANUAL_ONLY due to ${syncError}`);
+  } else {
+    // Unrecognized reason — only apply extra update (e.g. lastHealthCheckAt) if provided
+    if (ctx.extraAccountUpdate) {
+      await prisma.account.update({
+        where: { id: accountId },
+        data: ctx.extraAccountUpdate,
+      });
     }
-
-    throw new UnrecoverableError("MANUAL_REVIEW");
   }
 
-  // Under threshold → throw Error so BullMQ retries.
-  // The processor (invite/replace) can catch this and try a different account.
-  throw new Error(
-    `LOGIN_FAILED:${loginResult.reason}:${accountId}|${loginResult.detail}`
+  const reasonMap: Record<string, string> = {
+    CAPTCHA: "Google要求验证码",
+    PHONE_CHALLENGE: "Google要求手机验证",
+    VERIFICATION_REQUIRED: "需要身份验证",
+    UNKNOWN: "密码错误或登录异常",
+  };
+  const reasonCN = reasonMap[loginResult.reason] ?? loginResult.reason;
+  const displayStatus = newAccountStatus ?? "（未改变）";
+
+  await logger.log("ERROR",
+    `账号 ${accountId} 登录失败（${reasonCN}）— 账号状态: ${displayStatus}，需要人工干预`
   );
+
+  const detailSuffix = loginResult.detail ? `：${loginResult.detail}` : '';
+  await logger.updateStatus("MANUAL_REVIEW", {
+    code: newAccountStatus ? `ACCOUNT_${newAccountStatus}` : "LOGIN_FAILED",
+    message: `登录失败（${reasonCN}${detailSuffix}），请手动检查账号`,
+  });
+
+  if (ctx.returnOnFinal) {
+    return true; // Caller should return (used by health.processor)
+  }
+
+  throw new UnrecoverableError("MANUAL_REVIEW");
 }

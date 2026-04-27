@@ -38,6 +38,40 @@ function migrateFileIfNeeded(legacyPath, targetPath, label) {
 }
 
 const projectRoot = path.resolve(__dirname, '..');
+const DEFAULT_REMOTE_TOKEN_SERVER_URL = 'https://bcai.site/remote-token';
+
+function normalizeUrl(value) {
+    return String(value || '').trim().toLowerCase().replace(/\/+$/, '');
+}
+
+function isRemoteMode(config) {
+    const mode = String(
+        config?.tokenProxyMode ||
+        config?.tokenSource ||
+        config?.relayProxy?.tokenSource ||
+        'local'
+    ).trim().toLowerCase();
+    return mode === 'remote' || mode === 'token-passthrough' || mode === 'relay';
+}
+
+function migrateRemoteTokenUrlIfNeeded(configPath, config) {
+    if (!isRemoteMode(config)) return config;
+    const relay = config.relayProxy || (config.relayProxy = {});
+    const current = normalizeUrl(relay.tokenServerUrl || config.remoteTokenServerUrl);
+    if (current && current !== 'http://127.0.0.1:60700' && current !== 'http://localhost:60700') {
+        return config;
+    }
+    relay.tokenServerUrl = DEFAULT_REMOTE_TOKEN_SERVER_URL;
+    try {
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+        console.log(`[migrate] Remote token URL -> ${DEFAULT_REMOTE_TOKEN_SERVER_URL}`);
+    } catch (error) {
+        console.error(`[migrate] Failed to update remote token URL: ${error.message}`);
+    }
+    return config;
+}
+
 migrateFileIfNeeded(
     path.join(projectRoot, 'accounts.json'),
     paths.accountsPath(),
@@ -74,11 +108,14 @@ if (fs.existsSync(centralConfigPath)) {
     }
 }
 
+fileConfig = migrateRemoteTokenUrlIfNeeded(centralConfigPath, fileConfig);
+
 const logFilePath = path.resolve(fileConfig.tokenProxyLogPath || paths.tokenProxyLogPath());
 const logger = createLogger({ filePath: logFilePath });
 
 const config = {
     proxyPort: fileConfig.tokenProxyPort || 60670,
+    configPath: centralConfigPath,
     accountsFilePath: fileConfig.accountsFilePath || paths.accountsPath(),
     cloudEndpoint: fileConfig.googleCloudEndpoint || undefined,
     cooldownMs: fileConfig.tokenProxyCooldownMs || 60000,

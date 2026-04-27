@@ -761,7 +761,7 @@ async function handleReAuth(
 // Accept invite handler
 // ============================================================
 
-async function handleAcceptInvite(
+export async function handleAcceptInvite(
   page: import("playwright").Page,
   credentials: LoginCredentials,
   logger: TaskLogger
@@ -1691,6 +1691,7 @@ async function doProactivePhoneVerification(
     resolved: result.resolved,
     usedPhone: result.usedPhone,
     disabledPhones: result.disabledPhones,
+    error: result.error,
   };
   // Return token info so the client can use it
   payloadObj.token = {
@@ -1746,9 +1747,10 @@ async function doProactivePhoneVerification(
       } catch { /* best-effort */ }
     }
   } else {
+    const isQrFailure = String(result.error || "").includes("验证失败（扫码）");
     if (setTaskStatus) {
       await logger.updateStatus("FAILED_FINAL", {
-        code: "PHONE_VERIFY_FAILED",
+        code: isQrFailure ? "PHONE_VERIFY_QR_REQUIRED" : "PHONE_VERIFY_FAILED",
         message: result.error ?? "Phone verification failed",
       });
     }
@@ -1767,6 +1769,22 @@ async function doProactivePhoneVerification(
       });
       await logger.log("INFO", `[phone-verify] Phone ${disabledPhone.slice(-4)} disabled in pool`);
     } catch { /* best-effort */ }
+  }
+
+  if (String(result.error || "").includes("验证失败（扫码）")) {
+    await closePhoneVerificationBrowser(page, logger);
+  }
+}
+
+async function closePhoneVerificationBrowser(
+  page: import("playwright").Page,
+  logger: TaskLogger
+): Promise<void> {
+  try {
+    await logger.log("INFO", "[phone-verify] QR failure detected — closing browser session to release profile");
+    await page.context().browser()?.close();
+  } catch (error) {
+    await logger.log("WARN", `[phone-verify] Browser close after QR failure failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

@@ -308,7 +308,22 @@ export default function AccountsPage() {
                             <TableCell>
                               <div className="text-sm">{a._count?.familyGroups ?? 0} 组 · {a._count?.tasks ?? 0} 任务</div>
                               <div className="text-xs text-muted-foreground">
-                                登录 {formatDateTime(a.lastLoginAt)} · 到期 {a.subscriptionExpiresAt ? formatDateTime(a.subscriptionExpiresAt) : "未知"}
+                                登录 {formatDateTime(a.lastLoginAt)} · 到期 {a.subscriptionExpiresAt ? (
+                                  <span className={(() => {
+                                    const diff = Math.floor((new Date(a.subscriptionExpiresAt).getTime() - Date.now()) / 86400000);
+                                    if (diff < 0) return "text-destructive font-semibold";
+                                    if (diff <= 30) return "text-orange-500 font-semibold";
+                                    return "";
+                                  })()}>
+                                    {formatDateTime(a.subscriptionExpiresAt)}
+                                    {(() => {
+                                      const diff = Math.floor((new Date(a.subscriptionExpiresAt).getTime() - Date.now()) / 86400000);
+                                      if (diff < 0) return ` (已过期${Math.abs(diff)}天)`;
+                                      if (diff <= 30) return ` (剩${diff}天)`;
+                                      return "";
+                                    })()}
+                                  </span>
+                                ) : "未知"}
                               </div>
                               <Badge variant={subBadgeVariant(a.subscriptionStatus ?? "未知")} className="text-xs mt-1">{a.subscriptionStatus ?? "未知"}</Badge>
                             </TableCell>

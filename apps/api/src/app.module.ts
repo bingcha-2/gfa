@@ -22,6 +22,7 @@ import { SchedulerModule } from "./scheduler/scheduler.module";
 import { PhonePoolModule } from "./phone-pool/phone-pool.module";
 import { FaqModule } from "./faq/faq.module";
 import { HealthController } from "./health.controller";
+import { RemoteTokenController } from "./remote-token.controller";
 
 import { StatsController } from "./stats.controller";
 
@@ -67,7 +68,7 @@ import { StatsController } from "./stats.controller";
     PhonePoolModule,
     FaqModule,
   ],
-  controllers: [HealthController, StatsController],
+  controllers: [HealthController, StatsController, RemoteTokenController],
   providers: [
     // RealIpThrottlerGuard must be first so rate-limit is checked before auth
     { provide: APP_GUARD, useClass: RealIpThrottlerGuard },

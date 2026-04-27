@@ -11,7 +11,6 @@ import {
 import { TaskSummary } from "../lib/types";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "./spinner";
-import { StatusBadge } from "./status-badge";
 
 /** 格式化绝对时间为本地可读字符串 */
 function fmtTime(iso: string): string {
@@ -95,6 +94,16 @@ type ActioningState = {
   taskId: string;
   action: "retry" | "complete" | "fail" | "cancel";
 } | null;
+
+/** Map raw task status to simplified 3-state display */
+function getSimplifiedStatus(status: string): { label: string; color: string; bg: string } {
+  const running = new Set(["PENDING", "RUNNING", "MANUAL_REVIEW"]);
+  const success = new Set(["SUCCESS", "COMPLETED", "INVITE_SENT", "REPLACED_AND_INVITE_SENT"]);
+  if (running.has(status)) return { label: "执行中", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" };
+  if (success.has(status)) return { label: "成功", color: "#22c55e", bg: "rgba(34,197,94,0.12)" };
+  if (status === "CANCELLED") return { label: "已终止", color: "#94a3b8", bg: "rgba(148,163,184,0.12)" };
+  return { label: "失败", color: "#ef4444", bg: "rgba(239,68,68,0.12)" };
+}
 
 export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -350,7 +359,23 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                         <TaskTimeMeta task={task} />
                       </td>
                       <td>
-                        <StatusBadge value={isActioning ? "RUNNING" : task.status} />
+                        {(() => {
+                          const ss = getSimplifiedStatus(isActioning ? "RUNNING" : task.status);
+                          return (
+                            <span style={{
+                              display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+                              fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.02em',
+                              color: ss.color, background: ss.bg, border: `1px solid ${ss.color}22`,
+                            }}>
+                              {isActioning ? "执行中" : ss.label}
+                            </span>
+                          );
+                        })()}
+                        {!isActioning && task.status !== getSimplifiedStatus(task.status).label && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--clr-muted, #94a3b8)', marginTop: 2 }}>
+                            {task.status}
+                          </div>
+                        )}
                       </td>
                       <td>
                         {task.order?.orderNo && (
@@ -398,65 +423,65 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                         )}
                       </td>
                       <td>
-                        <div className="inline-actions">
-                          {canRetryTask(role, task.status) ? (
+                        <div className="inline-actions" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {canRetryTask(role, task.status) && (
                             <button
                               className="button secondary small"
                               disabled={isActioning}
                               onClick={() => void handleRetry(task.id)}
                               type="button"
-                              style={{ gap: 6 }}
+                              style={{ gap: 4, fontSize: '0.78rem' }}
                             >
                               {isActioning && actioning?.action === "retry"
                                 ? <><Spinner size={12} color="currentColor" /> 重试中...</>
-                                : "重试"}
+                                : "🔄 重试"}
                             </button>
-                          ) : null}
-                          {canManualCompleteTask(role, task.status) ? (
-                            <button
-                              className="button secondary small"
-                              disabled={isActioning}
-                              onClick={() => void handleManualComplete(task.id)}
-                              type="button"
-                              style={{ gap: 6 }}
-                            >
-                              {isActioning && actioning?.action === "complete"
-                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
-                                : "手动完成"}
-                            </button>
-                          ) : null}
-                          {canManualFailTask(role, task.status) ? (
-                            <button
-                              className="button secondary small"
-                              disabled={isActioning}
-                              onClick={() => void handleManualFail(task.id)}
-                              type="button"
-                              style={{ gap: 6 }}
-                            >
-                              {isActioning && actioning?.action === "fail"
-                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
-                                : "手动失败"}
-                            </button>
-                          ) : null}
-                          {canCancelTask(role, task.status) ? (
+                          )}
+                          {canCancelTask(role, task.status) && (
                             <button
                               className="button secondary small"
                               disabled={isActioning}
                               onClick={() => void handleCancel(task.id)}
                               type="button"
-                              style={{ gap: 6, color: 'var(--clr-error, #ef4444)' }}
+                              style={{ gap: 4, fontSize: '0.78rem', color: 'var(--clr-error, #ef4444)' }}
                             >
                               {isActioning && actioning?.action === "cancel"
                                 ? <><Spinner size={12} color="currentColor" /> 终止中...</>
-                                : "终止"}
+                                : "⛔ 终止"}
                             </button>
-                          ) : null}
+                          )}
+                          {canManualCompleteTask(role, task.status) && (
+                            <button
+                              className="button secondary small"
+                              disabled={isActioning}
+                              onClick={() => void handleManualComplete(task.id)}
+                              type="button"
+                              style={{ gap: 4, fontSize: '0.78rem' }}
+                            >
+                              {isActioning && actioning?.action === "complete"
+                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
+                                : "✅ 手动完成"}
+                            </button>
+                          )}
+                          {canManualFailTask(role, task.status) && (
+                            <button
+                              className="button secondary small"
+                              disabled={isActioning}
+                              onClick={() => void handleManualFail(task.id)}
+                              type="button"
+                              style={{ gap: 4, fontSize: '0.78rem' }}
+                            >
+                              {isActioning && actioning?.action === "fail"
+                                ? <><Spinner size={12} color="currentColor" /> 处理中...</>
+                                : "❌ 手动失败"}
+                            </button>
+                          )}
                           {!canRetryTask(role, task.status) &&
                           !canManualCompleteTask(role, task.status) &&
                           !canManualFailTask(role, task.status) &&
-                          !canCancelTask(role, task.status) ? (
-                            <span className="muted">无可用动作</span>
-                          ) : null}
+                          !canCancelTask(role, task.status) && (
+                            <span className="muted" style={{ fontSize: '0.78rem' }}>—</span>
+                          )}
                         </div>
                       </td>
                     </tr>

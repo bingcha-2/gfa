@@ -41,7 +41,7 @@ const DEFAULT_OAUTH_SCOPES = [
 ];
 
 // Default Cloud Code API endpoint
-const DEFAULT_CLOUD_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
+const DEFAULT_CLOUD_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 
 // Token refresh buffer: refresh 5 minutes before actual expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -755,19 +755,17 @@ function createTokenManager(config) {
 
     /**
      * Fetch plan type via loadCodeAssist API.
-     * This is the same API that the Antigravity IDE uses to get paidTier.
-     * Aligned with cockpit-tools quota.rs — must send full metadata, platform,
-     * User-Agent, x-goog-api-client, and mode=FULL_ELIGIBILITY_CHECK.
+     * Multi-level fallback aligned with Antigravity-Manager (quota.rs):
+     *   1. paidTier.name (Google One AI Premium etc.)
+     *   2. currentTier.name (if account is NOT ineligible for free-tier)
+     *   3. allowedTiers default tier (marked as "Restricted")
+     * Uses the sandbox endpoint and minimal metadata for accurate results.
      */
     async function fetchPlanViaLoadCodeAssist(token, projectId, email) {
         try {
             const payload = {
-                metadata: buildCloudCodeMetadata(projectId),
-                mode: 'FULL_ELIGIBILITY_CHECK',
+                metadata: { ideType: 'ANTIGRAVITY' },
             };
-            if (projectId) {
-                payload.cloudaicompanionProject = projectId;
-            }
             const body = JSON.stringify(payload);
             const res = await apiRequest(
                 `${cloudEndpoint}/v1internal:loadCodeAssist`,
@@ -777,7 +775,6 @@ function createTokenManager(config) {
                     'content-type': 'application/json',
                     'content-length': String(Buffer.byteLength(body)),
                     'user-agent': buildLoadCodeAssistUserAgent(),
-                    'x-goog-api-client': 'gl-node/22.21.1',
                     'accept-encoding': 'identity',
                 },
                 body
@@ -787,13 +784,42 @@ function createTokenManager(config) {
                 return '';
             }
             const data = JSON.parse(res.body);
-            const tierId = data.paidTier?.id || data.currentTier?.id || '';
-            if (tierId.includes('ultra')) return 'ultra';
-            if (tierId.includes('premium')) return 'premium';
-            if (tierId.includes('standard')) return 'standard';
-            if (tierId.includes('free')) return 'free';
-            log(`[token-manager] ${email}: loadCodeAssist tier=${tierId || 'unknown'}`);
-            return tierId || '';
+
+            // Multi-level fallback for tier extraction (matches Antigravity-Manager logic)
+            // 1. Paid Tier (Google One AI Premium etc.)
+            let subscriptionTier = data.paidTier?.name || data.paidTier?.id || '';
+
+            if (!subscriptionTier) {
+                const isIneligible = Array.isArray(data.ineligibleTiers) && data.ineligibleTiers.length > 0;
+
+                if (!isIneligible) {
+                    // 2. Current Tier (only if account is NOT marked ineligible)
+                    subscriptionTier = data.currentTier?.name || data.currentTier?.id || '';
+                } else {
+                    // 3. Account is ineligible for free-tier; fallback to allowedTiers default
+                    const allowed = data.allowedTiers || [];
+                    const defaultTier = allowed.find(t => t.isDefault === true);
+                    if (defaultTier) {
+                        subscriptionTier = (defaultTier.name || defaultTier.id || '') + ' (Restricted)';
+                    }
+                }
+            }
+
+            // Normalize to canonical plan names
+            const raw = String(subscriptionTier).toLowerCase();
+            if (raw.includes('ultra')) return 'ultra';
+            if (raw.includes('premium') || raw.includes('ai pro') || raw.includes('helium')) return 'premium';
+            if (raw.includes('standard')) return 'standard';
+            if (raw.includes('restricted')) return 'standard-restricted';
+            if (raw.includes('free')) return 'free';
+
+            if (subscriptionTier) {
+                log(`[token-manager] ${email}: loadCodeAssist subscription tier: ${subscriptionTier}`);
+                return subscriptionTier;
+            }
+
+            log(`[token-manager] ${email}: loadCodeAssist returned no tier info`);
+            return '';
         } catch (error) {
             log(`[token-manager] ${email}: loadCodeAssist error: ${error.message}`);
             return '';

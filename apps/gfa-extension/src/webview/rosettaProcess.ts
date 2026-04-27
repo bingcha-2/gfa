@@ -17,6 +17,30 @@ import {
 
 const IS_WIN = process.platform === "win32";
 const IS_MAC = process.platform === "darwin";
+const DEFAULT_REMOTE_TOKEN_SERVER_URL = "https://bcai.site/remote-token";
+
+function isOldLocalRemoteTokenUrl(value: any): boolean {
+  const raw = String(value || "").trim().toLowerCase().replace(/\/+$/, "");
+  return raw === "http://127.0.0.1:60700" || raw === "http://localhost:60700";
+}
+
+// Relay proxy status port — always independent of the proxy port.
+// The relay proxy shares the token proxy port (60670) for actual traffic,
+// but keeps a dedicated status port (default: 60681) for health checks.
+function getRelayStatusPort(config: any): number {
+  const v = Number(config?.tokenProxyPort);
+  const tokenProxyPort = Number.isFinite(v) && v > 0 ? v : 60670;
+  return tokenProxyPort + 1;
+}
+
+// ─── Diagnostic logging ────────────────────────────────────────────────
+let _outputChannel: any = null;
+export function setOutputChannel(ch: any) { _outputChannel = ch; }
+function procLog(msg: string): void {
+  if (!_outputChannel) return;
+  const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  _outputChannel.appendLine(`[${ts}] [proc] ${msg}`);
+}
 
 function getPlatformString(): string {
   if (IS_WIN) return "WINDOWS_AMD64";
@@ -68,12 +92,24 @@ function resolveNodeBinary(): string {
   throw new Error("找不到 Node.js，请先安装或把 node 加到 PATH。");
 }
 
-function launchDetachedNodeScript(nodeBinary: string, scriptPath: string, cwd: string): number | undefined {
+function launchDetachedNodeScript(nodeBinary: string, scriptPath: string, cwd: string, env?: Record<string, string>): number | undefined {
+  const fs = require("fs");
+  // Create a log file to capture stderr for debugging startup failures
+  const logDir = path.join(cwd, "..", "..", "..", "logs");
+  try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* */ }
+  const errLogPath = path.join(logDir, `detached-${path.basename(scriptPath, ".js")}.log`);
+  let stderrFd: number | undefined;
+  try { stderrFd = fs.openSync(errLogPath, "a"); } catch { /* */ }
+
   const child = spawn(nodeBinary, [scriptPath], {
     cwd,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", stderrFd != null ? stderrFd : "ignore", stderrFd != null ? stderrFd : "ignore"],
     windowsHide: true,
+    env: env ? { ...process.env, ...env } : undefined,
+  });
+  child.on("error", (err: any) => {
+    try { fs.appendFileSync(errLogPath, `[spawn error] ${err.message}\n`); } catch { /* */ }
   });
   child.unref();
   return child.pid;
@@ -250,27 +286,117 @@ async function cleanupDetachedNodeScripts(port: number, statusPort: number, proc
   } catch { /* ignore */ }
 }
 
+/**
+ * Combined stop + cleanup in a SINGLE PowerShell invocation (Windows).
+ * Replaces the serial stopProxyByPort + cleanupDetachedNodeScripts calls
+ * which previously required 6-9 separate PowerShell invocations (~10-15s).
+ * Now completes in a single ~2s PowerShell call.
+ */
+async function stopAndCleanup(port: number, statusPort: number, processPattern: string): Promise<void> {
+  procLog(`[stopAndCleanup] port=${port} statusPort=${statusPort} pattern="${processPattern}"`);
+  if (IS_WIN) {
+    const ports = [...new Set([port, statusPort].filter((v) => v > 0))];
+    const portsArray = ports.map(String).join(",");
+    // Single PowerShell script that:
+    // 1. Finds PIDs listening on the target ports
+    // 2. Checks each PID's command line for the process pattern
+    // 3. Kills matching port listeners
+    // 4. Finds any orphan node processes with the pattern and kills them too
+    const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$ports = @(${portsArray})
+$pattern = "*${processPattern}*"
+$killedPids = @()
+$diag = @()
+$diag += "PORTS: $($ports -join ',')"
+$diag += "PATTERN: $pattern"
+
+# Step 1: Kill processes listening on target ports that match the pattern
+foreach ($p in $ports) {
+  $conns = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
+  $diag += "PORT $p LISTENERS: $($conns.Count)"
+  foreach ($conn in $conns) {
+    $ownerPid = $conn.OwningProcess
+    if ($ownerPid -gt 0 -and $killedPids -notcontains $ownerPid) {
+      $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+      $cmdline = if ($proc) { $proc.CommandLine } else { '(none)' }
+      $matched = if ($proc) { $proc.CommandLine -like $pattern } else { $false }
+      $diag += "  PID $ownerPid CMD=$cmdline MATCH=$matched"
+      if ($proc -and $matched) {
+        Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+        $killedPids += $ownerPid
+        $diag += "  KILLED PID $ownerPid"
+      }
+    }
+  }
+}
+
+# Step 2: Clean up any orphan node processes matching the pattern
+$allNodeProcs = Get-CimInstance Win32_Process | Where-Object {
+  $_.Name -match '^node(\\.exe)?$' -and $_.CommandLine -like $pattern
+}
+$diag += "ORPHAN NODE PROCS: $($allNodeProcs.Count)"
+foreach ($proc in $allNodeProcs) {
+  $diag += "  ORPHAN PID $($proc.ProcessId) CMD=$($proc.CommandLine)"
+  if ($killedPids -notcontains $proc.ProcessId) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    $diag += "  KILLED ORPHAN PID $($proc.ProcessId)"
+  }
+}
+
+$diag += "TOTAL KILLED: $($killedPids.Count)"
+$diag -join [char]10
+`.trim();
+    try {
+      const output = await runPowerShell(script);
+      procLog(`[stopAndCleanup] PowerShell output:\n${output}`);
+    } catch (e: any) {
+      procLog(`[stopAndCleanup] PowerShell error: ${e.message}`);
+    }
+  } else {
+    // Unix: fall back to the original sequential approach (fast enough)
+    await stopProxyByPort(port, statusPort, processPattern);
+    await cleanupDetachedNodeScripts(port, statusPort, processPattern);
+  }
+  procLog(`[stopAndCleanup] done`);
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────
 
 export async function startProxy(state: RosettaState): Promise<void> {
   const port = Number(state.config.tokenProxyPort || 60670);
   const statusPort = port + 1;
   const processPattern = state.workspace.paths.startProcessPattern || "start-token-proxy.js";
+  procLog(`[startProxy] begin port=${port} statusPort=${statusPort} pattern="${processPattern}" statusUrl=${state.proxy.statusUrl}`);
+  procLog(`[startProxy] scriptPath=${state.workspace.paths.startScriptPath}`);
+  procLog(`[startProxy] rootPath=${state.workspace.rootPath}`);
+
+  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
+  config.tokenProxyMode = "local";
+  writeJsonFile(state.workspace.paths.configPath, config);
+  procLog(`[startProxy] switched Token Proxy token source to local`);
 
   if (state.proxy.running || (await isProxyRunning(state.proxy.statusUrl))) {
+    procLog(`[startProxy] skip: already running by state/check. state.proxy.running=${state.proxy.running}`);
     vscode.window.showInformationMessage("代理已经在运行。");
     return;
   }
 
-  await cleanupDetachedNodeScripts(port, statusPort, processPattern);
+  procLog(`[startProxy] stopAndCleanup before launch`);
+  await stopAndCleanup(port, statusPort, processPattern);
   const nodeBinary = resolveNodeBinary();
-  launchDetachedNodeScript(nodeBinary, state.workspace.paths.startScriptPath, state.workspace.rootPath);
+  procLog(`[startProxy] launching: ${nodeBinary} ${state.workspace.paths.startScriptPath}`);
+  const pid = launchDetachedNodeScript(nodeBinary, state.workspace.paths.startScriptPath, state.workspace.rootPath);
+  procLog(`[startProxy] spawned PID=${pid}`);
 
   try {
-    await waitForProxyStatus(state.proxy.statusUrl, 15000, 400);
-  } catch {
-    await cleanupDetachedNodeScripts(port, statusPort, processPattern);
+    const status = await waitForProxyStatus(state.proxy.statusUrl, 15000, 400);
+    procLog(`[startProxy] status confirmed: ${JSON.stringify(status).slice(0, 1200)}`);
+  } catch (err: any) {
+    procLog(`[startProxy] status check failed: ${err?.message || String(err)}`);
+    await stopAndCleanup(port, statusPort, processPattern);
     if (await isProxyRunning(state.proxy.statusUrl)) {
+      procLog(`[startProxy] status became running after cleanup race; accepting`);
       vscode.window.showInformationMessage("代理已经在运行。");
       return;
     }
@@ -292,15 +418,27 @@ export async function stopProxy(state: RosettaState): Promise<void> {
   const port = Number(state.config.tokenProxyPort || 60670);
   const statusPort = port + 1;
   const processPattern = state.workspace.paths.startProcessPattern || "start-token-proxy.js";
+  procLog(`[stopProxy] begin port=${port} statusPort=${statusPort} pattern="${processPattern}" statusUrl=${state.proxy.statusUrl}`);
+  procLog(`[stopProxy] state proxy.running=${state.proxy.running} active=${state.proxy.activeEmail || "(none)"} requests=${state.proxy.totalRequests}`);
 
   if (!state.proxy.running) {
+    const live = await isProxyRunning(state.proxy.statusUrl).catch(() => false);
+    procLog(`[stopProxy] skip by state, live status check=${live}`);
     vscode.window.showInformationMessage("代理已经停止。");
     return;
   }
 
-  await stopProxyByPort(port, statusPort, processPattern);
-  await cleanupDetachedNodeScripts(port, statusPort, processPattern);
-  await waitForProxyOffline(state.proxy.statusUrl);
+  procLog(`[stopProxy] calling stopAndCleanup`);
+  await stopAndCleanup(port, statusPort, processPattern);
+  procLog(`[stopProxy] stopAndCleanup done; waiting for offline`);
+  try {
+    await waitForProxyOffline(state.proxy.statusUrl);
+    procLog(`[stopProxy] confirmed offline`);
+  } catch (err: any) {
+    const live = await isProxyRunning(state.proxy.statusUrl).catch(() => false);
+    procLog(`[stopProxy] waitForProxyOffline failed: ${err?.message || String(err)}; live status check=${live}`);
+    throw err;
+  }
   vscode.window.showInformationMessage("代理已经停止。");
 }
 
@@ -315,14 +453,15 @@ export async function startReverseProxy(state: RosettaState): Promise<void> {
     return;
   }
 
-  await cleanupDetachedNodeScripts(rpPort, rpPort, processPattern);
+  await stopAndCleanup(rpPort, rpPort, processPattern);
   const nodeBinary = resolveNodeBinary();
   launchDetachedNodeScript(nodeBinary, state.workspace.paths.reverseProxyScriptPath, state.workspace.rootPath);
 
   try {
     await waitForProxyStatus(rpStatusUrl, 15000, 400, false, { headers: rpHeaders });
-  } catch {
-    await cleanupDetachedNodeScripts(rpPort, rpPort, processPattern);
+  } catch (err: any) {
+    procLog(`[startReverseProxy] status check error detail=${err?.message || String(err)}`);
+    await stopAndCleanup(rpPort, rpPort, processPattern);
     if (await isProxyRunning(rpStatusUrl, false, { headers: rpHeaders })) {
       vscode.window.showInformationMessage("OpenAI 反代已经在运行。");
       return;
@@ -341,13 +480,158 @@ export async function stopReverseProxy(state: RosettaState): Promise<void> {
     return;
   }
 
-  await stopProxyByPort(rpPort, rpPort, processPattern);
-  await cleanupDetachedNodeScripts(rpPort, rpPort, processPattern);
+  await stopAndCleanup(rpPort, rpPort, processPattern);
   // Also clean up legacy
-  await stopProxyByPort(rpPort, rpPort, "antigravity-openai-proxy.js");
-  await cleanupDetachedNodeScripts(rpPort, rpPort, "antigravity-openai-proxy.js");
+  await stopAndCleanup(rpPort, rpPort, "antigravity-openai-proxy.js");
   await sleep(1000);
   vscode.window.showInformationMessage("OpenAI 反代已停止。");
+}
+
+export async function startRelayProxy(state: RosettaState): Promise<void> {
+  {
+  const tokenProxyPort = Number(state.config?.tokenProxyPort) || 60670;
+  const statusPort = tokenProxyPort + 1;
+  const statusUrl = `http://127.0.0.1:${statusPort}/status`;
+  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
+  config.tokenProxyMode = "remote";
+  if (!config.relayProxy) config.relayProxy = {};
+  if (!config.relayProxy.tokenServerUrl || isOldLocalRemoteTokenUrl(config.relayProxy.tokenServerUrl)) {
+    config.relayProxy.tokenServerUrl = DEFAULT_REMOTE_TOKEN_SERVER_URL;
+  }
+  writeJsonFile(state.workspace.paths.configPath, config);
+  procLog(`[startRelayProxy] switched Token Proxy token source to remote; tokenServerUrl=${config.relayProxy.tokenServerUrl}; port remains ${tokenProxyPort}`);
+
+  if (!(await isProxyRunning(statusUrl))) {
+    const nodeBinary = resolveNodeBinary();
+    const pid = launchDetachedNodeScript(
+      nodeBinary,
+      state.workspace.paths.startScriptPath,
+      state.workspace.rootPath
+    );
+    procLog(`[startRelayProxy] spawned token proxy PID=${pid}`);
+  }
+  const status = await waitForProxyStatus(statusUrl, 15000, 400);
+  procLog(`[startRelayProxy] token proxy status=${JSON.stringify(status).slice(0, 1200)}`);
+  vscode.window.showInformationMessage("缁澂浠ｇ悊宸插惎鍔ㄣ€?");
+  return;
+  }
+
+  // Relay proxy now listens on the SAME port as the token proxy (60670)
+  // so we don't need to change cloudCodeUrl. The IDE keeps sending to :60670.
+  const tokenProxyPort = Number(state.config?.tokenProxyPort) || 60670;
+  const relayStatusPort = getRelayStatusPort(state.config);  // 60681
+  const processPattern = state.workspace.paths.relayProxyProcessPattern || path.join("relay-proxy", "index.js");
+  const relayStatusUrl = `http://127.0.0.1:${relayStatusPort}/status`;
+
+  procLog(`[startRelayProxy] proxyPort=${tokenProxyPort} (shared with token proxy) statusPort=${relayStatusPort}`);
+  procLog(`[startRelayProxy] scriptPath=${state.workspace.paths.relayProxyScriptPath}`);
+  procLog(`[startRelayProxy] rootPath=${state.workspace.rootPath}`);
+  procLog(`[startRelayProxy] incoming state proxy.running=${state.proxy.running} relay.running=${state.relay.running} relay.hasApiKey=${state.relay.hasApiKey} upstream=${state.relay.upstream || "(empty)"}`);
+  procLog(`[startRelayProxy] config relayProxy=${JSON.stringify(state.config?.relayProxy || {})}`);
+
+  if (await isProxyRunning(relayStatusUrl)) {
+    procLog(`[startRelayProxy] already running (status on ${relayStatusPort}), skipping`);
+    vscode.window.showInformationMessage("续杯代理已经在运行。");
+    return;
+  }
+
+  // Clean up any leftover relay processes (using relay-specific pattern)
+  procLog(`[startRelayProxy] cleaning up before start...`);
+  await stopAndCleanup(tokenProxyPort, relayStatusPort, processPattern);
+  procLog(`[startRelayProxy] cleanup complete; launching relay now`);
+  const nodeBinary = resolveNodeBinary();
+  procLog(`[startRelayProxy] launching: ${nodeBinary} ${state.workspace.paths.relayProxyScriptPath}`);
+  procLog(`[startRelayProxy] env: RELAY_PROXY_PORT=${tokenProxyPort} RELAY_STATUS_PORT=${relayStatusPort}`);
+  const pid = launchDetachedNodeScript(
+    nodeBinary,
+    state.workspace.paths.relayProxyScriptPath,
+    state.workspace.rootPath,
+    {
+      RELAY_PROXY_PORT: String(tokenProxyPort),
+      RELAY_STATUS_PORT: String(relayStatusPort),
+    }
+  );
+  procLog(`[startRelayProxy] spawned PID=${pid}`);
+
+  try {
+    const status = await waitForProxyStatus(relayStatusUrl, 15000, 400);
+    procLog(`[startRelayProxy] status payload=${JSON.stringify(status).slice(0, 1200)}`);
+    procLog(`[startRelayProxy] ✅ status confirmed running on :${relayStatusPort}`);
+  } catch (err: any) {
+    procLog(`[startRelayProxy] status check error detail=${err?.message || String(err)}`);
+    procLog(`[startRelayProxy] ❌ status check failed, cleaning up...`);
+    await stopAndCleanup(tokenProxyPort, relayStatusPort, processPattern);
+    if (await isProxyRunning(relayStatusUrl)) {
+      procLog(`[startRelayProxy] but it IS running after cleanup (race?), accepting`);
+      vscode.window.showInformationMessage("续杯代理已经在运行。");
+      return;
+    }
+    throw new Error("续杯代理没有成功启动。");
+  }
+  vscode.window.showInformationMessage("续杯代理已启动。");
+}
+
+export async function stopRelayProxy(state: RosettaState): Promise<void> {
+  {
+  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
+  config.tokenProxyMode = "local";
+  writeJsonFile(state.workspace.paths.configPath, config);
+  procLog(`[stopRelayProxy] switched Token Proxy token source to local; port unchanged`);
+  vscode.window.showInformationMessage("缁澂浠ｇ悊宸插仠姝€?");
+  return;
+  }
+
+  // Relay proxy now runs on the token proxy port, with its own status port
+  const tokenProxyPort = Number(state.config?.tokenProxyPort) || 60670;
+  const relayStatusPort = getRelayStatusPort(state.config);  // 60681
+  const processPattern = state.workspace.paths.relayProxyProcessPattern || path.join("relay-proxy", "index.js");
+  const relayStatusUrl = `http://127.0.0.1:${relayStatusPort}/status`;
+
+  procLog(`[stopRelayProxy] proxyPort=${tokenProxyPort} statusPort=${relayStatusPort} pattern="${processPattern}"`);
+
+  // Check if it's actually running first
+  const isRunning = await isProxyRunning(relayStatusUrl);
+  procLog(`[stopRelayProxy] isRunning (pre-stop)=${isRunning}`);
+
+  procLog(`[stopRelayProxy] calling stopAndCleanup...`);
+  await stopAndCleanup(tokenProxyPort, relayStatusPort, processPattern);
+  procLog(`[stopRelayProxy] stopAndCleanup done, waiting for offline...`);
+
+  try {
+    await waitForProxyOffline(relayStatusUrl);
+    procLog(`[stopRelayProxy] ✅ confirmed offline`);
+  } catch (e: any) {
+    procLog(`[stopRelayProxy] ⚠️ waitForProxyOffline issue: ${e?.message || '(timeout?)'}`);
+  }
+
+  // Double check
+  const stillRunning = await isProxyRunning(relayStatusUrl);
+  procLog(`[stopRelayProxy] isRunning (post-stop)=${stillRunning}`);
+  if (stillRunning) {
+    procLog(`[stopRelayProxy] ⚠️ STILL RUNNING after stop! Attempting port-based kill...`);
+    const pids = await findPidsByPort(tokenProxyPort);
+    const statusPids = await findPidsByPort(relayStatusPort);
+    const allPids = [...new Set([...pids, ...statusPids])];
+    procLog(`[stopRelayProxy] found PIDs on ports: ${JSON.stringify(allPids)}`);
+    for (const pid of allPids) {
+      procLog(`[stopRelayProxy] force killing PID ${pid}`);
+      await killPid(pid);
+    }
+    await sleep(1000);
+    const finalCheck = await isProxyRunning(relayStatusUrl);
+    procLog(`[stopRelayProxy] isRunning (final)=${finalCheck}`);
+  }
+
+  vscode.window.showInformationMessage("续杯代理已停止。");
+}
+
+export async function attachIdeRelay(state: RosettaState): Promise<void> {
+  const relayUrl = state.relay.url || `http://127.0.0.1:${Number(state.config?.relayProxy?.port) || 60680}`;
+  writeIdeCloudCodeUrl(state.workspace.paths.ideSettingsPath, relayUrl);
+  try {
+    await vscode.workspace.getConfiguration("jetski").update("cloudCodeUrl", relayUrl, vscode.ConfigurationTarget.Global);
+  } catch { /* non-fatal */ }
+  vscode.window.showInformationMessage("IDE 已切换到续杯代理。");
 }
 
 export async function attachIde(state: RosettaState): Promise<void> {

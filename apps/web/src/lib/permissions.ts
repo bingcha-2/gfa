@@ -21,7 +21,7 @@ export function canReplaceMember(role?: string | null) {
 export function canRetryTask(role?: string | null, status?: string | null) {
   return (
     operatorRoles.has(role ?? "") &&
-    ["PENDING", "FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW"].includes(status ?? "")
+    ["PENDING", "FAILED", "FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW"].includes(status ?? "")
   );
 }
 
@@ -39,7 +39,7 @@ export function canManualFailTask(role?: string | null, status?: string | null) 
 export function canCancelTask(role?: string | null, status?: string | null) {
   return (
     operatorRoles.has(role ?? "") &&
-    ["PENDING", "RUNNING", "FAILED_RETRYABLE", "MANUAL_REVIEW"].includes(status ?? "")
+    ["PENDING", "RUNNING", "FAILED", "FAILED_RETRYABLE", "FAILED_FINAL", "MANUAL_REVIEW"].includes(status ?? "")
   );
 }
 

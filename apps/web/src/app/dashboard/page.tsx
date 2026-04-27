@@ -1,8 +1,13 @@
-import { AppSidebar } from "@/components/app-sidebar"
-import { ChartAreaInteractive } from "@/components/chart-area-interactive"
-import { DataTable } from "@/components/data-table"
-import { SectionCards } from "@/components/section-cards"
-import { SiteHeader } from "@/components/site-header"
+// @ts-nocheck
+"use client"
+
+import dynamic from "next/dynamic"
+
+const AppSidebar = dynamic(() => import("@/components/app-sidebar").then(m => m.AppSidebar), { ssr: false })
+const ChartAreaInteractive = dynamic(() => import("@/components/chart-area-interactive").then(m => m.ChartAreaInteractive), { ssr: false })
+const DataTable = dynamic(() => import("@/components/data-table").then(m => m.DataTable), { ssr: false })
+const SectionCards = dynamic(() => import("@/components/section-cards").then(m => m.SectionCards), { ssr: false })
+const SiteHeader = dynamic(() => import("@/components/site-header").then(m => m.SiteHeader), { ssr: false })
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
 import data from "./data.json"

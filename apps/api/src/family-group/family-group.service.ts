@@ -25,12 +25,15 @@ export class FamilyGroupService {
     const where: Record<string, any> = {};
     if (opts?.accountId) where.accountId = opts.accountId;
     if (opts?.memberEmail) {
-      where.members = {
-        some: {
-          email: { contains: opts.memberEmail.trim().toLowerCase() },
-          status: { not: "REMOVED" },
-        },
-      };
+      const search = opts.memberEmail.trim().toLowerCase();
+      where.OR = [
+        // Match member email (子号)
+        { members: { some: { email: { contains: search }, status: { not: "REMOVED" } } } },
+        // Match parent account email (母号)
+        { account: { loginEmail: { contains: search } } },
+        // Match group name
+        { groupName: { contains: search } },
+      ];
     }
     const groups = await this.prisma.familyGroup.findMany({
       where,
@@ -57,7 +60,7 @@ export class FamilyGroupService {
         },
         members: {
           where: { status: "PENDING" },
-          select: { id: true },
+          select: { id: true, createdAt: true },
         },
       },
     });
@@ -82,9 +85,15 @@ export class FamilyGroupService {
       return bExp - aExp;
     });
 
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
     return groups.map(({ members: pendingMembers, ...g }) => ({
       ...g,
       pendingMemberCount: pendingMembers.length,
+      pendingOver3DaysCount: pendingMembers.filter(
+        (m) => now - m.createdAt.getTime() > THREE_DAYS_MS
+      ).length,
     }));
   }
 
@@ -169,12 +178,41 @@ export class FamilyGroupService {
 
     const [withAccount] = await this.attachAccounts([group]);
 
-    // Attach derived isInGroup field to each member
+    // Lookup recent tasks for this group to attach latestTask per member
+    const tasks = await this.prisma.task.findMany({
+      where: { familyGroupId: id, type: { in: ["INVITE_MEMBER", "REMOVE_MEMBER", "REPLACE_MEMBER"] } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: { type: true, status: true, payload: true, createdAt: true },
+    });
+
+    // Build email -> latest task map
+    const taskMap = new Map<string, { type: string; status: string; createdAt: string }>();
+    for (const t of tasks) {
+      try {
+        const pl = JSON.parse(t.payload);
+        const email = (pl.userEmail || pl.memberEmail || pl.targetMemberEmail || "").toLowerCase();
+        if (email && !taskMap.has(email)) {
+          taskMap.set(email, { type: t.type, status: t.status, createdAt: t.createdAt.toISOString() });
+        }
+        // For REPLACE_MEMBER, also map the NEW member email (newUserEmail)
+        // so the replaced-in member shows the task in the UI
+        if (t.type === "REPLACE_MEMBER" && pl.newUserEmail) {
+          const newEmail = pl.newUserEmail.toLowerCase();
+          if (!taskMap.has(newEmail)) {
+            taskMap.set(newEmail, { type: t.type, status: t.status, createdAt: t.createdAt.toISOString() });
+          }
+        }
+      } catch {}
+    }
+
+    // Attach derived isInGroup field and latestTask to each member
     return {
       ...withAccount,
       members: withAccount.members.map((m) => ({
         ...m,
         isInGroup: m.status === "ACTIVE",
+        latestTask: taskMap.get(m.email.toLowerCase()) ?? null,
       })),
     };
   }
@@ -230,7 +268,7 @@ export class FamilyGroupService {
       const job = await this.syncQueue.add(
         "sync-family-group",
         { taskId: task.id, familyGroupId: groupId, accountId: group.accountId, ignoreCooldown: true },
-        { ...JOB_DEFAULTS }
+        { ...JOB_DEFAULTS, jobId: task.id }
       );
       return { queued: true, jobId: job.id, taskId: task.id };
     } catch (queueError) {
@@ -307,7 +345,7 @@ export class FamilyGroupService {
           originalMemberStatus: result.originalStatus,
           ignoreCooldown: true
         },
-        { ...JOB_DEFAULTS }
+        { ...JOB_DEFAULTS, jobId: result.task.id }
       );
     } catch (queueError) {
       // Queue add failed — rollback to original status
@@ -446,14 +484,36 @@ export class FamilyGroupService {
     const allUniqueEmails = [...new Set(normEmails)];
 
     // Cross-group duplicate check: filter out emails already ACTIVE/PENDING in any group
+    // Exception: members whose expiresAt has passed, or who are in groups with
+    // SUSPENDED/EXPIRED subscriptions, are allowed (renewal scenario).
+    const now = new Date();
     const existingInAnyGroup = await this.prisma.familyMember.findMany({
       where: {
         email: { in: allUniqueEmails },
         status: { in: ["ACTIVE", "PENDING"] },
       },
-      select: { email: true },
+      select: {
+        email: true,
+        expiresAt: true,
+        familyGroup: {
+          select: {
+            account: { select: { subscriptionStatus: true, subscriptionExpiresAt: true } },
+          },
+        },
+      },
     });
-    const existingEmailSet = new Set(existingInAnyGroup.map((m) => m.email));
+    const existingEmailSet = new Set(
+      existingInAnyGroup
+        .filter((m) => {
+          if (m.expiresAt && m.expiresAt <= now) return false;
+          const subStatus = m.familyGroup?.account?.subscriptionStatus;
+          const subExpiresAt = m.familyGroup?.account?.subscriptionExpiresAt;
+          if (subStatus === "SUSPENDED" || subStatus === "EXPIRED") return false;
+          if (subExpiresAt && new Date(subExpiresAt) <= now) return false;
+          return true;
+        })
+        .map((m) => m.email)
+    );
     const uniqueEmails = allUniqueEmails.filter((e) => !existingEmailSet.has(e));
     const skippedActive = allUniqueEmails.filter((e) => existingEmailSet.has(e));
 
@@ -677,11 +737,36 @@ export class FamilyGroupService {
 
     // R3-C: filter out emails that already have an ACTIVE member record in any group
     // to avoid double-inviting existing members.
+    // Exception: members whose expiresAt has passed, or who are in groups with
+    // SUSPENDED/EXPIRED subscriptions, are allowed (renewal scenario).
+    const now = new Date();
     const existingMembers = await this.prisma.familyMember.findMany({
       where: { email: { in: normEmails }, status: { in: ["ACTIVE", "PENDING"] } },
-      select: { email: true }
+      select: {
+        email: true,
+        expiresAt: true,
+        familyGroup: {
+          select: {
+            account: { select: { subscriptionStatus: true, subscriptionExpiresAt: true } },
+          },
+        },
+      },
     });
-    const existingEmails = new Set(existingMembers.map((m) => m.email));
+    // Only block members who are truly active (not expired, not in suspended/expired groups)
+    const existingEmails = new Set(
+      existingMembers
+        .filter((m) => {
+          // Allow re-invite if member's own subscription has expired
+          if (m.expiresAt && m.expiresAt <= now) return false;
+          // Allow re-invite if the group's account subscription is suspended or expired
+          const subStatus = m.familyGroup?.account?.subscriptionStatus;
+          const subExpiresAt = m.familyGroup?.account?.subscriptionExpiresAt;
+          if (subStatus === "SUSPENDED" || subStatus === "EXPIRED") return false;
+          if (subExpiresAt && new Date(subExpiresAt) <= now) return false;
+          return true; // truly active — block
+        })
+        .map((m) => m.email)
+    );
     const alreadyActive = normEmails.filter((e) => existingEmails.has(e));
     const freshEmails = normEmails.filter((e) => !existingEmails.has(e));
 
@@ -696,7 +781,6 @@ export class FamilyGroupService {
 
     // Fetch all available groups with remaining slots, ordered earliest-first
     // Exclude accounts with SUSPENDED/EXPIRED subscription status or expired subscriptionExpiresAt
-    const now = new Date();
     const availableGroups = await this.prisma.familyGroup.findMany({
       where: {
         status: "ACTIVE",
@@ -1104,7 +1188,7 @@ export class FamilyGroupService {
       );
     }
 
-    // Atomic: check member + create task in one transaction
+    // Atomic: check member + guard duplicate task + create task in one transaction
     const result = await this.prisma.$transaction(async (tx) => {
       // Verify target member exists and is in a removable state
       const member = await tx.familyMember.findFirst({
@@ -1117,6 +1201,19 @@ export class FamilyGroupService {
 
       if (!member) {
         return null; // Not found or already being processed
+      }
+
+      // Guard: reject if a PENDING/RUNNING replace task already exists for this member+group
+      const existingTask = await tx.task.findFirst({
+        where: {
+          type: "REPLACE_MEMBER",
+          familyGroupId: groupId,
+          status: { in: ["PENDING", "RUNNING"] },
+          payload: { contains: targetMemberEmail },
+        },
+      });
+      if (existingTask) {
+        return { duplicate: true as const, existingTaskId: existingTask.id };
       }
 
       const task = await tx.task.create({
@@ -1143,6 +1240,12 @@ export class FamilyGroupService {
       );
     }
 
+    if ('duplicate' in result) {
+      throw new BadRequestException(
+        `该成员已有进行中的替换任务 (${result.existingTaskId})，请勿重复提交`
+      );
+    }
+
     try {
       await this.replaceQueue.add(
         "replace-member",
@@ -1153,7 +1256,7 @@ export class FamilyGroupService {
           targetMemberEmail,
           newUserEmail
         },
-        { ...JOB_DEFAULTS }
+        { ...JOB_DEFAULTS, jobId: result.task.id }
       );
     } catch (queueError) {
       // Queue add failed — clean up orphaned task
@@ -1284,7 +1387,23 @@ export class FamilyGroupService {
       };
     }
 
-    // No slots available — member was removed but could not be re-invited
+    // No slots available — ROLLBACK: restore member to original state
+    // Without rollback, member would be orphaned (REMOVED but not re-invited),
+    // causing self-service to show "removed" on next check.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.familyMember.update({
+        where: { id: member.id },
+        data: { status: member.status, removedAt: null },
+      });
+      await tx.familyGroup.update({
+        where: { id: groupId },
+        data: {
+          availableSlots: { decrement: 1 },
+          memberCount: { increment: 1 },
+        },
+      });
+    });
+
     return {
       removedFromGroupId: groupId,
       removedFromGroupName: sourceGroup.groupName,

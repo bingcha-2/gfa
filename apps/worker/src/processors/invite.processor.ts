@@ -31,6 +31,7 @@ import { gmailLogin } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { ensureFamilyGroup } from "../ensure-family-group";
 import { checkTransferBatchProgress } from "../check-transfer-progress";
+import { recalcGroupCountsFromDB } from "./sync.processor";
 import { Queue } from "bullmq";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
@@ -55,6 +56,7 @@ export interface InviteProcessorDeps {
   pool: BrowserPool;
   workerId: string;
   inviteQueue?: Queue;
+  syncQueue?: Queue;
 }
 
 /**
@@ -78,13 +80,10 @@ async function findAlternativeAccount(
     orderBy: { createdAt: "asc" },
   });
 
-  // Filter out accounts in cooldown or with too many failures
+  // Filter out accounts in cooldown
   for (const candidate of candidates) {
     const cooldown = await pool.isLoginCoolingDown(candidate.accountId);
     if (cooldown > 0) continue;
-
-    const failures = await pool.getAccountTaskFailureCount(candidate.accountId);
-    if (failures >= 5) continue;
 
     return { accountId: candidate.accountId, familyGroupId: candidate.id };
   }
@@ -100,6 +99,8 @@ export async function processInvite(
   const { orderId, userEmail } = job.data;
   let { accountId } = job.data;
   let familyGroupId = job.data.familyGroupId;
+  // Track original group for slot rollback on switch/failure
+  const originalGroupId = familyGroupId;
   // Compute member-level expiry: use payload value or default to 30 days from now
   const memberExpiresAt = job.data.memberExpiresAt
     ? new Date(job.data.memberExpiresAt)
@@ -137,14 +138,12 @@ export async function processInvite(
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(accountId);
       const inviteCooldownSecs = await pool.isInviteCoolingDown(accountId);
-      const failureCount = await pool.getAccountTaskFailureCount(accountId);
       const accountUnhealthy = account.status !== "HEALTHY";
 
-      if (cooldownSecs > 0 || inviteCooldownSecs > 0 || failureCount >= 5 || accountUnhealthy) {
+      if (cooldownSecs > 0 || inviteCooldownSecs > 0 || accountUnhealthy) {
         const reasons: string[] = [];
         if (cooldownSecs > 0) reasons.push(`登录冷却中(${cooldownSecs}秒)`);
         if (inviteCooldownSecs > 0) reasons.push(`邀请冷却中(${Math.ceil(inviteCooldownSecs/3600)}小时)`);
-        if (failureCount >= 5) reasons.push(`累计失败${failureCount}次`);
         if (accountUnhealthy) reasons.push(`状态异常(${account.status})`);
         await logger.log("WARN",
           `[invite] 原主号不可用（${reasons.join('、')}），正在搜索替代账号...`
@@ -153,6 +152,23 @@ export async function processInvite(
         const alt = await findAlternativeAccount(prisma, pool, accountId);
         if (alt) {
           await logger.log("INFO", `[invite] 切换到替代账号 ${alt.accountId}（家庭组=${alt.familyGroupId}）`);
+          // Restore slot on original group before switching
+          if (familyGroupId && familyGroupId !== alt.familyGroupId) {
+            await prisma.familyGroup.update({
+              where: { id: familyGroupId },
+              data: { availableSlots: { increment: 1 } },
+            }).catch(() => {});
+            await prisma.familyGroup.updateMany({
+              where: { id: familyGroupId, pendingInviteCount: { gt: 0 } },
+              data: { pendingInviteCount: { decrement: 1 } },
+            }).catch(() => {});
+            await logger.log("INFO", `[invite] 已归还原组 ${familyGroupId} 的 slot`);
+          }
+          // Reserve slot on new group
+          await prisma.familyGroup.update({
+            where: { id: alt.familyGroupId },
+            data: { availableSlots: { decrement: 1 }, pendingInviteCount: { increment: 1 } },
+          }).catch(() => {});
           accountId = alt.accountId;
           familyGroupId = alt.familyGroupId;
           account = await prisma.account.findUnique({ where: { id: accountId } });
@@ -256,29 +272,64 @@ export async function processInvite(
         lockedAccountId = null;
       }
 
-      // Record failure for this account (handleLoginResult also does this, but we need
-      // to check for fallback BEFORE it throws)
+      // Record login cooldown for this account so it's not immediately retried
       await pool.recordLoginFailure(accountId, 2 * 60 * 1000);
-      const newFailCount = await pool.recordAccountTaskFailure(accountId);
       await logger.log("WARN",
-        `Login failed for account ${accountId} (failures: ${newFailCount}/3). Searching for alternative...`
+        `Login failed for account ${accountId}. Searching for alternative...`
       );
 
-      // Mark account RISKY if threshold reached
-      if (newFailCount >= 3) {
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { status: "RISKY" as any },
-        }).catch(() => {});
+      // Try to find alternative account — but limit total switches to prevent cascading damage.
+      // Each switch consumes one BullMQ attempt. With attempts=3, we allow at most 2 switches.
+      const MAX_ACCOUNT_SWITCHES = 2;
+      const switchesSoFar = job.attemptsMade ?? 0; // 0-indexed: 0 = first try, 1 = first switch, etc.
+
+      if (switchesSoFar >= MAX_ACCOUNT_SWITCHES) {
         await logger.log("ERROR",
-          `Account ${accountId} reached ${newFailCount} failures — marked RISKY, needs human intervention`
+          `[invite] 已切换 ${switchesSoFar} 次母号仍然失败，停止重试以避免连坐更多母号`
         );
+        // Slot rollback: restore the slot on the current group
+        if (familyGroupId) {
+          await prisma.familyGroup.update({
+            where: { id: familyGroupId },
+            data: { availableSlots: { increment: 1 } },
+          }).catch(() => {});
+          await prisma.familyGroup.updateMany({
+            where: { id: familyGroupId, pendingInviteCount: { gt: 0 } },
+            data: { pendingInviteCount: { decrement: 1 } },
+          }).catch(() => {});
+          await logger.log("INFO", `[invite] 已归还组 ${familyGroupId} 的 slot（MAX_SWITCHES_EXCEEDED）`);
+        }
+        const userMessage = `系统尝试了多个服务器均无法完成操作，请 15 分钟后重试`;
+        await logger.updateStatus("FAILED_FINAL", {
+          code: "MAX_SWITCHES_EXCEEDED",
+          message: userMessage,
+        });
+        if (orderId) {
+          await logger.updateOrderStatus(orderId, "FAILED", userMessage);
+        }
+        throw new UnrecoverableError(userMessage);
       }
 
-      // Try to find alternative account
       const alt = await findAlternativeAccount(prisma, pool, accountId);
       if (alt) {
-        await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId})`);
+        await logger.log("INFO", `[invite] Switching to alternative account ${alt.accountId} (group=${alt.familyGroupId}) [switch ${switchesSoFar + 1}/${MAX_ACCOUNT_SWITCHES}]`);
+        // Restore slot on original group before switching
+        if (familyGroupId && familyGroupId !== alt.familyGroupId) {
+          await prisma.familyGroup.update({
+            where: { id: familyGroupId },
+            data: { availableSlots: { increment: 1 } },
+          }).catch(() => {});
+          await prisma.familyGroup.updateMany({
+            where: { id: familyGroupId, pendingInviteCount: { gt: 0 } },
+            data: { pendingInviteCount: { decrement: 1 } },
+          }).catch(() => {});
+          await logger.log("INFO", `[invite] 已归还原组 ${familyGroupId} 的 slot`);
+        }
+        // Reserve slot on new group
+        await prisma.familyGroup.update({
+          where: { id: alt.familyGroupId },
+          data: { availableSlots: { decrement: 1 }, pendingInviteCount: { increment: 1 } },
+        }).catch(() => {});
         // Update task and order to use new account/group
         await prisma.task.update({
           where: { id: taskId },
@@ -403,31 +454,13 @@ export async function processInvite(
       await logger.log("WARN", `Failed to record invite in DB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
     }
 
-    // Lightweight post-invite verification: count cards instead of full sync.
-    // This avoids visiting every member detail page (which creates placeholder
-    // @gaia.unknown records when Google hides emails).
+    // Recalculate group counts from DB (FamilyMember records) instead of page card counting.
+    // countMemberCardsOnPage was unreliable: it sometimes counted the family manager card,
+    // inflating memberCount by 1 and causing phantom "no available slots".
     try {
-      if (!page.url().includes("family/details")) {
-        await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-      }
-      await page.waitForTimeout(1500);
-      const postInviteCardCount = await countMemberCardsOnPage(page);
-      await logger.log("INFO", `Post-invite card count: ${postInviteCardCount} (was ${preInviteCardCount})`);
-
-      // Update group slot counts based on card count
-      const NON_ADMIN_CAPACITY = 5;
-      const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - postInviteCardCount);
-      await prisma.familyGroup.update({
-        where: { id: familyGroupId },
-        data: {
-          memberCount: postInviteCardCount,
-          availableSlots: computedSlots,
-          lastSyncedAt: new Date(),
-        },
-      });
-      await logger.log("INFO", `Group counts updated: ${postInviteCardCount} members, ${computedSlots} slots available`);
+      await recalcGroupCountsFromDB(prisma, familyGroupId, logger);
     } catch (countErr) {
-      await logger.log("WARN", `Post-invite card count failed (non-fatal): ${countErr instanceof Error ? countErr.message : String(countErr)}`);
+      await logger.log("WARN", `Post-invite recount failed (non-fatal): ${countErr instanceof Error ? countErr.message : String(countErr)}`);
     }
 
     await logger.log("INFO", "Invite completed successfully");
@@ -560,26 +593,11 @@ export async function processInvite(
             await prisma.familyInvite.create({ data: { familyGroupId, email: nextUserEmail, status: "SENT" } }).catch(() => {});
           }
 
-          // Lightweight post-invite: count cards instead of full sync
+          // Recalculate group counts from DB records (reliable, avoids manager card miscount)
           try {
-            if (!page.url().includes("family/details")) {
-              await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-            }
-            await page.waitForTimeout(1500);
-            const batchCardCount = await countMemberCardsOnPage(page);
-            const NON_ADMIN_CAPACITY = 5;
-            const computedSlots = Math.max(0, NON_ADMIN_CAPACITY - batchCardCount);
-            await prisma.familyGroup.update({
-              where: { id: familyGroupId },
-              data: {
-                memberCount: batchCardCount,
-                availableSlots: computedSlots,
-                lastSyncedAt: new Date(),
-              },
-            });
-            await batchLogger.log("INFO", `Post-invite card count: ${batchCardCount}, ${computedSlots} slots available`);
+            await recalcGroupCountsFromDB(prisma, familyGroupId, batchLogger);
           } catch (countErr) {
-            await batchLogger.log("WARN", `Post-invite card count failed (non-fatal): ${countErr instanceof Error ? countErr.message : String(countErr)}`);
+            await batchLogger.log("WARN", `Post-invite recount failed (non-fatal): ${countErr instanceof Error ? countErr.message : String(countErr)}`);
           }
         }
 
@@ -731,6 +749,149 @@ export async function processInvite(
           await logger.log("INFO",
             `已自动重新分配 ${orderId ? `订单 ${orderId}` : `任务 ${taskId}`}：从家庭组 ${oldGroupId} 转到 ${newGroup.id}（新任务 ${newTask.id}）`
           );
+
+          // ── Batch-reassign: move ALL other PENDING tasks off the full group ──
+          // Without this, queued tasks keep hitting the full group one by one.
+          if (isFamilyFull && oldGroupId) {
+            try {
+              const siblingTasks = await prisma.task.findMany({
+                where: {
+                  familyGroupId: oldGroupId,
+                  type: "INVITE_MEMBER",
+                  status: { in: ["PENDING"] },
+                  id: { not: taskId },
+                },
+                select: { id: true, orderId: true, payload: true },
+                take: 50,
+              });
+
+              for (const sib of siblingTasks) {
+                let sibPayload: any = {};
+                try { sibPayload = JSON.parse(sib.payload); } catch {}
+                const sibEmail = sibPayload.userEmail;
+                if (!sibEmail) continue;
+
+                // Find a group with available slots (excluding the full group)
+                const altGroup = await prisma.familyGroup.findFirst({
+                  where: {
+                    status: "ACTIVE",
+                    availableSlots: { gt: 0 },
+                    account: { status: "HEALTHY" },
+                    id: { not: oldGroupId },
+                  },
+                  include: { account: { select: { id: true, loginEmail: true } } },
+                  orderBy: { createdAt: "asc" },
+                });
+
+                if (!altGroup) {
+                  // No group available — mark failed
+                  await prisma.task.update({
+                    where: { id: sib.id },
+                    data: {
+                      status: "FAILED_FINAL",
+                      lastErrorCode: "FAMILY_FULL_NO_ALT",
+                      lastErrorMessage: `原家庭组已满，且无可用替代家庭组`,
+                      finishedAt: new Date(),
+                    },
+                  });
+                  continue;
+                }
+
+                // Reserve slot
+                await prisma.familyGroup.update({
+                  where: { id: altGroup.id },
+                  data: { availableSlots: { decrement: 1 }, pendingInviteCount: { increment: 1 } },
+                });
+
+                // Update order if exists
+                if (sib.orderId) {
+                  await prisma.order.update({
+                    where: { id: sib.orderId },
+                    data: { familyGroupId: altGroup.id, status: "TASK_QUEUED" as any, resultMessage: null },
+                  }).catch(() => {});
+                }
+
+                // Mark old task as reassigned
+                await prisma.task.update({
+                  where: { id: sib.id },
+                  data: {
+                    status: "FAILED_FINAL",
+                    lastErrorCode: "AUTO_REASSIGNED",
+                    lastErrorMessage: `原家庭组已满，已批量转移到 ${altGroup.id}`,
+                    finishedAt: new Date(),
+                  },
+                });
+
+                // Create new task
+                const sibNewTask = await prisma.task.create({
+                  data: {
+                    type: "INVITE_MEMBER",
+                    ...(sib.orderId ? { orderId: sib.orderId } : {}),
+                    familyGroupId: altGroup.id,
+                    accountId: altGroup.accountId,
+                    lastErrorCode: "TRANSFERRED",
+                    lastErrorMessage: `从已满家庭组 ${oldGroupId} 批量转移`,
+                    payload: JSON.stringify({
+                      ...(sib.orderId ? { orderId: sib.orderId } : {}),
+                      familyGroupId: altGroup.id,
+                      accountId: altGroup.accountId,
+                      userEmail: sibEmail,
+                    }),
+                  },
+                });
+
+                await deps.inviteQueue!.add("invite-member", {
+                  taskId: sibNewTask.id,
+                  ...(sib.orderId ? { orderId: sib.orderId } : {}),
+                  familyGroupId: altGroup.id,
+                  accountId: altGroup.accountId,
+                  userEmail: sibEmail,
+                }, { ...JOB_DEFAULTS });
+              }
+
+              if (siblingTasks.length > 0) {
+                // Reset the full group's pendingInviteCount since all tasks moved out
+                await prisma.familyGroup.update({
+                  where: { id: oldGroupId },
+                  data: { pendingInviteCount: 0, availableSlots: 0 },
+                });
+                await logger.log("INFO",
+                  `[batch-reassign] 已将 ${siblingTasks.length} 个排队任务从已满家庭组 ${oldGroupId} 批量转移`
+                );
+              }
+
+              // ── Trigger sync for the full group to get real member count from Google ──
+              if (deps.syncQueue) {
+                try {
+                  const syncTask = await prisma.task.create({
+                    data: {
+                      type: "SYNC_FAMILY_GROUP",
+                      familyGroupId: oldGroupId,
+                      accountId,
+                      source: "auto-family-full",
+                      payload: JSON.stringify({ familyGroupId: oldGroupId, accountId }),
+                    },
+                  });
+                  await deps.syncQueue.add("sync-family-group", {
+                    taskId: syncTask.id,
+                    familyGroupId: oldGroupId,
+                    accountId,
+                  }, { ...JOB_DEFAULTS });
+                  await logger.log("INFO",
+                    `[family-full] 已触发同步任务 ${syncTask.id} 更新家庭组 ${oldGroupId} 的真实成员数`
+                  );
+                } catch (syncErr) {
+                  await logger.log("WARN",
+                    `Failed to enqueue sync for full group: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`
+                  );
+                }
+              }
+            } catch (batchErr) {
+              await logger.log("WARN",
+                `Batch reassign failed: ${batchErr instanceof Error ? batchErr.message : String(batchErr)}`
+              );
+            }
+          }
 
           // Task has been auto-handled — do NOT rethrow
           return;
@@ -937,11 +1098,71 @@ export async function processInvite(
     }
 
     // UnrecoverableError that we don't auto-reassign (e.g. LOGIN_COOLDOWN)
-    if (error instanceof UnrecoverableError) throw error;
+    if (error instanceof UnrecoverableError) {
+      // Slot rollback: UnrecoverableError = permanent failure, restore the slot
+      try {
+        const failedTask = await prisma.task.findUnique({
+          where: { id: taskId },
+          select: { familyGroupId: true },
+        });
+        const rollbackGroupId = failedTask?.familyGroupId ?? familyGroupId;
+        if (rollbackGroupId) {
+          await prisma.familyGroup.update({
+            where: { id: rollbackGroupId },
+            data: { availableSlots: { increment: 1 } },
+          }).catch(() => {});
+          await prisma.familyGroup.updateMany({
+            where: { id: rollbackGroupId, pendingInviteCount: { gt: 0 } },
+            data: { pendingInviteCount: { decrement: 1 } },
+          }).catch(() => {});
+          await logger.log("INFO", `[invite] UnrecoverableError，已归还组 ${rollbackGroupId} 的 slot`);
+        }
+      } catch { /* best-effort */ }
+      throw error;
+    }
 
     const errMsg = error instanceof Error ? error.message : String(error);
     try {
     } catch { /* noop */ }
+
+    // Check if this is the last BullMQ attempt — if so, mark FAILED_FINAL and update Order
+    const isLastAttempt = (job.attemptsMade ?? 0) >= ((job.opts?.attempts ?? 3) - 1);
+    if (isLastAttempt) {
+      // ── Slot rollback: restore the occupied slot back to the group ──
+      // The slot was decremented when the task was created (order.service or family-group.service).
+      // Since the invite permanently failed, the slot must be returned.
+      try {
+        const failedTask = await prisma.task.findUnique({
+          where: { id: taskId },
+          select: { familyGroupId: true },
+        });
+        const rollbackGroupId = failedTask?.familyGroupId ?? familyGroupId;
+        if (rollbackGroupId) {
+          await prisma.familyGroup.update({
+            where: { id: rollbackGroupId },
+            data: { availableSlots: { increment: 1 } },
+          });
+          await prisma.familyGroup.updateMany({
+            where: { id: rollbackGroupId, pendingInviteCount: { gt: 0 } },
+            data: { pendingInviteCount: { decrement: 1 } },
+          });
+          await logger.log("INFO", `[invite] 邀请最终失败，已归还组 ${rollbackGroupId} 的 slot`);
+        }
+      } catch (rollbackErr) {
+        await logger.log("WARN", `[invite] slot 回滚失败: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+      }
+
+      const userMessage = `系统暂时无法完成操作，请 15 分钟后重试`;
+      await logger.updateStatus("FAILED_FINAL", {
+        code: "MAX_RETRIES_EXCEEDED",
+        message: errMsg,
+      });
+      if (orderId) {
+        await logger.updateOrderStatus(orderId, "FAILED", userMessage);
+      }
+      await logger.log("ERROR", `邀请最终失败: ${errMsg}`);
+      throw new UnrecoverableError(errMsg);
+    }
 
     await logger.updateStatus("FAILED_RETRYABLE", {
       code: profileId ? "INVITE_ERROR" : "PROFILE_ACQUIRE_FAILED",
@@ -950,7 +1171,7 @@ export async function processInvite(
     await logger.log("ERROR", `邀请失败（将重试）: ${errMsg}`);
 
     // Transfer batch callback on terminal failure
-    if (deps.inviteQueue && job.attemptsMade >= (job.opts?.attempts ?? 3) - 1) {
+    if (isLastAttempt) {
       const transferTask = await prisma.task.findUnique({
         where: { id: taskId },
         select: { transferBatchId: true },
@@ -961,7 +1182,50 @@ export async function processInvite(
           where: { id: taskId },
           data: { status: "FAILED_FINAL" },
         }).catch(() => {});
-        await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch(() => {});
+
+        // ROLLBACK: restore the member in the source group so they're not orphaned.
+        // TransferBatch has sourceGroupId and memberEmails that tell us what to restore.
+        try {
+          const batch = await prisma.transferBatch.findUnique({
+            where: { id: transferTask.transferBatchId },
+            select: { sourceGroupId: true, memberEmails: true },
+          });
+          if (batch?.sourceGroupId && batch.memberEmails) {
+            const emails: string[] = JSON.parse(batch.memberEmails);
+            for (const memberEmail of emails) {
+              const removedMember = await prisma.familyMember.findFirst({
+                where: {
+                  familyGroupId: batch.sourceGroupId,
+                  email: memberEmail,
+                  status: "REMOVED",
+                },
+                orderBy: { updatedAt: "desc" },
+              });
+              if (removedMember) {
+                await prisma.$transaction(async (tx) => {
+                  await tx.familyMember.update({
+                    where: { id: removedMember.id },
+                    data: { status: "ACTIVE", removedAt: null },
+                  });
+                  await tx.familyGroup.update({
+                    where: { id: batch.sourceGroupId },
+                    data: {
+                      availableSlots: { decrement: 1 },
+                      memberCount: { increment: 1 },
+                    },
+                  });
+                });
+                await logger.log("INFO", `迁移回滚: 已将 ${memberEmail} 恢复到原组 ${batch.sourceGroupId}`);
+              }
+            }
+          }
+        } catch (rollbackErr) {
+          await logger.log("ERROR", `迁移回滚失败: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+        }
+
+        if (deps.inviteQueue) {
+          await checkTransferBatchProgress(prisma, taskId, deps.inviteQueue).catch(() => {});
+        }
       }
     }
 
@@ -1179,7 +1443,7 @@ export async function checkInviteResultPage(
   return { outcome: "success", pageText: snippet };
 }
 
-async function executeInviteOnPage(
+export async function executeInviteOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,

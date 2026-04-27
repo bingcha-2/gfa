@@ -14,8 +14,8 @@ export class PhoneInfoDto {
 }
 
 export class StartAutomationDto {
-  @IsIn(["oauth", "accept-invite", "phone-verify"])
-  action!: "oauth" | "accept-invite" | "phone-verify";
+  @IsIn(["oauth", "accept-invite", "phone-verify", "family-join"])
+  action!: "oauth" | "accept-invite" | "phone-verify" | "family-join";
 
   /** Account credentials — passed from client's local SQLite */
   @IsString()
@@ -31,6 +31,22 @@ export class StartAutomationDto {
   @IsOptional()
   @IsString()
   totpSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  childEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  childPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  childRecoveryEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  childTotpSecret?: string;
 
   @IsOptional()
   @IsArray()

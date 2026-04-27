@@ -11,7 +11,6 @@ import { toast } from "sonner";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,13 +35,14 @@ import { RefreshCw, RotateCcw, CheckCircle2, XCircle, Ban, ChevronDown, Loader2 
 
 const PAGE_SIZE = 50;
 
-function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "SUCCESS": case "COMPLETED": case "INVITE_SENT": case "REPLACED_AND_INVITE_SENT": return "default";
-    case "PENDING": case "QUEUED": case "RUNNING": return "secondary";
-    case "FAILED": case "FAILED_FINAL": case "FAILED_RETRYABLE": case "CANCELLED": return "destructive";
-    default: return "outline";
-  }
+/** Map raw task status to simplified 3-state display */
+function getSimplifiedStatus(status: string): { label: string; cls: string } {
+  const running = new Set(["PENDING", "RUNNING", "MANUAL_REVIEW"]);
+  const success = new Set(["SUCCESS", "COMPLETED", "INVITE_SENT", "REPLACED_AND_INVITE_SENT"]);
+  if (running.has(status)) return { label: "执行中", cls: "bg-amber-500/15 text-amber-600 border-amber-500/20" };
+  if (success.has(status)) return { label: "成功", cls: "bg-emerald-500/15 text-emerald-600 border-emerald-500/20" };
+  if (status === "CANCELLED") return { label: "已终止", cls: "bg-muted text-muted-foreground border-border" };
+  return { label: "失败", cls: "bg-red-500/15 text-red-600 border-red-500/20" };
 }
 
 function fmtTime(iso: string): string {
@@ -257,15 +257,15 @@ export default function TasksPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-md border">
-                <Table>
+              <div className="rounded-md border overflow-hidden">
+                <Table style={{ tableLayout: "fixed", width: "100%" }}>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[25%]">任务</TableHead>
-                      <TableHead className="w-20">状态</TableHead>
-                      <TableHead className="w-[18%]">关联对象</TableHead>
-                      <TableHead className="w-[28%]">错误</TableHead>
-                      <TableHead className="text-right">操作</TableHead>
+                      <TableHead style={{ width: "25%" }}>任务</TableHead>
+                      <TableHead style={{ width: "8%" }}>状态</TableHead>
+                      <TableHead style={{ width: "17%" }}>关联对象</TableHead>
+                      <TableHead style={{ width: "32%" }}>错误</TableHead>
+                      <TableHead style={{ width: "18%" }} className="text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -275,7 +275,7 @@ export default function TasksPage() {
                       const displayEmail = emails.user || emails.target || task.order?.userEmail;
                       return (
                         <TableRow key={task.id}>
-                          <TableCell>
+                          <TableCell className="overflow-hidden">
                             <div className="font-semibold text-sm">{task.type}</div>
                             {displayEmail && (
                               <div className="text-xs break-all">
@@ -289,17 +289,27 @@ export default function TasksPage() {
                             <TaskTimer task={task} />
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(isActioning ? "RUNNING" : task.status)} className="text-xs">
-                              {isActioning ? "..." : task.status}
-                            </Badge>
+                            {(() => {
+                              const ss = getSimplifiedStatus(isActioning ? "RUNNING" : task.status);
+                              return (
+                                <div>
+                                  <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${ss.cls}`}>
+                                    {isActioning ? "执行中" : ss.label}
+                                  </span>
+                                  {!isActioning && (
+                                    <div className="text-[10px] text-muted-foreground mt-1">{task.status}</div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </TableCell>
-                          <TableCell className="text-xs">
+                          <TableCell className="text-xs overflow-hidden">
                             {task.order?.orderNo && <div><span className="text-muted-foreground">订单：</span>{task.order.orderNo}</div>}
                             {task.familyGroup?.groupName && <div><span className="text-muted-foreground">家庭组：</span>{task.familyGroup.groupName}</div>}
                             {task.account?.name && <div><span className="text-muted-foreground">母号：</span>{task.account.name}</div>}
                             {!task.order?.orderNo && !task.familyGroup?.groupName && !task.account?.name && <span className="text-muted-foreground">-</span>}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="overflow-hidden">
                             <Collapsible>
                               <div className="text-xs font-medium">{task.lastErrorCode ?? "-"}</div>
                               {task.lastErrorMessage && (
@@ -318,29 +328,41 @@ export default function TasksPage() {
                             </Collapsible>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1 flex-wrap">
-                              {canRetryTask(role, task.status) && (
-                                <Button variant="outline" size="sm" disabled={isActioning} onClick={() => void handleRetry(task.id)} className="h-7 text-xs gap-1">
-                                  {isActioning && actioning?.action === "retry" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                                  重试
-                                </Button>
-                              )}
-                              {canManualCompleteTask(role, task.status) && (
-                                <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "complete")} className="h-7 text-xs gap-1">
-                                  <CheckCircle2 className="h-3 w-3" />完成
-                                </Button>
-                              )}
-                              {canManualFailTask(role, task.status) && (
-                                <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "fail")} className="h-7 text-xs gap-1">
-                                  <XCircle className="h-3 w-3" />失败
-                                </Button>
-                              )}
-                              {canCancelTask(role, task.status) && (
-                                <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "cancel")} className="h-7 text-xs gap-1 text-destructive">
-                                  <Ban className="h-3 w-3" />终止
-                                </Button>
-                              )}
-                            </div>
+                            {(() => {
+                              const s = task.status;
+                              const isTerminal = ["SUCCESS", "COMPLETED", "INVITE_SENT", "REPLACED_AND_INVITE_SENT", "CANCELLED"].includes(s);
+                              const isFailedLike = ["FAILED", "FAILED_RETRYABLE", "FAILED_FINAL"].includes(s);
+                              const isActive = ["PENDING", "RUNNING"].includes(s);
+                              const isManualReview = s === "MANUAL_REVIEW";
+                              const showRetry = isFailedLike || isManualReview;
+                              const showCancel = isActive || isFailedLike || isManualReview;
+                              return (
+                                <div className="flex items-center justify-end gap-1 flex-wrap">
+                                  {showRetry && (
+                                    <Button variant="outline" size="sm" disabled={isActioning} onClick={() => void handleRetry(task.id)} className="h-7 text-xs gap-1">
+                                      {isActioning && actioning?.action === "retry" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                                      重试
+                                    </Button>
+                                  )}
+                                  {showCancel && (
+                                    <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "cancel")} className="h-7 text-xs gap-1 text-destructive">
+                                      <Ban className="h-3 w-3" />终止
+                                    </Button>
+                                  )}
+                                  {isManualReview && (
+                                    <>
+                                      <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "complete")} className="h-7 text-xs gap-1">
+                                        <CheckCircle2 className="h-3 w-3" />完成
+                                      </Button>
+                                      <Button variant="outline" size="sm" disabled={isActioning} onClick={() => openPrompt(task.id, "fail")} className="h-7 text-xs gap-1">
+                                        <XCircle className="h-3 w-3" />失败
+                                      </Button>
+                                    </>
+                                  )}
+                                  {isTerminal && <span className="text-xs text-muted-foreground">—</span>}
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                         </TableRow>
                       );

@@ -35,6 +35,7 @@ const ALL_PERMISSIONS = [
   { key: "orders", label: "订单" }, { key: "tasks", label: "任务" },
   { key: "codes", label: "卡密" }, { key: "expire", label: "到期扫描" },
   { key: "scheduler", label: "自动维护" }, { key: "lookup", label: "成员管理" },
+  { key: "agent_service", label: "代理服务" },
 ];
 
 const ROLE_LABELS: Record<string, string> = { SUPER_ADMIN: "超级管理员", ADMIN: "管理员", OPERATIONS: "运营", SUPPORT: "客服" };

@@ -61,6 +61,32 @@ export interface RosettaReverseProxy {
   toolBridge: boolean;
 }
 
+export interface RosettaRelay {
+  running: boolean;
+  url: string;
+  statusUrl: string;
+  upstream: string;
+  hasApiKey: boolean;
+  totalRequests: number;
+  totalErrors: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastError: string | null;
+  accessKeyStatus?: {
+    id: string;
+    name: string;
+    status: string;
+    firstUsedAt: string;
+    expiresAt: string;
+    remainingMs: number;
+    totalRequests: number;
+    recentWindowRequests: number;
+    windowLimit: number;
+    windowMs: number;
+    lastUsedAt: string;
+  } | null;
+}
+
 export interface RosettaState {
   ready: boolean;
   problem: string;
@@ -74,6 +100,7 @@ export interface RosettaState {
     url: string;
   };
   reverseProxy: RosettaReverseProxy;
+  relay: RosettaRelay;
   ide: {
     configuredUrl: string;
     expectedUrl: string;

@@ -6,7 +6,19 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+// Wrap SelectPrimitive.Root to filter null from onValueChange
+// @base-ui/react Select returns string|null but consumers expect string
+function Select({ onValueChange, ...props }: Record<string, any> & {
+  onValueChange?: (value: string) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <SelectPrimitive.Root
+      {...props}
+      onValueChange={(v: any) => { if (v != null && onValueChange) onValueChange(v); }}
+    />
+  );
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (

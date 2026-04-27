@@ -347,6 +347,15 @@ function extractQuotaResetDelayMs(errorText, nowMs = Date.now()) {
         }
     }
 
+    const refreshOnMatch = rawText.match(/(?:refresh|reset)\s+on\s+([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{4},?\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?\s*(?:AM|PM)?)/i);
+    if (refreshOnMatch) {
+        sawResetHint = true;
+        const delayMs = parseQuotaResetTimestampToMs(refreshOnMatch[1], nowMs);
+        if (delayMs > 0) {
+            return delayMs;
+        }
+    }
+
     const delayMs = parseDurationToMs(rawText);
     if (delayMs > 0) {
         return delayMs;
@@ -388,8 +397,46 @@ function getRotationDetails(statusCode, authMode, errorText, fallbackModelKey = 
     return { reason: '', modelKey: '', retryAfterMs: 0 };
 }
 
+function getErrorSnippet(value) {
+    const text = String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return text.slice(0, 1200);
+}
+
 function getRotationReason(statusCode, authMode, errorText, fallbackModelKey = '') {
     return getRotationDetails(statusCode, authMode, errorText, fallbackModelKey).reason;
+}
+
+function getStreamingRotationDetails(text, fallbackModelKey = '') {
+    const raw = String(text || '');
+    if (!raw) return { reason: '', modelKey: '', retryAfterMs: 0 };
+    const lower = raw.toLowerCase();
+    const modelKey = extractCapacityModelKey(raw) || String(fallbackModelKey || '').trim();
+    if (
+        lower.includes('baseline model quota reached') ||
+        lower.includes('quota reached') ||
+        lower.includes('quota_exhausted') ||
+        lower.includes('resource_exhausted')
+    ) {
+        return {
+            reason: 'quota',
+            modelKey,
+            retryAfterMs: extractQuotaResetDelayMs(raw),
+        };
+    }
+    if (
+        lower.includes('model_capacity_exhausted') ||
+        lower.includes('no capacity available') ||
+        lower.includes('capacity available for model')
+    ) {
+        return {
+            reason: 'capacity',
+            modelKey,
+            retryAfterMs: extractQuotaResetDelayMs(raw),
+        };
+    }
+    return { reason: '', modelKey: '', retryAfterMs: 0 };
 }
 
 function sanitizeProxyResponseHeaders(headers, options = {}) {
@@ -432,6 +479,92 @@ function shouldWaitForCapacityRecovery(unavailable, attempts, maxRetries, accumu
         return false;
     }
     return Number(accumulatedWaitMs || 0) + retryAfterMs <= MAX_CAPACITY_RECOVERY_WAIT_MS;
+}
+
+function readJsonFile(filePath, fallback = {}) {
+    if (!filePath) return fallback;
+    try {
+        const raw = require('fs').readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+        return raw.trim() ? JSON.parse(raw) : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function fingerprintSecret(secret) {
+    const value = String(secret || '').trim();
+    if (!value) return '(none)';
+    if (value.length <= 10) return `${value.slice(0, 2)}***${value.slice(-2)} len=${value.length}`;
+    return `${value.slice(0, 6)}***${value.slice(-4)} len=${value.length}`;
+}
+
+function safeRemoteUrl(url) {
+    try {
+        const target = new URL(url);
+        return `${target.protocol}//${target.host}${target.pathname}`;
+    } catch {
+        return String(url || '(invalid)');
+    }
+}
+
+function postJson(url, payload, secret, timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+        const body = Buffer.from(JSON.stringify(payload || {}), 'utf8');
+        const target = new URL(url);
+        const isHttps = target.protocol === 'https:';
+        const transport = isHttps ? https : http;
+        const headers = {
+            'Content-Type': 'application/json',
+            'Content-Length': String(body.length),
+        };
+        if (secret) {
+            headers.Authorization = `Bearer ${secret}`;
+            headers['X-Token-Server-Secret'] = secret;
+        }
+
+        const req = transport.request({
+            method: 'POST',
+            hostname: target.hostname,
+            port: target.port || (isHttps ? 443 : 80),
+            path: `${target.pathname}${target.search}`,
+            headers,
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => chunks.push(chunk));
+            res.on('end', () => {
+                const raw = Buffer.concat(chunks).toString('utf8');
+                let parsed = {};
+                try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
+                if ((res.statusCode || 500) >= 400 || parsed.ok === false) {
+                    const message = parsed.error || parsed.message || `HTTP ${res.statusCode}`;
+                    const error = new Error(message);
+                    error.statusCode = res.statusCode || 0;
+                    error.responseBody = raw.slice(0, 500);
+                    reject(error);
+                    return;
+                }
+                resolve(parsed);
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => req.destroy(new Error('Token server timeout')));
+        req.write(body);
+        req.end();
+    });
+}
+
+function joinUrl(base, urlPath) {
+    return `${String(base || '').replace(/\/+$/, '')}/${String(urlPath || '').replace(/^\/+/, '')}`;
+}
+
+function shouldRefreshLease(lease) {
+    if (!lease || !lease.accessToken || !lease.projectId) return true;
+    const expiresAt = Date.parse(lease.expiresAt || '');
+    if (Number.isFinite(expiresAt)) {
+        return expiresAt < Date.now() + 60 * 1000;
+    }
+    const leasedAt = Number(lease._leasedAt) || 0;
+    return leasedAt > 0 ? Date.now() > leasedAt + 45 * 60 * 1000 : true;
 }
 
 function formatRetryDelayText(retryAfterMs) {
@@ -532,6 +665,7 @@ function createTokenProxy(config) {
         log = console.log,
         oauthClientId,
         runtimeStatePath,
+        configPath,
     } = config;
 
     const parsedEndpoint = new URL(cloudEndpoint);
@@ -549,6 +683,99 @@ function createTokenProxy(config) {
     let server = null;
     let requestCount = 0;
     let rotationCount = 0;
+    let cachedRemoteLease = null;
+    let remoteLeaseCount = 0;
+    let remoteReportCount = 0;
+    let remoteErrorCount = 0;
+    let lastRemoteError = null;
+    let lastAccessKeyStatus = null;
+
+    function getRuntimeTokenMode() {
+        const runtimeConfig = readJsonFile(configPath, {});
+        const mode = String(
+            runtimeConfig.tokenProxyMode ||
+            runtimeConfig.tokenSource ||
+            runtimeConfig.relayProxy?.tokenSource ||
+            'local'
+        ).trim().toLowerCase();
+        const relay = runtimeConfig.relayProxy || {};
+        return {
+            mode: mode === 'remote' || mode === 'token-passthrough' || mode === 'relay'
+                ? 'remote'
+                : 'local',
+            tokenServerUrl: String(relay.tokenServerUrl || runtimeConfig.remoteTokenServerUrl || '').trim(),
+            tokenServerSecret: String(relay.tokenServerSecret || relay.apiKey || runtimeConfig.remoteTokenServerSecret || '').trim(),
+        };
+    }
+
+    async function getRemoteToken(modelKey, force = false) {
+        const runtime = getRuntimeTokenMode();
+        if (!runtime.tokenServerUrl) {
+            throw new Error('Remote token mode is enabled but relayProxy.tokenServerUrl is not configured.');
+        }
+        if (!force && !shouldRefreshLease(cachedRemoteLease)) {
+            log(`[token-proxy] remote lease cache hit account=#${cachedRemoteLease.accountId || '?'} project=${cachedRemoteLease.projectId || '(none)'}`);
+            return cachedRemoteLease;
+        }
+        const leaseUrl = joinUrl(runtime.tokenServerUrl, '/lease-token');
+        log(
+            `[token-proxy] remote lease request url=${safeRemoteUrl(leaseUrl)} ` +
+            `model=${modelKey || '(empty)'} force=${force ? 'yes' : 'no'} ` +
+            `key=${fingerprintSecret(runtime.tokenServerSecret)}`
+        );
+        let lease;
+        try {
+            lease = await postJson(
+                leaseUrl,
+                { modelKey, reason: 'token-proxy-remote-mode' },
+                runtime.tokenServerSecret
+            );
+        } catch (error) {
+            remoteErrorCount++;
+            lastRemoteError = error.message;
+            log(
+                `[token-proxy] remote lease failed status=${error.statusCode || 'n/a'} ` +
+                `error=${error.message} body=${String(error.responseBody || '').slice(0, 300)}`
+            );
+            throw error;
+        }
+        lease._leasedAt = Date.now();
+        lastAccessKeyStatus = lease.accessKeyStatus || lastAccessKeyStatus;
+        cachedRemoteLease = {
+            token: lease.accessToken,
+            accountId: lease.accountId || 0,
+            email: lease.emailHint || 'remote-token',
+            projectId: lease.projectId || '',
+            canRotate: true,
+            reservation: null,
+            remoteLease: true,
+            leaseId: lease.leaseId || '',
+        };
+        remoteLeaseCount++;
+        lastRemoteError = null;
+        log(`[token-proxy] remote lease #${cachedRemoteLease.accountId || '?'} ${cachedRemoteLease.email} project=${cachedRemoteLease.projectId || '(none)'}`);
+        return cachedRemoteLease;
+    }
+
+    function reportRemoteResult(tokenInfo, status, modelKey, details = {}) {
+        if (!tokenInfo?.remoteLease || !tokenInfo.leaseId) return;
+        const runtime = getRuntimeTokenMode();
+        if (!runtime.tokenServerUrl) return;
+        remoteReportCount++;
+        log(`[token-proxy] remote report lease=${tokenInfo.leaseId} status=${status || 'n/a'} model=${modelKey || '(empty)'}`);
+        return postJson(joinUrl(runtime.tokenServerUrl, '/report-result'), {
+            leaseId: tokenInfo.leaseId,
+            status,
+            modelKey,
+            reason: details.reason,
+            retryAfterMs: details.retryAfterMs,
+            errorText: getErrorSnippet(details.errorText || details.errText || details.message),
+        }, runtime.tokenServerSecret, 10000).catch((error) => {
+            remoteErrorCount++;
+            lastRemoteError = error.message;
+            log(`[token-proxy] remote report failed: ${error.message}`);
+        });
+    }
 
     function forwardRequest(method, reqPath, headers, body) {
         return new Promise((resolve, reject) => {
@@ -589,22 +816,27 @@ function createTokenProxy(config) {
         let lastError = null;
         const attemptedAccountIds = new Set();
         let accumulatedWaitMs = 0;
+        const requestUsesRemoteToken = getRuntimeTokenMode().mode === 'remote';
 
         // Allow enough attempts to try ALL rotatable accounts for quota/capacity rotation,
         // not just maxRetries (which is meant for network errors).
-        const rotatableCount = quotaTracker.getStatus().rotatableAccounts;
+        const rotatableCount = requestUsesRemoteToken ? Math.max(1, maxRetries + 1) : quotaTracker.getStatus().rotatableAccounts;
         const maxAttempts = Math.max(maxRetries, rotatableCount);
 
         while (attempts <= maxAttempts) {
             attempts++;
             let tokenInfo;
             try {
-                tokenInfo = await quotaTracker.getActiveToken({
-                    modelKey: requestModelKey,
-                    balanceLoad: isGenerationRequest,
-                    trackInFlight: isGenerationRequest,
-                    requireProjectId: isGenerationRequest,
-                });
+                if (requestUsesRemoteToken) {
+                    tokenInfo = await getRemoteToken(requestModelKey, attempts > 1);
+                } else {
+                    tokenInfo = await quotaTracker.getActiveToken({
+                        modelKey: requestModelKey,
+                        balanceLoad: isGenerationRequest,
+                        trackInFlight: isGenerationRequest,
+                        requireProjectId: isGenerationRequest,
+                    });
+                }
                 attemptedAccountIds.add(tokenInfo.accountId);
             } catch (error) {
                 const unavailable = quotaTracker.getModelAvailability({
@@ -692,7 +924,23 @@ function createTokenProxy(config) {
                         errText,
                         requestModelKey
                     );
-
+                    rotation.errorText = errText;
+                    await reportRemoteResult(tokenInfo, proxyRes.statusCode, rotation.modelKey || requestModelKey, rotation);
+                    if (tokenInfo.remoteLease && attempts < maxAttempts) {
+                        cachedRemoteLease = null;
+                        log(`[token-proxy] #${reqId} remote 429; refreshing lease and retrying...`);
+                        await new Promise((r) => setTimeout(r, 100 + Math.random() * 400));
+                        continue;
+                    }
+                    if (tokenInfo.remoteLease) {
+                        log(`[token-proxy] #${reqId} remote ERROR 429: ${errText.substring(0, 500)}`);
+                        const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
+                            bodyLength: rawErr.length,
+                        });
+                        res.writeHead(proxyRes.statusCode, resHeaders);
+                        res.end(rawErr);
+                        return;
+                    }
                     if (prepared.authMode !== 'account') {
                         log(
                             `[token-proxy] #${reqId} 429 received in ${prepared.authMode} mode; ` +
@@ -750,7 +998,23 @@ function createTokenProxy(config) {
                         errText,
                         requestModelKey
                     );
-
+                    rotation.errorText = errText;
+                    if (tokenInfo.remoteLease && (proxyRes.statusCode === 401 || proxyRes.statusCode === 403 || proxyRes.statusCode === 503) && attempts < maxAttempts) {
+                        await reportRemoteResult(tokenInfo, proxyRes.statusCode, rotation.modelKey || requestModelKey, rotation);
+                        cachedRemoteLease = null;
+                        log(`[token-proxy] #${reqId} remote ${proxyRes.statusCode}; refreshing lease and retrying...`);
+                        await new Promise((r) => setTimeout(r, 100 + Math.random() * 400));
+                        continue;
+                    }
+                    if (tokenInfo.remoteLease) {
+                        log(`[token-proxy] #${reqId} remote ERROR ${proxyRes.statusCode}: ${errText.substring(0, 500)}`);
+                        const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
+                            bodyLength: rawErr.length,
+                        });
+                        res.writeHead(proxyRes.statusCode, resHeaders);
+                        res.end(rawErr);
+                        return;
+                    }
                     if (rotation.reason) {
                         log(
                             `[token-proxy] #${reqId} ${proxyRes.statusCode} ${rotation.reason} hit, rotating...`
@@ -814,18 +1078,22 @@ function createTokenProxy(config) {
                     return;
                 }
 
-                if (prepared.authMode !== 'passthrough') {
+                const isStreaming = req.url.includes('streamGenerate') ||
+                    String(proxyRes.headers['content-type'] || '').includes('text/event-stream');
+
+                if (tokenInfo.remoteLease && !isStreaming) {
+                    reportRemoteResult(tokenInfo, proxyRes.statusCode || 200, requestModelKey);
+                } else if (!isStreaming && prepared.authMode !== 'passthrough') {
                     quotaTracker.reportSuccess(tokenInfo.accountId, {
                         modelKey: requestModelKey,
                     });
                 }
 
-                const isStreaming = req.url.includes('streamGenerate') ||
-                    String(proxyRes.headers['content-type'] || '').includes('text/event-stream');
                 const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, { isStreaming });
                 let responseBytes = 0;
                 let responseEnded = false;
                 let clientClosed = false;
+                let streamReportedFailure = false;
 
                 const shouldInterceptBody = Math.floor(proxyRes.statusCode / 100) === 2 &&
                     (req.url.includes('fetchUserInfo') || req.url.includes('cascadeNuxes') || req.url.includes('fetchAvailableModels'));
@@ -908,6 +1176,28 @@ function createTokenProxy(config) {
                     if (isStreaming) {
                         streamHasData = true;
                         resetStreamTimer();
+                        if (!streamReportedFailure) {
+                            const rotation = getStreamingRotationDetails(chunk.toString('utf8'), requestModelKey);
+                            if (rotation.reason) {
+                                streamReportedFailure = true;
+                                const status = rotation.reason === 'capacity' ? 503 : 429;
+                                log(
+                                    `[token-proxy] #${reqId} stream ${rotation.reason} hit` +
+                                    (rotation.modelKey ? ` (${rotation.modelKey})` : '') +
+                                    ', marking account for rotation'
+                                );
+                                if (tokenInfo.remoteLease) {
+                                    reportRemoteResult(tokenInfo, status, rotation.modelKey || requestModelKey, rotation);
+                                    cachedRemoteLease = null;
+                                } else if (prepared.authMode === 'account') {
+                                    quotaTracker.reportQuotaExhausted(tokenInfo.accountId, {
+                                        reason: rotation.reason,
+                                        modelKey: rotation.modelKey || requestModelKey,
+                                        retryAfterMs: rotation.retryAfterMs,
+                                    });
+                                }
+                            }
+                        }
                     }
                     if (shouldInterceptBody) {
                         bodyChunks.push(chunk);
@@ -917,6 +1207,15 @@ function createTokenProxy(config) {
                     responseEnded = true;
                     if (streamInactivityTimer) clearTimeout(streamInactivityTimer);
                     releaseReservation();
+                    if (isStreaming && !streamReportedFailure) {
+                        if (tokenInfo.remoteLease) {
+                            reportRemoteResult(tokenInfo, proxyRes.statusCode || 200, requestModelKey);
+                        } else if (prepared.authMode !== 'passthrough') {
+                            quotaTracker.reportSuccess(tokenInfo.accountId, {
+                                modelKey: requestModelKey,
+                            });
+                        }
+                    }
                     // Stream end log removed — response line is sufficient
                     if (shouldInterceptBody && bodyChunks.length > 0) {
                         try {
@@ -970,7 +1269,10 @@ function createTokenProxy(config) {
                 lastError = error;
                 releaseReservation();
                 log(`[token-proxy] #${reqId} Network error: ${error.message}`);
-                if (prepared.authMode !== 'passthrough') {
+                if (tokenInfo.remoteLease) {
+                    reportRemoteResult(tokenInfo, 502, requestModelKey);
+                    cachedRemoteLease = null;
+                } else if (prepared.authMode !== 'passthrough') {
                     quotaTracker.reportError(tokenInfo.accountId);
                 }
                 if (attempts <= maxRetries) continue;
@@ -1017,8 +1319,21 @@ function createTokenProxy(config) {
     }
 
     function getStatus() {
+        const runtime = getRuntimeTokenMode();
         return {
             running: Boolean(server), port: proxyPort, cloudEndpoint,
+            mode: runtime.mode === 'remote' ? 'token-passthrough' : 'token-proxy',
+            tokenSource: runtime.mode,
+            tokenServerUrl: runtime.mode === 'remote' ? runtime.tokenServerUrl : '',
+            hasTokenServerSecret: runtime.mode === 'remote' ? Boolean(runtime.tokenServerSecret) : false,
+            remoteLeaseCount,
+            remoteReportCount,
+            remoteErrorCount,
+            lastRemoteError,
+            remoteActiveAccountId: cachedRemoteLease?.accountId || null,
+            remoteActiveEmailHint: cachedRemoteLease?.email || '',
+            remoteActiveProjectId: cachedRemoteLease?.projectId || '',
+            accessKeyStatus: lastAccessKeyStatus,
             totalRequests: requestCount, totalRotations: rotationCount,
             ...quotaTracker.getStatus(),
         };

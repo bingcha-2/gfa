@@ -27,6 +27,7 @@ import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWind
 import { checkTransferBatchProgress } from "../check-transfer-progress";
 import { Queue } from "bullmq";
 import { postTaskSync } from "../post-task-sync";
+import { recalcGroupCountsFromDB } from "./sync.processor";
 
 const GOOGLE_FAMILY_URL = "https://myaccount.google.com/family/details?hl=en";
 
@@ -154,20 +155,13 @@ export async function processRemove(
     const syncOk = await postTaskSync(page, prisma, familyGroupId, account.loginEmail ?? "", logger);
 
     if (!syncOk) {
-      // postTaskSync failed silently — apply manual fallback so slots stay accurate
-      await logger.log("WARN", "Post-removal sync failed, applying manual DB fallback");
+      // postTaskSync failed silently — recalculate from DB records for accuracy
+      await logger.log("WARN", "Post-removal sync failed, recalculating counts from DB");
       await prisma.familyMember.updateMany({
         where: { familyGroupId, email: memberEmail },
         data: { status: "REMOVED", removedAt: new Date() },
       });
-      await prisma.familyGroup.update({
-        where: { id: familyGroupId },
-        data: { availableSlots: { increment: 1 } },
-      });
-      await prisma.familyGroup.updateMany({
-        where: { id: familyGroupId, memberCount: { gt: 0 } },
-        data: { memberCount: { decrement: 1 } },
-      });
+      await recalcGroupCountsFromDB(prisma, familyGroupId, logger);
     } else {
       // Verify the removed member was marked in DB (postTaskSync's reconcile
       // should have done this, but ensure it as a safety net)
@@ -292,7 +286,7 @@ export async function processRemove(
  *
  * Handles password re-authentication and TOTP 2FA if triggered by Google.
  */
-async function removeMemberOnPage(
+export async function removeMemberOnPage(
   page: import("playwright").Page,
   email: string,
   logger: TaskLogger,
@@ -841,7 +835,7 @@ async function removeMemberOnPage(
  * Fallback member finder when GAIA ID is not available.
  * Tries S1 (email text) → S2 (displayName) → S3 (iterate all member hrefs).
  */
-async function fallbackFindMember(
+export async function fallbackFindMember(
   page: import("playwright").Page,
   email: string,
   displayName: string | undefined,

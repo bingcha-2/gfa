@@ -20,8 +20,30 @@
   "longPromptLsRequestTimeoutMs": 120000,
   "thinkingModelLsRequestTimeoutMs": 180000,
   "tokenProxyEnabled": false,
+  "tokenProxyMode": "local",
   "tokenProxyPort": 60670,
   "googleCloudEndpoint": "https://daily-cloudcode-pa.googleapis.com",
   "tokenProxyCooldownMs": 60000,
-  "tokenProxyMaxRetries": 3
+  "tokenProxyMaxRetries": 3,
+
+  "remoteTokenServer": {
+    "host": "0.0.0.0",
+    "port": 60700,
+    "secret": "change-this-remote-token-secret",
+    "leaseTtlMs": 2700000,
+    "affinityTtlMs": 7200000,
+    "maxConcurrentPerAccount": 1
+  },
+
+  "relayProxy": {
+    "mode": "token-passthrough",
+    "port": 60680,
+    "tokenServerUrl": "https://bcai.site/remote-token",
+    "tokenServerSecret": "change-this-remote-token-secret",
+    "clientId": "",
+
+    "legacyMode": "openai-relay",
+    "upstream": "https://bcai.online",
+    "apiKey": ""
+  }
 }

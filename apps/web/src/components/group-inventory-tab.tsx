@@ -12,6 +12,7 @@ import {
 } from "./group-panel-types";
 import type { FamilyGroupSummary } from "../lib/types";
 import type { MigrateResult } from "./console-app";
+import { MemberTimeline } from "./member-timeline";
 
 type InventoryTabProps = {
   searchMode: "parent" | "member";
@@ -262,6 +263,7 @@ export function InventoryTab({
             <option value="PASSWORD_ERROR">🔴 密码错误</option>
             <option value="CAPTCHA_REQUIRED">🤖 人机验证</option>
             <option value="INVITE_COOLDOWN">🚫 邀请受限</option>
+            <option value="ACCT_RISKY">🔶 风控母号</option>
             <option value="SUBSCRIPTION_SUSPENDED">⚠️ 订阅暂停</option>
           </select>
         </>)}
@@ -303,6 +305,7 @@ export function InventoryTab({
               else if (filterExtra === 'PASSWORD_ERROR') matchExtra = g.account?.syncError === 'PASSWORD_ERROR';
               else if (filterExtra === 'CAPTCHA_REQUIRED') matchExtra = g.account?.syncError === 'CAPTCHA_REQUIRED';
               else if (filterExtra === 'INVITE_COOLDOWN') matchExtra = g.account?.syncError === 'INVITE_COOLDOWN';
+              else if (filterExtra === 'ACCT_RISKY') matchExtra = g.account?.status === 'RISKY';
               else if (filterExtra === 'SUBSCRIPTION_SUSPENDED') matchExtra = g.account?.subscriptionStatus === 'SUSPENDED' || g.account?.syncError === 'SUBSCRIPTION_SUSPENDED';
               return matchEmail && matchStatus && matchExtra;
             })
@@ -319,6 +322,11 @@ export function InventoryTab({
                 : `共 ${groups.length} 组${filtered.length < groups.length ? ` · 筛选 ${filtered.length} 条` : ''}`}
               {totalGroupPages > 0 && ` · 第 ${currentGroupPage}/${totalGroupPages} 页`}
             </div>
+
+            {/* Member timeline (shown when searching by member email) */}
+            {searchMode === "member" && memberSearchDone && searchEmail.trim() && (
+              <MemberTimeline email={searchEmail.trim()} autoLoad />
+            )}
 
             {filterExtra === 'HAS_DUPLICATES' && (
               <div style={{

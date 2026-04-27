@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 
 const PAGE_SIZE = 30;
-const CODE_TYPE_LABELS: Record<string, string> = { JOIN_GROUP: "上车码", ACCOUNT_SWAP: "换号码", SUBSCRIPTION: "订阅码" };
+const CODE_TYPE_LABELS: Record<string, string> = { JOIN_GROUP: "邀请码(JZ)", ACCOUNT_SWAP: "换号码(HH)", SUBSCRIPTION: "长效换号码(CX)" };
 
 function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
   if (s === "UNUSED") return "default";
@@ -104,9 +104,9 @@ export default function CodesPage() {
         count: parseInt(form.count) || 10,
         codeType: form.codeType,
         product: form.product,
-        validDays: parseInt(form.validDays) || 30,
       };
-      if (form.codeType === "ACCOUNT_SWAP") {
+      if (form.codeType === "SUBSCRIPTION") {
+        payload.validDays = parseInt(form.validDays) || 30;
         payload.swapLimit = parseInt(form.swapLimit) || 2;
         payload.swapWindowHours = parseInt(form.swapWindowHours) || 5;
       }
@@ -168,9 +168,9 @@ export default function CodesPage() {
       <div className="grid gap-4 mb-6 md:grid-cols-4">
         {[
           { label: "全部", count: stats.types.ALL, active: typeFilter === "ALL", onClick: () => { setTypeFilter("ALL"); setCurrentPage(1); } },
-          { label: "上车码", count: stats.types.JOIN_GROUP, active: typeFilter === "JOIN_GROUP", onClick: () => { setTypeFilter("JOIN_GROUP"); setCurrentPage(1); } },
-          { label: "换号码", count: stats.types.ACCOUNT_SWAP, active: typeFilter === "ACCOUNT_SWAP", onClick: () => { setTypeFilter("ACCOUNT_SWAP"); setCurrentPage(1); } },
-          { label: "订阅码", count: stats.types.SUBSCRIPTION, active: typeFilter === "SUBSCRIPTION", onClick: () => { setTypeFilter("SUBSCRIPTION"); setCurrentPage(1); } },
+          { label: "邀请码(JZ)", count: stats.types.JOIN_GROUP, active: typeFilter === "JOIN_GROUP", onClick: () => { setTypeFilter("JOIN_GROUP"); setCurrentPage(1); } },
+          { label: "换号码(HH)", count: stats.types.ACCOUNT_SWAP, active: typeFilter === "ACCOUNT_SWAP", onClick: () => { setTypeFilter("ACCOUNT_SWAP"); setCurrentPage(1); } },
+          { label: "长效换号码(CX)", count: stats.types.SUBSCRIPTION, active: typeFilter === "SUBSCRIPTION", onClick: () => { setTypeFilter("SUBSCRIPTION"); setCurrentPage(1); } },
         ].map((s) => (
           <Card key={s.label} className={`cursor-pointer transition-colors ${s.active ? "border-primary" : "hover:border-muted-foreground/30"}`} onClick={s.onClick}>
             <CardHeader className="pb-2"><CardDescription>{s.label}</CardDescription></CardHeader>
@@ -287,26 +287,26 @@ export default function CodesPage() {
                   <div>
                     <Label>卡密类型</Label>
                     <Select value={form.codeType} onValueChange={(v) => setForm((f) => ({ ...f, codeType: v as any }))} items={[
-                      { label: "上车码", value: "JOIN_GROUP" },
-                      { label: "换号码", value: "ACCOUNT_SWAP" },
-                      { label: "订阅码", value: "SUBSCRIPTION" },
+                      { label: "邀请码(JZ)", value: "JOIN_GROUP" },
+                      { label: "换号码(HH)", value: "ACCOUNT_SWAP" },
+                      { label: "长效换号码(CX)", value: "SUBSCRIPTION" },
                     ]}>
                       <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem value="JOIN_GROUP">上车码</SelectItem>
-                          <SelectItem value="ACCOUNT_SWAP">换号码</SelectItem>
-                          <SelectItem value="SUBSCRIPTION">订阅码</SelectItem>
+                          <SelectItem value="JOIN_GROUP">邀请码(JZ)</SelectItem>
+                          <SelectItem value="ACCOUNT_SWAP">换号码(HH)</SelectItem>
+                          <SelectItem value="SUBSCRIPTION">长效换号码(CX)</SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>
                   </div>
                   <div><Label>数量</Label><Input type="number" min={1} max={200} value={form.count} onChange={(e) => setForm((f) => ({ ...f, count: e.target.value }))} className="mt-1" /></div>
-                  <div><Label>有效期(天)</Label><Input type="number" min={1} value={form.validDays} onChange={(e) => setForm((f) => ({ ...f, validDays: e.target.value }))} className="mt-1" /></div>
                   <div><Label>产品线</Label><Input value={form.product} onChange={(e) => setForm((f) => ({ ...f, product: e.target.value }))} className="mt-1" /></div>
-                  {form.codeType === "ACCOUNT_SWAP" && (
+                  {form.codeType === "SUBSCRIPTION" && (
                     <>
-                      <div><Label>换号上限</Label><Input type="number" min={1} value={form.swapLimit} onChange={(e) => setForm((f) => ({ ...f, swapLimit: e.target.value }))} className="mt-1" /></div>
+                      <div><Label>有效期(天)</Label><Input type="number" min={1} value={form.validDays} onChange={(e) => setForm((f) => ({ ...f, validDays: e.target.value }))} className="mt-1" /></div>
+                      <div><Label>换号上限(次/窗口)</Label><Input type="number" min={1} value={form.swapLimit} onChange={(e) => setForm((f) => ({ ...f, swapLimit: e.target.value }))} className="mt-1" /></div>
                       <div><Label>换号窗口(小时)</Label><Input type="number" min={1} value={form.swapWindowHours} onChange={(e) => setForm((f) => ({ ...f, swapWindowHours: e.target.value }))} className="mt-1" /></div>
                     </>
                   )}

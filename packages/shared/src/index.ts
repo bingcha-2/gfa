@@ -77,9 +77,15 @@ export type PhoneInfo = {
 
 export type AutomationPayload = {
   taskId?: string;
-  action: "oauth" | "accept-invite" | "phone-verify";
+  action: "oauth" | "accept-invite" | "phone-verify" | "family-join";
   /** Account credentials — passed from client, not stored server-side */
   credentials: {
+    email: string;
+    password: string;
+    recoveryEmail?: string;
+    totpSecret?: string;
+  };
+  childCredentials?: {
     email: string;
     password: string;
     recoveryEmail?: string;

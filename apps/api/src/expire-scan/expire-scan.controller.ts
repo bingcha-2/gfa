@@ -14,6 +14,12 @@ export class ExpireScanController {
     return this.expireScanService.getStatus();
   }
 
+  /** GET /admin/expire-scan/expired-members — list all members whose expiresAt has passed */
+  @Get("expired-members")
+  getExpiredMembers() {
+    return this.expireScanService.getExpiredMembers();
+  }
+
   /** POST /admin/expire-scan/run — manually trigger a scan immediately */
   @Post("run")
   async runScan() {

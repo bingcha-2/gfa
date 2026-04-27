@@ -658,6 +658,7 @@ export class SchedulerService implements OnModuleInit {
           data: {
             memberCount: activeMembers,
             availableSlots: computedSlots,
+            pendingInviteCount: 0,
           },
         });
       }

@@ -69,22 +69,21 @@ export async function processReplace(
   let removeConfirmed = false; // tracks whether remove step succeeded (for failure recovery)
 
   try {
-    // ── Pre-check: if account is in cooldown, has too many failures, or is unhealthy → delay/fail ──
+    // ── Pre-check: if account is in cooldown or unhealthy → delay/fail ──
     if (!job.data.ignoreCooldown) {
       const cooldownSecs = await pool.isLoginCoolingDown(accountId);
-      const priorFailures = await pool.getAccountTaskFailureCount(accountId);
 
-      // Account truly unhealthy (too many failures or bad status) → unrecoverable, needs human
-      if (priorFailures >= 5 || (account.status !== "HEALTHY" && account.status !== "LOGIN_REQUIRED")) {
+      // Account unhealthy (bad status) → unrecoverable, needs human
+      if (account.status !== "HEALTHY" && account.status !== "LOGIN_REQUIRED") {
         const statusDesc = account.status === "RISKY" ? "风险" : account.status === "DISABLED" ? "已禁用" : account.status;
         await logger.log("WARN",
-          `[replace] 主号不可用：累计登录失败 ${priorFailures} 次，状态=${statusDesc}。替换任务必须使用家庭组自身主号，无法切换。`
+          `[replace] 主号不可用：状态=${statusDesc}。替换任务必须使用家庭组自身主号，无法切换。`
         );
         await logger.updateStatus("FAILED_RETRYABLE", {
           code: "ACCOUNT_UNAVAILABLE",
-          message: `主号不可用（累计失败 ${priorFailures} 次，状态: ${statusDesc}），请手动检查账号登录情况`,
+          message: `主号不可用（状态: ${statusDesc}），请手动检查账号登录情况`,
         });
-        throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: failures=${priorFailures}, status=${account.status}`);
+        throw new UnrecoverableError(`ACCOUNT_UNAVAILABLE: status=${account.status}`);
       }
 
       // Account in transient cooldown → delay job until cooldown expires (don't waste an attempt)
@@ -174,10 +173,10 @@ export async function processReplace(
           await prisma.familyMember.update({
             where: { id: memberRecord.id },
             data: { googleMemberId: targetGaiaId },
-          }).catch(() => {});
+          }).catch(() => { });
           await prisma.familyMember.delete({
             where: { id: placeholders[0].id },
-          }).catch(() => {});
+          }).catch(() => { });
           await logger.log("INFO",
             `Fuzzy GAIA: merged placeholder into ${targetMemberEmail}, deleted ${placeholders[0].email}`);
         }
@@ -195,10 +194,10 @@ export async function processReplace(
             await prisma.familyMember.update({
               where: { id: memberRecord.id },
               data: { googleMemberId: targetGaiaId },
-            }).catch(() => {});
+            }).catch(() => { });
             await prisma.familyMember.delete({
               where: { id: byName[0].id },
-            }).catch(() => {});
+            }).catch(() => { });
             await logger.log("INFO",
               `Fuzzy GAIA: merged placeholder into ${targetMemberEmail}`);
           }
@@ -217,17 +216,11 @@ export async function processReplace(
     );
 
     // Fix #5: On retry, check if old member was already removed in a previous attempt.
-    // Two checks:
-    //   1. DB status = REMOVED → definitely skip
-    //   2. DB status != REMOVED but member not findable on page → also skip (crash-retry scenario)
-    // For check #2, we count member cards on the page (excluding manager).
-    // We do NOT use body.textContent for presence detection (it's unreliable for PENDING→ACTIVE transitions).
+    // We always attempt page-based verification instead of trusting DB status alone,
+    // because the DB can be stale (e.g. marked REMOVED but Google didn't actually remove).
+    // The page-based "Cannot find member" handler (below) covers all retry scenarios.
     let skipRemove = false;
     let skipInvite = false;
-    if (memberRecord?.status === "REMOVED") {
-      await logger.log("INFO", `Target member ${targetMemberEmail} already REMOVED in DB — skipping Step 1 (remove)`);
-      skipRemove = true;
-    }
 
     let discoveredGaiaId: string | undefined;
     let preRemoveCardCount: number | undefined;
@@ -272,7 +265,7 @@ export async function processReplace(
           await logger.log("WARN",
             `Member ${targetMemberEmail} not found on page (attempt=${job.attemptsMade ?? 0}). Verifying if slot is available...`
           );
-          
+
           await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
           await page.waitForTimeout(2000);
 
@@ -320,7 +313,7 @@ export async function processReplace(
                 await prisma.swapRecord.updateMany({
                   where: { orderId, taskId, status: "PENDING" },
                   data: { status: "FAILED" },
-                }).catch(() => {});
+                }).catch(() => { });
               }
               throw new UnrecoverableError(userMessage);
             } else if (inviteLinkCount > 0 && !isFirstAttempt) {
@@ -342,10 +335,10 @@ export async function processReplace(
               await logger.log("WARN",
                 `No invite slots, newUserEmail not on page → member must be present but identification failed. Reloading and retrying...`
               );
-              await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
+              await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => { });
               await page.waitForTimeout(2000);
               await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-              await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+              await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => { });
               await page.waitForTimeout(5000);
 
               try {
@@ -379,7 +372,7 @@ export async function processReplace(
         await prisma.familyMember.update({
           where: { id: memberRecord.id },
           data: { googleMemberId: discoveredGaiaId },
-        }).catch(() => {}); // non-fatal
+        }).catch(() => { }); // non-fatal
         await logger.log("INFO", `Back-filled gaiaId=${discoveredGaiaId} for ${targetMemberEmail}`);
       }
     }
@@ -558,11 +551,11 @@ export async function processReplace(
       await prisma.familyGroup.updateMany({
         where: { accountId, status: "ACTIVE" },
         data: { status: "MANUAL_ONLY" },
-      }).catch(() => {});
+      }).catch(() => { });
       await prisma.account.update({
         where: { id: accountId },
         data: { syncError: "INVITE_COOLDOWN" },
-      }).catch(() => {});
+      }).catch(() => { });
       await logger.log("ERROR",
         `账号 ${accountId} 在替换过程中触发 Google 邀请频率限制 — 已设置 24 小时冷却，家庭组已标记为 MANUAL_ONLY`
       );
@@ -613,7 +606,7 @@ export async function processReplace(
               availableSlots: { increment: 1 },
               memberCount: { decrement: 1 },
             },
-          }).catch(() => {});
+          }).catch(() => { });
           await logger.log("INFO", `数据库已同步：${targetMemberEmail} 标记为 REMOVED，位置已回收`);
         } catch (syncErr: any) {
           await logger.log("WARN", `同步数据库失败: ${syncErr.message}`);
@@ -808,7 +801,7 @@ export async function processReplace(
             availableSlots: { increment: 1 },
             memberCount: { decrement: 1 },
           },
-        }).catch(() => {});
+        }).catch(() => { });
         await logger.log("INFO", `DB synced: ${targetMemberEmail} marked REMOVED, slot reclaimed`);
       } catch (syncErr: any) {
         await logger.log("WARN", `Failed to sync DB after partial replace: ${syncErr.message}`);
@@ -818,12 +811,12 @@ export async function processReplace(
     throw error;
   } finally {
     stopHeartbeat?.();
-    await browser.disconnect().catch(() => {});
+    await browser.disconnect().catch(() => { });
     if (profileId) {
-      await adspower.closeProfile(profileId).catch(() => {});
-      await pool.release(profileId, workerId).catch(() => {});
+      await adspower.closeProfile(profileId).catch(() => { });
+      await pool.release(profileId, workerId).catch(() => { });
     }
-    await pool.releaseAccount(accountId, workerId).catch(() => {});
+    await pool.releaseAccount(accountId, workerId).catch(() => { });
   }
 }
 
@@ -904,14 +897,14 @@ async function removeMemberOnPage(
         );
         // Clear SPA state: navigate to blank page first to prevent stale DOM content
         // from leaking into subsequent S3 page visits
-        await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
+        await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => { });
         await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
         discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
       }
     } else {
       await logger.log("WARN", `S0: Landed on page but no action button found, falling back to list page matching`);
       // Clear SPA state before fallback
-      await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => { });
       await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
       discoveredGaiaId = await fallbackFindMember(page, email, displayName, logger, googleMemberId, otherMemberGaiaIds);
     }
@@ -1022,7 +1015,7 @@ async function removeMemberOnPage(
   // We poll for up to 15s to definitively detect the state change.
   let needsReAuth = false;
   let confirmDetected = false;
-  
+
   for (let poll = 0; poll < 30; poll++) {
     await page.waitForTimeout(500);
     const u = page.url();
@@ -1030,7 +1023,7 @@ async function removeMemberOnPage(
       needsReAuth = true;
       break;
     }
-    
+
     if (u.includes("family/remove/")) {
       confirmDetected = true;
       break;
@@ -1050,7 +1043,7 @@ async function removeMemberOnPage(
       'button:has-text("Xác nhận")', 'a:has-text("Xác nhận")',
     ].join(", "));
 
-    if ((await confirmButton.count()) > 0 && await confirmButton.first().isVisible().catch(()=>false)) {
+    if ((await confirmButton.count()) > 0 && await confirmButton.first().isVisible().catch(() => false)) {
       confirmDetected = true;
       break;
     }
@@ -1492,7 +1485,7 @@ async function fallbackFindMember(
     if (gaiaHref) {
       await logger.log("INFO", `S3-fast: Found href matching known GAIA ${knownGaiaId}, navigating directly`);
       await page.goto(gaiaHref, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => { });
       await page.waitForTimeout(1500);
       return extractGaiaIdFromUrl(page.url());
     }
@@ -1506,7 +1499,7 @@ async function fallbackFindMember(
       await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60000 });
       // Wait for Google Angular content to render — domcontentloaded only means
       // the HTML shell is parsed, not that dynamic content is visible.
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => { });
       await page.waitForTimeout(1500);
 
       // Verify URL actually navigated to a member detail page
@@ -1606,7 +1599,7 @@ async function fallbackFindMember(
       // Verify it's not the manager page
       try {
         await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60000 });
-        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => { });
         await page.waitForTimeout(1500);
 
         const isManager = await page.locator(
@@ -1631,7 +1624,7 @@ async function fallbackFindMember(
       const target = unknownCards[0];
       await logger.log("INFO", `S4: Elimination match! Only 1 unmatched card: GAIA=${target.gaiaId}. This must be "${email}".`);
       await page.goto(target.href, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => { });
       await page.waitForTimeout(1500);
       return target.gaiaId;
     } else if (unknownCards.length > 1) {
@@ -1645,7 +1638,7 @@ async function fallbackFindMember(
   }
 
   // Navigate back to family page for error screenshot
-  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+  await page.goto(GOOGLE_FAMILY_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => { });
 
   throw new Error(
     `Cannot find member "${email}" on family page. ` +

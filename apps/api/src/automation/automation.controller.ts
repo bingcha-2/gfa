@@ -39,7 +39,12 @@ export class AutomationController {
       phoneNumber: p.phoneNumber,
       countryCode: p.countryCode ?? "+1",
       smsUrl: p.smsUrl,
-    })));
+    })), dto.childEmail ? {
+      email: dto.childEmail,
+      password: dto.childPassword ?? "",
+      recoveryEmail: dto.childRecoveryEmail,
+      totpSecret: dto.childTotpSecret,
+    } : undefined);
   }
 
   /**

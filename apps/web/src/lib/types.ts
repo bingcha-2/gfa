@@ -46,7 +46,10 @@ export type FamilyGroupSummary = {
   availableSlots: number;
   pendingInviteCount: number;
   pendingMemberCount?: number;
+  pendingOver3DaysCount?: number;
   status: string;
+  syncStatus?: string | null;
+  autoAssignEnabled?: boolean;
   riskScore: number;
   createdAt: string;
   lastSyncedAt?: string | null;
@@ -56,6 +59,7 @@ export type FamilyGroupSummary = {
     loginEmail: string;
     status?: string;
     syncError?: string | null;
+    notes?: string | null;
     subscriptionExpiresAt?: string | null;
     subscriptionStatus?: string | null;
     subscriptionStatusUpdatedAt?: string | null;
@@ -131,6 +135,7 @@ export type RedeemCodeSummary = {
   product: string;
   codeType: "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
   status: string;
+  redeemedBy?: string | null;
   usedAt?: string | null;
   expiresAt?: string | null;
   validDays?: number | null;

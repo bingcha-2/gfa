@@ -51,14 +51,31 @@ export async function scrapeSubscriptionInfo(
 async function scrapeFromSubscriptionsPage(page: Page): Promise<SubscriptionInfo | null> {
   try {
     await page.goto(GOOGLE_SUBSCRIPTIONS_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(1000);
 
-    const pageText = await page.evaluate(() => document.body.innerText);
+    // Google's subscriptions page loads content asynchronously via JS.
+    // Wait up to 8 seconds for "Google One" or "subscription" text to appear,
+    // polling every 500ms. This prevents false SUSPENDED from incomplete page loads.
+    let pageText = "";
+    const pollStart = Date.now();
+    const POLL_TIMEOUT = 8000;
+    while (Date.now() - pollStart < POLL_TIMEOUT) {
+      await page.waitForTimeout(500);
+      pageText = await page.evaluate(() => document.body.innerText);
+      // If we see subscription-related content, the page has loaded enough
+      if (/Google\s+One/i.test(pageText) || /subscription/i.test(pageText) || /15\s*GB/i.test(pageText)) {
+        break;
+      }
+    }
+    // Final read after polling (in case we timed out but content just appeared)
+    if (!pageText) {
+      pageText = await page.evaluate(() => document.body.innerText);
+    }
 
     // Check if "Google One" subscription exists on the page
     const googleOneIdx = pageText.search(/Google\s+One/i);
     if (googleOneIdx === -1) {
       // No Google One subscription found → SUSPENDED (free tier)
+      console.log(`[scrape-subscription] No "Google One" found on page after ${Date.now() - pollStart}ms. First 300 chars: ${pageText.slice(0, 300)}`);
       return { expiresAt: null, status: "SUSPENDED", planName: null };
     }
 

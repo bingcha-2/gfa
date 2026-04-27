@@ -50,15 +50,17 @@ export class AutomationService {
    * Creates a Task record, enqueues BullMQ job, returns taskId for polling.
    */
   async startAutomation(
-    action: "oauth" | "accept-invite" | "phone-verify",
+    action: "oauth" | "accept-invite" | "phone-verify" | "family-join",
     credentials: AccountCredentials,
-    phones?: PhoneInfo[]
+    phones?: PhoneInfo[],
+    childCredentials?: AccountCredentials
   ) {
     // Map action to TaskType enum
     const typeMap: Record<string, string> = {
       oauth: TASK_TYPES.oauthAuthorize,
       "accept-invite": TASK_TYPES.acceptInvite,
-      "phone-verify": TASK_TYPES.phoneVerify
+      "phone-verify": TASK_TYPES.phoneVerify,
+      "family-join": TASK_TYPES.acceptInvite
     };
 
     const taskType = typeMap[action] as any;
@@ -78,7 +80,7 @@ export class AutomationService {
     const existing = activeTasks.find((t) => {
       try {
         const p = JSON.parse(t.payload);
-        return p.email === credentials.email;
+        return p.email === credentials.email && (!childCredentials?.email || p.childEmail === childCredentials.email);
       } catch {
         return false;
       }
@@ -102,6 +104,12 @@ export class AutomationService {
         recoveryEmail: credentials.recoveryEmail,
         totpSecret: credentials.totpSecret
       },
+      childCredentials: childCredentials ? {
+        email: childCredentials.email,
+        password: childCredentials.password,
+        recoveryEmail: childCredentials.recoveryEmail,
+        totpSecret: childCredentials.totpSecret
+      } : undefined,
       phones: phones?.length ? phones : undefined
     };
 
@@ -111,7 +119,7 @@ export class AutomationService {
         type: taskType,
         status: "PENDING",
         // Store action + email (NOT password) for display purposes
-        payload: JSON.stringify({ action, email: credentials.email })
+        payload: JSON.stringify({ action, email: credentials.email, childEmail: childCredentials?.email })
       }
     });
 

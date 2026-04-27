@@ -206,6 +206,7 @@ export class TaskLogger {
         order.redeemCodeId &&
         (status === "INVITE_SENT" || status === "COMPLETED")
       ) {
+        // Success: mark the redeem code as USED
         await tx.redeemCode.updateMany({
           where: {
             id: order.redeemCodeId,
@@ -214,6 +215,21 @@ export class TaskLogger {
           data: {
             status: "USED",
             usedAt: updatedAt
+          }
+        });
+      } else if (
+        order.redeemCodeId &&
+        status === "FAILED"
+      ) {
+        // Failure: roll RESERVED code back to UNUSED so the customer can reuse it
+        await tx.redeemCode.updateMany({
+          where: {
+            id: order.redeemCodeId,
+            status: "RESERVED"
+          },
+          data: {
+            status: "UNUSED",
+            usedAt: null
           }
         });
       }

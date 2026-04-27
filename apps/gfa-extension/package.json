@@ -1,8 +1,8 @@
 {
   "name": "bcai-tools",
-  "displayName": "BCAI",
+  "displayName": "冰茶AI",
   "description": "冰茶 AI 续航终端 — Google One 家庭自动化操作面板",
-  "version": "3.4.13",
+  "version": "3.4.30",
   "publisher": "bingcha",
   "engines": {
     "vscode": "^1.85.0"

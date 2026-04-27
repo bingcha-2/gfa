@@ -33,7 +33,7 @@ import { processReplace } from "./processors/replace.processor";
 import { processSync } from "./processors/sync.processor";
 import { processHealth } from "./processors/health.processor";
 import { processAutomation } from "./processors/automation.processor";
-import { processAgentReplace, processAgentMigrate } from "./processors/agent-pool.processor";
+import { processAgentReplace, processAgentMigrate, processRosettaFamilyJoin } from "./processors/agent-pool.processor";
 
 // ---- Configuration ----
 
@@ -75,7 +75,8 @@ const connection = parseRedisUrl(redisUrl);
 // Create a Queue instance for invite — needed by transfer batch callback
 // to enqueue Phase 2 invite tasks from within the remove processor.
 const inviteQueueRef = new Queue(QUEUE_NAMES.invite, { connection });
-const depsWithInviteQueue = { ...deps, inviteQueue: inviteQueueRef };
+const syncQueueRef = new Queue(QUEUE_NAMES.sync, { connection });
+const depsWithInviteQueue = { ...deps, inviteQueue: inviteQueueRef, syncQueue: syncQueueRef };
 
 // ---- Workers ----
 
@@ -147,6 +148,7 @@ const automationWorker = new Worker<AutomationPayload>(
     const action = (job.data as any)?.action;
     if (action === "agent-replace") return processAgentReplace(job as any, deps);
     if (action === "agent-migrate") return processAgentMigrate(job as any, deps);
+    if (action === "family-join") return processRosettaFamilyJoin(job as any, deps);
     return processAutomation(job, deps);
   },
   {

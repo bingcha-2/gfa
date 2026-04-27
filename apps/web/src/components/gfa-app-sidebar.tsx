@@ -33,6 +33,8 @@ import {
   ShieldIcon,
   Settings2Icon,
   CommandIcon,
+  BotIcon,
+  HelpCircleIcon,
 } from "lucide-react";
 
 const SECTION_PERM_MAP: Record<string, string> = {
@@ -46,6 +48,8 @@ const SECTION_PERM_MAP: Record<string, string> = {
   expire: "expire",
   scheduler: "scheduler",
   lookup: "lookup",
+  "agent-service": "agent_service",
+  faq: "faq",
 };
 
 type NavItem = {
@@ -172,6 +176,22 @@ export function GfaAppSidebar({
       url: `/${prefix}/lookup`,
       icon: <SearchIcon />,
       permKey: "lookup",
+    },
+    {
+      id: "agent-service",
+      title: "代理服务",
+      url: `/${prefix}/agent-service`,
+      icon: <BotIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "faq",
+      title: "常见问题",
+      url: `/${prefix}/faq`,
+      icon: <HelpCircleIcon />,
+      permKey: "faq",
+      roleGuard: () => isAdminOrOps,
     },
     {
       id: "users",
