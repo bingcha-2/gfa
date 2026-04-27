@@ -38,3 +38,6 @@ backups/
 # Remote data (sensitive)
 scripts/remote-data/
 scripts/active-*.txt
+
+# Local data
+data/

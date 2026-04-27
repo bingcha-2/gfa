@@ -888,6 +888,94 @@ export async function addAccountByToken(
   return { email };
 }
 
+export interface BatchImportItem {
+  refreshToken: string;
+  alias?: string;
+}
+
+export interface BatchImportResult {
+  total: number;
+  success: number;
+  skipped: number;
+  failed: number;
+  details: Array<{ alias: string; email?: string; status: "ok" | "skipped" | "error"; message: string }>;
+}
+
+export async function batchImportTokens(
+  state: RosettaState,
+  items: BatchImportItem[],
+  onProgress?: (current: number, total: number, detail: string) => void
+): Promise<BatchImportResult> {
+  if (!items.length) throw new Error("导入列表为空。");
+
+  const fs = require("fs");
+  const accountsData = readJsonFile(state.workspace.paths.accountsPath, { accounts: [] } as any);
+  const accounts: any[] = Array.isArray(accountsData.accounts) ? accountsData.accounts : [];
+  const config = readJsonFile(state.workspace.paths.configPath, {} as any);
+  const clientId = String(config.clientId || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com").trim();
+  const clientSecret = String(config.clientSecret || "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").trim();
+
+  const result: BatchImportResult = { total: items.length, success: 0, skipped: 0, failed: 0, details: [] };
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const token = (item.refreshToken || "").trim();
+    const alias = (item.alias || "").trim();
+    const label = alias || `#${i + 1}`;
+
+    if (!token) {
+      result.failed++;
+      result.details.push({ alias: label, status: "error", message: "Token 为空" });
+      continue;
+    }
+
+    onProgress?.(i + 1, items.length, `正在验证 ${label}…`);
+
+    try {
+      const tokenResp = await exchangeRefreshToken(token, clientId, clientSecret);
+      const accessToken = tokenResp.access_token;
+      const userInfo = await fetchUserInfo(accessToken);
+      const email = String(userInfo.email || "").trim();
+      if (!email) {
+        result.failed++;
+        result.details.push({ alias: label, status: "error", message: "无法获取邮箱" });
+        continue;
+      }
+
+      if (accounts.some((a: any) => String(a.email || "").trim().toLowerCase() === email.toLowerCase())) {
+        result.skipped++;
+        result.details.push({ alias: label, email, status: "skipped", message: "已存在" });
+        continue;
+      }
+
+      const maxId = accounts.reduce((max: number, a: any) => Math.max(max, Number(a.id) || 0), 0);
+      accounts.push({
+        id: maxId + 1,
+        email,
+        refreshToken: token,
+        enabled: true,
+        alias,
+        oauthProfile: "antigravity",
+      });
+
+      result.success++;
+      result.details.push({ alias: label, email, status: "ok", message: "Token 有效" });
+    } catch (err: any) {
+      result.failed++;
+      result.details.push({ alias: label, status: "error", message: err.message || String(err) });
+    }
+  }
+
+  writeJsonFile(state.workspace.paths.accountsPath, { ...accountsData, accounts });
+
+  if (state.proxy.running && state.proxy.reloadAccountsUrl) {
+    try { await postJson(state.proxy.reloadAccountsUrl, {}, { timeoutMs: 10000 }); } catch { /* non-fatal */ }
+  }
+
+  vscode.window.showInformationMessage(`批量导入完成: ${result.success} 成功, ${result.skipped} 跳过, ${result.failed} 失败`);
+  return result;
+}
+
 // ─── Google OAuth helpers ───────────────────────────────────────────────
 
 function exchangeRefreshToken(refreshToken: string, clientId: string, clientSecret: string): Promise<any> {
