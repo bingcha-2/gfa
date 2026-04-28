@@ -112,13 +112,6 @@ export async function handlePhoneVerification(
     return { needed: true, resolved: false, disabledPhones, error: "No phone numbers provided" };
   }
 
-  // Force English for consistent element detection
-  await forceEnglish(page, logger);
-  if (await isQrPhoneVerificationPage(page)) {
-    await logger.log("WARN", "[phone-verify] QR-code phone verification page detected after language switch");
-    return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
-  }
-
   // Try each phone number until one works
   for (const phone of phones) {
     await logger.log("INFO", `[phone-verify] Trying phone: ${maskPhone(phone.phoneNumber)}`);
@@ -212,7 +205,6 @@ async function resetToVerificationPage(page: Page, logger: TaskLogger): Promise<
 
     // If we're back on a verification page, wait for content to load
     if (isVerificationPage(page.url())) {
-      await forceEnglish(page, logger);
       // Wait for the "Verify your phone number" option to appear
       await page.getByText("Verify your phone number", { exact: false }).first()
         .waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
@@ -359,6 +351,30 @@ function isPhoneOptionText(text: string): boolean {
 async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
 
+  // Prefer the explicit SMS challenge marker when Google exposes it. This is
+  // safer than selecting phone-prompt/device/QR methods.
+  const smsChallengeSelectors = [
+    'div[data-challengetype="9"]',
+    'li[data-challengetype="9"]',
+    'button[data-challengetype="9"]',
+    '[data-challengetype="9"]',
+  ];
+
+  for (const selector of smsChallengeSelectors) {
+    try {
+      const el = page.locator(selector).first();
+      if ((await el.count()) > 0 && (await el.isVisible())) {
+        await el.click();
+        await logger.log("INFO", `[phone-verify] Selected SMS phone option via: ${selector}`);
+        await page.waitForTimeout(1000);
+        await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
+        return true;
+      }
+    } catch {
+      // continue
+    }
+  }
+
   // Prefer clickable option containers. A broad getByText("phone number") can
   // match QR explanatory copy and accidentally enter the scan-code challenge.
   const options = page.locator(
@@ -383,31 +399,6 @@ async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Pr
     await page.waitForTimeout(1000);
     await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
     return true;
-  }
-
-  // Google's internal markers are useful when the UI is localized and text is
-  // not stable. They are intentionally tried after text matching to avoid
-  // choosing QR/passkey options when a real phone/SMS option is visible.
-  const challengeSelectors = [
-    'div[data-challengetype="12"]',
-    'li[data-challengetype="12"]',
-    'div[data-challengetype="9"]',
-    'li[data-challengetype="9"]',
-  ];
-
-  for (const selector of challengeSelectors) {
-    try {
-      const el = page.locator(selector).first();
-      if ((await el.count()) > 0 && (await el.isVisible())) {
-        await el.click();
-        await logger.log("INFO", `[phone-verify] Selected phone option via: ${selector}`);
-        await page.waitForTimeout(1000);
-        await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
-        return true;
-      }
-    } catch {
-      // continue
-    }
   }
 
   await logger.log("WARN", "[phone-verify] Could not find phone verification option on page");
