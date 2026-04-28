@@ -40,13 +40,11 @@ const PHONE_OPTION_PATTERNS = [
   /mensaje de texto/i,
 ];
 const QR_TEXT_PATTERNS = [
-  /verify your info to continue/i,
-  /google needs to verify some info about your device or phone number/i,
   /image of qr code to scan/i,
   /scan the qr code with your phone/i,
   /open your camera app/i,
   /you.ll need to switch back to your computer/i,
-  /QR\s*code/i,
+  /scan (the )?QR\s*code/i,
   /二维码/,
   /二維碼/,
   /扫码/,
