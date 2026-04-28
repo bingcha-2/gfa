@@ -89,6 +89,7 @@ export class AutomationController {
    * GET /api/automation/phone-pool
    */
   @Get("phone-pool")
+  @Public()
   async listPhones() {
     return this.automationService.listPhonePool();
   }
