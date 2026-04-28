@@ -20,6 +20,42 @@ import type { PhoneInfo } from "@gfa/shared";
 const SMS_POLL_TIMEOUT_MS = 30_000;
 /** Interval between SMS polls */
 const SMS_POLL_INTERVAL_MS = 3_000;
+const PHONE_OPTION_PATTERNS = [
+  /verify (your )?phone number/i,
+  /use .*phone number/i,
+  /text message/i,
+  /\bSMS\b/i,
+  /验证.*手机号/,
+  /验证.*手机号码/,
+  /驗證.*手機/,
+  /驗證.*電話/,
+  /手机号码/,
+  /手机号/,
+  /手機號碼/,
+  /電話號碼/,
+  /電話番号/,
+  /số điện thoại/i,
+  /tin nhắn/i,
+  /n[uú]mero de tel[eé]fono/i,
+  /mensaje de texto/i,
+];
+const QR_TEXT_PATTERNS = [
+  /verify your info to continue/i,
+  /google needs to verify some info about your device or phone number/i,
+  /image of qr code to scan/i,
+  /scan the qr code with your phone/i,
+  /open your camera app/i,
+  /you.ll need to switch back to your computer/i,
+  /QR\s*code/i,
+  /二维码/,
+  /二維碼/,
+  /扫码/,
+  /掃描/,
+  /扫描/,
+  /QRコード/,
+  /mã QR/i,
+  /c[oó]digo QR/i,
+];
 const QR_VERIFICATION_ERROR = "验证失败（扫码）";
 
 export interface PhoneVerifyResult {
@@ -300,12 +336,7 @@ async function isQrPhoneVerificationPage(page: Page): Promise<boolean> {
       return true;
     }
     const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-    return /verify your info to continue/i.test(bodyText) ||
-      /google needs to verify some info about your device or phone number/i.test(bodyText) ||
-      /image of qr code to scan/i.test(bodyText) ||
-      /scan the qr code with your phone/i.test(bodyText) ||
-      /open your camera app/i.test(bodyText) ||
-      /you.ll need to switch back to your computer/i.test(bodyText);
+    return isQrText(bodyText);
   } catch {
     return false;
   }
@@ -315,42 +346,50 @@ function isQrVerificationError(value: unknown): boolean {
   return String(value || "").includes(QR_VERIFICATION_ERROR);
 }
 
+function isQrText(text: string): boolean {
+  return QR_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isPhoneOptionText(text: string): boolean {
+  if (!text.trim() || isQrText(text)) return false;
+  return PHONE_OPTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 /**
  * On the selection page, click "Verify your phone number" option.
  */
 async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Promise<boolean> {
-  // Strategy 1: Use Playwright's getByText to find the exact text element, then click it
-  // Wait for the page content to be ready before looking for options
-  await page.getByText("Verify your phone number", { exact: false }).first()
-    .waitFor({ state: "visible", timeout: 15000 }).catch(() => {
-    // If main text not found, try alternative
-  });
+  await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
 
-  // This is more precise than div:has-text() which matches all ancestor elements
-  const textPatterns = [
-    "Verify your phone number",
-    "phone number",
-    "SMS",
-    "text message",
-  ];
+  // Prefer clickable option containers. A broad getByText("phone number") can
+  // match QR explanatory copy and accidentally enter the scan-code challenge.
+  const options = page.locator(
+    [
+      '[role="link"]',
+      '[role="button"]',
+      'li',
+      'div[tabindex]',
+      'div[data-challengetype]',
+      'li[data-challengetype]',
+    ].join(", ")
+  );
+  const count = await options.count();
+  for (let i = 0; i < count; i++) {
+    const option = options.nth(i);
+    const text = await option.innerText().catch(() => "");
+    if (!isPhoneOptionText(text)) continue;
+    if (!(await option.isVisible().catch(() => false))) continue;
 
-  for (const pattern of textPatterns) {
-    try {
-      const el = page.getByText(pattern, { exact: false }).first();
-      if ((await el.count()) > 0 && (await el.isVisible())) {
-        await el.click();
-        await logger.log("INFO", `[phone-verify] Clicked text element: "${pattern}"`);
-        // Log post-click state
-        await page.waitForTimeout(1000);
-        await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
-        return true;
-      }
-    } catch {
-      // continue
-    }
+    await option.click();
+    await logger.log("INFO", `[phone-verify] Selected phone option by text match: "${text.substring(0, 80)}"`);
+    await page.waitForTimeout(1000);
+    await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
+    return true;
   }
 
-  // Strategy 2: data-challengetype attributes (Google's internal markers)
+  // Google's internal markers are useful when the UI is localized and text is
+  // not stable. They are intentionally tried after text matching to avoid
+  // choosing QR/passkey options when a real phone/SMS option is visible.
   const challengeSelectors = [
     'div[data-challengetype="12"]',
     'li[data-challengetype="12"]',
@@ -364,6 +403,8 @@ async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Pr
       if ((await el.count()) > 0 && (await el.isVisible())) {
         await el.click();
         await logger.log("INFO", `[phone-verify] Selected phone option via: ${selector}`);
+        await page.waitForTimeout(1000);
+        await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
         return true;
       }
     } catch {
@@ -371,42 +412,9 @@ async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Pr
     }
   }
 
-  // Fallback: look for any clickable element with phone/SMS text
-  try {
-    const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
-    const hasPhoneOption =
-      bodyText.includes("phone number") ||
-      bodyText.includes("SMS") ||
-      bodyText.includes("text message");
-
-    if (hasPhoneOption) {
-      // Try clicking by role
-      const options = page.locator('[role="link"], [role="button"], li, div[tabindex]');
-      const count = await options.count();
-      for (let i = 0; i < count; i++) {
-        const text = await options.nth(i).innerText().catch(() => "");
-        if (
-          text.toLowerCase().includes("phone") ||
-          text.toLowerCase().includes("sms") ||
-          text.toLowerCase().includes("text message") ||
-          text.toLowerCase().includes("điện thoại") ||
-          text.toLowerCase().includes("手机") ||
-          text.toLowerCase().includes("電話")
-        ) {
-          await options.nth(i).click();
-          await logger.log("INFO", `[phone-verify] Selected phone option by text match: "${text.substring(0, 50)}"`);
-          return true;
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-
   await logger.log("WARN", "[phone-verify] Could not find phone verification option on page");
   return false;
 }
-
 async function enterPhoneNumber(page: Page, number: string, logger: TaskLogger): Promise<boolean> {
   const phoneInput = page.locator(
     'input[type="tel"], input[autocomplete="tel"], input[name="phoneNumberId"], ' +
