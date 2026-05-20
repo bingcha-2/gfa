@@ -1,0 +1,62 @@
+appId: com.bcai.client
+productName: 冰茶AI
+copyright: Copyright © 2026 BCAI
+
+directories:
+  output: release
+
+asar: true
+
+# 防逆向：ASAR 签名（防止直接解包篡改）
+asarUnpack:
+  - "**/*.node"
+
+# 打包 bundled-rosetta 到 resources
+extraResources:
+  - from: "../gfa-extension/bundled-rosetta"
+    to: "bundled-rosetta"
+    filter:
+      - "**/*"
+      - "!**/node_modules/.cache/**"
+      - "!**/*.pre-obfuscate*"
+      - "!**/tests/**"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.png
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 冰茶AI
+  artifactName: "BingchaAI-Setup-${version}.${ext}"
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Development
+  icon: resources
+
+publish:
+  provider: github
+  owner: your-github-org
+  repo: bcai-client
+  releaseType: release
