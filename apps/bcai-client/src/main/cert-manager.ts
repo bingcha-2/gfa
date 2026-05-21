@@ -68,10 +68,13 @@ export class CertManager {
     this.caCert = cert
   }
 
-  /** 用 CA 为指定域名签发服务器证书 */
-  generateServerCert(domain: string): CertPair {
+  /** 用 CA 为指定域名签发服务器证书（支持多域名） */
+  generateServerCert(domains: string | string[]): CertPair {
     this.ensureCA()
     if (!this.caKey || !this.caCert) throw new Error('CA not initialized')
+
+    const domainList = Array.isArray(domains) ? domains : [domains]
+    const primaryDomain = domainList[0]
 
     const keys = forge.pki.rsa.generateKeyPair(2048)
     const cert = forge.pki.createCertificate()
@@ -81,19 +84,19 @@ export class CertManager {
     cert.validity.notAfter = new Date()
     cert.validity.notAfter.setFullYear(cert.validity.notAfter.getFullYear() + 1)
 
-    cert.setSubject([{ name: 'commonName', value: domain }])
+    cert.setSubject([{ name: 'commonName', value: primaryDomain }])
     cert.setIssuer(this.caCert.subject.attributes)
+
+    // 为所有域名生成 SAN 条目
+    const altNames: any[] = domainList.map(d => ({ type: 2, value: d }))
+    altNames.push({ type: 2, value: 'localhost' })
+    altNames.push({ type: 7, ip: '127.0.0.1' })
+
     cert.setExtensions([
       { name: 'basicConstraints', cA: false },
       { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
       { name: 'extKeyUsage', serverAuth: true },
-      {
-        name: 'subjectAltName', altNames: [
-          { type: 2, value: domain },
-          { type: 2, value: 'localhost' },
-          { type: 7, ip: '127.0.0.1' },
-        ]
-      },
+      { name: 'subjectAltName', altNames },
     ])
     cert.sign(this.caKey, forge.md.sha256.create())
 

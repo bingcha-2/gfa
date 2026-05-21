@@ -15,16 +15,19 @@ export class HostsManager {
     this.log = log || console.log
   }
 
-  /** 添加 hosts 条目 + netsh 端口转发 */
-  enableIntercept(domain: string, gatewayPort: number): boolean {
+  /** 添加 hosts 条目 + netsh 端口转发（支持多域名） */
+  enableIntercept(domains: string | string[], gatewayPort: number): boolean {
+    const domainList = Array.isArray(domains) ? domains : [domains]
     try {
-      // 1. 添加 hosts 条目
-      this.addHostsEntry(domain)
+      // 1. 添加所有域名的 hosts 条目
+      for (const domain of domainList) {
+        this.addHostsEntry(domain)
+      }
 
       // 2. 设置端口转发 443 → gatewayPort
       this.addPortProxy(443, gatewayPort)
 
-      this.log(`[Hosts] 拦截已启用: ${domain} → 127.0.0.1:${gatewayPort}`)
+      this.log(`[Hosts] 拦截已启用: ${domainList.join(', ')} → 127.0.0.1:${gatewayPort}`)
       return true
     } catch (err: any) {
       this.log(`[Hosts] 启用拦截失败: ${err.message}`)
@@ -32,10 +35,13 @@ export class HostsManager {
     }
   }
 
-  /** 移除 hosts 条目 + netsh 端口转发 */
-  disableIntercept(domain: string): boolean {
+  /** 移除 hosts 条目 + netsh 端口转发（支持多域名） */
+  disableIntercept(domains: string | string[]): boolean {
+    const domainList = Array.isArray(domains) ? domains : [domains]
     try {
-      this.removeHostsEntry(domain)
+      for (const domain of domainList) {
+        this.removeHostsEntry(domain)
+      }
       this.removePortProxy(443)
       this.log(`[Hosts] 拦截已禁用`)
       return true
@@ -45,11 +51,13 @@ export class HostsManager {
     }
   }
 
-  /** 检查是否正在拦截 */
-  isIntercepting(domain: string): boolean {
+  /** 检查是否正在拦截（任一域名匹配即返回 true） */
+  isIntercepting(domains: string | string[]): boolean {
+    const domainList = Array.isArray(domains) ? domains : [domains]
     try {
       const content = fs.readFileSync(HOSTS_PATH, 'utf8')
-      return content.includes(MARKER) && content.includes(domain)
+      if (!content.includes(MARKER)) return false
+      return domainList.some(d => content.includes(d))
     } catch {
       return false
     }
@@ -86,9 +94,11 @@ export class HostsManager {
 
   private addHostsEntry(domain: string): void {
     const content = fs.readFileSync(HOSTS_PATH, 'utf8')
-    if (content.includes(MARKER)) return // 已存在
+    // 检查该域名是否已存在（而不是只检查 MARKER）
+    if (content.includes(`${domain}  ${MARKER}`)) return
 
-    const entry = `\n127.0.0.1  ${domain}  ${MARKER}\n`
+    // 同时写入 IPv4 和 IPv6，防止系统优先走 IPv6 绕过劫持
+    const entry = `\n127.0.0.1  ${domain}  ${MARKER}\n::1  ${domain}  ${MARKER}\n`
     fs.appendFileSync(HOSTS_PATH, entry, 'utf8')
   }
 

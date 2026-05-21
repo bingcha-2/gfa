@@ -11,8 +11,8 @@ export interface GatewayOptions {
   port: number
   /** token-proxy 的 HTTP 地址 */
   proxyTarget: string
-  /** 目标域名（证书签发用） */
-  domain: string
+  /** 目标域名（证书签发用，支持多域名） */
+  domains: string | string[]
   /** 数据目录（证书存储） */
   dataDir: string
   /** 日志函数 */
@@ -41,7 +41,7 @@ export class HttpsGateway {
       try {
         // 生成证书
         this.certManager.ensureCA()
-        const { key, cert } = this.certManager.generateServerCert(this.options.domain)
+        const { key, cert } = this.certManager.generateServerCert(this.options.domains)
 
         this.server = https.createServer({ key, cert }, (req, res) => {
           this.handleRequest(req, res)
@@ -100,40 +100,73 @@ export class HttpsGateway {
   private handleRequest(req: https.IncomingMessage, res: http.ServerResponse): void {
     this.requestCount++
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    this.logFn(`[Gateway] [${ts}] #${this.requestCount} ${req.method} ${req.url}`)
+    const reqId = this.requestCount
+    this.logFn(`[Gateway] [${ts}] #${reqId} ${req.method} ${req.url}`)
 
     const target = new URL(this.options.proxyTarget)
+    const isGenerate = req.url?.includes('streamGenerateContent') || false
 
-    const proxyReq = http.request(
-      {
-        hostname: target.hostname,
-        port: target.port,
-        path: req.url,
-        method: req.method,
-        headers: {
-          ...req.headers,
-          host: target.host,
+    // 缓冲请求体
+    const bodyChunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => bodyChunks.push(chunk))
+    req.on('end', () => {
+      const body = Buffer.concat(bodyChunks)
+
+      const proxyReq = http.request(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: req.url,
+          method: req.method,
+          headers: {
+            ...req.headers,
+            host: target.host,
+            'content-length': String(body.length),
+          },
         },
-      },
-      (proxyRes) => {
-        res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
-        proxyRes.pipe(res)
+        (proxyRes) => {
+          res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+          proxyRes.pipe(res)
+        }
+      )
+
+      proxyReq.on('error', (err) => {
+        this.logFn(`[Gateway] 转发失败: ${err.message}`)
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Gateway: token-proxy 连接失败', detail: err.message }))
+        }
+      })
+
+      // 超时处理
+      proxyReq.setTimeout(30000, () => {
+        proxyReq.destroy(new Error('Gateway proxy timeout'))
+      })
+
+      // 为 streamGenerateContent 请求注入积分参数
+      if (isGenerate) {
+        try {
+          const text = body.toString('utf8')
+          const payload = JSON.parse(text)
+          const credits = Array.isArray(payload.enabledCreditTypes) ? payload.enabledCreditTypes : []
+          const needsInject = !credits.includes('GOOGLE_ONE_AI') && !credits.includes(1)
+          if (needsInject) {
+            // 只在需要注入时才重新序列化
+            payload.enabledCreditTypes = [...credits, 'GOOGLE_ONE_AI']
+            const modifiedBody = Buffer.from(JSON.stringify(payload))
+            proxyReq.setHeader('content-length', String(modifiedBody.length))
+            proxyReq.write(modifiedBody)
+          } else {
+            // 已包含，直接透传原始 body
+            proxyReq.write(body)
+          }
+        } catch (e) {
+          proxyReq.write(body)
+        }
+      } else {
+        proxyReq.write(body)
       }
-    )
-
-    proxyReq.on('error', (err) => {
-      this.logFn(`[Gateway] 转发失败: ${err.message}`)
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: 'Gateway: token-proxy 连接失败', detail: err.message }))
-      }
+      proxyReq.end()
     })
-
-    // 超时处理
-    proxyReq.setTimeout(30000, () => {
-      proxyReq.destroy(new Error('Gateway proxy timeout'))
-    })
-
-    req.pipe(proxyReq)
   }
 }

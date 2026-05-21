@@ -26,6 +26,10 @@ const APP_DATA_DIR = IS_WIN
 const ROSETTA_DATA_DIR = path.join(APP_DATA_DIR, 'Antigravity', 'rosetta')
 const CONFIG_PATH = path.join(ROSETTA_DATA_DIR, 'proxy.config.json')
 const IDE_SETTINGS_PATH = path.join(APP_DATA_DIR, 'Antigravity', 'User', 'settings.json')
+const IDE_SETTINGS_PATHS = [
+  { name: 'Antigravity', path: path.join(APP_DATA_DIR, 'Antigravity', 'User', 'settings.json') },
+  { name: 'Antigravity IDE', path: path.join(APP_DATA_DIR, 'Antigravity IDE', 'User', 'settings.json') },
+]
 const DEFAULT_TOKEN_SERVER_URL = 'https://bcai.site/remote-token'
 const PROXY_PORT = 60670
 const STATUS_PORT = 60671
@@ -33,7 +37,7 @@ const STATUS_URL = `http://127.0.0.1:${STATUS_PORT}/status`
 const PROXY_URL = `http://127.0.0.1:${PROXY_PORT}`
 const REFRESH_INTERVAL_MS = 3000
 const GATEWAY_PORT = 60680
-const GATEWAY_DOMAIN = 'cloudcode-pa.googleapis.com'
+const GATEWAY_DOMAINS = ['cloudcode-pa.googleapis.com', 'daily-cloudcode-pa.googleapis.com']
 
 // ─── Globals ────────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -41,6 +45,7 @@ let tray: Tray | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let currentState: any = null
 let isQuitting = false
+let stoppingRelay = false
 
 // ─── Gateway globals ────────────────────────────────────────────────────
 let gateway: HttpsGateway | null = null
@@ -142,34 +147,59 @@ function updateConfig(updater: (config: any) => any): any {
 
 // ─── IDE settings ───────────────────────────────────────────────────────
 function readIdeCloudCodeUrl(): string {
-  try {
-    if (!fs.existsSync(IDE_SETTINGS_PATH)) return ''
-    const raw = fs.readFileSync(IDE_SETTINGS_PATH, 'utf8')
-    // Strip JSON comments
-    const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
-    const settings = JSON.parse(cleaned)
-    return String(settings['jetski.cloudCodeUrl'] || '').trim()
-  } catch {
-    return ''
+  // 从任一 Antigravity 版本读取配置
+  for (const { path: settingsPath } of IDE_SETTINGS_PATHS) {
+    try {
+      if (!fs.existsSync(settingsPath)) continue
+      const raw = fs.readFileSync(settingsPath, 'utf8')
+      const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+      const settings = JSON.parse(cleaned)
+      const url = String(settings['jetski.cloudCodeUrl'] || '').trim()
+      if (url) return url
+    } catch { /* continue to next */ }
   }
+  return ''
+}
+
+function readAllIdeStatuses(): { name: string; configuredUrl: string; isConfigured: boolean }[] {
+  return IDE_SETTINGS_PATHS.map(({ name, path: settingsPath }) => {
+    let configuredUrl = ''
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const raw = fs.readFileSync(settingsPath, 'utf8')
+        const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+        const settings = JSON.parse(cleaned)
+        configuredUrl = String(settings['jetski.cloudCodeUrl'] || '').trim()
+      }
+    } catch { /* ignore */ }
+    return { name, configuredUrl, isConfigured: configuredUrl === PROXY_URL }
+  })
 }
 
 function writeIdeCloudCodeUrl(url: string): void {
-  let settings: any = {}
-  if (fs.existsSync(IDE_SETTINGS_PATH)) {
+  // 写入所有 Antigravity 版本的设置
+  for (const { name, path: settingsPath } of IDE_SETTINGS_PATHS) {
     try {
-      const raw = fs.readFileSync(IDE_SETTINGS_PATH, 'utf8')
-      const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
-      settings = JSON.parse(cleaned)
-    } catch { settings = {} }
+      let settings: any = {}
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const raw = fs.readFileSync(settingsPath, 'utf8')
+          const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+          settings = JSON.parse(cleaned)
+        } catch { settings = {} }
+      }
+      if (url) {
+        settings['jetski.cloudCodeUrl'] = url.trim()
+      } else {
+        delete settings['jetski.cloudCodeUrl']
+      }
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8')
+      log(`[IDE] ${name}: cloudCodeUrl ${url ? 'set' : 'cleared'}`)
+    } catch (err: any) {
+      log(`[IDE] ${name}: failed to write settings: ${err.message}`)
+    }
   }
-  if (url) {
-    settings['jetski.cloudCodeUrl'] = url.trim()
-  } else {
-    delete settings['jetski.cloudCodeUrl']
-  }
-  fs.mkdirSync(path.dirname(IDE_SETTINGS_PATH), { recursive: true })
-  fs.writeFileSync(IDE_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf8')
 }
 
 // ─── Proxy process management ──────────────────────────────────────────
@@ -232,6 +262,15 @@ async function stopTokenProxy(): Promise<void> {
   }
 }
 
+async function waitForProxyStop(timeoutMs = 8000): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (!(await isProxyRunning())) return true
+    await new Promise(r => setTimeout(r, 400))
+  }
+  return false
+}
+
 async function waitForProxy(timeoutMs = 15000): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -260,6 +299,7 @@ async function collectState(): Promise<any> {
   const config = readConfig()
   const proxyStatus = await getProxyStatus()
   const configuredUrl = readIdeCloudCodeUrl()
+  const ideStatuses = readAllIdeStatuses()
 
   // 判断是否是 relay 模式
   const isRelay = proxyStatus?.mode === 'token-passthrough' || proxyStatus?.mode === 'relay'
@@ -275,7 +315,7 @@ async function collectState(): Promise<any> {
   const gatewayMode = Boolean(config?.gatewayMode)
   let caInstalled = false
   try { caInstalled = gateway?.certMgr?.isCATrusted() || false } catch { /* ignore */ }
-  const hostsActive = hostsManager?.isIntercepting(GATEWAY_DOMAIN) || false
+  const hostsActive = hostsManager?.isIntercepting(GATEWAY_DOMAINS) || false
 
   // 在网关模式下，IDE 不需要配置 cloudCodeUrl
   const ideConnected = gatewayMode
@@ -296,7 +336,7 @@ async function collectState(): Promise<any> {
       outbound: proxyStatus?.outbound || null,
     },
     relay: {
-      running: Boolean(proxyStatus?.running && isRelay),
+      running: stoppingRelay ? false : Boolean(proxyStatus?.running && isRelay),
       url: PROXY_URL,
       hasApiKey: relayHasApiKey,
       totalRequests: isRelay ? Number(proxyStatus?.totalRequests || 0) : 0,
@@ -311,11 +351,13 @@ async function collectState(): Promise<any> {
       configuredUrl,
       expectedUrl: PROXY_URL,
       isConfigured: ideConnected,
+      instances: ideStatuses,
     },
     gateway: {
       enabled: gatewayMode,
       running: gatewayRunning,
-      domain: GATEWAY_DOMAIN,
+      domain: GATEWAY_DOMAINS.join(', '),
+      domains: GATEWAY_DOMAINS,
       port: GATEWAY_PORT,
       caInstalled,
       hostsActive,
@@ -384,11 +426,23 @@ function setupIpcHandlers(): void {
           if (isRelay) {
             // ─── 关闭续杯 ─────────────────
             log('[relay:off] stopping...')
+            stoppingRelay = true
             await stopTokenProxy()
-            await new Promise(r => setTimeout(r, 1500))
+
+            // 等待 proxy 真正停止，而不是固定延时
+            const stopped = await waitForProxyStop(8000)
+            if (!stopped) {
+              log('[relay:off] proxy did not stop in time, force killing...')
+              // 尝试强制杀进程
+              if (lastSpawnedPid) {
+                try { process.kill(lastSpawnedPid) } catch { /* ignore */ }
+              }
+              await new Promise(r => setTimeout(r, 1000))
+            }
 
             // 清除 IDE 配置
             writeIdeCloudCodeUrl('')
+            stoppingRelay = false
             log('[relay:off] IDE cloudCodeUrl cleared')
           } else {
             // ─── 开启续杯 ─────────────────
@@ -425,7 +479,7 @@ function setupIpcHandlers(): void {
               gateway = new HttpsGateway({
                 port: GATEWAY_PORT,
                 proxyTarget: PROXY_URL,
-                domain: GATEWAY_DOMAIN,
+                domains: GATEWAY_DOMAINS,
                 dataDir: ROSETTA_DATA_DIR,
                 log,
               })
@@ -448,7 +502,7 @@ function setupIpcHandlers(): void {
 
             // 3. 配置 hosts + 端口转发
             if (!hostsManager) hostsManager = new HostsManager(log)
-            hostsManager.enableIntercept(GATEWAY_DOMAIN, GATEWAY_PORT)
+            hostsManager.enableIntercept(GATEWAY_DOMAINS, GATEWAY_PORT)
 
             // 4. 保存网关模式到配置
             updateConfig((config) => {
@@ -471,7 +525,7 @@ function setupIpcHandlers(): void {
           try {
             // 1. 移除 hosts + 端口转发
             if (!hostsManager) hostsManager = new HostsManager(log)
-            hostsManager.disableIntercept(GATEWAY_DOMAIN)
+            hostsManager.disableIntercept(GATEWAY_DOMAINS)
 
             // 2. 停止 HTTPS 网关
             if (gateway) await gateway.stop()
@@ -502,7 +556,7 @@ function setupIpcHandlers(): void {
               gateway = new HttpsGateway({
                 port: GATEWAY_PORT,
                 proxyTarget: PROXY_URL,
-                domain: GATEWAY_DOMAIN,
+                domains: GATEWAY_DOMAINS,
                 dataDir: ROSETTA_DATA_DIR,
                 log,
               })
@@ -523,7 +577,7 @@ function setupIpcHandlers(): void {
               gateway = new HttpsGateway({
                 port: GATEWAY_PORT,
                 proxyTarget: PROXY_URL,
-                domain: GATEWAY_DOMAIN,
+                domains: GATEWAY_DOMAINS,
                 dataDir: ROSETTA_DATA_DIR,
                 log,
               })
@@ -658,7 +712,7 @@ function createTray(): void {
         // 关闭网关
         if (gateway?.running) {
           if (!hostsManager) hostsManager = new HostsManager(log)
-          hostsManager.disableIntercept(GATEWAY_DOMAIN)
+          hostsManager.disableIntercept(GATEWAY_DOMAINS)
           await gateway.stop()
         }
         // 停止续杯 + 清除 IDE 配置

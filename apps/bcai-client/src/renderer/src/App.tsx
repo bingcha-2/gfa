@@ -218,12 +218,30 @@ export default function App() {
 
       {/* IDE 状态 */}
       {(hasKey || isRunning) && (
-        <div className="ide-status">
-          <span className={`ide-dot ${ide.isConfigured ? 'connected' : ''}`} />
-          <span>IDE {ide.isConfigured ? '已接入' : '未接入'}</span>
-          {gw.enabled && <span className="ide-url">网关模式</span>}
-          {!gw.enabled && ide.isConfigured && ide.configuredUrl && <span className="ide-url">{ide.configuredUrl}</span>}
-          {!gw.enabled && !ide.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>开启后自动接入</span>}
+        <div className="ide-status-group">
+          {gw.enabled ? (
+            <div className="ide-status">
+              <span className={`ide-dot ${ide.isConfigured ? 'connected' : ''}`} />
+              <span>IDE {ide.isConfigured ? '已接入' : '未接入'}</span>
+              <span className="ide-url">网关模式（自动拦截所有版本）</span>
+            </div>
+          ) : (
+            (ide.instances || []).map((inst: any, i: number) => (
+              <div className="ide-status" key={i}>
+                <span className={`ide-dot ${inst.isConfigured ? 'connected' : ''}`} />
+                <span>{inst.name} {inst.isConfigured ? '已接入' : '未接入'}</span>
+                {inst.isConfigured && inst.configuredUrl && <span className="ide-url">{inst.configuredUrl}</span>}
+                {!inst.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>等待接入</span>}
+              </div>
+            ))
+          )}
+          {!gw.enabled && !ide.isConfigured && isRunning && !(ide.instances?.length) && (
+            <div className="ide-status">
+              <span className="ide-dot" />
+              <span>IDE 未接入</span>
+              <span className="ide-url" style={{ color: 'var(--warning)' }}>开启后自动接入</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -239,9 +257,13 @@ export default function App() {
           </div>
           {gw.enabled && (
             <div className="key-info" style={{ marginTop: 8 }}>
-              <div className="key-row">
+              <div className="key-row" style={{ alignItems: 'flex-start' }}>
                 <span>拦截域名</span>
-                <strong style={{ fontSize: 11 }}>{gw.domain}</strong>
+                <strong style={{ fontSize: 11, textAlign: 'right' }}>
+                  {(gw.domains || [gw.domain]).map((d: string, i: number) => (
+                    <div key={i}>{d}</div>
+                  ))}
+                </strong>
               </div>
               <div className="key-row">
                 <span>CA 证书</span>
