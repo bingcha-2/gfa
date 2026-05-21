@@ -7,6 +7,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as http from 'http'
+import * as crypto from 'crypto'
 import { spawn, execFileSync } from 'child_process'
 import * as net from 'net'
 import { HttpsGateway } from './https-gateway'
@@ -50,6 +51,14 @@ let stoppingRelay = false
 // ─── Gateway globals ────────────────────────────────────────────────────
 let gateway: HttpsGateway | null = null
 let hostsManager: HostsManager | null = null
+
+// ─── Stable Client ID ───────────────────────────────────────────────────
+// 基于机器特征生成稳定的 clientId，防止重启后被服务端判定为"其他设备"
+function getStableClientId(): string {
+  const raw = `${os.hostname()}|${os.userInfo().username}|${os.platform()}|${os.arch()}`
+  const hash = crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16)
+  return `bcai-${hash}`
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 function log(msg: string): void {
@@ -235,11 +244,14 @@ function spawnTokenProxy(): number | undefined {
   const nodeBinary = resolveNodeBinary()
   log(`[spawn] node=${nodeBinary} script=${scriptPath}`)
 
+  const stableClientId = getStableClientId()
+  log(`[spawn] clientId=${stableClientId}`)
   const child = spawn(nodeBinary, [scriptPath], {
     cwd: rosettaPath,
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    env: { ...process.env, BCAI_RELAY_CLIENT_ID: stableClientId },
   })
   child.on('error', (err) => log(`[spawn error] ${err.message}`))
   child.unref()
