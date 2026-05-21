@@ -1,6 +1,6 @@
 /**
  * 冰茶AI Electron 主进程
- * 功能：窗口管理 + 系统托盘 + IPC 通信 + token-proxy 进程管理
+ * 功能：窗口管理 + 系统托盘 + IPC 通信 + token-proxy 进程管理 + HTTPS 网关
  */
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, shell } from 'electron'
 import * as path from 'path'
@@ -9,6 +9,8 @@ import * as os from 'os'
 import * as http from 'http'
 import { spawn, execFileSync } from 'child_process'
 import * as net from 'net'
+import { HttpsGateway } from './https-gateway'
+import { HostsManager } from './hosts-manager'
 
 // ─── Constants ──────────────────────────────────────────────────────────
 const IS_WIN = process.platform === 'win32'
@@ -30,6 +32,8 @@ const STATUS_PORT = 60671
 const STATUS_URL = `http://127.0.0.1:${STATUS_PORT}/status`
 const PROXY_URL = `http://127.0.0.1:${PROXY_PORT}`
 const REFRESH_INTERVAL_MS = 3000
+const GATEWAY_PORT = 60680
+const GATEWAY_DOMAIN = 'cloudcode-pa.googleapis.com'
 
 // ─── Globals ────────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -37,6 +41,10 @@ let tray: Tray | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let currentState: any = null
 let isQuitting = false
+
+// ─── Gateway globals ────────────────────────────────────────────────────
+let gateway: HttpsGateway | null = null
+let hostsManager: HostsManager | null = null
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 function log(msg: string): void {
@@ -262,6 +270,18 @@ async function collectState(): Promise<any> {
   // 端口冲突检测
   const portConflict = checkPortConflict(proxyStatus)
 
+  // Gateway 状态
+  const gatewayRunning = gateway?.running || false
+  const gatewayMode = Boolean(config?.gatewayMode)
+  let caInstalled = false
+  try { caInstalled = gateway?.certMgr?.isCATrusted() || false } catch { /* ignore */ }
+  const hostsActive = hostsManager?.isIntercepting(GATEWAY_DOMAIN) || false
+
+  // 在网关模式下，IDE 不需要配置 cloudCodeUrl
+  const ideConnected = gatewayMode
+    ? (gatewayRunning && hostsActive)
+    : (configuredUrl === PROXY_URL)
+
   return {
     ready: true,
     distribution: 'client',
@@ -285,12 +305,21 @@ async function collectState(): Promise<any> {
       totalOutputTokens: isRelay ? Number(proxyStatus?.totalOutputTokens || 0) : 0,
       lastError: isRelay ? (proxyStatus?.lastRemoteError || proxyStatus?.lastError || null) : null,
       accessKeyStatus: isRelay ? (proxyStatus?.accessKeyStatus || null) : null,
-      serviceStatus: computeServiceStatus(isRelay && proxyStatus?.running, relayHasApiKey, configuredUrl === PROXY_URL, proxyStatus),
+      serviceStatus: computeServiceStatus(isRelay && proxyStatus?.running, relayHasApiKey, ideConnected, proxyStatus),
     },
     ide: {
       configuredUrl,
       expectedUrl: PROXY_URL,
-      isConfigured: configuredUrl === PROXY_URL,
+      isConfigured: ideConnected,
+    },
+    gateway: {
+      enabled: gatewayMode,
+      running: gatewayRunning,
+      domain: GATEWAY_DOMAIN,
+      port: GATEWAY_PORT,
+      caInstalled,
+      hostsActive,
+      totalRequests: gateway?.totalRequests || 0,
     },
     accounts: [],
   }
@@ -385,6 +414,126 @@ function setupIpcHandlers(): void {
         case 'rosetta:openExternal': {
           const url = String(payload?.url || '').trim()
           if (url) shell.openExternal(url)
+          break
+        }
+
+        // ─── Gateway IPC ──────────────────────────────────────────
+        case 'gateway:enable': {
+          log('[Gateway] 启用网关模式...')
+          try {
+            if (!gateway) {
+              gateway = new HttpsGateway({
+                port: GATEWAY_PORT,
+                proxyTarget: PROXY_URL,
+                domain: GATEWAY_DOMAIN,
+                dataDir: ROSETTA_DATA_DIR,
+                log,
+              })
+            }
+
+            // 1. 启动 HTTPS 网关
+            await gateway.start()
+
+            // 2. 安装 CA 证书
+            const caInstalled = gateway.certMgr.isCATrusted()
+            if (!caInstalled) {
+              log('[Gateway] 安装 CA 证书...')
+              const ok = gateway.certMgr.installCATrust()
+              if (!ok) {
+                sendNotification('CA 证书安装失败，需要管理员权限')
+                await gateway.stop()
+                break
+              }
+            }
+
+            // 3. 配置 hosts + 端口转发
+            if (!hostsManager) hostsManager = new HostsManager(log)
+            hostsManager.enableIntercept(GATEWAY_DOMAIN, GATEWAY_PORT)
+
+            // 4. 保存网关模式到配置
+            updateConfig((config) => {
+              config.gatewayMode = true
+              return config
+            })
+
+            sendNotification('HTTPS 网关已启用')
+            log('[Gateway] 网关模式已完全启用')
+          } catch (err: any) {
+            log(`[Gateway] 启用失败: ${err.message}`)
+            sendNotification(`网关启用失败: ${err.message}`)
+          }
+          await refreshAndPush()
+          break
+        }
+
+        case 'gateway:disable': {
+          log('[Gateway] 禁用网关模式...')
+          try {
+            // 1. 移除 hosts + 端口转发
+            if (!hostsManager) hostsManager = new HostsManager(log)
+            hostsManager.disableIntercept(GATEWAY_DOMAIN)
+
+            // 2. 停止 HTTPS 网关
+            if (gateway) await gateway.stop()
+
+            // 3. 更新配置
+            updateConfig((config) => {
+              config.gatewayMode = false
+              return config
+            })
+
+            sendNotification('HTTPS 网关已禁用')
+            log('[Gateway] 网关模式已禁用')
+          } catch (err: any) {
+            log(`[Gateway] 禁用失败: ${err.message}`)
+          }
+          await refreshAndPush()
+          break
+        }
+
+        case 'gateway:status': {
+          await refreshAndPush()
+          break
+        }
+
+        case 'gateway:installCA': {
+          try {
+            if (!gateway) {
+              gateway = new HttpsGateway({
+                port: GATEWAY_PORT,
+                proxyTarget: PROXY_URL,
+                domain: GATEWAY_DOMAIN,
+                dataDir: ROSETTA_DATA_DIR,
+                log,
+              })
+            }
+            gateway.certMgr.ensureCA()
+            const ok = gateway.certMgr.installCATrust()
+            sendNotification(ok ? 'CA 证书安装成功' : 'CA 证书安装失败，需要管理员权限')
+          } catch (err: any) {
+            sendNotification(`CA 安装失败: ${err.message}`)
+          }
+          await refreshAndPush()
+          break
+        }
+
+        case 'gateway:uninstallCA': {
+          try {
+            if (!gateway) {
+              gateway = new HttpsGateway({
+                port: GATEWAY_PORT,
+                proxyTarget: PROXY_URL,
+                domain: GATEWAY_DOMAIN,
+                dataDir: ROSETTA_DATA_DIR,
+                log,
+              })
+            }
+            gateway.certMgr.uninstallCATrust()
+            sendNotification('CA 证书已删除')
+          } catch (err: any) {
+            sendNotification(`CA 删除失败: ${err.message}`)
+          }
+          await refreshAndPush()
           break
         }
 
@@ -506,6 +655,12 @@ function createTray(): void {
     {
       label: '退出', click: async () => {
         isQuitting = true
+        // 关闭网关
+        if (gateway?.running) {
+          if (!hostsManager) hostsManager = new HostsManager(log)
+          hostsManager.disableIntercept(GATEWAY_DOMAIN)
+          await gateway.stop()
+        }
         // 停止续杯 + 清除 IDE 配置
         if (await isProxyRunning()) {
           await stopTokenProxy()
@@ -529,6 +684,10 @@ app.whenReady().then(() => {
 
   // 确保数据目录存在
   fs.mkdirSync(ROSETTA_DATA_DIR, { recursive: true })
+
+  // 清理残留的 hosts 条目（防止上次异常退出）
+  hostsManager = new HostsManager(log)
+  hostsManager.cleanupStale()
 
   // 初始化默认配置
   if (!fs.existsSync(CONFIG_PATH)) {

@@ -39,11 +39,17 @@ export default function App() {
   const portConflict = state?.portConflict
   const hasKey = relay.hasApiKey
   const isRunning = relay.running
+  const gw = state?.gateway || {}
 
   const handleToggleRelay = useCallback(() => {
     setLoading(true)
     sendAction('rosetta:toggleRelay')
   }, [])
+
+  const handleToggleGateway = useCallback(() => {
+    setLoading(true)
+    sendAction(gw.enabled ? 'gateway:disable' : 'gateway:enable')
+  }, [gw.enabled])
 
   const handleSetKey = useCallback(() => {
     if (!keyInput.trim()) return
@@ -215,8 +221,62 @@ export default function App() {
         <div className="ide-status">
           <span className={`ide-dot ${ide.isConfigured ? 'connected' : ''}`} />
           <span>IDE {ide.isConfigured ? '已接入' : '未接入'}</span>
-          {ide.isConfigured && ide.configuredUrl && <span className="ide-url">{ide.configuredUrl}</span>}
-          {!ide.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>开启后自动接入</span>}
+          {gw.enabled && <span className="ide-url">网关模式</span>}
+          {!gw.enabled && ide.isConfigured && ide.configuredUrl && <span className="ide-url">{ide.configuredUrl}</span>}
+          {!gw.enabled && !ide.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>开启后自动接入</span>}
+        </div>
+      )}
+
+      {/* 网关模式 */}
+      {(hasKey || isRunning) && (
+        <div className="status-card" style={{ marginTop: 8 }}>
+          <div className="status-header">
+            <div className="status-dot" style={{ background: gw.running ? '#22c55e' : '#6b7280' }} />
+            <span className="status-label">HTTPS 网关</span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
+              {gw.enabled ? (gw.running ? '运行中' : '启动中...') : '未启用'}
+            </span>
+          </div>
+          {gw.enabled && (
+            <div className="key-info" style={{ marginTop: 8 }}>
+              <div className="key-row">
+                <span>拦截域名</span>
+                <strong style={{ fontSize: 11 }}>{gw.domain}</strong>
+              </div>
+              <div className="key-row">
+                <span>CA 证书</span>
+                <strong style={{ color: gw.caInstalled ? '#22c55e' : '#ef4444' }}>
+                  {gw.caInstalled ? '✅ 已安装' : '❌ 未安装'}
+                </strong>
+              </div>
+              <div className="key-row">
+                <span>Hosts 劫持</span>
+                <strong style={{ color: gw.hostsActive ? '#22c55e' : '#ef4444' }}>
+                  {gw.hostsActive ? '✅ 已启用' : '❌ 未启用'}
+                </strong>
+              </div>
+              {gw.totalRequests > 0 && (
+                <div className="key-row">
+                  <span>网关请求</span>
+                  <strong>{gw.totalRequests}</strong>
+                </div>
+              )}
+            </div>
+          )}
+          <button
+            className={`btn ${gw.enabled ? 'btn-danger' : 'btn-secondary'}`}
+            style={{ width: '100%', marginTop: 10, fontSize: 13 }}
+            onClick={handleToggleGateway}
+            disabled={loading}
+          >
+            {loading ? '⏳ 处理中...' : gw.enabled ? '🔓 关闭网关' : '🔒 启用 HTTPS 网关'}
+          </button>
+          {!gw.enabled && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+              启用后 IDE 无需修改任何配置，流量自动通过本地网关转发。
+              需要管理员权限（首次安装证书 + 修改 hosts）。
+            </p>
+          )}
         </div>
       )}
 
