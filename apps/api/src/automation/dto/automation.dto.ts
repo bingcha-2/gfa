@@ -1,4 +1,4 @@
-import { IsString, IsIn, IsOptional, IsArray, ValidateNested } from "class-validator";
+import { IsString, IsIn, IsOptional, IsArray, IsBoolean, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 
 export class PhoneInfoDto {
@@ -49,6 +49,18 @@ export class StartAutomationDto {
   childTotpSecret?: string;
 
   @IsOptional()
+  @IsString()
+  profileId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  keepBrowserOpenOnChallenge?: boolean;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PhoneInfoDto)
@@ -66,6 +78,34 @@ export class ConsoleStartDto {
 
   @IsIn(["accept-invite", "phone-verify"])
   action!: "accept-invite" | "phone-verify";
+}
+
+export class RepairAutomationDto {
+  @IsOptional()
+  @IsString()
+  accountId?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  profileId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  keepBrowserOpenOnChallenge?: boolean;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PhoneInfoDto)
+  phones?: PhoneInfoDto[];
 }
 
 export class BatchOAuthAccount {

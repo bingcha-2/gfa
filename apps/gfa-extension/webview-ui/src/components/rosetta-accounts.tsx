@@ -6,9 +6,13 @@ import { RosettaQuota } from "./rosetta-quota";
 export function RosettaAccounts({
   accounts,
   proxyRunning,
+  employeeMode = false,
+  clientMode = false,
 }: {
   accounts: RosettaAccount[];
   proxyRunning: boolean;
+  employeeMode?: boolean;
+  clientMode?: boolean;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [filter, setFilter] = useState<"all" | "active" | "error">("all");
@@ -166,6 +170,12 @@ export function RosettaAccounts({
                     {" "}{acc.successRate ?? "—"}%
                   </span>
                 )}
+                {employeeMode && acc.employeeSubmittedAt && (
+                  <span className="rosetta-badge success">已入池</span>
+                )}
+                {employeeMode && acc.projectId && !acc.employeeSubmittedAt && (
+                  <span className="rosetta-badge warning">待上报</span>
+                )}
                 {acc.accountStatusLabel && (
                   <span className={`rosetta-badge ${toneCls}`}>{acc.accountStatusLabel}</span>
                 )}
@@ -200,13 +210,35 @@ export function RosettaAccounts({
                   >
                     别名
                   </button>
-                  <button
-                    className={`rosetta-btn-sm ${acc.hasCredentials ? "" : "accent"}`}
-                    onClick={() => sendRosettaAction("rosetta:editCredentials", { accountId: acc.id })}
-                    title={acc.hasCredentials ? "编辑登录凭据（已配置）" : "录入密码和TOTP（未配置）"}
-                  >
-                    {acc.hasCredentials ? "✅ 凭据" : "🔑 凭据"}
-                  </button>
+                  {!clientMode && (
+                    <>
+                      <button
+                        className={`rosetta-btn-sm ${acc.hasCredentials ? "" : "accent"}`}
+                        onClick={() => sendRosettaAction("rosetta:editCredentials", { accountId: acc.id })}
+                        title={acc.hasCredentials ? "编辑登录凭据（已配置）" : "录入密码和TOTP（未配置）"}
+                      >
+                        {acc.hasCredentials ? "凭据" : "凭据"}
+                      </button>
+                      <button
+                        className={`rosetta-btn-sm ${acc.lastVerifiedPhone?.phoneNumber ? "" : "accent"}`}
+                        onClick={() => sendRosettaAction("rosetta:editAccountPhone", { accountId: acc.id })}
+                        title={acc.lastVerifiedPhone?.phoneNumber
+                          ? `手机号：${acc.lastVerifiedPhone.countryCode || "+1"} ${acc.lastVerifiedPhone.phoneNumber}`
+                          : "查看或补录最近一次验证手机号"}
+                      >
+                        手机
+                      </button>
+                    </>
+                  )}
+                  {!employeeMode && !clientMode && (
+                    <button
+                      className="rosetta-btn-sm"
+                      onClick={() => sendRosettaAction("rosetta:repairAccount", { accountId: acc.id })}
+                      title={acc.hasCredentials ? "使用本地 AdsPower 浏览器修复此账号" : "使用后台保存的凭据修复此账号"}
+                    >
+                      修复
+                    </button>
+                  )}
                   {needsWarmup && (
                     <button
                       className={`rosetta-btn-sm warmup ${isWarming ? "warming" : ""}`}
@@ -248,6 +280,15 @@ export function RosettaAccounts({
                 )}
 
                 <RosettaQuota groups={acc.quotaGroups} refreshedAt={acc.quotaRefreshedAt} />
+                {employeeMode && (
+                  <div className="rosetta-hint" style={{ marginTop: 8 }}>
+                    {acc.employeeSubmittedAt
+                      ? "此账号已自动进入中央号池。"
+                      : acc.projectId
+                        ? "已有项目号，等待自动上报入池。"
+                        : "请先预热拿到项目号。"}
+                  </div>
+                )}
               </div>
               );
             })()}

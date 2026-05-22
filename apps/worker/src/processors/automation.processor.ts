@@ -13,7 +13,7 @@
  *   6. Release profile
  */
 
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import type { AutomationPayload } from "@gfa/shared";
 
@@ -25,9 +25,14 @@ import { gmailLogin, type LoginCredentials } from "../gmail-login";
 import { handleLoginResult } from "../handle-login-result";
 import { handlePhoneVerification, isVerificationPage } from "../phone-verification";
 import { generateTOTP, totpSecondsRemaining, currentTotpWindow, lastUsedTotpWindow, markTotpUsed } from "../totp";
+import { captureStepScreenshot } from "../screenshot-capture";
 
 /** Max time for the entire accept-invite flow (5 min), well under BullMQ lockDuration (10 min). */
 const ACCEPT_INVITE_TIMEOUT_MS = 5 * 60 * 1000;
+const ROSETTA_REPAIR_MANUAL_WAIT_MS = 5 * 60 * 1000;
+const MANUAL_REPAIR_PROFILE_WATCH_MS = 30 * 60 * 1000;
+const MANUAL_REPAIR_PROFILE_WATCH_INTERVAL_MS = 10 * 1000;
+const PHONE_POOL_FAILURE_DISABLE_THRESHOLD = 2;
 
 // ---- OAuth constants ----
 const OAUTH_CLIENT_ID =
@@ -59,8 +64,17 @@ export async function processAutomation(
   deps: AutomationProcessorDeps
 ): Promise<void> {
   const { prisma, adspower, pool, workerId } = deps;
-  const { action, credentials, phones } = job.data;
+  const { action, credentials, phones, profileId: requestedProfileId, keepBrowserOpenOnChallenge, source } = job.data;
   const taskId = job.data.taskId ?? job.id ?? job.name;
+  const isRosettaAccountRepair = source === "rosetta-account-repair";
+  const isRosettaAccountAutoImport = source === "rosetta-account-auto-import";
+  const isCaptchaUnblock = source === "captcha-unblock" || source === "captcha-unblock-phase2";
+  const isRosettaAccountMaintenance = isRosettaAccountRepair || isRosettaAccountAutoImport;
+  const manualRepairMode =
+    isRosettaAccountRepair &&
+    action === "oauth" &&
+    keepBrowserOpenOnChallenge &&
+    !credentials.password;
 
   if (!taskId) {
     console.error(`[worker:${workerId}] automation job has no id, skipping`);
@@ -77,7 +91,7 @@ export async function processAutomation(
   });
   if (
     existing &&
-    (existing.status === "SUCCESS" || existing.status === "FAILED_FINAL")
+    (existing.status === "SUCCESS" || existing.status === "FAILED_FINAL" || existing.status === "MANUAL_REVIEW")
   ) {
     console.log(
       `[worker:${workerId}][task:${taskId}] Skipping — already ${existing.status}`
@@ -88,6 +102,7 @@ export async function processAutomation(
   const browser = new WorkerBrowser();
   let profileId: string | null = null;
   let stopHeartbeat: (() => void) | null = null;
+  let keepBrowserOpen = false;
 
   // Look up the Account record by email so we use the same lock key
   // (account.id) as invite/sync/remove/replace processors.
@@ -106,7 +121,9 @@ export async function processAutomation(
   try {
 
     // Acquire profile + open AdsPower browser (retries other profiles on failure)
-    const acquired = await pool.acquireAndOpen(workerId, accountLockKey, adspower);
+    const acquired = requestedProfileId
+      ? await pool.acquireSpecificAndOpen(workerId, accountLockKey, requestedProfileId, adspower)
+      : await pool.acquireAndOpen(workerId, accountLockKey, adspower);
     profileId = acquired.profileId;
     stopHeartbeat = pool.startHeartbeat(profileId, accountLockKey, workerId);
     await logger.log(
@@ -124,9 +141,97 @@ export async function processAutomation(
       totpSecret: credentials.totpSecret,
     };
 
+    let repairPhones = phones;
+    if (isRosettaAccountMaintenance && (!repairPhones || repairPhones.length === 0)) {
+      const pooledPhones = await prisma.phonePool.findMany({
+        where: { status: "available" },
+        orderBy: { usedCount: "asc" },
+        take: 5,
+        select: { phoneNumber: true, countryCode: true, smsUrl: true },
+      });
+      repairPhones = pooledPhones.map((phone) => ({
+        phoneNumber: phone.phoneNumber,
+        countryCode: phone.countryCode || "+1",
+        smsUrl: phone.smsUrl,
+      }));
+      await logger.log(
+        repairPhones.length ? "INFO" : "WARN",
+        `[repair] Loaded ${repairPhones.length} available phone(s) from local PhonePool`
+      );
+    }
+
     // Step 1: Gmail login
     await logger.log("INFO", `Logging in as ${credentials.email}`);
-    const loginResult = await gmailLogin(page, loginCreds, logger);
+    const captchaUnblockWaitMs = 10 * 60 * 1000; // 10 minutes for manual CAPTCHA
+    let loginResult = await gmailLogin(page, loginCreds, logger, {
+      manualChallengeWaitMs: isCaptchaUnblock
+        ? captchaUnblockWaitMs
+        : isRosettaAccountMaintenance
+          ? ROSETTA_REPAIR_MANUAL_WAIT_MS
+          : 0,
+      skipPhoneChallengeManualWait: (isRosettaAccountMaintenance || isCaptchaUnblock) && Boolean(repairPhones?.length),
+    });
+
+    let verifiedPhoneRecord: { phoneNumber: string; countryCode: string; smsUrl: string } | undefined;
+
+    if (
+      !loginResult.success &&
+      (isRosettaAccountMaintenance || isCaptchaUnblock) &&
+      loginResult.reason === "PHONE_CHALLENGE" &&
+      repairPhones?.length
+    ) {
+      await logger.log("INFO", "[repair] Phone challenge detected; trying saved recovery phone/SMS URL");
+      const phoneResult = await handlePhoneVerification(page, repairPhones, logger);
+      if (phoneResult.resolved) {
+        const usedPhone = phoneResult.usedPhoneInfo ||
+          repairPhones.find((phone) => phone.phoneNumber === phoneResult.usedPhone);
+        verifiedPhoneRecord = usedPhone
+          ? {
+              phoneNumber: usedPhone.phoneNumber,
+              countryCode: usedPhone.countryCode || "+1",
+              smsUrl: usedPhone.smsUrl,
+            }
+          : undefined;
+        if (phoneResult.usedPhone) {
+          await markPhonePoolUsed(prisma, phoneResult.usedPhone, logger, "[repair]");
+        }
+        if (isRosettaAccountRepair) {
+          keepBrowserOpen = true;
+          await logger.log(
+            "INFO",
+            "[repair] Phone verification resolved; leaving browser open for manual appeal. Worker will stop now."
+          );
+          await prisma.task.update({
+            where: { id: taskId },
+            data: {
+              payload: JSON.stringify({
+                action: "oauth",
+                email: credentials.email,
+                result: {
+                  phoneVerified: true,
+                  usedPhone: verifiedPhoneRecord,
+                },
+              }),
+            },
+          });
+          await logger.updateStatus("MANUAL_REVIEW", {
+            code: "PHONE_VERIFIED_APPEAL_REQUIRED",
+            message: "Phone verification completed. Browser left open for manual appeal; close it manually to release the profile.",
+          });
+          return;
+        }
+        await logger.log("INFO", "[auto-import] Phone verification resolved; continuing OAuth token capture.");
+        loginResult = { success: true };
+      } else {
+        await recordPhonePoolFailures(
+          prisma,
+          phoneResult.attemptedPhones ?? repairPhones.map((phone) => phone.phoneNumber),
+          logger,
+          "[repair]"
+        );
+        await logger.log("WARN", `[repair] Saved recovery phone failed: ${phoneResult.error || "unknown"}`);
+      }
+    }
 
     if (!loginResult.success) {
       await logger.log(
@@ -135,12 +240,39 @@ export async function processAutomation(
       );
       // TRANSIENT errors (network, browser crash) → FAILED_RETRYABLE for BullMQ retry
       // All other failures → FAILED_FINAL (permanent)
-      const status = loginResult.reason === "TRANSIENT" ? "FAILED_RETRYABLE" : "FAILED_FINAL";
+      if (keepBrowserOpenOnChallenge && isManualVerificationResult(loginResult)) {
+        keepBrowserOpen = true;
+        await logger.log(
+          "WARN",
+          `[automation:${action}] Manual verification required; leaving AdsPower profile ${profileId} open.`
+        );
+        await logger.updateStatus("MANUAL_REVIEW", {
+          code: loginResult.reason,
+          message: `${loginResult.detail} Browser left open for manual repair.`,
+        });
+        return;
+      }
+      if (manualRepairMode && loginResult.reason === "TRANSIENT") {
+        keepBrowserOpen = true;
+        await logger.log(
+          "WARN",
+          `[automation:${action}] Repair browser hit a transient navigation error; leaving AdsPower profile ${profileId} open for manual continuation.`
+        );
+        await logger.updateStatus("MANUAL_REVIEW", {
+          code: loginResult.reason,
+          message: `${loginResult.detail} Browser left open for manual repair.`,
+        });
+        return;
+      }
+      const status = loginResult.reason === "TRANSIENT" && !isRosettaAccountRepair ? "FAILED_RETRYABLE" : "FAILED_FINAL";
       await logger.updateStatus(status, {
         code: loginResult.reason,
         message: loginResult.detail,
       });
       if (loginResult.reason === "TRANSIENT") {
+        if (isRosettaAccountRepair) {
+          throw new UnrecoverableError(`Repair login transient failure: ${loginResult.detail}`);
+        }
         throw new Error(`Login transient failure: ${loginResult.detail}`);
       }
       return;
@@ -150,7 +282,19 @@ export async function processAutomation(
     // Step 2: Dispatch to action handler
     switch (action) {
       case "oauth":
-        await handleOAuth(page, loginCreds, logger, prisma, taskId);
+        // Captcha-unblock: login success is sufficient — no OAuth needed.
+        // The goal is just to verify the account can log in past CAPTCHA.
+        if (isCaptchaUnblock) {
+          await logger.log("INFO", `[captcha-unblock] Login successful for ${credentials.email} — marking as unblocked`);
+          await logger.updateStatus("SUCCESS", {
+            code: "CAPTCHA_UNBLOCKED",
+            message: `Account ${credentials.email} successfully logged in past captcha`,
+          });
+          break;
+        }
+        await handleOAuth(page, loginCreds, logger, prisma, taskId, {
+          verifiedPhone: verifiedPhoneRecord,
+        });
         break;
       case "accept-invite": {
         // Wrap with overall timeout to prevent the task from running forever
@@ -260,21 +404,126 @@ export async function processAutomation(
       // noop
     }
 
-    await logger.updateStatus("FAILED_RETRYABLE", {
+    if (manualRepairMode && profileId) {
+      keepBrowserOpen = true;
+      await logger.log(
+        "WARN",
+        `[automation:${action}] Repair automation failed after opening profile ${profileId}; leaving browser open for manual continuation: ${errMsg}`
+      );
+      await logger.updateStatus("MANUAL_REVIEW", {
+        code: "REPAIR_BROWSER_ERROR",
+        message: `${errMsg} Browser left open for manual repair.`,
+      });
+      return;
+    }
+
+    const failureStatus = isRosettaAccountRepair ? "FAILED_FINAL" : "FAILED_RETRYABLE";
+    await logger.updateStatus(failureStatus, {
       code: profileId ? "AUTOMATION_ERROR" : "PROFILE_ACQUIRE_FAILED",
       message: errMsg,
     });
 
+    if (isRosettaAccountRepair) {
+      throw new UnrecoverableError(errMsg);
+    }
     throw error;
   } finally {
+    // ── Stabilization delay before closing browser ──
+    // After phone verification / QR scan / OAuth, Google's redirect chain may
+    // still be in-flight. Give the browser extra time to settle so the
+    // verification state persists on Google's servers.
+    if (profileId && action === "phone-verify") {
+      try {
+        await logger.log("DEBUG", "[automation] Waiting 8s before closing browser to let verification state settle...");
+      } catch {}
+      await new Promise(r => setTimeout(r, 8000));
+    }
+
     stopHeartbeat?.();
     await browser.disconnect().catch(() => {});
+    if (keepBrowserOpen) {
+      try {
+        await logger.log(
+          "INFO",
+          `[automation] Browser profile ${profileId || requestedProfileId || "(unknown)"} kept open for manual verification. Locks will expire naturally.`
+        );
+      } catch {}
+      if (profileId) {
+        watchManualRepairProfileClose({
+          profileId,
+          accountLockKey,
+          workerId,
+          adspower,
+          pool,
+          logger,
+        });
+      }
+      return;
+    }
     if (profileId) {
       await adspower.closeProfile(profileId).catch(() => {});
       await pool.release(profileId, workerId).catch(() => {});
     }
     await pool.releaseAccount(accountLockKey, workerId).catch(() => {});
   }
+}
+
+function isManualVerificationResult(
+  result: Exclude<Awaited<ReturnType<typeof gmailLogin>>, { success: true }>
+): boolean {
+  if (result.reason === "CAPTCHA" || result.reason === "PHONE_CHALLENGE") return true;
+  if (result.reason !== "VERIFICATION_REQUIRED") return false;
+  const detail = result.detail.toLowerCase();
+  if (detail.includes("loginpassword is not configured")) return false;
+  if (detail.includes("totp secret is invalid") || detail.includes("totp密钥错误")) return false;
+  return (
+    detail.includes("challenge") ||
+    detail.includes("verification") ||
+    detail.includes("verify") ||
+    detail.includes("manual")
+  );
+}
+
+function watchManualRepairProfileClose(args: {
+  profileId: string;
+  accountLockKey: string;
+  workerId: string;
+  adspower: AutomationProcessorDeps["adspower"];
+  pool: AutomationProcessorDeps["pool"];
+  logger: TaskLogger;
+}): void {
+  const { profileId, accountLockKey, workerId, adspower, pool, logger } = args;
+  const deadline = Date.now() + MANUAL_REPAIR_PROFILE_WATCH_MS;
+
+  void (async () => {
+    await logger.log(
+      "INFO",
+      `[automation] Watching profile ${profileId} for manual close; locks will be released when browser closes.`
+    ).catch(() => {});
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, MANUAL_REPAIR_PROFILE_WATCH_INTERVAL_MS));
+      const status = await adspower.checkProfile(profileId).catch(() => ({ active: false }));
+      if (status.active) continue;
+
+      await logger.log(
+        "INFO",
+        `[automation] Manual repair profile ${profileId} is closed; releasing profile/account locks.`
+      ).catch(() => {});
+      await pool.release(profileId, workerId).catch((err: unknown) => {
+        void logger.log("WARN", `[automation] Failed to release profile lock ${profileId}: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+      });
+      await pool.releaseAccount(accountLockKey, workerId).catch((err: unknown) => {
+        void logger.log("WARN", `[automation] Failed to release account lock ${accountLockKey}: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+      });
+      return;
+    }
+
+    await logger.log(
+      "WARN",
+      `[automation] Manual repair profile ${profileId} watcher timed out; locks will expire by Redis TTL.`
+    ).catch(() => {});
+  })();
 }
 
 // ============================================================
@@ -397,6 +646,10 @@ async function doOAuthForToken(
         await page.waitForTimeout(5000);
         continue;
       }
+
+      await logger.log("DEBUG", "[oauth] TOTP challenge page has no visible input yet; waiting without changing URL");
+      await page.waitForTimeout(3000);
+      continue;
     }
 
     // Password re-auth
@@ -476,7 +729,7 @@ async function doOAuthForToken(
     }
 
     // ── Force English on non-English OAuth/consent pages if still on Google ──
-    if (nowUrl.includes("google.com")) {
+    if (nowUrl.includes("google.com") && !/\/challenge\//i.test(nowUrl)) {
       try {
         const urlObj = new URL(nowUrl);
         if (urlObj.searchParams.get("hl") !== "en" && !nowUrl.includes("oauth-callback")) {
@@ -596,7 +849,10 @@ async function handleOAuth(
   credentials: LoginCredentials,
   logger: TaskLogger,
   prisma: PrismaClient,
-  taskId: string
+  taskId: string,
+  metadata: {
+    verifiedPhone?: { phoneNumber: string; countryCode: string; smsUrl: string };
+  } = {}
 ): Promise<void> {
   await logger.log("INFO", "Starting Antigravity OAuth flow");
 
@@ -624,6 +880,7 @@ async function handleOAuth(
         action: "oauth",
         email: credentials.loginEmail,
         result: token,
+        ...(metadata.verifiedPhone ? { phoneVerified: true, usedPhone: metadata.verifiedPhone } : {}),
         ...(isRestricted ? { restrictedAge: true } : {}),
         ...(probeResult.projectId ? { projectId: probeResult.projectId } : {}),
       }),
@@ -1439,7 +1696,9 @@ async function doProactivePhoneVerification(
 ): Promise<void> {
   // ── Step 1: OAuth to get access_token ──
   await logger.log("INFO", "[phone-verify] Running OAuth to get access token for API probe...");
+  await captureStepScreenshot(page, logger, "activation-before-oauth", "beforeScreenshotPath");
   const token = await doOAuthForToken(page, credentials, logger);
+  await captureStepScreenshot(page, logger, token ? "activation-after-oauth-success" : "activation-after-oauth-failed", token ? undefined : "errorScreenshotPath");
 
   if (!token) {
     await logger.log("WARN", "[phone-verify] OAuth failed — cannot probe API for verification status");
@@ -1466,6 +1725,7 @@ async function doProactivePhoneVerification(
       });
       await page.waitForTimeout(2000);
       await logger.log("DEBUG", `[phone-verify] Browser restored to: ${page.url()}`);
+      await captureStepScreenshot(page, logger, "activation-restored-google-domain");
     }
   } catch (restoreErr) {
     await logger.log("WARN", `[phone-verify] Failed to restore browser to Google domain: ${restoreErr}`);
@@ -1473,6 +1733,7 @@ async function doProactivePhoneVerification(
   }
 
   await logger.log("INFO", "[phone-verify] Got access token, probing cloudcode API...");
+  await captureStepScreenshot(page, logger, "activation-before-api-probe");
 
   // ── Step 2: Probe cloudcode API ──
   const probeResult = await probeCloudCodeAPI(token.access_token, logger);
@@ -1588,6 +1849,7 @@ async function doProactivePhoneVerification(
   }
 
   await logger.log("INFO", `[phone-verify] Opening validation URL: ${validationUrl.substring(0, 100)}...`);
+  await captureStepScreenshot(page, logger, "activation-before-validation-url");
   try {
     await page.goto(validationUrl, {
       waitUntil: "domcontentloaded",
@@ -1611,6 +1873,7 @@ async function doProactivePhoneVerification(
   };
 
   const postNavUrl = page.url();
+  await captureStepScreenshot(page, logger, "activation-after-validation-navigation");
   if (isReAuthPage(postNavUrl)) {
     await logger.log("INFO", `[phone-verify] Re-auth challenge detected after validation URL: ${postNavUrl.substring(0, 100)}`);
     await handleReAuthLoop(page, reAuthCreds, logger, {
@@ -1618,6 +1881,7 @@ async function doProactivePhoneVerification(
       logPrefix: "[phone-verify-reauth]",
     });
     await page.waitForTimeout(2000);
+    await captureStepScreenshot(page, logger, "activation-after-reauth");
   }
 
   // Wait for redirect — validation URL goes through signin/continue → actual verification page
@@ -1631,6 +1895,7 @@ async function doProactivePhoneVerification(
   // Check where we landed
   const currentUrl = page.url();
   await logger.log("INFO", `[phone-verify] Landed on: ${currentUrl}`);
+  await captureStepScreenshot(page, logger, "activation-validation-landed");
 
   // Check if we're on a verification page FIRST (before success check)
   if (isVerificationPage(currentUrl)) {
@@ -1643,6 +1908,39 @@ async function doProactivePhoneVerification(
       // because that could be a redirect from a failed validation URL navigation
       if (urlObj.pathname.includes("auth_success")) {
         await logger.log("INFO", "[phone-verify] Landed on auth_success page — verification auto-completed");
+
+        // ── Wait for the final redirect chain to complete ──
+        // Google's verification flow has a multi-step redirect chain:
+        //   auth_success_gemini → final landing page
+        // If the browser closes before the final redirect finishes, the
+        // verification state may NOT persist on Google's side.
+        await logger.log("DEBUG", "[phone-verify] Waiting for final redirect chain after auth_success...");
+        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+
+        const urlAfterIdle = page.url();
+        await logger.log("DEBUG", `[phone-verify] URL after networkidle: ${urlAfterIdle}`);
+
+        if (
+          urlAfterIdle.includes("auth_success") ||
+          urlAfterIdle.includes("accounts.google.com/signin")
+        ) {
+          await logger.log("DEBUG", "[phone-verify] Still on intermediate page, waiting for final redirect...");
+          await page.waitForURL(
+            (url) => {
+              const u = url.toString();
+              return !u.includes("accounts.google.com/signin") && !u.includes("uplevelingstep");
+            },
+            { timeout: 15000 }
+          ).catch(() => {});
+          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+        }
+
+        // Final stabilization wait — ensure cookies and server-side state are fully persisted
+        const finalUrl = page.url();
+        await logger.log("INFO", `[phone-verify] Final landing page after auth_success: ${finalUrl}`);
+        await logger.log("DEBUG", "[phone-verify] Waiting 5s for Google to finalize verification state...");
+        await page.waitForTimeout(5000);
+
         if (setTaskStatus) {
           await logger.updateStatus("SUCCESS");
         }
@@ -1681,6 +1979,7 @@ async function doProactivePhoneVerification(
 
   // ── Step 4: Do phone verification ──
   const result = await handlePhoneVerification(page, phones, logger);
+  await captureStepScreenshot(page, logger, result.resolved ? "activation-phone-verify-success" : "activation-phone-verify-failed", result.resolved ? "afterScreenshotPath" : "errorScreenshotPath");
 
   // Store result — merge into existing payload
   const existingPayload = await prisma.task.findUnique({ where: { id: taskId }, select: { payload: true } });
@@ -1689,7 +1988,9 @@ async function doProactivePhoneVerification(
   payloadObj.phoneVerifyResult = {
     needed: result.needed,
     resolved: result.resolved,
+    attemptedPhones: result.attemptedPhones ?? [],
     usedPhone: result.usedPhone,
+    usedPhoneInfo: result.usedPhoneInfo,
     disabledPhones: result.disabledPhones,
     error: result.error,
   };
@@ -1714,18 +2015,14 @@ async function doProactivePhoneVerification(
 
     // ── Mark used phone as "used" in PhonePool (prevent reuse) ──
     if (result.usedPhone) {
-      try {
-        await prisma.phonePool.update({
-          where: { phoneNumber: result.usedPhone },
-          data: {
-            status: "used",
-            usedCount: { increment: 1 },
-            lastUsedAt: new Date(),
-          },
-        });
-        await logger.log("INFO", `[phone-verify] Phone ${result.usedPhone.slice(-4)} marked as used in pool`);
-      } catch { /* best-effort */ }
+      await markPhonePoolUsed(prisma, result.usedPhone, logger, "[phone-verify]");
     }
+    await recordPhonePoolFailures(
+      prisma,
+      (result.attemptedPhones ?? []).filter((phone) => phone !== result.usedPhone),
+      logger,
+      "[phone-verify]"
+    );
 
     // Auto-capture token to AgentAccount
     if (token.refresh_token) {
@@ -1754,25 +2051,105 @@ async function doProactivePhoneVerification(
         message: result.error ?? "Phone verification failed",
       });
     }
-    await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
-  }
 
-  // ── Mark disabled phones in PhonePool ──
-  for (const disabledPhone of result.disabledPhones) {
-    try {
-      await prisma.phonePool.update({
-        where: { phoneNumber: disabledPhone },
-        data: {
-          status: "disabled",
-          disabledReason: "verification_hard_failure",
-        },
-      });
-      await logger.log("INFO", `[phone-verify] Phone ${disabledPhone.slice(-4)} disabled in pool`);
-    } catch { /* best-effort */ }
+    if (isQrFailure) {
+      try {
+        const agentAcc = await prisma.agentAccount.findFirst({ where: { loginEmail: credentials.loginEmail } });
+        if (agentAcc) {
+          const timestamp = new Date().toISOString().split("T")[0];
+          const qrNote = `[${timestamp}] 需扫码验证`;
+          const newNotes = agentAcc.notes ? `${agentAcc.notes}\n${qrNote}` : qrNote;
+          await prisma.agentAccount.update({
+            where: { id: agentAcc.id },
+            data: { notes: newNotes, banned: true },
+          });
+          await logger.log("INFO", `[agent-account] Marked ${credentials.loginEmail} as banned and noted QR verification requirement`);
+        }
+
+        const mainAcc = await prisma.account.findFirst({ where: { loginEmail: credentials.loginEmail } });
+        if (mainAcc) {
+          const timestamp = new Date().toISOString().split("T")[0];
+          const qrNote = `[${timestamp}] 需扫码验证`;
+          const newNotes = mainAcc.notes ? `${mainAcc.notes}\n${qrNote}` : qrNote;
+          await prisma.account.update({
+            where: { id: mainAcc.id },
+            data: { notes: newNotes, status: "VERIFICATION_REQUIRED" },
+          });
+          await logger.log("INFO", `[account] Marked ${credentials.loginEmail} as VERIFICATION_REQUIRED and noted QR verification requirement`);
+        }
+      } catch (err) {
+        await logger.log("WARN", `[phone-verify] Failed to mark account for QR code verification: ${err}`);
+      }
+    }
+
+    await logger.log("WARN", `[phone-verify] Verification failed: ${result.error}`);
+    await recordPhonePoolFailures(prisma, result.attemptedPhones ?? [], logger, "[phone-verify]");
   }
 
   if (String(result.error || "").includes("验证失败（扫码）")) {
     await closePhoneVerificationBrowser(page, logger);
+  }
+}
+
+async function markPhonePoolUsed(
+  prisma: PrismaClient,
+  phoneNumber: string,
+  logger: TaskLogger,
+  prefix: string
+): Promise<void> {
+  try {
+    await prisma.phonePool.update({
+      where: { phoneNumber },
+      data: {
+        status: "used",
+        usedCount: { increment: 1 },
+        failureCount: 0,
+        lastUsedAt: new Date(),
+        disabledReason: null,
+      },
+    });
+    await logger.log("INFO", `${prefix} Phone ${phoneNumber.slice(-4)} marked as used in pool`);
+  } catch (error) {
+    await logger.log("WARN", `${prefix} Failed to mark phone ${phoneNumber.slice(-4)} as used: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function recordPhonePoolFailures(
+  prisma: PrismaClient,
+  phoneNumbers: string[],
+  logger: TaskLogger,
+  prefix: string
+): Promise<void> {
+  const uniquePhoneNumbers = Array.from(new Set(phoneNumbers.filter(Boolean)));
+  for (const phoneNumber of uniquePhoneNumbers) {
+    try {
+      const phone = await prisma.phonePool.findUnique({
+        where: { phoneNumber },
+        select: { status: true, failureCount: true },
+      });
+      if (!phone || phone.status === "used" || phone.status === "disabled") continue;
+
+      const failureCount = (phone.failureCount ?? 0) + 1;
+      if (failureCount >= PHONE_POOL_FAILURE_DISABLE_THRESHOLD) {
+        await prisma.phonePool.update({
+          where: { phoneNumber },
+          data: {
+            status: "disabled",
+            failureCount,
+            disabledReason: "verification_failed_twice",
+          },
+        });
+        await logger.log("INFO", `${prefix} Phone ${phoneNumber.slice(-4)} disabled after ${failureCount} failed verification attempts`);
+      } else {
+        await prisma.phonePool.update({
+          where: { phoneNumber },
+          data: { failureCount },
+        });
+        await logger.log("INFO", `${prefix} Phone ${phoneNumber.slice(-4)} failure count ${failureCount}/${PHONE_POOL_FAILURE_DISABLE_THRESHOLD}`);
+      }
+    } catch (error) {
+      await logger.log("WARN", `${prefix} Failed to record phone ${phoneNumber.slice(-4)} failure: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 

@@ -14,6 +14,20 @@ import {
   writeJsonFile,
   updateAccountRecord,
 } from "./rosettaState.js";
+import { ROSETTA_DISTRIBUTION } from "../distribution.js";
+
+function atomicUpdateJsonFile<T>(filePath: string, fallback: T, updater: (current: T) => T): T {
+  const current = readJsonFile<T>(filePath, fallback);
+  const next = updater(current);
+  writeJsonFile(filePath, next);
+  return next;
+}
+
+
+function getExtensionVersion(): string {
+  const ext = vscode.extensions.getExtension("bingcha.bcai-tools");
+  return ext?.packageJSON?.version || "unknown";
+}
 
 const IS_WIN = process.platform === "win32";
 const IS_MAC = process.platform === "darwin";
@@ -371,9 +385,12 @@ export async function startProxy(state: RosettaState): Promise<void> {
   procLog(`[startProxy] scriptPath=${state.workspace.paths.startScriptPath}`);
   procLog(`[startProxy] rootPath=${state.workspace.rootPath}`);
 
-  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
-  config.tokenProxyMode = "local";
-  writeJsonFile(state.workspace.paths.configPath, config);
+  const config = atomicUpdateJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any, (current) => {
+    const next = { ...current };
+    next.tokenProxyMode = "local";
+    procLog(`[startProxy] Atomic update saving mode="local"`);
+    return next;
+  });
   procLog(`[startProxy] switched Token Proxy token source to local`);
 
   if (state.proxy.running || (await isProxyRunning(state.proxy.statusUrl))) {
@@ -492,14 +509,35 @@ export async function startRelayProxy(state: RosettaState): Promise<void> {
   const tokenProxyPort = Number(state.config?.tokenProxyPort) || 60670;
   const statusPort = tokenProxyPort + 1;
   const statusUrl = `http://127.0.0.1:${statusPort}/status`;
-  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
-  config.tokenProxyMode = "remote";
-  if (!config.relayProxy) config.relayProxy = {};
-  if (!config.relayProxy.tokenServerUrl || isOldLocalRemoteTokenUrl(config.relayProxy.tokenServerUrl)) {
-    config.relayProxy.tokenServerUrl = DEFAULT_REMOTE_TOKEN_SERVER_URL;
-  }
-  writeJsonFile(state.workspace.paths.configPath, config);
+  // Use an atomic update to prevent background tasks (like refreshAndPush) from overwriting
+  // our changes. Log exactly what we are writing.
+  procLog(`[startRelayProxy] WIRITING TO configPath: ${state.workspace.paths.configPath}`);
+  
+  const config = atomicUpdateJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any, (current) => {
+    const next = { ...current };
+    next.tokenProxyMode = "remote";
+    if (!next.relayProxy) next.relayProxy = {};
+    if (!next.relayProxy.tokenServerUrl || isOldLocalRemoteTokenUrl(next.relayProxy.tokenServerUrl)) {
+      next.relayProxy.tokenServerUrl = DEFAULT_REMOTE_TOKEN_SERVER_URL;
+    }
+    next.relayProxy.clientVersion = getExtensionVersion();
+    next.relayProxy.clientDistribution = ROSETTA_DISTRIBUTION;
+    
+    // Detailed log of what we're saving
+    procLog(`[startRelayProxy] Atomic update saving mode="remote", relayProxy=${JSON.stringify(next.relayProxy)}`);
+    return next;
+  });
+
   procLog(`[startRelayProxy] switched Token Proxy token source to remote; tokenServerUrl=${config.relayProxy.tokenServerUrl}; port remains ${tokenProxyPort}`);
+
+  // Detailed check of what's ACTUALLY on disk right before launch
+  try {
+    const fs = require("fs");
+    const raw = fs.readFileSync(state.workspace.paths.configPath, "utf8");
+    procLog(`[startRelayProxy] config on disk before spawn: ${raw.replace(/\n/g, ' ')}`);
+  } catch (e: any) {
+    procLog(`[startRelayProxy] read config failed: ${e.message}`);
+  }
 
   if (!(await isProxyRunning(statusUrl))) {
     const nodeBinary = resolveNodeBinary();
@@ -573,9 +611,12 @@ export async function startRelayProxy(state: RosettaState): Promise<void> {
 
 export async function stopRelayProxy(state: RosettaState): Promise<void> {
   {
-  const config = readJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any);
-  config.tokenProxyMode = "local";
-  writeJsonFile(state.workspace.paths.configPath, config);
+  const config = atomicUpdateJsonFile(state.workspace.paths.configPath, { ...(state.config || {}) } as any, (current) => {
+    const next = { ...current };
+    next.tokenProxyMode = "local";
+    procLog(`[stopRelayProxy] Atomic update saving mode="local"`);
+    return next;
+  });
   procLog(`[stopRelayProxy] switched Token Proxy token source to local; port unchanged`);
   vscode.window.showInformationMessage("缁澂浠ｇ悊宸插仠姝€?");
   return;
@@ -678,6 +719,13 @@ export async function toggleAccount(state: RosettaState, accountId: number): Pro
     try { await postJson(state.proxy.reloadAccountsUrl, {}, { timeoutMs: 45000 }); } catch { /* non-fatal */ }
   }
   vscode.window.showInformationMessage(acc.enabled ? "账号已停用。" : "账号已启用。");
+}
+
+export async function toggleDebugMode(state: RosettaState, enabled: boolean): Promise<void> {
+  if (!state.proxy.running) throw new Error("代理未运行，无法切换调试模式。");
+  if (!state.proxy.debugModeUrl) throw new Error("代理版本过低，不支持调试模式。");
+  const res = await postJson(state.proxy.debugModeUrl, { enabled });
+  if (res.error) throw new Error(res.error);
 }
 
 export async function deleteAccount(state: RosettaState, accountId: number): Promise<void> {

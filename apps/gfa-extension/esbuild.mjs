@@ -14,6 +14,10 @@ const buildOptions = {
   target: "node18",
   sourcemap: !isProduction,
   minify: isProduction,
+  charset: "utf8",
+  define: {
+    "process.env.ROSETTA_DISTRIBUTION": JSON.stringify(process.env.ROSETTA_DISTRIBUTION || "server"),
+  },
   logLevel: "info",
 };
 

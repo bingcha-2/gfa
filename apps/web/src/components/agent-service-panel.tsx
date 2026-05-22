@@ -48,6 +48,7 @@ interface PhoneEntry {
   smsUrl: string;
   status: string;
   usedCount: number;
+  failureCount: number;
   lastUsedAt: string | null;
   lastCode: string | null;
   disabledReason: string | null;
@@ -705,6 +706,36 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
     }
   };
 
+  const handleUploadToRosetta = async () => {
+    if (agentSelected.size === 0) { showToast("error", "请先选择子号"); return; }
+    try {
+      const result = await apiRequest<{
+        total: number; added: number; updated: number; failed: number;
+        errors: Array<{ email: string; error: string }>;
+      }>("agent-accounts/upload-rosetta", {
+        method: "POST",
+        body: { ids: Array.from(agentSelected) },
+      });
+
+      showToast(
+        result.failed > 0 ? "error" : "success",
+        `Rosetta入池: 新增 ${result.added} 个，更新 ${result.updated} 个${result.failed > 0 ? `，失败 ${result.failed} 个` : ''}`
+      );
+
+      if (result.errors?.length > 0) {
+        for (const e of result.errors.slice(0, 5)) {
+          showToast("error", `${e.email}: ${e.error}`);
+        }
+      }
+
+      setAgentSelected(new Set());
+      await loadAgentAccountsByPool(agentSubTab);
+      await loadAgentStats();
+    } catch (err) {
+      showToast("error", `Rosetta入池失败: ${getErrorMessage(err)}`);
+    }
+  };
+
   const handleToggleBanned = async (id: string) => {
     try {
       const result = await apiRequest<{ banned: boolean; email: string }>(
@@ -907,6 +938,11 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                       onClick={() => setShowUploadModal(true)}
                       style={{ fontSize: 12, gap: 4, background: "var(--emerald, #059669)", color: "white" }}>
                       🚀 一键上号 ({agentSelected.size})
+                    </button>
+                    <button className="button" type="button" disabled={agentBatchAction}
+                      onClick={handleUploadToRosetta}
+                      style={{ fontSize: 12, gap: 4, background: "var(--blue, #2563eb)", color: "white" }}>
+                      {agentBatchAction && <Spinner size={12} color="currentColor" />} 🔄 上号Rosetta ({agentSelected.size})
                     </button>
                   </div>
                 </div>
@@ -1846,6 +1882,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     <th>国家码</th>
                     <th>SMS URL</th>
                     <th>使用次数</th>
+                    <th>失败次数</th>
                     <th>最后验证码</th>
                     <th>状态</th>
                     <th style={{ width: 120 }}>操作</th>
@@ -1862,6 +1899,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                         </span>
                       </td>
                       <td>{phone.usedCount}</td>
+                      <td>{phone.failureCount ?? 0}/2</td>
                       <td><code style={{ fontSize: 11 }}>{phone.lastCode ?? "-"}</code></td>
                       <td>
                         <StatusBadge

@@ -419,6 +419,28 @@ export default function AccountsPage() {
                       <span className="text-amber-500">跳过: <strong>{bulkResult.skipped}</strong></span>
                       <span className="text-destructive">错误: <strong>{bulkResult.errorCount}</strong></span>
                     </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-md bg-emerald-500/10 p-3">
+                        <div className="mb-2 font-medium text-emerald-600">已成功进入号池</div>
+                        <div className="max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                          {bulkResult.createdEmails?.length
+                            ? bulkResult.createdEmails.map((email: string) => <div key={email} className="truncate">{email}</div>)
+                            : <div>暂无</div>}
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-destructive/10 p-3">
+                        <div className="mb-2 font-medium text-destructive">未成功进入号池</div>
+                        <div className="max-h-40 space-y-1 overflow-y-auto text-xs text-muted-foreground">
+                          {bulkResult.skippedEmails?.map((email: string) => (
+                            <div key={`skipped-${email}`} className="truncate">{email} · 已存在/已跳过</div>
+                          ))}
+                          {bulkResult.errors?.map((error: string, index: number) => (
+                            <div key={`error-${index}`} className="text-destructive">{error}</div>
+                          ))}
+                          {!bulkResult.skippedEmails?.length && !bulkResult.errors?.length && <div>暂无</div>}
+                        </div>
+                      </div>
+                    </div>
                     {bulkResult.errors?.length > 0 && (
                       <div className="bg-destructive/10 rounded p-3 max-h-40 overflow-y-auto">
                         {bulkResult.errors.map((e: string, i: number) => <div key={i} className="text-destructive text-xs">{e}</div>)}

@@ -65,7 +65,7 @@ export class PhonePoolService {
   async getPhoneStatus(phoneNumber: string) {
     const phone = await this.prisma.phonePool.findUnique({
       where: { phoneNumber },
-      select: { phoneNumber: true, status: true, disabledReason: true, usedCount: true },
+      select: { phoneNumber: true, status: true, disabledReason: true, usedCount: true, failureCount: true },
     });
     return phone;
   }
@@ -87,6 +87,7 @@ export class PhonePoolService {
       where: { phoneNumber },
       data: {
         status: "disabled",
+        failureCount: { increment: 1 },
         disabledReason: reason ?? "verification_failed",
       },
     });
@@ -99,6 +100,7 @@ export class PhonePoolService {
       data: {
         status: "used",
         usedCount: { increment: 1 },
+        failureCount: 0,
         lastUsedAt: new Date(),
         lastCode: code,
       },

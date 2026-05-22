@@ -10,6 +10,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as http from "http";
 import * as vscode from "vscode";
+import * as os from "os";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export interface RosettaQuotaEntry {
@@ -39,6 +40,7 @@ export interface RosettaQuotaGroup {
 export interface RosettaAccount {
   id: number;
   email: string;
+  refreshToken?: string;
   enabled: boolean;
   alias: string;
   planType: string;
@@ -177,7 +179,7 @@ function parseJsonc<T>(raw: string, fallback: T): T {
   }
 }
 
-function readJsonFile<T>(filePath: string, fallback: T): T {
+export function readJsonFile<T>(filePath: string, fallback: T): T {
   if (!filePath || !fs.existsSync(filePath)) return fallback;
   return parseJsonc(fs.readFileSync(filePath, "utf8"), fallback);
 }
@@ -185,6 +187,13 @@ function readJsonFile<T>(filePath: string, fallback: T): T {
 export function writeJsonFile(filePath: string, value: any): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+export function atomicUpdateJsonFile<T>(filePath: string, fallback: T, updater: (current: T) => T): T {
+  const current = readJsonFile<T>(filePath, fallback);
+  const next = updater(current);
+  writeJsonFile(filePath, next);
+  return next;
 }
 
 // ─── Proxy repo discovery ───────────────────────────────────────────────
@@ -250,6 +259,22 @@ export function writeIdeCloudCodeUrl(filePath: string, url: string): void {
   }
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+export function clearRosettaIdeCloudCodeUrl(): boolean {
+  // Try to find common paths
+  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  const defaultPath = path.join(appData, "Antigravity", "User", "settings.json");
+  if (fs.existsSync(defaultPath)) {
+    writeIdeCloudCodeUrl(defaultPath, "");
+    return true;
+  }
+  return false;
+}
+
+export function isRosettaCloudCodeUrl(url: string): boolean {
+  if (!url) return false;
+  return url.includes("127.0.0.1:60670") || url.includes("127.0.0.1:60680");
 }
 
 // ─── Log reading ────────────────────────────────────────────────────────
@@ -493,6 +518,7 @@ function mergeAccounts(
     return {
       id: Number(account.id),
       email: String(account.email || ""),
+      refreshToken: String(account.refreshToken || account.refresh_token || ""),
       enabled: account.enabled !== false,
       alias: String(account.alias || quotaSnapshot?.alias || ""),
       planType: normalizePlanType(
@@ -755,6 +781,7 @@ export async function collectState(
   const switchUrl = `http://127.0.0.1:${statusPort}/switch-account`;
   const reloadAccountsUrl = `http://127.0.0.1:${statusPort}/reload-accounts`;
   const refreshQuotaUrl = `http://127.0.0.1:${statusPort}/refresh-quota`;
+  const debugModeUrl = `http://127.0.0.1:${statusPort}/set-debug-mode`;
 
   log(`configPath=${configPath} tokenProxyPort=${config.tokenProxyPort || 60670} statusPort=${statusPort}`);
   log(`accountsPath=${repoPaths.accountsPath} startScript=${repoPaths.startScriptPath}`);
@@ -831,12 +858,62 @@ export async function collectState(
     String(config?.relayProxy?.apiKey || config?.relayProxy?.tokenServerSecret || "").trim()
   );
 
+  const idePointsToProxy = configuredUrl === proxyUrl;
+
+  function computeRelayServiceStatus(opts: {
+    running: boolean;
+    hasApiKey: boolean;
+    ideConfigured: boolean;
+    status?: any;
+    error?: any;
+  }): { code: string; label: string; detail: string; tone: "good" | "warning" | "bad" | "muted" } {
+    const st = opts.status || {};
+    const errMsg = String(st.lastRemoteError || st.lastError || opts.error?.message || "").trim();
+    const errLow = errMsg.toLowerCase();
+
+    if (!opts.hasApiKey) {
+      return { code: "missing_key", label: "未配置卡密", detail: "请先设置卡密。", tone: "warning" };
+    }
+    if (!opts.running) {
+      if (errLow.includes("econnrefused") || errLow.includes("connect") || errLow.includes("timeout") || errLow.includes("状态接口")) {
+        return { code: "proxy_offline", label: "本机代理未连接", detail: errMsg || "本机续杯代理未启动。", tone: "bad" };
+      }
+      return { code: "stopped", label: "未开启", detail: "临时续杯尚未启动。", tone: "muted" };
+    }
+    if (!opts.ideConfigured) {
+      return { code: "ide_detached", label: "IDE 未接入续杯", detail: "续杯代理已启动，但 IDE 还没有接到本机代理。点击开启续杯即可接入。", tone: "warning" };
+    }
+    if (errMsg) {
+      if (errLow.includes("invalid access key") || errLow.includes("unauthorized") || errLow.includes("access key was rejected") || errLow.includes("卡密")) {
+        return { code: "invalid_key", label: "卡密不可用", detail: errMsg, tone: "bad" };
+      }
+      if (errLow.includes("already active") || errLow.includes("another device") || errLow.includes("另一台")) {
+        return { code: "key_in_use", label: "卡密正在其他设备使用", detail: errMsg, tone: "bad" };
+      }
+      if (errLow.includes("upgrade") || errLow.includes("版本过低") || errLow.includes("client_upgrade_required")) {
+        return { code: "upgrade_required", label: "需要升级插件", detail: errMsg, tone: "bad" };
+      }
+      if (errLow.includes("timeout") || errLow.includes("econnreset") || errLow.includes("enotfound") || errLow.includes("econnrefused") || errLow.includes("http 502") || errLow.includes("http 503")) {
+        return { code: "server_unreachable", label: "续杯服务器连接异常", detail: errMsg, tone: "bad" };
+      }
+      if (errLow.includes("no healthy") || errLow.includes("no token") || errLow.includes("no account")) {
+        return { code: "pool_unavailable", label: "号池暂不可用", detail: errMsg, tone: "warning" };
+      }
+      return { code: "error", label: "服务异常", detail: errMsg, tone: "bad" };
+    }
+    if (Number(st.remoteLeaseCount || 0) > 0) {
+      return { code: "ok", label: "服务正常", detail: "已成功连接续杯服务。", tone: "good" };
+    }
+    return { code: "waiting_first_lease", label: "等待首次连接", detail: "发送第一条对话后会验证卡密并租用账号。", tone: "warning" };
+  }
+
   let relay: RosettaRelay = {
     running: false,
     url: proxyUrl,         // relay now shares the token proxy port
     statusUrl: relayStatusUrl,
     upstream: relayUpstream,
     hasApiKey: relayHasApiKey,
+    serviceStatus: computeRelayServiceStatus({ running: false, hasApiKey: relayHasApiKey, ideConfigured: idePointsToProxy }),
     totalRequests: 0,
     totalErrors: 0,
     totalInputTokens: 0,
@@ -857,12 +934,29 @@ export async function collectState(
       relay.totalErrors = Number(relayStatus?.totalErrors || 0);
       relay.totalInputTokens = Number(relayStatus?.totalInputTokens || 0);
       relay.totalOutputTokens = Number(relayStatus?.totalOutputTokens || 0);
-      relay.lastError = relayStatus?.lastError || null;
+      relay.lastError = relayStatus?.lastRemoteError || relayStatus?.lastError || null;
       relay.accessKeyStatus = relayStatus?.accessKeyStatus || null;
-      if (relayStatus?.hasApiKey !== undefined) relay.hasApiKey = Boolean(relayStatus.hasApiKey);
+      if (relayStatus?.hasApiKey !== undefined || relayStatus?.hasTokenServerSecret !== undefined) {
+        relay.hasApiKey = Boolean(relayStatus.hasApiKey ?? relayStatus.hasTokenServerSecret);
+      }
     }
+    relay.serviceStatus = computeRelayServiceStatus({
+      running: relay.running,
+      hasApiKey: relay.hasApiKey,
+      ideConfigured: idePointsToProxy,
+      status: relayStatus,
+    });
     log(`relay: statusMode=${relayStatus?.mode || '(none)'} isRelay=${isActuallyRelay} running=${relay.running}`);
-  } catch { log(`relay: OFFLINE (statusPort ${relayStatusPort})`); }
+  } catch (e: any) {
+    relay.serviceStatus = computeRelayServiceStatus({
+      running: false,
+      hasApiKey: relay.hasApiKey,
+      ideConfigured: idePointsToProxy,
+      error: e,
+    });
+    relay.lastError = e?.message || null;
+    log(`relay: OFFLINE (statusPort ${relayStatusPort})`);
+  }
 
   // IDE detection: cloudCodeUrl always points to proxyUrl (60670) in both modes
   const ideMatch = configuredUrl === proxyUrl;
@@ -882,8 +976,10 @@ export async function collectState(
       rotatableAccounts: Number(proxyStatus.rotatableAccounts || 0),
       totalRequests: Number(proxyStatus.totalRequests || 0),
       totalRotations: Number(proxyStatus.totalRotations || 0),
+      debugMode: Boolean(proxyStatus.debugMode || false),
       statusUrl,
       switchUrl,
+      debugModeUrl,
       reloadAccountsUrl,
       refreshQuotaUrl,
       url: proxyUrl,

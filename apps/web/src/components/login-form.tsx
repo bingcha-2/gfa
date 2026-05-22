@@ -73,7 +73,8 @@ export function LoginForm() {
           (
             process.env.NEXT_PUBLIC_ADMIN_PATH_PREFIX ?? "console"
           ).replace(/^\/|\/$/g, "") || "console";
-        router.push(`/${prefix}`);
+        const next = new URLSearchParams(window.location.search).get("next");
+        router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : `/${prefix}`);
         router.refresh();
       });
     } catch (loginError) {

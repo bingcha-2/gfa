@@ -18,10 +18,12 @@
 import type { Page } from "playwright";
 import { generateTOTP, totpSecondsRemaining, markTotpUsed } from "./totp";
 import type { TaskLogger } from "./task-logger";
+import { captureStepScreenshot } from "./screenshot-capture";
 
 const GOOGLE_LOGIN_URL = "https://accounts.google.com?hl=en";
 const SUCCESS_DOMAIN = "myaccount.google.com";
 const LOGIN_TIMEOUT_MS = 60_000;
+const MANUAL_CHALLENGE_POLL_MS = 3_000;
 
 /**
  * Event-driven page state detector.
@@ -124,28 +126,27 @@ export type GmailLoginResult =
 
 export interface LoginCredentials {
   loginEmail: string;
-  loginPassword: string | null;  // null = not configured, will return VERIFICATION_REQUIRED
+  loginPassword: string | null;
   totpSecret?: string | null;
+}
+
+export interface GmailLoginOptions {
+  manualChallengeWaitMs?: number;
+  skipPhoneChallengeManualWait?: boolean;
 }
 
 export async function gmailLogin(
   page: Page,
   credentials: LoginCredentials,
-  logger: TaskLogger
+  logger: TaskLogger,
+  options: GmailLoginOptions = {}
 ): Promise<GmailLoginResult> {
   const { loginEmail, loginPassword, totpSecret } = credentials;
+  const manualChallengeWaitMs = Math.max(0, Number(options.manualChallengeWaitMs || 0));
+  const phoneChallengeWaitMs = options.skipPhoneChallengeManualWait ? 0 : manualChallengeWaitMs;
 
   await logger.log("INFO", `[gmail-login] Starting login for ${loginEmail}`);
-
-  // Guard: password is required for automated login
-  if (!loginPassword) {
-    return {
-      success: false,
-      reason: "VERIFICATION_REQUIRED",
-      detail: "Account loginPassword is not configured — manual login required",
-    };
-  }
-
+  await captureStepScreenshot(page, logger, "gmail-login-start", "beforeScreenshotPath");
 
   try {
     // Step 1: Navigate to Google login
@@ -221,6 +222,7 @@ export async function gmailLogin(
     const passwordInput = page.locator(
       'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
     );
+    let passwordReadyAfterManualChallenge = false;
     try {
       await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
     } catch {
@@ -231,7 +233,53 @@ export async function gmailLogin(
       if (await isCaptchaPage(page, url)) {
         const detail = `CAPTCHA challenge before password step at ${url}`;
         await logger.log("WARN", `[gmail-login] Pre-password CAPTCHA: ${detail}`);
-        return { success: false, reason: "CAPTCHA", detail };
+        const resolved = await waitForManualChallengeResolution(page, logger, "CAPTCHA", url, manualChallengeWaitMs);
+        if (!resolved) {
+          return { success: false, reason: "CAPTCHA", detail };
+        }
+        if (page.url().includes(SUCCESS_DOMAIN) || page.url().includes("mail.google.com")) {
+          return { success: true };
+        }
+        let afterManualUrl = page.url();
+
+        // After CAPTCHA, Google may show challenge/selection page instead of password.
+        // Auto-select TOTP if available, then wait for the password field.
+        if (afterManualUrl.includes("challenge/selection")) {
+          await logger.log("INFO", "[gmail-login] Challenge selection page after CAPTCHA — attempting to select TOTP");
+          const selectionHandled = await handleChallengeSelection(page, totpSecret, logger);
+          if (selectionHandled) {
+            await page.waitForURL(
+              (url) => !url.toString().includes("challenge/selection"),
+              { timeout: 10000 }
+            ).catch(() => {});
+            await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+            afterManualUrl = page.url();
+            await logger.log("INFO", `[gmail-login] After challenge selection, now at: ${afterManualUrl.substring(0, 120)}`);
+          }
+          // If selection failed or TOTP not available, fall through to check for password/other states
+        }
+
+        // Check if we landed on TOTP page after selection — let the Round loop handle it
+        if (afterManualUrl.includes("challenge/totp")) {
+          await logger.log("INFO", "[gmail-login] TOTP challenge page reached after CAPTCHA — skipping to Round loop");
+          passwordReadyAfterManualChallenge = true; // Skip password wait, go to Round loop
+        }
+
+        await passwordInput.first().waitFor({ state: "visible", timeout: 30_000 }).catch(() => {});
+        if (afterManualUrl !== url) {
+          const passwordVisible = (await passwordInput.count()) > 0 && await passwordInput.first().isVisible().catch(() => false);
+          if (passwordVisible) {
+            await logger.log("INFO", "[gmail-login] Password field appeared after manual CAPTCHA; continuing without re-navigation");
+            passwordReadyAfterManualChallenge = true;
+          } else if (afterManualUrl.includes("/challenge/pwd")) {
+            const detail = `Password page reached after manual CAPTCHA but password input is not visible yet. URL: ${afterManualUrl}`;
+            await logger.log("WARN", `[gmail-login] ${detail}`);
+            if (!loginPassword) {
+              return { success: false, reason: "VERIFICATION_REQUIRED", detail };
+            }
+            return { success: false, reason: "TRANSIENT", detail };
+          }
+        }
       }
 
       // Account locked/disabled before password step
@@ -245,35 +293,64 @@ export async function gmailLogin(
       if (await isPhoneChallengePage(page)) {
         const detail = `Phone challenge before password step at ${url}`;
         await logger.log("WARN", `[gmail-login] Pre-password phone challenge: ${detail}`);
-        return { success: false, reason: "PHONE_CHALLENGE", detail };
+        const resolved = await waitForManualChallengeResolution(page, logger, "PHONE_CHALLENGE", url, phoneChallengeWaitMs);
+        if (!resolved) {
+          return { success: false, reason: "PHONE_CHALLENGE", detail };
+        }
+        if (page.url().includes(SUCCESS_DOMAIN) || page.url().includes("mail.google.com")) {
+          return { success: true };
+        }
+        await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
       }
 
-      // ── Recovery: re-navigate to login page and retry email entry once ──
-      // Google occasionally shows a transient error page after email submission.
-      // A fresh navigation typically resolves it.
-      await logger.log("WARN", `[gmail-login] Password field not visible at ${url} — attempting fresh login navigation`);
-      try {
-        await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
-        const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
-        await retryEmailInput.first().waitFor({ state: "visible", timeout: 5000 });
-        await retryEmailInput.first().fill(loginEmail);
-        await clickNext(page, logger, 0, "identifier");
-        await waitForNextState(page, 6000);
-
-        // Wait for password field after fresh navigation
-        await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
-        await logger.log("INFO", "[gmail-login] Password field appeared after fresh re-navigation — continuing");
-        // Fall through to password fill below (line after the outer catch block)
-      } catch {
-        // Fresh navigation also failed — give up with TRANSIENT
-        const retryUrl = page.url();
-        const allPwd = await page.evaluate(() =>
-          Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
-            name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
-          }))
-        );
-        return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible after retry. URL: ${retryUrl} | pwd fields: ${JSON.stringify(allPwd)}` };
+      if (!loginPassword) {
+        await logger.log("WARN", "[gmail-login] Password was not configured; keeping browser open for manual continuation from current Google page.");
+        await captureStepScreenshot(page, logger, "gmail-login-manual-email-page", "afterScreenshotPath");
+        return {
+          success: false,
+          reason: "VERIFICATION_REQUIRED",
+          detail: `Email page ready for manual continuation. URL: ${url}`,
+        };
       }
+
+      if (!passwordReadyAfterManualChallenge) {
+        // ── Recovery: re-navigate to login page and retry email entry once ──
+        // Google occasionally shows a transient error page after email submission.
+        // A fresh navigation typically resolves it.
+        await logger.log("WARN", `[gmail-login] Password field not visible at ${url} — attempting fresh login navigation`);
+        try {
+          await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
+          const retryEmailInput = page.locator('input[type="email"], input[id="identifierId"]');
+          await retryEmailInput.first().waitFor({ state: "visible", timeout: 5000 });
+          await retryEmailInput.first().fill(loginEmail);
+          await clickNext(page, logger, 0, "identifier");
+          await waitForNextState(page, 6000);
+  
+          // Wait for password field after fresh navigation
+          await passwordInput.first().waitFor({ state: "visible", timeout: 15_000 });
+          await logger.log("INFO", "[gmail-login] Password field appeared after fresh re-navigation — continuing");
+          // Fall through to password fill below (line after the outer catch block)
+        } catch {
+          // Fresh navigation also failed — give up with TRANSIENT
+          const retryUrl = page.url();
+          const allPwd = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('input[type="password"]')).map(e => ({
+              name: e.getAttribute('name'), ariaHidden: e.getAttribute('aria-hidden'), visible: (e as HTMLElement).offsetParent !== null
+            }))
+          );
+          return { success: false, reason: "TRANSIENT" as const, detail: `Password input never became visible after retry. URL: ${retryUrl} | pwd fields: ${JSON.stringify(allPwd)}` };
+        }
+      }
+    }
+
+    if (!loginPassword) {
+      await logger.log("WARN", "[gmail-login] Password field is ready; waiting for manual password input.");
+      await captureStepScreenshot(page, logger, "gmail-login-manual-password", "afterScreenshotPath");
+      return {
+        success: false,
+        reason: "VERIFICATION_REQUIRED",
+        detail: "Password page ready for manual input",
+      };
     }
 
     await passwordInput.first().fill(loginPassword);
@@ -288,6 +365,7 @@ export async function gmailLogin(
     let totpSubmitted = false;
     for (let round = 0; round < 8; round++) {
       await logger.log("INFO", `[gmail-login] Round ${round + 1}, URL: ${page.url()}`);
+      await captureStepScreenshot(page, logger, `gmail-login-round-${round + 1}`);
 
       // Dismiss any error popup before checking success/challenges.
       // Must re-read URL after dismiss, as Restart may navigate the page.
@@ -296,6 +374,7 @@ export async function gmailLogin(
 
       // Success: landed on myaccount.google.com
       if (roundUrl.includes(SUCCESS_DOMAIN) || roundUrl.includes("mail.google.com")) {
+        await captureStepScreenshot(page, logger, "gmail-login-success", "afterScreenshotPath");
         await logger.log("INFO", "[gmail-login] Login successful");
         return { success: true };
       }
@@ -350,22 +429,37 @@ export async function gmailLogin(
 
       // ── DOM-based challenge detection ───────────────────────────────────
 
+      if (roundUrl.includes("/challenge/iap")) {
+        const detail = `Interactive account protection / phone verification required at ${roundUrl}`;
+        await logger.log("WARN", `[gmail-login] IAP challenge treated as phone challenge: ${detail}`);
+        const resolved = await waitForManualChallengeResolution(page, logger, "PHONE_CHALLENGE", roundUrl, phoneChallengeWaitMs);
+        if (resolved) {
+          continue;
+        }
+        return { success: false, reason: "PHONE_CHALLENGE", detail };
+      }
+
       // TOTP 2FA — only check when still on accounts.google.com
-      const totpInput = page.locator(
-        'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-      );
+      const totpSelector = roundUrl.includes("/challenge/totp")
+        ? 'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+        : 'input[name="totpPin"], input[id="totpPin"]';
+      const totpInput = page.locator(totpSelector);
       if ((await totpInput.count()) > 0) {
         // If TOTP was already submitted in a previous round, the code was rejected.
         // Wait for the next 30s TOTP window to get a fresh code.
         if (totpSubmitted) {
+          if (await isPhoneChallengePage(page)) {
+            const detail = `Phone verification required after TOTP: ${page.url()}`;
+            await logger.log("INFO", `[gmail-login] TOTP already accepted; phone challenge is active: ${page.url()}`);
+            return { success: false, reason: "PHONE_CHALLENGE", detail };
+          }
+
           // TOTP was rejected — retry with a fresh code from the next window.
           // handleTotp(forceNewCode=true) will wait internally for the next 30s boundary.
           await logger.log("WARN", "[gmail-login] TOTP rejected — retrying with fresh code");
 
           // Page may have changed during previous wait. Re-check TOTP input.
-          const freshTotpInput = page.locator(
-            'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-          );
+          const freshTotpInput = page.locator(totpSelector);
           if ((await freshTotpInput.count()) === 0) {
             await logger.log("WARN", "[gmail-login] TOTP input disappeared — re-detecting page state");
             continue;
@@ -373,11 +467,24 @@ export async function gmailLogin(
         }
 
         // Re-locate input fresh (never use stale locator references)
-        const freshInput = page.locator(
-          'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
-        );
+        const freshInput = page.locator(totpSelector);
         const result = await handleTotp(page, freshInput.first(), totpSecret, logger, loginEmail, totpSubmitted);
-        if (!result.success) return result;
+        if (!result.success) {
+          if (
+            result.reason === "TRANSIENT" &&
+            String(result.detail || "").includes("TOTP input disappeared") &&
+            await isPhoneChallengePage(page)
+          ) {
+            const detail = `Phone verification required after TOTP: ${page.url()}`;
+            await logger.log("INFO", `[gmail-login] TOTP input disappeared because phone challenge loaded: ${page.url()}`);
+            const resolved = await waitForManualChallengeResolution(page, logger, "PHONE_CHALLENGE", page.url(), phoneChallengeWaitMs);
+            if (resolved) {
+              continue;
+            }
+            return { success: false, reason: "PHONE_CHALLENGE", detail };
+          }
+          return result;
+        }
         totpSubmitted = true;
         // After TOTP submit: wait specifically for URL to change (success or next challenge).
         // Do NOT use waitForNextState here — the TOTP input is still visible and would
@@ -390,6 +497,17 @@ export async function gmailLogin(
         if (page.url() === totpUrl) {
           await logger.log("INFO", "[gmail-login] TOTP page URL unchanged after submit — waiting for navigation");
           await page.waitForURL((url) => url.toString() !== totpUrl, { timeout: 8000 }).catch(() => {});
+        }
+        const postTotpState = await waitForPostTotpState(page, logger, totpUrl, 12_000);
+        if (postTotpState === "phone") {
+          const detail = `Phone verification required after TOTP: ${page.url()}`;
+          await logger.log("INFO", `[gmail-login] TOTP accepted; phone challenge detected: ${page.url()}`);
+          return { success: false, reason: "PHONE_CHALLENGE", detail };
+        }
+        if (postTotpState === "success") {
+          await captureStepScreenshot(page, logger, "gmail-login-success", "afterScreenshotPath");
+          await logger.log("INFO", "[gmail-login] Login successful after TOTP");
+          return { success: true };
         }
         await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
         continue;
@@ -430,8 +548,71 @@ export async function gmailLogin(
       // CAPTCHA / reCAPTCHA challenge
       if (await isCaptchaPage(page, roundUrl)) {
         const detail = `CAPTCHA challenge required at ${roundUrl}`;
+        await captureStepScreenshot(page, logger, "gmail-login-captcha", "errorScreenshotPath");
         await logger.log("WARN", `[gmail-login] CAPTCHA detected: ${detail}`);
+        const resolved = await waitForManualChallengeResolution(page, logger, "CAPTCHA", roundUrl, manualChallengeWaitMs);
+        if (resolved) {
+          continue;
+        }
         return { success: false, reason: "CAPTCHA", detail };
+      }
+
+      // Challenge selection page — Google asks user to pick a verification method.
+      // MUST be checked BEFORE phone challenge, because the selection page contains
+      // data-challengetype="12" elements that falsely trigger phone detection.
+      if (roundUrl.includes("challenge/selection")) {
+        await logger.log("INFO", `[gmail-login] ✅ MATCHED challenge/selection URL. totpSecret=${totpSecret ? 'YES(' + totpSecret.substring(0,4) + '...)' : 'NO'}`);
+
+        // Verify this is actually a challenge selection page and not a stale URL
+        // showing a different page (e.g. Welcome/email page after session reset).
+        const pageActualContent = await page.evaluate(() => {
+          const hasChallenge = document.querySelectorAll('[data-challengetype]').length > 0;
+          const bodySnippet = document.body?.innerText?.slice(0, 200) || '';
+          const hasEmailInput = !!document.querySelector('input[type="email"], input#identifierId');
+          const hasPwdInput = !!document.querySelector('input[type="password"]:not([aria-hidden="true"])');
+          return { hasChallenge, bodySnippet, hasEmailInput, hasPwdInput };
+        });
+
+        if (!pageActualContent.hasChallenge && (pageActualContent.hasEmailInput || pageActualContent.bodySnippet.includes('Welcome'))) {
+          await logger.log("WARN", `[gmail-login] URL says challenge/selection but page is actually login/welcome page (emailInput=${pageActualContent.hasEmailInput}). Skipping selection logic.`);
+          // If password input is visible, try to fill it
+          if (pageActualContent.hasPwdInput && loginPassword) {
+            const pwdInput = page.locator('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])');
+            if ((await pwdInput.count()) > 0) {
+              await logger.log("INFO", "[gmail-login] Found password input on stale selection URL — filling password");
+              await pwdInput.first().fill(loginPassword);
+              await clickNext(page, logger);
+              await waitForNextState(page, 5000);
+            }
+          }
+          // Skip to next round
+          await page.waitForTimeout(800);
+          continue;
+        }
+
+        const handled = await handleChallengeSelection(page, totpSecret, logger);
+        await logger.log("INFO", `[gmail-login] handleChallengeSelection returned: ${handled}`);
+        if (!handled) {
+          const detail = `Challenge selection page with no automated option at ${roundUrl}`;
+          await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
+          const resolved = await waitForManualChallengeResolution(page, logger, "VERIFICATION_REQUIRED", roundUrl, manualChallengeWaitMs);
+          if (resolved) {
+            continue;
+          }
+          return { success: false, reason: "VERIFICATION_REQUIRED", detail };
+        }
+        // Wait for URL to actually leave /challenge/selection before proceeding.
+        await logger.log("INFO", `[gmail-login] Waiting for URL to leave /challenge/selection...`);
+        await page.waitForURL(
+          (url) => !url.toString().includes("challenge/selection"),
+          { timeout: 8000 }
+        ).catch(() => {});
+        const afterSelUrl = page.url();
+        await logger.log("INFO", `[gmail-login] After selection wait, URL: ${afterSelUrl.substring(0, 120)}`);
+        await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+        continue;
+      } else {
+        await logger.log("DEBUG", `[gmail-login] Round ${round + 1} URL does NOT contain 'challenge/selection'. URL=${roundUrl.substring(0, 120)}`);
       }
 
       // Phone / SMS / push notification challenge (unhandled)
@@ -447,30 +628,12 @@ export async function gmailLogin(
         if ((await phoneChallenge.count()) > 0 || await isPhoneChallengePage(page)) {
           const detail = `Phone/SMS verification required at ${roundUrl}`;
           await logger.log("WARN", `[gmail-login] Unhandled phone challenge: ${detail}`);
+          const resolved = await waitForManualChallengeResolution(page, logger, "PHONE_CHALLENGE", roundUrl, phoneChallengeWaitMs);
+          if (resolved) {
+            continue;
+          }
           return { success: false, reason: "PHONE_CHALLENGE", detail };
         }
-      }
-
-      // Challenge selection page — Google asks user to pick a verification method.
-      // Try to select TOTP (Google Authenticator) if available, then let the outer
-      // loop handle the actual TOTP input on the next round.
-      if (roundUrl.includes("challenge/selection")) {
-        const handled = await handleChallengeSelection(page, totpSecret, logger);
-        if (!handled) {
-          const detail = `Challenge selection page with no automated option at ${roundUrl}`;
-          await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
-          return { success: false, reason: "VERIFICATION_REQUIRED", detail };
-        }
-        // Wait for URL to actually leave /challenge/selection before proceeding.
-        // Using waitForNextState here is unreliable because residual [data-challengetype]
-        // elements on the page can trigger it prematurely, leading to the next round
-        // seeing the same URL and mis-detecting a phone challenge.
-        await page.waitForURL(
-          (url) => !url.toString().includes("challenge/selection"),
-          { timeout: 8000 }
-        ).catch(() => {});
-        await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
-        continue;
       }
 
       // Unknown state — brief wait before next round
@@ -498,6 +661,7 @@ export async function gmailLogin(
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
+    await captureStepScreenshot(page, logger, "gmail-login-exception", "errorScreenshotPath");
     await logger.log("ERROR", `[gmail-login] Error during login: ${detail}`);
 
     // Network errors are transient — BullMQ should retry, never MANUAL_REVIEW
@@ -937,15 +1101,35 @@ async function handleChallengeSelection(
   totpSecret: string | null | undefined,
   logger: TaskLogger
 ): Promise<boolean> {
-  await logger.log("INFO", "[gmail-login] Challenge selection page detected — scanning options");
+  await logger.log("INFO", `[gmail-login] handleChallengeSelection called. totpSecret=${totpSecret ? 'YES(len=' + totpSecret.length + ')' : 'NO/EMPTY'}, URL=${page.url().substring(0, 100)}`);
 
   // Wait for the page to fully render
   await page.waitForTimeout(2000);
   await page.waitForLoadState("domcontentloaded").catch(() => { });
 
-  // Google's challenge selection uses a list with data-challengetype attributes
-  // or plain text links. Try data-challengetype first (more reliable).
-  //
+  // Dump all page text and data-challengetype elements for debugging
+  const pageDebugInfo = await page.evaluate(() => {
+    const challengeEls = document.querySelectorAll('[data-challengetype]');
+    const challengeItems = Array.from(challengeEls).map(el => ({
+      tag: el.tagName,
+      type: el.getAttribute('data-challengetype'),
+      index: el.getAttribute('data-challengeindex'),
+      text: (el as HTMLElement).innerText?.trim().slice(0, 100),
+      classes: el.className?.slice(0, 60),
+    }));
+    const allLinks = document.querySelectorAll('li, div[role="link"], a[role="link"], button');
+    const linkItems = Array.from(allLinks).slice(0, 15).map(el => ({
+      tag: el.tagName,
+      role: el.getAttribute('role'),
+      text: (el as HTMLElement).innerText?.trim().slice(0, 100),
+    }));
+    const bodyText = document.body?.innerText?.slice(0, 500) || '';
+    return { challengeItems, linkItems, bodyText };
+  });
+  await logger.log("INFO", `[gmail-login] Page debug - challengeElements: ${JSON.stringify(pageDebugInfo.challengeItems)}`);
+  await logger.log("INFO", `[gmail-login] Page debug - links/buttons: ${JSON.stringify(pageDebugInfo.linkItems)}`);
+  await logger.log("DEBUG", `[gmail-login] Page debug - bodyText: ${pageDebugInfo.bodyText.substring(0, 300)}`);
+
   // Known challenge types:
   //   6  = TOTP (Google Authenticator)
   //   12 = Phone prompt (push notification)
@@ -962,22 +1146,27 @@ async function handleChallengeSelection(
       '[data-challengeindex][data-challengetype="6"], ' +
       '[data-challengetype="6"]'
     );
-    if ((await totpOption.count()) > 0) {
+    const totpCount = await totpOption.count();
+    await logger.log("INFO", `[gmail-login] TOTP data-challengetype=6 elements found: ${totpCount}`);
+    if (totpCount > 0) {
       const option = totpOption.first();
       try {
         await option.click({ timeout: 3000 });
-      } catch {
+        await logger.log("INFO", "[gmail-login] ✅ Clicked TOTP option via data-challengetype=6");
+      } catch (clickErr: any) {
+        await logger.log("WARN", `[gmail-login] Click failed (${clickErr.message}), trying JS click`);
         await option.evaluate((el: HTMLElement) => {
           const target =
             el.closest('[role="link"], [role="button"], li, button, a, div[data-challengetype]') as HTMLElement | null;
           (target ?? el).click();
         });
+        await logger.log("INFO", "[gmail-login] ✅ JS-clicked TOTP option");
       }
-      await logger.log("INFO", "[gmail-login] Selected TOTP (Google Authenticator) challenge option");
       return true;
     }
 
     // Fallback: look for text-based TOTP option
+    await logger.log("INFO", "[gmail-login] No data-challengetype=6, trying text-based TOTP selectors...");
     const totpTextOption = page.locator([
       'li:has-text("Google Authenticator")',
       'li:has-text("Authenticator")',
@@ -989,21 +1178,25 @@ async function handleChallengeSelection(
       'div[role="link"]:has-text("身份验证器")',
       'a:has-text("Google Authenticator")',
       'a:has-text("Authenticator")',
-      // Google may show "Enter a code from Google Authenticator" or
-      // "从 Google 身份验证器获取验证码"
+      'div:has-text("Google Authenticator")',
+      'span:has-text("Google Authenticator")',
       'li:has-text("verification code")',
       'li:has-text("验证码")',
       'li:has-text("驗證碼")',
     ].join(", "));
-    if ((await totpTextOption.count()) > 0) {
+    const textCount = await totpTextOption.count();
+    await logger.log("INFO", `[gmail-login] Text-based TOTP option count: ${textCount}`);
+    if (textCount > 0) {
+      const firstText = await totpTextOption.first().innerText().catch(() => '(unknown)');
+      await logger.log("INFO", `[gmail-login] Clicking text-based TOTP option: "${firstText.trim().substring(0, 80)}"`);
       await totpTextOption.first().click();
-      await logger.log("INFO", "[gmail-login] Selected TOTP option via text match");
+      await logger.log("INFO", "[gmail-login] ✅ Selected TOTP option via text match");
       return true;
     }
+    await logger.log("WARN", "[gmail-login] totpSecret is set but NO matching TOTP elements found on page");
+  } else {
+    await logger.log("WARN", "[gmail-login] totpSecret is null/empty — cannot auto-select TOTP");
   }
-
-  // Priority 2: Backup codes (challengetype=8) — not yet automated,
-  // but could be in the future. Skip for now.
 
   // No automatable option found — log available options for debugging
   const allOptions = await page.evaluate(() => {
@@ -1023,11 +1216,93 @@ async function handleChallengeSelection(
   return false;
 }
 
+async function waitForManualChallengeResolution(
+  page: Page,
+  logger: TaskLogger,
+  kind: "CAPTCHA" | "PHONE_CHALLENGE" | "VERIFICATION_REQUIRED",
+  initialUrl: string,
+  waitMs: number
+): Promise<boolean> {
+  if (waitMs <= 0) {
+    return false;
+  }
+  const startedAt = Date.now();
+  let lastLogAt = 0;
+
+  await logger.log(
+    "WARN",
+    `[gmail-login] ${kind} requires manual action. Waiting up to ${Math.ceil(waitMs / 60000)} minutes before releasing worker.`
+  );
+
+  while (Date.now() - startedAt < waitMs) {
+    if (page.isClosed()) {
+      await logger.log("WARN", `[gmail-login] Browser closed while waiting for ${kind}; cancelling manual wait`);
+      return false;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs - lastLogAt >= 30_000 || lastLogAt === 0) {
+      const remainingSec = Math.max(0, Math.ceil((waitMs - elapsedMs) / 1000));
+      await logger.log("INFO", `[gmail-login] Waiting for manual ${kind}; ${remainingSec}s remaining`);
+      lastLogAt = elapsedMs;
+    }
+
+    await page.waitForTimeout(MANUAL_CHALLENGE_POLL_MS);
+    await page.waitForLoadState("domcontentloaded", { timeout: 1000 }).catch(() => {});
+
+    const currentUrl = page.url();
+    if (currentUrl.includes(SUCCESS_DOMAIN) || currentUrl.includes("mail.google.com")) {
+      await logger.log("INFO", `[gmail-login] Manual ${kind} completed; account is logged in`);
+      return true;
+    }
+
+    const stillCaptcha = await isCaptchaPage(page, currentUrl).catch(() => true);
+    const stillPhone = await isPhoneChallengePage(page).catch(() => true);
+    const stillSelection = currentUrl.includes("challenge/selection");
+    const stillSameManualUrl = currentUrl === initialUrl && (stillCaptcha || stillPhone || stillSelection);
+
+    if (!stillCaptcha && !stillPhone && !stillSelection && !stillSameManualUrl) {
+      await logger.log("INFO", `[gmail-login] Manual ${kind} page changed; continuing automation at ${currentUrl}`);
+      return true;
+    }
+  }
+
+  await logger.log("WARN", `[gmail-login] Manual ${kind} wait timed out after ${Math.ceil(waitMs / 60000)} minutes`);
+  return false;
+}
+
+async function waitForPostTotpState(
+  page: Page,
+  logger: TaskLogger,
+  initialUrl: string,
+  timeoutMs: number
+): Promise<"phone" | "success" | "changed" | "same"> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (page.isClosed()) return "changed";
+    await page.waitForTimeout(1000);
+    await page.waitForLoadState("domcontentloaded", { timeout: 1000 }).catch(() => {});
+
+    const currentUrl = page.url();
+    if (currentUrl.includes(SUCCESS_DOMAIN) || currentUrl.includes("mail.google.com")) {
+      return "success";
+    }
+    if (await isPhoneChallengePage(page).catch(() => false)) {
+      return "phone";
+    }
+    if (currentUrl !== initialUrl && !currentUrl.includes("/challenge/totp")) {
+      await logger.log("INFO", `[gmail-login] Post-TOTP page changed: ${currentUrl}`);
+      return "changed";
+    }
+  }
+  return page.url() === initialUrl ? "same" : "changed";
+}
+
 /** Detect phone/push/SMS challenge pages heuristically */
 async function isPhoneChallengePage(page: Page): Promise<boolean> {
   const url = page.url();
   // URL-based: these paths are unambiguously phone/push challenges
-  if (url.includes("challenge/dp") || url.includes("challenge/ipp") || url.includes("challenge/sk")) {
+  if (url.includes("challenge/dp") || url.includes("challenge/ipp") || url.includes("challenge/sk") || url.includes("challenge/iap")) {
     return true;
   }
   // DOM-specific selectors: phone number input or challengetype 9/12 on current page
@@ -1046,6 +1321,11 @@ async function isPhoneChallengePage(page: Page): Promise<boolean> {
   // would NOT appear on a TOTP code-entry page
   const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
   return (
+    bodyText.includes("Get a verification code") ||
+    bodyText.includes("Google will send a verification code") ||
+    bodyText.includes("Verify it’s you") ||
+    bodyText.includes("Verify it's you") ||
+    bodyText.includes("There is something unusual about your activity") ||
     bodyText.includes("Google prompt") ||
     bodyText.includes("Check your phone") ||
     bodyText.includes("check your phone") ||

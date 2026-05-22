@@ -382,6 +382,7 @@ model PhonePool {
   smsUrl         String
   status         String    @default("available") // available / used / in_use / disabled
   usedCount      Int       @default(0)
+  failureCount   Int       @default(0)
   lastUsedAt     DateTime?
   lastCode       String?
   disabledReason String?

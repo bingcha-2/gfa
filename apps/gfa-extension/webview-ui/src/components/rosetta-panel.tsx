@@ -5,8 +5,10 @@ import { RosettaAccounts } from "./rosetta-accounts";
 
 export function RosettaPanel() {
   const [state, setState] = useState<RosettaState | null>(null);
+  const [employeeState, setEmployeeState] = useState<any>(null);
   const [showTokenImport, setShowTokenImport] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
+  const [autoImporting, setAutoImporting] = useState(false);
   const [addAccountMsg, setAddAccountMsg] = useState<string | null>(null);
   const [opStatus, setOpStatus] = useState<{ operation: string; status: string } | null>(null);
 
@@ -23,6 +25,9 @@ export function RosettaPanel() {
         const { operation, status } = data.payload || {};
         setOpStatus(operation && status ? { operation, status } : null);
       }
+      if (data?.type === "rosetta:employeeState") {
+        setEmployeeState(data.payload || null);
+      }
       if (data?.type === "rosetta:addAccountResult") {
         setAddingAccount(false);
         if (data.payload?.error) {
@@ -31,6 +36,19 @@ export function RosettaPanel() {
           setAddAccountMsg(`已添加 ${data.payload.email}`);
         }
         setTimeout(() => setAddAccountMsg(null), 6000);
+      }
+      if (data?.type === "rosetta:autoImportResult") {
+        setAutoImporting(false);  // Re-enable button immediately for next click
+        if (data.payload?.error) {
+          setAddAccountMsg(`自动录入失败：${data.payload.error}`);
+          setTimeout(() => setAddAccountMsg(null), 8000);
+        } else if (data.payload?.email) {
+          setAddAccountMsg(`已启动: ${data.payload.email}（后台运行中，可继续添加下一个）`);
+          setTimeout(() => setAddAccountMsg(null), 5000);
+        }
+      }
+      if (data?.type === "rosetta:autoImportProgress") {
+        setAddAccountMsg(data.payload?.message || "自动录入中...");
       }
     };
     window.addEventListener("message", handler);
@@ -52,52 +70,189 @@ export function RosettaPanel() {
 
   const { proxy, ide, relay } = state;
   const idePointsToProxy = ide.configuredUrl === proxy.url;
-  const isRelayOn = Boolean(relay?.running);
-  const isTakeoverOn = proxy.running && idePointsToProxy && !isRelayOn;
+  const isRelayProcessRunning = Boolean(relay?.running);
+  const isRelayOn = Boolean(relay?.running && idePointsToProxy);
+  const isTakeoverOn = proxy.running && idePointsToProxy && !isRelayProcessRunning;
   const takeoverLoading = opStatus?.operation === "takeover";
   const relayLoading = opStatus?.operation === "relay";
-  const anyLoading = takeoverLoading || relayLoading;
+  const debugLoading = opStatus?.operation === "debugMode";
+  const anyLoading = takeoverLoading || relayLoading || debugLoading;
   const accessKeyStatus = relay?.accessKeyStatus || null;
   const accessKeyRemainingMs = accessKeyStatus?.expiresAt
     ? Date.parse(accessKeyStatus.expiresAt) - Date.now()
     : Number(accessKeyStatus?.remainingMs || 0);
+  const accessKeyRecentTokens = Number(accessKeyStatus?.recentWindowTokens || 0);
+  const accessKeyRecentRawTokens = Number(accessKeyStatus?.recentWindowRawTokens || accessKeyRecentTokens);
+  const accessKeyCachedTokens = Number(accessKeyStatus?.recentWindowCachedInputTokens || 0);
+  const accessKeyTokenLimit = Number(accessKeyStatus?.tokenWindowLimit || 0);
+  const accessKeyTotalTokens = Number(accessKeyStatus?.totalTokensUsed || 0);
+  const accessKeyTokenResetMs = accessKeyStatus?.tokenWindowResetAt
+    ? Date.parse(accessKeyStatus.tokenWindowResetAt) - Date.now()
+    : Number(accessKeyStatus?.tokenWindowResetMs || 0);
+  const opusUsed = Number(accessKeyStatus?.opusTokensUsed || 0);
+  const opusLimit = Number(accessKeyStatus?.opusTokenLimit || 0);
+  const geminiUsed = Number(accessKeyStatus?.geminiTokensUsed || 0);
+  const geminiLimit = Number(accessKeyStatus?.geminiTokenLimit || 0);
+  const fmtQuota = (used: number, limit: number) =>
+    limit > 0 ? `${used.toLocaleString()}/${limit.toLocaleString()}` : `${used.toLocaleString()}/不限`;
+  const relayService = relay?.serviceStatus || {
+    code: "unknown",
+    label: "状态未知",
+    detail: "",
+    tone: "muted" as const,
+  };
+  const isClientBuild = state.distribution === "client";
+  const isEmployeeBuild = state.distribution === "employee";
+  const showLocalAccountTools = !isEmployeeBuild;
+  const showAutoImport = !isClientBuild;  // employee + server both show auto-import
+  const employee = employeeState?.employee || null;
+
+  if (isEmployeeBuild && !employee) {
+    return <EmployeeLoginForm />;
+  }
 
   return (
     <div className="rosetta-root">
-      <div className="rosetta-switches rosetta-switches-single">
-        <SwitchCard
-          label="一键接管"
-          hint={
-            takeoverLoading
-              ? opStatus!.status === "starting" ? "正在打开..." : "正在关闭..."
-              : isTakeoverOn
-                ? ide.isLiveAttached ? "已接管" : "已接管，等待 IDE 生效"
-                : isRelayOn
-                  ? "临时续杯模式中"
-                  : proxy.running
-                    ? "代理运行中，IDE 未接管"
-                    : "未启动"
-          }
-          hintDot={!takeoverLoading && isTakeoverOn}
-          on={takeoverLoading ? opStatus!.status === "starting" : isTakeoverOn}
-          loading={takeoverLoading}
-          disabled={anyLoading}
-          onClick={() => sendRosettaAction("rosetta:toggleTakeover")}
-        />
-      </div>
-      <p className="rosetta-takeover-desc">
-        <strong>开启一键接管后插件会自动选择最优账号进行对话</strong>
-      </p>
+      {proxy.outbound && proxy.outbound.tested && !proxy.outbound.success && (
+        <div className="rosetta-status-banner" style={{ marginBottom: 12, background: "rgba(239,68,68,0.15)", borderLeft: "3px solid var(--vscode-charts-red, #ef4444)" }}>
+          <div className="rosetta-status-right" style={{ width: "100%", justifyContent: "flex-start", flexWrap: "wrap", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+            <span className="rosetta-status-stat bad" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span className="codicon codicon-warning"></span>
+              网络受限，Node 转发引擎无法访问 Google
+            </span>
+            <span className="rosetta-status-stat rosetta-status-detail" style={{ whiteSpace: "normal", opacity: 0.9 }}>
+              您虽然能成功获取卡密，但您的代理软件没有接管底层 Node 进程的流量，导致对话无法进行。
+            </span>
+            <span className="rosetta-status-stat rosetta-status-detail" style={{ whiteSpace: "normal", opacity: 0.9 }}>
+              <strong>解决办法：</strong>查看您的代理软件（如 Clash、v2ray），开启 "TUN 模式 / 虚拟网卡模式"，切换网络重试。或者手动指定代理端口：
+            </span>
+            <button className="rosetta-btn" style={{ marginTop: 4, alignSelf: "flex-start" }} onClick={() => sendRosettaAction("rosetta:setManualProxy")}>
+              手动设置代理地址
+            </button>
+          </div>
+        </div>
+      )}
+      {isEmployeeBuild && employee && (
+        <div className="rosetta-status-banner" style={{ marginBottom: 8 }}>
+          <div className="rosetta-status-right" style={{ width: "100%", justifyContent: "center", flexWrap: "wrap" }}>
+            <span className="rosetta-status-stat">员工 <span className="rosetta-status-stat-val">{employee.email}</span></span>
+            <span className="rosetta-status-sep">·</span>
+            <span className="rosetta-status-stat">已入池 <span className="rosetta-status-stat-val">{employee.stats?.accepted ?? 0}</span></span>
+            <span className="rosetta-status-sep">·</span>
+            <button className="rosetta-btn-sm" onClick={() => sendRosettaAction("rosetta:employeeLogout")}>退出</button>
+          </div>
+        </div>
+      )}
 
-      <div className="rosetta-relay-section">
+      {isEmployeeBuild && employee && (
+        <>
+          <div className="rosetta-actions">
+            {showAutoImport && (
+              <button
+                className="rosetta-btn"
+                disabled={autoImporting}
+                onClick={() => {
+                  setAutoImporting(true);
+                  setAddAccountMsg("自动录入已启动，正在连接本机 AdsPower...");
+                  sendRosettaAction("rosetta:autoImportAccount");
+                }}
+              >
+                {autoImporting ? "自动录入中..." : "自动录入"}
+              </button>
+            )}
+            <button
+              className="rosetta-btn"
+              disabled={addingAccount}
+              onClick={() => {
+                setAddingAccount(true);
+                setAddAccountMsg("浏览器已打开，请完成 Google 登录...");
+                sendRosettaAction("rosetta:addAccount");
+              }}
+            >
+              {addingAccount ? "等待登录..." : "新增账号"}
+            </button>
+            <button className="rosetta-btn" onClick={() => setShowTokenImport(!showTokenImport)}>
+              {showTokenImport ? "取消" : "Token 导入"}
+            </button>
+            <button className="rosetta-btn" onClick={() => sendRosettaAction("rosetta:refreshQuota")}>
+              刷新
+            </button>
+            <button className="rosetta-btn" onClick={() => sendRosettaAction("rosetta:configAdspower")} title="配置 AdsPower API Key 和浏览器号">
+              ⚙️ AdsPower
+            </button>
+          </div>
+
+          {addAccountMsg && (
+            <div className="rosetta-hint" style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(234,88,12,0.08)", fontSize: 12 }}>
+              {addAccountMsg}
+            </div>
+          )}
+
+          {showTokenImport && (
+            <TokenImportForm onDone={() => { setShowTokenImport(false); sendRosettaAction("rosetta:refresh"); }} />
+          )}
+
+          <RosettaAccounts accounts={state.accounts} proxyRunning={proxy.running} employeeMode={isEmployeeBuild} clientMode={false} />
+        </>
+      )}
+
+      {showLocalAccountTools && (
+        <>
+          <div className="rosetta-switches rosetta-switches-single">
+            <SwitchCard
+              label={isClientBuild ? "我的账号" : "本地号池"}
+              hint={
+                takeoverLoading
+                  ? opStatus!.status === "starting" ? "正在打开..." : "正在关闭..."
+                  : isTakeoverOn
+                    ? ide.isLiveAttached ? "已接管" : "已接管，等待 IDE 生效"
+                    : isRelayProcessRunning
+                      ? "远程续杯模式中"
+                      : proxy.running
+                        ? "代理运行中，IDE 未接管"
+                        : "未启动"
+              }
+              hintDot={!takeoverLoading && isTakeoverOn}
+              on={takeoverLoading ? opStatus!.status === "starting" : isTakeoverOn}
+              loading={takeoverLoading}
+              disabled={anyLoading}
+              onClick={() => sendRosettaAction("rosetta:toggleTakeover")}
+            />
+          </div>
+          <p className="rosetta-takeover-desc">
+            <strong>{isClientBuild ? "开启后使用你自己本机添加的账号进行对话" : "开启本地号池后插件会自动选择最优账号进行对话"}</strong>
+          </p>
+          {!isClientBuild && proxy.running && !isRelayProcessRunning && (
+            <div className="rosetta-switches rosetta-switches-single" style={{ marginTop: 8 }}>
+              <SwitchCard
+                label="账号调试"
+                hint={
+                  proxy.debugMode
+                    ? "已锁定当前账号，错误将原样返回"
+                    : "关闭后恢复自动轮换"
+                }
+                hintDot={proxy.debugMode}
+                on={debugLoading ? !proxy.debugMode : proxy.debugMode}
+                loading={debugLoading}
+                disabled={anyLoading}
+                onClick={() => sendRosettaAction("rosetta:toggleDebugMode", { enabled: !proxy.debugMode })}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {!isEmployeeBuild && <div className="rosetta-relay-section">
         <div className="rosetta-switches rosetta-switches-single">
           <SwitchCard
-            label="临时续杯"
+            label={isClientBuild ? "临时续杯" : "远程续杯"}
             hint={
               relayLoading
                 ? opStatus!.status === "starting" ? "正在打开..." : "正在关闭..."
                 : isRelayOn
                   ? `运行中 · ${relay.totalRequests} 请求`
+                  : isRelayProcessRunning
+                    ? "代理已启动，IDE 未接管"
                   : !relay?.hasApiKey
                     ? "未配置卡密"
                     : "未开启"
@@ -113,6 +268,20 @@ export function RosettaPanel() {
           <button className="rosetta-btn" onClick={() => sendRosettaAction("rosetta:setRelayKey")}>
             设置卡密
           </button>
+        </div>
+
+        <div className="rosetta-status-banner" style={{ marginTop: 6 }}>
+          <div className="rosetta-status-right" style={{ width: "100%", justifyContent: "center", flexWrap: "wrap" }}>
+            <span className={`rosetta-status-stat ${relayService.tone === "good" ? "good" : relayService.tone === "bad" ? "bad" : relayService.tone === "warning" ? "warning" : ""}`}>
+              服务状态 <span className="rosetta-status-stat-val">{relayService.label}</span>
+            </span>
+            {relayService.detail && relayService.code !== "ok" && (
+              <>
+                <span className="rosetta-status-sep">·</span>
+                <span className="rosetta-status-stat rosetta-status-detail">{relayService.detail}</span>
+              </>
+            )}
+          </div>
         </div>
 
         {isRelayOn && (
@@ -149,15 +318,29 @@ export function RosettaPanel() {
                     卡密剩余 <span className="rosetta-status-stat-val">{formatDurationShort(accessKeyRemainingMs)}</span>
                   </span>
                   <span className="rosetta-status-sep">·</span>
-                  <span className="rosetta-status-stat">
-                    5小时{" "}
-                    <span className="rosetta-status-stat-val">
-                      {accessKeyStatus.recentWindowRequests}/{accessKeyStatus.windowLimit}
-                    </span>
+                  <span className="rosetta-status-stat" title="Opus 模型 5 小时额度">
+                    Opus{" "}
+                    <span className="rosetta-status-stat-val">{fmtQuota(opusUsed, opusLimit)}</span>
+                  </span>
+                  <span className="rosetta-status-sep">·</span>
+                  <span className="rosetta-status-stat" style={{ color: "var(--vscode-charts-orange, #ea580c)" }} title="Gemini 模型 5 小时额度">
+                    Gemini{" "}
+                    <span className="rosetta-status-stat-val">{fmtQuota(geminiUsed, geminiLimit)}</span>
+                  </span>
+                  <span className="rosetta-status-sep">·</span>
+                  <span className="rosetta-status-stat" title={`原始 token ${accessKeyRecentRawTokens.toLocaleString()}，缓存 token 按 1/10 计入额度`}>
+                    缓存{" "}
+                    <span className="rosetta-status-stat-val">{accessKeyCachedTokens.toLocaleString()}</span>
+                    <span> 按 1/10</span>
                   </span>
                   <span className="rosetta-status-sep">·</span>
                   <span className="rosetta-status-stat">
-                    总请求 <span className="rosetta-status-stat-val">{accessKeyStatus.totalRequests}</span>
+                    5小时恢复{" "}
+                    <span className="rosetta-status-stat-val">{formatRecoveryDuration(accessKeyTokenResetMs)}</span>
+                  </span>
+                  <span className="rosetta-status-sep">·</span>
+                  <span className="rosetta-status-stat">
+                    总 tokens <span className="rosetta-status-stat-val">{accessKeyTotalTokens.toLocaleString()}</span>
                   </span>
                 </>
               ) : (
@@ -177,9 +360,9 @@ export function RosettaPanel() {
             {relay.lastError}
           </div>
         )}
-      </div>
+      </div>}
 
-      {proxy.running && (
+        {showLocalAccountTools && proxy.running && !isRelayProcessRunning && (
         <div className="rosetta-status-banner">
           <div className="rosetta-status-right" style={{ width: "100%", justifyContent: "center" }}>
             <span className="rosetta-status-account">{proxy.activeEmail?.split("@")[0] || "-"}</span>
@@ -202,37 +385,100 @@ export function RosettaPanel() {
         </div>
       )}
 
-      <div className="rosetta-actions">
-        <button
-          className="rosetta-btn"
-          disabled={addingAccount}
-          onClick={() => {
-            setAddingAccount(true);
-            setAddAccountMsg("浏览器已打开，请完成 Google 登录...");
-            sendRosettaAction("rosetta:addAccount");
-          }}
-        >
-          {addingAccount ? "等待登录..." : "新增账号"}
-        </button>
-        <button className="rosetta-btn" onClick={() => setShowTokenImport(!showTokenImport)}>
-          {showTokenImport ? "取消" : "Token 导入"}
-        </button>
-        <button className="rosetta-btn" onClick={() => sendRosettaAction("rosetta:refreshQuota")}>
-          刷新
-        </button>
-      </div>
+      {showLocalAccountTools && (
+        <div className="rosetta-actions">
+          <button
+            className="rosetta-btn"
+            disabled={addingAccount}
+            onClick={() => {
+              setAddingAccount(true);
+              setAddAccountMsg("浏览器已打开，请完成 Google 登录...");
+              sendRosettaAction("rosetta:addAccount");
+            }}
+          >
+            {addingAccount ? "等待登录..." : "新增账号"}
+          </button>
+          {showAutoImport && (
+            <button
+              className="rosetta-btn"
+              disabled={autoImporting}
+              onClick={() => {
+                setAutoImporting(true);
+                setAddAccountMsg("自动录入已启动，等待浏览器流程完成...");
+                sendRosettaAction("rosetta:autoImportAccount");
+              }}
+            >
+              {autoImporting ? "自动录入中..." : "自动录入"}
+            </button>
+          )}
+          <button className="rosetta-btn" onClick={() => setShowTokenImport(!showTokenImport)}>
+            {showTokenImport ? "取消" : "Token 导入"}
+          </button>
+          <button className="rosetta-btn" onClick={() => sendRosettaAction("rosetta:refreshQuota")}>
+            刷新
+          </button>
+        </div>
+      )}
 
-      {addAccountMsg && (
+      {showLocalAccountTools && addAccountMsg && (
         <div className="rosetta-hint" style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(234,88,12,0.08)", fontSize: 12 }}>
           {addAccountMsg}
         </div>
       )}
 
-      {showTokenImport && (
+      {showLocalAccountTools && showTokenImport && (
         <TokenImportForm onDone={() => { setShowTokenImport(false); sendRosettaAction("rosetta:refresh"); }} />
       )}
 
-      <RosettaAccounts accounts={state.accounts} proxyRunning={proxy.running} />
+      {showLocalAccountTools && <RosettaAccounts accounts={state.accounts} proxyRunning={proxy.running} employeeMode={isEmployeeBuild} clientMode={isClientBuild} />}
+    </div>
+  );
+}
+
+function EmployeeLoginForm() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [error, setError] = useState<string | null>(null);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!email.trim() || password.length < 6) {
+      setError("请输入邮箱和至少 6 位密码");
+      return;
+    }
+    sendRosettaAction(mode === "register" ? "rosetta:employeeRegister" : "rosetta:employeeLogin", {
+      email: email.trim(),
+      password,
+    });
+  }
+
+  return (
+    <div className="rosetta-root">
+      <div className="rosetta-add-form">
+        <div className="rosetta-add-form-title">员工账号</div>
+        <p className="rosetta-add-form-hint">登录后只能管理自己添加的账号；测试成功后会自动进入中央号池。</p>
+        <form onSubmit={submit}>
+          <div className="rosetta-form-field">
+            <label className="rosetta-form-label">邮箱</label>
+            <input className="rosetta-form-input" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div className="rosetta-form-field">
+            <label className="rosetta-form-label">密码</label>
+            <input className="rosetta-form-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          {error && <div className="rosetta-form-error">{error}</div>}
+          <div className="rosetta-actions">
+            <button className="rosetta-btn rosetta-btn-primary" type="submit">
+              {mode === "register" ? "注册并登录" : "登录"}
+            </button>
+            <button className="rosetta-btn" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+              {mode === "login" ? "去注册" : "去登录"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -245,6 +491,16 @@ function formatDurationShort(ms?: number | null) {
   const m = Math.floor((total % 3600) / 60);
   if (d > 0) return `${d}天${h}小时`;
   if (h > 0) return `${h}小时${m}分`;
+  return `${Math.max(1, m)}分`;
+}
+
+function formatRecoveryDuration(ms?: number | null) {
+  const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  if (!total) return "已恢复";
+  const h = Math.floor(total / 3600);
+  const m = Math.ceil((total % 3600) / 60);
+  if (h > 0 && m > 0) return `${h}小时${m}分`;
+  if (h > 0) return `${h}小时`;
   return `${Math.max(1, m)}分`;
 }
 

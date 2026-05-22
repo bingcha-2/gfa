@@ -41,3 +41,24 @@ scripts/active-*.txt
 
 # Local data
 data/
+
+# Temp scratch files
+prev*.tsx
+output.json
+task_logs.txt
+*.pre-obfuscate*
+
+# Extension builds
+apps/gfa-extension/*.vsix
+
+# Client release binaries
+apps/bcai-client/release/
+apps/bcai-client/out/
+apps/bcai-client/temp-*/
+apps/bcai-client/test-certs/
+apps/bcai-client/dev.*.log
+
+# Update distribution binaries
+**/updates/*.exe
+**/updates/*.dmg
+**/updates/*.blockmap

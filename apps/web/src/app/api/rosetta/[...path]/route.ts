@@ -16,6 +16,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as nodeCrypto from "crypto";
+import { spawn } from "child_process";
+import { CONSOLE_AUTH_COOKIE } from "../../../../lib/auth-cookie";
 
 // ─── Paths (mirrors bundled-rosetta/shared/paths.js) ─────────────────────
 
@@ -36,8 +38,14 @@ const CONFIG_PATH = path.join(DATA_DIR, "proxy.config.json");
 const FAMILY_POOL_PATH = path.join(DATA_DIR, "family-pool.json");
 const QUOTA_DATA_PATH = path.join(DATA_DIR, "quota-data.json");
 const ACCESS_KEYS_PATH = path.join(DATA_DIR, "access-keys.json");
+const EMPLOYEES_PATH = path.join(DATA_DIR, "employees.json");
+const CAPTCHA_UNBLOCK_PATH = path.join(DATA_DIR, "captcha-unblock.json");
+const THROTTLE_CONFIG_PATH = path.join(DATA_DIR, "throttle-config.json");
 const DEFAULT_ACCESS_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
 const DEFAULT_ACCESS_KEY_WINDOW_LIMIT = 300;
+const DEFAULT_ACCESS_KEY_TOKENS_PER_REQUEST = 100_000;
+const BACKEND_BASE_URL =
+  process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api";
 
 function getProxyPort(): number {
   try {
@@ -75,6 +83,36 @@ function textJson(text: string, init?: ResponseInit): NextResponse {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
   }));
+}
+
+async function requireConsoleAuth(req: NextRequest): Promise<NextResponse | null> {
+  const authorization = req.headers.get("authorization");
+  const cookieToken = req.cookies.get(CONSOLE_AUTH_COOKIE)?.value;
+  const token = authorization?.replace(/^Bearer\s+/i, "").trim() || cookieToken;
+
+  if (!token) {
+    return json({ ok: false, error: "Console login required" }, { status: 401 });
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/auth/me`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      return json({ ok: false, error: "Console login expired" }, { status: 401 });
+    }
+    return null;
+  } catch (err: any) {
+    return json(
+      { ok: false, error: `Unable to verify console login: ${err.message || err}` },
+      { status: 502 }
+    );
+  }
 }
 
 function getRemoteTokenServerPort(): number {
@@ -119,7 +157,7 @@ async function forwardToRemoteTokenServer(): Promise<NextResponse> {
   try {
     const resp = await fetch(url, {
       method: "GET",
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000),
     });
     const text = await resp.text();
     return textJson(text, { status: resp.status });
@@ -127,6 +165,46 @@ async function forwardToRemoteTokenServer(): Promise<NextResponse> {
     return json(
       { ok: false, running: false, port, error: `Remote Token Server 未运行或无法连接: ${err.message}` },
       { status: 200 }
+    );
+  }
+}
+
+async function forwardToRemoteTokenServerPost(path: string): Promise<NextResponse> {
+  const port = getRemoteTokenServerPort();
+  const url = `http://127.0.0.1:${port}${path}`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(10000),
+    });
+    const text = await resp.text();
+    return textJson(text, { status: resp.status });
+  } catch (err: any) {
+    return json(
+      { ok: false, error: `Remote Token Server 请求失败: ${err.message}` },
+      { status: 502 }
+    );
+  }
+}
+
+async function forwardToRemoteTokenServerPostWithBody(rtsPath: string, body: string): Promise<NextResponse> {
+  const port = getRemoteTokenServerPort();
+  const url = `http://127.0.0.1:${port}${rtsPath}`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(10000),
+    });
+    const text = await resp.text();
+    return textJson(text, { status: resp.status });
+  } catch (err: any) {
+    return json(
+      { ok: false, error: `Remote Token Server 请求失败: ${err.message}` },
+      { status: 502 }
     );
   }
 }
@@ -149,6 +227,7 @@ interface FamilyPoolData {
   mothers: MotherRecord[];
   seats: SeatRecord[];
   candidates: CandidateRecord[];
+  children: ChildPoolRecord[];
   events: FamilyPoolEvent[];
   updatedAt?: string;
 }
@@ -213,6 +292,30 @@ interface CandidateRecord {
   updatedAt: string;
 }
 
+interface ChildPoolRecord {
+  id: string;
+  email: string;
+  alias?: string;
+  loginPassword?: string;
+  recoveryEmail?: string;
+  totpSecret?: string;
+  rosettaAccountId?: number;
+  activationTaskId?: string;
+  activationStatus?: string;
+  activationError?: string;
+  activatedAt?: string;
+  tokenObtainedAt?: string;
+  assignedMotherId?: string;
+  assignedSeatId?: string;
+  isFamilyMember?: boolean;
+  joinStatus?: string;
+  joinError?: string;
+  status: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface FamilyPoolEvent {
   id: string;
   type: string;
@@ -244,7 +347,22 @@ function readAccountsData(): { accounts: AccountRecord[] } {
 
 function writeAccountsData(data: { accounts: AccountRecord[] }) {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify(data, null, 2), "utf8");
+  const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
+  console.log(`[writeAccountsData] Writing ${data.accounts.length} accounts. Last: ${data.accounts[data.accounts.length - 1]?.email || 'none'}. Caller: ${caller}`);
+  // Atomic write: temp file then rename to avoid partial writes
+  const tmpPath = ACCOUNTS_PATH + `.tmp.${process.pid}.${Date.now()}`;
+  const content = JSON.stringify(data, null, 2) + "\n";
+  fs.writeFileSync(tmpPath, content, "utf8");
+  fs.renameSync(tmpPath, ACCOUNTS_PATH);
+  // Post-write verification: read back and confirm the data is correct
+  try {
+    const verify = JSON.parse(fs.readFileSync(ACCOUNTS_PATH, "utf8"));
+    if (!Array.isArray(verify.accounts) || verify.accounts.length !== data.accounts.length) {
+      console.error(`[writeAccountsData] ⚠ POST-WRITE VERIFICATION FAILED: wrote ${data.accounts.length} accounts, read back ${verify.accounts?.length ?? 0}`);
+    }
+  } catch (verifyErr: any) {
+    console.error(`[writeAccountsData] ⚠ POST-WRITE VERIFICATION ERROR: ${verifyErr.message}`);
+  }
 }
 
 function readAccessKeysData(): { keys: any[]; updatedAt?: string } {
@@ -252,17 +370,95 @@ function readAccessKeysData(): { keys: any[]; updatedAt?: string } {
   try {
     const parsed = JSON.parse(fs.readFileSync(ACCESS_KEYS_PATH, "utf8"));
     return { keys: Array.isArray(parsed.keys) ? parsed.keys : [], updatedAt: parsed.updatedAt || "" };
-  } catch {
-    return { keys: [] };
+  } catch (error: any) {
+    throw new Error(`access-keys.json 解析失败，已阻止覆盖写入：${error?.message || error}`);
   }
+}
+
+function readEmployeesData(): { employees: any[]; accounts: any[]; sessions: any[]; updatedAt?: string } {
+  if (!fs.existsSync(EMPLOYEES_PATH)) return { employees: [], accounts: [], sessions: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(EMPLOYEES_PATH, "utf8"));
+    return {
+      employees: Array.isArray(parsed.employees) ? parsed.employees : [],
+      accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      updatedAt: parsed.updatedAt || "",
+    };
+  } catch {
+    return { employees: [], accounts: [], sessions: [] };
+  }
+}
+
+function writeEmployeesData(data: { employees: any[]; accounts: any[]; sessions: any[]; updatedAt?: string }) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(EMPLOYEES_PATH, JSON.stringify({
+    employees: Array.isArray(data.employees) ? data.employees : [],
+    accounts: Array.isArray(data.accounts) ? data.accounts : [],
+    sessions: Array.isArray(data.sessions) ? data.sessions : [],
+    updatedAt: nowIso(),
+  }, null, 2), "utf8");
+}
+
+function hashEmployeePassword(password: string, salt = nodeCrypto.randomBytes(16).toString("hex")) {
+  const hash = nodeCrypto.pbkdf2Sync(password, salt, 120_000, 32, "sha256").toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyEmployeePassword(password: string, stored: string): boolean {
+  const [salt, hash] = String(stored || "").split(":");
+  if (!salt || !hash) return false;
+  const next = hashEmployeePassword(password, salt).split(":")[1];
+  try {
+    return nodeCrypto.timingSafeEqual(Buffer.from(hash), Buffer.from(next));
+  } catch {
+    return false;
+  }
+}
+
+function employeeSessionFromRequest(req: NextRequest, data = readEmployeesData()) {
+  const raw = req.headers.get("authorization") || "";
+  const token = raw.toLowerCase().startsWith("bearer ") ? raw.slice(7).trim() : "";
+  if (!token) return null;
+  const session = data.sessions.find((item) => item.token === token && (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()));
+  if (!session) return null;
+  const employee = data.employees.find((item) => item.id === session.employeeId && item.status !== "disabled");
+  if (!employee) return null;
+  return { token, session, employee };
+}
+
+function safeEmployee(employee: any, accounts: any[] = []) {
+  const mine = accounts.filter((item) => item.employeeId === employee.id);
+  return {
+    id: employee.id,
+    email: employee.email,
+    status: employee.status || "active",
+    createdAt: employee.createdAt || "",
+    lastActiveAt: employee.lastActiveAt || "",
+    stats: {
+      total: mine.length,
+      accepted: mine.filter((item) => item.status === "accepted").length,
+      failed: mine.filter((item) => String(item.status || "").includes("failed") || String(item.status || "").includes("invalid")).length,
+      disabled: mine.filter((item) => item.disabledByEmployee).length,
+      deleted: mine.filter((item) => item.deletedByEmployee).length,
+    },
+  };
 }
 
 function writeAccessKeysData(data: { keys: any[]; updatedAt?: string }) {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (fs.existsSync(ACCESS_KEYS_PATH)) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.copyFileSync(ACCESS_KEYS_PATH, `${ACCESS_KEYS_PATH}.bak-${stamp}`);
+  }
   fs.writeFileSync(ACCESS_KEYS_PATH, JSON.stringify({
     keys: Array.isArray(data.keys) ? data.keys : [],
     updatedAt: nowIso(),
   }, null, 2), "utf8");
+}
+
+function accessKeyBackupStamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function accessKeyExpiresAt(key: any): string {
@@ -277,6 +473,37 @@ function safeAccessKey(key: any) {
   const windowMs = Number(key.windowMs || DEFAULT_ACCESS_KEY_WINDOW_MS);
   const cutoff = now - windowMs;
   const usageEvents = (Array.isArray(key.usageEvents) ? key.usageEvents : []).filter((item: any) => Number(item?.at || 0) >= cutoff);
+  const tokenWindowMs = Number(key.tokenWindowMs || windowMs);
+  const tokenCutoff = now - tokenWindowMs;
+  const tokenUsageEvents = (Array.isArray(key.tokenUsageEvents) ? key.tokenUsageEvents : []).filter((item: any) => Number(item?.at || 0) >= tokenCutoff);
+  
+  let opusTokensUsed = 0;
+  let geminiTokensUsed = 0;
+  let recentWindowTokens = 0;
+  
+  tokenUsageEvents.forEach((item: any) => {
+    const modelKey = String(item?.modelKey || "").toLowerCase();
+    const isGemini = modelKey.includes("gemini") || modelKey.startsWith("gem");
+    const total = Number(item?.totalTokens || 0);
+    const input = Number(item?.inputTokens || 0);
+    const output = Number(item?.outputTokens || 0);
+    const billable = Math.max(0, Math.floor(total || input + output || 0));
+    
+    recentWindowTokens += billable;
+    if (isGemini) {
+      geminiTokensUsed += billable;
+    } else {
+      opusTokensUsed += billable;
+    }
+  });
+
+  const baseTokenLimit = Math.max(0, Math.floor(Number(
+    key.tokenWindowLimit ??
+    key.windowTokenLimit ??
+    key.tokenLimit ??
+    ((Number(key.windowLimit || 0) || 0) * DEFAULT_ACCESS_KEY_TOKENS_PER_REQUEST)
+  )));
+
   const raw = String(key.key || "");
   return {
     id: key.id,
@@ -290,7 +517,18 @@ function safeAccessKey(key: any) {
     totalRequests: Number(key.totalRequests || 0),
     recentWindowRequests: usageEvents.length,
     windowMs,
-    windowLimit: Number(key.windowLimit || DEFAULT_ACCESS_KEY_WINDOW_LIMIT),
+    windowLimit: Number(key.windowLimit || 0),
+    totalInputTokens: Number(key.totalInputTokens || 0),
+    totalOutputTokens: Number(key.totalOutputTokens || 0),
+    totalTokensUsed: Number(key.totalTokensUsed || 0),
+    recentWindowTokens,
+    opusTokensUsed,
+    opusTokenLimit: baseTokenLimit,
+    geminiTokensUsed,
+    geminiTokenLimit: baseTokenLimit * 5,
+    tokenWindowMs,
+    tokenWindowLimit: baseTokenLimit,
+    tokenWindowRemaining: baseTokenLimit > 0 ? Math.max(0, baseTokenLimit - recentWindowTokens) : 0,
     lastUsedAt: key.lastUsedAt || "",
     createdAt: key.createdAt || "",
   };
@@ -298,9 +536,18 @@ function safeAccessKey(key: any) {
 
 function durationToMs(value: string): number {
   if (value === "1h") return 60 * 60 * 1000;
+  if (value === "5h") return 5 * 60 * 60 * 1000;
   if (value === "1d") return 24 * 60 * 60 * 1000;
   if (value === "1m") return 30 * 24 * 60 * 60 * 1000;
   return 60 * 60 * 1000;
+}
+
+function readAccessKeyDurationMs(payload: any): number {
+  const amount = Math.max(1, Math.min(3650, Math.floor(Number(payload?.durationValue || payload?.durationAmount || 0))));
+  const unit = String(payload?.durationUnit || payload?.durationType || "").toLowerCase();
+  if (amount > 0 && (unit === "d" || unit === "day" || unit === "days")) return amount * 24 * 60 * 60 * 1000;
+  if (amount > 0 && (unit === "h" || unit === "hour" || unit === "hours")) return amount * 60 * 60 * 1000;
+  return durationToMs(String(payload?.duration || "1h"));
 }
 
 function newAccessKeyValue(): string {
@@ -432,10 +679,17 @@ async function notifyProxyReload() {
       signal: AbortSignal.timeout(10000),
     });
   } catch { /* proxy might not be running */ }
+  try {
+    const rtsPort = getRemoteTokenServerPort();
+    await fetch(`http://127.0.0.1:${rtsPort}/reload-accounts`, {
+      method: "POST",
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch { /* rts might not be running */ }
 }
 
 function emptyFamilyPool(): FamilyPoolData {
-  return { mothers: [], seats: [], candidates: [], events: [] };
+  return { mothers: [], seats: [], candidates: [], children: [], events: [] };
 }
 
 function readFamilyPool(): FamilyPoolData {
@@ -446,6 +700,7 @@ function readFamilyPool(): FamilyPoolData {
       mothers: Array.isArray(parsed.mothers) ? parsed.mothers : [],
       seats: Array.isArray(parsed.seats) ? parsed.seats : [],
       candidates: Array.isArray(parsed.candidates) ? parsed.candidates : [],
+      children: Array.isArray(parsed.children) ? parsed.children : [],
       events: Array.isArray(parsed.events) ? parsed.events : [],
       updatedAt: parsed.updatedAt,
     };
@@ -618,7 +873,7 @@ async function handleExchangeOob(req: NextRequest): Promise<NextResponse> {
     // 3. Optional Project ID
     let projectId = "";
     try {
-      const METADATA = { ideName: "antigravity", ideType: "ANTIGRAVITY", ideVersion: "1.21.6", pluginVersion: "1.21.6", platform: "unknown", updateChannel: "stable", pluginType: "GEMINI" };
+      const METADATA = { ideName: "antigravity", ideType: "ANTIGRAVITY", ideVersion: "1.21.6", pluginVersion: "1.21.6", platform: "WINDOWS_AMD64", updateChannel: "stable", pluginType: "GEMINI" };
       for (const host of ["daily-cloudcode-pa.sandbox.googleapis.com", "daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com"]) {
         const r = await fetch(`https://${host}/v1internal:loadCodeAssist`, {
           method: "POST",
@@ -1206,6 +1461,27 @@ async function handleFamilyActivateChild(req: NextRequest): Promise<NextResponse
       });
     }
 
+    let child = pool.children.find((item) => normalizeEmail(item.email) === email);
+    if (!child) {
+      child = {
+        id: newId("child"),
+        email,
+        rosettaAccountId: account.id,
+        status: eligibleToEnable ? "active" : "activated_pending_member",
+        createdAt: now,
+        updatedAt: now,
+      };
+      pool.children.push(child);
+    }
+    child.rosettaAccountId = account.id;
+    child.assignedMotherId = seat.motherId;
+    child.assignedSeatId = seat.id;
+    child.activatedAt = String(payload.activatedAt || child.activatedAt || now);
+    child.tokenObtainedAt = child.tokenObtainedAt || child.activatedAt;
+    child.isFamilyMember = eligibleToEnable;
+    child.status = eligibleToEnable ? "active" : "activated_pending_member";
+    child.updatedAt = now;
+
     account.enabled = eligibleToEnable;
     account.familyRole = "child";
     account.familyStatus = eligibleToEnable ? "active" : "activated_pending_member";
@@ -1232,13 +1508,166 @@ async function handleFamilyActivateChild(req: NextRequest): Promise<NextResponse
   }
 }
 
-function handleAccessKeys() {
+async function handleFamilyChild(req: NextRequest): Promise<NextResponse> {
+  try {
+    const payload = await req.json();
+    const email = normalizeEmail(payload.email);
+    const now = nowIso();
+    const pool = readFamilyPool();
+
+    if (payload.delete === true) {
+      const id = String(payload.id || "");
+      const before = pool.children.length;
+      pool.children = pool.children.filter((item) => {
+        if (id && item.id === id) return false;
+        return !(email && normalizeEmail(item.email) === email);
+      });
+      if (pool.children.length === before) return json({ ok: false, error: "child not found" }, { status: 404 });
+      appendFamilyEvent(pool, {
+        type: "child_deleted",
+        email,
+        message: `Child pool account ${email || id} deleted.`,
+      });
+      writeFamilyPool(pool);
+      return json({ ok: true, pool });
+    }
+
+    if (!email) return json({ ok: false, error: "child email is required" }, { status: 400 });
+
+    let child = String(payload.id || "")
+      ? pool.children.find((item) => item.id === String(payload.id))
+      : pool.children.find((item) => normalizeEmail(item.email) === email);
+    if (!child) {
+      child = {
+        id: newId("child"),
+        email,
+        alias: String(payload.alias || "").trim(),
+        loginPassword: String(payload.loginPassword || "").trim(),
+        recoveryEmail: normalizeEmail(payload.recoveryEmail),
+        totpSecret: String(payload.totpSecret || "").trim(),
+        rosettaAccountId: Number(payload.rosettaAccountId) || undefined,
+        activationTaskId: String(payload.activationTaskId || "").trim() || undefined,
+        activationStatus: String(payload.activationStatus || "").trim() || undefined,
+        activationError: String(payload.activationError || "").trim() || undefined,
+        activatedAt: String(payload.activatedAt || "").trim() || undefined,
+        tokenObtainedAt: String(payload.tokenObtainedAt || "").trim() || undefined,
+        assignedMotherId: String(payload.assignedMotherId || "").trim() || undefined,
+        assignedSeatId: String(payload.assignedSeatId || "").trim() || undefined,
+        isFamilyMember: payload.isFamilyMember === true,
+        joinStatus: String(payload.joinStatus || "").trim() || undefined,
+        joinError: String(payload.joinError || "").trim() || undefined,
+        status: String(payload.status || "idle"),
+        notes: String(payload.notes || "").trim(),
+        createdAt: now,
+        updatedAt: now,
+      };
+      pool.children.push(child);
+      appendFamilyEvent(pool, {
+        type: "child_created",
+        email,
+        message: `Child pool account ${email} created.`,
+      });
+    } else {
+      child.email = email;
+      if (payload.alias !== undefined) child.alias = String(payload.alias || "").trim();
+      if (payload.loginPassword !== undefined) child.loginPassword = String(payload.loginPassword || "").trim();
+      if (payload.recoveryEmail !== undefined) child.recoveryEmail = normalizeEmail(payload.recoveryEmail);
+      if (payload.totpSecret !== undefined) child.totpSecret = String(payload.totpSecret || "").trim();
+      if (payload.rosettaAccountId !== undefined) child.rosettaAccountId = Number(payload.rosettaAccountId) || undefined;
+      if (payload.activationTaskId !== undefined) child.activationTaskId = String(payload.activationTaskId || "").trim() || undefined;
+      if (payload.activationStatus !== undefined) child.activationStatus = String(payload.activationStatus || "").trim() || undefined;
+      if (payload.activationError !== undefined) child.activationError = String(payload.activationError || "").trim() || undefined;
+      if (payload.activatedAt !== undefined) child.activatedAt = String(payload.activatedAt || "").trim() || undefined;
+      if (payload.tokenObtainedAt !== undefined) child.tokenObtainedAt = String(payload.tokenObtainedAt || "").trim() || undefined;
+      if (payload.assignedMotherId !== undefined) child.assignedMotherId = String(payload.assignedMotherId || "").trim() || undefined;
+      if (payload.assignedSeatId !== undefined) child.assignedSeatId = String(payload.assignedSeatId || "").trim() || undefined;
+      if (payload.isFamilyMember !== undefined) child.isFamilyMember = payload.isFamilyMember === true;
+      if (payload.joinStatus !== undefined) child.joinStatus = String(payload.joinStatus || "").trim() || undefined;
+      if (payload.joinError !== undefined) child.joinError = String(payload.joinError || "").trim() || undefined;
+      if (payload.status !== undefined) child.status = String(payload.status || "idle");
+      if (payload.notes !== undefined) child.notes = String(payload.notes || "").trim();
+      child.updatedAt = now;
+      appendFamilyEvent(pool, {
+        type: "child_updated",
+        email,
+        message: `Child pool account ${email} updated.`,
+      });
+    }
+
+    if (child.rosettaAccountId) {
+      const accountData = readAccountsData();
+      const account = findAccountByIdOrEmail(accountData.accounts, child.rosettaAccountId, email);
+      if (account) {
+        account.familyRole = "child";
+        account.familyStatus = child.status || account.familyStatus || "activated_pending_member";
+        account.motherId = child.assignedMotherId || account.motherId || "";
+        account.seatId = child.assignedSeatId || account.seatId || "";
+        writeAccountsData(accountData);
+        await notifyProxyReload();
+      }
+    }
+
+    writeFamilyPool(pool);
+    return json({ ok: true, child, pool });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+function accessKeyMatchesSearch(key: any, search: string): boolean {
+  const term = search.trim().toLowerCase();
+  if (!term) return true;
+  const values = [
+    key.id,
+    key.name,
+    key.key,
+    key.status,
+    key.sessionClientId,
+    key.activeSessionId,
+    key.firstUsedAt,
+    key.lastUsedAt,
+    key.createdAt,
+  ];
+  return values.some((value) => String(value || "").toLowerCase().includes(term));
+}
+
+function handleAccessKeys(req: NextRequest) {
   const data = readAccessKeysData();
+  const search = String(req.nextUrl.searchParams.get("search") || req.nextUrl.searchParams.get("q") || "").trim();
+  const keys = data.keys.filter((key) => accessKeyMatchesSearch(key, search));
   return json({
-    keys: data.keys.map(safeAccessKey),
+    keys: keys.map(safeAccessKey),
+    total: keys.length,
+    totalAll: data.keys.length,
+    search,
     accessKeysPath: ACCESS_KEYS_PATH,
-    defaults: { windowMs: DEFAULT_ACCESS_KEY_WINDOW_MS, windowLimit: DEFAULT_ACCESS_KEY_WINDOW_LIMIT },
+    defaults: {
+      windowMs: DEFAULT_ACCESS_KEY_WINDOW_MS,
+      windowLimit: 0,
+      tokenWindowLimit: 0,
+    },
   });
+}
+
+function readAccessKeyWindowLimit(value: unknown): number {
+  if (value === undefined || value === null || String(value).trim() === "") return 0;
+  const num = Number(value);
+  return Math.max(0, Math.min(5000, Number.isFinite(num) && num > 0 ? Math.floor(num) : 0));
+}
+
+function readAccessKeyTokenWindowLimit(payload: any, windowLimit: number): number {
+  const raw =
+    payload?.tokenWindowLimit ??
+    payload?.windowTokenLimit ??
+    payload?.tokenLimit;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return windowLimit > 0 ? Math.min(500_000_000, windowLimit * DEFAULT_ACCESS_KEY_TOKENS_PER_REQUEST) : 0;
+  }
+  const explicit = Number(raw);
+  return Math.max(
+    0,
+    Math.min(500_000_000, Number.isFinite(explicit) && explicit > 0 ? Math.floor(explicit) : 0)
+  );
 }
 
 async function handleCreateAccessKey(req: NextRequest) {
@@ -1246,23 +1675,33 @@ async function handleCreateAccessKey(req: NextRequest) {
     const payload = await req.json();
     const data = readAccessKeysData();
     const now = nowIso();
-    const record = {
+    const count = Math.max(1, Math.min(200, Math.floor(Number(payload.count || 1))));
+    const baseName = String(payload.name || "").trim();
+    const windowLimit = readAccessKeyWindowLimit(payload.windowLimit);
+    const tokenWindowLimit = readAccessKeyTokenWindowLimit(payload, windowLimit);
+    const records = Array.from({ length: count }, (_, index) => ({
       id: newId("key"),
-      name: String(payload.name || "").trim(),
+      name: count > 1 && baseName ? `${baseName}-${index + 1}` : baseName,
       key: newAccessKeyValue(),
       status: "active",
-      durationMs: durationToMs(String(payload.duration || "1h")),
+      durationMs: readAccessKeyDurationMs(payload),
       firstUsedAt: "",
       totalRequests: 0,
       usageEvents: [],
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokensUsed: 0,
+      tokenUsageEvents: [],
       windowMs: DEFAULT_ACCESS_KEY_WINDOW_MS,
-      windowLimit: Math.max(1, Math.min(5000, Number(payload.windowLimit || DEFAULT_ACCESS_KEY_WINDOW_LIMIT))),
+      windowLimit,
+      tokenWindowMs: DEFAULT_ACCESS_KEY_WINDOW_MS,
+      tokenWindowLimit,
       createdAt: now,
       updatedAt: now,
-    };
-    data.keys.unshift(record);
+    }));
+    data.keys.unshift(...records);
     writeAccessKeysData(data);
-    return json({ ok: true, key: safeAccessKey(record) });
+    return json({ ok: true, key: safeAccessKey(records[0]), keys: records.map(safeAccessKey), count: records.length });
   } catch (err: any) {
     return json({ ok: false, error: err.message || String(err) }, { status: 500 });
   }
@@ -1277,13 +1716,419 @@ async function handleUpdateAccessKey(req: NextRequest) {
     if (!record) return json({ ok: false, error: "Access key not found" }, { status: 404 });
     if (payload.status) record.status = String(payload.status);
     if (payload.windowLimit !== undefined) {
-      record.windowLimit = Math.max(1, Math.min(5000, Number(payload.windowLimit || DEFAULT_ACCESS_KEY_WINDOW_LIMIT)));
+      record.windowLimit = readAccessKeyWindowLimit(payload.windowLimit);
+    }
+    if (payload.tokenWindowLimit !== undefined || payload.windowTokenLimit !== undefined || payload.tokenLimit !== undefined) {
+      record.tokenWindowLimit = readAccessKeyTokenWindowLimit(payload, Number(record.windowLimit || 0));
+      record.tokenWindowMs = Number(record.tokenWindowMs || record.windowMs || DEFAULT_ACCESS_KEY_WINDOW_MS);
     }
     record.updatedAt = nowIso();
     writeAccessKeysData(data);
     return json({ ok: true, key: safeAccessKey(record) });
   } catch (err: any) {
     return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+async function handleEmployeeRegister(req: NextRequest) {
+  try {
+    const payload = await req.json();
+    const email = normalizeEmail(payload.email);
+    const password = String(payload.password || "");
+    if (!email || !email.includes("@")) return json({ ok: false, error: "邮箱不正确" }, { status: 400 });
+    if (password.length < 6) return json({ ok: false, error: "密码至少 6 位" }, { status: 400 });
+    const data = readEmployeesData();
+    if (data.employees.some((item) => normalizeEmail(item.email) === email)) {
+      return json({ ok: false, error: "员工已注册" }, { status: 409 });
+    }
+    const now = nowIso();
+    const employee = {
+      id: newId("emp"),
+      email,
+      passwordHash: hashEmployeePassword(password),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      lastActiveAt: now,
+    };
+    const token = `emp_${cryptoRandom(24).toLowerCase()}`;
+    data.employees.push(employee);
+    data.sessions.push({
+      token,
+      employeeId: employee.id,
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    writeEmployeesData(data);
+    return json({ ok: true, token, employee: safeEmployee(employee, data.accounts) });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+async function handleEmployeeLogin(req: NextRequest) {
+  try {
+    const payload = await req.json();
+    const email = normalizeEmail(payload.email);
+    const password = String(payload.password || "");
+    const data = readEmployeesData();
+    const employee = data.employees.find((item) => normalizeEmail(item.email) === email && item.status !== "disabled");
+    if (!employee || !verifyEmployeePassword(password, employee.passwordHash)) {
+      return json({ ok: false, error: "邮箱或密码错误" }, { status: 401 });
+    }
+    const now = nowIso();
+    const token = `emp_${cryptoRandom(24).toLowerCase()}`;
+    employee.lastActiveAt = now;
+    employee.updatedAt = now;
+    data.sessions.push({
+      token,
+      employeeId: employee.id,
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    data.sessions = data.sessions.filter((item) => !item.expiresAt || Date.parse(item.expiresAt) > Date.now()).slice(-1000);
+    writeEmployeesData(data);
+    return json({ ok: true, token, employee: safeEmployee(employee, data.accounts) });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+function handleEmployeeMe(req: NextRequest) {
+  const data = readEmployeesData();
+  const auth = employeeSessionFromRequest(req, data);
+  if (!auth) return json({ ok: false, error: "未登录" }, { status: 401 });
+  return json({
+    ok: true,
+    employee: safeEmployee(auth.employee, data.accounts),
+    accounts: data.accounts.filter((item) => item.employeeId === auth.employee.id),
+  });
+}
+
+async function handleEmployeeSubmitAccount(req: NextRequest) {
+  try {
+    const data = readEmployeesData();
+    const auth = employeeSessionFromRequest(req, data);
+    if (!auth) return json({ ok: false, error: "未登录" }, { status: 401 });
+    const payload = await req.json();
+    const email = normalizeEmail(payload.email);
+    const refreshToken = String(payload.refreshToken || "").trim();
+    const projectId = String(payload.projectId || "").trim();
+    const localAccountId = Number(payload.localAccountId || 0) || undefined;
+    const lastConversationOkAt = String(payload.lastConversationOkAt || "").trim();
+    if (!email || !refreshToken || !projectId) {
+      return json({ ok: false, error: "缺少邮箱、refreshToken 或 projectId" }, { status: 400 });
+    }
+    if (!lastConversationOkAt) {
+      return json({ ok: false, error: "账号还没有完成一次真实对话测试" }, { status: 400 });
+    }
+
+    const now = nowIso();
+    let employeeAccount = data.accounts.find(
+      (item) => item.employeeId === auth.employee.id && normalizeEmail(item.email) === email
+    );
+    if (!employeeAccount) {
+      employeeAccount = { id: newId("empacc"), employeeId: auth.employee.id, email, createdAt: now };
+      data.accounts.unshift(employeeAccount);
+    }
+    Object.assign(employeeAccount, {
+      localAccountId,
+      projectId,
+      planType: String(payload.planType || employeeAccount.planType || ""),
+      status: "accepted",
+      acceptedAt: employeeAccount.acceptedAt || now,
+      lastSubmittedAt: now,
+      lastConversationOkAt,
+      disabledByEmployee: Boolean(payload.disabledByEmployee || false),
+      deletedByEmployee: Boolean(payload.deletedByEmployee || false),
+      updatedAt: now,
+    });
+    auth.employee.lastActiveAt = now;
+    auth.employee.updatedAt = now;
+
+    const central = readAccountsData();
+    const existing = central.accounts.find((item) => normalizeEmail(item.email) === email);
+    if (existing) {
+      existing.refreshToken = refreshToken;
+      existing.enabled = existing.enabled !== false;
+      existing.projectId = projectId;
+      existing.projectIdSource = existing.projectIdSource || "employee";
+      existing.planType = String(payload.planType || existing.planType || "");
+      existing.source = existing.source || "employee";
+      existing.sourceEmployeeId = auth.employee.id;
+      existing.sourceEmployeeEmail = auth.employee.email;
+      existing.lastConversationOkAt = lastConversationOkAt;
+    } else {
+      const maxId = central.accounts.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0);
+      central.accounts.push({
+        id: maxId + 1,
+        email,
+        refreshToken,
+        enabled: true,
+        alias: `employee:${auth.employee.email}`,
+        oauthProfile: "antigravity",
+        projectId,
+        projectIdSource: "employee",
+        planType: String(payload.planType || ""),
+        source: "employee",
+        sourceEmployeeId: auth.employee.id,
+        sourceEmployeeEmail: auth.employee.email,
+        lastConversationOkAt,
+      } as any);
+    }
+    writeAccountsData(central);
+    writeEmployeesData(data);
+    void notifyProxyReload().catch(() => undefined);
+    return json({ ok: true, account: employeeAccount, employee: safeEmployee(auth.employee, data.accounts) });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+function handleEmployeesAdmin() {
+  const data = readEmployeesData();
+  return json({
+    ok: true,
+    employees: data.employees.map((employee) => safeEmployee(employee, data.accounts)),
+    accounts: data.accounts,
+    employeesPath: EMPLOYEES_PATH,
+  });
+}
+
+
+// ─── Captcha Unblock (file-based state) ──────────────────────────────────
+
+interface CaptchaUnblockTask {
+  id: string;
+  email: string;
+  password: string;
+  recoveryEmail: string;
+  totpSecret: string;
+  phase: "first" | "second";
+  source: string;
+  status: string; // PENDING | RUNNING | CAPTCHA_WAITING | PHONE_VERIFYING | APPEAL_REQUIRED | WAITING_SECOND_VERIFY | UNBLOCKED | FAILED_FINAL
+  taskId?: string;
+  usedPhone?: string;
+  appealAt?: string;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function readCaptchaUnblockData(): { tasks: CaptchaUnblockTask[] } {
+  if (!fs.existsSync(CAPTCHA_UNBLOCK_PATH)) return { tasks: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CAPTCHA_UNBLOCK_PATH, "utf8"));
+    return { tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [] };
+  } catch {
+    return { tasks: [] };
+  }
+}
+
+function writeCaptchaUnblockData(data: { tasks: CaptchaUnblockTask[] }) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(CAPTCHA_UNBLOCK_PATH, JSON.stringify(data, null, 2), "utf8");
+}
+
+async function handleCaptchaUnblock(req: NextRequest): Promise<NextResponse> {
+  try {
+    const payload = await req.json();
+    const creds = payload.credentials || {};
+    const email = normalizeEmail(creds.email);
+    const password = String(creds.password || "");
+    const recoveryEmail = String(creds.recoveryEmail || "");
+    const totpSecret = String(creds.totpSecret || "");
+    const phase = String(payload.phase || "first");
+    const source = String(payload.source || "captcha-unblock");
+
+    if (!email) return json({ ok: false, error: "email 不能为空" }, { status: 400 });
+    if (!password) return json({ ok: false, error: "password 不能为空" }, { status: 400 });
+
+    const data = readCaptchaUnblockData();
+
+    // Create task
+    const task: CaptchaUnblockTask = {
+      id: newId("unblock"),
+      email,
+      password,
+      recoveryEmail,
+      totpSecret,
+      phase: phase === "second" ? "second" : "first",
+      source,
+      status: "PENDING",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+
+    // For phase 2, try to find existing phase 1 task to get usedPhone
+    if (phase === "second") {
+      const existing = data.tasks.find(
+        (t) => normalizeEmail(t.email) === email && t.usedPhone && t.status === "WAITING_SECOND_VERIFY"
+      );
+      if (existing) {
+        task.usedPhone = existing.usedPhone;
+        existing.status = "PHASE2_STARTED";
+        existing.updatedAt = nowIso();
+      }
+    }
+
+    data.tasks.unshift(task);
+    // Keep last 500 tasks
+    data.tasks = data.tasks.slice(0, 500);
+    writeCaptchaUnblockData(data);
+
+    // Parse phones from payload
+    const rawPhones = Array.isArray(payload.phones) ? payload.phones : [];
+    const phones = rawPhones
+      .filter((p: any) => p && p.phoneNumber && p.smsUrl)
+      .map((p: any) => ({
+        phoneNumber: String(p.phoneNumber),
+        countryCode: String(p.countryCode || "+1"),
+        smsUrl: String(p.smsUrl),
+      }));
+
+    // Submit to backend worker queue
+    try {
+      const automationPayload: Record<string, unknown> = {
+        action: "oauth" as const,
+        email,
+        password,
+        recoveryEmail,
+        totpSecret,
+        source,
+        keepBrowserOpenOnChallenge: true,
+      };
+      if (phones.length > 0) {
+        automationPayload.phones = phones;
+      }
+      const backendResp = await fetch(`${BACKEND_BASE_URL}/automation/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(automationPayload),
+        signal: AbortSignal.timeout(10000),
+      });
+      const backendData = await backendResp.json().catch(() => ({}));
+      if (backendData.taskId) {
+        task.taskId = backendData.taskId;
+        task.status = "RUNNING";
+        task.updatedAt = nowIso();
+        writeCaptchaUnblockData(data);
+      }
+    } catch (err: any) {
+      console.warn("[captcha-unblock] Failed to submit to backend:", err.message);
+    }
+
+    return json({ ok: true, task: { id: task.id, email, status: task.status } });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message }, { status: 500 });
+  }
+}
+
+async function handleCaptchaUnblockStatus(): Promise<NextResponse> {
+  const data = readCaptchaUnblockData();
+
+  // Refresh status from backend for running tasks
+  for (const task of data.tasks) {
+    if (task.taskId && ["RUNNING", "PENDING"].includes(task.status)) {
+      try {
+        const resp = await fetch(`${BACKEND_BASE_URL}/automation/status/${task.taskId}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        const taskData = await resp.json().catch(() => null);
+        if (taskData) {
+          const backendStatus = String(taskData.status || "");
+          if (backendStatus === "SUCCESS") {
+            task.status = task.phase === "second" ? "UNBLOCKED" : "APPEAL_REQUIRED";
+            task.updatedAt = nowIso();
+          } else if (backendStatus === "MANUAL_REVIEW") {
+            const code = String(taskData.lastErrorCode || "");
+            if (code === "PHONE_VERIFIED_APPEAL_REQUIRED") {
+              task.status = "APPEAL_REQUIRED";
+              // Extract used phone from task payload
+              try {
+                const pl = JSON.parse(taskData.payload || "{}");
+                if (pl.result?.usedPhone?.phoneNumber) {
+                  task.usedPhone = pl.result.usedPhone.phoneNumber;
+                }
+              } catch {}
+            } else if (code === "CAPTCHA") {
+              task.status = "CAPTCHA_WAITING";
+            } else {
+              task.status = "MANUAL_REVIEW";
+              task.lastErrorCode = code;
+              task.lastErrorMessage = taskData.lastErrorMessage || "";
+            }
+            task.updatedAt = nowIso();
+          } else if (backendStatus === "FAILED_FINAL" || backendStatus === "FAILED_RETRYABLE") {
+            task.status = "FAILED_FINAL";
+            task.lastErrorCode = taskData.lastErrorCode || "";
+            task.lastErrorMessage = taskData.lastErrorMessage || "";
+            task.updatedAt = nowIso();
+          }
+        }
+      } catch {
+        // silent
+      }
+    }
+  }
+
+  // Save updated statuses
+  writeCaptchaUnblockData(data);
+
+  // Split into active tasks and phase2 waiting
+  const tasks = data.tasks.filter((t) => t.status !== "WAITING_SECOND_VERIFY");
+  const phase2 = data.tasks.filter((t) => t.status === "WAITING_SECOND_VERIFY" || t.status === "APPEAL_REQUIRED");
+
+  return json({ tasks, phase2 });
+}
+
+async function handleCaptchaUnblockRetry(req: NextRequest): Promise<NextResponse> {
+  try {
+    const payload = await req.json();
+    const taskId = String(payload.taskId || "");
+    if (!taskId) return json({ ok: false, error: "taskId required" }, { status: 400 });
+
+    const data = readCaptchaUnblockData();
+    const task = data.tasks.find((t) => t.id === taskId);
+    if (!task) return json({ ok: false, error: "Task not found" }, { status: 404 });
+
+    // Re-submit
+    task.status = "PENDING";
+    task.lastErrorCode = undefined;
+    task.lastErrorMessage = undefined;
+    task.updatedAt = nowIso();
+
+    try {
+      const automationPayload = {
+        action: "oauth" as const,
+        email: task.email,
+        password: task.password,
+        recoveryEmail: task.recoveryEmail || "",
+        totpSecret: task.totpSecret || "",
+        source: task.source || "captcha-unblock",
+        keepBrowserOpenOnChallenge: true,
+      };
+      const resp = await fetch(`${BACKEND_BASE_URL}/automation/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(automationPayload),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (result.taskId) {
+        task.taskId = result.taskId;
+        task.status = "RUNNING";
+      }
+    } catch (err: any) {
+      console.warn("[captcha-unblock] Retry submit failed:", err.message);
+    }
+
+    task.updatedAt = nowIso();
+    writeCaptchaUnblockData(data);
+    return json({ ok: true });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message }, { status: 500 });
   }
 }
 
@@ -1294,6 +2139,11 @@ export async function GET(
   const segments = (await params).path;
   const route = "/" + segments.join("/");
 
+  if (route !== "/employee/me") {
+    const authError = await requireConsoleAuth(req);
+    if (authError) return authError;
+  }
+
   switch (route) {
     case "/status":
       return forwardToProxy("/status", "GET");
@@ -1301,8 +2151,24 @@ export async function GET(
       return forwardToProxy("/health", "GET");
     case "/remote-token-status":
       return forwardToRemoteTokenServer();
+    case "/throttle-config": {
+      try {
+        if (!fs.existsSync(THROTTLE_CONFIG_PATH)) {
+          return json({ ok: true, config: null, path: THROTTLE_CONFIG_PATH });
+        }
+        const raw = fs.readFileSync(THROTTLE_CONFIG_PATH, "utf8");
+        const config = JSON.parse(raw);
+        return json({ ok: true, config, path: THROTTLE_CONFIG_PATH });
+      } catch (err: any) {
+        return json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
     case "/access-keys":
-      return handleAccessKeys();
+      return handleAccessKeys(req);
+    case "/employee/me":
+      return handleEmployeeMe(req);
+    case "/employees":
+      return handleEmployeesAdmin();
     case "/family-pool":
       return handleFamilyPool();
     case "/accounts": {
@@ -1353,9 +2219,411 @@ export async function GET(
         return json({ accounts: [], error: err.message });
       }
     }
+    case "/captcha-unblock/status":
+      return handleCaptchaUnblockStatus();
+    case "/adspower-import-status":
+      return handleAdspowerImportStatus(req);
+    case "/adspower-import-history":
+      return handleAdspowerImportHistory(req);
     default:
       return json({ error: "Not found" }, { status: 404 });
   }
+}
+
+// ─── AdsPower batch import: file-based profile lock + parallel workers ────
+
+const PROFILE_LOCK_DIR = path.join(DATA_DIR, "profile-locks");
+
+const ADSPOWER_HISTORY_FILE = path.join(DATA_DIR, "adspower-history.json");
+
+function loadAdspowerBatches(): Map<string, any> {
+  try {
+    if (fs.existsSync(ADSPOWER_HISTORY_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ADSPOWER_HISTORY_FILE, "utf8"));
+      return new Map(Object.entries(data));
+    }
+  } catch { /* ignore */ }
+  return new Map();
+}
+
+function saveAdspowerBatches(batches: Map<string, any>) {
+  try {
+    fs.writeFileSync(ADSPOWER_HISTORY_FILE, JSON.stringify(Object.fromEntries(batches), null, 2));
+  } catch { /* ignore */ }
+}
+
+// In-memory batch state backed by file
+const _adspowerBatches = loadAdspowerBatches();
+
+function lockProfile(profileId: string, owner: string): boolean {
+  if (!fs.existsSync(PROFILE_LOCK_DIR)) fs.mkdirSync(PROFILE_LOCK_DIR, { recursive: true });
+  const lockFile = path.join(PROFILE_LOCK_DIR, `${profileId}.lock`);
+  try {
+    // Check if lock exists and is stale (> 10 minutes)
+    if (fs.existsSync(lockFile)) {
+      const stat = fs.statSync(lockFile);
+      const ageMs = Date.now() - stat.mtimeMs;
+      if (ageMs < 10 * 60 * 1000) return false; // lock is fresh, profile is busy
+      // Stale lock — remove it
+    }
+    fs.writeFileSync(lockFile, JSON.stringify({ owner, lockedAt: new Date().toISOString(), pid: process.pid }), { flag: "wx" });
+    return true;
+  } catch {
+    // writeFileSync with 'wx' fails if file exists (race condition safe)
+    // If it exists, try the stale check
+    try {
+      if (fs.existsSync(lockFile)) {
+        const stat = fs.statSync(lockFile);
+        if (Date.now() - stat.mtimeMs >= 10 * 60 * 1000) {
+          fs.unlinkSync(lockFile);
+          fs.writeFileSync(lockFile, JSON.stringify({ owner, lockedAt: new Date().toISOString(), pid: process.pid }));
+          return true;
+        }
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+}
+
+function unlockProfile(profileId: string): void {
+  try {
+    const lockFile = path.join(PROFILE_LOCK_DIR, `${profileId}.lock`);
+    if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
+  } catch { /* ignore */ }
+}
+
+function touchProfileLock(profileId: string): void {
+  try {
+    const lockFile = path.join(PROFILE_LOCK_DIR, `${profileId}.lock`);
+    if (fs.existsSync(lockFile)) {
+      const now = new Date();
+      fs.utimesSync(lockFile, now, now);
+    }
+  } catch { /* ignore */ }
+}
+
+function getAdspowerConfig(): { url: string; apiKey: string; profileIds: string[] } {
+  const cfg = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
+  const adspower = cfg?.employee?.adspower || {};
+  return {
+    url: String(adspower.url || "http://localhost:50325"),
+    apiKey: String(adspower.apiKey || ""),
+    profileIds: Array.isArray(adspower.profileIds) ? adspower.profileIds : [],
+  };
+}
+
+function findWorkerScript(): string {
+  // Try several locations
+  const candidates = [
+    path.join(process.cwd(), "bundled-rosetta", "employee-auto-import", "index.js"),
+    path.join(process.cwd(), "..", "gfa-extension", "bundled-rosetta", "employee-auto-import", "index.js"),
+    path.resolve(DATA_DIR, "..", "employee-auto-import", "index.js"),
+  ];
+  // Also check the extension directory pattern
+  const antigravityExt = path.join(os.homedir(), ".antigravity", "extensions");
+  if (fs.existsSync(antigravityExt)) {
+    try {
+      const dirs = fs.readdirSync(antigravityExt).filter(d => d.startsWith("bingcha.bcai-account-assistant"));
+      for (const d of dirs.sort().reverse()) {
+        candidates.push(path.join(antigravityExt, d, "bundled-rosetta", "employee-auto-import", "index.js"));
+      }
+    } catch { /* ignore */ }
+  }
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  throw new Error("找不到 employee-auto-import/index.js 脚本");
+}
+
+function spawnImportWorker(
+  workerScript: string,
+  input: Record<string, unknown>,
+  onProgress: (msg: string) => void
+): Promise<{ ok: boolean; refreshToken?: string; email?: string; projectId?: string; error?: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("node", [workerScript], {
+      cwd: path.dirname(workerScript),
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+    let lastResult: any = null;
+    let stdoutBuf = "";
+    let stderrBuf = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuf += chunk.toString("utf8");
+      const lines = stdoutBuf.split("\n");
+      stdoutBuf = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "progress") onProgress(msg.message);
+          else if (msg.type === "result") lastResult = msg;
+        } catch { /* ignore */ }
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => { stderrBuf += chunk.toString("utf8"); });
+
+    child.on("close", (code) => {
+      if (stdoutBuf.trim()) {
+        try {
+          const msg = JSON.parse(stdoutBuf.trim());
+          if (msg.type === "result") lastResult = msg;
+        } catch { /* ignore */ }
+      }
+      resolve(lastResult || { ok: false, error: `Worker 退出 (code=${code})${stderrBuf ? `: ${stderrBuf.substring(0, 300)}` : ""}` });
+    });
+
+    child.on("error", (err) => { resolve({ ok: false, error: `Worker 启动失败: ${err.message}` }); });
+
+    child.stdin.write(JSON.stringify(input));
+    child.stdin.end();
+  });
+}
+
+async function processOneImport(
+  batchId: string,
+  idx: number,
+  cred: { email: string; password: string; recoveryEmail?: string; totpSecret?: string },
+  profileId: string,
+  adsCfg: { url: string; apiKey: string },
+  workerScript: string
+) {
+  const batch = _adspowerBatches.get(batchId);
+  if (!batch) return;
+
+  batch.items[idx].status = "running";
+  batch.items[idx].message = `正在使用浏览器 ${profileId} 录入...`;
+  batch.running++;
+
+  // Touch lock periodically so it doesn't go stale
+  const touchTimer = setInterval(() => touchProfileLock(profileId), 60_000);
+
+  try {
+    const result = await spawnImportWorker(workerScript, {
+      adspowerUrl: adsCfg.url,
+      adspowerApiKey: adsCfg.apiKey || undefined,
+      profileId,
+      email: cred.email,
+      password: cred.password,
+      recoveryEmail: cred.recoveryEmail || undefined,
+      totpSecret: cred.totpSecret || undefined,
+    }, (msg) => {
+      if (batch) batch.items[idx].message = msg;
+    });
+
+    if (result.ok && result.refreshToken) {
+      // Write to accounts.json
+      try {
+        console.log(`[processOneImport] START SAVE for ${cred.email}`);
+        const accountsData = readAccountsData();
+        const email = String(result.email || cred.email).trim();
+        console.log(`[processOneImport] READ: ${accountsData.accounts.length} accounts. Has ${email}: ${accountsData.accounts.some(a => normalizeEmail(a.email) === normalizeEmail(email))}`);
+        const existingIdx = accountsData.accounts.findIndex(a => normalizeEmail(a.email) === normalizeEmail(email));
+        const maxId = accountsData.accounts.reduce((m, a) => Math.max(m, a.id || 0), 0);
+        const hasProjectId = Boolean(result.projectId);
+        const patch: any = {
+          email,
+          refreshToken: result.refreshToken,
+          enabled: hasProjectId,  // Only enable if we got a projectId
+          loginPassword: cred.password,
+          recoveryEmail: cred.recoveryEmail || "",
+          totpSecret: cred.totpSecret || "",
+          oauthProfile: "antigravity",
+          ...(result.projectId ? { projectId: result.projectId } : {}),
+        };
+        if (existingIdx >= 0) {
+          accountsData.accounts[existingIdx] = { ...accountsData.accounts[existingIdx], ...patch };
+          console.log(`[processOneImport] UPDATED existing at idx=${existingIdx}, total=${accountsData.accounts.length}`);
+        } else {
+          accountsData.accounts.push({ id: maxId + 1, alias: "", ...patch });
+          console.log(`[processOneImport] APPENDED as id=${maxId + 1}, total=${accountsData.accounts.length}`);
+        }
+        writeAccountsData(accountsData);
+        console.log(`[processOneImport] WRITE COMPLETE for ${email}`);
+
+        // Post-save verification: confirm the account is actually in the file
+        const verifyData = readAccountsData();
+        const savedOk = verifyData.accounts.some(a => normalizeEmail(a.email) === normalizeEmail(email));
+        console.log(`[processOneImport] VERIFY: ${verifyData.accounts.length} accounts. Has ${email}: ${savedOk}`);
+        if (!savedOk) {
+          console.error(`[processOneImport] ⚠ ACCOUNT NOT FOUND AFTER WRITE: ${email} (total: ${verifyData.accounts.length})`);
+          batch.items[idx].status = "failed";
+          batch.items[idx].message = `⚠️ 写入验证失败: 账号未保存到文件中`;
+        } else {
+          console.log(`[processOneImport] Notifying proxy reload for ${email}...`);
+          await notifyProxyReload();
+          console.log(`[processOneImport] Proxy reload done for ${email}. Checking file again...`);
+          // Check if the account survived the proxy reload
+          const postReloadData = readAccountsData();
+          const survivedReload = postReloadData.accounts.some(a => normalizeEmail(a.email) === normalizeEmail(email));
+          console.log(`[processOneImport] POST-RELOAD: ${postReloadData.accounts.length} accounts. Has ${email}: ${survivedReload}`);
+          if (!survivedReload) {
+            console.error(`[processOneImport] ⚠⚠⚠ ACCOUNT DISAPPEARED AFTER PROXY RELOAD: ${email} (was ${verifyData.accounts.length}, now ${postReloadData.accounts.length})`);
+          }
+
+          if (hasProjectId) {
+            batch.items[idx].status = "success";
+            batch.items[idx].message = `✅ 录入成功 (项目: ${result.projectId})`;
+            batch.items[idx].projectId = result.projectId;
+          } else {
+            batch.items[idx].status = "failed";
+            batch.items[idx].message = `⚠️ 已获取Token但未拿到项目号，账号已保存但未启用`;
+          }
+        }
+      } catch (saveErr: any) {
+        console.error(`[processOneImport] SAVE ERROR for ${cred.email}: ${saveErr.message}`);
+        batch.items[idx].status = "failed";
+        batch.items[idx].message = `保存失败: ${saveErr.message}`;
+      }
+    } else {
+      batch.items[idx].status = "failed";
+      batch.items[idx].message = `❌ ${result.error || "未知错误"}`;
+    }
+  } catch (err: any) {
+    batch.items[idx].status = "failed";
+    batch.items[idx].message = `❌ 异常: ${err.message}`;
+  } finally {
+    clearInterval(touchTimer);
+    unlockProfile(profileId);
+    batch.running--;
+    batch.completed++;
+    saveAdspowerBatches(_adspowerBatches);
+  }
+}
+
+async function handleAdspowerImport(req: NextRequest): Promise<NextResponse> {
+  try {
+    const payload = await req.json();
+    const credentials: Array<{ email: string; password: string; recoveryEmail?: string; totpSecret?: string }> =
+      Array.isArray(payload.credentials) ? payload.credentials : [];
+
+    if (!credentials.length) {
+      return json({ ok: false, error: "请提供至少一个账号凭证" }, { status: 400 });
+    }
+
+    const adsCfg = getAdspowerConfig();
+    if (!adsCfg.profileIds.length) {
+      return json({ ok: false, error: "未配置 AdsPower Profile ID，请先在插件中配置" }, { status: 400 });
+    }
+
+    const workerScript = findWorkerScript();
+    const batchId = `batch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+    // Read existing accounts to skip them
+    let existingEmails = new Set<string>();
+    try {
+      const data = JSON.parse(fs.readFileSync(ACCOUNTS_PATH, "utf8"));
+      if (Array.isArray(data.accounts)) {
+        existingEmails = new Set(data.accounts.map((a: any) => String(a.email || "").trim().toLowerCase()));
+      }
+    } catch { /* ignore */ }
+
+    const initialItems = credentials.map((c) => {
+      const emailLower = String(c.email || "").trim().toLowerCase();
+      if (existingEmails.has(emailLower)) {
+        return { email: c.email, status: "success" as const, message: "已在库中 (自动跳过)" };
+      }
+      return { email: c.email, status: "pending" as const, message: "排队中" };
+    });
+
+    // Initialize batch state
+    _adspowerBatches.set(batchId, {
+      items: initialItems,
+      total: credentials.length,
+      completed: initialItems.filter(i => i.status === "success").length,
+      running: 0,
+      createdAt: new Date().toISOString(),
+    });
+    saveAdspowerBatches(_adspowerBatches);
+
+    // Fire-and-forget: process all credentials with parallel profiles
+    void (async () => {
+      const batch = _adspowerBatches.get(batchId)!;
+      // Only queue the ones that are still "pending"
+      const queue = [...credentials.map((c, i) => ({ cred: c, idx: i })).filter((_, i) => initialItems[i].status === "pending")];
+
+      async function tryProcessNext() {
+        while (queue.length > 0) {
+          // Find an available profile
+          let profileId: string | null = null;
+          for (const pid of adsCfg.profileIds) {
+            if (lockProfile(pid, `web-batch-${batchId}`)) {
+              profileId = pid;
+              break;
+            }
+          }
+          if (!profileId) {
+            // All profiles busy, wait and retry
+            await new Promise(r => setTimeout(r, 5000));
+            continue;
+          }
+
+          const item = queue.shift();
+          if (!item) {
+            unlockProfile(profileId);
+            break;
+          }
+
+          // Process in background, don't await — allows parallel processing
+          void processOneImport(batchId, item.idx, item.cred, profileId, adsCfg, workerScript);
+
+          // Small delay before trying to grab next profile
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+      await tryProcessNext();
+
+      // Wait for all running workers to finish
+      while (batch.running > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      saveAdspowerBatches(_adspowerBatches);
+    })();
+
+    return json({ ok: true, batchId, total: credentials.length });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+function handleAdspowerImportStatus(req: NextRequest): NextResponse {
+  const batchId = new URL(req.url).searchParams.get("batchId") || "";
+  const batch = _adspowerBatches.get(batchId);
+  if (!batch) {
+    return json({ ok: false, error: "批次不存在" }, { status: 404 });
+  }
+  return json({
+    ok: true,
+    batchId,
+    items: batch.items,
+    total: batch.total,
+    completed: batch.completed,
+    running: batch.running,
+    done: batch.completed >= batch.total,
+  });
+}
+
+function handleAdspowerImportHistory(req: NextRequest): NextResponse {
+  // Combine all items from all batches, sorted by newest first
+  const allBatches = Array.from(_adspowerBatches.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const items = allBatches.flatMap(b => b.items);
+  
+  const total = items.length;
+  const completed = items.filter(i => i.status === "success" || i.status === "failed").length;
+  const running = items.filter(i => i.status === "running").length;
+  
+  return json({
+    ok: true,
+    items,
+    total,
+    completed,
+    running,
+    done: running === 0 && items.filter(i => i.status === "pending").length === 0,
+  });
 }
 
 export async function OPTIONS() {
@@ -1368,6 +2636,11 @@ export async function POST(
 ) {
   const segments = (await params).path;
   const route = "/" + segments.join("/");
+
+  if (!["/employee/register", "/employee/login", "/employee/submit-account"].includes(route)) {
+    const authError = await requireConsoleAuth(req);
+    if (authError) return authError;
+  }
 
   switch (route) {
     case "/exchange-oob":
@@ -1396,10 +2669,77 @@ export async function POST(
       return handleFamilyReplace(req);
     case "/family-activate-child":
       return handleFamilyActivateChild(req);
+    case "/family-child":
+      return handleFamilyChild(req);
     case "/access-key":
       return handleCreateAccessKey(req);
     case "/access-key-update":
       return handleUpdateAccessKey(req);
+    case "/employee/register":
+      return handleEmployeeRegister(req);
+    case "/employee/login":
+      return handleEmployeeLogin(req);
+    case "/employee/submit-account":
+      return handleEmployeeSubmitAccount(req);
+    case "/unblock-location":
+      return forwardToRemoteTokenServerPost("/unblock-location");
+    case "/unblock-accounts": {
+      const body = await req.text();
+      return forwardToRemoteTokenServerPostWithBody("/unblock-accounts", body);
+    }
+    case "/captcha-unblock":
+      return handleCaptchaUnblock(req);
+    case "/captcha-unblock/retry":
+      return handleCaptchaUnblockRetry(req);
+    case "/adspower-import":
+      return handleAdspowerImport(req);
+    case "/adspower-import-status":
+      return handleAdspowerImportStatus(req);
+    case "/adspower-import-history":
+      return handleAdspowerImportHistory(req);
+    case "/toggle-account": {
+      const body = await req.text();
+      return forwardToRemoteTokenServerPostWithBody("/toggle-account", body);
+    }
+    case "/export-accounts": {
+      try {
+        const payload = await req.json();
+        const ids: number[] = Array.isArray(payload.accountIds)
+          ? payload.accountIds.map((v: any) => Number(v)).filter((v: number) => Number.isFinite(v) && v > 0)
+          : [];
+        if (!ids.length) {
+          return json({ ok: false, error: "accountIds array is required" }, { status: 400 });
+        }
+        const data = readAccountsData();
+        const idSet = new Set(ids);
+        const lines = data.accounts
+          .filter((a) => idSet.has(a.id))
+          .map((a) => `${a.email}-----${a.refreshToken || ""}`);
+        return json({ ok: true, lines });
+      } catch (err: any) {
+        return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+      }
+    }
+    case "/throttle-config": {
+      try {
+        const payload = await req.json();
+        if (payload.delete) {
+          if (fs.existsSync(THROTTLE_CONFIG_PATH)) {
+            fs.unlinkSync(THROTTLE_CONFIG_PATH);
+          }
+          return json({ ok: true, deleted: true });
+        }
+        const config = payload.config;
+        if (!config || typeof config !== "object") {
+          return json({ ok: false, error: "config object is required" }, { status: 400 });
+        }
+        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(THROTTLE_CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+        return json({ ok: true, saved: true, path: THROTTLE_CONFIG_PATH });
+      } catch (err: any) {
+        return json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
     default:
       return json({ error: "Not found" }, { status: 404 });
   }

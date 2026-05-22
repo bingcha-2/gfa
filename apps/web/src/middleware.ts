@@ -7,6 +7,7 @@ import { CONSOLE_AUTH_COOKIE } from "./lib/auth-cookie";
 // Default: "console" → /console/login
 // Production: set to any random string, e.g. "manage-x7k2p"
 const ADMIN_PREFIX = (process.env.ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "");
+const PROTECTED_STATIC_PAGES = new Set(["/add-account.html"]);
 
 // Comma-separated list of allowed client IPs for admin routes.
 // Leave empty to allow all IPs (useful when client IP is dynamic).
@@ -67,8 +68,9 @@ export function middleware(request: NextRequest) {
   }
 
   const isAdminRequest = isAdminPageRoute || isAdminApiRoute;
+  const isProtectedStaticPage = PROTECTED_STATIC_PAGES.has(pathname);
 
-  if (!isAdminRequest) {
+  if (!isAdminRequest && !isProtectedStaticPage) {
     // Public routes — pass through unconditionally.
     return NextResponse.next();
   }
@@ -91,7 +93,7 @@ export function middleware(request: NextRequest) {
   }
 
   // ── 4. Auth guard ─────────────────────────────────────────────────────────
-  if (isAdminPageRoute) {
+  if (isAdminPageRoute || isProtectedStaticPage) {
     const loginPath = `/${ADMIN_PREFIX}/login`;
     const isLoginPage = pathname === loginPath || pathname.startsWith(`${loginPath}/`);
 
@@ -100,6 +102,9 @@ export function middleware(request: NextRequest) {
       if (!hasToken) {
         const loginUrl = request.nextUrl.clone();
         loginUrl.pathname = loginPath;
+        if (isProtectedStaticPage) {
+          loginUrl.searchParams.set("next", pathname);
+        }
         return NextResponse.redirect(loginUrl);
       }
     }
@@ -110,5 +115,5 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // Run on all paths except Next.js internals and static assets.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|updates/).*)"]
 };

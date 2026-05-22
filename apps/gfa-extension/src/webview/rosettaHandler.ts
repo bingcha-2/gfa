@@ -906,6 +906,20 @@ export async function handleRosettaMessage(
         return;
       }
 
+      case "rosetta:toggleDebugMode": {
+        const state = getState();
+        const enabled = Boolean(message.payload?.enabled);
+        log(`[调试模式] 切换请求: enabled=${enabled}`);
+        try {
+          await rosettaProcess.toggleDebugMode(state, enabled);
+          await refreshAndPush();
+          log(`[调试模式] 已设置为 ${enabled}`);
+        } catch (err: any) {
+          log(`[调试模式] 失败: ${err.message}`);
+        }
+        return;
+      }
+
       case "rosetta:toggleAccount": {
         const state = getState();
         const toggleId = Number(message.payload?.accountId);

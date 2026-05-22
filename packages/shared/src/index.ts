@@ -97,6 +97,12 @@ export type AutomationPayload = {
   oauthState?: string;
   /** Phone numbers for verification (accept-invite & phone-verify only) */
   phones?: PhoneInfo[];
+  /** Optional AdsPower profile override for one-off maintenance tasks. */
+  profileId?: string;
+  /** Leave the AdsPower browser open when Google requires manual verification. */
+  keepBrowserOpenOnChallenge?: boolean;
+  /** Optional caller label for task diagnostics. */
+  source?: string;
 };
 
 // Redis key prefixes used by worker infrastructure

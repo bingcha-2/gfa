@@ -209,6 +209,9 @@ export function PublicPortal({ defaultTab = "submit" }: PublicPortalProps) {
                 <a href="https://bcai.online/" target="_blank" rel="noopener noreferrer" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600, background: '#ea580c', color: '#fff', borderColor: '#ea580c' }}>
                   冰茶API →
                 </a>
+                <a href="/download" className="button secondary" style={{ fontSize: '13px', padding: '0 20px', minHeight: '38px', fontWeight: 600, background: '#1d4ed8', color: '#fff', borderColor: '#1d4ed8' }}>
+                  ⬇ 下载客户端
+                </a>
               </div>
             </div>
             <div style={{ borderTop: '1px solid rgba(234, 88, 12, 0.2)', paddingTop: '10px' }}>

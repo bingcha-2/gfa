@@ -13,6 +13,7 @@
     "test": "node tests/config.test.js && node tests/tool-bridge.test.js && node tests/prompt-window.test.js && node tests/quota-poller.test.js && node tests/quota-tracker.test.js && node tests/token-manager.test.js && node tests/token-proxy.test.js && node tests/manager-extension.test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0"
+    "better-sqlite3": "^12.8.0",
+    "puppeteer-core": "^24.43.0"
   }
 }

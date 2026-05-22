@@ -11,13 +11,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Clock, Zap, Loader2, AlertTriangle, Users, RefreshCw, Trash2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Clock, Zap, Loader2, AlertTriangle, Users, RefreshCw, Trash2, Save } from "lucide-react";
 
 type ScanStatus = {
   pendingCount: number;
   expiredMemberCount: number;
   lastRunAt: string | null;
   lastRunCount: number;
+};
+type ScanConfig = {
+  intervalMinutes: number;
+  options: number[];
 };
 type ProcessedOrder = { orderId: string; orderNo: string; userEmail: string; familyGroupId: string | null };
 type RunResult = { triggered: boolean; processedCount: number; orders: ProcessedOrder[] };
@@ -56,6 +61,14 @@ function fmtDate(iso: string | null | undefined) {
   return iso ? new Date(iso).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "medium" }) : "—";
 }
 
+function intervalLabel(minutes: number): string {
+  if (minutes === 0) return "从不（已禁用）";
+  if (minutes < 60) return `每 ${minutes} 分钟`;
+  if (minutes === 60) return "每小时";
+  if (minutes < 1440) return `每 ${minutes / 60} 小时`;
+  return "每天";
+}
+
 function expiredAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
   const hours = Math.floor(diff / (1000 * 60 * 60));
@@ -75,6 +88,11 @@ export default function ExpirePage() {
   const [error, setError] = useState<string | null>(null);
   const [isScanning, startScanTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<"members" | "orders">("members");
+
+  // Scan config state
+  const [config, setConfig] = useState<ScanConfig | null>(null);
+  const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
+  const [isSavingConfig, startConfigTransition] = useTransition();
 
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -107,10 +125,36 @@ export default function ExpirePage() {
     } catch (err) { setError(getErrorMessage(err)); }
   }
 
+  async function loadConfig() {
+    try {
+      const data = await apiRequest<ScanConfig>("admin/expire-scan/config");
+      setConfig(data);
+      setSelectedInterval(data.intervalMinutes);
+    } catch { /* ignore */ }
+  }
+
+  function saveConfig() {
+    if (selectedInterval === null) return;
+    startConfigTransition(async () => {
+      try {
+        const data = await apiRequest<ScanConfig>("admin/expire-scan/config", {
+          method: "POST",
+          body: { intervalMinutes: selectedInterval },
+        });
+        setConfig(data);
+        setSelectedInterval(data.intervalMinutes);
+        toast.success("扫描频率已更新为：" + intervalLabel(data.intervalMinutes));
+      } catch (err) {
+        toast.error(getErrorMessage(err));
+      }
+    });
+  }
+
   useEffect(() => {
     loadExpiredMembers();
     loadExpiredOrders();
     loadStatus();
+    loadConfig();
   }, []);
 
   function triggerScan() {
@@ -225,7 +269,7 @@ export default function ExpirePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5" />扫描操作</CardTitle>
-            <CardDescription>每小时自动扫描，也可手动立即触发</CardDescription>
+            <CardDescription>自动扫描到期订单和成员，也可手动立即触发</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex gap-2">
@@ -238,7 +282,45 @@ export default function ExpirePage() {
               </Button>
             </div>
             <div className="flex items-center justify-between py-2 border-b text-sm">
-              <span className="text-muted-foreground">执行频率</span><span className="font-mono font-medium">每小时</span>
+              <span className="text-muted-foreground">执行频率</span>
+              <div className="flex items-center gap-2">
+                {config ? (
+                  <>
+                    <Select
+                      value={String(selectedInterval ?? config.intervalMinutes)}
+                      onValueChange={(v) => setSelectedInterval(Number(v))}
+                    >
+                      <SelectTrigger className="w-[160px] h-8 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {config.options.map((opt) => (
+                          <SelectItem key={opt} value={String(opt)}>
+                            {intervalLabel(opt)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedInterval !== null && selectedInterval !== config.intervalMinutes && (
+                      <Button size="sm" variant="default" className="h-8" onClick={saveConfig} disabled={isSavingConfig}>
+                        {isSavingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <span className="font-mono text-sm text-muted-foreground">加载中...</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b text-sm">
+              <span className="text-muted-foreground">当前状态</span>
+              <span className="font-mono font-medium">
+                {config
+                  ? config.intervalMinutes === 0
+                    ? "⏸ 已禁用"
+                    : `✅ ${intervalLabel(config.intervalMinutes)}`
+                  : "—"}
+              </span>
             </div>
             <div className="flex items-center justify-between py-2 text-sm">
               <span className="text-muted-foreground">上次处理</span><span className="font-bold">{status?.lastRunCount ?? "—"} 条</span>

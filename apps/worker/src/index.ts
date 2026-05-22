@@ -83,8 +83,25 @@ const depsWithInviteQueue = { ...deps, inviteQueue: inviteQueueRef, syncQueue: s
 // Concurrency = pool size: each job needs an AdsPower profile, so there's no
 // point dispatching more concurrent jobs than available profiles — extras would
 // just spin in acquireForAccount() waiting for a free profile.
-const WORKER_CONCURRENCY = pool.poolSize;
-console.log(`[${workerId}] Pool size: ${pool.poolSize}, worker concurrency: ${WORKER_CONCURRENCY}`);
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const WORKER_CONCURRENCY = Math.min(
+  pool.poolSize,
+  parsePositiveIntEnv("WORKER_CONCURRENCY", pool.poolSize)
+);
+const AUTOMATION_CONCURRENCY = Math.min(
+  WORKER_CONCURRENCY,
+  parsePositiveIntEnv("AUTOMATION_CONCURRENCY", Math.min(3, WORKER_CONCURRENCY))
+);
+console.log(
+  `[${workerId}] Pool size: ${pool.poolSize}, worker concurrency: ${WORKER_CONCURRENCY}, ` +
+    `automation concurrency: ${AUTOMATION_CONCURRENCY}`
+);
 
 const inviteWorker = new Worker<InviteMemberPayload>(
   QUEUE_NAMES.invite,
@@ -153,7 +170,7 @@ const automationWorker = new Worker<AutomationPayload>(
   },
   {
     connection,
-    concurrency: WORKER_CONCURRENCY,
+    concurrency: AUTOMATION_CONCURRENCY,
     lockDuration: 600_000, // 10 min — compound tasks with multiple logins need extra time
     stalledInterval: 120_000,
   }
@@ -165,14 +182,39 @@ const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWo
 // If the worker crashed mid-task, the DB task stays in RUNNING forever.
 // On restart, reset any RUNNING tasks to FAILED_RETRYABLE so they can be retried.
 async function cleanupStalledTasks(): Promise<void> {
+  const rosettaResult = await prisma.task.updateMany({
+    where: {
+      status: { in: ["RUNNING", "PENDING"] },
+      OR: [
+        { source: "rosetta-account-repair" },
+        { payload: { contains: '"source":"rosetta-account-repair"' } },
+      ],
+    },
+    data: {
+      status: "FAILED_FINAL",
+      lastErrorCode: "WORKER_RESTART",
+      lastErrorMessage: `Worker ${workerId} restarted during Rosetta account repair - task will not be retried`,
+    },
+  });
   const result = await prisma.task.updateMany({
-    where: { status: { in: ["RUNNING", "PENDING"] } },
+    where: {
+      status: { in: ["RUNNING", "PENDING"] },
+      NOT: {
+        OR: [
+          { source: "rosetta-account-repair" },
+          { payload: { contains: '"source":"rosetta-account-repair"' } },
+        ],
+      },
+    },
     data: {
       status: "FAILED_RETRYABLE",
       lastErrorCode: "WORKER_RESTART",
       lastErrorMessage: `Worker ${workerId} restarted — task may have been in progress`,
     },
   });
+  if (rosettaResult.count > 0) {
+    console.log(`[${workerId}] Cleaned up ${rosettaResult.count} Rosetta repair RUNNING/PENDING task(s) -> FAILED_FINAL`);
+  }
   if (result.count > 0) {
     console.log(`[${workerId}] Cleaned up ${result.count} orphaned RUNNING/PENDING task(s) → FAILED_RETRYABLE`);
   }
@@ -251,12 +293,37 @@ for (const worker of workers) {
     );
 
     // Extract taskId from the BullMQ jobId (format: "automation-<taskId>")
-    // Only update THIS specific task, not all RUNNING tasks
+    // Only update THIS specific task, not all RUNNING tasks.
+    // Rosetta account repair is manual by design: never mark it retryable,
+    // otherwise BullMQ can re-open the browser after the user closes it.
     const taskId = jobId.replace(/^automation-/, "");
     prisma.task.updateMany({
       where: {
         id: taskId,
         status: { in: ["RUNNING", "PENDING"] },
+        OR: [
+          { source: "rosetta-account-repair" },
+          { payload: { contains: '"source":"rosetta-account-repair"' } },
+        ],
+      },
+      data: {
+        status: "FAILED_FINAL",
+        lastErrorCode: "STALLED",
+        lastErrorMessage: `BullMQ job ${jobId} stalled during Rosetta account repair - task will not be retried`,
+      },
+    }).catch((err: Error) =>
+      console.error(`[${workerId}] Failed to update stalled Rosetta repair task in DB:`, err.message)
+    );
+    prisma.task.updateMany({
+      where: {
+        id: taskId,
+        status: { in: ["RUNNING", "PENDING"] },
+        NOT: {
+          OR: [
+            { source: "rosetta-account-repair" },
+            { payload: { contains: '"source":"rosetta-account-repair"' } },
+          ],
+        },
       },
       data: {
         status: "FAILED_RETRYABLE",

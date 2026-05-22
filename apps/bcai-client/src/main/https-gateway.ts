@@ -4,6 +4,8 @@
  */
 import * as https from 'https'
 import * as http from 'http'
+import * as fs from 'fs'
+import * as path from 'path'
 import { CertManager } from './cert-manager'
 
 export interface GatewayOptions {
@@ -26,12 +28,134 @@ export class HttpsGateway {
   private requestCount = 0
   private _running = false
   private logFn: (msg: string) => void
+  private _dnsOverridePath: string | null = null
+  private accessLogPath: string
 
   constructor(options: GatewayOptions) {
     this.options = options
     this.certManager = new CertManager(options.dataDir)
     this.logFn = options.log || console.log
+    this.accessLogPath = path.join(options.dataDir, 'logs', 'https-gateway.log')
   }
+
+  private writeAccessLog(entry: Record<string, unknown>): void {
+    try {
+      fs.mkdirSync(path.dirname(this.accessLogPath), { recursive: true })
+      fs.appendFileSync(this.accessLogPath, JSON.stringify({
+        ts: new Date().toISOString(),
+        ...entry,
+      }) + '\n', 'utf8')
+    } catch {
+      // Diagnostics must never break forwarding.
+    }
+  }
+
+  private summarizeBody(body: Buffer): Record<string, unknown> {
+    const summary: Record<string, unknown> = { bodyBytes: body.length }
+    if (!body.length) return summary
+
+    const text = body.toString('utf8')
+    summary.bodyPrefix = text.slice(0, 300)
+
+    try {
+      const payload = JSON.parse(text)
+      const model =
+        payload.model ||
+        payload.modelName ||
+        payload.name ||
+        payload.request?.model ||
+        payload.generationConfig?.model ||
+        payload.metadata?.model
+      if (model) summary.model = model
+      if (Array.isArray(payload.contents)) summary.contentsCount = payload.contents.length
+      if (Array.isArray(payload.messages)) summary.messagesCount = payload.messages.length
+      if (payload.enabledCreditTypes) summary.enabledCreditTypes = payload.enabledCreditTypes
+      if (payload.project || payload.projectId) summary.project = payload.project || payload.projectId
+    } catch {
+      summary.bodyJson = false
+    }
+
+    return summary
+  }
+
+  /**
+   * 写入 DNS 覆盖脚本，用于注入到 token-proxy 进程
+   * 原理：用 dns.resolve4（走 DNS 服务器，绕过 hosts）替代 dns.lookup（受 hosts 影响）
+   * TUN 模式下 DNS 返回虚拟 IP，TUN 自动路由到代理
+   */
+  writeDnsOverride(): string {
+    const domains = Array.isArray(this.options.domains) ? this.options.domains : [this.options.domains]
+    const domainList = domains.map(d => `  '${d}'`).join(',\n')
+
+    const script = `// Auto-generated DNS override for BCAI Gateway
+// 让 token-proxy 绕过 hosts 文件，通过 DNS 服务器解析域名
+// hosts 只影响 dns.lookup，不影响 dns.resolve4
+const dns = require('dns');
+const origLookup = dns.lookup;
+const interceptedDomains = new Set([
+${domainList}
+]);
+dns.lookup = function(hostname, options, callback) {
+  if (typeof options === 'function') {
+    callback = options;
+    options = {};
+  }
+  if (interceptedDomains.has(hostname)) {
+    // 用 dns.resolve4 绕过 hosts 文件
+    var wantAll = options && options.all;
+    return dns.resolve4(hostname, function(err, addresses) {
+      if (err || !addresses || addresses.length === 0) {
+        // resolve4 失败，回退到原始 lookup
+        return origLookup.call(dns, hostname, options, callback);
+      }
+      if (wantAll) {
+        // options.all=true: 返回数组 [{address, family}, ...]
+        return callback(null, addresses.map(function(a) { return { address: a, family: 4 }; }));
+      }
+      // 单结果: callback(err, address, family)
+      return callback(null, addresses[0], 4);
+    });
+  }
+  return origLookup.call(dns, hostname, options, callback);
+};
+`
+
+    const overridePath = path.join(this.options.dataDir, 'dns-override.js')
+    fs.writeFileSync(overridePath, script, 'utf8')
+    fs.appendFileSync(overridePath, `
+;(() => {
+  const fixedARecords = {
+    'cloudcode-pa.googleapis.com': ['142.251.24.95', '142.250.23.95', '142.250.21.95', '142.251.23.95'],
+    'daily-cloudcode-pa.googleapis.com': ['142.250.23.95', '142.251.24.95', '142.251.23.95', '142.250.21.95']
+  };
+  const previousLookup = dns.lookup;
+  function normalizeHost(hostname) {
+    return String(hostname || '').replace(/\\.$/, '').toLowerCase();
+  }
+  dns.lookup = function(hostname, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    const normalized = normalizeHost(hostname);
+    const addresses = fixedARecords[normalized];
+    if (addresses && addresses.length > 0) {
+      if (options && options.all) {
+        return callback(null, addresses.map(function(address) { return { address, family: 4 }; }));
+      }
+      return callback(null, addresses[Math.floor(Math.random() * addresses.length)], 4);
+    }
+    return previousLookup.call(dns, hostname, options, callback);
+  };
+})();
+`, 'utf8')
+    this._dnsOverridePath = overridePath
+    this.logFn(`[Gateway] DNS 覆盖脚本已写入: ${overridePath}`)
+    this.logFn(`[Gateway] 拦截域名: ${domains.join(', ')}`)
+    return overridePath
+  }
+
+  get dnsOverridePath(): string | null { return this._dnsOverridePath }
 
   /** 启动网关 */
   start(): Promise<void> {
@@ -101,16 +225,37 @@ export class HttpsGateway {
     this.requestCount++
     const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     const reqId = this.requestCount
-    this.logFn(`[Gateway] [${ts}] #${reqId} ${req.method} ${req.url}`)
+    const startedAt = Date.now()
+    const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host
+    const sni = (req.socket as any)?.servername || ''
+    const authState = req.headers.authorization ? 'present' : 'missing'
+    this.logFn(`[Gateway] [${ts}] #${reqId} host=${host || '-'} sni=${sni || '-'} ${req.method} ${req.url}`)
 
     const target = new URL(this.options.proxyTarget)
-    const isGenerate = req.url?.includes('streamGenerateContent') || false
+    const isGenerate =
+      req.url?.includes('streamGenerateContent') ||
+      req.url?.includes(':generateContent') ||
+      req.url?.includes('generateContent') ||
+      false
 
     // 缓冲请求体
     const bodyChunks: Buffer[] = []
     req.on('data', (chunk: Buffer) => bodyChunks.push(chunk))
     req.on('end', () => {
       const body = Buffer.concat(bodyChunks)
+      this.writeAccessLog({
+        reqId,
+        phase: 'inbound',
+        host,
+        sni,
+        method: req.method,
+        url: req.url,
+        auth: authState,
+        contentType: req.headers['content-type'] || '',
+        userAgent: req.headers['user-agent'] || '',
+        isGenerate,
+        ...this.summarizeBody(body),
+      })
 
       const proxyReq = http.request(
         {
@@ -120,18 +265,50 @@ export class HttpsGateway {
           method: req.method,
           headers: {
             ...req.headers,
-            host: target.host,
             'content-length': String(body.length),
           },
         },
         (proxyRes) => {
-          res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
-          proxyRes.pipe(res)
+          this.writeAccessLog({
+            reqId,
+            phase: 'response',
+            host,
+            method: req.method,
+            url: req.url,
+            statusCode: proxyRes.statusCode || 0,
+            durationMs: Date.now() - startedAt,
+            target: this.options.proxyTarget,
+          })
+          // 捕获非200响应体用于调试
+          if (proxyRes.statusCode && proxyRes.statusCode >= 400) {
+            const errChunks: Buffer[] = []
+            proxyRes.on('data', (ch: Buffer) => errChunks.push(ch))
+            proxyRes.on('end', () => {
+              const errBody = Buffer.concat(errChunks)
+              const snippet = errBody.toString('utf8').substring(0, 500)
+              this.logFn(`[Gateway] error response (${proxyRes.statusCode}): ${snippet}`)
+              this.writeAccessLog({ reqId, phase: 'error-body', statusCode: proxyRes.statusCode, body: snippet })
+              res.writeHead(proxyRes.statusCode, proxyRes.headers)
+              res.end(errBody)
+            })
+          } else {
+            res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+            proxyRes.pipe(res)
+          }
         }
       )
 
       proxyReq.on('error', (err) => {
         this.logFn(`[Gateway] 转发失败: ${err.message}`)
+        this.writeAccessLog({
+          reqId,
+          phase: 'proxy-error',
+          host,
+          method: req.method,
+          url: req.url,
+          error: err.message,
+          durationMs: Date.now() - startedAt,
+        })
         if (!res.headersSent) {
           res.writeHead(502, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'Gateway: token-proxy 连接失败', detail: err.message }))

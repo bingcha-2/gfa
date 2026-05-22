@@ -45,6 +45,18 @@ export interface RosettaAccount {
   successRate: number | null;
   qualityTier: string;
   requestStats: { total: number; successes: number; failures: number };
+  source?: string;
+  sourceEmployeeId?: string;
+  sourceEmployeeEmail?: string;
+  employeeSubmittedAt?: string;
+  lastConversationOkAt?: string;
+  lastVerifiedPhone?: {
+    phoneNumber: string;
+    countryCode: string;
+    smsUrl: string;
+    verifiedAt: string;
+    source: string;
+  };
 }
 
 export interface RosettaReverseProxy {
@@ -67,6 +79,12 @@ export interface RosettaRelay {
   statusUrl: string;
   upstream: string;
   hasApiKey: boolean;
+  serviceStatus: {
+    code: string;
+    label: string;
+    detail: string;
+    tone: "good" | "warning" | "bad" | "muted";
+  };
   totalRequests: number;
   totalErrors: number;
   totalInputTokens: number;
@@ -83,6 +101,25 @@ export interface RosettaRelay {
     recentWindowRequests: number;
     windowLimit: number;
     windowMs: number;
+    totalInputTokens?: number;
+    totalOutputTokens?: number;
+    totalCachedInputTokens?: number;
+    totalRawTokensUsed?: number;
+    totalTokensUsed?: number;
+    recentWindowInputTokens?: number;
+    recentWindowOutputTokens?: number;
+    recentWindowCachedInputTokens?: number;
+    recentWindowRawTokens?: number;
+    recentWindowTokens?: number;
+    tokenWindowLimit?: number;
+    tokenWindowRemaining?: number;
+    tokenWindowMs?: number;
+    tokenWindowResetMs?: number;
+    tokenWindowResetAt?: string;
+    opusTokensUsed?: number;
+    opusTokenLimit?: number;
+    geminiTokensUsed?: number;
+    geminiTokenLimit?: number;
     lastUsedAt: string;
   } | null;
 }
@@ -90,6 +127,7 @@ export interface RosettaRelay {
 export interface RosettaState {
   ready: boolean;
   problem: string;
+  distribution?: "server" | "client" | "employee";
   proxy: {
     running: boolean;
     activeEmail: string;
@@ -97,7 +135,18 @@ export interface RosettaState {
     rotatableAccounts: number;
     totalRequests: number;
     totalRotations: number;
+    debugMode: boolean;
+    statusUrl: string;
+    switchUrl: string;
+    debugModeUrl: string;
     url: string;
+    outbound?: {
+      tested: boolean;
+      success: boolean;
+      error: string;
+      proxyUsed: string;
+      layer: number;
+    };
   };
   reverseProxy: RosettaReverseProxy;
   relay: RosettaRelay;

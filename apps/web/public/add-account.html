@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BCAI Rosetta 账号管理</title>
+  <title>BCAI Rosetta 管理</title>
   <meta name="description" content="Rosetta 账号池与远端租号服务管理">
   <meta name="robots" content="noindex, nofollow">
   <style>
@@ -35,7 +35,7 @@
       color: var(--text);
     }
     button, input { font: inherit; }
-    .page { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 44px; }
+    .page { width: calc(100vw - 48px); max-width: 100%; margin: 0 auto; padding: 28px 24px 44px; }
     .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
     h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: 0; }
     .subtitle { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
@@ -114,6 +114,16 @@
     .dot.warn { background: var(--warn); box-shadow: 0 0 14px rgba(249,115,22,.35); }
     .dot.bad { background: var(--danger); box-shadow: 0 0 14px rgba(239,68,68,.35); }
     .accounts { display: grid; gap: 9px; }
+    .search-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .search-bar input { flex: 1; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 7px; background: #0e121a; color: var(--text); outline: none; font-size: 13px; }
+    .search-bar input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(56,189,248,.12); }
+    .search-bar .search-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .pagination { display: flex; justify-content: center; align-items: center; gap: 4px; padding: 12px 0 4px; flex-wrap: wrap; }
+    .pagination button { min-width: 32px; min-height: 30px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 500; transition: border-color .15s, background .15s; }
+    .pagination button:hover { border-color: #56657d; background: #1d2431; }
+    .pagination button:disabled { opacity: .4; cursor: not-allowed; }
+    .pagination button.active { background: var(--accent); color: #151002; border-color: #facc15; font-weight: 700; }
+    .pagination .ellipsis { padding: 0 4px; color: var(--soft); font-size: 12px; }
     .account-family-strip { display: grid; grid-template-columns: 1fr; gap: 8px; }
     .account-card {
       padding: 12px;
@@ -211,6 +221,19 @@
     .bulk-import { display: grid; gap: 10px; margin-bottom: 14px; }
     .bulk-import textarea { width: 100%; min-height: 118px; padding: 10px 12px; resize: vertical; line-height: 1.45; }
     .bulk-actions { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .import-result-panel { margin-top: -6px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); display: grid; gap: 10px; }
+    .import-result-panel.hidden { display: none; }
+    .import-result-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+    .import-result-head strong { color: var(--text); }
+    .import-result-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .import-result-column { border: 1px solid rgba(255,255,255,.08); border-radius: 7px; padding: 10px; min-height: 58px; background: rgba(0,0,0,.12); }
+    .import-result-title { font-size: 12px; font-weight: 650; margin-bottom: 6px; }
+    .import-result-title.ok { color: var(--accent-2); }
+    .import-result-title.warn { color: var(--warn); }
+    .import-result-title.bad { color: var(--danger); }
+    .import-result-list { display: grid; gap: 4px; max-height: 150px; overflow-y: auto; font-size: 12px; color: var(--muted); }
+    .import-result-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (max-width: 760px) { .import-result-columns { grid-template-columns: 1fr; } }
     .mother-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
     .family-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
     .family-list { display: grid; gap: 10px; }
@@ -242,9 +265,15 @@
     .kv .k { color: var(--muted); }
     .kv .v { color: var(--text); overflow-wrap: anywhere; }
     .load-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .load-table th, .load-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    .load-table th, .load-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
     .load-table th { color: var(--muted); font-weight: 650; }
     .load-table td { color: var(--text); }
+    .table-wrap { overflow-x: auto; width: 100%; }
+    .table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .table-wrap table th, .table-wrap table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+    .table-wrap table th { color: var(--muted); font-weight: 650; }
+    .table-wrap table td { color: var(--text); }
+    .table-wrap table td code { font-size: 11px; padding: 2px 5px; background: rgba(255,255,255,.06); border-radius: 3px; }
     .form-view { display: none; }
     .form-view.active { display: block; }
     .notice {
@@ -290,6 +319,22 @@
     }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.13); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 8px auto 14px; }
+    .disabled-row { opacity: .45; }
+    .disabled-row td:first-child { text-decoration: line-through; }
+    .toggle-btn { padding: 3px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,.15); font-size: 11px; cursor: pointer; transition: all .2s; white-space: nowrap; }
+    .toggle-btn:hover { opacity: .85; transform: scale(1.05); }
+    .toggle-btn:disabled { opacity: .5; cursor: wait; }
+    .btn-disable { background: rgba(239,68,68,.15); color: #f87171; border-color: rgba(239,68,68,.3); }
+    .btn-disable:hover { background: rgba(239,68,68,.25); }
+    .btn-enable { background: rgba(34,197,94,.15); color: #22c55e; border-color: rgba(34,197,94,.3); }
+    .btn-enable:hover { background: rgba(34,197,94,.25); }
+    .stat-card { background: var(--card); border-radius: 8px; text-align: center; border: 1px solid rgba(255,255,255,.06); }
+    .small-text { font-size: .78em; line-height: 1.3; }
+    .small-text code { font-size: .85em; padding: 1px 4px; background: rgba(255,255,255,.06); border-radius: 3px; }
+    .load-table th, .load-table td { white-space: nowrap; }
+    .load-table td { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+    .load-table td:nth-child(6) { white-space: normal; max-width: 160px; word-break: break-all; }
+    .load-table td:last-child { white-space: normal; max-width: 180px; word-break: break-all; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (max-width: 920px) {
       .grid, .workspace { grid-template-columns: 1fr; }
@@ -306,101 +351,232 @@
   <main class="page">
     <div class="topbar">
       <div>
-        <h1>BCAI Rosetta 账号管理</h1>
-        <p class="subtitle">管理母号家庭组、子号席位与 Rosetta 账号池。</p>
+        <h1>BCAI Rosetta 管理</h1>
+        <p class="subtitle">人机解封、AdsPower 录入与续杯服务管理。</p>
       </div>
       <div class="toolbar">
         <button class="btn" onclick="refreshAll()">刷新状态</button>
-        <button class="btn" onclick="refreshQuota()">刷新额度</button>
+        
       </div>
     </div>
 
     <section class="workspace">
       <aside class="side-nav">
-        <button class="nav-btn active" data-tab="mothers" onclick="switchWorkspace('mothers')">母号池</button>
-        <button class="nav-btn" data-tab="accounts" onclick="switchWorkspace('accounts')">账号池</button>
+        <button class="nav-btn active" data-tab="captcha-unblock" onclick="switchWorkspace('captcha-unblock')">🔓 人机解封</button>
+        <button class="nav-btn" data-tab="adspower" onclick="switchWorkspace('adspower')" style="color:#eab308;border-color:rgba(234,179,8,.3)">AdsPower录入</button>
+        <button class="nav-btn" data-tab="load" onclick="switchWorkspace('load')">账号负载</button>
         <button class="nav-btn" data-tab="users" onclick="switchWorkspace('users')">用户管理</button>
+        <button class="nav-btn" data-tab="employees" onclick="switchWorkspace('employees')">员工管理</button>
       </aside>
 
       <div class="workspace-main">
         <section class="grid">
           <div>
-        <div class="panel nav-section" data-section="mothers">
-          <div class="panel-head">
-            <div>
-              <h2 class="panel-title">家庭额度池</h2>
-              <div class="panel-note" id="familySummary">先批量导入母号，再点开管理家庭组席位、子号和替换状态。</div>
-            </div>
-            <span class="badge"><span class="dot ok"></span><span id="familyBadge">旁路</span></span>
-          </div>
-          <div class="bulk-import">
-            <textarea id="motherBatchText" placeholder="批量导入母号，每行一个：&#10;邮箱----密码----辅助邮箱----2FA密钥&#10;邮箱---密码---辅助邮箱---2FA密钥&#10;邮箱----密码----2FA密钥"></textarea>
-            <div class="bulk-actions">
-              <div class="panel-note">格式与 GFA 控制台母号导入一致，默认每个母号创建 5 个席位。</div>
-              <button class="btn primary" onclick="batchImportMothers()">批量导入母号</button>
-            </div>
-          </div>
-          <div class="inline-form">
-            <input id="motherEmail" type="email" placeholder="单个母号邮箱">
-            <input id="motherSeats" type="number" min="0" max="20" value="5" title="席位数">
-            <button class="btn" onclick="createMother()">新增母号</button>
-          </div>
-          <div id="familyList" class="family-list">
-            <div class="empty">正在加载家庭额度池...</div>
-          </div>
-        </div>
 
-        <div class="panel nav-section hidden" data-section="accounts">
-          <div class="panel-head">
-            <div>
-              <h2 class="panel-title">账号池</h2>
-              <div class="panel-note" id="accountSummary">正在加载账号列表</div>
-            </div>
-            <span class="badge"><span class="dot" id="accountDot"></span><span id="accountBadge">--</span></span>
-          </div>
-          <div id="accountList" class="accounts">
-            <div class="empty">加载中...</div>
-          </div>
-        </div>
 
-        <div class="panel nav-section hidden" data-section="accounts">
+
+        <div class="panel nav-section hidden" data-section="load">
           <div class="panel-head">
             <div>
               <h2 class="panel-title">账号负载</h2>
               <div class="panel-note">来自 Remote Token Server 调度器的 lease 与账号统计。</div>
             </div>
+            <button class="btn small" onclick="unblockLocationAccounts()" title="解除所有 location_unsupported 封禁">解封地区</button>
           </div>
-          <div id="loadTableWrap" class="empty">Remote Token Server 未返回调度数据</div>
+          <div id="serverOverview" style="margin-bottom: 14px;"></div>
+          <div id="loadSummaryBar" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; margin-bottom: 10px; font-size: .85em;"></div>
+          <div class="search-bar">
+            <input id="loadSearch" placeholder="搜索账号 / 状态 / 原因…" oninput="onLoadSearchInput()" onkeydown="if(event.key==='Enter'){event.preventDefault(); renderLoadTable(state.remote);}"/>
+            <span class="search-count" id="loadSearchCount"></span>
+            <button class="btn small" onclick="clearLoadSearch()">清空</button>
+            <button class="btn small danger" id="bulkDeleteBtn" onclick="bulkDeleteSelected()" style="display:none;">删除(0)</button>
+            <button class="btn small primary" id="bulkExportBtn" onclick="bulkExportSelected()" style="display:none;">导出(0)</button>
+          </div>
+          <div id="loadTableWrap" class="empty" style="overflow-x: auto; width: 100%;">Remote Token Server 未返回调度数据</div>
+          <div id="loadPagination" class="pagination"></div>
+
+          <!-- ── 节流配置面板 ── -->
+          <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px;">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">⚡ 动态节流配置</h2>
+                <div class="panel-note">控制客户端重试速率。无配置时使用自动模式（根据号池健康度动态调整）。修改后立即对所有新请求生效。</div>
+              </div>
+              <div style="display:flex;gap:6px">
+                <button class="btn small" onclick="loadThrottleConfig()">刷新</button>
+                <button class="btn small danger" onclick="deleteThrottleConfig()">恢复自动</button>
+              </div>
+            </div>
+            <div id="throttleStatus" style="margin: 8px 0; font-size: 12px; color: var(--muted);"></div>
+            <div style="display: grid; gap: 12px; margin-top: 10px;">
+
+              <!-- 紧急模式 -->
+              <div style="border: 1px solid rgba(239,68,68,.25); border-radius: 8px; padding: 12px; background: rgba(239,68,68,.04);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="color: #f87171; font-size: 13px;">🚨 紧急模式</strong>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+                    <input type="checkbox" id="throttleEmergencyEnabled" onchange="onThrottleChange()"> 启用
+                  </label>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                  <div class="field" style="margin:0"><label>最大重试</label><input id="throttleEmergencyMaxAttempts" type="number" min="1" max="10" value="3" onchange="onThrottleChange()"></div>
+                  <div class="field" style="margin:0"><label>基础延迟(ms)</label><input id="throttleEmergencyBaseDelay" type="number" min="500" value="5000" onchange="onThrottleChange()"></div>
+                  <div class="field" style="margin:0"><label>提示消息</label><input id="throttleEmergencyMessage" placeholder="维护中..." onchange="onThrottleChange()"></div>
+                </div>
+              </div>
+
+              <!-- 全局默认 -->
+              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 12px;">
+                <strong style="font-size: 13px; color: var(--text);">全局默认</strong>
+                <div class="panel-note" style="margin-bottom: 8px;">所有模型生效。留空 = 自动模式。</div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+                  <div class="field" style="margin:0"><label>maxAttempts</label><input id="throttleGlobalMaxAttempts" type="number" placeholder="自动" onchange="onThrottleChange()"></div>
+                  <div class="field" style="margin:0"><label>baseDelayMs</label><input id="throttleGlobalBaseDelay" type="number" placeholder="自动" onchange="onThrottleChange()"></div>
+                  <div class="field" style="margin:0"><label>capacityWaitMs</label><input id="throttleGlobalCapacityWait" type="number" placeholder="自动" onchange="onThrottleChange()"></div>
+                  <div class="field" style="margin:0"><label>backoffMultiplier</label><input id="throttleGlobalBackoff" type="number" step="0.1" placeholder="自动" onchange="onThrottleChange()"></div>
+                </div>
+              </div>
+
+              <!-- 按模型覆盖 -->
+              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <div>
+                    <strong style="font-size: 13px; color: var(--text);">按模型覆盖</strong>
+                    <div class="panel-note">优先于全局。只设置需要覆盖的字段。</div>
+                  </div>
+                  <button class="btn small" onclick="addThrottleModelRow()">+ 添加模型</button>
+                </div>
+                <div id="throttleModelRows" style="display: grid; gap: 8px;"></div>
+              </div>
+
+              <!-- 503 自动升级 -->
+              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <div>
+                    <strong style="font-size: 13px; color: var(--text);">503 频率自动升级</strong>
+                    <div class="panel-note">当 503 错误占比超过阈值时，自动增加延迟。</div>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+                    <input type="checkbox" id="throttleEscalationEnabled" checked onchange="onThrottleChange()"> 启用
+                  </label>
+                </div>
+                <div id="throttleEscalationRows" style="display: grid; gap: 6px;"></div>
+                <button class="btn small" style="margin-top: 8px;" onclick="addThrottleEscalationRow()">+ 添加阈值</button>
+              </div>
+
+              <button class="btn primary" onclick="saveThrottleConfig()" style="justify-self: start;">💾 保存节流配置</button>
+            </div>
+          </div>
+
         </div>
         <div class="panel nav-section hidden" data-section="users">
           <div class="panel-head">
             <div>
               <h2 class="panel-title">用户管理</h2>
-              <div class="panel-note">生成卡密、查看有效期与请求数量。有效期从第一次使用开始计算。</div>
+              <div class="panel-note">生成卡密、查看有效期与 token 用量。有效期从第一次使用开始计算。</div>
             </div>
           </div>
           <div class="inline-form">
             <input id="accessKeyName" placeholder="备注/用户名">
-            <select id="accessKeyDuration">
-              <option value="1h">1小时</option>
-              <option value="1d">一天</option>
-              <option value="1m">一个月</option>
+            <input id="accessKeyDurationValue" type="number" min="1" value="1" title="有效期数字">
+            <select id="accessKeyDurationUnit" title="有效期单位">
+              <option value="h">小时</option>
+              <option value="d">天</option>
             </select>
-            <input id="accessKeyLimit" type="number" min="1" max="5000" value="300" title="5小时请求上限">
+            <input id="accessKeyLimit" type="number" min="1" max="5000" placeholder="请求数：留空不限" title="兼容字段：5小时请求上限；留空则不限请求数和 token 额度">
+            <input id="accessKeyTokenLimit" type="number" min="1" placeholder="Token：留空按请求数换算" title="留空且填写请求数时按 1 次请求 = 100000 token；请求数和 token 都留空则不限">
+            <input id="accessKeyCount" type="number" min="1" max="200" value="1" title="生成数量">
             <button class="btn primary" onclick="createAccessKey()">生成卡密</button>
           </div>
-          <div class="panel-note" id="accessKeySummary">5小时内默认限制 300 次请求；请求数按客户端上报结果累计，不实时刷新。</div>
+          <div class="inline-form" style="margin-top:10px">
+            <input id="accessKeySearch" placeholder="搜索卡密 / 备注 / 状态 / 设备" oninput="scheduleAccessKeySearch()" onkeydown="if(event.key==='Enter'){event.preventDefault(); loadAccessKeysAndRender();}">
+            <button class="btn" onclick="loadAccessKeysAndRender()">搜索</button>
+            <button class="btn" onclick="clearAccessKeySearch()">清空</button>
+          </div>
+          <div class="panel-note" id="accessKeySummary">5小时内默认按 token 数限制；token 用量按客户端上报结果累计，不实时刷新。</div>
           <div id="accessKeyList" class="table-wrap"><div class="empty">正在加载卡密...</div></div>
+          <div id="userPagination" class="pagination"></div>
         </div>
-        <div class="panel nav-section" data-section="mothers">
+        <div class="panel nav-section hidden" data-section="employees">
           <div class="panel-head">
             <div>
-              <h2 class="panel-title">家庭组事件</h2>
-              <div class="panel-note">这里只记录 Rosetta 池内状态，不会改动现有 GFA 管理系统任务。</div>
+              <h2 class="panel-title">员工管理</h2>
+              <div class="panel-note">查看员工注册、账号调试提交、自动入池和失败统计。</div>
             </div>
           </div>
-          <div id="familyEvents" class="event-list">
-            <div class="empty">暂无事件</div>
+          <div class="stats">
+            <div class="stat"><div class="k">员工</div><div class="v" id="employeeCount">0</div></div>
+            <div class="stat"><div class="k">提交账号</div><div class="v" id="employeeAccountCount">0</div></div>
+            <div class="stat"><div class="k">已入池</div><div class="v" id="employeeAcceptedCount">0</div></div>
+            <div class="stat"><div class="k">失败</div><div class="v" id="employeeFailedCount">0</div></div>
+          </div>
+          <div class="inline-form" style="margin-top:10px">
+            <input id="employeeSearch" placeholder="搜索员工 / 账号 / projectId / 状态" oninput="scheduleEmployeeSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault(); renderEmployees();}">
+            <button class="btn" onclick="renderEmployees()">搜索</button>
+            <button class="btn" onclick="clearEmployeeSearch()">清空</button>
+          </div>
+          <div class="panel-note" id="employeeSummary">正在加载员工数据...</div>
+          <div id="employeeList" class="table-wrap"><div class="empty">正在加载员工...</div></div>
+        </div>
+
+        <div class="panel nav-section" data-section="captcha-unblock">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">🔓 人机解封</h2>
+              <div class="panel-note">解封遭遇人机挑战的 Google 账号。分两阶段：① 手工通过人机 + 自动手机验证 + 手工申诉 → ② 12小时后二次验证完成解封。</div>
+            </div>
+            <span class="badge"><span class="dot" id="unblockDot"></span><span id="unblockBadge">就绪</span></span>
+          </div>
+          <div class="bulk-import">
+            <textarea id="unblockBatchText" placeholder="批量粘贴待解封账号，每行一个：&#10;邮箱|密码|恢复邮箱|TOTP密钥&#10;邮箱----密码----恢复邮箱----TOTP密钥&#10;邮箱|密码（恢复邮箱和TOTP可省略）" style="min-height:140px"></textarea>
+            <div class="bulk-actions">
+              <div class="panel-note">格式：<code>邮箱|密码|恢复邮箱|TOTP</code>（用 <code>|</code> 或 <code>----</code> 分隔）。阶段一需要手工完成人机挑战和申诉。</div>
+              <button class="btn primary" id="unblockStartBtn" onclick="startCaptchaUnblock('first')">🔓 开始解封（阶段一）</button>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;margin:12px 0 8px">
+            <h3 style="margin:0;font-size:14px;font-weight:700">解封任务</h3>
+            <button class="btn small" onclick="refreshUnblockTasks()">刷新</button>
+          </div>
+
+          <div id="unblockTaskList" class="accounts">
+            <div class="empty">暂无解封任务</div>
+          </div>
+
+          <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+              <h3 style="margin:0;font-size:14px;font-weight:700">⏳ 待二次验证</h3>
+              <div class="panel-note" style="margin:0">申诉通过后（约12小时），点击下方按钮进行二次手机验证完成解封。</div>
+            </div>
+            <div id="unblockPhase2List" class="accounts">
+              <div class="empty">暂无待二次验证的账号</div>
+            </div>
+          </div>
+        </div>
+
+
+        <div class="panel nav-section hidden" data-section="adspower">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">🤖 AdsPower 批量自动录入</h2>
+              <div class="panel-note">通过 AdsPower 指纹浏览器自动完成 Google 登录 + OAuth 授权，直接录入账号池。支持多浏览器并行。</div>
+            </div>
+            <span class="badge"><span class="dot" id="adspowerDot"></span><span id="adspowerBadge">就绪</span></span>
+          </div>
+          <div class="bulk-import">
+            <textarea id="adspowerBatchText" placeholder="批量粘贴账号凭证，每行一个：&#10;邮箱|密码|恢复邮箱|TOTP密钥&#10;邮箱----密码----恢复邮箱----TOTP密钥&#10;邮箱|密码（恢复邮箱和TOTP可省略）" style="min-height:160px"></textarea>
+            <div class="bulk-actions">
+              <div class="panel-note">格式：<code>邮箱|密码|恢复邮箱|TOTP</code>（用 <code>|</code> 或 <code>----</code> 分隔）。将使用所有已配置的 AdsPower Profile 并行处理。</div>
+              <button class="btn primary" id="adspowerStartBtn" onclick="startAdspowerBatchImport()">🚀 一键录入</button>
+            </div>
+          </div>
+          <div id="adspowerProgress" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <div style="font-size:13px;color:var(--muted)" id="adspowerProgressSummary">准备中...</div>
+              <button class="btn small" id="adspowerStopBtn" onclick="stopAdspowerPolling()" style="display:none">停止轮询</button>
+            </div>
+            <div id="adspowerProgressList" class="accounts" style="max-height:500px;overflow-y:auto"></div>
           </div>
         </div>
 
@@ -413,16 +589,143 @@
   <div class="toast" id="toast"></div>
 
   <script>
-    const API = location.hostname === "127.0.0.1" || location.hostname === "localhost"
-      ? "/api/rosetta"
-      : "http://127.0.0.1:3000/api/rosetta";
+    const API = "/api/rosetta";
     const GFA_API = "/api/proxy";
-    const state = { accounts: [], proxy: null, remote: null, family: null, accessKeys: [], selectedMotherId: "", activeTab: "mothers", expandedAccountKeys: new Set(), syncingMotherId: null, activatingMotherIds: new Set(), activatingChildKeys: new Set(), joiningChildKeys: new Set(), reconcilingActivationIds: new Set(), syncStatus: {}, addingSeatId: "" };
+    const state = { accounts: [], proxy: null, remote: null, family: null, accessKeys: [], accessKeySearch: "", accessKeyTotal: 0, accessKeyTotalAll: 0, employees: [], employeeAccounts: [], employeeSearch: "", selectedMotherId: "", activeTab: "mothers", expandedAccountKeys: new Set(), syncingMotherId: null, activatingMotherIds: new Set(), importingMotherIds: new Set(), importingRosettaEmails: new Set(), activatingChildKeys: new Set(), importingChildKeys: new Set(), joiningChildKeys: new Set(), assigningChildKeys: new Set(), reconcilingActivationIds: new Set(), syncStatus: {}, addingSeatId: "" };
+    state.directImportBatchSeq = 0;
+    state.directImportResult = null;
+    // Pagination & search state
+    const PAGE_SIZE = 20;
+    state.accountSearch = "";
+    state.accountPage = 1;
+    state.motherSearch = "";
+    state.motherPage = 1;
+    state.childSearch = "";
+    state.childPage = 1;
+    state.loadSearch = "";
+    state.loadPage = 1;
+    state.userPage = 1;
+    state.employeePage = 1;
+    let accountSearchTimer = null;
+    let motherSearchTimer = null;
+    let childSearchTimer = null;
+    let loadSearchTimer = null;
+    let accessKeySearchTimer = null;
+    let employeeSearchTimer = null;
+
+    // ── Reusable pagination renderer ──
+    function renderPaginationControls(containerId, currentPage, totalPages, onPageChange) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      if (totalPages <= 1) { container.innerHTML = ""; return; }
+      const delta = 2;
+      const pages = [];
+      for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+          pages.push(i);
+        } else if (pages.length > 0 && pages[pages.length - 1] !== "...") {
+          pages.push("...");
+        }
+      }
+      container.innerHTML =
+        `<button ${currentPage <= 1 ? "disabled" : ""} onclick="${onPageChange}(${currentPage - 1})">← 上页</button>` +
+        pages.map(p => p === "..."
+          ? `<span class="ellipsis">…</span>`
+          : `<button class="${p === currentPage ? "active" : ""}" onclick="${onPageChange}(${p})">${p}</button>`
+        ).join("") +
+        `<button ${currentPage >= totalPages ? "disabled" : ""} onclick="${onPageChange}(${currentPage + 1})">下页 →</button>`;
+    }
+
+    // ── Search handlers: Accounts ──
+    function onAccountSearchInput() {
+      state.accountSearch = (document.getElementById("accountSearch")?.value || "").trim().toLowerCase();
+      state.accountPage = 1;
+      clearTimeout(accountSearchTimer);
+      accountSearchTimer = setTimeout(() => renderAccounts(state.dataDir || ""), 200);
+    }
+    function clearAccountSearch() {
+      const el = document.getElementById("accountSearch");
+      if (el) el.value = "";
+      state.accountSearch = "";
+      state.accountPage = 1;
+      renderAccounts(state.dataDir || "");
+    }
+    function goAccountPage(p) { state.accountPage = p; renderAccounts(state.dataDir || ""); }
+
+    // ── Search handlers: Load ──
+    function onLoadSearchInput() {
+      state.loadSearch = (document.getElementById("loadSearch")?.value || "").trim().toLowerCase();
+      state.loadPage = 1;
+      clearTimeout(loadSearchTimer);
+      loadSearchTimer = setTimeout(() => { if (state.remote) renderLoadTable(state.remote); }, 200);
+    }
+    function clearLoadSearch() {
+      const el = document.getElementById("loadSearch");
+      if (el) el.value = "";
+      state.loadSearch = "";
+      state.loadPage = 1;
+      if (state.remote) renderLoadTable(state.remote);
+    }
+    function goLoadPage(p) { state.loadPage = p; if (state.remote) renderLoadTable(state.remote); }
+
+    async function unblockLocationAccounts() {
+      if (!confirm("确定解封所有 location_unsupported 封禁的账号？")) return;
+      try {
+        const resp = await fetch(`${API}/unblock-location`, { method: "POST", headers: { "Content-Type": "application/json" } });
+        const data = await resp.json();
+        if (data.ok) {
+          showToast(`已解封 ${data.unblocked || 0} 个账号`);
+          refreshAll();
+        } else {
+          showToast("解封失败: " + (data.error || "未知错误"), true);
+        }
+      } catch (err) {
+        showToast("请求失败: " + err.message, true);
+      }
+    }
+
+    // ── Search handlers: Mothers ──
+    function onMotherSearchInput() {
+      state.motherSearch = (document.getElementById("motherSearch")?.value || "").trim().toLowerCase();
+      state.motherPage = 1;
+      clearTimeout(motherSearchTimer);
+      motherSearchTimer = setTimeout(renderFamilyPool, 200);
+    }
+    function clearMotherSearch() {
+      const el = document.getElementById("motherSearch");
+      if (el) el.value = "";
+      state.motherSearch = "";
+      state.motherPage = 1;
+      renderFamilyPool();
+    }
+    function goMotherPage(p) { state.motherPage = p; renderFamilyPool(); }
+
+    // ── Search handlers: Children ──
+    function onChildSearchInput() {
+      state.childSearch = (document.getElementById("childSearch")?.value || "").trim().toLowerCase();
+      state.childPage = 1;
+      clearTimeout(childSearchTimer);
+      childSearchTimer = setTimeout(renderChildPool, 200);
+    }
+    function clearChildSearch() {
+      const el = document.getElementById("childSearch");
+      if (el) el.value = "";
+      state.childSearch = "";
+      state.childPage = 1;
+      renderChildPool();
+    }
+    function goChildPage(p) { state.childPage = p; renderChildPool(); }
+
+    // ── Search handlers: Users (Access Keys) ──
+    function goUserPage(p) { state.userPage = p; renderAccessKeys(); }
+
+    // ── Search handlers: Employees ──
+    function goEmployeePage(p) { state.employeePage = p; renderEmployees(); }
 
     document.addEventListener("DOMContentLoaded", () => {
-      switchWorkspace("mothers");
+      switchWorkspace("captcha-unblock");
       refreshAll();
-      setInterval(refreshAll, 15000);
+      setInterval(refreshAll, 1800000); // 30 minutes
     });
 
     async function fetchJson(url, options) {
@@ -433,16 +736,16 @@
     }
 
     async function refreshAll() {
-      const results = await Promise.allSettled([loadAccounts(), loadProxyStatus(), loadRemoteStatus(), loadFamilyPool(), loadAccessKeys()]);
-      await reconcilePendingChildActivations();
-      renderAccounts(state.dataDir || "");
-      renderFamilyPool();
+      const results = await Promise.allSettled([loadProxyStatus(), loadRemoteStatus(), loadAccessKeys(), loadEmployees()]);
       renderAccessKeys();
+      renderEmployees();
+      loadAdspowerHistory();
       if (results.some((item) => item.status === "rejected")) {
         console.warn("Some Rosetta status requests failed", results);
       }
-      if (state.remote) renderLoadTable(state.remote);
+      if (state.remote) { renderServerOverview(state.remote); renderLoadTable(state.remote); }
       renderServiceDetails();
+      refreshUnblockTasks();
     }
 
     async function loadAccounts() {
@@ -485,16 +788,15 @@
         if (leaseCount) leaseCount.textContent = String(activeLeases);
         if (leaseFoot) leaseFoot.textContent = `${data.totalLeases || 0} 次总租约 / ${data.totalReports || 0} 次上报`;
         if (clientCount) clientCount.textContent = String(clients);
+        renderServerOverview(data);
         renderLoadTable(data);
       } catch (error) {
-        state.remote = null;
-        setStatus("remoteState", "离线", "remoteFoot", error.message || "未启动", false);
-        const leaseCount = document.getElementById("leaseCount");
-        const clientCount = document.getElementById("clientCount");
-        const loadTableWrap = document.getElementById("loadTableWrap");
-        if (leaseCount) leaseCount.textContent = "0";
-        if (clientCount) clientCount.textContent = "0";
-        if (loadTableWrap) loadTableWrap.innerHTML = `<div class="empty">Remote Token Server 未运行</div>`;
+        // Keep last known data if we had it — only clear on first failure
+        if (!state.remote) {
+          const loadTableWrap = document.getElementById("loadTableWrap");
+          if (loadTableWrap) loadTableWrap.innerHTML = `<div class="empty">Remote Token Server 未运行</div>`;
+        }
+        setStatus("remoteState", state.remote ? "刷新失败" : "离线", "remoteFoot", error.message || "未启动", Boolean(state.remote));
         throw error;
       }
     }
@@ -511,9 +813,61 @@
     }
 
     async function loadAccessKeys() {
-      const data = await fetchJson(`${API}/access-keys`);
+      const params = new URLSearchParams();
+      const term = String(state.accessKeySearch || "").trim();
+      if (term) params.set("search", term);
+      const data = await fetchJson(`${API}/access-keys${params.toString() ? `?${params.toString()}` : ""}`);
       state.accessKeys = data.keys || [];
       state.accessKeyDefaults = data.defaults || {};
+      state.accessKeyTotal = Number(data.total || state.accessKeys.length || 0);
+      state.accessKeyTotalAll = Number(data.totalAll || state.accessKeyTotal || 0);
+    }
+
+    async function loadEmployees() {
+      const data = await fetchJson(`${API}/employees`);
+      state.employees = data.employees || [];
+      state.employeeAccounts = data.accounts || [];
+    }
+
+    function scheduleAccessKeySearch() {
+      const input = document.getElementById("accessKeySearch");
+      state.accessKeySearch = input?.value || "";
+      clearTimeout(accessKeySearchTimer);
+      accessKeySearchTimer = setTimeout(() => {
+        loadAccessKeysAndRender();
+      }, 300);
+    }
+
+    async function loadAccessKeysAndRender() {
+      const input = document.getElementById("accessKeySearch");
+      state.accessKeySearch = input?.value || "";
+      try {
+        await loadAccessKeys();
+        renderAccessKeys();
+      } catch (error) {
+        showToast(`卡密搜索失败：${error.message || error}`);
+      }
+    }
+
+    function clearAccessKeySearch() {
+      const input = document.getElementById("accessKeySearch");
+      if (input) input.value = "";
+      state.accessKeySearch = "";
+      loadAccessKeysAndRender();
+    }
+
+    function scheduleEmployeeSearch() {
+      const input = document.getElementById("employeeSearch");
+      state.employeeSearch = input?.value || "";
+      clearTimeout(employeeSearchTimer);
+      employeeSearchTimer = setTimeout(renderEmployees, 200);
+    }
+
+    function clearEmployeeSearch() {
+      const input = document.getElementById("employeeSearch");
+      if (input) input.value = "";
+      state.employeeSearch = "";
+      renderEmployees();
     }
 
     async function reconcilePendingChildActivations() {
@@ -577,7 +931,16 @@
         JSON.stringify(taskStatus?.result || {}),
         ...(Array.isArray(taskStatus?.logs) ? taskStatus.logs.map((log) => log?.message || "") : [])
       ].join("\n").toLowerCase();
+      return isQrVerificationText(haystack);
+    }
+
+    function isQrVerificationText(value) {
+      const haystack = String(value || "").toLowerCase();
       return haystack.includes("/challenge/iap/qrcode") ||
+        haystack.includes("phone_verify_qr_required") ||
+        haystack.includes("qr_required") ||
+        haystack.includes("验证失败（扫码）") ||
+        haystack.includes("扫码") ||
         haystack.includes("verify your info to continue") ||
         haystack.includes("scan the qr code with your phone") ||
         haystack.includes("image of qr code to scan") ||
@@ -650,6 +1013,8 @@
         const requestStats = account.requestStats || {};
         const schedulerStats = stats[id] || {};
         const activeLeases = Number(leaseCounts[id] ?? (account.isActive ? 1 : 0) ?? 0);
+        const blockedUntil = Number(account.blockedUntil ?? schedulerStats.blockedUntil ?? 0);
+        const cooldownRemainingMs = blockedUntil > Date.now() ? blockedUntil - Date.now() : 0;
         const total = Number(requestStats.total ?? schedulerStats.totalLeases ?? 0);
         const successes = Number(requestStats.successes ?? schedulerStats.successCount ?? 0);
         const failures = Number(requestStats.failures ?? schedulerStats.errorCount ?? 0);
@@ -671,6 +1036,8 @@
             : (Array.isArray(schedulerStats.quotaGroups) ? schedulerStats.quotaGroups : []),
           quotaRefreshedAt: account.quotaRefreshedAt || schedulerStats.quotaRefreshedAt || "",
           quotaLiveBlockedCount: account.quotaLiveBlockedCount ?? schedulerStats.quotaLiveBlockedCount ?? 0,
+          blockedUntil,
+          cooldownRemainingMs,
           qualityTier: account.qualityTier || (total ? "tracked" : "new"),
           lastStatus: schedulerStats.lastStatus || "",
           schedulerTotalLeases: Number(schedulerStats.totalLeases || 0),
@@ -683,6 +1050,7 @@
     function quotaLabel(account) {
       const status = String(account.quotaStatus || "unknown").toLowerCase();
       const reason = account.quotaStatusReason ? ` - ${account.quotaStatusReason}` : "";
+      if (isPhoneVerificationCooldown(account)) return `手机验证冷却 ${formatMs(account.cooldownRemainingMs)}`;
       if (status === "ok") return `额度正常${reason}`;
       if (status === "exhausted") return `额度受限${reason}`;
       if (status === "error") return `账号错误${reason}`;
@@ -692,8 +1060,22 @@
     function quotaDot(account) {
       const status = String(account.quotaStatus || "").toLowerCase();
       if (account.enabled === false || status === "error") return "bad";
+      if (isPhoneVerificationCooldown(account)) return "warn";
       if (status === "exhausted" || !account.canRotate) return "warn";
       return "ok";
+    }
+
+    function isPhoneVerificationCooldown(account) {
+      const reason = String(account.quotaStatusReason || "").toLowerCase();
+      return Number(account.cooldownRemainingMs || 0) > 0 && reason.includes("phone_verification");
+    }
+
+    function accountPoolStateLabel(account) {
+      if (!account.hasToken && !account.placeholder) return "未激活";
+      if (isPhoneVerificationCooldown(account)) return `手机验证冷却 ${formatMs(account.cooldownRemainingMs)}`;
+      if (account.isActive || account.activeLeases > 0) return "使用中";
+      if (account.enabled === false) return "停用";
+      return "空闲";
     }
 
     function formatSuccessRate(value) {
@@ -703,19 +1085,40 @@
     function renderAccounts(dataDir) {
       const list = document.getElementById("accountList");
       const accounts = mergeAccounts();
-      const enabled = accounts.filter((a) => a.enabled !== false).length;
-      const active = accounts.filter((a) => a.isActive || a.activeLeases > 0).length;
-      const ordered = orderedFamilyAccounts(accounts);
-      document.getElementById("accountSummary").textContent = `${ordered.length} 个账号列，${enabled} 个启用，${active} 个使用中${dataDir ? ` · ${dataDir}` : ""}`;
-      document.getElementById("accountBadge").textContent = enabled > 0 ? "可用" : "空";
-      document.getElementById("accountDot").className = `dot ${enabled > 0 ? "ok" : "warn"}`;
+      const allEnabled = accounts.filter((a) => a.enabled !== false);
+      const active = allEnabled.filter((a) => a.isActive || a.activeLeases > 0).length;
+      const ordered = orderedFamilyAccounts(allEnabled);
 
-      if (!ordered.length) {
-        list.innerHTML = `<div class="empty">当前没有账号</div>`;
+      // Global search filter
+      const q = state.accountSearch || "";
+      const filtered = q
+        ? ordered.filter((a) => {
+            const hay = [a.email, a.planType, a.plan, a.subscriptionPlan, accountPoolStateLabel(a), a.quotaStatus, a.familyMotherEmail, a.qualityTier].join(" ").toLowerCase();
+            return hay.includes(q);
+          })
+        : ordered;
+
+      document.getElementById("accountSummary").textContent = `${accounts.length} 总 · ${allEnabled.length} 启用 · ${active} 使用中${q ? ` · 搜到 ${filtered.length}` : ""}${dataDir ? ` · ${dataDir}` : ""}`;
+      document.getElementById("accountBadge").textContent = allEnabled.length > 0 ? "可用" : "空";
+      document.getElementById("accountDot").className = `dot ${allEnabled.length > 0 ? "ok" : "warn"}`;
+
+      const searchCount = document.getElementById("accountSearchCount");
+      if (searchCount) searchCount.textContent = q ? `${filtered.length} / ${ordered.length}` : `${ordered.length} 条`;
+
+      if (!filtered.length) {
+        list.innerHTML = `<div class="empty">${q ? "没有匹配的启用账号" : "没有启用的账号"}</div>`;
+        renderPaginationControls("accountPagination", 1, 1, "goAccountPage");
         return;
       }
 
-      list.innerHTML = `<div class="account-family-strip">${ordered.map(renderAccountCard).join("")}</div>`;
+      // Pagination
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+      if (state.accountPage > totalPages) state.accountPage = totalPages;
+      const start = (state.accountPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      list.innerHTML = `<div class="account-family-strip">${pageItems.map(renderAccountCard).join("")}</div>`;
+      renderPaginationControls("accountPagination", state.accountPage, totalPages, "goAccountPage");
     }
 
     function orderedFamilyAccounts(accounts) {
@@ -787,7 +1190,7 @@
             <div class="metric-value">${escapeHtml(quality)}</div>
           </div>
           <div class="row-actions" onclick="event.stopPropagation()">
-            <span class="badge"><span class="dot ${!account.hasToken && !account.placeholder ? 'warn' : quotaDot(account)}"></span>${!account.hasToken && !account.placeholder ? "未激活" : (account.isActive || account.activeLeases > 0 ? "使用中" : (account.enabled === false ? "停用" : "空闲"))}</span>
+            <span class="badge"><span class="dot ${!account.hasToken && !account.placeholder ? 'warn' : quotaDot(account)}"></span>${escapeHtml(accountPoolStateLabel(account))}</span>
             ${account.placeholder || !account.hasToken ? "" : `<button class="btn small" onclick="toggleAcc(${Number(account.id)})">${account.enabled === false ? "启用" : "停用"}</button>`}
           </div>
           ${expanded ? accountQuotaDetail(account, quota) : `<div class="meta" style="grid-column: 1 / -1;">点击查看具体额度</div>`}
@@ -955,16 +1358,33 @@
 
       const activeSeats = seats.filter((seat) => seat.status === "active").length;
       const replacingSeats = seats.filter((seat) => seat.status === "replacing").length;
-      summary.textContent = `${mothers.length} 个母号，${seats.length} 个席位，${activeSeats} 个活跃，${replacingSeats} 个替换中`;
       badge.textContent = family.familyPoolPath ? "family-pool.json" : "旁路";
       if (state.selectedMotherId && !mothers.some((mother) => mother.id === state.selectedMotherId)) {
         state.selectedMotherId = "";
       }
 
-      if (!mothers.length) {
-        list.innerHTML = `<div class="empty">还没有母号。先批量导入母号，然后像 GFA 控制台一样点开管理家庭组。</div>`;
+      // Search filter
+      const q = state.motherSearch || "";
+      const filteredMothers = q
+        ? mothers.filter((m) => String(m.email || "").toLowerCase().includes(q))
+        : mothers;
+
+      summary.textContent = `${mothers.length} 个母号，${seats.length} 个席位，${activeSeats} 个活跃，${replacingSeats} 个替换中${q ? ` · 搜到 ${filteredMothers.length}` : ""}`;
+
+      const motherSearchCount = document.getElementById("motherSearchCount");
+      if (motherSearchCount) motherSearchCount.textContent = q ? `${filteredMothers.length} / ${mothers.length}` : `${mothers.length} 条`;
+
+      if (!filteredMothers.length) {
+        list.innerHTML = `<div class="empty">${q ? "没有匹配的母号" : "还没有母号。先批量导入母号，然后像 GFA 控制台一样点开管理家庭组。"}</div>`;
+        renderPaginationControls("motherPagination", 1, 1, "goMotherPage");
       } else {
-        list.innerHTML = mothers.map((mother) => {
+        // Pagination
+        const totalPages = Math.ceil(filteredMothers.length / PAGE_SIZE);
+        if (state.motherPage > totalPages) state.motherPage = totalPages;
+        const start = (state.motherPage - 1) * PAGE_SIZE;
+        const pageMothers = filteredMothers.slice(start, start + PAGE_SIZE);
+
+        list.innerHTML = pageMothers.map((mother) => {
           const motherSeats = seats
             .filter((seat) => seat.motherId === mother.id)
             .sort((a, b) => Number(a.seatIndex || 0) - Number(b.seatIndex || 0));
@@ -972,15 +1392,22 @@
           const active = motherSeats.filter((seat) => seat.status === "active").length;
           const replacing = motherSeats.filter((seat) => seat.status === "replacing").length;
           const empty = motherSeats.filter((seat) => !seat.currentChildEmail).length;
+          const motherCarrier = Boolean(mother.tokenObtainedAt || mother.activationStatus === "SUCCESS" || childAccountFor(mother.email));
+          const childCarrierSeat = motherSeats.find((seat) => seat.status === "active" && seat.currentChildEmail);
+          const availableChildren = availableActivatedChildren();
           const activating = state.activatingMotherIds.has(mother.id);
+          const importing = state.importingMotherIds.has(mother.id);
+          const qrActivation = isQrVerificationText(`${mother.activationStatus || ""}\n${mother.activationError || ""}`);
           const activationLabel = mother.tokenObtainedAt || mother.activationStatus === "SUCCESS"
             ? "已激活"
             : activating || mother.activationStatus === "PENDING" || mother.activationStatus === "RUNNING"
               ? "激活中..."
+              : qrActivation
+                ? "扫码验证"
               : "激活";
           const activationTone = mother.tokenObtainedAt || mother.activationStatus === "SUCCESS"
             ? "ok"
-            : mother.activationStatus === "FAILED_FINAL" || mother.activationStatus === "FAILED"
+            : qrActivation || mother.activationStatus === "FAILED_FINAL" || mother.activationStatus === "FAILED"
               ? "bad"
               : "warn";
           return `
@@ -994,13 +1421,28 @@
                   <span class="badge"><span class="dot ${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? 'warn' : (mother.enabled === false ? 'bad' : 'ok')}"></span>${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? '未激活' : (mother.enabled === false ? '停用' : '启用')}</span>
                   ${!mother.tokenObtainedAt && mother.activationStatus !== 'SUCCESS' ? `
                     <span class="badge" title="${escapeHtml(mother.activationError || '')}"><span class="dot ${activationTone}"></span>${activationLabel}</span>
-                    <button class="btn small primary" onclick="activateMother('${escapeJs(mother.id)}')" ${activating ? "disabled" : ""}>${activating ? "激活中..." : "激活"}</button>
+                    <button class="btn small primary" onclick="activateMother('${escapeJs(mother.id)}')" ${activating || qrActivation ? `disabled title="${escapeHtml(qrActivation ? '已确认遭遇扫码挑战，请改用导入或子号承载' : '')}"` : ""}>${activating ? "激活中..." : "激活"}</button>
                   ` : ''}
+                  <button class="btn small" onclick="importMotherToken('${escapeJs(mother.id)}')" ${importing || activating ? "disabled" : ""}>${importing ? "导入中..." : "导入"}</button>
                   <button class="btn small${state.syncingMotherId === mother.id ? ' primary' : ''}" onclick="syncMother('${escapeJs(mother.id)}','${escapeJs(mother.email)}')" ${state.syncingMotherId === mother.id ? 'disabled' : ''}>${state.syncingMotherId === mother.id ? '同步中...' : '同步'}</button>
                   <button class="btn small" onclick="toggleMotherGroup('${escapeJs(mother.id)}')">${isOpen ? "收起" : "管理家庭组"}</button>
                 </div>
                 ${state.syncStatus[mother.id] ? `<div class="sync-status ${escapeHtml(state.syncStatus[mother.id].tone || '')}">${escapeHtml(state.syncStatus[mother.id].message || '')}</div>` : ''}
               </div>
+              ${!motherCarrier && !childCarrierSeat ? `
+                <div class="family-toolbar">
+                  <span class="meta">${qrActivation ? "母号需要扫码验证，可改用已激活子号承载这个家庭组。" : "这个家庭组还没有可轮询的承载账号。"}</span>
+                  <select id="carrierChild_${escapeHtml(mother.id)}">
+                    <option value="">选择已激活子号</option>
+                    ${availableChildren.map((child) => `<option value="${escapeHtml(child.email)}">${escapeHtml(child.email)}</option>`).join("")}
+                  </select>
+                  <button class="btn small primary" onclick="assignChildToMother('${escapeJs(mother.id)}')" ${availableChildren.length ? "" : "disabled"}>拉入家庭组</button>
+                </div>
+              ` : `
+                <div class="family-toolbar">
+                  <span class="badge"><span class="dot ok"></span>当前承载：${motherCarrier ? `母号 ${escapeHtml(mother.email)}` : `子号 ${escapeHtml(childCarrierSeat.currentChildEmail || "")}`}</span>
+                </div>
+              `}
               ${isOpen ? `
                 <div class="family-toolbar">
                   <button class="btn small" onclick="addMotherSeats('${escapeJs(mother.id)}')">增加席位</button>
@@ -1012,6 +1454,7 @@
               ` : ""}
             </div>`;
         }).join("");
+        renderPaginationControls("motherPagination", state.motherPage, totalPages, "goMotherPage");
       }
 
       const eventBox = document.getElementById("familyEvents");
@@ -1031,6 +1474,127 @@
         const el = document.getElementById(`seatAddText_${state.addingSeatId}`);
         if (el) { el.value = savedAddText; el.focus(); }
       }
+    }
+
+    function childPoolRecords() {
+      const byEmail = new Map();
+      for (const child of state.family?.children || []) {
+        const email = normalizeEmailFront(child.email);
+        if (email) byEmail.set(email, { ...child, email });
+      }
+      for (const candidate of state.family?.candidates || []) {
+        const email = normalizeEmailFront(candidate.email);
+        if (!email || byEmail.has(email)) continue;
+        byEmail.set(email, {
+          id: `candidate:${candidate.id || email}`,
+          email,
+          loginPassword: candidate.loginPassword || "",
+          recoveryEmail: candidate.recoveryEmail || "",
+          totpSecret: candidate.totpSecret || "",
+          rosettaAccountId: candidate.rosettaAccountId,
+          activationTaskId: candidate.activationTaskId || "",
+          activationStatus: candidate.activationStatus || "",
+          activationError: candidate.activationError || "",
+          activatedAt: candidate.activatedAt || "",
+          assignedMotherId: candidate.motherId || "",
+          assignedSeatId: candidate.seatId || "",
+          isFamilyMember: candidate.isFamilyMember === true,
+          joinStatus: candidate.joinStatus || "",
+          joinError: candidate.joinError || "",
+          status: candidate.status || "candidate"
+        });
+      }
+      return [...byEmail.values()].sort((a, b) => normalizeEmailFront(a.email).localeCompare(normalizeEmailFront(b.email)));
+    }
+
+    function childAccountFor(email) {
+      return mergeAccounts().find((a) => normalizeEmailFront(a.email) === normalizeEmailFront(email)) || null;
+    }
+
+    function childIsActivated(child) {
+      return Boolean(child?.rosettaAccountId || child?.tokenObtainedAt || child?.activatedAt || childAccountFor(child?.email));
+    }
+
+    function childStatusBadges(child) {
+      const account = childAccountFor(child.email);
+      const activated = childIsActivated(child);
+      const qrFailure = isQrVerificationText(`${child.activationStatus || ""}\n${child.activationError || ""}`);
+      const bits = [
+        child.isFamilyMember ? ["在组", "ok"] : null,
+        child.assignedMotherId ? ["已分配", "ok"] : null,
+        activated ? ["已激活", "ok"] : ["未激活", "warn"],
+        qrFailure ? ["扫码验证", "bad"] : null,
+        child.joinStatus === "RUNNING" || child.joinStatus === "PENDING" ? ["进组中", "warn"] : null,
+        child.activationError && !qrFailure ? [child.activationError, "bad"] : null,
+        account?.enabled ? ["轮询中", "ok"] : null
+      ].filter(Boolean);
+      return bits.map(([label, tone]) => `<span class="badge"><span class="dot ${tone}"></span>${escapeHtml(label)}</span>`).join("");
+    }
+
+    function availableActivatedChildren() {
+      return childPoolRecords().filter((child) =>
+        childIsActivated(child) &&
+        !child.assignedMotherId &&
+        !child.isFamilyMember &&
+        !["replaced", "blocked", "disabled"].includes(String(child.status || "").toLowerCase())
+      );
+    }
+
+    function renderChildPool() {
+      const list = document.getElementById("childPoolList");
+      const summary = document.getElementById("childPoolSummary");
+      if (!list) return;
+      const children = childPoolRecords();
+      const activated = children.filter(childIsActivated).length;
+      const assigned = children.filter((child) => child.assignedMotherId || child.isFamilyMember).length;
+
+      // Search filter
+      const q = state.childSearch || "";
+      const filtered = q
+        ? children.filter((c) => String(c.email || "").toLowerCase().includes(q))
+        : children;
+
+      if (summary) summary.textContent = `${children.length} 个子号，${activated} 个已激活，${assigned} 个已分配${q ? ` · 搜到 ${filtered.length}` : ""}。子号只有进组后才会启用到轮询池。`;
+
+      const childSearchCount = document.getElementById("childSearchCount");
+      if (childSearchCount) childSearchCount.textContent = q ? `${filtered.length} / ${children.length}` : `${children.length} 条`;
+
+      if (!filtered.length) {
+        list.innerHTML = `<div class="empty">${q ? "没有匹配的子号" : "还没有子号。先批量导入备用子号，后续母号扫码或激活失败时可以拉一个进家庭组。"}</div>`;
+        renderPaginationControls("childPagination", 1, 1, "goChildPage");
+        return;
+      }
+
+      // Pagination
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+      if (state.childPage > totalPages) state.childPage = totalPages;
+      const start = (state.childPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      list.innerHTML = pageItems.map((child) => {
+        const email = normalizeEmailFront(child.email);
+        const activating = state.activatingChildKeys.has(`pool:${email}`) || child.activationStatus === "PENDING" || child.activationStatus === "RUNNING";
+        const importing = state.importingChildKeys.has(email);
+        const activated = childIsActivated(child);
+        const qrBlocked = isQrVerificationText(`${child.activationStatus || ""}\n${child.activationError || ""}\n${child.status || ""}`);
+        const flags = [child.loginPassword ? "密码" : "", child.recoveryEmail ? "辅助邮箱" : "", child.totpSecret ? "2FA" : ""].filter(Boolean).join("/");
+        return `
+          <div class="mother-card">
+            <div class="mother-head">
+              <div>
+                <div class="email">${escapeHtml(child.email)}</div>
+                <div class="meta">子号 ${shortId(child.id || email)}${flags ? ` · ${escapeHtml(flags)}` : ""}${child.assignedMotherId ? ` · 归属 ${escapeHtml(motherEmailById(child.assignedMotherId))}` : ""}</div>
+              </div>
+              <div class="mother-actions">
+                ${childStatusBadges(child)}
+                ${activated ? "" : `<button class="btn small primary" onclick="activateChildPool('${escapeJs(email)}')" ${activating || qrBlocked ? `disabled title="${escapeHtml(qrBlocked ? '已确认遭遇扫码挑战，避免重复提交任务' : '')}"` : ""}>${activating ? "激活中..." : (qrBlocked ? "扫码挑战" : "激活")}</button>`}
+                <button class="btn small" onclick="importChildToken('${escapeJs(email)}')" ${importing || activating ? "disabled" : ""}>${importing ? "导入中..." : "导入"}</button>
+                <button class="btn small danger" onclick="deleteChildPool('${escapeJs(email)}')">删除</button>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+      renderPaginationControls("childPagination", state.childPage, totalPages, "goChildPage");
     }
 
     function renderSeatRow(seat) {
@@ -1063,6 +1627,7 @@
             const joining = state.joiningChildKeys.has(childKey) || item.joinStatus === "PENDING" || item.joinStatus === "RUNNING";
             const activated = imported || item.activatedAt || item.status === "activated_pending_member" || item.status === "active";
             const activationFailed = ["FAILED", "FAILED_FINAL"].includes(String(item.activationStatus || "").toUpperCase());
+            const qrBlocked = isQrVerificationText(`${item.activationStatus || ""}\n${item.activationError || ""}\n${item.status || ""}`);
             const failureLabel = item.activationError || (activationFailed ? "激活失败" : "");
             const quotaExhausted = String(account?.quotaStatus || "").toLowerCase() === "exhausted" || Number(account?.quotaLiveBlockedCount || 0) > 0;
             const seatOccupied = Boolean(seat.currentChildEmail);
@@ -1084,7 +1649,7 @@
               <div class="candidate-email">${escapeHtml(item.email)}</div>
               <div class="candidate-meta">${statusBits.map((bit) => `<span class="badge"><span class="dot ${bit === "额度耗尽" || bit.includes("失败") ? "bad" : bit === "在组" || bit === "当前使用" || bit === "已激活" ? "ok" : "warn"}"></span>${escapeHtml(bit)}</span>`).join("")}</div>
               <div class="candidate-actions">
-                ${activated ? "" : `<button class="candidate-action primary" onclick="activateSeatCandidate('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${activating ? "disabled" : ""}>${activating ? "激活中" : "激活"}</button>`}
+                ${activated ? "" : `<button class="candidate-action primary" onclick="activateSeatCandidate('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${activating || qrBlocked ? `disabled title='${escapeHtml(qrBlocked ? "已确认遭遇扫码挑战，避免重复提交任务" : "")}'` : ""}>${activating ? "激活中" : (qrBlocked ? "扫码挑战" : "激活")}</button>`}
                 <button class="candidate-action primary" onclick="joinSeatMember('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${canJoinSeat ? "" : `disabled title='${escapeHtml(joinTitle)}'`}>${joining ? "进组中" : "进组"}</button>
                 <button class="candidate-action" onclick="switchSeatToCandidate('${escapeJs(seat.id)}','${escapeJs(item.email)}')" ${activated ? "" : "disabled title='请先激活'"}>切换</button>
                 <button class="candidate-action danger" onclick="removeSeatEmail('${escapeJs(seat.id)}','${escapeJs(item.email)}')">删除</button>
@@ -1118,23 +1683,208 @@
         </div>`;
     }
 
+    function renderServerOverview(remote) {
+      const el = document.getElementById("serverOverview");
+      if (!el || !remote?.running) { if (el) el.innerHTML = ""; return; }
+
+      const scheduler = remote.scheduler || {};
+      const stats = scheduler.accountStats || {};
+      const gates = scheduler.modelGates || [];
+      const leaseCounts = scheduler.activeLeaseCounts || {};
+      const daily = remote.daily || {};
+      const now = Date.now();
+
+      const activeLeases = Object.values(leaseCounts).reduce((s, v) => s + Number(v || 0), 0);
+      const clients = Number(remote.affinityClients || 0);
+
+      // Overall success rate from all account stats
+      let totalSuccess = 0, totalErr = 0, totalAllTokens = 0;
+      for (const s of Object.values(stats)) {
+        totalSuccess += Number(s.successCount || 0);
+        totalErr += Number(s.errorCount || 0);
+        totalAllTokens += Number(s.totalTokensUsed || 0);
+      }
+      const totalReqs = totalSuccess + totalErr;
+      const successRate = totalReqs > 0 ? Math.round(totalSuccess / totalReqs * 100) : 0;
+
+      // Model pressure: count active cooling gates per model
+      const activeGates = gates.filter(g => g.blockedUntil > now);
+      const gatesByModel = {};
+      activeGates.forEach(g => { gatesByModel[g.modelKey] = (gatesByModel[g.modelKey] || 0) + 1; });
+      const totalAccounts = (remote.quota?.accounts || []).filter(a => a.enabled !== false && a.projectId).length;
+
+      // Model pressure bars
+      const modelPressureHtml = Object.entries(gatesByModel)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([model, count]) => {
+          const pct = totalAccounts > 0 ? Math.round(count / totalAccounts * 100) : 0;
+          const short = model.replace(/^(tab_|models\/)/, "").replace(/_preview$/, "");
+          const color = pct > 60 ? "#ef4444" : pct > 30 ? "#f59e0b" : "#22c55e";
+          return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0;">
+            <span style="min-width:140px;color:var(--muted)">${escapeHtml(short)}</span>
+            <div style="flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+              <div style="width:${pct}%;height:100%;background:${color};border-radius:3px;transition:width .3s"></div>
+            </div>
+            <span style="min-width:60px;text-align:right;font-variant-numeric:tabular-nums">${count}/${totalAccounts} <small>(${pct}%)</small></span>
+          </div>`;
+        }).join("") || '<span style="color:var(--muted);font-size:12px">无阻断</span>';
+
+      // Daily stats
+      const dailyRate = daily.leases > 0 ? Math.round((daily.successes || 0) / daily.leases * 100) : 0;
+
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div style="background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:14px 16px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">📊 服务器概况</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
+              <div>
+                <div style="font-size:22px;font-weight:700;color:var(--accent)">${activeLeases}</div>
+                <div style="font-size:11px;color:var(--muted)">活跃 Lease</div>
+              </div>
+              <div>
+                <div style="font-size:22px;font-weight:700;color:var(--accent)">${clients}</div>
+                <div style="font-size:11px;color:var(--muted)">绑定客户端</div>
+              </div>
+              <div>
+                <div style="font-size:22px;font-weight:700;color:${successRate >= 70 ? '#22c55e' : successRate >= 50 ? '#f59e0b' : '#ef4444'}">${successRate}%</div>
+                <div style="font-size:11px;color:var(--muted)">总成功率</div>
+              </div>
+            </div>
+            <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px;">
+              <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">📅 今日统计 (${daily.date || "-"})</div>
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;text-align:center;font-size:12px;">
+                <div><strong>${daily.leases || 0}</strong><br><span style="color:var(--muted)">租号</span></div>
+                <div><strong style="color:#22c55e">${daily.successes || 0}</strong><br><span style="color:var(--muted)">成功</span></div>
+                <div><strong style="color:#ef4444">${daily.errors || 0}</strong><br><span style="color:var(--muted)">失败</span></div>
+                <div><strong>${dailyRate}%</strong><br><span style="color:var(--muted)">成功率</span></div>
+                <div><strong>${formatTokenCount(daily.tokensUsed || 0)}</strong><br><span style="color:var(--muted)">Token</span></div>
+              </div>
+            </div>
+            <div style="margin-top:8px;font-size:11px;color:var(--muted);text-align:right">
+              累计 Token: ${formatTokenCount(totalAllTokens)}
+            </div>
+          </div>
+          <div style="background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:14px 16px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">🔥 模型压力 <small style="font-weight:400;color:var(--muted)">(cooling 中的账号数)</small></div>
+            ${modelPressureHtml}
+            ${(() => {
+              const ep = remote.enterpriseProbe || {};
+              const groups = Object.entries(ep);
+              if (!groups.length) return '';
+              return `
+                <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+                  <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">🏢 企业号探测</div>
+                  ${groups.map(([name, g]) => {
+                    const wColor = g.weight >= 6 ? '#22c55e' : g.weight >= 3 ? 'var(--accent)' : g.weight >= 1.5 ? '#f59e0b' : '#ef4444';
+                    const statusText = g.emergency ? '⚠️ 紧急降权' : (g.rate !== null ? g.rate + '% 成功' : '探测中…');
+                    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin:4px 0">
+                      <span style="min-width:50px;font-weight:600">${name}</span>
+                      <span style="color:${wColor};font-weight:700;min-width:60px">权重 ${g.weight.toFixed(1)}</span>
+                      <span style="color:var(--muted)">${statusText}</span>
+                      <span style="color:var(--muted);font-size:10px">${g.successes}ok/${g.failures}fail</span>
+                      <span style="margin-left:auto;color:var(--muted);font-size:10px">${g.cycleMinutesLeft}min</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+              `;
+            })()}
+          </div>
+        </div>
+      `;
+    }
+
     function renderLoadTable(remote) {
       const scheduler = remote?.scheduler || {};
       const leaseCounts = scheduler.activeLeaseCounts || {};
       const stats = scheduler.accountStats || {};
-      const accounts = mergeAccounts();
-      const rows = accounts.length
+      const quotaAccounts = remote?.quota?.accounts || [];
+      const localAccounts = mergeAccounts();
+
+      // Merge local accounts with quota accounts from server for richer data
+      const quotaMap = new Map(quotaAccounts.map(a => [Number(a.id), a]));
+      const accounts = localAccounts.length
+        ? localAccounts.map(a => {
+            const q = quotaMap.get(Number(a.id));
+            return q ? { ...a, ...q, email: q.email || a.email } : a;
+          })
+        : quotaAccounts;
+      const allRows = accounts.length
         ? accounts
         : Object.keys({ ...leaseCounts, ...stats }).sort((a, b) => Number(a) - Number(b)).map((id) => ({ id }));
+
+      // Merge model gates into blockedModels
+      if (scheduler.modelGates) {
+        const gateMap = new Map();
+        scheduler.modelGates.forEach(g => {
+          if (!gateMap.has(g.accountId)) gateMap.set(g.accountId, []);
+          gateMap.get(g.accountId).push(g);
+        });
+        allRows.forEach(a => {
+          const gates = gateMap.get(Number(a.id));
+          if (gates) {
+            a.blockedModels = [...(a.blockedModels || []), ...gates];
+          }
+        });
+      }
+
+      // Summary bar
+      const summaryBar = document.getElementById("loadSummaryBar");
+      if (summaryBar && allRows.length) {
+        const reasons = {};
+        let okCount = 0;
+        allRows.forEach(a => {
+          if (a.quotaStatus === "exhausted") {
+            const r = a.quotaStatusReason || "unknown";
+            reasons[r] = (reasons[r] || 0) + 1;
+          } else {
+            okCount++;
+          }
+        });
+        const items = [`<div class="stat-card" style="padding:6px 10px"><strong style="color:var(--accent)">${okCount}</strong> 正常</div>`];
+        const reasonLabels = {
+          "quota": "额度", "location_unsupported": "地区", "location_permanent_ban": "地区永封",
+          "token_refresh_failed": "Token失效", "phone_verification_required": "手机验证",
+          "auth_forbidden": "认证拒", "capacity": "容量", "unknown": "未知",
+        };
+        for (const [r, count] of Object.entries(reasons).sort((a, b) => b[1] - a[1])) {
+          items.push(`<div class="stat-card" style="padding:6px 10px"><strong style="color:#f87171">${count}</strong> ${escapeHtml(reasonLabels[r] || r)}</div>`);
+        }
+        summaryBar.innerHTML = items.join("");
+      }
+
+      // Search filter (enhanced to include quotaStatusReason and blockedModels)
+      const q = state.loadSearch || "";
+      const rows = q
+        ? allRows.filter((a) => {
+            const blockedModelStr = (a.blockedModels || []).map(m => `${m.modelKey} ${m.reason}`).join(" ");
+            const hay = [a.email, a.planType, a.quotaStatus, a.quotaStatusReason, String(a.id), blockedModelStr].join(" ").toLowerCase();
+            return hay.includes(q);
+          })
+        : allRows;
+
+      const loadSearchCount = document.getElementById("loadSearchCount");
+      if (loadSearchCount) loadSearchCount.textContent = q ? `${rows.length} / ${allRows.length}` : `${allRows.length} 条`;
+
       if (!rows.length) {
-        document.getElementById("loadTableWrap").innerHTML = `<div class="empty">暂无账号负载数据</div>`;
+        document.getElementById("loadTableWrap").innerHTML = `<div class="empty">${q ? "没有匹配的负载数据" : "暂无账号负载数据"}</div>`;
+        renderPaginationControls("loadPagination", 1, 1, "goLoadPage");
         return;
       }
+
+      // Pagination
+      const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+      if (state.loadPage > totalPages) state.loadPage = totalPages;
+      const start = (state.loadPage - 1) * PAGE_SIZE;
+      const pageRows = rows.slice(start, start + PAGE_SIZE);
+
+      const now = Date.now();
+
       document.getElementById("loadTableWrap").innerHTML = `
         <table class="load-table">
-          <thead><tr><th>账号</th><th>套餐</th><th>额度</th><th>使用中</th><th>活跃 Lease</th><th>成功率</th><th>请求</th><th>429/503</th><th>最近状态</th></tr></thead>
+          <thead><tr><th style="width: 32px;"><input type="checkbox" id="selectAllLoadAccounts" onchange="toggleAllLoadAccounts(this)"></th><th>账号</th><th>套餐</th><th>额度状态</th><th>封禁原因</th><th>冷却/剩余</th><th>阻断模型</th><th>Lease</th><th>累计Token</th><th>成功率</th><th>请求/失败</th><th>地区失败</th><th>最近对话</th><th>最近码</th><th>操作</th></tr></thead>
           <tbody>
-            ${rows.map((account) => {
+            ${pageRows.map((account) => {
               const id = String(account.id ?? "");
               const s = stats[id] || {};
               const activeLeases = Number(leaseCounts[id] ?? account.activeLeases ?? 0);
@@ -1142,21 +1892,99 @@
               const failures = Number(account.requestStats?.failures ?? s.errorCount ?? 0);
               const successes = Number(account.requestStats?.successes ?? s.successCount ?? Math.max(0, total - failures));
               const successRate = account.successRate != null ? account.successRate : (total ? Math.round(successes / total * 100) : null);
-              return `<tr>
+
+              // Blocking reason
+              const reason = account.quotaStatusReason || "";
+              const reasonLabel = {
+                "quota": "额度耗尽",
+                "capacity": "容量限制",
+                "location_unsupported": "地区不支持",
+                "location_permanent_ban": "地区永封",
+                "token_refresh_failed": "Token失效",
+                "phone_verification_required": "手机验证",
+                "auth_forbidden": "认证被拒",
+                "auth_failed": "认证失败",
+                "verification_required": "需验证",
+              }[reason] || reason || "-";
+              const reasonClass = reason.includes("permanent") || reason.includes("token_refresh") ? "err" : reason ? "warn" : "ok";
+
+              // Cooldown remaining
+              const blockedUntil = Number(account.blockedUntil || 0);
+              const cooldownMs = blockedUntil > now ? blockedUntil - now : 0;
+              const cooldownStr = cooldownMs > 0 ? formatMs(cooldownMs) : "-";
+
+              // Blocked models
+              const blockedModels = (account.blockedModels || []).filter(m => m.blockedUntil > now);
+              const blockedModelsStr = blockedModels.length
+                ? blockedModels.map(m => {
+                    const mRemaining = Math.max(0, m.blockedUntil - now);
+                    const shortModel = (m.modelKey || "").replace(/^(tab_|models\/)/, "").slice(0, 18);
+                    return `<code title="${escapeHtml(m.modelKey)} (${escapeHtml(m.reason)})">${escapeHtml(shortModel)}</code> <small>${formatMs(mRemaining)}</small>`;
+                  }).join("<br>")
+                : "-";
+
+              // Location failures
+              const locFails = Number(s.locationFailures || 0);
+
+              // Last conversation
+              const lastConvo = account.lastConversationOkAt ? formatDateTime(account.lastConversationOkAt) : "-";
+
+              // Token usage
+              const totalInputTokens = Number(s.totalInputTokens || 0);
+              const totalOutputTokens = Number(s.totalOutputTokens || 0);
+              const totalTokensUsed = Number(s.totalTokensUsed || 0);
+              const tokenStr = totalTokensUsed > 0
+                ? `<span title="输入: ${totalInputTokens.toLocaleString()} / 输出: ${totalOutputTokens.toLocaleString()}">${formatTokenCount(totalTokensUsed)}</span>`
+                : "-";
+
+              return `<tr class="${account.enabled === false ? 'disabled-row' : ''}">
+                <td><input type="checkbox" class="load-account-checkbox" value="${id}" onchange="updateLoadAccountSelection()"></td>
                 <td>#${escapeHtml(id)}<br>${escapeHtml(maskEmail(account.email || ""))}</td>
                 <td>${escapeHtml(account.planType || "-")}</td>
                 <td><span class="badge"><span class="dot ${quotaDot(account)}"></span>${escapeHtml(account.quotaStatus || "unknown")}</span></td>
-                <td>${account.isActive || activeLeases > 0 ? "是" : "否"}</td>
+                <td><span class="badge"><span class="dot ${reasonClass}"></span>${reasonLabel}</span></td>
+                <td>${cooldownStr}</td>
+                <td class="small-text">${blockedModelsStr}</td>
                 <td>${activeLeases}</td>
+                <td class="small-text">${tokenStr}</td>
                 <td>${formatSuccessRate(successRate)}</td>
                 <td>${total} / ${failures}</td>
-                <td>${Number(s.quota429Count || 0)}</td>
+                <td>${locFails > 0 ? `<span class="badge"><span class="dot ${locFails >= 10 ? 'err' : 'warn'}"></span>${locFails}</span>` : "-"}</td>
+                <td class="small-text">${escapeHtml(lastConvo)}</td>
                 <td>${s.lastStatus || account.lastStatus || "-"}</td>
+                <td>
+                  <button class="toggle-btn ${account.enabled === false ? 'btn-enable' : 'btn-disable'}" onclick="toggleAccount(${id}, ${account.enabled !== false})" title="${account.enabled === false ? '点击解封此账号' : '点击禁用此账号'}">${account.enabled === false ? '🔓 解封' : '🔒 禁用'}</button>
+                </td>
               </tr>`;
             }).join("")}
           </tbody>
         </table>
       `;
+      renderPaginationControls("loadPagination", state.loadPage, totalPages, "goLoadPage");
+    }
+
+    async function toggleAccount(accountId, currentlyEnabled) {
+      const action = currentlyEnabled ? '禁用' : '解封';
+      if (!confirm(`确认${action}账号 #${accountId}？`)) return;
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ 处理中...'; }
+      try {
+        const res = await window.fetch(`${API}/toggle-account`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: Number(accountId), enabled: !currentlyEnabled }),
+        });
+        const resp = await res.json();
+        if (resp?.ok) {
+          showToast(`✅ 账号 #${accountId} 已${action}`, 'success');
+          await loadRemoteStatus();
+        } else {
+          showToast(`❌ ${action}失败: ${resp?.error || '未知错误'}`, 'error');
+        }
+      } catch (err) {
+        showToast(`❌ ${action}请求失败: ${err.message}`, 'error');
+      }
+      if (btn) { btn.disabled = false; }
     }
 
     function renderServiceDetails() {
@@ -1183,18 +2011,31 @@
       const keys = state.accessKeys || [];
       const summary = document.getElementById("accessKeySummary");
       if (summary) {
-        const limit = state.accessKeyDefaults?.windowLimit || 300;
-        summary.textContent = `5小时内默认限制 ${limit} 次请求；请求数按客户端上报结果累计，页面每次刷新时更新。`;
+        const limit = state.accessKeyDefaults?.tokenWindowLimit || 0;
+        const suffix = state.accessKeySearch
+          ? `当前搜索 ${state.accessKeyTotal.toLocaleString()} / ${state.accessKeyTotalAll.toLocaleString()} 张。`
+          : `共 ${state.accessKeyTotalAll.toLocaleString()} 张。`;
+        summary.textContent = limit > 0
+          ? `5小时内默认限制 ${Number(limit).toLocaleString()} tokens；token 用量按客户端上报结果累计，页面每次刷新时更新。${suffix}`
+          : `token 留空按请求数 1:100000 换算；请求数和 token 都留空则不限。token 用量按客户端上报结果累计，页面每次刷新时更新。${suffix}`;
       }
       if (!keys.length) {
-        wrap.innerHTML = `<div class="empty">暂无卡密</div>`;
+        wrap.innerHTML = `<div class="empty">${state.accessKeySearch ? "没有匹配的卡密" : "暂无卡密"}</div>`;
+        renderPaginationControls("userPagination", 1, 1, "goUserPage");
         return;
       }
+
+      // Pagination
+      const totalPages = Math.ceil(keys.length / PAGE_SIZE);
+      if (state.userPage > totalPages) state.userPage = totalPages;
+      const start = (state.userPage - 1) * PAGE_SIZE;
+      const pageKeys = keys.slice(start, start + PAGE_SIZE);
+
       wrap.innerHTML = `
         <table>
-          <thead><tr><th>卡密</th><th>备注</th><th>状态</th><th>有效期</th><th>首次使用</th><th>到期</th><th>总请求</th><th>5小时请求</th><th>操作</th></tr></thead>
+          <thead><tr><th>卡密</th><th>备注</th><th>状态</th><th>有效期</th><th>首次使用</th><th>到期</th><th>总请求</th><th>总 tokens</th><th>5小时 tokens</th><th>操作</th></tr></thead>
           <tbody>
-            ${keys.map((key) => `
+            ${pageKeys.map((key) => `
               <tr>
                 <td><code>${escapeHtml(key.key || "")}</code></td>
                 <td>${escapeHtml(key.name || "-")}</td>
@@ -1203,7 +2044,11 @@
                 <td>${escapeHtml(formatDateTime(key.firstUsedAt) || "未使用")}</td>
                 <td>${escapeHtml(formatDateTime(key.expiresAt) || "首次使用后计算")}</td>
                 <td>${Number(key.totalRequests || 0)}</td>
-                <td>${Number(key.recentWindowRequests || 0)} / ${Number(key.windowLimit || 0)}</td>
+                <td>${Number(key.totalTokensUsed || 0).toLocaleString()}</td>
+                <td>
+                  <div style="font-size:11px;margin-bottom:2px">Opus: ${Number(key.opusTokensUsed || 0).toLocaleString()} / ${Number(key.opusTokenLimit || 0) > 0 ? Number(key.opusTokenLimit || 0).toLocaleString() : "不限"}</div>
+                  <div style="font-size:11px;color:var(--accent)">Gemini: ${Number(key.geminiTokensUsed || 0).toLocaleString()} / ${Number(key.geminiTokenLimit || 0) > 0 ? Number(key.geminiTokenLimit || 0).toLocaleString() : "不限"}</div>
+                </td>
                 <td>
                   <button class="btn small" onclick="copyAccessKey('${escapeJs(key.fullKey || "")}')">复制</button>
                   <button class="btn small ${key.status === "active" ? "danger" : ""}" onclick="toggleAccessKey('${escapeJs(key.id)}','${key.status === "active" ? "disabled" : "active"}')">${key.status === "active" ? "禁用" : "启用"}</button>
@@ -1212,12 +2057,118 @@
             `).join("")}
           </tbody>
         </table>`;
+      renderPaginationControls("userPagination", state.userPage, totalPages, "goUserPage");
+    }
+
+    function renderEmployees() {
+      const wrap = document.getElementById("employeeList");
+      if (!wrap) return;
+      const employees = state.employees || [];
+      const accounts = state.employeeAccounts || [];
+      const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+      const totals = employees.reduce((sum, employee) => {
+        const stats = employee.stats || {};
+        sum.total += Number(stats.total || 0);
+        sum.accepted += Number(stats.accepted || 0);
+        sum.failed += Number(stats.failed || 0);
+        return sum;
+      }, { total: 0, accepted: 0, failed: 0 });
+
+      const employeeCount = document.getElementById("employeeCount");
+      const employeeAccountCount = document.getElementById("employeeAccountCount");
+      const employeeAcceptedCount = document.getElementById("employeeAcceptedCount");
+      const employeeFailedCount = document.getElementById("employeeFailedCount");
+      if (employeeCount) employeeCount.textContent = String(employees.length);
+      if (employeeAccountCount) employeeAccountCount.textContent = String(totals.total || accounts.length);
+      if (employeeAcceptedCount) employeeAcceptedCount.textContent = String(totals.accepted);
+      if (employeeFailedCount) employeeFailedCount.textContent = String(totals.failed);
+
+      const input = document.getElementById("employeeSearch");
+      const term = String(input?.value || state.employeeSearch || "").trim().toLowerCase();
+      state.employeeSearch = term;
+
+      const filteredAccounts = accounts.filter((account) => {
+        if (!term) return true;
+        const owner = employeeById.get(account.employeeId);
+        return [
+          owner?.email,
+          account.employeeId,
+          account.email,
+          account.projectId,
+          account.planType,
+          account.status,
+          account.acceptedAt,
+          account.lastConversationOkAt,
+        ].some((value) => String(value || "").toLowerCase().includes(term));
+      });
+      const filteredEmployees = employees.filter((employee) => {
+        if (!term) return false;
+        return [employee.email, employee.id, employee.status]
+          .some((value) => String(value || "").toLowerCase().includes(term));
+      });
+
+      const summary = document.getElementById("employeeSummary");
+      if (summary) {
+        summary.textContent = term
+          ? `当前搜索 ${filteredAccounts.length} 个账号，${filteredEmployees.length} 个仅员工匹配；全部 ${employees.length} 名员工、${accounts.length} 个账号。`
+          : `全部 ${employees.length} 名员工、${accounts.length} 个账号。`;
+      }
+
+      const rows = filteredAccounts.map((account) => {
+        const owner = employeeById.get(account.employeeId);
+        return `
+          <tr>
+            <td>${escapeHtml(owner?.email || account.employeeId || "-")}</td>
+            <td><code>${escapeHtml(account.email || "-")}</code></td>
+            <td><code>${escapeHtml(account.projectId || "-")}</code></td>
+            <td>${escapeHtml(account.planType || "-")}</td>
+            <td><span class="badge"><span class="dot ${account.status === "accepted" ? "ok" : "warn"}"></span>${escapeHtml(account.status || "-")}</span></td>
+            <td>${escapeHtml(formatDateTime(account.lastConversationOkAt) || "-")}</td>
+            <td>${escapeHtml(formatDateTime(account.acceptedAt) || "-")}</td>
+          </tr>
+        `;
+      });
+
+      const employeeOnlyRows = filteredEmployees
+        .filter((employee) => !filteredAccounts.some((account) => account.employeeId === employee.id))
+        .map((employee) => `
+          <tr>
+            <td>${escapeHtml(employee.email || employee.id || "-")}</td>
+            <td colspan="3">-</td>
+            <td><span class="badge"><span class="dot ${employee.status === "active" ? "ok" : "warn"}"></span>${escapeHtml(employee.status || "-")}</span></td>
+            <td>${escapeHtml(formatDateTime(employee.lastActiveAt) || "-")}</td>
+            <td>${escapeHtml(formatDateTime(employee.createdAt) || "-")}</td>
+          </tr>
+        `);
+
+      if (!rows.length && !employeeOnlyRows.length) {
+        wrap.innerHTML = `<div class="empty">${term ? "没有匹配的员工或账号" : "暂无员工账号"}</div>`;
+        return;
+      }
+
+      const allTableRows = [...rows, ...employeeOnlyRows];
+      // Pagination
+      const totalPages = Math.ceil(allTableRows.length / PAGE_SIZE);
+      if (state.employeePage > totalPages) state.employeePage = totalPages;
+      const start = (state.employeePage - 1) * PAGE_SIZE;
+      const pageTableRows = allTableRows.slice(start, start + PAGE_SIZE);
+
+      wrap.innerHTML = `
+        <table>
+          <thead><tr><th>员工</th><th>账号</th><th>项目号</th><th>套餐</th><th>状态</th><th>对话测试</th><th>入池/注册时间</th></tr></thead>
+          <tbody>${pageTableRows.join("")}</tbody>
+        </table>
+        <div id="employeePagination" class="pagination"></div>`;
+      renderPaginationControls("employeePagination", state.employeePage, totalPages, "goEmployeePage");
     }
 
     function formatDuration(ms) {
       const n = Number(ms || 0);
       if (n === 60 * 60 * 1000) return "1小时";
+      if (n === 5 * 60 * 60 * 1000) return "5小时";
       if (n === 24 * 60 * 60 * 1000) return "一天";
+      if (n > 0 && n % (24 * 60 * 60 * 1000) === 0) return `${Math.round(n / (24 * 60 * 60 * 1000))}天`;
+      if (n > 0 && n % (60 * 60 * 1000) === 0) return `${Math.round(n / (60 * 60 * 1000))}小时`;
       if (n >= 28 * 24 * 60 * 60 * 1000) return "一个月";
       return n ? formatMs(n) : "-";
     }
@@ -1229,12 +2180,14 @@
       return date.toLocaleString();
     }
 
-    function parseAccountImportLine(line) {
+    function parseAccountImportLine(line, options = {}) {
       const raw = String(line || "").trim();
       if (!raw) return null;
-      const parts = raw.includes("----") || raw.includes("---") || raw.includes("——") || raw.includes("—")
-        ? raw.split(/----|---|——|—/).map((item) => item.trim())
-        : raw.split(/[,，\s]+/).map((item) => item.trim());
+      const parts = raw.includes("|")
+        ? raw.split("|").map((item) => item.trim())
+        : raw.includes("----") || raw.includes("---") || raw.includes("——") || raw.includes("—")
+          ? raw.split(/----|---|——|—/).map((item) => item.trim())
+          : raw.split(/[,，\s]+/).map((item) => item.trim());
       const email = String(parts[0] || "").trim().toLowerCase();
       if (!email || !email.includes("@")) return null;
       const second = String(parts[1] || "").trim();
@@ -1242,10 +2195,11 @@
       const fourth = String(parts[3] || "").trim();
       const recoveryEmail = [third, fourth].find((item) => item.includes("@")) || "";
       const totpSecret = [third, fourth].find((item) => item && !item.includes("@")) || "";
-      const legacySeats = parts.length === 2 && /^\d+$/.test(second) ? Number(second) : 5;
+      const allowLegacySeats = options.allowLegacySeats !== false;
+      const legacySeats = allowLegacySeats && parts.length === 2 && /^\d+$/.test(second) ? Number(second) : 5;
       return {
         email,
-        loginPassword: /^\d+$/.test(second) && parts.length === 2 ? "" : second,
+        loginPassword: allowLegacySeats && /^\d+$/.test(second) && parts.length === 2 ? "" : second,
         recoveryEmail: recoveryEmail.toLowerCase(),
         totpSecret,
         totalSeats: Math.max(0, Math.min(20, legacySeats)),
@@ -1253,7 +2207,7 @@
     }
 
     function parseMotherImportLine(line) {
-      return parseAccountImportLine(line);
+      return parseAccountImportLine(line, { allowLegacySeats: true });
     }
 
     async function batchImportMothers() {
@@ -1374,6 +2328,162 @@
       });
     }
 
+    function resetDirectAccountImportResult(total) {
+      state.directImportBatchSeq += 1;
+      state.directImportResult = {
+        batchId: state.directImportBatchSeq,
+        total,
+        pending: [],
+        success: [],
+        failed: []
+      };
+      renderDirectAccountImportResult();
+      return state.directImportResult.batchId;
+    }
+
+    function updateDirectAccountImportResult(batchId, email, status, message) {
+      const result = state.directImportResult;
+      if (!result || result.batchId !== batchId) return;
+      const normalized = normalizeEmailFront(email);
+      for (const key of ["pending", "success", "failed"]) {
+        result[key] = result[key].filter((item) => item.email !== normalized);
+      }
+      if (status === "success") {
+        result.success.push({ email: normalized, message: message || "已进入账号池" });
+      } else if (status === "failed") {
+        result.failed.push({ email: normalized, message: message || "未进入账号池" });
+      } else {
+        result.pending.push({ email: normalized, message: message || "正在自动登录" });
+      }
+      renderDirectAccountImportResult();
+    }
+
+    function renderDirectAccountImportResult() {
+      const box = document.getElementById("directAccountImportResult");
+      const result = state.directImportResult;
+      if (!box || !result) return;
+      const itemHtml = (item) => `<div class="import-result-item" title="${escapeHtml(item.message || "")}">${escapeHtml(item.email)}${item.message ? ` · ${escapeHtml(item.message)}` : ""}</div>`;
+      box.classList.remove("hidden");
+      box.innerHTML = `
+        <div class="import-result-head">
+          <span>本轮导入 <strong>${result.total}</strong> 个</span>
+          <span>已成功进入号池 <strong>${result.success.length}</strong> 个</span>
+          <span>未成功进入号池 <strong>${result.failed.length}</strong> 个</span>
+          <span>进行中 <strong>${result.pending.length}</strong> 个</span>
+        </div>
+        <div class="import-result-columns">
+          <div class="import-result-column">
+            <div class="import-result-title ok">已成功进入号池</div>
+            <div class="import-result-list">${result.success.length ? result.success.map(itemHtml).join("") : '<span class="meta">暂无</span>'}</div>
+          </div>
+          <div class="import-result-column">
+            <div class="import-result-title bad">未成功进入号池</div>
+            <div class="import-result-list">${result.failed.length ? result.failed.map(itemHtml).join("") : '<span class="meta">暂无</span>'}</div>
+          </div>
+          <div class="import-result-column">
+            <div class="import-result-title warn">正在处理</div>
+            <div class="import-result-list">${result.pending.length ? result.pending.map(itemHtml).join("") : '<span class="meta">暂无</span>'}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function pollDirectRosettaImport(row, taskId, batchId) {
+      const email = normalizeEmailFront(row.email);
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          if (status.status === "SUCCESS" || status.status === "MANUAL_REVIEW") {
+            const result = status.result || {};
+            const refreshToken = result.refresh_token || result.refreshToken || "";
+            if (!refreshToken) {
+              clearInterval(timer);
+              state.importingRosettaEmails.delete(email);
+              updateDirectAccountImportResult(batchId, email, "failed", "登录完成但没有 refresh_token");
+              showToast(`${email} 自动登录完成但没有返回 refresh_token`);
+              refreshAll();
+              return;
+            }
+            clearInterval(timer);
+            try {
+              await saveRosettaTokenFromActivation(row, status, { enabled: true });
+              updateDirectAccountImportResult(batchId, email, "success", "已进入账号池");
+              showToast(`${email} 已自动登录并进入账号池`);
+            } catch (error) {
+              updateDirectAccountImportResult(batchId, email, "failed", `写入失败：${error.message || error}`);
+              showToast(`${email} 写入账号池失败：${error.message || error}`);
+            }
+            state.importingRosettaEmails.delete(email);
+            refreshAll();
+          } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
+            clearInterval(timer);
+            state.importingRosettaEmails.delete(email);
+            updateDirectAccountImportResult(batchId, email, "failed", status.lastErrorMessage || "自动登录失败");
+            showToast(`${email} 自动登录失败：${status.lastErrorMessage || "未知错误"}`);
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.importingRosettaEmails.delete(email);
+          updateDirectAccountImportResult(batchId, email, "failed", `状态查询失败：${error.message || error}`);
+          showToast(`${email} 自动登录状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function batchAutoImportRosettaAccounts() {
+      const box = document.getElementById("directAccountImportText");
+      const rows = String(box?.value || "")
+        .split(/\r?\n/)
+        .map((line) => parseAccountImportLine(line, { allowLegacySeats: false }))
+        .filter(Boolean);
+      const validRows = rows.filter((row) => normalizeEmailFront(row.email) && row.loginPassword);
+      if (!validRows.length) {
+        showToast("请粘贴账号，格式：邮箱 | 密码");
+        return;
+      }
+
+      const batchId = resetDirectAccountImportResult(validRows.length);
+      const seen = new Set();
+      let started = 0;
+      let skipped = 0;
+      for (const row of validRows) {
+        const email = normalizeEmailFront(row.email);
+        if (!email || seen.has(email) || state.importingRosettaEmails.has(email)) {
+          skipped += 1;
+          if (email) updateDirectAccountImportResult(batchId, email, "failed", "重复或已有任务正在处理");
+          continue;
+        }
+        seen.add(email);
+        row.email = email;
+        state.importingRosettaEmails.add(email);
+        updateDirectAccountImportResult(batchId, email, "pending", "正在自动登录");
+        try {
+          const result = await fetchJson("/api/proxy/automation/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "oauth",
+              email,
+              password: row.loginPassword,
+              recoveryEmail: row.recoveryEmail || undefined,
+              totpSecret: row.totpSecret || undefined
+            })
+          });
+          pollDirectRosettaImport(row, result.taskId, batchId);
+          started += 1;
+        } catch (error) {
+          state.importingRosettaEmails.delete(email);
+          updateDirectAccountImportResult(batchId, email, "failed", `提交失败：${error.message || error}`);
+          showToast(`${email} 自动登录提交失败：${error.message || error}`);
+        }
+      }
+      if (started) box.value = "";
+      showToast(`已提交 ${started} 个自动登录任务${skipped ? `，跳过 ${skipped} 个重复任务` : ""}`);
+      refreshAll();
+    }
+
     async function pollMotherActivation(mother, taskId) {
       const timer = setInterval(async () => {
         try {
@@ -1408,7 +2518,15 @@
           } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
             clearInterval(timer);
             state.activatingMotherIds.delete(mother.id);
-            showToast(`${mother.email} 激活失败：${status.lastErrorMessage || "未知错误"}`);
+            const failureMessage = isQrVerificationTaskStatus(status)
+              ? "验证失败（扫码）"
+              : (status.lastErrorMessage || "未知错误");
+            await updateMotherActivation(mother, {
+              activationTaskId: taskId,
+              activationStatus: status.status,
+              activationError: failureMessage
+            }).catch(() => {});
+            showToast(`${mother.email} 激活失败：${failureMessage}`);
             refreshAll();
           } else {
             refreshAll();
@@ -1425,6 +2543,10 @@
     async function activateMother(motherId) {
       const mother = (state.family?.mothers || []).find((item) => item.id === motherId);
       if (!mother) return;
+      if (isQrVerificationText(`${mother.activationStatus || ""}\n${mother.activationError || ""}`)) {
+        showToast("这个母号已确认遭遇扫码挑战，已阻止重复提交激活任务");
+        return;
+      }
       if (!mother.loginPassword) {
         showToast("这个母号没有密码，无法自动 OAuth 登录");
         return;
@@ -1460,6 +2582,386 @@
         showToast(`激活失败：${error.message || error}`);
         refreshAll();
       }
+    }
+
+    async function pollMotherImport(mother, taskId) {
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          await updateMotherActivation(mother, {
+            activationTaskId: taskId,
+            activationStatus: status.status,
+            activationError: status.lastErrorMessage || ""
+          });
+
+          if (status.status === "SUCCESS" || status.status === "MANUAL_REVIEW") {
+            const hasToken = Boolean(status.result?.refresh_token || status.result?.refreshToken);
+            if (!hasToken) {
+              clearInterval(timer);
+              state.importingMotherIds.delete(mother.id);
+              await updateMotherActivation(mother, {
+                activationTaskId: taskId,
+                activationStatus: "FAILED",
+                activationError: "导入任务完成但没有返回 refresh_token"
+              });
+              showToast(`${mother.email} 导入失败：没有返回 refresh_token`);
+              refreshAll();
+              return;
+            }
+            clearInterval(timer);
+            try {
+              await saveRosettaTokenFromActivation(mother, status);
+              await updateMotherActivation(mother, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: "",
+                tokenObtainedAt: new Date().toISOString()
+              });
+              showToast(`${mother.email} 已导入 Rosetta 账号池`);
+            } catch (error) {
+              await updateMotherActivation(mother, {
+                activationTaskId: taskId,
+                activationStatus: "SUCCESS",
+                activationError: `写入 Rosetta 失败：${error.message || error}`
+              });
+              showToast(`导入成功，但写入 Rosetta 失败：${error.message || error}`);
+            }
+            state.importingMotherIds.delete(mother.id);
+            refreshAll();
+          } else if (status.status === "FAILED_FINAL" || status.status === "FAILED") {
+            clearInterval(timer);
+            state.importingMotherIds.delete(mother.id);
+            showToast(`${mother.email} 导入失败：${status.lastErrorMessage || "未知错误"}`);
+            refreshAll();
+          } else {
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.importingMotherIds.delete(mother.id);
+          showToast(`导入状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function importMotherToken(motherId) {
+      const mother = (state.family?.mothers || []).find((item) => item.id === motherId);
+      if (!mother) return;
+      if (!mother.loginPassword) {
+        showToast("这个母号没有密码，无法自动 OAuth 登录");
+        return;
+      }
+      state.importingMotherIds.add(motherId);
+      renderFamilyPool();
+      try {
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "oauth",
+            email: mother.email,
+            password: mother.loginPassword,
+            recoveryEmail: mother.recoveryEmail || undefined,
+            totpSecret: mother.totpSecret || undefined
+          })
+        });
+        await updateMotherActivation(mother, {
+          activationTaskId: result.taskId,
+          activationStatus: result.status || "PENDING",
+          activationError: ""
+        });
+        showToast(`${mother.email} 导入任务已提交`);
+        pollMotherImport(mother, result.taskId);
+        refreshAll();
+      } catch (error) {
+        state.importingMotherIds.delete(motherId);
+        await updateMotherActivation(mother, { activationStatus: "FAILED", activationError: error.message || String(error) }).catch(() => {});
+        showToast(`导入失败：${error.message || error}`);
+        refreshAll();
+      }
+    }
+
+    function childPoolRecordByEmail(email) {
+      const normalized = normalizeEmailFront(email);
+      return childPoolRecords().find((item) => normalizeEmailFront(item.email) === normalized) || null;
+    }
+
+    async function updateChildPool(child, patch) {
+      const base = child || {};
+      const email = normalizeEmailFront(patch.email || base.email);
+      if (!email) throw new Error("child email is required");
+      await fetchJson(`${API}/family-child`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: String(base.id || "").startsWith("candidate:") ? "" : (base.id || ""),
+          email,
+          alias: base.alias || "",
+          loginPassword: base.loginPassword || "",
+          recoveryEmail: base.recoveryEmail || "",
+          totpSecret: base.totpSecret || "",
+          rosettaAccountId: base.rosettaAccountId || undefined,
+          activationTaskId: base.activationTaskId || "",
+          activationStatus: base.activationStatus || "",
+          activationError: base.activationError || "",
+          activatedAt: base.activatedAt || "",
+          tokenObtainedAt: base.tokenObtainedAt || "",
+          assignedMotherId: base.assignedMotherId || "",
+          assignedSeatId: base.assignedSeatId || "",
+          isFamilyMember: base.isFamilyMember === true,
+          joinStatus: base.joinStatus || "",
+          joinError: base.joinError || "",
+          status: base.status || "idle",
+          ...(patch || {})
+        })
+      });
+    }
+
+    async function batchImportChildren() {
+      const box = document.getElementById("childBatchText");
+      const rows = String(box?.value || "").split(/\r?\n/).map(parseAccountImportLine).filter(Boolean);
+      if (!rows.length) {
+        showToast("请先粘贴子号");
+        return;
+      }
+      const seen = new Set();
+      let ok = 0;
+      let skipped = 0;
+      for (const row of rows) {
+        const email = normalizeEmailFront(row.email);
+        if (!email || seen.has(email)) {
+          skipped += 1;
+          continue;
+        }
+        seen.add(email);
+        await updateChildPool(childPoolRecordByEmail(email), {
+          email,
+          loginPassword: row.loginPassword || "",
+          recoveryEmail: row.recoveryEmail || "",
+          totpSecret: row.totpSecret || "",
+          status: "idle"
+        });
+        ok += 1;
+      }
+      if (box) box.value = "";
+      showToast(`已导入/更新 ${ok} 个子号${skipped ? `，跳过 ${skipped} 行` : ""}`);
+      refreshAll();
+    }
+
+    async function pollChildPoolActivation(child, taskId, mode) {
+      const email = normalizeEmailFront(child.email);
+      const key = mode === "import" ? email : `pool:${email}`;
+      const timer = setInterval(async () => {
+        try {
+          const status = await fetchJson(`/api/proxy/automation/status/${taskId}`);
+          await updateChildPool(childPoolRecordByEmail(email) || child, {
+            activationTaskId: taskId,
+            activationStatus: status.status,
+            activationError: status.lastErrorMessage || ""
+          });
+          if (status.status === "SUCCESS" || (mode === "import" && status.status === "MANUAL_REVIEW")) {
+            const hasToken = Boolean(status.result?.refresh_token || status.result?.refreshToken);
+            if (!hasToken) {
+              clearInterval(timer);
+              state.activatingChildKeys.delete(`pool:${email}`);
+              state.importingChildKeys.delete(email);
+              await updateChildPool(childPoolRecordByEmail(email) || child, {
+                activationStatus: "FAILED",
+                activationError: "任务完成但没有返回 refresh_token",
+                status: "failed"
+              });
+              showToast(`${email} 导入失败：没有返回 refresh_token`);
+              refreshAll();
+              return;
+            }
+            clearInterval(timer);
+            await saveRosettaTokenFromActivation({ email }, status, { enabled: false });
+            const refreshed = await fetchJson(`${API}/accounts`);
+            const imported = (refreshed.accounts || []).find((a) => normalizeEmailFront(a.email) === email);
+            await updateChildPool(childPoolRecordByEmail(email) || child, {
+              activationTaskId: taskId,
+              activationStatus: "SUCCESS",
+              activationError: "",
+              activatedAt: new Date().toISOString(),
+              tokenObtainedAt: new Date().toISOString(),
+              rosettaAccountId: imported?.id,
+              status: "activated_pending_member"
+            });
+            state.activatingChildKeys.delete(`pool:${email}`);
+            state.importingChildKeys.delete(email);
+            showToast(`${email} 已${mode === "import" ? "导入" : "激活"}，等待进组后启用`);
+            refreshAll();
+          } else if (["FAILED_FINAL", "FAILED"].includes(status.status)) {
+            clearInterval(timer);
+            state.activatingChildKeys.delete(`pool:${email}`);
+            state.importingChildKeys.delete(email);
+            const failureMessage = isQrVerificationTaskStatus(status) ? "验证失败（扫码）" : (status.lastErrorMessage || "未知错误");
+            await updateChildPool(childPoolRecordByEmail(email) || child, {
+              activationTaskId: taskId,
+              activationStatus: status.status,
+              activationError: failureMessage,
+              status: isQrVerificationText(failureMessage) ? "qr_failed" : "failed"
+            }).catch(() => {});
+            showToast(`${email} 激活失败：${failureMessage}`);
+            refreshAll();
+          } else {
+            refreshAll();
+          }
+        } catch (error) {
+          clearInterval(timer);
+          state.activatingChildKeys.delete(`pool:${email}`);
+          state.importingChildKeys.delete(email);
+          showToast(`子号状态查询失败：${error.message || error}`);
+          refreshAll();
+        }
+      }, 3000);
+    }
+
+    async function activateChildPool(email) {
+      const child = childPoolRecordByEmail(email);
+      if (isQrVerificationText(`${child?.activationStatus || ""}\n${child?.activationError || ""}\n${child?.status || ""}`)) {
+        showToast("这个子号已确认遭遇扫码挑战，已阻止重复提交激活任务");
+        return;
+      }
+      if (!child?.loginPassword) {
+        showToast("这个子号没有密码，无法自动 OAuth 登录");
+        return;
+      }
+      const normalized = normalizeEmailFront(email);
+      state.activatingChildKeys.add(`pool:${normalized}`);
+      renderChildPool();
+      try {
+        const phones = await loadAvailablePhones();
+        if (!phones.length) throw new Error("GFA 手机号池没有可用号码");
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "phone-verify",
+            email: normalized,
+            password: child.loginPassword,
+            recoveryEmail: child.recoveryEmail || undefined,
+            totpSecret: child.totpSecret || undefined,
+            phones
+          })
+        });
+        await updateChildPool(child, { activationTaskId: result.taskId, activationStatus: result.status || "PENDING", activationError: "", status: "activating" });
+        showToast(`${normalized} 子号激活任务已提交`);
+        pollChildPoolActivation(child, result.taskId, "activate");
+        refreshAll();
+      } catch (error) {
+        state.activatingChildKeys.delete(`pool:${normalized}`);
+        await updateChildPool(child, { activationStatus: "FAILED", activationError: error.message || String(error), status: "failed" }).catch(() => {});
+        showToast(`子号激活失败：${error.message || error}`);
+        refreshAll();
+      }
+    }
+
+    async function importChildToken(email) {
+      const child = childPoolRecordByEmail(email);
+      if (!child?.loginPassword) {
+        showToast("这个子号没有密码，无法自动 OAuth 登录");
+        return;
+      }
+      const normalized = normalizeEmailFront(email);
+      state.importingChildKeys.add(normalized);
+      renderChildPool();
+      try {
+        const result = await fetchJson("/api/proxy/automation/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "oauth",
+            email: normalized,
+            password: child.loginPassword,
+            recoveryEmail: child.recoveryEmail || undefined,
+            totpSecret: child.totpSecret || undefined
+          })
+        });
+        await updateChildPool(child, { activationTaskId: result.taskId, activationStatus: result.status || "PENDING", activationError: "", status: "importing" });
+        showToast(`${normalized} 子号导入任务已提交`);
+        pollChildPoolActivation(child, result.taskId, "import");
+        refreshAll();
+      } catch (error) {
+        state.importingChildKeys.delete(normalized);
+        await updateChildPool(child, { activationStatus: "FAILED", activationError: error.message || String(error), status: "failed" }).catch(() => {});
+        showToast(`子号导入失败：${error.message || error}`);
+        refreshAll();
+      }
+    }
+
+    async function deleteChildPool(email) {
+      if (!confirm(`确定从子号池删除 ${email} 吗？不会删除 Rosetta 账号池里的 token。`)) return;
+      await fetchJson(`${API}/family-child`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, delete: true })
+      });
+      showToast("子号已删除");
+      refreshAll();
+    }
+
+    async function assignChildToMother(motherId) {
+      const mother = (state.family?.mothers || []).find((m) => m.id === motherId);
+      if (!mother) return;
+      const selected = normalizeEmailFront(document.getElementById(`carrierChild_${motherId}`)?.value);
+      const child = childPoolRecordByEmail(selected);
+      if (!child) {
+        showToast("请选择一个已激活子号");
+        return;
+      }
+      if (!mother.loginPassword) {
+        showToast("这个母号没有密码，无法自动发送家庭组邀请");
+        return;
+      }
+      if (!child.loginPassword) {
+        showToast("这个子号没有密码，无法自动接受邀请");
+        return;
+      }
+      const imported = childAccountFor(child.email);
+      if (!imported?.id) {
+        showToast("这个子号还没有 token，请先激活或导入");
+        return;
+      }
+      let seats = (state.family?.seats || []).filter((seat) => seat.motherId === motherId);
+      let seat = seats.find((item) => !item.currentChildEmail && item.status !== "active");
+      if (!seat) {
+        await fetchJson(`${API}/family-mother`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: mother.id, email: mother.email, totalSeats: seats.length + 1 })
+        });
+        await loadFamilyPool();
+        seats = (state.family?.seats || []).filter((item) => item.motherId === motherId);
+        seat = seats.sort((a, b) => Number(a.seatIndex || 0) - Number(b.seatIndex || 0)).find((item) => !item.currentChildEmail && item.status !== "active");
+      }
+      if (!seat) {
+        showToast("没有可用空席位");
+        return;
+      }
+      const childKey = `${seat.id}:${normalizeEmailFront(child.email)}`;
+      state.assigningChildKeys.add(childKey);
+      await updateSeatCandidateActivation(seat.id, child.email, {
+        loginPassword: child.loginPassword || "",
+        recoveryEmail: child.recoveryEmail || "",
+        totpSecret: child.totpSecret || "",
+        activationStatus: child.activationStatus || "SUCCESS",
+        activationError: child.activationError || "",
+        activatedAt: child.activatedAt || child.tokenObtainedAt || new Date().toISOString(),
+        rosettaAccountId: imported.id
+      });
+      await updateChildPool(child, {
+        assignedMotherId: mother.id,
+        assignedSeatId: seat.id,
+        rosettaAccountId: imported.id,
+        status: "joining",
+        joinStatus: "PENDING",
+        joinError: ""
+      });
+      await loadFamilyPool();
+      await joinSeatMember(seat.id, child.email);
+      state.assigningChildKeys.delete(childKey);
     }
 
     function candidateForSeat(seatId, email) {
@@ -1569,6 +3071,10 @@
 
     async function activateSeatCandidate(seatId, email) {
       const candidate = candidateForSeat(seatId, email);
+      if (isQrVerificationText(`${candidate?.activationStatus || ""}\n${candidate?.activationError || ""}\n${candidate?.status || ""}`)) {
+        showToast("这个子号已确认遭遇扫码挑战，已阻止重复提交激活任务");
+        return;
+      }
       if (!candidate?.loginPassword) {
         showToast("这个子号没有密码，无法自动 OAuth 登录");
         return;
@@ -1648,12 +3154,29 @@
               joinStatus: "SUCCESS",
               joinError: ""
             });
+            await updateChildPool(childPoolRecordByEmail(email), {
+              email,
+              rosettaAccountId: imported.id,
+              assignedMotherId: (state.family?.seats || []).find((seat) => seat.id === seatId)?.motherId || "",
+              assignedSeatId: seatId,
+              isFamilyMember: true,
+              joinStatus: "SUCCESS",
+              joinError: "",
+              status: "active"
+            }).catch(() => {});
             state.joiningChildKeys.delete(childKey);
             showToast(`${email} 已接受邀请并进组，席位已启用`);
             refreshAll();
           } else if (["FAILED_FINAL", "FAILED", "FAILED_RETRYABLE"].includes(status.status)) {
             clearInterval(timer);
             state.joiningChildKeys.delete(childKey);
+            await updateChildPool(childPoolRecordByEmail(email), {
+              email,
+              assignedSeatId: seatId,
+              joinStatus: status.status,
+              joinError: status.lastErrorMessage || "未知错误",
+              status: "join_failed"
+            }).catch(() => {});
             showToast(`${email} 进组失败：${status.lastErrorMessage || "未知错误"}`);
             refreshAll();
           } else {
@@ -1667,6 +3190,13 @@
             inviteTaskId: taskId,
             joinStatus: "FAILED",
             joinError: error.message || String(error)
+          }).catch(() => {});
+          await updateChildPool(childPoolRecordByEmail(email), {
+            email,
+            assignedSeatId: seatId,
+            joinStatus: "FAILED",
+            joinError: error.message || String(error),
+            status: "join_failed"
           }).catch(() => {});
           showToast(`进组状态查询失败：${error.message || error}`);
           refreshAll();
@@ -1990,16 +3520,27 @@
 
     async function createAccessKey() {
       const name = document.getElementById("accessKeyName")?.value || "";
-      const duration = document.getElementById("accessKeyDuration")?.value || "1h";
-      const windowLimit = Number(document.getElementById("accessKeyLimit")?.value || 300);
+      const durationValue = Math.max(1, Math.floor(Number(document.getElementById("accessKeyDurationValue")?.value || 1)));
+      const durationUnit = document.getElementById("accessKeyDurationUnit")?.value === "d" ? "d" : "h";
+      const windowLimitRaw = String(document.getElementById("accessKeyLimit")?.value || "").trim();
+      const tokenWindowRaw = String(document.getElementById("accessKeyTokenLimit")?.value || "").trim();
+      const count = Number(document.getElementById("accessKeyCount")?.value || 1);
+      const payload = { name, durationValue, durationUnit, count };
+      if (windowLimitRaw) {
+        payload.windowLimit = Number(windowLimitRaw);
+      }
+      if (tokenWindowRaw) {
+        payload.tokenWindowLimit = Number(tokenWindowRaw);
+      }
       const result = await fetchJson(`${API}/access-key`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, duration, windowLimit })
+        body: JSON.stringify(payload)
       });
       if (document.getElementById("accessKeyName")) document.getElementById("accessKeyName").value = "";
-      showToast("卡密已生成");
-      await navigator.clipboard?.writeText(result.key?.fullKey || "").catch(() => {});
+      const created = Array.isArray(result.keys) ? result.keys : (result.key ? [result.key] : []);
+      showToast(`已生成 ${created.length || 1} 张卡密`);
+      await navigator.clipboard?.writeText(created.map((key) => key.fullKey || "").filter(Boolean).join("\n")).catch(() => {});
       refreshAll();
     }
 
@@ -2089,6 +3630,10 @@
 
     function motherEmailForSeat(seat) {
       return (state.family?.mothers || []).find((mother) => mother.id === seat.motherId)?.email || shortId(seat.motherId);
+    }
+
+    function motherEmailById(motherId) {
+      return (state.family?.mothers || []).find((mother) => mother.id === motherId)?.email || shortId(motherId);
     }
 
     async function toggleAcc(id) {
@@ -2230,7 +3775,10 @@
       const n = Number(ms || 0);
       if (!n) return "-";
       if (n < 60000) return `${Math.round(n / 1000)} 秒`;
-      return `${Math.round(n / 60000)} 分钟`;
+      const mins = Math.round(n / 60000);
+      if (mins < 60) return `${mins} 分钟`;
+      const hrs = Math.round(mins / 60 * 10) / 10;
+      return `${hrs} 小时`;
     }
 
     function formatSeconds(seconds) {
@@ -2247,6 +3795,13 @@
       return `${text.slice(0, 2)}***${text.slice(at)}`;
     }
 
+    function formatTokenCount(n) {
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
         "&": "&amp;",
@@ -2261,7 +3816,465 @@
       return String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     }
 
+    // ── AdsPower batch import ──
+    let _adspowerPollTimer = null;
+    let _adspowerBatchId = null;
+
+    function parseAdspowerCredentialLine(line) {
+      if (!line || !line.trim()) return null;
+      
+      // Split by ------ to separate account info from phone info
+      const mainAndPhone = line.trim().split(/------/);
+      const mainPart = (mainAndPhone[0] || "").trim();
+      const phonePart = (mainAndPhone[1] || "").trim();
+      
+      const parts = mainPart.split(/\||\t/).map(s => s.trim()).filter(Boolean);
+      if (parts.length < 2) return null;
+      
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const totpRegex = /^[a-z2-7\s\-=]{16,}$/i;
+      const isTotpLike = (s) => /2fa\.live\/tok\//i.test(s) || (totpRegex.test(s) && !/^\d{4}$/.test(s));
+      
+      const email = parts[0];
+      const password = parts[1];
+      
+      if (!emailRegex.test(email)) return null;
+      if (!password) return null;
+      
+      let recoveryEmail = undefined;
+      let totpSecret = undefined;
+      
+      for (let i = 2; i < parts.length; i++) {
+        const p = parts[i];
+        if (!recoveryEmail && emailRegex.test(p)) {
+          recoveryEmail = p;
+        } else if (!totpSecret && isTotpLike(p)) {
+          totpSecret = p;
+        }
+      }
+      
+      // Parse phone info: phoneNumber|smsUrl
+      let phones = undefined;
+      if (phonePart) {
+        const phoneParts = phonePart.split(/\|/).map(s => s.trim()).filter(Boolean);
+        if (phoneParts.length >= 2) {
+          const phoneNumber = phoneParts[0];
+          const smsUrl = phoneParts.slice(1).join("|"); // SMS URL may contain | in query params
+          phones = [{ phoneNumber, smsUrl }];
+        }
+      }
+      
+      return {
+        email,
+        password,
+        recoveryEmail,
+        totpSecret,
+        phones,
+      };
+    }
+
+    async function startAdspowerBatchImport() {
+      const box = document.getElementById('adspowerBatchText');
+      const lines = String(box?.value || '').split(/\r?\n/);
+      const credentials = lines.map(l => parseAdspowerCredentialLine(l)).filter(Boolean);
+      if (!credentials.length) {
+        showToast('请粘贴至少一个账号凭证');
+        return;
+      }
+
+      const btn = document.getElementById('adspowerStartBtn');
+      btn.disabled = true;
+      btn.textContent = '提交中...';
+
+      try {
+        const result = await fetchJson(`${API}/adspower-import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credentials }),
+        });
+        if (!result.ok) throw new Error(result.error || '提交失败');
+
+        _adspowerBatchId = result.batchId;
+        showToast(`已提交 ${result.total} 个账号，开始自动录入`);
+        box.value = '';
+
+        // Show progress panel
+        const progressEl = document.getElementById('adspowerProgress');
+        progressEl.style.display = 'block';
+        document.getElementById('adspowerStopBtn').style.display = '';
+
+        // Initial render
+        renderAdspowerProgress({
+          items: credentials.map(c => ({ email: c.email, status: 'pending', message: '排队中' })),
+          total: credentials.length, completed: 0, running: 0, done: false,
+        });
+
+        // Start polling
+        _adspowerPollTimer = setInterval(() => pollAdspowerStatus(), 3000);
+      } catch (err) {
+        showToast('提交失败: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 一键录入';
+      }
+    }
+
+    async function pollAdspowerStatus() {
+      if (!_adspowerBatchId) return;
+      try {
+        const data = await fetchJson(`${API}/adspower-import-status?batchId=${_adspowerBatchId}`);
+        if (!data.ok) return;
+        renderAdspowerProgress(data);
+        if (data.done) {
+          stopAdspowerPolling();
+          showToast(`批量录入完成：${data.items.filter(i => i.status === 'success').length} 成功 / ${data.items.filter(i => i.status === 'failed').length} 失败`);
+          refreshAll();
+        }
+      } catch { /* ignore polling errors */ }
+    }
+
+    function stopAdspowerPolling() {
+      if (_adspowerPollTimer) {
+        clearInterval(_adspowerPollTimer);
+        _adspowerPollTimer = null;
+      }
+      document.getElementById('adspowerStopBtn').style.display = 'none';
+    }
+
+    async function loadAdspowerHistory() {
+      try {
+        const data = await fetchJson(`${API}/adspower-import-history`);
+        if (data && data.ok) {
+          const progressEl = document.getElementById('adspowerProgress');
+          if (data.total > 0) {
+            progressEl.style.display = 'block';
+            renderAdspowerProgress(data);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function renderAdspowerProgress(data) {
+      const list = document.getElementById('adspowerProgressList');
+      const summary = document.getElementById('adspowerProgressSummary');
+      const dot = document.getElementById('adspowerDot');
+      const badge = document.getElementById('adspowerBadge');
+
+      const successCount = data.items.filter(i => i.status === 'success').length;
+      const failedCount = data.items.filter(i => i.status === 'failed').length;
+      const runningCount = data.items.filter(i => i.status === 'running').length;
+      const pendingCount = data.items.filter(i => i.status === 'pending').length;
+
+      summary.textContent = `总计 ${data.total} | ✅ ${successCount} | ❌ ${failedCount} | ⏳ ${runningCount} | 🕐 ${pendingCount}`;
+
+      if (data.done) {
+        dot.className = failedCount > 0 ? 'dot warn' : 'dot ok';
+        badge.textContent = '完成';
+      } else {
+        dot.className = 'dot ok';
+        badge.textContent = `${runningCount} 进行中`;
+      }
+
+      list.innerHTML = data.items.map((item, i) => {
+        const statusIcon = item.status === 'success' ? '✅'
+          : item.status === 'failed' ? '❌'
+          : item.status === 'running' ? '⏳'
+          : '🕐';
+        const borderColor = item.status === 'success' ? 'rgba(34,197,94,.4)'
+          : item.status === 'failed' ? 'rgba(239,68,68,.4)'
+          : item.status === 'running' ? 'rgba(56,189,248,.4)'
+          : 'var(--line)';
+        const bg = item.status === 'running' ? 'rgba(56,189,248,.06)' : 'rgba(255,255,255,.025)';
+        return `<div style="padding:10px 12px;border:1px solid ${borderColor};border-radius:8px;background:${bg};display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px;align-items:start">
+          <span style="font-size:16px;text-align:center">${statusIcon}</span>
+          <div>
+            <div style="font-size:13px;font-weight:650;color:var(--text)">${escapeHtml(item.email)}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere">${escapeHtml(item.message)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
     let toastTimer;
+
+    // ── Captcha Unblock ──
+    async function startCaptchaUnblock(phase) {
+      const textarea = document.getElementById("unblockBatchText");
+      const raw = (textarea?.value || "").trim();
+      if (!raw) { showToast("请粘贴待解封的账号凭证", true); return; }
+
+      const lines = raw.split(/\n/).filter(l => l.trim());
+      const accounts = lines.map(line => parseAdspowerCredentialLine(line)).filter(Boolean);
+      if (!accounts.length) { showToast("未解析到有效账号", true); return; }
+
+      const btn = document.getElementById("unblockStartBtn");
+      if (btn) btn.disabled = true;
+
+      try {
+        for (const acc of accounts) {
+          try {
+            const body = {
+              credentials: {
+                email: acc.email,
+                password: acc.password,
+                recoveryEmail: acc.recoveryEmail || "",
+                totpSecret: acc.totpSecret || "",
+              },
+              phones: acc.phones || [],
+              phase: phase,
+              source: phase === "second" ? "captcha-unblock-phase2" : "captcha-unblock",
+            };
+            const res = await fetchJson(`${API}/captcha-unblock`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            showToast(`${acc.email} 解封任务已创建`);
+          } catch (err) {
+            showToast(`${acc.email} 创建失败: ${err.message}`, true);
+          }
+        }
+        if (textarea) textarea.value = "";
+        await refreshUnblockTasks();
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function startPhase2Unblock(email, password, recoveryEmail, totpSecret) {
+      try {
+        const body = {
+          credentials: { email, password, recoveryEmail: recoveryEmail || "", totpSecret: totpSecret || "" },
+          phase: "second",
+          source: "captcha-unblock-phase2",
+        };
+        await fetchJson(`${API}/captcha-unblock`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        showToast(`${email} 二次验证任务已创建`);
+        await refreshUnblockTasks();
+      } catch (err) {
+        showToast(`${email} 创建失败: ${err.message}`, true);
+      }
+    }
+
+    async function refreshUnblockTasks() {
+      try {
+        const data = await fetchJson(`${API}/captcha-unblock/status`);
+        state.unblockTasks = data.tasks || [];
+        state.unblockPhase2 = data.phase2 || [];
+        renderUnblockTasks();
+        renderUnblockPhase2();
+        const dot = document.getElementById("unblockDot");
+        const badge = document.getElementById("unblockBadge");
+        const active = state.unblockTasks.filter(t => !["SUCCESS","FAILED_FINAL","UNBLOCKED"].includes(t.status));
+        if (dot) dot.className = active.length ? "dot warn" : "dot ok";
+        if (badge) badge.textContent = active.length ? `${active.length} 进行中` : "就绪";
+      } catch {
+        // silent
+      }
+    }
+
+    function unblockPhaseLabel(task) {
+      const src = task.source || "";
+      const status = task.status || "";
+      if (status === "SUCCESS" || status === "UNBLOCKED") return '<span style="color:var(--accent-2)">✅ 已解封</span>';
+      if (status === "FAILED_FINAL") return '<span style="color:var(--danger)">❌ 失败</span>';
+      if (status === "MANUAL_REVIEW") {
+        if (task.lastErrorCode === "PHONE_VERIFIED_APPEAL_REQUIRED") return '<span style="color:var(--warn)">📝 需手工申诉</span>';
+        return '<span style="color:var(--warn)">⚠️ 需人工介入</span>';
+      }
+      if (status === "RUNNING") {
+        if (src.includes("phase2")) return '<span style="color:var(--blue)">🔄 二次验证中</span>';
+        return '<span style="color:var(--blue)">🔄 解封进行中</span>';
+      }
+      if (status === "PENDING") return '<span style="color:var(--muted)">⏳ 排队中</span>';
+      return '<span style="color:var(--muted)">' + escapeHtml(status) + '</span>';
+    }
+
+    function renderUnblockTasks() {
+      const container = document.getElementById("unblockTaskList");
+      if (!container) return;
+      const tasks = state.unblockTasks || [];
+      if (!tasks.length) { container.innerHTML = '<div class="empty">暂无解封任务</div>'; return; }
+
+      container.innerHTML = tasks.map(task => {
+        const email = task.email || "unknown";
+        const phase = unblockPhaseLabel(task);
+        const phone = task.usedPhone ? `📱 ${maskEmail(task.usedPhone)}` : "";
+        const time = task.createdAt ? formatDateTime(task.createdAt) : "";
+        const error = task.lastErrorMessage ? `<div style="color:var(--danger);font-size:11px;margin-top:4px">${escapeHtml(task.lastErrorMessage.substring(0, 120))}</div>` : "";
+        return `<div class="account-row">
+          <div>
+            <div class="email">${escapeHtml(email)}</div>
+            <div class="meta">${phase} ${phone ? " · " + phone : ""} ${time ? " · " + time : ""}</div>
+            ${error}
+          </div>
+          <div class="row-actions">
+            ${task.status === "RUNNING" || task.status === "PENDING" ? "" : `<button class="btn small" onclick="retryUnblock('${escapeJs(task.id)}')">重试</button>`}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderUnblockPhase2() {
+      const container = document.getElementById("unblockPhase2List");
+      if (!container) return;
+      const tasks = state.unblockPhase2 || [];
+      if (!tasks.length) { container.innerHTML = '<div class="empty">暂无待二次验证的账号</div>'; return; }
+
+      container.innerHTML = tasks.map(task => {
+        const email = task.email || "unknown";
+        const appealTime = task.appealAt ? formatDateTime(task.appealAt) : "未知";
+        const elapsed = task.appealAt ? Math.round((Date.now() - new Date(task.appealAt).getTime()) / 3600000) : 0;
+        const ready = elapsed >= 12;
+        const phone = task.usedPhone || "";
+        return `<div class="account-row" style="border-color:${ready ? 'rgba(34,197,94,.4)' : 'var(--line)'}">
+          <div>
+            <div class="email">${escapeHtml(email)}</div>
+            <div class="meta">申诉时间: ${appealTime} · 已过 ${elapsed}h ${ready ? '<span style="color:var(--accent-2)">（可验证）</span>' : '<span style="color:var(--warn)">（等待中）</span>'} ${phone ? " · 📱 " + maskEmail(phone) : ""}</div>
+          </div>
+          <div class="row-actions">
+            <button class="btn small${ready ? ' primary' : ''}" onclick="startPhase2Unblock('${escapeJs(email)}', '${escapeJs(task.password || "")}', '${escapeJs(task.recoveryEmail || "")}', '${escapeJs(task.totpSecret || "")}')" ${ready ? "" : "disabled"}>
+              ${ready ? "🔓 二次验证" : "⏳ 等待12h"}
+            </button>
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    async function retryUnblock(taskId) {
+      try {
+        await fetchJson(`${API}/captcha-unblock/retry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId }),
+        });
+        showToast("已重新提交");
+        await refreshUnblockTasks();
+      } catch (err) {
+        showToast("重试失败: " + err.message, true);
+      }
+    }
+
+
+    function toggleAllLoadAccounts(el) {
+      const checkboxes = document.querySelectorAll('.load-account-checkbox');
+      checkboxes.forEach(cb => cb.checked = el.checked);
+      updateLoadAccountSelection();
+    }
+
+    function updateLoadAccountSelection() {
+      const checkboxes = document.querySelectorAll('.load-account-checkbox:checked');
+      const count = checkboxes.length;
+      const deleteBtn = document.getElementById('bulkDeleteBtn');
+      const exportBtn = document.getElementById('bulkExportBtn');
+      if (deleteBtn && exportBtn) {
+        if (count > 0) {
+          deleteBtn.style.display = 'inline-flex';
+          exportBtn.style.display = 'inline-flex';
+          deleteBtn.textContent = '删除(' + count + ')';
+          exportBtn.textContent = '导出(' + count + ')';
+        } else {
+          deleteBtn.style.display = 'none';
+          exportBtn.style.display = 'none';
+        }
+      }
+      const selectAll = document.getElementById('selectAllLoadAccounts');
+      if (selectAll) {
+        const all = document.querySelectorAll('.load-account-checkbox');
+        selectAll.checked = all.length > 0 && all.length === count;
+      }
+    }
+
+    async function bulkDeleteSelected() {
+      const checkboxes = document.querySelectorAll('.load-account-checkbox:checked');
+      if (checkboxes.length === 0) return;
+      if (!confirm('确定要删除选中的 ' + checkboxes.length + ' 个账号吗？')) return;
+      
+      const btn = document.getElementById('bulkDeleteBtn');
+      btn.disabled = true;
+      btn.textContent = '删除中...';
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const cb of checkboxes) {
+        const accountId = cb.value;
+        try {
+          const res = await window.fetch(`${API}/delete-account`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: Number(accountId) })
+          });
+          if (res.ok) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch (err) {
+          failCount++;
+        }
+      }
+
+      showToast(`删除完成: ${successCount} 成功, ${failCount} 失败`);
+      
+      const selectAll = document.getElementById('selectAllLoadAccounts');
+      if (selectAll) selectAll.checked = false;
+      
+      await refreshAll();
+      btn.disabled = false;
+      updateLoadAccountSelection();
+    }
+
+    async function bulkExportSelected() {
+      const checkboxes = document.querySelectorAll('.load-account-checkbox:checked');
+      if (checkboxes.length === 0) return;
+      
+      const btn = document.getElementById('bulkExportBtn');
+      btn.disabled = true;
+      btn.textContent = '导出中...';
+
+      try {
+        const accountIds = Array.from(checkboxes).map(cb => Number(cb.value));
+        const result = await fetchJson(`${API}/export-accounts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountIds })
+        });
+        
+        if (!result.ok || !Array.isArray(result.lines) || result.lines.length === 0) {
+          showToast('导出失败: ' + (result.error || '无数据'));
+          return;
+        }
+        
+        const text = result.lines.join('\n');
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'accounts_export_' + Date.now() + '.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showToast('已导出 ' + result.lines.length + ' 个账号');
+      } catch (err) {
+        showToast('导出失败: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        checkboxes.forEach(cb => cb.checked = false);
+        const selectAll = document.getElementById('selectAllLoadAccounts');
+        if (selectAll) selectAll.checked = false;
+        updateLoadAccountSelection();
+      }
+    }
+
     function showToast(message) {
       const toast = document.getElementById("toast");
       toast.textContent = message;
@@ -2269,6 +4282,197 @@
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
     }
+
+    // ── 节流配置管理 ──
+
+    state.throttleConfig = null;
+    state.throttleDirty = false;
+
+    async function loadThrottleConfig() {
+      try {
+        const data = await fetchJson(`${API}/throttle-config`);
+        state.throttleConfig = data.config;
+        populateThrottleUI(data.config);
+        const el = document.getElementById("throttleStatus");
+        if (el) {
+          el.textContent = data.config
+            ? `✅ 当前有手动配置生效。路径: ${data.path || ""}`
+            : "🔄 自动模式（无手动配置文件）";
+          el.style.color = data.config ? "var(--accent)" : "var(--muted)";
+        }
+        state.throttleDirty = false;
+      } catch (err) {
+        showToast("加载节流配置失败: " + err.message);
+      }
+    }
+
+    function populateThrottleUI(config) {
+      const c = config || {};
+      // Emergency
+      document.getElementById("throttleEmergencyEnabled").checked = Boolean(c.emergency?.enabled);
+      document.getElementById("throttleEmergencyMaxAttempts").value = c.emergency?.maxAttempts || 3;
+      document.getElementById("throttleEmergencyBaseDelay").value = c.emergency?.baseDelayMs || 5000;
+      document.getElementById("throttleEmergencyMessage").value = c.emergency?.message || "";
+      // Global
+      document.getElementById("throttleGlobalMaxAttempts").value = c.global?.maxAttempts ?? "";
+      document.getElementById("throttleGlobalBaseDelay").value = c.global?.baseDelayMs ?? "";
+      document.getElementById("throttleGlobalCapacityWait").value = c.global?.capacityWaitMs ?? "";
+      document.getElementById("throttleGlobalBackoff").value = c.global?.backoffMultiplier ?? "";
+      // Models
+      const modelRows = document.getElementById("throttleModelRows");
+      modelRows.innerHTML = "";
+      if (c.models) {
+        for (const [model, cfg] of Object.entries(c.models)) {
+          addThrottleModelRow(model, cfg);
+        }
+      }
+      // Escalation
+      document.getElementById("throttleEscalationEnabled").checked = c.autoEscalation?.enabled !== false;
+      const escRows = document.getElementById("throttleEscalationRows");
+      escRows.innerHTML = "";
+      const thresholds = c.autoEscalation?.thresholds || [
+        { rate503: 0.3, addDelayMs: 500 },
+        { rate503: 0.5, addDelayMs: 1500 },
+        { rate503: 0.8, addDelayMs: 3000 },
+      ];
+      for (const t of thresholds) {
+        addThrottleEscalationRow(t.rate503, t.addDelayMs);
+      }
+    }
+
+    function buildThrottleConfig() {
+      const config = {};
+      // Emergency
+      const emergencyEnabled = document.getElementById("throttleEmergencyEnabled").checked;
+      if (emergencyEnabled) {
+        config.emergency = {
+          enabled: true,
+          maxAttempts: Number(document.getElementById("throttleEmergencyMaxAttempts").value) || 3,
+          baseDelayMs: Number(document.getElementById("throttleEmergencyBaseDelay").value) || 5000,
+          message: document.getElementById("throttleEmergencyMessage").value || "",
+        };
+      }
+      // Global
+      const globalCfg = {};
+      const gMaxAttempts = document.getElementById("throttleGlobalMaxAttempts").value;
+      const gBaseDelay = document.getElementById("throttleGlobalBaseDelay").value;
+      const gCapacityWait = document.getElementById("throttleGlobalCapacityWait").value;
+      const gBackoff = document.getElementById("throttleGlobalBackoff").value;
+      if (gMaxAttempts !== "") globalCfg.maxAttempts = Number(gMaxAttempts);
+      if (gBaseDelay !== "") globalCfg.baseDelayMs = Number(gBaseDelay);
+      if (gCapacityWait !== "") globalCfg.capacityWaitMs = Number(gCapacityWait);
+      if (gBackoff !== "") globalCfg.backoffMultiplier = Number(gBackoff);
+      if (Object.keys(globalCfg).length) config.global = globalCfg;
+      // Models
+      const models = {};
+      document.querySelectorAll(".throttle-model-row").forEach(row => {
+        const name = row.querySelector(".throttle-model-name")?.value?.trim();
+        if (!name) return;
+        const entry = {};
+        const bd = row.querySelector(".throttle-model-baseDelay")?.value;
+        const cw = row.querySelector(".throttle-model-capacityWait")?.value;
+        const ma = row.querySelector(".throttle-model-maxAttempts")?.value;
+        const bo = row.querySelector(".throttle-model-backoff")?.value;
+        if (bd !== "" && bd != null) entry.baseDelayMs = Number(bd);
+        if (cw !== "" && cw != null) entry.capacityWaitMs = Number(cw);
+        if (ma !== "" && ma != null) entry.maxAttempts = Number(ma);
+        if (bo !== "" && bo != null) entry.backoffMultiplier = Number(bo);
+        if (Object.keys(entry).length) models[name] = entry;
+      });
+      if (Object.keys(models).length) config.models = models;
+      // Escalation
+      const escalationEnabled = document.getElementById("throttleEscalationEnabled").checked;
+      const thresholds = [];
+      document.querySelectorAll(".throttle-escalation-row").forEach(row => {
+        const rate = row.querySelector(".throttle-esc-rate")?.value;
+        const delay = row.querySelector(".throttle-esc-delay")?.value;
+        if (rate !== "" && delay !== "") {
+          thresholds.push({ rate503: Number(rate), addDelayMs: Number(delay) });
+        }
+      });
+      if (thresholds.length || !escalationEnabled) {
+        config.autoEscalation = {
+          enabled: escalationEnabled,
+          thresholds: thresholds.sort((a, b) => a.rate503 - b.rate503),
+        };
+      }
+      return config;
+    }
+
+    function addThrottleModelRow(name, cfg) {
+      const container = document.getElementById("throttleModelRows");
+      const c = cfg || {};
+      const row = document.createElement("div");
+      row.className = "throttle-model-row";
+      row.style.cssText = "display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:end;";
+      row.innerHTML = `
+        <div class="field" style="margin:0"><label>模型名</label><input class="throttle-model-name" value="${escapeHtml(name || "")}" placeholder="gemini-2.5-pro" onchange="onThrottleChange()"></div>
+        <div class="field" style="margin:0"><label>baseDelayMs</label><input class="throttle-model-baseDelay" type="number" value="${c.baseDelayMs ?? ""}" placeholder="自动" onchange="onThrottleChange()"></div>
+        <div class="field" style="margin:0"><label>capacityWaitMs</label><input class="throttle-model-capacityWait" type="number" value="${c.capacityWaitMs ?? ""}" placeholder="自动" onchange="onThrottleChange()"></div>
+        <div class="field" style="margin:0"><label>maxAttempts</label><input class="throttle-model-maxAttempts" type="number" value="${c.maxAttempts ?? ""}" placeholder="自动" onchange="onThrottleChange()"></div>
+        <div class="field" style="margin:0"><label>backoff</label><input class="throttle-model-backoff" type="number" step="0.1" value="${c.backoffMultiplier ?? ""}" placeholder="自动" onchange="onThrottleChange()"></div>
+        <button class="btn small danger" onclick="this.closest('.throttle-model-row').remove(); onThrottleChange();" style="height:32px;margin-bottom:1px;">✕</button>
+      `;
+      container.appendChild(row);
+    }
+
+    function addThrottleEscalationRow(rate, delay) {
+      const container = document.getElementById("throttleEscalationRows");
+      const row = document.createElement("div");
+      row.className = "throttle-escalation-row";
+      row.style.cssText = "display:grid;grid-template-columns:1fr 20px 1fr auto;gap:6px;align-items:center;";
+      row.innerHTML = `
+        <input class="throttle-esc-rate" type="number" step="0.05" min="0" max="1" value="${rate ?? ""}" placeholder="503占比 (0~1)" style="min-height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:6px;background:#0e121a;color:var(--text);outline:none;" onchange="onThrottleChange()">
+        <span style="text-align:center;color:var(--muted);font-size:12px;">→</span>
+        <input class="throttle-esc-delay" type="number" min="0" value="${delay ?? ""}" placeholder="追加延迟(ms)" style="min-height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:6px;background:#0e121a;color:var(--text);outline:none;" onchange="onThrottleChange()">
+        <button class="btn small danger" onclick="this.closest('.throttle-escalation-row').remove(); onThrottleChange();" style="height:32px;">✕</button>
+      `;
+      container.appendChild(row);
+    }
+
+    function onThrottleChange() {
+      state.throttleDirty = true;
+    }
+
+    async function saveThrottleConfig() {
+      const config = buildThrottleConfig();
+      try {
+        await fetchJson(`${API}/throttle-config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config }),
+        });
+        state.throttleDirty = false;
+        showToast("节流配置已保存，立即对新请求生效");
+        loadThrottleConfig();
+      } catch (err) {
+        showToast("保存失败: " + err.message);
+      }
+    }
+
+    async function deleteThrottleConfig() {
+      if (!confirm("确定恢复自动模式？将删除手动配置文件。")) return;
+      try {
+        await fetchJson(`${API}/throttle-config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ delete: true }),
+        });
+        state.throttleConfig = null;
+        state.throttleDirty = false;
+        populateThrottleUI(null);
+        showToast("已恢复自动模式");
+        loadThrottleConfig();
+      } catch (err) {
+        showToast("删除失败: " + err.message);
+      }
+    }
+
+    // 页面加载时初始化节流配置
+    document.addEventListener("DOMContentLoaded", () => {
+      loadThrottleConfig();
+    });
+
   </script>
 </body>
 </html>

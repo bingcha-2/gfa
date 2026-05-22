@@ -12,6 +12,11 @@ type ScanStatus = {
   lastRunCount: number;
 };
 
+type ScanConfig = {
+  intervalMinutes: number;
+  options: number[];
+};
+
 type ProcessedOrder = {
   orderId: string;
   orderNo: string;
@@ -25,13 +30,25 @@ type RunResult = {
   orders: ProcessedOrder[];
 };
 
+function intervalLabel(minutes: number): string {
+  if (minutes === 0) return "从不（已禁用）";
+  if (minutes < 60) return `每 ${minutes} 分钟`;
+  if (minutes === 60) return "每小时";
+  if (minutes < 1440) return `每 ${minutes / 60} 小时`;
+  return "每天";
+}
+
 export function ExpireScanPanel() {
   const [expiredOrders, setExpiredOrders] = useState<OrderSummary[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [status, setStatus] = useState<ScanStatus | null>(null);
+  const [config, setConfig] = useState<ScanConfig | null>(null);
+  const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [configMsg, setConfigMsg] = useState<string | null>(null);
   const [isLoading, startTransition] = useTransition();
+  const [isSavingConfig, startConfigTransition] = useTransition();
 
   async function loadExpiredOrders() {
     setIsLoadingOrders(true);
@@ -45,8 +62,19 @@ export function ExpireScanPanel() {
     }
   }
 
+  async function loadConfig() {
+    try {
+      const data = await apiRequest<ScanConfig>("admin/expire-scan/config");
+      setConfig(data);
+      setSelectedInterval(data.intervalMinutes);
+    } catch (err) {
+      console.error("Failed to load expire-scan config:", err);
+    }
+  }
+
   useEffect(() => {
     loadExpiredOrders();
+    loadConfig();
   }, []);
 
   async function loadStatus() {
@@ -76,6 +104,24 @@ export function ExpireScanPanel() {
     });
   }
 
+  async function saveConfig() {
+    if (selectedInterval === null) return;
+    startConfigTransition(async () => {
+      try {
+        const data = await apiRequest<ScanConfig>("admin/expire-scan/config", {
+          method: "POST",
+          body: { intervalMinutes: selectedInterval },
+        });
+        setConfig(data);
+        setSelectedInterval(data.intervalMinutes);
+        setConfigMsg("✅ 配置已保存");
+        setTimeout(() => setConfigMsg(null), 3000);
+      } catch (err) {
+        setConfigMsg(`❌ ${getErrorMessage(err)}`);
+      }
+    });
+  }
+
   function formatDate(iso: string | null | undefined) {
     if (!iso) return "—";
     return new Date(iso).toLocaleString("zh-CN", {
@@ -93,15 +139,50 @@ export function ExpireScanPanel() {
         <article className="glass-panel">
           <div className="panel-stack">
             <div className="section-copy">
-              <p className="label">Cron Schedule</p>
+              <p className="label">Scan Schedule</p>
               <h3 className="panel-title">自动扫描配置</h3>
-              <p className="muted">每小时整点（0 * * * *）自动扫描到期订单并推送移除任务。</p>
+              <p className="muted">设置自动扫描到期订单的执行频率，选择"从不"可完全禁用自动扫描。</p>
             </div>
             <div className="list-stack">
               <div className="list-card">
                 <div className="split-head">
                   <span className="muted">执行频率</span>
-                  <span className="strong mono">每小时</span>
+                  {config ? (
+                    <select
+                      id="expire-scan-interval"
+                      value={selectedInterval ?? config.intervalMinutes}
+                      onChange={(e) => setSelectedInterval(Number(e.target.value))}
+                      style={{
+                        padding: "0.35rem 0.75rem",
+                        borderRadius: "0.5rem",
+                        border: "1px solid var(--color-border, #444)",
+                        background: "var(--color-surface, #1a1a2e)",
+                        color: "inherit",
+                        fontSize: "0.875rem",
+                        minWidth: "140px",
+                      }}
+                    >
+                      {config.options.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {intervalLabel(opt)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="strong mono">加载中...</span>
+                  )}
+                </div>
+              </div>
+              <div className="list-card">
+                <div className="split-head">
+                  <span className="muted">当前状态</span>
+                  <span className={`strong mono ${config?.intervalMinutes === 0 ? "text-warning" : ""}`}>
+                    {config
+                      ? config.intervalMinutes === 0
+                        ? "⏸ 已禁用"
+                        : `✅ 运行中（${intervalLabel(config.intervalMinutes)}）`
+                      : "—"}
+                  </span>
                 </div>
               </div>
               <div className="list-card">
@@ -117,6 +198,26 @@ export function ExpireScanPanel() {
                 </div>
               </div>
             </div>
+            {config && selectedInterval !== null && selectedInterval !== config.intervalMinutes ? (
+              <div className="action-row">
+                <button
+                  className="button"
+                  disabled={isSavingConfig}
+                  onClick={saveConfig}
+                  type="button"
+                >
+                  {isSavingConfig ? "保存中..." : "保存配置"}
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => setSelectedInterval(config.intervalMinutes)}
+                  type="button"
+                >
+                  取消
+                </button>
+              </div>
+            ) : null}
+            {configMsg ? <div className="muted" style={{ fontSize: "0.875rem" }}>{configMsg}</div> : null}
           </div>
         </article>
 

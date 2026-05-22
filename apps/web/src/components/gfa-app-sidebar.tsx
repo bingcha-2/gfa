@@ -49,6 +49,8 @@ const SECTION_PERM_MAP: Record<string, string> = {
   scheduler: "scheduler",
   lookup: "lookup",
   "agent-service": "agent_service",
+  "rosetta-employees": "agent_service",
+  "rosetta-keys": "codes",
   faq: "faq",
 };
 
@@ -80,13 +82,15 @@ export function GfaAppSidebar({
   const pathname = usePathname();
   const prefix = getPrefix();
 
-  const isSuperAdmin = user.role === "SUPER_ADMIN";
+  const role = String(user.role || "").toUpperCase();
+  const isSuperAdmin = role === "SUPER_ADMIN" || role === "SUPERADMIN";
+  const isAdmin = role === "ADMIN";
   const isAdminOrOps =
-    isSuperAdmin || user.role === "ADMIN" || user.role === "OPERATIONS";
+    isSuperAdmin || isAdmin || role === "OPERATIONS";
 
   const userPerms: string[] | null = (user as any).permissions ?? null;
   function hasPermission(permKey: string): boolean {
-    if (isSuperAdmin) return true;
+    if (isSuperAdmin || isAdmin) return true;
     if (!userPerms || userPerms.length === 0) return true;
     return userPerms.includes(permKey);
   }
@@ -183,6 +187,22 @@ export function GfaAppSidebar({
       url: `/${prefix}/agent-service`,
       icon: <BotIcon />,
       permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-employees",
+      title: "Rosetta 员工",
+      url: `/${prefix}/rosetta-employees`,
+      icon: <UsersIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-keys",
+      title: "Rosetta 卡密",
+      url: `/${prefix}/rosetta-keys`,
+      icon: <KeyIcon />,
+      permKey: "codes",
       roleGuard: () => isAdminOrOps,
     },
     {

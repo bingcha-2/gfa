@@ -3,6 +3,9 @@
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 const {
     createTokenManager,
@@ -14,6 +17,87 @@ const { createQuotaPoller } = require('./quota-poller');
 const DEFAULT_CLOUD_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
 const MAX_CAPACITY_RECOVERY_WAIT_MS = 60 * 1000;
 const DEFAULT_CAPACITY_RETRY_DELAY_MS = 5000;
+const DEFAULT_REMOTE_ROTATION_ATTEMPTS = 2;
+const MAX_REMOTE_ROTATION_ATTEMPTS = 99;
+const CLIENT_VERSION_FALLBACK = '4.0.7';
+const REMOTE_ACCESS_KEY_FAILURE_COOLDOWN_MS = 60 * 1000;
+const LOCATION_UNSUPPORTED_COOLDOWN_MS = 5 * 60 * 1000;
+const TOKEN_USAGE_CAPTURE_LIMIT = 2 * 1024 * 1024;
+
+// ── Self-integrity verification ──────────────────────────────────────────────
+// Compute SHA-256 of this file at startup. Sent to the server with every
+// lease/report request so the server can detect tampered client code.
+const _integrityHash = (() => {
+    try {
+        const selfPath = __filename;
+        const content = fs.readFileSync(selfPath, 'utf8');
+        return crypto.createHash('sha256').update(content).digest('hex');
+    } catch {
+        return 'unknown';
+    }
+})();
+
+function readPositiveIntEnv(name, fallback) {
+    const value = Number.parseInt(String(process.env[name] || ''), 10);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function remoteRetryDelayMs(attempts, retryPolicy = null) {
+    const retryIndex = Math.max(0, Number(attempts || 1) - 1);
+    const policy = normalizeRemoteRetryPolicy(retryPolicy);
+    // 指数退避：base * multiplier^retryIndex + jitter
+    const exponential = policy.baseDelayMs * Math.pow(policy.backoffMultiplier, retryIndex);
+    const jitter = Math.random() * policy.jitterMs;
+    return Math.min(policy.maxDelayMs, exponential + jitter);
+}
+
+function remoteStatusDelayMs(status, attempts, retryPolicy = null) {
+    const policy = normalizeRemoteRetryPolicy(retryPolicy);
+    const baseRetry = remoteRetryDelayMs(attempts, retryPolicy);
+    if (status === 503) {
+        return Math.max(baseRetry, policy.capacityWaitMs);
+    }
+    if (status === 429) {
+        return Math.max(baseRetry, policy.quotaWaitMs);
+    }
+    return baseRetry;
+}
+
+function normalizeRemoteRetryPolicy(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const maxAttempts = Math.min(
+        MAX_REMOTE_ROTATION_ATTEMPTS,
+        Math.max(1, Number(raw.maxAttempts || DEFAULT_REMOTE_ROTATION_ATTEMPTS) || DEFAULT_REMOTE_ROTATION_ATTEMPTS)
+    );
+    const retryableStatuses = Array.isArray(raw.retryableStatuses)
+        ? raw.retryableStatuses.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+        : [429, 403, 503];
+    return {
+        maxAttempts,
+        baseDelayMs: Math.max(0, Number(raw.baseDelayMs || 250) || 250),
+        maxDelayMs: Math.max(500, Number(raw.maxDelayMs || 5000) || 5000),
+        backoffMultiplier: Math.max(1.0, Math.min(3.0, Number(raw.backoffMultiplier || 1.3) || 1.3)),
+        capacityWaitMs: Math.max(200, Number(raw.capacityWaitMs || 2000) || 2000),
+        quotaWaitMs: Math.max(200, Number(raw.quotaWaitMs || 1000) || 1000),
+        jitterMs: Math.max(0, Number(raw.jitterMs || 500) || 500),
+        retryableStatuses,
+        statusMaxAttempts: raw.statusMaxAttempts && typeof raw.statusMaxAttempts === 'object'
+            ? Object.fromEntries(Object.entries(raw.statusMaxAttempts)
+                .map(([status, attempts]) => [Number(status), Number(attempts)])
+                .filter(([status, attempts]) => Number.isFinite(status) && Number.isFinite(attempts) && attempts > 0)
+                .map(([status, attempts]) => [
+                    status,
+                    Math.min(MAX_REMOTE_ROTATION_ATTEMPTS, Math.max(1, attempts)),
+                ]))
+            : {},
+        reason: String(raw.reason || 'client_default'),
+        pressureUntil: Number(raw.pressureUntil || 0) || 0,
+    };
+}
+
+function makeLocalClientId() {
+    return `client_${Date.now().toString(36)}_${crypto.randomBytes(8).toString('hex')}`;
+}
 
 function formatProjectValue(currentValue, projectId) {
     const cleanProjectId = normalizeProjectId(projectId);
@@ -30,7 +114,30 @@ function formatProjectValue(currentValue, projectId) {
     return cleanProjectId;
 }
 
-function rewriteProjectFields(value, projectId) {
+function isSchemaNode(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+
+    return (
+        Object.prototype.hasOwnProperty.call(value, 'type') ||
+        Object.prototype.hasOwnProperty.call(value, 'description') ||
+        Object.prototype.hasOwnProperty.call(value, 'properties') ||
+        Object.prototype.hasOwnProperty.call(value, 'required') ||
+        Object.prototype.hasOwnProperty.call(value, 'items') ||
+        Object.prototype.hasOwnProperty.call(value, 'enum')
+    );
+}
+
+function isSchemaPropertiesMap(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+
+    return Object.values(value).some(isSchemaNode);
+}
+
+function rewriteProjectFields(value, projectId, context = {}) {
     if (!value || typeof value !== 'object') {
         return { found: 0, updated: 0 };
     }
@@ -40,7 +147,7 @@ function rewriteProjectFields(value, projectId) {
 
     if (Array.isArray(value)) {
         for (const item of value) {
-            const child = rewriteProjectFields(item, projectId);
+            const child = rewriteProjectFields(item, projectId, context);
             found += child.found;
             updated += child.updated;
         }
@@ -49,6 +156,10 @@ function rewriteProjectFields(value, projectId) {
 
     for (const [key, childValue] of Object.entries(value)) {
         if (key === 'project') {
+            if (context.inSchemaProperties && isSchemaNode(childValue)) {
+                continue;
+            }
+
             found += 1;
             const nextValue = formatProjectValue(childValue, projectId);
             if (nextValue !== childValue) {
@@ -59,7 +170,9 @@ function rewriteProjectFields(value, projectId) {
         }
 
         if (childValue && typeof childValue === 'object') {
-            const child = rewriteProjectFields(childValue, projectId);
+            const child = rewriteProjectFields(childValue, projectId, {
+                inSchemaProperties: key === 'properties' && isSchemaPropertiesMap(childValue),
+            });
             found += child.found;
             updated += child.updated;
         }
@@ -91,6 +204,18 @@ function rewriteProjectFieldsInBody(headers, rawBody, projectId, log, reqId) {
     }
 
     const rewrite = rewriteProjectFields(parsed, projectId);
+
+    // 注入 enabledCreditTypes: GOOGLE_ONE_AI（默认消耗积分）
+    const credits = Array.isArray(parsed.enabledCreditTypes) ? parsed.enabledCreditTypes : [];
+    if (!credits.includes('GOOGLE_ONE_AI') && !credits.includes(1)) {
+        parsed.enabledCreditTypes = [...credits, 'GOOGLE_ONE_AI'];
+        return {
+            body: Buffer.from(JSON.stringify(parsed)),
+            projectFound: rewrite.found > 0 || rewrite.updated > 0,
+            projectUpdated: true,
+        };
+    }
+
     if (rewrite.updated === 0) {
         return {
             body: rawBody,
@@ -125,7 +250,7 @@ function prepareForwardRequest(reqHeaders, rawBody, tokenInfo, parsedEndpoint, l
         delete fwdHeaders.authorization;
         fwdHeaders.authorization = `Bearer ${tokenInfo.token}`;
         authMode = 'account';
-    } else if (!fwdHeaders.authorization) {
+    } else if (!fwdHeaders.authorization && tokenInfo.token) {
         fwdHeaders.authorization = `Bearer ${tokenInfo.token}`;
         authMode = 'fallback';
     }
@@ -173,6 +298,229 @@ function decodeErrorBody(rawBody, contentEncoding, maxLength = 2000) {
     }
 }
 
+function readTokenCount(value) {
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0;
+}
+
+function discountedCachedTokens(cachedTokens) {
+    const count = readTokenCount(cachedTokens);
+    return count > 0 ? Math.ceil(count / 10) : 0;
+}
+
+function sumTokenDetails(value) {
+    if (!Array.isArray(value)) return 0;
+    return value.reduce((sum, item) => sum + readTokenCount(item?.tokenCount || item?.tokens), 0);
+}
+
+function addTokenUsage(total, usage) {
+    if (!usage || typeof usage !== 'object') return false;
+    const inputTokens = readTokenCount(usage.promptTokenCount) ||
+        readTokenCount(usage.inputTokenCount) ||
+        readTokenCount(usage.promptTokens) ||
+        readTokenCount(usage.inputTokens);
+    let outputTokens = readTokenCount(usage.candidatesTokenCount) ||
+        readTokenCount(usage.outputTokenCount) ||
+        readTokenCount(usage.completionTokens) ||
+        readTokenCount(usage.outputTokens);
+    const thoughtTokens = readTokenCount(usage.thoughtsTokenCount);
+    const totalTokens = readTokenCount(usage.totalTokenCount) || readTokenCount(usage.totalTokens);
+    const cachedInputTokens = Math.min(
+        inputTokens,
+        readTokenCount(usage.cachedContentTokenCount) ||
+        readTokenCount(usage.cachedPromptTokenCount) ||
+        readTokenCount(usage.cacheTokenCount) ||
+        readTokenCount(usage.cachedInputTokens) ||
+        sumTokenDetails(usage.cacheTokensDetails)
+    );
+
+    if (thoughtTokens > 0) {
+        outputTokens += thoughtTokens;
+    }
+    if (totalTokens > 0 && inputTokens > 0) {
+        outputTokens = Math.max(outputTokens, totalTokens - inputTokens);
+    }
+    if (inputTokens <= 0 && outputTokens <= 0) return false;
+
+    const rawTotalTokens = totalTokens || inputTokens + outputTokens;
+    const billableTotalTokens = cachedInputTokens > 0
+        ? Math.max(0, rawTotalTokens - cachedInputTokens + discountedCachedTokens(cachedInputTokens))
+        : rawTotalTokens;
+
+    total.inputTokens += inputTokens;
+    total.outputTokens += outputTokens;
+    total.cachedInputTokens += cachedInputTokens;
+    total.rawTotalTokens += rawTotalTokens;
+    total.totalTokens += billableTotalTokens;
+    return true;
+}
+
+function createEmptyTokenUsage() {
+    return {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        rawTotalTokens: 0,
+        totalTokens: 0,
+    };
+}
+
+function mergeCumulativeTokenUsage(total, usage) {
+    if (!usage || typeof usage !== 'object') return total;
+    total.inputTokens = Math.max(total.inputTokens, readTokenCount(usage.inputTokens));
+    total.outputTokens = Math.max(total.outputTokens, readTokenCount(usage.outputTokens));
+    total.cachedInputTokens = Math.max(total.cachedInputTokens, readTokenCount(usage.cachedInputTokens));
+    total.rawTotalTokens = Math.max(total.rawTotalTokens, readTokenCount(usage.rawTotalTokens));
+    total.totalTokens = Math.max(total.totalTokens, readTokenCount(usage.totalTokens));
+    return total;
+}
+
+function collectTokenUsage(value, total = createEmptyTokenUsage()) {
+    if (!value || typeof value !== 'object') {
+        return total;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) collectTokenUsage(item, total);
+        return total;
+    }
+
+    if (value.usageMetadata && typeof value.usageMetadata === 'object') {
+        addTokenUsage(total, value.usageMetadata);
+    }
+    if (value.usage && typeof value.usage === 'object') {
+        addTokenUsage(total, value.usage);
+    }
+
+    for (const child of Object.values(value)) {
+        if (child && typeof child === 'object') {
+            collectTokenUsage(child, total);
+        }
+    }
+    return total;
+}
+
+function parseTokenUsagePayload(text) {
+    const raw = String(text || '').trim();
+    if (!raw || raw === '[DONE]') {
+        return createEmptyTokenUsage();
+    }
+    try {
+        return collectTokenUsage(JSON.parse(raw));
+    } catch {
+        return createEmptyTokenUsage();
+    }
+}
+
+function findLastTokenField(text, fieldNames) {
+    const names = fieldNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const pattern = new RegExp(`"(${names})"\\s*:\\s*(\\d+)`, 'g');
+    let value = 0;
+    let match;
+    while ((match = pattern.exec(String(text || ''))) !== null) {
+        value = readTokenCount(match[2]) || value;
+    }
+    return value;
+}
+
+function extractTokenUsageByRegex(text) {
+    const inputTokens = findLastTokenField(text, [
+        'promptTokenCount',
+        'inputTokenCount',
+        'promptTokens',
+        'inputTokens',
+    ]);
+    let outputTokens = findLastTokenField(text, [
+        'candidatesTokenCount',
+        'outputTokenCount',
+        'completionTokens',
+        'outputTokens',
+    ]);
+    const thoughtTokens = findLastTokenField(text, ['thoughtsTokenCount']);
+    const totalTokens = findLastTokenField(text, ['totalTokenCount', 'totalTokens']);
+    const cachedInputTokens = Math.min(inputTokens, findLastTokenField(text, [
+        'cachedContentTokenCount',
+        'cachedPromptTokenCount',
+        'cacheTokenCount',
+        'cachedInputTokens',
+    ]));
+
+    if (thoughtTokens > 0) {
+        outputTokens += thoughtTokens;
+    }
+    if (totalTokens > 0 && inputTokens > 0) {
+        outputTokens = Math.max(outputTokens, totalTokens - inputTokens);
+    }
+    const rawTotalTokens = totalTokens || inputTokens + outputTokens;
+    const billableTotalTokens = cachedInputTokens > 0
+        ? Math.max(0, rawTotalTokens - cachedInputTokens + discountedCachedTokens(cachedInputTokens))
+        : rawTotalTokens;
+    return {
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        rawTotalTokens,
+        totalTokens: billableTotalTokens,
+    };
+}
+
+function extractTokenUsageFromText(text) {
+    const direct = parseTokenUsagePayload(text);
+    if (direct.inputTokens > 0 || direct.outputTokens > 0) {
+        return direct;
+    }
+
+    const total = createEmptyTokenUsage();
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+        let line = rawLine.trim();
+        if (!line) continue;
+        if (line.startsWith('data:')) {
+            line = line.slice(5).trim();
+        }
+        const usage = parseTokenUsagePayload(line);
+        mergeCumulativeTokenUsage(total, usage);
+    }
+    if (total.inputTokens > 0 || total.outputTokens > 0) {
+        return total;
+    }
+    return extractTokenUsageByRegex(text);
+}
+
+function createTokenUsageCapture(limit = TOKEN_USAGE_CAPTURE_LIMIT) {
+    const chunks = [];
+    let bytes = 0;
+
+    return {
+        push(chunk) {
+            if (!chunk) return;
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+            if (buffer.length > limit) {
+                chunks.length = 0;
+                chunks.push(buffer.subarray(buffer.length - limit));
+                bytes = limit;
+                return;
+            }
+            chunks.push(buffer);
+            bytes += buffer.length;
+            while (bytes > limit && chunks.length > 0) {
+                const first = chunks[0];
+                const overflow = bytes - limit;
+                if (first.length <= overflow) {
+                    chunks.shift();
+                    bytes -= first.length;
+                } else {
+                    chunks[0] = first.subarray(overflow);
+                    bytes -= overflow;
+                }
+            }
+        },
+        read() {
+            if (chunks.length === 0) return null;
+            return Buffer.concat(chunks, bytes);
+        },
+    };
+}
+
 function findFirstStringByKey(value, targetKey) {
     if (!value || typeof value !== 'object') {
         return '';
@@ -217,6 +565,26 @@ function extractModelKeyFromBody(headers, rawBody) {
     }
 }
 
+function getRequestPath(reqUrl) {
+    try {
+        return new URL(reqUrl, 'http://127.0.0.1').pathname;
+    } catch {
+        return String(reqUrl || '').split('?')[0] || '/';
+    }
+}
+
+function hasUsableAuthorization(headers) {
+    const value = headers?.authorization || headers?.Authorization || '';
+    return /^Bearer\s+\S+/i.test(String(value || '').trim());
+}
+
+function shouldLogRemoteDiagnostic(reqUrl, runtimeUsesRemoteToken, isGenerationRequest) {
+    if (!runtimeUsesRemoteToken) {
+        return false;
+    }
+    return isGenerationRequest || isIdeAccountSetupRequest(reqUrl);
+}
+
 function isLowSignalModel(modelKey) {
     return /^tab_/i.test(String(modelKey || '').trim());
 }
@@ -233,6 +601,131 @@ function shouldLogPrimaryConversation(reqUrl, modelKey) {
     }
 
     return !isLowSignalModel(cleanModelKey);
+}
+
+function isIdeAccountSetupRequest(reqUrl) {
+    const url = String(reqUrl || '');
+    return url.includes(':loadCodeAssist') ||
+        url.includes(':onboardUser') ||
+        url.includes(':fetchAdminControls') ||
+        url.includes(':fetchAvailableModels') ||
+        url.includes('fetchAvailableModels') ||
+        url.includes('/undefined') ||
+        url.includes('fetchUserInfo') ||
+        url.includes('cascadeNuxes');
+}
+
+function isGenerateContentRequest(reqUrl) {
+    const url = String(reqUrl || '');
+    return url.includes(':streamGenerateContent') ||
+        url.includes(':generateContent') ||
+        url.includes('streamGenerateContent') ||
+        url.includes('generateContent');
+}
+
+function sendJsonResponse(res, statusCode, payload) {
+    const body = JSON.stringify(payload || {});
+    res.writeHead(statusCode, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+    });
+    res.end(body);
+}
+
+function maybeMockRemoteIdeRequest(req, res, reqId, runtimeUsesRemoteToken, isGenerationRequest, log, configPath, accountsFilePath) {
+    if (!runtimeUsesRemoteToken || isGenerationRequest) {
+        return false;
+    }
+
+    const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+
+    // ── loadCodeAssist, onboardUser, fetchAdminControls: PASSTHROUGH ──
+    // These MUST hit Google with the IDE's own bearer token so the IDE
+    // receives the real cloudaicompanionProject, tier info, and operation
+    // structure.  Previous mocks returned a fake project name which caused
+    // fetchAdminControls → 400 and onboardUser → missing 'name' field →
+    // IDE polling /v1internal/undefined → 404, permanently blocking init.
+    if (pathname.includes(':loadCodeAssist') ||
+        pathname.includes(':onboardUser') ||
+        pathname.includes(':fetchAdminControls')) {
+        log(`[token-proxy] #${reqId} [PASSTHROUGH] ${pathname.split(':').pop()} (transparent)`);
+        return false;
+    }
+
+    // Safety net: catch the /undefined URL that older broken mocks caused
+    if (pathname === '/v1internal/undefined' || pathname.endsWith('/undefined')) {
+        log(`[token-proxy] #${reqId} [MOCK] undefined endpoint`);
+        sendJsonResponse(res, 200, {});
+        return true;
+    }
+
+    // fetchAvailableModels: serve from cache when available, otherwise passthrough
+    if (pathname.includes(':fetchAvailableModels') || pathname.includes('fetchAvailableModels')) {
+        const cachedModelsPayload = loadCachedAvailableModelsPayload(configPath, accountsFilePath);
+        if (hasAvailableModelsPayload(cachedModelsPayload)) {
+            log(`[token-proxy] #${reqId} [MOCK] fetchAvailableModels`);
+            sendJsonResponse(res, 200, cachedModelsPayload);
+            return true;
+        }
+        log(`[token-proxy] #${reqId} [MOCK-SKIP] fetchAvailableModels no cached models; passthrough`);
+        return false;
+    }
+
+    return false;
+}
+
+function createPassthroughTokenInfo() {
+    return {
+        token: '',
+        accountId: 0,
+        email: 'ide-passthrough',
+        projectId: '',
+        canRotate: false,
+        reservation: null,
+        remoteLease: false,
+        passthroughOnly: true,
+    };
+}
+
+function loadCachedAvailableModelsPayload(configPath, accountsFilePath) {
+    const candidateDirs = [
+        configPath ? path.dirname(configPath) : '',
+        accountsFilePath ? path.dirname(accountsFilePath) : '',
+        process.cwd(),
+    ].filter(Boolean);
+
+    for (const dir of candidateDirs) {
+        const quotaDataPath = path.join(dir, 'quota-data.json');
+        try {
+            if (!fs.existsSync(quotaDataPath)) {
+                continue;
+            }
+            const quotaData = JSON.parse(fs.readFileSync(quotaDataPath, 'utf8'));
+            const records = Object.values(quotaData || {});
+            for (const record of records) {
+                const parsed = typeof record?.modelsJson === 'string'
+                    ? JSON.parse(record.modelsJson)
+                    : record?.modelsJson;
+                if (parsed && parsed.models && !Array.isArray(parsed.models) && typeof parsed.models === 'object') {
+                    return parsed;
+                }
+            }
+        } catch {
+            // Fall through to the next candidate or the empty valid payload.
+        }
+    }
+
+    return null;
+}
+
+function hasAvailableModelsPayload(payload) {
+    return Boolean(
+        payload &&
+        payload.models &&
+        !Array.isArray(payload.models) &&
+        typeof payload.models === 'object' &&
+        Object.keys(payload.models).length > 0
+    );
 }
 
 function extractCapacityModelKey(errorText) {
@@ -370,6 +863,13 @@ function getRotationDetails(statusCode, authMode, errorText, fallbackModelKey = 
     }
 
     if (statusCode !== 503) {
+        if (statusCode === 400 && isLocationUnsupportedText(errorText)) {
+            return {
+                reason: 'location_unsupported',
+                modelKey: extractCapacityModelKey(errorText) || String(fallbackModelKey || '').trim(),
+                retryAfterMs: LOCATION_UNSUPPORTED_COOLDOWN_MS,
+            };
+        }
         if (statusCode === 429) {
             return {
                 reason: 'quota',
@@ -395,6 +895,38 @@ function getRotationDetails(statusCode, authMode, errorText, fallbackModelKey = 
     }
 
     return { reason: '', modelKey: '', retryAfterMs: 0 };
+}
+
+function isLocationUnsupportedText(value) {
+    const text = String(value || '').toLowerCase();
+    if (!text) return false;
+    return (
+        text.includes('user location is not supported') ||
+        text.includes('location is not supported for the api use') ||
+        (text.includes('failed_precondition') && text.includes('location') && text.includes('not supported'))
+    );
+}
+
+function isVerificationChallengeText(value) {
+    const text = String(value || '').toLowerCase();
+    if (!text) return false;
+    return (
+        text.includes('please verify your account') ||
+        text.includes('verify your account to continue') ||
+        text.includes('verify account') ||
+        text.includes('verify your info to continue') ||
+        text.includes('google needs to verify') ||
+        text.includes('verify some info about your device or phone number') ||
+        text.includes('scan the qr code with your phone') ||
+        text.includes('account to continue using antigravity') ||
+        text.includes('validation_required') ||
+        text.includes('"reason":"validation_required"') ||
+        text.includes('"reason": "validation_required"') ||
+        text.includes('validation_url') ||
+        text.includes('validation_error_message') ||
+        text.includes('permission_denied') ||
+        text.includes('al_alert')
+    );
 }
 
 function getErrorSnippet(value) {
@@ -484,11 +1016,16 @@ function shouldWaitForCapacityRecovery(unavailable, attempts, maxRetries, accumu
 function readJsonFile(filePath, fallback = {}) {
     if (!filePath) return fallback;
     try {
-        const raw = require('fs').readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+        const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
         return raw.trim() ? JSON.parse(raw) : fallback;
     } catch {
         return fallback;
     }
+}
+
+function writeJsonFile(filePath, value) {
+    if (!filePath) return;
+    fs.writeFileSync(filePath, `${JSON.stringify(value || {}, null, 2)}\n`, 'utf8');
 }
 
 function fingerprintSecret(secret) {
@@ -679,6 +1216,7 @@ function createTokenProxy(config) {
     });
     const quotaTracker = createQuotaTracker({ tokenManager, log, cooldownMs });
     const quotaPoller = createQuotaPoller({ tokenManager, cloudEndpoint, log, pollIntervalMs: 5 * 60 * 1000 });
+    const remoteOnlyClientBuild = String(process.env.BCAI_DISTRIBUTION || '').trim().toLowerCase() === 'client';
 
     let server = null;
     let requestCount = 0;
@@ -689,6 +1227,75 @@ function createTokenProxy(config) {
     let remoteErrorCount = 0;
     let lastRemoteError = null;
     let lastAccessKeyStatus = null;
+    let remoteAuthBlockedUntil = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const inFlightRemoteLeases = new Map();
+    const fallbackRemoteClientId = `token-proxy-${process.env.COMPUTERNAME || process.env.HOSTNAME || 'local'}`;
+
+    function recordTokenUsage(capture, headers) {
+        const rawBody = capture?.read?.();
+        if (!rawBody) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+        const decodedText = decodeErrorBody(rawBody, headers?.['content-encoding'], -1);
+        const usage = extractTokenUsageFromText(decodedText);
+        usage.totalTokens = readTokenCount(usage.totalTokens) || usage.inputTokens + usage.outputTokens;
+        if (usage.inputTokens <= 0 && usage.outputTokens <= 0 && usage.totalTokens <= 0) {
+            return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+        }
+        totalInputTokens += usage.inputTokens;
+        totalOutputTokens += usage.outputTokens;
+        return usage;
+    }
+
+    function getRemoteRotatableCount() {
+        const configured = Math.min(
+            MAX_REMOTE_ROTATION_ATTEMPTS,
+            readPositiveIntEnv('GFA_REMOTE_ROTATION_ATTEMPTS', DEFAULT_REMOTE_ROTATION_ATTEMPTS)
+        );
+        const policy = normalizeRemoteRetryPolicy(cachedRemoteLease?.retryPolicy);
+        if (cachedRemoteLease?.retryPolicy) {
+            return Math.min(configured, policy.maxAttempts);
+        }
+        const stats = cachedRemoteLease?.candidateStats || {};
+        const availableForModel = Number(
+            stats.healthyForModel ||
+            stats.availableForModel ||
+            0
+        );
+        // Keep remote retries low; service retryPolicy can tighten this further.
+        if (availableForModel > 0) {
+            return Math.max(1, Math.min(configured, availableForModel));
+        }
+        return Math.max(1, configured);
+    }
+
+    function shouldRetryRemoteStatus(tokenInfo, status, attempts, maxAttempts) {
+        if (!tokenInfo?.remoteLease) return false;
+        const policy = normalizeRemoteRetryPolicy(tokenInfo.retryPolicy);
+        const statusLimit = Number(policy.statusMaxAttempts?.[Number(status)] || 0);
+        const effectiveMaxAttempts = Math.max(maxAttempts, statusLimit || policy.maxAttempts);
+        if (attempts >= effectiveMaxAttempts) return false;
+        return policy.retryableStatuses.includes(Number(status));
+    }
+
+    function shouldRetryRemoteError(tokenInfo, status, attempts, maxAttempts, rotation) {
+        if (!tokenInfo?.remoteLease) return false;
+        if (Number(status) === 400 && rotation?.reason === 'location_unsupported') {
+            const policy = normalizeRemoteRetryPolicy(tokenInfo.retryPolicy);
+            const effectiveMaxAttempts = Math.max(maxAttempts, policy.maxAttempts);
+            return attempts < effectiveMaxAttempts;
+        }
+        return shouldRetryRemoteStatus(tokenInfo, status, attempts, maxAttempts);
+    }
+
+    function remoteStatusMaxAttempts(tokenInfo, status, fallbackMaxAttempts) {
+        const policy = normalizeRemoteRetryPolicy(tokenInfo?.retryPolicy);
+        const statusLimit = Number(policy.statusMaxAttempts?.[Number(status)] || 0);
+        return Math.min(
+            MAX_REMOTE_ROTATION_ATTEMPTS,
+            Math.max(1, fallbackMaxAttempts, policy.maxAttempts, statusLimit || 0)
+        );
+    }
 
     function getRuntimeTokenMode() {
         const runtimeConfig = readJsonFile(configPath, {});
@@ -699,24 +1306,84 @@ function createTokenProxy(config) {
             'local'
         ).trim().toLowerCase();
         const relay = runtimeConfig.relayProxy || {};
+        if (!relay.clientId) {
+            runtimeConfig.relayProxy = relay;
+            relay.clientId = makeLocalClientId();
+            try {
+                writeJsonFile(configPath, runtimeConfig);
+            } catch (error) {
+                log(`[token-proxy] failed to persist remote clientId: ${error.message}`);
+                relay.clientId = fallbackRemoteClientId;
+            }
+        }
         return {
             mode: mode === 'remote' || mode === 'token-passthrough' || mode === 'relay'
                 ? 'remote'
                 : 'local',
             tokenServerUrl: String(relay.tokenServerUrl || runtimeConfig.remoteTokenServerUrl || '').trim(),
             tokenServerSecret: String(relay.tokenServerSecret || relay.apiKey || runtimeConfig.remoteTokenServerSecret || '').trim(),
+            tokenServerSessionId: String(relay.sessionId || runtimeConfig.remoteTokenServerSessionId || '').trim(),
+            clientId: String(relay.clientId || fallbackRemoteClientId).trim(),
+            clientVersion: String(process.env.BCAI_EXTENSION_VERSION || relay.clientVersion || runtimeConfig.clientVersion || CLIENT_VERSION_FALLBACK).trim(),
+            clientDistribution: String(process.env.BCAI_DISTRIBUTION || relay.clientDistribution || runtimeConfig.clientDistribution || '').trim(),
         };
     }
 
-    async function getRemoteToken(modelKey, force = false) {
+    function saveRemoteSessionId(sessionId) {
+        const cleanSessionId = String(sessionId || '').trim();
+        if (!cleanSessionId) return;
+        const runtimeConfig = readJsonFile(configPath, {});
+        const relay = runtimeConfig.relayProxy || {};
+        if (relay.sessionId === cleanSessionId) return;
+        runtimeConfig.relayProxy = relay;
+        relay.sessionId = cleanSessionId;
+        try {
+            writeJsonFile(configPath, runtimeConfig);
+        } catch (error) {
+            log(`[token-proxy] failed to persist remote sessionId: ${error.message}`);
+        }
+    }
+
+    async function getRemoteToken(modelKey, force = false, options = {}) {
         const runtime = getRuntimeTokenMode();
         if (!runtime.tokenServerUrl) {
             throw new Error('Remote token mode is enabled but relayProxy.tokenServerUrl is not configured.');
         }
-        if (!force && !shouldRefreshLease(cachedRemoteLease)) {
+        if (remoteAuthBlockedUntil > Date.now()) {
+            const waitSeconds = Math.ceil((remoteAuthBlockedUntil - Date.now()) / 1000);
+            const error = new Error(`Remote token access key was rejected; retrying in ${waitSeconds}s`);
+            error.statusCode = 401;
+            throw error;
+        }
+        const excludeAccountIds = Array.isArray(options.excludeAccountIds) ? options.excludeAccountIds : [];
+        const cachedExcluded = cachedRemoteLease?.accountId && excludeAccountIds.includes(Number(cachedRemoteLease.accountId));
+        if (!force && !cachedExcluded && !shouldRefreshLease(cachedRemoteLease)) {
             log(`[token-proxy] remote lease cache hit account=#${cachedRemoteLease.accountId || '?'} project=${cachedRemoteLease.projectId || '(none)'}`);
             return cachedRemoteLease;
         }
+        const leaseKey = JSON.stringify({
+            modelKey: String(modelKey || ''),
+            force: Boolean(force),
+            excludeAccountIds: excludeAccountIds
+                .map((item) => Number(item))
+                .filter((item) => Number.isFinite(item))
+                .sort((a, b) => a - b),
+        });
+        const existingLease = inFlightRemoteLeases.get(leaseKey);
+        if (existingLease) {
+            log(`[token-proxy] remote lease join model=${modelKey || '(empty)'} force=${force ? 'yes' : 'no'}`);
+            return existingLease;
+        }
+        const leasePromise = requestRemoteTokenLease(runtime, modelKey, force, options, excludeAccountIds);
+        inFlightRemoteLeases.set(leaseKey, leasePromise);
+        try {
+            return await leasePromise;
+        } finally {
+            inFlightRemoteLeases.delete(leaseKey);
+        }
+    }
+
+    async function requestRemoteTokenLease(runtime, modelKey, force, options, excludeAccountIds) {
         const leaseUrl = joinUrl(runtime.tokenServerUrl, '/lease-token');
         log(
             `[token-proxy] remote lease request url=${safeRemoteUrl(leaseUrl)} ` +
@@ -727,12 +1394,28 @@ function createTokenProxy(config) {
         try {
             lease = await postJson(
                 leaseUrl,
-                { modelKey, reason: 'token-proxy-remote-mode' },
+                {
+                    modelKey,
+                    reason: 'token-proxy-remote-mode',
+                    clientId: runtime.clientId,
+                    clientVersion: runtime.clientVersion,
+                    clientDistribution: runtime.clientDistribution,
+                    sessionId: runtime.tokenServerSessionId,
+                    attemptSessionId: options.attemptSessionId || '',
+                    excludeAccountIds,
+                    bodyBytes: options.bodyBytes || 0,
+                    isGeneration: options.isGeneration !== false,
+                    integrityHash: _integrityHash,
+                },
                 runtime.tokenServerSecret
             );
         } catch (error) {
             remoteErrorCount++;
             lastRemoteError = error.message;
+            if (error.statusCode === 401 || error.statusCode === 403) {
+                cachedRemoteLease = null;
+                remoteAuthBlockedUntil = Date.now() + REMOTE_ACCESS_KEY_FAILURE_COOLDOWN_MS;
+            }
             log(
                 `[token-proxy] remote lease failed status=${error.statusCode || 'n/a'} ` +
                 `error=${error.message} body=${String(error.responseBody || '').slice(0, 300)}`
@@ -740,6 +1423,7 @@ function createTokenProxy(config) {
             throw error;
         }
         lease._leasedAt = Date.now();
+        saveRemoteSessionId(lease.accessKeySessionId || lease.sessionId);
         lastAccessKeyStatus = lease.accessKeyStatus || lastAccessKeyStatus;
         cachedRemoteLease = {
             token: lease.accessToken,
@@ -750,9 +1434,13 @@ function createTokenProxy(config) {
             reservation: null,
             remoteLease: true,
             leaseId: lease.leaseId || '',
+            probation: Boolean(lease.probation),
+            candidateStats: lease.candidateStats || null,
+            retryPolicy: normalizeRemoteRetryPolicy(lease.retryPolicy),
         };
         remoteLeaseCount++;
         lastRemoteError = null;
+        remoteAuthBlockedUntil = 0;
         log(`[token-proxy] remote lease #${cachedRemoteLease.accountId || '?'} ${cachedRemoteLease.email} project=${cachedRemoteLease.projectId || '(none)'}`);
         return cachedRemoteLease;
     }
@@ -769,15 +1457,26 @@ function createTokenProxy(config) {
             modelKey,
             reason: details.reason,
             retryAfterMs: details.retryAfterMs,
+            inputTokens: readTokenCount(details.tokenUsage?.inputTokens),
+            outputTokens: readTokenCount(details.tokenUsage?.outputTokens),
+            cachedInputTokens: readTokenCount(details.tokenUsage?.cachedInputTokens),
+            rawTotalTokens: readTokenCount(details.tokenUsage?.rawTotalTokens),
+            totalTokens: readTokenCount(details.tokenUsage?.totalTokens),
             errorText: getErrorSnippet(details.errorText || details.errText || details.message),
-        }, runtime.tokenServerSecret, 10000).catch((error) => {
+            integrityHash: _integrityHash,
+        }, runtime.tokenServerSecret, 10000).then((result) => {
+            if (result?.accessKeyStatus) {
+                lastAccessKeyStatus = result.accessKeyStatus;
+            }
+            return result;
+        }).catch((error) => {
             remoteErrorCount++;
             lastRemoteError = error.message;
             log(`[token-proxy] remote report failed: ${error.message}`);
         });
     }
 
-    function forwardRequest(method, reqPath, headers, body) {
+    function forwardRequest(method, reqPath, headers, body, timeoutMs = 60000) {
         return new Promise((resolve, reject) => {
             const targetUrl = new URL(reqPath, cloudEndpoint);
             const options = {
@@ -791,6 +1490,9 @@ function createTokenProxy(config) {
             const transport = parsedEndpoint.protocol === 'https:' ? https : http;
             const proxyReq = transport.request(options, resolve);
             proxyReq.on('error', reject);
+            proxyReq.setTimeout(timeoutMs, () => {
+                proxyReq.destroy(new Error(`upstream response timeout (${Math.ceil(timeoutMs / 1000)}s)`));
+            });
             if (body && body.length > 0) proxyReq.write(body);
             proxyReq.end();
         });
@@ -806,7 +1508,7 @@ function createTokenProxy(config) {
         for await (const chunk of req) bodyChunks.push(chunk);
         const reqBody = Buffer.concat(bodyChunks);
         const requestModelKey = extractModelKeyFromBody(req.headers, reqBody);
-        const isGenerationRequest = req.url.includes('streamGenerateContent');
+        const isGenerationRequest = isGenerateContentRequest(req.url);
         const shouldLogConversation = shouldLogPrimaryConversation(req.url, requestModelKey);
 
         // Request entry log removed — response line is sufficient
@@ -816,19 +1518,60 @@ function createTokenProxy(config) {
         let lastError = null;
         const attemptedAccountIds = new Set();
         let accumulatedWaitMs = 0;
-        const requestUsesRemoteToken = getRuntimeTokenMode().mode === 'remote';
+        const runtimeUsesRemoteToken = getRuntimeTokenMode().mode === 'remote';
+        // In remote/relay mode the proxy is now a stable transparent gateway:
+        // IDE setup, model-list, auth, count-token, and other non-generation
+        // calls keep the IDE's original Authorization and go straight to Google.
+        // Only actual generation calls lease a remote token and rewrite project.
+        const requestUsesRemoteToken = runtimeUsesRemoteToken && isGenerationRequest;
+        const requestUsesTransparentPassthrough = runtimeUsesRemoteToken && !isGenerationRequest;
+        const remoteAttemptSessionId = `${Date.now()}-${reqId}`;
+        const shouldLogRemoteDiag = shouldLogRemoteDiagnostic(req.url, runtimeUsesRemoteToken, isGenerationRequest);
+        if (shouldLogRemoteDiag) {
+            log(
+                `[token-proxy] #${reqId} [diag] inbound path=${getRequestPath(req.url)} ` +
+                `method=${req.method || 'GET'} model=${requestModelKey || '(none)'} ` +
+                `generation=${isGenerationRequest ? 'yes' : 'no'} remoteMode=${runtimeUsesRemoteToken ? 'yes' : 'no'} ` +
+                `branch=${requestUsesRemoteToken ? 'remote-token' : requestUsesTransparentPassthrough ? 'passthrough' : 'local'} ` +
+                `authHeader=${hasUsableAuthorization(req.headers) ? 'bearer' : 'missing'} bodyBytes=${reqBody.length}`
+            );
+        }
+
+        if (maybeMockRemoteIdeRequest(
+            req,
+            res,
+            reqId,
+            runtimeUsesRemoteToken,
+            isGenerationRequest,
+            log,
+            configPath,
+            accountsFilePath
+        )) {
+            return;
+        }
 
         // Allow enough attempts to try ALL rotatable accounts for quota/capacity rotation,
         // not just maxRetries (which is meant for network errors).
-        const rotatableCount = requestUsesRemoteToken ? Math.max(1, maxRetries + 1) : quotaTracker.getStatus().rotatableAccounts;
-        const maxAttempts = Math.max(maxRetries, rotatableCount);
+        const rotatableCount = requestUsesRemoteToken ? getRemoteRotatableCount() : quotaTracker.getStatus().rotatableAccounts;
+        const isDebugMode = !runtimeUsesRemoteToken && quotaTracker.isDebugMode();
+        let maxAttempts = requestUsesTransparentPassthrough
+            ? 1
+            : isDebugMode ? 0 : (requestUsesRemoteToken ? rotatableCount : Math.max(maxRetries, rotatableCount));
 
-        while (attempts <= maxAttempts) {
+        while ((requestUsesRemoteToken || requestUsesTransparentPassthrough) ? attempts < maxAttempts : attempts <= maxAttempts) {
             attempts++;
             let tokenInfo;
             try {
                 if (requestUsesRemoteToken) {
-                    tokenInfo = await getRemoteToken(requestModelKey, attempts > 1);
+                    tokenInfo = await getRemoteToken(requestModelKey, attempts > 1, {
+                        attemptSessionId: remoteAttemptSessionId,
+                        excludeAccountIds: Array.from(attemptedAccountIds),
+                        bodyBytes: reqBody.length,
+                        isGeneration: isGenerationRequest,
+                    });
+                    maxAttempts = Math.max(attempts, normalizeRemoteRetryPolicy(tokenInfo.retryPolicy).maxAttempts);
+                } else if (requestUsesTransparentPassthrough) {
+                    tokenInfo = createPassthroughTokenInfo();
                 } else {
                     tokenInfo = await quotaTracker.getActiveToken({
                         modelKey: requestModelKey,
@@ -837,7 +1580,9 @@ function createTokenProxy(config) {
                         requireProjectId: isGenerationRequest,
                     });
                 }
-                attemptedAccountIds.add(tokenInfo.accountId);
+                if (tokenInfo.accountId) {
+                    attemptedAccountIds.add(tokenInfo.accountId);
+                }
             } catch (error) {
                 const unavailable = quotaTracker.getModelAvailability({
                     modelKey: requestModelKey,
@@ -865,7 +1610,25 @@ function createTokenProxy(config) {
                     continue;
                 }
 
-                log(`[token-proxy] #${reqId} No token: ${error.message}`);
+                log(`[token-proxy] #${reqId} No token path=${getRequestPath(req.url)}: ${error.message}`);
+                if (requestUsesRemoteToken && error.statusCode === 409) {
+                    res.writeHead(409, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Access key is already active on another device',
+                        message: error.message,
+                    }));
+                    return;
+                }
+                if (
+                    requestUsesRemoteToken &&
+                    (error.statusCode === 502 || error.statusCode === 503 || error.statusCode === 504) &&
+                    attempts < maxAttempts
+                ) {
+                    lastError = error;
+                    cachedRemoteLease = null;
+                    await new Promise((r) => setTimeout(r, remoteStatusDelayMs(error.statusCode, attempts, cachedRemoteLease?.retryPolicy)));
+                    continue;
+                }
                 if (unavailable?.reason) {
                     const response = buildUnavailableAccountsResponse(unavailable, requestModelKey);
                     res.writeHead(response.statusCode, { 'Content-Type': 'application/json' });
@@ -894,13 +1657,26 @@ function createTokenProxy(config) {
                 log,
                 reqId
             );
+            if (shouldLogRemoteDiag) {
+                log(
+                    `[token-proxy] #${reqId} [diag] forward path=${getRequestPath(req.url)} ` +
+                    `authMode=${prepared.authMode} tokenSource=${tokenInfo.remoteLease ? 'remote-lease' : tokenInfo.passthroughOnly ? 'passthrough' : 'local-account'} ` +
+                    `account=${tokenInfo.accountId || '-'} project=${tokenInfo.projectId || '-'} ` +
+                    `forwardAuth=${hasUsableAuthorization(prepared.headers) ? 'bearer' : 'missing'} ` +
+                    `projectUpdated=${prepared.projectUpdated ? 'yes' : 'no'}`
+                );
+            }
 
             try {
+                const upstreamHeaderTimeoutMs = isGenerationRequest
+                    ? requestUsesRemoteToken ? 90000 : 180000
+                    : 30000;
                 const proxyRes = await forwardRequest(
                     req.method,
                     req.url,
                     prepared.headers,
-                    prepared.body
+                    prepared.body,
+                    upstreamHeaderTimeoutMs
                 );
 
                 if (shouldLogConversation || proxyRes.statusCode >= 400) {
@@ -911,6 +1687,13 @@ function createTokenProxy(config) {
                         ')'
                     );
                 }
+                if (shouldLogRemoteDiag) {
+                    log(
+                        `[token-proxy] #${reqId} [diag] response path=${getRequestPath(req.url)} ` +
+                        `status=${proxyRes.statusCode} authMode=${prepared.authMode} ` +
+                        `remoteLease=${tokenInfo.remoteLease ? 'yes' : 'no'}`
+                    );
+                }
 
                 if (proxyRes.statusCode === 429) {
                     const errChunks = [];
@@ -918,6 +1701,16 @@ function createTokenProxy(config) {
                     const rawErr = Buffer.concat(errChunks);
                     const errText = decodeErrorBody(rawErr, proxyRes.headers['content-encoding']);
                     releaseReservation();
+
+                    // Debug mode: passthrough 429 directly, no rotation/retry
+                    if (isDebugMode) {
+                        log(`[token-proxy] #${reqId} DEBUG 429 passthrough (${tokenInfo.email}): ${errText.substring(0, 500)}`);
+                        const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, { bodyLength: rawErr.length });
+                        res.writeHead(proxyRes.statusCode, resHeaders);
+                        res.end(rawErr);
+                        return;
+                    }
+
                     const rotation = getRotationDetails(
                         proxyRes.statusCode,
                         prepared.authMode,
@@ -926,14 +1719,15 @@ function createTokenProxy(config) {
                     );
                     rotation.errorText = errText;
                     await reportRemoteResult(tokenInfo, proxyRes.statusCode, rotation.modelKey || requestModelKey, rotation);
-                    if (tokenInfo.remoteLease && attempts < maxAttempts) {
+                    if (shouldRetryRemoteStatus(tokenInfo, proxyRes.statusCode, attempts, maxAttempts)) {
+                        maxAttempts = remoteStatusMaxAttempts(tokenInfo, proxyRes.statusCode, maxAttempts);
                         cachedRemoteLease = null;
                         log(`[token-proxy] #${reqId} remote 429; refreshing lease and retrying...`);
-                        await new Promise((r) => setTimeout(r, 100 + Math.random() * 400));
+                        await new Promise((r) => setTimeout(r, remoteStatusDelayMs(proxyRes.statusCode, attempts, tokenInfo.retryPolicy)));
                         continue;
                     }
                     if (tokenInfo.remoteLease) {
-                        log(`[token-proxy] #${reqId} remote ERROR 429: ${errText.substring(0, 500)}`);
+                        log(`[token-proxy] #${reqId} remote ERROR 429 path=${getRequestPath(req.url)}: ${errText.substring(0, 500)}`);
                         const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
                             bodyLength: rawErr.length,
                         });
@@ -972,12 +1766,12 @@ function createTokenProxy(config) {
                             attemptedAccountIds.size,
                             quotaTracker.getStatus().rotatableAccounts
                         )) {
-                            await new Promise((r) => setTimeout(r, 100 + Math.random() * 400));
+                            await new Promise((r) => setTimeout(r, remoteStatusDelayMs(proxyRes.statusCode, attempts, tokenInfo.retryPolicy)));
                             continue;
                         }
                     }
 
-                    log(`[token-proxy] #${reqId} ERROR 429: ${errText.substring(0, 500)}`);
+                    log(`[token-proxy] #${reqId} ERROR 429 path=${getRequestPath(req.url)}: ${errText.substring(0, 500)}`);
                     const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
                         bodyLength: rawErr.length,
                     });
@@ -992,6 +1786,22 @@ function createTokenProxy(config) {
                     const rawErr = Buffer.concat(errChunks);
                     const errText = decodeErrorBody(rawErr, proxyRes.headers['content-encoding']);
                     releaseReservation();
+                    if (shouldLogRemoteDiag) {
+                        log(
+                            `[token-proxy] #${reqId} [diag] error-body path=${getRequestPath(req.url)} ` +
+                            `status=${proxyRes.statusCode} snippet=${errText.substring(0, 300).replace(/\s+/g, ' ')}`
+                        );
+                    }
+
+                    // Debug mode: passthrough all errors directly
+                    if (isDebugMode) {
+                        log(`[token-proxy] #${reqId} DEBUG ${proxyRes.statusCode} passthrough (${tokenInfo.email}): ${errText.substring(0, 500)}`);
+                        const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, { bodyLength: rawErr.length });
+                        res.writeHead(proxyRes.statusCode, resHeaders);
+                        res.end(rawErr);
+                        return;
+                    }
+
                     const rotation = getRotationDetails(
                         proxyRes.statusCode,
                         prepared.authMode,
@@ -999,15 +1809,34 @@ function createTokenProxy(config) {
                         requestModelKey
                     );
                     rotation.errorText = errText;
-                    if (tokenInfo.remoteLease && (proxyRes.statusCode === 401 || proxyRes.statusCode === 403 || proxyRes.statusCode === 503) && attempts < maxAttempts) {
+                    if (
+                        tokenInfo.remoteLease &&
+                        shouldRetryRemoteError(tokenInfo, proxyRes.statusCode, attempts, maxAttempts, rotation)
+                    ) {
                         await reportRemoteResult(tokenInfo, proxyRes.statusCode, rotation.modelKey || requestModelKey, rotation);
+                        maxAttempts = remoteStatusMaxAttempts(tokenInfo, proxyRes.statusCode, maxAttempts);
                         cachedRemoteLease = null;
-                        log(`[token-proxy] #${reqId} remote ${proxyRes.statusCode}; refreshing lease and retrying...`);
-                        await new Promise((r) => setTimeout(r, 100 + Math.random() * 400));
+                        const retryReason = rotation.reason ? ` ${rotation.reason}` : '';
+                        log(`[token-proxy] #${reqId} remote ${proxyRes.statusCode}${retryReason}; refreshing lease and retrying...`);
+                        await new Promise((r) => setTimeout(r, remoteStatusDelayMs(proxyRes.statusCode, attempts, tokenInfo.retryPolicy)));
                         continue;
                     }
                     if (tokenInfo.remoteLease) {
-                        log(`[token-proxy] #${reqId} remote ERROR ${proxyRes.statusCode}: ${errText.substring(0, 500)}`);
+                        await reportRemoteResult(tokenInfo, proxyRes.statusCode, rotation.modelKey || requestModelKey, rotation);
+                        if (proxyRes.statusCode === 403 && isVerificationChallengeText(errText)) {
+                            cachedRemoteLease = null;
+                            log(`[token-proxy] #${reqId} remote verification challenge exhausted; returning temporary unavailable`);
+                            sendJsonResponse(res, 503, {
+                                ok: false,
+                                code: 'REMOTE_TOKEN_TEMPORARILY_UNAVAILABLE',
+                                error: 'Remote token account is temporarily unavailable. Please retry.',
+                                message: '临时续杯账号暂不可用，请稍后重试。',
+                                retryable: true,
+                                upstreamStatus: proxyRes.statusCode,
+                            });
+                            return;
+                        }
+                        log(`[token-proxy] #${reqId} remote ERROR ${proxyRes.statusCode} path=${getRequestPath(req.url)}: ${errText.substring(0, 500)}`);
                         const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
                             bodyLength: rawErr.length,
                         });
@@ -1069,7 +1898,7 @@ function createTokenProxy(config) {
                         }
                     }
 
-                    log(`[token-proxy] #${reqId} ERROR ${proxyRes.statusCode}: ${errText.substring(0, 500)}`);
+                    log(`[token-proxy] #${reqId} ERROR ${proxyRes.statusCode} path=${getRequestPath(req.url)}: ${errText.substring(0, 500)}`);
                     const resHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, {
                         bodyLength: rawErr.length,
                     });
@@ -1081,9 +1910,7 @@ function createTokenProxy(config) {
                 const isStreaming = req.url.includes('streamGenerate') ||
                     String(proxyRes.headers['content-type'] || '').includes('text/event-stream');
 
-                if (tokenInfo.remoteLease && !isStreaming) {
-                    reportRemoteResult(tokenInfo, proxyRes.statusCode || 200, requestModelKey);
-                } else if (!isStreaming && prepared.authMode !== 'passthrough') {
+                if (!tokenInfo.remoteLease && !isStreaming && prepared.authMode !== 'passthrough') {
                     quotaTracker.reportSuccess(tokenInfo.accountId, {
                         modelKey: requestModelKey,
                     });
@@ -1095,14 +1922,15 @@ function createTokenProxy(config) {
                 let clientClosed = false;
                 let streamReportedFailure = false;
 
-                const shouldInterceptBody = Math.floor(proxyRes.statusCode / 100) === 2 &&
+                const shouldInterceptBody = !tokenInfo.passthroughOnly &&
+                    Math.floor(proxyRes.statusCode / 100) === 2 &&
                     (req.url.includes('fetchUserInfo') || req.url.includes('cascadeNuxes') || req.url.includes('fetchAvailableModels'));
                 const bodyChunks = [];
+                const tokenUsageCapture = tokenInfo.remoteLease ? createTokenUsageCapture() : null;
 
                 // Stream timeout with socket-health-aware grace periods.
                 // Phase 1 (first byte): long timeout for model thinking.
                 // Phase 2 (mid-stream): when timer fires, check TCP socket health:
-                //   - Socket dead → connection silently dropped, force end immediately.
                 //   - Socket alive → model likely still thinking, grant grace period.
                 //   - Max total idle reached → force end to prevent infinite waiting.
                 let streamInactivityTimer = null;
@@ -1111,13 +1939,24 @@ function createTokenProxy(config) {
                 const STREAM_GRACE_MS = 30000; // 30s per grace extension when socket alive
                 const isThinkingModel = /thinking|think/i.test(requestModelKey);
                 const STREAM_MAX_IDLE_MS = isLowSignalModel(requestModelKey) ? 30000
-                    : isThinkingModel ? 240000 : 150000;
+                    : isThinkingModel ? 10 * 60 * 1000 : 5 * 60 * 1000;
+                const canWriteSseKeepalive = isStreaming &&
+                    String(proxyRes.headers['content-type'] || '').includes('text/event-stream');
                 let streamHasData = false;
                 let lastDataAt = Date.now();
 
                 const forceEndStream = (reason) => {
+                    if (streamReportedFailure) return;
+                    streamReportedFailure = true;
+                    releaseReservation();
                     log(`[token-proxy] #${reqId} stream end: ${reason}`);
-                    if (prepared.authMode === 'account') {
+                    if (tokenInfo.remoteLease) {
+                        reportRemoteResult(tokenInfo, 504, requestModelKey, {
+                            reason: 'stream_timeout',
+                            errorText: reason,
+                        });
+                        cachedRemoteLease = null;
+                    } else if (prepared.authMode === 'account') {
                         quotaTracker.reportStreamHang(tokenInfo.accountId);
                     }
                     proxyRes.destroy();
@@ -1134,17 +1973,14 @@ function createTokenProxy(config) {
                         return;
                     }
 
-                    // Check TCP socket: is the upstream connection still alive?
+                    // Check TCP socket for diagnostics only. Some Node/Windows
+                    // combinations mark the socket unreadable during long model
+                    // stalls even though the HTTP stream has not emitted end/error.
                     const socket = proxyRes.socket;
                     const socketAlive = socket
                         && !socket.destroyed
                         && socket.readable
                         && !proxyRes.complete;
-
-                    if (!socketAlive) {
-                        forceEndStream(`socket dead after ${Math.ceil(totalIdleMs / 1000)}s idle`);
-                        return;
-                    }
 
                     if (totalIdleMs >= STREAM_MAX_IDLE_MS) {
                         forceEndStream(`max idle ${Math.ceil(totalIdleMs / 1000)}s (limit=${STREAM_MAX_IDLE_MS / 1000}s)`);
@@ -1154,10 +1990,18 @@ function createTokenProxy(config) {
                     // Socket alive + under max idle → model still thinking, grant grace
                     const remaining = STREAM_MAX_IDLE_MS - totalIdleMs;
                     const nextCheck = Math.min(STREAM_GRACE_MS, remaining);
+                    if (canWriteSseKeepalive && !res.writableEnded) {
+                        try {
+                            res.write(`: bcai-keepalive ${Date.now()}\n\n`);
+                        } catch (_) {
+                            // Ignore keepalive write failures; normal close/error
+                            // handlers below will clean up the stream.
+                        }
+                    }
                     if (shouldLogConversation) {
                         log(
                             `[token-proxy] #${reqId} stream idle ${Math.ceil(totalIdleMs / 1000)}s, ` +
-                            `socket alive, grace +${Math.ceil(nextCheck / 1000)}s`
+                            `socket=${socketAlive ? 'alive' : 'quiet'}, grace +${Math.ceil(nextCheck / 1000)}s`
                         );
                     }
                     streamInactivityTimer = setTimeout(checkStreamHealth, nextCheck);
@@ -1173,6 +2017,9 @@ function createTokenProxy(config) {
 
                 proxyRes.on('data', (chunk) => {
                     responseBytes += chunk.length;
+                    if (tokenUsageCapture) {
+                        tokenUsageCapture.push(chunk);
+                    }
                     if (isStreaming) {
                         streamHasData = true;
                         resetStreamTimer();
@@ -1184,9 +2031,13 @@ function createTokenProxy(config) {
                                 log(
                                     `[token-proxy] #${reqId} stream ${rotation.reason} hit` +
                                     (rotation.modelKey ? ` (${rotation.modelKey})` : '') +
-                                    ', marking account for rotation'
+                                    ', marking account for rotation and aborting stream'
                                 );
                                 if (tokenInfo.remoteLease) {
+                                    rotation.tokenUsage = {
+                                        inputTokens: Math.max(0, Math.floor((reqBody.length || 0) / 4)),
+                                        outputTokens: Math.max(0, Math.floor((responseBytes || 0) / 5))
+                                    };
                                     reportRemoteResult(tokenInfo, status, rotation.modelKey || requestModelKey, rotation);
                                     cachedRemoteLease = null;
                                 } else if (prepared.authMode === 'account') {
@@ -1196,6 +2047,11 @@ function createTokenProxy(config) {
                                         retryAfterMs: rotation.retryAfterMs,
                                     });
                                 }
+                                
+                                releaseReservation();
+                                if (streamInactivityTimer) clearTimeout(streamInactivityTimer);
+                                proxyRes.destroy();
+                                if (!res.writableEnded) res.end();
                             }
                         }
                     }
@@ -1207,10 +2063,14 @@ function createTokenProxy(config) {
                     responseEnded = true;
                     if (streamInactivityTimer) clearTimeout(streamInactivityTimer);
                     releaseReservation();
-                    if (isStreaming && !streamReportedFailure) {
+                    let tokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+                    if (tokenUsageCapture && !streamReportedFailure) {
+                        tokenUsage = recordTokenUsage(tokenUsageCapture, proxyRes.headers);
+                    }
+                    if (!streamReportedFailure) {
                         if (tokenInfo.remoteLease) {
-                            reportRemoteResult(tokenInfo, proxyRes.statusCode || 200, requestModelKey);
-                        } else if (prepared.authMode !== 'passthrough') {
+                            reportRemoteResult(tokenInfo, proxyRes.statusCode || 200, requestModelKey, { tokenUsage });
+                        } else if (isStreaming && prepared.authMode !== 'passthrough') {
                             quotaTracker.reportSuccess(tokenInfo.accountId, {
                                 modelKey: requestModelKey,
                             });
@@ -1284,12 +2144,19 @@ function createTokenProxy(config) {
     }
 
     function start() {
-        quotaTracker.init();
-        // Auto-discover projects for accounts without projectId
-        tokenManager.autoDiscoverProjects().catch((err) => {
-            log(`[token-proxy] Auto-discover error: ${err.message}`);
-        });
-        quotaPoller.start();
+        const initialRuntime = getRuntimeTokenMode();
+        if (!remoteOnlyClientBuild && initialRuntime.mode !== 'remote') {
+            quotaTracker.init();
+            // Auto-discover projects for accounts without projectId
+            tokenManager.autoDiscoverProjects().catch((err) => {
+                log(`[token-proxy] Auto-discover error: ${err.message}`);
+            });
+            quotaPoller.start();
+        } else if (initialRuntime.mode === 'remote') {
+            log('[token-proxy] remote token mode: local account discovery and quota poller disabled');
+        } else {
+            log('[token-proxy] client distribution: local account discovery and quota poller disabled');
+        }
         server = http.createServer(handleRequest);
         server.listen(proxyPort, '127.0.0.1', () => {
             log(`[token-proxy] Proxy listening on 127.0.0.1:${proxyPort}`);
@@ -1324,6 +2191,9 @@ function createTokenProxy(config) {
             running: Boolean(server), port: proxyPort, cloudEndpoint,
             mode: runtime.mode === 'remote' ? 'token-passthrough' : 'token-proxy',
             tokenSource: runtime.mode,
+            clientVersion: runtime.clientVersion,
+            clientDistribution: runtime.clientDistribution,
+            pid: process.pid,
             tokenServerUrl: runtime.mode === 'remote' ? runtime.tokenServerUrl : '',
             hasTokenServerSecret: runtime.mode === 'remote' ? Boolean(runtime.tokenServerSecret) : false,
             remoteLeaseCount,
@@ -1334,7 +2204,11 @@ function createTokenProxy(config) {
             remoteActiveEmailHint: cachedRemoteLease?.email || '',
             remoteActiveProjectId: cachedRemoteLease?.projectId || '',
             accessKeyStatus: lastAccessKeyStatus,
-            totalRequests: requestCount, totalRotations: rotationCount,
+            totalInputTokens,
+            totalOutputTokens,
+            totalRequests: requestCount,
+            totalErrors: runtime.mode === 'remote' ? remoteErrorCount : 0,
+            totalRotations: rotationCount,
             ...quotaTracker.getStatus(),
         };
     }
@@ -1343,7 +2217,22 @@ function createTokenProxy(config) {
         return quotaTracker.setActiveAccount(accountId, reason);
     }
 
-    return { start, stop, getStatus, switchAccount, tokenManager, quotaTracker, quotaPoller };
+    function setDebugMode(enabled) {
+        const result = quotaTracker.setDebugMode(enabled);
+        if (result) {
+            quotaPoller.stop();
+            log('[token-proxy] debug mode: quota poller paused');
+        } else {
+            const runtime = getRuntimeTokenMode();
+            if (!remoteOnlyClientBuild && runtime.mode !== 'remote') {
+                quotaPoller.start();
+                log('[token-proxy] debug mode off: quota poller resumed');
+            }
+        }
+        return result;
+    }
+
+    return { start, stop, getStatus, switchAccount, setDebugMode, tokenManager, quotaTracker, quotaPoller };
 }
 
 module.exports = {
@@ -1351,6 +2240,7 @@ module.exports = {
     DEFAULT_CLOUD_ENDPOINT,
     decodeErrorBody,
     extractCapacityModelKey,
+    extractTokenUsageFromText,
     extractModelKeyFromBody,
     extractQuotaResetDelayMs,
     formatProjectValue,
@@ -1360,6 +2250,8 @@ module.exports = {
     parseDurationToMs,
     prepareForwardRequest,
     sanitizeProxyResponseHeaders,
+    createTokenUsageCapture,
+    collectTokenUsage,
     shouldLogPrimaryConversation,
     shouldRetryWithAnotherAccount,
     buildUnavailableAccountsResponse,

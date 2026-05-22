@@ -45,5 +45,13 @@
     "legacyMode": "openai-relay",
     "upstream": "https://bcai.online",
     "apiKey": ""
+  },
+
+  "employee": {
+    "adspower": {
+      "url": "http://localhost:50325",
+      "apiKey": "",
+      "profileIds": ["jxxxxxx"]
+    }
   }
 }

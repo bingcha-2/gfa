@@ -15,14 +15,20 @@
 import type { Page } from "playwright";
 import type { TaskLogger } from "./task-logger";
 import type { PhoneInfo } from "@gfa/shared";
+import { captureStepScreenshot } from "./screenshot-capture";
 
 /** How long to poll for SMS code (ms) */
 const SMS_POLL_TIMEOUT_MS = 30_000;
 /** Interval between SMS polls */
 const SMS_POLL_INTERVAL_MS = 3_000;
+/** How long to keep the browser open for a forced QR scan (ms) */
+const QR_MANUAL_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 const PHONE_OPTION_PATTERNS = [
-  /verify (your )?phone number/i,
-  /use .*phone number/i,
+    /verify (your )?phone number/i,
+    /get a verification code/i,
+    /send a verification code/i,
+    /google will send a verification code/i,
+    /use .*phone number/i,
   /text message/i,
   /\bSMS\b/i,
   /验证.*手机号/,
@@ -61,8 +67,12 @@ export interface PhoneVerifyResult {
   needed: boolean;
   /** Whether verification was successfully completed */
   resolved: boolean;
+  /** Phone numbers that were actually tried in this run */
+  attemptedPhones?: string[];
   /** Phone number that was successfully used */
   usedPhone?: string;
+  /** Full phone/SMS metadata that was successfully used */
+  usedPhoneInfo?: PhoneInfo;
   /** Phone numbers that failed / are unusable */
   disabledPhones: string[];
   /** Error message if failed */
@@ -76,8 +86,31 @@ export function isVerificationPage(url: string): boolean {
   return (
     url.includes("uplevelingstep") ||
     url.includes("InteractiveLogin/signconsent") ||
+    url.includes("/challenge/iap") ||
+    url.includes("/challenge/ipp") ||
+    url.includes("/challenge/sk") ||
+    url.includes("/challenge/dp") ||
     url.includes("challenge/selection")
   );
+}
+
+function isPreviousPhoneVerificationText(text: string): boolean {
+  return (
+    /get a verification code/i.test(text) ||
+    /google will send a verification code/i.test(text) ||
+    /verify it(?:'|’)?s you/i.test(text) ||
+    /there is something unusual about your activity/i.test(text) ||
+    /send a verification code/i.test(text)
+  );
+}
+
+async function isPreviousPhoneVerificationPage(page: Page): Promise<boolean> {
+  const url = page.url();
+  if (url.includes("/challenge/ipp") || url.includes("/challenge/sk") || url.includes("/challenge/dp")) {
+    return true;
+  }
+  const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+  return isPreviousPhoneVerificationText(bodyText);
 }
 
 /**
@@ -93,10 +126,25 @@ export async function handlePhoneVerification(
   logger: TaskLogger
 ): Promise<PhoneVerifyResult> {
   const disabledPhones: string[] = [];
+  const attemptedPhones: string[] = [];
 
   if (await isQrPhoneVerificationPage(page)) {
-    await logger.log("WARN", "[phone-verify] QR-code phone verification page detected — cannot automate");
-    return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
+    const qrContinueUrl = getEmbeddedVerificationUrl(page.url());
+    if (qrContinueUrl) {
+      await logger.log("WARN", "[phone-verify] QR challenge opened but contains selection continue URL; trying selection before failing");
+      await page.goto(qrContinueUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+    }
+  }
+
+  if (await isQrPhoneVerificationPage(page)) {
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-before-start");
+    if (qrResult.success) {
+      return { needed: true, resolved: true, disabledPhones };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
+    }
   }
 
   // Check if we're on a verification page
@@ -106,6 +154,19 @@ export async function handlePhoneVerification(
   }
 
   await logger.log("INFO", `[phone-verify] Verification page detected: ${currentUrl}`);
+  await captureStepScreenshot(page, logger, "phone-verify-detected", "beforeScreenshotPath");
+  const verificationStartUrl = await settleVerificationPage(page, logger, currentUrl);
+  await captureStepScreenshot(page, logger, "phone-verify-settled-selection");
+
+  if (await isQrPhoneVerificationPage(page)) {
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-after-settle");
+    if (qrResult.success) {
+      return { needed: true, resolved: true, disabledPhones };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { needed: true, resolved: false, disabledPhones, error: QR_VERIFICATION_ERROR };
+    }
+  }
 
   if (!phones || phones.length === 0) {
     await logger.log("WARN", "[phone-verify] No phone numbers available — skipping verification");
@@ -114,25 +175,32 @@ export async function handlePhoneVerification(
 
   // Try each phone number until one works
   for (const phone of phones) {
+    attemptedPhones.push(phone.phoneNumber);
     await logger.log("INFO", `[phone-verify] Trying phone: ${maskPhone(phone.phoneNumber)}`);
+    await captureStepScreenshot(page, logger, `phone-verify-before-phone-${maskPhone(phone.phoneNumber)}`);
 
     try {
-      const result = await attemptVerification(page, phone, logger);
+      const result = await attemptVerification(page, phone, logger, verificationStartUrl);
       if (result.success) {
+        await captureStepScreenshot(page, logger, `phone-verify-success-${maskPhone(phone.phoneNumber)}`, "afterScreenshotPath");
         await logger.log("INFO", `[phone-verify] ✅ Verification successful with ${maskPhone(phone.phoneNumber)}`);
         return {
           needed: true,
           resolved: true,
+          attemptedPhones,
           usedPhone: phone.phoneNumber,
+          usedPhoneInfo: phone,
           disabledPhones,
         };
       } else {
+        await captureStepScreenshot(page, logger, `phone-verify-failed-${maskPhone(phone.phoneNumber)}`, "errorScreenshotPath");
         await logger.log("WARN", `[phone-verify] Phone ${maskPhone(phone.phoneNumber)} failed: ${result.error}`);
         if (isQrVerificationError(result.error)) {
           await logger.log("WARN", "[phone-verify] QR-code flow is not retryable with another phone; stopping verification");
           return {
             needed: true,
             resolved: false,
+            attemptedPhones,
             disabledPhones,
             error: QR_VERIFICATION_ERROR,
           };
@@ -149,23 +217,26 @@ export async function handlePhoneVerification(
 
         // Navigate back to the verification selection page so the next phone
         // starts from the "enter phone number" step, not the "enter code" step.
-        await resetToVerificationPage(page, logger);
+        await resetToVerificationPage(page, logger, verificationStartUrl);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      await captureStepScreenshot(page, logger, `phone-verify-exception-${maskPhone(phone.phoneNumber)}`, "errorScreenshotPath");
       await logger.log("WARN", `[phone-verify] Error with ${maskPhone(phone.phoneNumber)}: ${errMsg}`);
       // Exceptions are always soft failures — don't disable
       await logger.log("INFO", `[phone-verify] Exception (soft) — keeping phone ${maskPhone(phone.phoneNumber)} available`);
 
       // Also reset page for next attempt
-      await resetToVerificationPage(page, logger);
+      await resetToVerificationPage(page, logger, verificationStartUrl);
     }
   }
 
   await logger.log("WARN", "[phone-verify] All phone numbers exhausted");
+  await captureStepScreenshot(page, logger, "phone-verify-all-phones-exhausted", "errorScreenshotPath");
   return {
     needed: true,
     resolved: false,
+    attemptedPhones,
     disabledPhones,
     error: "All phone numbers failed verification",
   };
@@ -190,12 +261,63 @@ async function forceEnglish(page: Page, logger: TaskLogger): Promise<void> {
   }
 }
 
+function getEmbeddedVerificationUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("accounts.google.com")) {
+      return null;
+    }
+    const next = parsed.searchParams.get("continue");
+    if (!next || !next.includes("accounts.google.com/uplevelingstep")) {
+      return null;
+    }
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+async function settleVerificationPage(page: Page, logger: TaskLogger, fallbackUrl?: string): Promise<string> {
+  // Check immediately before any load-state wait. signin/continue can auto-pick
+  // the QR challenge while we're waiting, but the embedded continue URL still
+  // points to the method selection page we need.
+  const embeddedUrl = getEmbeddedVerificationUrl(page.url());
+  if (embeddedUrl) {
+    await logger.log("DEBUG", `[phone-verify] Opening embedded upleveling selection URL from ${page.url()}`);
+    await page.goto(embeddedUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  } else if (fallbackUrl && page.url().includes("myaccount.google.com")) {
+    await logger.log("DEBUG", "[phone-verify] Current page left verification flow; reopening saved validation URL");
+    await page.goto(fallbackUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+  }
+
+  await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+
+  const lateEmbeddedUrl = getEmbeddedVerificationUrl(page.url());
+  if (lateEmbeddedUrl && !page.url().includes("/uplevelingstep/selection")) {
+    await logger.log("DEBUG", `[phone-verify] Redirected away from selection; reopening embedded URL from ${page.url()}`);
+    await page.goto(lateEmbeddedUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  }
+
+  await Promise.race([
+    page.locator("[data-challengetype]").first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {}),
+    page.locator(PHONE_INPUT_SELECTOR).first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {}),
+    page.locator('button:has-text("Send"), button:has-text("Get a verification code"), div[role="button"]:has-text("Send")').first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {}),
+    page.locator('[role="link"], [role="button"], li').first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {}),
+  ]);
+
+  await logger.log("DEBUG", `[phone-verify] Verification page settled at: ${page.url()}`);
+  await captureStepScreenshot(page, logger, "phone-verify-page-settled");
+  return isVerificationPage(page.url()) ? page.url() : (fallbackUrl ?? page.url());
+}
+
 /**
  * Navigate back to the verification selection page so the next phone attempt
  * starts from a clean state (phone input step, not code input step).
  * Uses browser back to return to the selection step within the verification flow.
  */
-async function resetToVerificationPage(page: Page, logger: TaskLogger): Promise<void> {
+async function resetToVerificationPage(page: Page, logger: TaskLogger, fallbackUrl?: string): Promise<void> {
   try {
     // Try going back twice to get past the "enter code" and "enter phone" steps
     await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
@@ -205,65 +327,165 @@ async function resetToVerificationPage(page: Page, logger: TaskLogger): Promise<
 
     // If we're back on a verification page, wait for content to load
     if (isVerificationPage(page.url())) {
-      // Wait for the "Verify your phone number" option to appear
-      await page.getByText("Verify your phone number", { exact: false }).first()
-        .waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
+      await settleVerificationPage(page, logger, fallbackUrl);
       await logger.log("DEBUG", "[phone-verify] Reset to verification page via back navigation");
       return;
     }
 
-    // Fallback: navigate to Google account page to re-trigger verification
-    await page.goto("https://myaccount.google.com/?hl=en", {
+    if (!fallbackUrl) {
+      await logger.log("DEBUG", `[phone-verify] No saved verification URL for reset; current page: ${page.url()}`);
+      return;
+    }
+
+    // Fallback: reopen the saved validation URL. Navigating to myaccount loses
+    // the uplevelingstep context and makes later phone attempts fail.
+    await page.goto(fallbackUrl, {
       waitUntil: "domcontentloaded",
-      timeout: 15000,
+      timeout: 20000,
     });
-    await page.waitForTimeout(3000);
-    await logger.log("DEBUG", `[phone-verify] Reset via myaccount, now at: ${page.url()}`);
+    await settleVerificationPage(page, logger, fallbackUrl);
+    await logger.log("DEBUG", `[phone-verify] Reset via saved validation URL, now at: ${page.url()}`);
   } catch {
     // ignore — best effort
   }
 }
 
+function isQrCompletionUrl(url: string): boolean {
+  return (
+    url.includes("auth_success") ||
+    url.includes("auth_success_gemini") ||
+    (
+      !isVerificationPage(url) &&
+      !url.includes("accounts.google.com/signin") &&
+      !/\/challenge\/iap\/qrcode/i.test(url) &&
+      !/[?&]challengeType=qrcode/i.test(url)
+    )
+  );
+}
+
+async function waitForManualQrScan(
+  page: Page,
+  logger: TaskLogger,
+  label: string
+): Promise<{ success: boolean; timedOut: boolean }> {
+  if (!(await isQrPhoneVerificationPage(page))) {
+    return { success: false, timedOut: false };
+  }
+
+  await captureStepScreenshot(page, logger, label, "errorScreenshotPath");
+  await logger.log("WARN", "[phone-verify] Forced QR verification detected; manual QR waiting is disabled, closing browser session");
+
+  // Manual QR scan waiting intentionally disabled. A QR challenge means this
+  // account should be marked in the pool and replaced by an activated child.
+  return { success: false, timedOut: true };
+}
+
 async function attemptVerification(
   page: Page,
   phone: PhoneInfo,
-  logger: TaskLogger
+  logger: TaskLogger,
+  verificationStartUrl?: string
 ): Promise<{ success: boolean; error?: string }> {
   if (await isQrPhoneVerificationPage(page)) {
-    return { success: false, error: QR_VERIFICATION_ERROR };
+    const qrContinueUrl = getEmbeddedVerificationUrl(page.url());
+    if (qrContinueUrl) {
+      await logger.log("WARN", "[phone-verify] QR challenge opened during attempt; trying embedded selection URL");
+      await page.goto(qrContinueUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+    }
+  }
+
+  if (await isQrPhoneVerificationPage(page)) {
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-before-attempt");
+    if (qrResult.success) {
+      return { success: true };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
+  }
+
+  await settleVerificationPage(page, logger, verificationStartUrl);
+  if (await isQrPhoneVerificationPage(page)) {
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-after-attempt-settle");
+    if (qrResult.success) {
+      return { success: true };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
   }
 
   // Step 1: Select "Verify your phone number" if on selection page
   const pageUrl = page.url();
-  if (pageUrl.includes("selection") || pageUrl.includes("uplevelingstep")) {
-    const selected = await selectPhoneVerificationOption(page, logger);
+  if ((pageUrl.includes("selection") || pageUrl.includes("uplevelingstep")) && !(await isPreviousPhoneVerificationPage(page))) {
+    let selected = await selectPhoneVerificationOption(page, logger);
     if (!selected) {
-      return { success: false, error: "Could not find phone verification option" };
+      await settleVerificationPage(page, logger, verificationStartUrl);
+      selected = await selectPhoneVerificationOption(page, logger);
+      if (!selected) {
+        return { success: false, error: "Could not find phone verification option" };
+      }
     }
     // Wait for navigation to phone input page after clicking the option
     const selectionUrl = page.url();
     await Promise.race([
       page.waitForURL((url) => url.toString() !== selectionUrl, { timeout: 15000 }).catch(() => {}),
-      page.locator('input[type="tel"]').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
+      page.locator(PHONE_INPUT_SELECTOR).first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
       page.locator('#phoneNumberId').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {}),
     ]);
     if (await isQrPhoneVerificationPage(page)) {
-      return { success: false, error: QR_VERIFICATION_ERROR };
+      const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-after-option");
+      if (qrResult.success) {
+        return { success: true };
+      }
+      if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+        return { success: false, error: QR_VERIFICATION_ERROR };
+      }
     }
   }
 
-  // Step 2: Enter phone number
-  const fullNumber = phone.countryCode + phone.phoneNumber.replace(/^0+/, "");
-  const phoneEntered = await enterPhoneNumber(page, fullNumber, logger);
-  if (!phoneEntered) {
-    return { success: false, error: "Could not enter phone number" };
+  // Step 2: Enter phone number. Some repeat challenges skip this step and
+  // ask to send a code to the previously used phone number.
+  if (await hasVisibleTotpInput(page)) {
+    await logger.log(
+      "WARN",
+      "[phone-verify] TOTP input is still visible; refusing to enter phone number into a code field"
+    );
+    return { success: false, error: "Still on TOTP challenge; phone input not ready" };
+  }
+
+  const hasPhoneInput = await hasVisiblePhoneInput(page);
+  if (hasPhoneInput) {
+    const fullNumber = phone.countryCode + phone.phoneNumber.replace(/^0+/, "");
+    const phoneEntered = await enterPhoneNumber(page, fullNumber, logger);
+    await captureStepScreenshot(page, logger, `phone-verify-after-enter-phone-${maskPhone(phone.phoneNumber)}`);
+    if (!phoneEntered) {
+      return { success: false, error: "Could not enter phone number" };
+    }
+  } else {
+    await logger.log(
+      "INFO",
+      `[phone-verify] No phone input found; using previous-phone send flow for ${maskPhone(phone.phoneNumber)}`
+    );
+    await captureStepScreenshot(page, logger, `phone-verify-before-send-previous-phone-${maskPhone(phone.phoneNumber)}`);
   }
 
   // Step 3: Click send/next button
-  await clickSendCode(page, logger);
+  const sent = await clickSendCode(page, logger);
+  if (!sent) {
+    return { success: false, error: "Could not click send code button" };
+  }
   await page.waitForTimeout(5000);
+  await captureStepScreenshot(page, logger, `phone-verify-after-send-code-${maskPhone(phone.phoneNumber)}`);
   if (await isQrPhoneVerificationPage(page)) {
-    return { success: false, error: QR_VERIFICATION_ERROR };
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-after-send");
+    if (qrResult.success) {
+      return { success: true };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
   }
 
   // Check for errors (invalid number, etc.)
@@ -284,7 +506,13 @@ async function attemptVerification(
       return { success: false, error: lateError };
     }
     if (await isQrPhoneVerificationPage(page)) {
-      return { success: false, error: QR_VERIFICATION_ERROR };
+      const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-during-sms-poll");
+      if (qrResult.success) {
+        return { success: true };
+      }
+      if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+        return { success: false, error: QR_VERIFICATION_ERROR };
+      }
     }
     return { success: false, error: "SMS code not received within timeout" };
   }
@@ -293,6 +521,7 @@ async function attemptVerification(
 
   // Step 5: Enter verification code
   const codeEntered = await enterVerificationCode(page, code, logger);
+  await captureStepScreenshot(page, logger, `phone-verify-after-enter-code-${maskPhone(phone.phoneNumber)}`);
   if (!codeEntered) {
     return { success: false, error: "Could not enter verification code" };
   }
@@ -300,8 +529,15 @@ async function attemptVerification(
   // Step 6: Click verify/next
   await clickVerifyButton(page, logger);
   await page.waitForTimeout(5000);
+  await captureStepScreenshot(page, logger, `phone-verify-after-submit-code-${maskPhone(phone.phoneNumber)}`);
   if (await isQrPhoneVerificationPage(page)) {
-    return { success: false, error: QR_VERIFICATION_ERROR };
+    const qrResult = await waitForManualQrScan(page, logger, "phone-verify-qr-after-submit");
+    if (qrResult.success) {
+      return { success: true };
+    }
+    if (qrResult.timedOut || await isQrPhoneVerificationPage(page)) {
+      return { success: false, error: QR_VERIFICATION_ERROR };
+    }
   }
 
   // Step 7: Check for success
@@ -316,6 +552,7 @@ async function attemptVerification(
     const bodyPreview = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
     await logger.log("DEBUG", `[phone-verify] No error element found. Page body: ${bodyPreview.substring(0, 500)}`);
   }
+  await captureStepScreenshot(page, logger, "phone-verify-did-not-succeed", "errorScreenshotPath");
   return { success: false, error: postError ?? "Verification did not succeed" };
 }
 
@@ -324,6 +561,9 @@ async function isQrPhoneVerificationPage(page: Page): Promise<boolean> {
     const url = page.url();
     if (/\/challenge\/iap\/qrcode/i.test(url) || /[?&]challengeType=qrcode/i.test(url)) {
       return true;
+    }
+    if (url.includes("/uplevelingstep/selection") || url.includes("/challenge/selection")) {
+      return false;
     }
     const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
     return isQrText(bodyText);
@@ -368,6 +608,7 @@ async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Pr
         await logger.log("INFO", `[phone-verify] Selected SMS phone option via: ${selector}`);
         await page.waitForTimeout(1000);
         await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
+        await captureStepScreenshot(page, logger, "phone-verify-after-select-sms-option");
         return true;
       }
     } catch {
@@ -398,17 +639,60 @@ async function selectPhoneVerificationOption(page: Page, logger: TaskLogger): Pr
     await logger.log("INFO", `[phone-verify] Selected phone option by text match: "${text.substring(0, 80)}"`);
     await page.waitForTimeout(1000);
     await logger.log("DEBUG", `[phone-verify] Post-click URL: ${page.url()}`);
+    await captureStepScreenshot(page, logger, "phone-verify-after-select-phone-option");
     return true;
   }
 
-  await logger.log("WARN", "[phone-verify] Could not find phone verification option on page");
+  const bodyPreview = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+  const challengePreview = await page.locator("[data-challengetype]").evaluateAll((els) =>
+    els.slice(0, 8).map((el) => ({
+      type: el.getAttribute("data-challengetype"),
+      text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 100),
+    }))
+  ).catch(() => []);
+  await logger.log(
+    "WARN",
+    `[phone-verify] Could not find phone verification option on page. url=${page.url()} challenges=${JSON.stringify(challengePreview)} body=${bodyPreview.substring(0, 500)}`
+  );
+  await captureStepScreenshot(page, logger, "phone-verify-no-phone-option", "errorScreenshotPath");
   return false;
 }
+const PHONE_INPUT_SELECTOR = [
+  'input[name="phoneNumberId"]',
+  'input#phoneNumberId',
+  'input#deviceAddress',
+  'input[name="deviceAddress"]',
+  'input#knowledgePreregisteredPhone',
+  'input[name="knowledgePreregisteredPhone"]',
+  'input[autocomplete="tel"]',
+  'input[id*="phone" i]',
+  'input[aria-label*="phone" i]',
+  'input[placeholder*="phone" i]',
+  'input[aria-label*="电话" i]',
+  'input[placeholder*="电话" i]',
+  'input[aria-label*="手机" i]',
+  'input[placeholder*="手机" i]',
+  'input[type="tel"]:not([name*="totp" i]):not([id*="totp" i]):not([autocomplete="one-time-code"])',
+].join(", ");
+
+const TOTP_INPUT_SELECTOR = [
+  'input[name="totpPin"]',
+  'input[id="totpPin"]',
+  'input[autocomplete="one-time-code"]',
+  'input[type="tel"][name*="totp" i]',
+  'input[type="tel"][id*="totp" i]',
+].join(", ");
+
 async function enterPhoneNumber(page: Page, number: string, logger: TaskLogger): Promise<boolean> {
-  const phoneInput = page.locator(
-    'input[type="tel"], input[autocomplete="tel"], input[name="phoneNumberId"], ' +
-    'input[id*="phone" i], input[aria-label*="phone" i], input[placeholder*="phone" i]'
-  );
+  if (await hasVisibleTotpInput(page)) {
+    await logger.log(
+      "WARN",
+      "[phone-verify] Refusing to enter phone number because a TOTP input is visible"
+    );
+    return false;
+  }
+
+  const phoneInput = page.locator(PHONE_INPUT_SELECTOR);
 
   // Wait for phone input to appear
   try {
@@ -418,31 +702,92 @@ async function enterPhoneNumber(page: Page, number: string, logger: TaskLogger):
     return false;
   }
 
-  await phoneInput.first().fill(number);
+  const input = await firstSafePhoneInput(page);
+  if (!input) {
+    await logger.log("WARN", "[phone-verify] No safe phone input found");
+    return false;
+  }
+
+  await input.fill(number);
   await logger.log("INFO", `[phone-verify] Entered phone number: ${maskPhone(number)}`);
   return true;
 }
 
-async function clickSendCode(page: Page, logger: TaskLogger): Promise<void> {
+async function hasVisiblePhoneInput(page: Page): Promise<boolean> {
+  return Boolean(await firstSafePhoneInput(page));
+}
+
+async function hasVisibleTotpInput(page: Page): Promise<boolean> {
+  const totpInput = page.locator(TOTP_INPUT_SELECTOR);
+  const count = await totpInput.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    if (await totpInput.nth(i).isVisible().catch(() => false)) return true;
+  }
+  return false;
+}
+
+async function firstSafePhoneInput(page: Page) {
+  const phoneInput = page.locator(PHONE_INPUT_SELECTOR);
+  const count = await phoneInput.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const input = phoneInput.nth(i);
+    if (!(await input.isVisible().catch(() => false))) continue;
+
+    const attrs = await input.evaluate((el: HTMLInputElement) => ({
+      id: el.id || "",
+      name: el.name || "",
+      autocomplete: el.autocomplete || "",
+      ariaLabel: el.getAttribute("aria-label") || "",
+      placeholder: el.getAttribute("placeholder") || "",
+    })).catch(() => null);
+    if (!attrs) continue;
+
+    const marker = `${attrs.id} ${attrs.name} ${attrs.autocomplete} ${attrs.ariaLabel} ${attrs.placeholder}`;
+    if (/totp|one-time-code|authenticator|verification code|enter code/i.test(marker)) {
+      continue;
+    }
+    return input;
+  }
+  return null;
+}
+
+async function clickSendCode(page: Page, logger: TaskLogger): Promise<boolean> {
   const sendBtn = page.locator(
     [
       'button:has-text("Send")',
+      'button:has-text("Send code")',
       'button:has-text("Next")',
       'button:has-text("Continue")',
       'button:has-text("Get code")',
+      'button:has-text("Text")',
+      'button:has-text("Text me")',
+      'button:has-text("发送")',
+      'button:has-text("获取验证码")',
+      'button:has-text("短信")',
       'button[type="submit"]',
       'button[jsname="LgbsSe"]',
       'div[role="button"][jsname="LgbsSe"]',
+      'div[role="button"]:has-text("Send")',
+      'div[role="button"]:has-text("Send code")',
+      'div[role="button"]:has-text("Next")',
+      'div[role="button"]:has-text("Continue")',
+      'div[role="button"]:has-text("发送")',
+      'div[role="button"]:has-text("获取验证码")',
     ].join(", ")
   );
 
-  if ((await sendBtn.count()) > 0) {
-    await sendBtn.first().evaluate((el: HTMLElement) => el.click());
+  const count = await sendBtn.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const btn = sendBtn.nth(i);
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    await btn.evaluate((el: HTMLElement) => el.click());
     await logger.log("INFO", "[phone-verify] Clicked send/next button");
-  } else {
-    await page.keyboard.press("Enter");
-    await logger.log("INFO", "[phone-verify] Pressed Enter to submit phone");
+    return true;
   }
+
+  await page.keyboard.press("Enter");
+  await logger.log("INFO", "[phone-verify] Pressed Enter to submit phone");
+  return true;
 }
 
 /**
@@ -584,6 +929,15 @@ async function checkVerificationSuccess(page: Page, logger: TaskLogger): Promise
   // verification state may NOT persist on Google's side.
 
   const startUrl = page.url();
+
+  if (isQrCompletionUrl(startUrl)) {
+    await logger.log("INFO", `[phone-verify] Verification already completed at: ${startUrl}`);
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    // Match the 5s stabilization wait used in the main success path (line ~916)
+    // to ensure Google's server-side state is fully persisted before browser closes
+    await page.waitForTimeout(5000);
+    return true;
+  }
 
   try {
     const signal = await Promise.race([

@@ -14,10 +14,10 @@ import type { AdsPowerClient } from "./adspower-client";
 
 const POOL_KEY_PREFIX = "gfa:pool:profile:";
 const ACCOUNT_LOCK_PREFIX = "gfa:account-lock:";
-const LOCK_TTL_MS = 5 * 60 * 1000; // 5 min — normal task takes 1-2 min; 5 min covers slow Google pages
+const LOCK_TTL_MS = Number(process.env.BROWSER_LOCK_TTL_MS ?? 5 * 60 * 1000);
 const POLL_INTERVAL_MS = 3_000;
 const HEARTBEAT_INTERVAL_MS = 60_000; // extend lock every 60s
-const MAX_HEARTBEAT_MS = 5 * 60 * 1000; // hard upper limit: stop heartbeat after 5 min
+const MAX_HEARTBEAT_MS = Number(process.env.BROWSER_LOCK_MAX_HEARTBEAT_MS ?? 15 * 60 * 1000);
 
 
 export class BrowserPool {
@@ -340,6 +340,56 @@ export class BrowserPool {
     throw new Error(
       `[BrowserPool] All ${failedProfiles.size} tried profiles failed to open for account ${accountId}. ` +
       `Failed profiles: [${[...failedProfiles].join(", ")}]`
+    );
+  }
+
+  /**
+   * Acquire a specific AdsPower profile for account maintenance and open it.
+   * This keeps the normal account/profile mutexes, but skips pool selection.
+   */
+  async acquireSpecificAndOpen(
+    workerId: string,
+    accountId: string,
+    profileId: string,
+    adspower: AdsPowerClient,
+    timeoutMs = 180_000
+  ): Promise<{ profileId: string; debugUrl: string }> {
+    const deadline = Date.now() + timeoutMs;
+    const accountKey = `${ACCOUNT_LOCK_PREFIX}${accountId}`;
+    const profileKey = `${POOL_KEY_PREFIX}${profileId}`;
+
+    while (Date.now() < deadline) {
+      const accountLock = await this.redis.set(accountKey, workerId, "PX", LOCK_TTL_MS, "NX");
+      if (accountLock !== "OK") {
+        await sleep(Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
+        continue;
+      }
+
+      const profileLock = await this.redis.set(profileKey, workerId, "PX", LOCK_TTL_MS, "NX");
+      if (profileLock !== "OK") {
+        await this.releaseAccount(accountId, workerId).catch(() => {});
+        await sleep(Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
+        continue;
+      }
+
+      try {
+        const { debugUrl } = await adspower.openProfile(profileId, async (candidateId) => {
+          const holder = await this.redis.get(`${POOL_KEY_PREFIX}${candidateId}`);
+          return !holder || holder === workerId;
+        });
+        console.log(
+          `[BrowserPool] Specific profile ${profileId} acquired for account ${accountId} by worker ${workerId}`
+        );
+        return { profileId, debugUrl };
+      } catch (err) {
+        await this.release(profileId, workerId).catch(() => {});
+        await this.releaseAccount(accountId, workerId).catch(() => {});
+        throw err;
+      }
+    }
+
+    throw new Error(
+      `[BrowserPool] Specific profile ${profileId} unavailable for account ${accountId} after ${timeoutMs}ms.`
     );
   }
 

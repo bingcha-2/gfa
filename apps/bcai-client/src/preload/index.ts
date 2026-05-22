@@ -22,4 +22,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('rosetta:notification', handler)
     return () => ipcRenderer.removeListener('rosetta:notification', handler)
   },
+
+  /** 监听自动升级状态 */
+  onUpdateStatus: (callback: (status: any) => void) => {
+    const handler = (_event: any, status: any) => callback(status)
+    ipcRenderer.on('rosetta:updateStatus', handler)
+    return () => ipcRenderer.removeListener('rosetta:updateStatus', handler)
+  },
 })

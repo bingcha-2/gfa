@@ -1,7 +1,7 @@
-import { Controller, Get, Post } from "@nestjs/common";
+import { Controller, Get, Post, Body } from "@nestjs/common";
 
 import { Roles } from "../auth/roles.decorator";
-import { ExpireScanService } from "./expire-scan.service";
+import { ExpireScanService, INTERVAL_OPTIONS } from "./expire-scan.service";
 
 @Controller("admin/expire-scan")
 @Roles("ADMIN", "OPERATIONS")
@@ -28,6 +28,27 @@ export class ExpireScanController {
       triggered: true,
       processedCount: processed.length,
       orders: processed
+    };
+  }
+
+  /** GET /admin/expire-scan/config — current scan config */
+  @Get("config")
+  getConfig() {
+    return {
+      ...this.expireScanService.getConfig(),
+      options: INTERVAL_OPTIONS,
+    };
+  }
+
+  /** POST /admin/expire-scan/config — update scan config */
+  @Post("config")
+  setConfig(@Body() body: { intervalMinutes: number }) {
+    const updated = this.expireScanService.setConfig({
+      intervalMinutes: body.intervalMinutes,
+    });
+    return {
+      ...updated,
+      options: INTERVAL_OPTIONS,
     };
   }
 }

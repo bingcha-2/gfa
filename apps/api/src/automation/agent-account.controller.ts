@@ -145,4 +145,13 @@ export class AgentAccountController {
   ) {
     return this.agentAccountService.migrateToMother(id, body.newGroupId);
   }
+
+  /** Upload accounts directly to Rosetta account pool (accounts.json). */
+  @Post("upload-rosetta")
+  uploadToRosetta(@Body() body: { ids: string[] }) {
+    if (!body.ids || body.ids.length === 0) {
+      throw new Error("ids array is required");
+    }
+    return this.agentAccountService.uploadToRosetta(body.ids);
+  }
 }

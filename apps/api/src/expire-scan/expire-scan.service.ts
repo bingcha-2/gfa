@@ -1,8 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { OrderStatus } from "@prisma/client";
+import * as fs from "fs";
+import * as path from "path";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { QUEUE_NAMES, JOB_DEFAULTS } from "@gfa/shared";
@@ -20,6 +21,46 @@ export type ScanStatus = {
   lastRunCount: number;
 };
 
+export type ScanConfig = {
+  /** Scan interval in minutes. 0 means disabled ("never"). */
+  intervalMinutes: number;
+};
+
+/** Predefined interval options (in minutes). 0 = never/disabled. */
+export const INTERVAL_OPTIONS = [0, 10, 30, 60, 120, 360, 720, 1440];
+
+const DEFAULT_INTERVAL_MINUTES = 60;
+
+// Persist config to a file so it survives restarts
+function getConfigFilePath(): string {
+  return path.join(process.cwd(), "expire-scan-config.json");
+}
+
+function loadPersistedConfig(): ScanConfig {
+  try {
+    const filePath = getConfigFilePath();
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, "utf8");
+      const parsed = JSON.parse(raw);
+      const interval = Number(parsed.intervalMinutes);
+      if (Number.isFinite(interval) && interval >= 0) {
+        return { intervalMinutes: interval };
+      }
+    }
+  } catch {
+    // Fall through to default
+  }
+  return { intervalMinutes: DEFAULT_INTERVAL_MINUTES };
+}
+
+function savePersistedConfig(config: ScanConfig): void {
+  try {
+    fs.writeFileSync(getConfigFilePath(), JSON.stringify(config, null, 2), "utf8");
+  } catch (err) {
+    // Non-fatal: config will reset on restart
+  }
+}
+
 // Non-terminal statuses that qualify an order for expiry removal
 const ACTIVE_STATUSES: OrderStatus[] = [
   OrderStatus.CODE_VERIFIED,
@@ -32,7 +73,7 @@ const ACTIVE_STATUSES: OrderStatus[] = [
 ];
 
 @Injectable()
-export class ExpireScanService {
+export class ExpireScanService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ExpireScanService.name);
   private lastRunAt: Date | null = null;
   private lastRunCount = 0;
@@ -40,21 +81,77 @@ export class ExpireScanService {
   // For multi-pod safety, the CAS updateMany below is the actual race-free lock.
   private scanning = false;
 
+  private config: ScanConfig;
+  private timer: ReturnType<typeof setInterval> | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(QUEUE_NAMES.remove)
     private readonly removeQueue: Queue
-  ) {}
+  ) {
+    this.config = loadPersistedConfig();
+  }
 
-  /** Hourly cron: auto-scan and remove expired orders + check subscription expiry. */
-  @Cron(CronExpression.EVERY_HOUR)
-  async handleCron(): Promise<void> {
-    this.logger.log("Cron: scanning expired orders");
-    const results = await this.scanExpiredOrders();
-    this.logger.log(`Cron: processed ${results.length} expired orders`);
+  onModuleInit() {
+    this.scheduleTimer();
+    this.logger.log(
+      `Expire scan initialized: interval=${this.config.intervalMinutes === 0 ? "DISABLED" : this.config.intervalMinutes + "m"}`
+    );
+  }
 
-    // Phase 3: mark accounts with expired subscriptions as EXPIRED (DB-only, no browser)
-    await this.scanExpiredSubscriptions();
+  onModuleDestroy() {
+    this.clearTimer();
+  }
+
+  // ─── Config management ────────────────────────────────────────────────
+
+  getConfig(): ScanConfig {
+    return { ...this.config };
+  }
+
+  setConfig(config: Partial<ScanConfig>): ScanConfig {
+    if (config.intervalMinutes !== undefined) {
+      const interval = Number(config.intervalMinutes);
+      if (!Number.isFinite(interval) || interval < 0) {
+        throw new Error("intervalMinutes must be a non-negative number");
+      }
+      this.config.intervalMinutes = interval;
+    }
+
+    savePersistedConfig(this.config);
+    this.scheduleTimer();
+
+    this.logger.log(
+      `Expire scan config updated: interval=${this.config.intervalMinutes === 0 ? "DISABLED" : this.config.intervalMinutes + "m"}`
+    );
+
+    return { ...this.config };
+  }
+
+  private clearTimer() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private scheduleTimer() {
+    this.clearTimer();
+
+    if (this.config.intervalMinutes <= 0) {
+      this.logger.log("Expire scan timer DISABLED (interval = 0 / never)");
+      return;
+    }
+
+    const intervalMs = this.config.intervalMinutes * 60 * 1000;
+    this.timer = setInterval(async () => {
+      this.logger.log("Timer: scanning expired orders");
+      const results = await this.scanExpiredOrders();
+      this.logger.log(`Timer: processed ${results.length} expired orders`);
+
+      // Phase 3: mark accounts with expired subscriptions as EXPIRED (DB-only, no browser)
+      await this.scanExpiredSubscriptions();
+    }, intervalMs);
   }
 
   /**

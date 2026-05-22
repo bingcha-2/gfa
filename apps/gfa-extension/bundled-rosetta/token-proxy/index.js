@@ -147,6 +147,109 @@ if (proxyServer) {
 
 config.log(`[bootstrap] pid=${process.pid}`);
 
+// ─── Outbound connectivity test (5-layer smart probe) ───────────────────────
+const https = require('https');
+const { execSync } = require('child_process');
+
+const outboundState = {
+    tested: false,
+    success: false,
+    error: '',
+    proxyUsed: '',
+    layer: -1,
+};
+
+function probeGoogle(proxyUrl, timeoutMs) {
+    timeoutMs = timeoutMs || 5000;
+    return new Promise((resolve, reject) => {
+        if (proxyUrl) {
+            const proxyParsed = new URL(proxyUrl);
+            const connectReq = http.request({
+                host: proxyParsed.hostname,
+                port: Number(proxyParsed.port) || 80,
+                method: 'CONNECT',
+                path: 'generativelanguage.googleapis.com:443',
+            });
+            connectReq.setTimeout(timeoutMs, () => { connectReq.destroy(); reject(new Error('PROXY_TIMEOUT')); });
+            connectReq.on('error', reject);
+            connectReq.on('connect', (res, socket) => {
+                if (res.statusCode !== 200) { socket.destroy(); reject(new Error('CONNECT_' + res.statusCode)); return; }
+                const tlsReq = https.request({
+                    host: 'generativelanguage.googleapis.com', path: '/', method: 'HEAD',
+                    socket: socket, agent: false,
+                }, (tlsRes) => { socket.destroy(); resolve(tlsRes.statusCode); });
+                tlsReq.setTimeout(timeoutMs, () => { socket.destroy(); reject(new Error('TLS_TIMEOUT')); });
+                tlsReq.on('error', (err) => { socket.destroy(); reject(err); });
+                tlsReq.end();
+            });
+            connectReq.end();
+        } else {
+            const req = https.request({
+                host: 'generativelanguage.googleapis.com', path: '/', method: 'HEAD', timeout: timeoutMs,
+            }, (res) => { resolve(res.statusCode); });
+            req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error('DIRECT_TIMEOUT')); });
+            req.on('error', reject);
+            req.end();
+        }
+    });
+}
+
+function readWindowsSystemProxy() {
+    if (process.platform !== 'win32') return '';
+    try {
+        const enabledRaw = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable', { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+        if (!enabledRaw.includes('0x1')) return '';
+        const serverRaw = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer', { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+        const match = serverRaw.match(/ProxyServer\s+REG_SZ\s+(\S+)/i);
+        if (!match) return '';
+        const val = match[1].trim();
+        return val.startsWith('http') ? val : 'http://' + val;
+    } catch { return ''; }
+}
+
+async function runOutboundTest() {
+    const layers = [];
+    const userProxy = String(process.env.BCAI_USER_PROXY || '').trim();
+    if (userProxy) layers.push({ name: 'user_proxy', proxy: userProxy });
+    layers.push({ name: 'direct', proxy: '' });
+    const ideProxy = String(process.env.BCAI_IDE_PROXY || '').trim();
+    if (ideProxy) layers.push({ name: 'ide_proxy', proxy: ideProxy });
+    const regProxy = readWindowsSystemProxy();
+    if (regProxy) layers.push({ name: 'registry_proxy', proxy: regProxy });
+    const envProxy = String(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || '').trim();
+    if (envProxy && envProxy !== ideProxy && envProxy !== userProxy) layers.push({ name: 'env_proxy', proxy: envProxy });
+
+    config.log(`[outbound] testing ${layers.length} layers: ${layers.map(l => l.name + '=' + (l.proxy || '(direct)')).join(', ')}`);
+
+    for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
+        try {
+            const code = await probeGoogle(layer.proxy, 6000);
+            config.log(`[outbound] layer ${i} (${layer.name}) OK: HTTP ${code}`);
+            outboundState.tested = true;
+            outboundState.success = true;
+            outboundState.proxyUsed = layer.proxy;
+            outboundState.layer = i;
+            outboundState.error = '';
+            return;
+        } catch (err) {
+            config.log(`[outbound] layer ${i} (${layer.name}) FAILED: ${err.message || err}`);
+        }
+    }
+    config.log('[outbound] all layers failed');
+    outboundState.tested = true;
+    outboundState.success = false;
+    outboundState.error = '所有探测层均失败，Node 引擎无法连接 Google';
+    outboundState.layer = -1;
+}
+
+runOutboundTest().catch((err) => {
+    config.log(`[outbound] test crashed: ${err.message || err}`);
+    outboundState.tested = true;
+    outboundState.success = false;
+    outboundState.error = err.message || String(err);
+});
+
 process.on('uncaughtException', (error) => {
     config.log(`[fatal] uncaughtException: ${error.stack || error.message}`);
     process.exit(1);
@@ -176,7 +279,7 @@ const STATUS_PORT = config.proxyPort + 1;
 const statusServer = http.createServer((req, res) => {
     if (req.url === '/status' || req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ...proxy.getStatus(), dataDir: paths.DATA_DIR }, null, 2));
+        res.end(JSON.stringify({ ...proxy.getStatus(), outbound: outboundState, dataDir: paths.DATA_DIR }, null, 2));
     } else if (req.url === '/reload-accounts' && req.method === 'POST') {
         const handleReload = async () => {
             try {
@@ -184,10 +287,7 @@ const statusServer = http.createServer((req, res) => {
                 proxy.tokenManager.loadAccounts();
                 await proxy.tokenManager.autoDiscoverProjects();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    ok: true,
-                    status: proxy.getStatus(),
-                }));
+                res.end(JSON.stringify({ ok: true, status: proxy.getStatus() }));
             } catch (error) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: error.message }));
@@ -201,11 +301,7 @@ const statusServer = http.createServer((req, res) => {
                 config.log('[quota] manual refresh requested');
                 const result = await proxy.quotaPoller.pollNow();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    ok: true,
-                    result: result || {},
-                    status: proxy.getStatus(),
-                }));
+                res.end(JSON.stringify({ ok: true, result: result || {}, status: proxy.getStatus() }));
             } catch (error) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: error.message }));
@@ -226,11 +322,27 @@ const statusServer = http.createServer((req, res) => {
                 }
                 const switched = proxy.switchAccount(accountId, 'manual');
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    ok: true,
-                    switched,
-                    status: proxy.getStatus(),
-                }));
+                res.end(JSON.stringify({ ok: true, switched }));
+            } catch (error) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: error.message }));
+            }
+        });
+        req.on('error', (error) => {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: error.message }));
+        });
+    } else if (req.url === '/set-debug-mode' && req.method === 'POST') {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => {
+            try {
+                const raw = Buffer.concat(chunks).toString('utf8');
+                const payload = raw ? JSON.parse(raw) : {};
+                const enabled = Boolean(payload.enabled);
+                const result = proxy.setDebugMode(enabled);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, debugMode: result }));
             } catch (error) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: error.message }));

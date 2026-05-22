@@ -7,6 +7,11 @@ directories:
 
 asar: true
 
+# 只保留中英文语言包（删除 100+ 种未使用的 locale，节省 ~38MB）
+electronLanguages:
+  - zh-CN
+  - en-US
+
 # 防逆向：ASAR 签名（防止直接解包篡改）
 asarUnpack:
   - "**/*.node"
@@ -56,7 +61,6 @@ linux:
   icon: resources
 
 publish:
-  provider: github
-  owner: your-github-org
-  repo: bcai-client
-  releaseType: release
+  provider: generic
+  url: https://bcai.site/updates/
+  useMultipleRangeRequest: false

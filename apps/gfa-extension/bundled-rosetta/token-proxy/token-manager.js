@@ -269,6 +269,119 @@ function createTokenManager(config) {
         return path.join(path.dirname(path.resolve(accountsFilePath)), 'quota-data.json');
     }
 
+    function isQuotaRecoverableBlockReason(reason) {
+        const text = String(reason || '').toLowerCase();
+        return !text ||
+            text === 'quota' ||
+            text === 'capacity' ||
+            text === 'model_unavailable' ||
+            text.includes('quota') ||
+            text.includes('capacity');
+    }
+
+    function parseQuotaRefreshedAt(value) {
+        const timestamp = Date.parse(String(value || ''));
+        return Number.isFinite(timestamp) ? timestamp : 0;
+    }
+
+    function isQuotaDataNewerThanBlock(refreshedAtMs, blocked) {
+        if (!refreshedAtMs) return false;
+        const blockedAt = Number(blocked?.blockedAt || 0);
+        if (blockedAt > 0) {
+            return refreshedAtMs >= blockedAt - 1000;
+        }
+        return Date.now() - refreshedAtMs <= 10 * 60 * 1000;
+    }
+
+    function applyQuotaDataToAccounts() {
+        const quotaFilePath = resolveQuotaDataPath();
+        if (!quotaFilePath || !fs.existsSync(quotaFilePath)) {
+            return;
+        }
+
+        try {
+            const quotaData = JSON.parse(fs.readFileSync(quotaFilePath, 'utf8'));
+            const accountsByEmail = new Map(
+                Array.from(accountPool.values()).map((account) => [
+                    String(account.email || '').toLowerCase(),
+                    account,
+                ])
+            );
+            let recoveredCount = 0;
+            let fractionCount = 0;
+
+            for (const [email, entry] of Object.entries(quotaData || {})) {
+                const account = accountsByEmail.get(String(email || '').toLowerCase());
+                if (!account || !entry?.modelsJson) {
+                    continue;
+                }
+                const refreshedAtMs = parseQuotaRefreshedAt(entry.refreshedAt);
+
+                let models = null;
+                try {
+                    models = JSON.parse(entry.modelsJson)?.models || null;
+                } catch {
+                    continue;
+                }
+                if (!models || typeof models !== 'object') {
+                    continue;
+                }
+
+                if (!account.modelQuotaFractions) {
+                    account.modelQuotaFractions = new Map();
+                }
+                account.modelQuotaRefreshedAt = Math.max(
+                    Number(account.modelQuotaRefreshedAt || 0),
+                    refreshedAtMs
+                );
+                for (const [modelKey, modelData] of Object.entries(models)) {
+                    const normalizedModelKey = normalizeModelKey(modelKey);
+                    const fraction = normalizeRemainingFraction(modelData?.quotaInfo?.remainingFraction);
+                    if (!normalizedModelKey || fraction === null) {
+                        continue;
+                    }
+                    account.modelQuotaFractions.set(normalizedModelKey, fraction);
+                    fractionCount += 1;
+                }
+
+                const blockedModels = ensureBlockedModels(account);
+                for (const [modelKey, blocked] of Array.from(blockedModels.entries())) {
+                    if (!isQuotaRecoverableBlockReason(blocked.reason)) {
+                        continue;
+                    }
+                    const latestFraction = account.modelQuotaFractions.get(normalizeModelKey(modelKey));
+                    if (
+                        latestFraction !== null &&
+                        latestFraction !== undefined &&
+                        Number(latestFraction) > 0 &&
+                        isQuotaDataNewerThanBlock(refreshedAtMs, blocked)
+                    ) {
+                        blockedModels.delete(modelKey);
+                        recoveredCount += 1;
+                    }
+                }
+
+                if (
+                    blockedModels.size === 0 &&
+                    isQuotaRecoverableBlockReason(account.quotaStatusReason) &&
+                    (account.quotaStatus !== 'ok' || account.exhaustedUntil || account.exhaustedAt || account.quotaStatusReason)
+                ) {
+                    account.quotaStatus = 'ok';
+                    account.quotaStatusReason = '';
+                    account.exhaustedAt = 0;
+                    account.exhaustedUntil = 0;
+                }
+            }
+
+            if (recoveredCount > 0) {
+                saveRuntimeState();
+                log(`[token-manager] Recovered ${recoveredCount} model block(s) from quota-data`);
+            }
+        } catch (error) {
+            log(`[token-manager] Failed to apply quota-data.json: ${error.message}`);
+        }
+    }
+
     function ensureBlockedModels(account) {
         if (!(account.blockedModels instanceof Map)) {
             account.blockedModels = new Map();
@@ -455,6 +568,11 @@ function createTokenManager(config) {
                     projectIdSource,
                     planType: acc.planType || '',
                     oauthProfile,
+                    source: acc.source || '',
+                    sourceEmployeeId: acc.sourceEmployeeId || '',
+                    sourceEmployeeEmail: acc.sourceEmployeeEmail || '',
+                    employeeSubmittedAt: acc.employeeSubmittedAt || '',
+                    lastConversationOkAt: acc.lastConversationOkAt || '',
                     quotaStatus: 'ok',
                     quotaStatusReason: '',
                     exhaustedAt: 0,
@@ -463,6 +581,7 @@ function createTokenManager(config) {
                     consecutiveErrors: 0,
                     blockedModels: new Map(),
                     modelQuotaFractions: new Map(),
+                    modelQuotaRefreshedAt: 0,
                 });
                 if (String(acc.oauthProfile || '').trim() !== oauthProfile) {
                     changed = true;
@@ -485,6 +604,7 @@ function createTokenManager(config) {
                 saveAccounts();
             }
             loadRuntimeState();
+            applyQuotaDataToAccounts();
             log(`[token-manager] Loaded ${accountPool.size} accounts`);
         } catch (error) {
             log(`[token-manager] Error loading accounts: ${error.message}`);
@@ -521,6 +641,21 @@ function createTokenManager(config) {
                 if (acc.oauthProfile) {
                     entry.oauthProfile = acc.oauthProfile;
                 }
+                if (acc.source) {
+                    entry.source = acc.source;
+                }
+                if (acc.sourceEmployeeId) {
+                    entry.sourceEmployeeId = acc.sourceEmployeeId;
+                }
+                if (acc.sourceEmployeeEmail) {
+                    entry.sourceEmployeeEmail = acc.sourceEmployeeEmail;
+                }
+                if (acc.employeeSubmittedAt) {
+                    entry.employeeSubmittedAt = acc.employeeSubmittedAt;
+                }
+                if (acc.lastConversationOkAt) {
+                    entry.lastConversationOkAt = acc.lastConversationOkAt;
+                }
                 return entry;
             }),
         };
@@ -556,6 +691,11 @@ function createTokenManager(config) {
                 : '',
             planType: account.planType || '',
             oauthProfile,
+            source: account.source || '',
+            sourceEmployeeId: account.sourceEmployeeId || '',
+            sourceEmployeeEmail: account.sourceEmployeeEmail || '',
+            employeeSubmittedAt: account.employeeSubmittedAt || '',
+            lastConversationOkAt: account.lastConversationOkAt || '',
             quotaStatus: 'ok',
             quotaStatusReason: '',
             exhaustedAt: 0,
@@ -564,6 +704,7 @@ function createTokenManager(config) {
             consecutiveErrors: 0,
             blockedModels: new Map(),
             modelQuotaFractions: new Map(),
+            modelQuotaRefreshedAt: 0,
         });
         log(`[token-manager] Added account #${id}: ${account.email}`);
         saveAccounts();
@@ -1090,12 +1231,18 @@ function createTokenManager(config) {
                 projectIdSource: acc.projectIdSource,
                 planType: acc.planType,
                 oauthProfile: acc.oauthProfile || '',
+                source: acc.source || '',
+                sourceEmployeeId: acc.sourceEmployeeId || '',
+                sourceEmployeeEmail: acc.sourceEmployeeEmail || '',
+                employeeSubmittedAt: acc.employeeSubmittedAt || '',
+                lastConversationOkAt: acc.lastConversationOkAt || '',
                 canRotate: Boolean(acc.projectId),
                 quotaStatus: acc.quotaStatus,
                 quotaStatusReason: acc.quotaStatusReason,
                 blockedUntil,
                 blockedModels,
                 modelQuotaFractions: Object.fromEntries(acc.modelQuotaFractions || new Map()),
+                modelQuotaRefreshedAt: Number(acc.modelQuotaRefreshedAt || 0),
                 hasAccessToken: Boolean(acc.accessToken),
                 accessTokenExpiresIn: acc.accessTokenExpiresAt
                     ? Math.max(0, Math.round((acc.accessTokenExpiresAt - now) / 1000))
@@ -1172,15 +1319,21 @@ function createTokenManager(config) {
             if (modelKey) {
                 ensureBlockedModels(acc).delete(modelKey);
             }
-            acc.quotaStatus = 'ok';
             if (ensureBlockedModels(acc).size === 0) {
+                acc.quotaStatus = 'ok';
                 acc.exhaustedAt = 0;
                 acc.exhaustedUntil = 0;
                 acc.quotaStatusReason = '';
+            } else {
+                acc.quotaStatus = 'exhausted';
+                acc.exhaustedUntil = Array.from(ensureBlockedModels(acc).values())
+                    .reduce((maxValue, item) => Math.max(maxValue, Number(item.blockedUntil || 0)), 0);
             }
             acc.consecutiveErrors = 0;
             acc.lastUsedAt = Date.now();
+            acc.lastConversationOkAt = new Date().toISOString();
             saveRuntimeState();
+            saveAccounts();
         }
     }
 
@@ -1256,6 +1409,7 @@ function createTokenManager(config) {
         // Store per-model quota fractions for quota-aware load balancing
         if (parsedModelsPayload?.models) {
             if (!acc.modelQuotaFractions) acc.modelQuotaFractions = new Map();
+            acc.modelQuotaRefreshedAt = Date.now();
             for (const [mk, modelData] of Object.entries(parsedModelsPayload.models)) {
                 const fraction = normalizeRemainingFraction(modelData?.quotaInfo?.remainingFraction);
                 if (fraction !== null) acc.modelQuotaFractions.set(mk, fraction);

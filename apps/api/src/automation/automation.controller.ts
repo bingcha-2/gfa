@@ -9,7 +9,7 @@ import { Body, Controller, Delete, Get, Param, Post, Query, Logger } from "@nest
 import { Throttle } from "@nestjs/throttler";
 import { Public } from "../auth/public.decorator";
 import { AutomationService } from "./automation.service";
-import { StartAutomationDto, BatchOAuthDto, ConsoleStartDto } from "./dto/automation.dto";
+import { StartAutomationDto, BatchOAuthDto, ConsoleStartDto, RepairAutomationDto } from "./dto/automation.dto";
 
 @Controller("automation")
 export class AutomationController {
@@ -44,7 +44,23 @@ export class AutomationController {
       password: dto.childPassword ?? "",
       recoveryEmail: dto.childRecoveryEmail,
       totpSecret: dto.childTotpSecret,
-    } : undefined);
+    } : undefined, {
+      profileId: dto.profileId,
+      keepBrowserOpenOnChallenge: dto.keepBrowserOpenOnChallenge,
+      source: dto.source,
+    });
+  }
+
+  /**
+   * Start account repair using credentials already stored by Rosetta.
+   * POST /api/automation/repair
+   * Body: { email?, accountId?, profileId?, keepBrowserOpenOnChallenge? }
+   */
+  @Post("repair")
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 300 } })
+  async repair(@Body() dto: RepairAutomationDto) {
+    return this.automationService.repairFromStoredCredentials(dto);
   }
 
   /**

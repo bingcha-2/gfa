@@ -1,8 +1,8 @@
 {
   "name": "bcai-tools",
   "displayName": "冰茶AI",
-  "description": "冰茶 AI 续航终端 — Google One 家庭自动化操作面板",
-  "version": "3.4.32",
+  "description": "冰茶AI 智能编程助手 - 账号池管理与代理服务插件",
+  "version": "4.0.39",
   "publisher": "bingcha",
   "engines": {
     "vscode": "^1.85.0"
@@ -15,24 +15,26 @@
     "type": "git",
     "url": "https://github.com/bingcha135-sys/GFA-per.git"
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "*"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "bcai-sidebar",
+          "id": "bcai-server-sidebar",
           "title": "BCAI",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "bcai-sidebar": [
+      "bcai-server-sidebar": [
         {
           "type": "webview",
-          "id": "bcai.welcomeView",
+          "id": "bcai.serverView",
           "name": "BCAI"
         }
       ]
@@ -45,6 +47,11 @@
           "default": "https://bcai.site/api/proxy",
           "description": "GFA API 服务器地址 (例如 https://bcai.site/api/proxy)"
         },
+        "bcai.rosettaApiBaseUrl": {
+          "type": "string",
+          "default": "https://bcai.site/api/rosetta",
+          "description": "Rosetta/员工账号 API 地址"
+        },
         "bcai.rosettaRepoPath": {
           "type": "string",
           "default": "",
@@ -56,10 +63,16 @@
   "scripts": {
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.mjs --production && cd webview-ui && npm run build",
+    "build:server": "node scripts/build-profile.mjs server build",
+    "build:client": "node scripts/build-profile.mjs client build",
+    "build:employee": "node scripts/build-profile.mjs employee build",
     "build:ext": "node esbuild.mjs --production",
     "watch": "node esbuild.mjs --watch",
     "dev:webview": "cd webview-ui && npm run dev",
     "package": "npx @vscode/vsce package --no-dependencies",
+    "package:server": "node scripts/build-profile.mjs server package",
+    "package:client": "node scripts/build-profile.mjs client package",
+    "package:employee": "node scripts/build-profile.mjs employee package",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

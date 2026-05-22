@@ -105,6 +105,8 @@ function main() {
     tokenServerUrl,
     tokenServerSecret,
     clientId: relay.clientId,
+    sessionId: relay.sessionId,
+    configPath,
     cloudEndpoint: config.googleCloudEndpoint,
   }).start();
 }

@@ -36,6 +36,22 @@ interface AccountCredentials {
   totpSecret?: string;
 }
 
+interface AutomationOptions {
+  profileId?: string;
+  keepBrowserOpenOnChallenge?: boolean;
+  source?: string;
+}
+
+type RepairPhoneInput = Omit<PhoneInfo, "countryCode"> & {
+  countryCode?: string;
+};
+
+interface RepairAutomationRequest extends AutomationOptions {
+  accountId?: string;
+  email?: string;
+  phones?: RepairPhoneInput[];
+}
+
 @Injectable()
 export class AutomationService {
   constructor(
@@ -53,7 +69,8 @@ export class AutomationService {
     action: "oauth" | "accept-invite" | "phone-verify" | "family-join",
     credentials: AccountCredentials,
     phones?: PhoneInfo[],
-    childCredentials?: AccountCredentials
+    childCredentials?: AccountCredentials,
+    options?: AutomationOptions
   ) {
     // Map action to TaskType enum
     const typeMap: Record<string, string> = {
@@ -110,7 +127,10 @@ export class AutomationService {
         recoveryEmail: childCredentials.recoveryEmail,
         totpSecret: childCredentials.totpSecret
       } : undefined,
-      phones: phones?.length ? phones : undefined
+      phones: phones?.length ? phones : undefined,
+      profileId: options?.profileId?.trim() || undefined,
+      keepBrowserOpenOnChallenge: Boolean(options?.keepBrowserOpenOnChallenge),
+      source: options?.source?.trim() || undefined
     };
 
     // Create Task record (no accountId — credentials are in payload)
@@ -118,17 +138,28 @@ export class AutomationService {
       data: {
         type: taskType,
         status: "PENDING",
+        source: payload.source || "manual",
         // Store action + email (NOT password) for display purposes
-        payload: JSON.stringify({ action, email: credentials.email, childEmail: childCredentials?.email })
+        payload: JSON.stringify({
+          action,
+          email: credentials.email,
+          childEmail: childCredentials?.email,
+          profileId: payload.profileId,
+          source: payload.source,
+        })
       }
     });
+
+    const jobOptions = options?.source === "rosetta-account-repair" || options?.source === "rosetta-account-auto-import"
+      ? { ...JOB_DEFAULTS, attempts: 1 }
+      : JOB_DEFAULTS;
 
     // Enqueue BullMQ job with full credentials
     await this.automationQueue.add(
       action,
       { ...payload, taskId: task.id },
       {
-        ...JOB_DEFAULTS,
+        ...jobOptions,
         jobId: `automation-${task.id}`
       }
     );
@@ -137,6 +168,7 @@ export class AutomationService {
       taskId: task.id,
       action,
       email: credentials.email,
+      profileId: payload.profileId,
       status: "PENDING"
     };
   }
@@ -186,7 +218,7 @@ export class AutomationService {
 
     // Parse result from payload if task reached a terminal state
     let result: Record<string, unknown> | undefined;
-    if ((task.status === "SUCCESS" || task.status === "FAILED_FINAL") && task.payload) {
+    if ((task.status === "SUCCESS" || task.status === "FAILED_FINAL" || task.status === "MANUAL_REVIEW") && task.payload) {
       try {
         const parsed = JSON.parse(task.payload);
         result = parsed.result;
@@ -308,6 +340,131 @@ export class AutomationService {
   }
 
   // ── Phone pool helpers (for console) ──
+
+  async repairFromStoredCredentials(options: RepairAutomationRequest) {
+    const accountId = String(options.accountId || "").trim();
+    const email = String(options.email || "").trim().toLowerCase();
+    let repairPhones = Array.isArray(options.phones)
+      ? options.phones
+          .map((phone) => ({
+            phoneNumber: String(phone.phoneNumber || "").trim(),
+            countryCode: String(phone.countryCode || "+1").trim() || "+1",
+            smsUrl: String(phone.smsUrl || "").trim(),
+          }))
+          .filter((phone) => phone.phoneNumber && phone.smsUrl)
+      : undefined;
+    if (!repairPhones?.length) {
+      const phones = await this.prisma.phonePool.findMany({
+        where: { status: "available" },
+        orderBy: { usedCount: "asc" },
+        take: 5,
+        select: { phoneNumber: true, countryCode: true, smsUrl: true },
+      });
+      repairPhones = phones.map((phone) => ({
+        phoneNumber: phone.phoneNumber,
+        countryCode: phone.countryCode || "+1",
+        smsUrl: phone.smsUrl,
+      }));
+    }
+    if (!accountId && !email) {
+      throw new BadRequestException("accountId or email is required");
+    }
+
+    let account = accountId ? await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        loginEmail: true,
+        loginPassword: true,
+        totpSecret: true,
+        recoveryEmail: true,
+      },
+    }) : null;
+
+    if (!account && email) {
+      account = await this.prisma.account.findUnique({
+        where: { loginEmail: email },
+        select: {
+          loginEmail: true,
+          loginPassword: true,
+          totpSecret: true,
+          recoveryEmail: true,
+        },
+      });
+    }
+
+    if (account) {
+      if (!account.loginPassword) {
+        return {
+          ...(await this.startAutomation("oauth", {
+            email: account.loginEmail,
+            password: "",
+          }, repairPhones, undefined, {
+            profileId: options.profileId,
+            keepBrowserOpenOnChallenge: options.keepBrowserOpenOnChallenge ?? true,
+            source: options.source || "rosetta-account-repair",
+          })),
+          credentialSource: "manual",
+          manualPasswordRequired: true,
+        };
+      }
+      return {
+        ...(await this.startAutomation("oauth", {
+          email: account.loginEmail,
+          password: account.loginPassword,
+          recoveryEmail: account.recoveryEmail ?? undefined,
+          totpSecret: account.totpSecret ?? undefined,
+        }, repairPhones, undefined, {
+          profileId: options.profileId,
+          keepBrowserOpenOnChallenge: options.keepBrowserOpenOnChallenge ?? true,
+          source: options.source || "rosetta-account-repair",
+        })),
+        credentialSource: "account",
+      };
+    }
+
+    if (!email) {
+      throw new NotFoundException("Account credentials not found");
+    }
+
+    const agentAccount = await this.prisma.agentAccount.findUnique({
+      where: { loginEmail: email },
+      select: {
+        loginEmail: true,
+        loginPassword: true,
+        totpSecret: true,
+        recoveryEmail: true,
+      },
+    });
+
+    if (!agentAccount) {
+      return {
+        ...(await this.startAutomation("oauth", {
+          email,
+          password: "",
+        }, repairPhones, undefined, {
+          profileId: options.profileId,
+          keepBrowserOpenOnChallenge: options.keepBrowserOpenOnChallenge ?? true,
+          source: options.source || "rosetta-account-repair",
+        })),
+        credentialSource: "manual",
+        manualPasswordRequired: true,
+      };
+    }
+
+    return {
+      ...(await this.startAutomation("oauth", {
+        email: agentAccount.loginEmail,
+        password: agentAccount.loginPassword,
+        recoveryEmail: agentAccount.recoveryEmail ?? undefined,
+        totpSecret: agentAccount.totpSecret ?? undefined,
+      }, repairPhones, undefined, {
+        profileId: options.profileId,
+        keepBrowserOpenOnChallenge: options.keepBrowserOpenOnChallenge ?? true,
+        source: options.source || "rosetta-account-repair",
+      })),
+      credentialSource: "agentAccount",
+    };
+  }
 
   async listPhonePool() {
     return this.prisma.phonePool.findMany({ orderBy: { createdAt: "desc" } });

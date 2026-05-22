@@ -98,7 +98,7 @@ export class HostsManager {
     if (content.includes(`${domain}  ${MARKER}`)) return
 
     // 同时写入 IPv4 和 IPv6，防止系统优先走 IPv6 绕过劫持
-    const entry = `\n127.0.0.1  ${domain}  ${MARKER}\n::1  ${domain}  ${MARKER}\n`
+    const entry = `\n127.0.0.1  ${domain}  ${MARKER}\n`
     fs.appendFileSync(HOSTS_PATH, entry, 'utf8')
   }
 

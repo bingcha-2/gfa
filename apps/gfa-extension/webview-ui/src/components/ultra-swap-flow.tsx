@@ -183,11 +183,26 @@ export function UltraSwapFlow() {
           throw new Error(`获取存储凭据失败: ${err.message}`);
         }
 
-        // Parse credential line: email----password----totpSecret
-        const credParts = actualCredentialText.split("----");
-        const credEmail = (credParts[0] || "").trim();
-        const credPassword = (credParts[1] || "").trim();
-        const credTotp = (credParts[2] || "").trim();
+        // Parse credential line (smart detection)
+        const sep = actualCredentialText.includes("----") ? "----" : actualCredentialText.includes("---") ? "---" : "|";
+        const credParts = actualCredentialText.split(sep).map(s => s.trim());
+        const credEmail = credParts[0] || "";
+        const credPassword = credParts[1] || "";
+        let credRecovery = credParts[2] || "";
+        let credTotp = credParts[3] || "";
+
+        // Fallback: if no 4th part but 3rd part exists, it might be the TOTP
+        if (!credTotp && credRecovery && !credRecovery.includes("@")) {
+          credTotp = credRecovery;
+          credRecovery = "";
+        }
+
+        // Smart swap if recoveryEmail looks like a TOTP (no '@') and totpSecret looks like an email (has '@')
+        if (credRecovery && !credRecovery.includes("@") && credTotp && credTotp.includes("@")) {
+          const temp = credRecovery;
+          credRecovery = credTotp;
+          credTotp = temp;
+        }
 
         if (!credEmail || !credPassword) {
           throw new Error("凭据格式不正确，需要至少包含 邮箱----密码");

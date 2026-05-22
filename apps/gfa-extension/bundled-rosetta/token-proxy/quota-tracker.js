@@ -19,6 +19,7 @@ function createQuotaTracker(config) {
     } = config;
 
     let activeAccountId = null;
+    let debugMode = false;
     let cooldownCheckTimer = null;
     const inFlightByAccount = new Map();
     const inFlightByModel = new Map();
@@ -326,6 +327,15 @@ function createQuotaTracker(config) {
             throw new Error('No active account. Run: node add-account.js');
         }
 
+        // Debug mode: always use the locked active account, skip rotation & balancing
+        if (debugMode) {
+            const activeAccount = tokenManager.listAccounts().find((account) => account.id === activeAccountId);
+            if (!activeAccount || !activeAccount.enabled) {
+                throw new Error(`Debug mode: active account #${activeAccountId} is not available`);
+            }
+            return activeAccountId;
+        }
+
         const allAccounts = tokenManager.listAccounts();
         const activeAccount = allAccounts.find((account) => account.id === activeAccountId);
         const activeUsable = Boolean(activeAccount) &&
@@ -390,6 +400,14 @@ function createQuotaTracker(config) {
 
     function getActiveAccountId() { return activeAccountId; }
 
+    function setDebugMode(enabled) {
+        debugMode = Boolean(enabled);
+        log(`[quota-tracker] Debug mode ${debugMode ? 'ON — account locked, no auto-rotation' : 'OFF — normal rotation'}`);
+        return debugMode;
+    }
+
+    function isDebugMode() { return debugMode; }
+
     function setActiveAccount(accountId, reason = 'manual') {
         const targetId = Number(accountId);
         const account = tokenManager.getAccount(targetId);
@@ -437,6 +455,10 @@ function createQuotaTracker(config) {
             releaseReservation(reservation);
             log(`[quota-tracker] Token error #${targetAccountId}: ${error.message}`);
             tokenManager.markError(targetAccountId);
+            if (debugMode) {
+                log(`[quota-tracker] Debug mode: token error on #${targetAccountId}, keeping locked account`);
+                throw error;
+            }
             if (targetAccountId === activeAccountId && rotateToNext('token_error', {
                 modelKey: options.modelKey,
                 allowBlockedFallback: false,
@@ -454,10 +476,11 @@ function createQuotaTracker(config) {
 
     function reportQuotaExhausted(accountId, details = {}) {
         const rawRetryAfterMs = Number(details.retryAfterMs || 0);
+        const allowLongSuggestedBlock = details.useSuggestedBlock === true;
         const retryAfterMs = rawRetryAfterMs > 0
-            ? Math.min(rawRetryAfterMs, MAX_BLOCK_DURATION_MS)
+            ? (allowLongSuggestedBlock ? rawRetryAfterMs : Math.min(rawRetryAfterMs, MAX_BLOCK_DURATION_MS))
             : 0;
-        if (rawRetryAfterMs > MAX_BLOCK_DURATION_MS) {
+        if (!allowLongSuggestedBlock && rawRetryAfterMs > MAX_BLOCK_DURATION_MS) {
             log(
                 `[quota-tracker] #${accountId} retryAfter capped: ` +
                 `${Math.ceil(rawRetryAfterMs / 60000)}m → ${Math.ceil(retryAfterMs / 60000)}m`
@@ -466,9 +489,9 @@ function createQuotaTracker(config) {
         const reason = String(details.reason || 'quota').trim() || 'quota';
         const reasonLabel = reason === 'capacity' ? 'capacity limited' : 'quota exhausted';
 
-        // Use short initial block; async verification will extend if truly exhausted
         const serverSuggestedMs = retryAfterMs > 0 ? retryAfterMs : cooldownMs;
-        const useShortBlock = serverSuggestedMs > INITIAL_BLOCK_MS && Boolean(details.modelKey);
+        const useSuggestedBlock = allowLongSuggestedBlock;
+        const useShortBlock = !useSuggestedBlock && serverSuggestedMs > INITIAL_BLOCK_MS && Boolean(details.modelKey);
         const effectiveBlockMs = useShortBlock ? INITIAL_BLOCK_MS : serverSuggestedMs;
         const nextBlockedUntil = Date.now() + effectiveBlockMs;
 
@@ -485,13 +508,19 @@ function createQuotaTracker(config) {
             ', rotating...'
         );
 
-        // Async verification: if server suggested a long block, check actual quota
+        // Async verification is useful for local interactive use, but remote
+        // leasing can opt out because fetchAvailableModels is not reliable
+        // enough to overturn real generation QUOTA_EXHAUSTED responses.
         if (useShortBlock) {
             verifyAndAdjustBlock(accountId, details.modelKey, serverSuggestedMs, reason)
                 .catch((err) => log(`[quota-tracker] verify error #${accountId}: ${err.message}`));
         }
 
         if (accountId === activeAccountId) {
+            if (debugMode) {
+                log(`[quota-tracker] Debug mode: skipping rotation for #${accountId} (${reasonLabel})`);
+                return false;
+            }
             return rotateToNext(describeRotationReason(reason), {
                 modelKey: details.modelKey,
                 allowBlockedFallback: false,
@@ -551,8 +580,8 @@ function createQuotaTracker(config) {
     function reportStreamHang(accountId) {
         recordOutcome(accountId, false);
         const account = tokenManager.getAccount(accountId);
-        log(`[quota-tracker] #${accountId} (${account?.email || '?'}) stream hang, rotating for retry`);
-        if (accountId === activeAccountId) {
+        log(`[quota-tracker] #${accountId} (${account?.email || '?'}) stream hang${debugMode ? ' (debug: no rotate)' : ', rotating for retry'}`);
+        if (accountId === activeAccountId && !debugMode) {
             rotateToNext('stream_hang', { allowBlockedFallback: false });
         }
     }
@@ -623,6 +652,7 @@ function createQuotaTracker(config) {
         const accounts = tokenManager.listAccounts();
         return {
             activeAccountId,
+            debugMode,
             activeEmail: accounts.find((a) => a.id === activeAccountId)?.email || null,
             totalAccounts: accounts.length,
             rotatableAccounts: accounts.filter((a) => a.projectId).length,
@@ -641,6 +671,11 @@ function createQuotaTracker(config) {
                     projectId: a.projectId,
                     planType: a.planType || '',
                     alias: a.alias || '',
+                    source: a.source || '',
+                    sourceEmployeeId: a.sourceEmployeeId || '',
+                    sourceEmployeeEmail: a.sourceEmployeeEmail || '',
+                    employeeSubmittedAt: a.employeeSubmittedAt || '',
+                    lastConversationOkAt: a.lastConversationOkAt || '',
                     enabled: a.enabled,
                     canRotate: Boolean(a.projectId),
                     blockedUntil: a.blockedUntil,
@@ -663,7 +698,7 @@ function createQuotaTracker(config) {
     return {
         init, getActiveAccountId, getActiveToken,
         reportSuccess, reportQuotaExhausted, reportError, reportStreamHang,
-        releaseReservation, rotateToNext, setActiveAccount, getStatus, getModelAvailability, destroy,
+        releaseReservation, rotateToNext, setActiveAccount, setDebugMode, isDebugMode, getStatus, getModelAvailability, destroy,
     };
 }
 

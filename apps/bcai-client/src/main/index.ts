@@ -1,6 +1,6 @@
 /**
  * 冰茶AI Electron 主进程
- * 功能：窗口管理 + 系统托盘 + IPC 通信 + token-proxy 进程管理 + HTTPS 网关
+ * 功能：窗口管理 + 系统托盘 + IPC 通信 + token-proxy 进程管理
  */
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, Notification, shell } from 'electron'
 import * as path from 'path'
@@ -10,8 +10,7 @@ import * as http from 'http'
 import * as crypto from 'crypto'
 import { spawn, execFileSync } from 'child_process'
 import * as net from 'net'
-import { HttpsGateway } from './https-gateway'
-import { HostsManager } from './hosts-manager'
+import { autoUpdater, UpdateInfo } from 'electron-updater'
 
 // ─── Constants ──────────────────────────────────────────────────────────
 const IS_WIN = process.platform === 'win32'
@@ -27,18 +26,12 @@ const APP_DATA_DIR = IS_WIN
 const ROSETTA_DATA_DIR = path.join(APP_DATA_DIR, 'Antigravity', 'rosetta')
 const CONFIG_PATH = path.join(ROSETTA_DATA_DIR, 'proxy.config.json')
 const IDE_SETTINGS_PATH = path.join(APP_DATA_DIR, 'Antigravity', 'User', 'settings.json')
-const IDE_SETTINGS_PATHS = [
-  { name: 'Antigravity', path: path.join(APP_DATA_DIR, 'Antigravity', 'User', 'settings.json') },
-  { name: 'Antigravity IDE', path: path.join(APP_DATA_DIR, 'Antigravity IDE', 'User', 'settings.json') },
-]
 const DEFAULT_TOKEN_SERVER_URL = 'https://bcai.site/remote-token'
 const PROXY_PORT = 60670
 const STATUS_PORT = 60671
 const STATUS_URL = `http://127.0.0.1:${STATUS_PORT}/status`
 const PROXY_URL = `http://127.0.0.1:${PROXY_PORT}`
 const REFRESH_INTERVAL_MS = 3000
-const GATEWAY_PORT = 60680
-const GATEWAY_DOMAINS = ['cloudcode-pa.googleapis.com', 'daily-cloudcode-pa.googleapis.com']
 
 // ─── Globals ────────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -46,11 +39,7 @@ let tray: Tray | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let currentState: any = null
 let isQuitting = false
-let stoppingRelay = false
-
-// ─── Gateway globals ────────────────────────────────────────────────────
-let gateway: HttpsGateway | null = null
-let hostsManager: HostsManager | null = null
+let updateStatus: any = null
 
 // ─── Stable Client ID ───────────────────────────────────────────────────
 // 基于机器特征生成稳定的 clientId，防止重启后被服务端判定为"其他设备"
@@ -156,59 +145,34 @@ function updateConfig(updater: (config: any) => any): any {
 
 // ─── IDE settings ───────────────────────────────────────────────────────
 function readIdeCloudCodeUrl(): string {
-  // 从任一 Antigravity 版本读取配置
-  for (const { path: settingsPath } of IDE_SETTINGS_PATHS) {
-    try {
-      if (!fs.existsSync(settingsPath)) continue
-      const raw = fs.readFileSync(settingsPath, 'utf8')
-      const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
-      const settings = JSON.parse(cleaned)
-      const url = String(settings['jetski.cloudCodeUrl'] || '').trim()
-      if (url) return url
-    } catch { /* continue to next */ }
+  try {
+    if (!fs.existsSync(IDE_SETTINGS_PATH)) return ''
+    const raw = fs.readFileSync(IDE_SETTINGS_PATH, 'utf8')
+    // Strip JSON comments
+    const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+    const settings = JSON.parse(cleaned)
+    return String(settings['jetski.cloudCodeUrl'] || '').trim()
+  } catch {
+    return ''
   }
-  return ''
-}
-
-function readAllIdeStatuses(): { name: string; configuredUrl: string; isConfigured: boolean }[] {
-  return IDE_SETTINGS_PATHS.map(({ name, path: settingsPath }) => {
-    let configuredUrl = ''
-    try {
-      if (fs.existsSync(settingsPath)) {
-        const raw = fs.readFileSync(settingsPath, 'utf8')
-        const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
-        const settings = JSON.parse(cleaned)
-        configuredUrl = String(settings['jetski.cloudCodeUrl'] || '').trim()
-      }
-    } catch { /* ignore */ }
-    return { name, configuredUrl, isConfigured: configuredUrl === PROXY_URL }
-  })
 }
 
 function writeIdeCloudCodeUrl(url: string): void {
-  // 写入所有 Antigravity 版本的设置
-  for (const { name, path: settingsPath } of IDE_SETTINGS_PATHS) {
+  let settings: any = {}
+  if (fs.existsSync(IDE_SETTINGS_PATH)) {
     try {
-      let settings: any = {}
-      if (fs.existsSync(settingsPath)) {
-        try {
-          const raw = fs.readFileSync(settingsPath, 'utf8')
-          const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
-          settings = JSON.parse(cleaned)
-        } catch { settings = {} }
-      }
-      if (url) {
-        settings['jetski.cloudCodeUrl'] = url.trim()
-      } else {
-        delete settings['jetski.cloudCodeUrl']
-      }
-      fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8')
-      log(`[IDE] ${name}: cloudCodeUrl ${url ? 'set' : 'cleared'}`)
-    } catch (err: any) {
-      log(`[IDE] ${name}: failed to write settings: ${err.message}`)
-    }
+      const raw = fs.readFileSync(IDE_SETTINGS_PATH, 'utf8')
+      const cleaned = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+      settings = JSON.parse(cleaned)
+    } catch { settings = {} }
   }
+  if (url) {
+    settings['jetski.cloudCodeUrl'] = url.trim()
+  } else {
+    delete settings['jetski.cloudCodeUrl']
+  }
+  fs.mkdirSync(path.dirname(IDE_SETTINGS_PATH), { recursive: true })
+  fs.writeFileSync(IDE_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n', 'utf8')
 }
 
 // ─── Proxy process management ──────────────────────────────────────────
@@ -274,15 +238,6 @@ async function stopTokenProxy(): Promise<void> {
   }
 }
 
-async function waitForProxyStop(timeoutMs = 8000): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    if (!(await isProxyRunning())) return true
-    await new Promise(r => setTimeout(r, 400))
-  }
-  return false
-}
-
 async function waitForProxy(timeoutMs = 15000): Promise<boolean> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -311,7 +266,6 @@ async function collectState(): Promise<any> {
   const config = readConfig()
   const proxyStatus = await getProxyStatus()
   const configuredUrl = readIdeCloudCodeUrl()
-  const ideStatuses = readAllIdeStatuses()
 
   // 判断是否是 relay 模式
   const isRelay = proxyStatus?.mode === 'token-passthrough' || proxyStatus?.mode === 'relay'
@@ -321,18 +275,6 @@ async function collectState(): Promise<any> {
 
   // 端口冲突检测
   const portConflict = checkPortConflict(proxyStatus)
-
-  // Gateway 状态
-  const gatewayRunning = gateway?.running || false
-  const gatewayMode = Boolean(config?.gatewayMode)
-  let caInstalled = false
-  try { caInstalled = gateway?.certMgr?.isCATrusted() || false } catch { /* ignore */ }
-  const hostsActive = hostsManager?.isIntercepting(GATEWAY_DOMAINS) || false
-
-  // 在网关模式下，IDE 不需要配置 cloudCodeUrl
-  const ideConnected = gatewayMode
-    ? (gatewayRunning && hostsActive)
-    : (configuredUrl === PROXY_URL)
 
   return {
     ready: true,
@@ -348,7 +290,7 @@ async function collectState(): Promise<any> {
       outbound: proxyStatus?.outbound || null,
     },
     relay: {
-      running: stoppingRelay ? false : Boolean(proxyStatus?.running && isRelay),
+      running: Boolean(proxyStatus?.running && isRelay),
       url: PROXY_URL,
       hasApiKey: relayHasApiKey,
       totalRequests: isRelay ? Number(proxyStatus?.totalRequests || 0) : 0,
@@ -357,23 +299,12 @@ async function collectState(): Promise<any> {
       totalOutputTokens: isRelay ? Number(proxyStatus?.totalOutputTokens || 0) : 0,
       lastError: isRelay ? (proxyStatus?.lastRemoteError || proxyStatus?.lastError || null) : null,
       accessKeyStatus: isRelay ? (proxyStatus?.accessKeyStatus || null) : null,
-      serviceStatus: computeServiceStatus(isRelay && proxyStatus?.running, relayHasApiKey, ideConnected, proxyStatus),
+      serviceStatus: computeServiceStatus(isRelay && proxyStatus?.running, relayHasApiKey, configuredUrl === PROXY_URL, proxyStatus),
     },
     ide: {
       configuredUrl,
       expectedUrl: PROXY_URL,
-      isConfigured: ideConnected,
-      instances: ideStatuses,
-    },
-    gateway: {
-      enabled: gatewayMode,
-      running: gatewayRunning,
-      domain: GATEWAY_DOMAINS.join(', '),
-      domains: GATEWAY_DOMAINS,
-      port: GATEWAY_PORT,
-      caInstalled,
-      hostsActive,
-      totalRequests: gateway?.totalRequests || 0,
+      isConfigured: configuredUrl === PROXY_URL,
     },
     accounts: [],
   }
@@ -438,23 +369,11 @@ function setupIpcHandlers(): void {
           if (isRelay) {
             // ─── 关闭续杯 ─────────────────
             log('[relay:off] stopping...')
-            stoppingRelay = true
             await stopTokenProxy()
-
-            // 等待 proxy 真正停止，而不是固定延时
-            const stopped = await waitForProxyStop(8000)
-            if (!stopped) {
-              log('[relay:off] proxy did not stop in time, force killing...')
-              // 尝试强制杀进程
-              if (lastSpawnedPid) {
-                try { process.kill(lastSpawnedPid) } catch { /* ignore */ }
-              }
-              await new Promise(r => setTimeout(r, 1000))
-            }
+            await new Promise(r => setTimeout(r, 1500))
 
             // 清除 IDE 配置
             writeIdeCloudCodeUrl('')
-            stoppingRelay = false
             log('[relay:off] IDE cloudCodeUrl cleared')
           } else {
             // ─── 开启续杯 ─────────────────
@@ -483,123 +402,13 @@ function setupIpcHandlers(): void {
           break
         }
 
-        // ─── Gateway IPC ──────────────────────────────────────────
-        case 'gateway:enable': {
-          log('[Gateway] 启用网关模式...')
-          try {
-            if (!gateway) {
-              gateway = new HttpsGateway({
-                port: GATEWAY_PORT,
-                proxyTarget: PROXY_URL,
-                domains: GATEWAY_DOMAINS,
-                dataDir: ROSETTA_DATA_DIR,
-                log,
-              })
-            }
-
-            // 1. 启动 HTTPS 网关
-            await gateway.start()
-
-            // 2. 安装 CA 证书
-            const caInstalled = gateway.certMgr.isCATrusted()
-            if (!caInstalled) {
-              log('[Gateway] 安装 CA 证书...')
-              const ok = gateway.certMgr.installCATrust()
-              if (!ok) {
-                sendNotification('CA 证书安装失败，需要管理员权限')
-                await gateway.stop()
-                break
-              }
-            }
-
-            // 3. 配置 hosts + 端口转发
-            if (!hostsManager) hostsManager = new HostsManager(log)
-            hostsManager.enableIntercept(GATEWAY_DOMAINS, GATEWAY_PORT)
-
-            // 4. 保存网关模式到配置
-            updateConfig((config) => {
-              config.gatewayMode = true
-              return config
-            })
-
-            sendNotification('HTTPS 网关已启用')
-            log('[Gateway] 网关模式已完全启用')
-          } catch (err: any) {
-            log(`[Gateway] 启用失败: ${err.message}`)
-            sendNotification(`网关启用失败: ${err.message}`)
-          }
-          await refreshAndPush()
+        case 'rosetta:checkUpdate': {
+          autoUpdater.checkForUpdates().catch(() => {})
           break
         }
 
-        case 'gateway:disable': {
-          log('[Gateway] 禁用网关模式...')
-          try {
-            // 1. 移除 hosts + 端口转发
-            if (!hostsManager) hostsManager = new HostsManager(log)
-            hostsManager.disableIntercept(GATEWAY_DOMAINS)
-
-            // 2. 停止 HTTPS 网关
-            if (gateway) await gateway.stop()
-
-            // 3. 更新配置
-            updateConfig((config) => {
-              config.gatewayMode = false
-              return config
-            })
-
-            sendNotification('HTTPS 网关已禁用')
-            log('[Gateway] 网关模式已禁用')
-          } catch (err: any) {
-            log(`[Gateway] 禁用失败: ${err.message}`)
-          }
-          await refreshAndPush()
-          break
-        }
-
-        case 'gateway:status': {
-          await refreshAndPush()
-          break
-        }
-
-        case 'gateway:installCA': {
-          try {
-            if (!gateway) {
-              gateway = new HttpsGateway({
-                port: GATEWAY_PORT,
-                proxyTarget: PROXY_URL,
-                domains: GATEWAY_DOMAINS,
-                dataDir: ROSETTA_DATA_DIR,
-                log,
-              })
-            }
-            gateway.certMgr.ensureCA()
-            const ok = gateway.certMgr.installCATrust()
-            sendNotification(ok ? 'CA 证书安装成功' : 'CA 证书安装失败，需要管理员权限')
-          } catch (err: any) {
-            sendNotification(`CA 安装失败: ${err.message}`)
-          }
-          await refreshAndPush()
-          break
-        }
-
-        case 'gateway:uninstallCA': {
-          try {
-            if (!gateway) {
-              gateway = new HttpsGateway({
-                port: GATEWAY_PORT,
-                proxyTarget: PROXY_URL,
-                domains: GATEWAY_DOMAINS,
-                dataDir: ROSETTA_DATA_DIR,
-                log,
-              })
-            }
-            gateway.certMgr.uninstallCATrust()
-            sendNotification('CA 证书已删除')
-          } catch (err: any) {
-            sendNotification(`CA 删除失败: ${err.message}`)
-          }
-          await refreshAndPush()
+        case 'rosetta:getUpdateStatus': {
+          if (updateStatus) pushUpdateStatus(updateStatus)
           break
         }
 
@@ -633,6 +442,33 @@ function startRelay(): void {
     if (ok) {
       writeIdeCloudCodeUrl(PROXY_URL)
       log('[relay:on] started + IDE configured')
+
+      // 检查 language_server 是否已连到我们的代理（参照 timo 方案）
+      if (IS_WIN) {
+        try {
+          const lsCmdline = execFileSync('wmic', [
+            'process', 'where', "name like 'language_server%'",
+            'get', 'commandline', '/format:list'
+          ], { encoding: 'utf8', windowsHide: true, timeout: 5000 }).trim()
+
+          if (lsCmdline) {
+            const endpointMatch = lsCmdline.match(/--cloud_code_endpoint\s+(\S+)/)
+            const currentEndpoint = endpointMatch ? endpointMatch[1] : ''
+            if (currentEndpoint === PROXY_URL || currentEndpoint === `${PROXY_URL}/`) {
+              log('[relay:on] language_server already connected to proxy, skip restart')
+            } else {
+              log(`[relay:on] language_server endpoint: ${currentEndpoint || '(default)'}, restarting...`)
+              execFileSync('taskkill', ['/IM', 'language_server_windows_x64.exe', '/F'],
+                { stdio: 'ignore', windowsHide: true })
+              log('[relay:on] language_server killed, IDE will auto-restart it')
+            }
+          } else {
+            log('[relay:on] language_server not running, skip restart')
+          }
+        } catch {
+          log('[relay:on] language_server check failed, skip restart')
+        }
+      }
       sendNotification('续杯已开启')
     } else {
       log('[relay:on] proxy failed to start')
@@ -721,12 +557,6 @@ function createTray(): void {
     {
       label: '退出', click: async () => {
         isQuitting = true
-        // 关闭网关
-        if (gateway?.running) {
-          if (!hostsManager) hostsManager = new HostsManager(log)
-          hostsManager.disableIntercept(GATEWAY_DOMAINS)
-          await gateway.stop()
-        }
         // 停止续杯 + 清除 IDE 配置
         if (await isProxyRunning()) {
           await stopTokenProxy()
@@ -740,6 +570,66 @@ function createTray(): void {
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus() })
 }
 
+// ─── Auto Updater ───────────────────────────────────────────────────────
+function setupAutoUpdater(): void {
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.logger = {
+    info: (msg: any) => log(`[updater] ${msg}`),
+    warn: (msg: any) => log(`[updater:warn] ${msg}`),
+    error: (msg: any) => log(`[updater:error] ${msg}`),
+    debug: (msg: any) => log(`[updater:debug] ${msg}`),
+  }
+
+  autoUpdater.on('checking-for-update', () => {
+    log('[updater] Checking for updates...')
+  })
+
+  autoUpdater.on('update-available', (info: UpdateInfo) => {
+    log(`[updater] Update available: v${info.version}`)
+    pushUpdateStatus({ status: 'downloading', version: info.version })
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    log('[updater] Already up to date')
+    pushUpdateStatus({ status: 'up-to-date', version: app.getVersion() })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    const pct = Math.round(progress.percent)
+    if (pct % 10 === 0) log(`[updater] Download: ${pct}%`)
+    pushUpdateStatus({
+      status: 'downloading',
+      percent: pct,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total,
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    log(`[updater] Update downloaded: v${info.version} — will install on quit`)
+    pushUpdateStatus({ status: 'ready', version: info.version })
+    sendNotification(`新版本 v${info.version} 已就绪，下次启动自动更新`)
+  })
+
+  autoUpdater.on('error', (err) => {
+    log(`[updater] Error: ${err.message}`)
+    pushUpdateStatus({ status: 'error', error: err.message })
+  })
+
+  // 启动后 8 秒检查，之后每 30 分钟检查
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 8000)
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 30 * 60 * 1000)
+}
+
+function pushUpdateStatus(status: any): void {
+  updateStatus = status
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('rosetta:updateStatus', status)
+  }
+}
+
 // ─── App lifecycle ──────────────────────────────────────────────────────
 app.whenReady().then(() => {
   log('App starting...')
@@ -750,10 +640,6 @@ app.whenReady().then(() => {
 
   // 确保数据目录存在
   fs.mkdirSync(ROSETTA_DATA_DIR, { recursive: true })
-
-  // 清理残留的 hosts 条目（防止上次异常退出）
-  hostsManager = new HostsManager(log)
-  hostsManager.cleanupStale()
 
   // 初始化默认配置
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -769,6 +655,11 @@ app.whenReady().then(() => {
   setupIpcHandlers()
   createWindow()
   createTray()
+
+  // 启动自动升级（生产模式）
+  if (!IS_DEV) {
+    setupAutoUpdater()
+  }
 
   // 启动状态轮询
   refreshTimer = setInterval(() => refreshAndPush(), REFRESH_INTERVAL_MS)

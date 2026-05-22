@@ -18,6 +18,10 @@ export class TaskLogger {
     private workerId: string
   ) {}
 
+  getTaskId(): string {
+    return this.taskId;
+  }
+
   /**
    * Write a log entry to the TaskLog table.
    */

@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import { handleMessage } from "./messageHandler.js";
+import { ROSETTA_WEBVIEW_ID } from "../distribution.js";
 
 export class WebviewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'bcai.welcomeView';
+  public static readonly viewType = ROSETTA_WEBVIEW_ID;
 
   private onWebviewReady?: (webview: vscode.Webview) => void;
 

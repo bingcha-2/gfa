@@ -274,9 +274,20 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   )}
                   {bulkResult.createdEmails.length > 0 && (
                     <div style={{ background: 'var(--surface-success, #f0fdf4)', borderRadius: '6px', padding: '10px 14px', fontSize: '0.875rem', marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
-                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--emerald, #059669)' }}>成功导入：</div>
+                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--emerald, #059669)' }}>已成功进入号池：</div>
                       {bulkResult.createdEmails.map((email, idx) => (
                         <div key={idx} style={{ color: '#666', lineHeight: 1.6 }}>{email}</div>
+                      ))}
+                    </div>
+                  )}
+                  {(bulkResult.skippedEmails.length > 0 || bulkResult.errors.length > 0) && (
+                    <div style={{ background: 'var(--surface-error, #fef2f2)', borderRadius: '6px', padding: '10px 14px', fontSize: '0.875rem', marginTop: '8px', maxHeight: '160px', overflowY: 'auto' }}>
+                      <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--red, #dc2626)' }}>未成功进入号池：</div>
+                      {bulkResult.skippedEmails.map((email, idx) => (
+                        <div key={`skipped-${idx}`} style={{ color: '#666', lineHeight: 1.6 }}>{email} · 已存在/已跳过</div>
+                      ))}
+                      {bulkResult.errors.map((err, idx) => (
+                        <div key={`error-${idx}`} style={{ color: '#666', lineHeight: 1.6 }}>{err}</div>
                       ))}
                     </div>
                   )}

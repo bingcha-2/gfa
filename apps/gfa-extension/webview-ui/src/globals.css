@@ -3024,6 +3024,12 @@ button[title="修改到期时间"]:hover {
   white-space: nowrap;
 }
 
+.rosetta-status-detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
 .rosetta-status-stat-val {
   font-weight: 700;
   color: var(--foreground);
@@ -3035,6 +3041,10 @@ button[title="修改到期时间"]:hover {
 
 .rosetta-status-stat.bad .rosetta-status-stat-val {
   color: #dc2626;
+}
+
+.rosetta-status-stat.warning .rosetta-status-stat-val {
+  color: #d97706;
 }
 
 .rosetta-status-offline {

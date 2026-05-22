@@ -17,7 +17,7 @@ type FaqItem = {
 async function fetchFaqs(): Promise<FaqItem[]> {
   const base = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api";
   try {
-    const res = await fetch(`${base}/faq`, { cache: "no-store" });
+    const res = await fetch(`${base}/faq`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -28,7 +28,7 @@ async function fetchFaqs(): Promise<FaqItem[]> {
 async function fetchSettings(): Promise<Record<string, string>> {
   const base = process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api";
   try {
-    const res = await fetch(`${base}/faq/settings`, { cache: "no-store" });
+    const res = await fetch(`${base}/faq/settings`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (!res.ok) return {};
     return res.json();
   } catch {

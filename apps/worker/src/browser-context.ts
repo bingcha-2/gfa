@@ -10,6 +10,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 const SCREENSHOTS_DIR = path.resolve(process.cwd(), "screenshots");
+const SCREENSHOT_MODE = (process.env.GFA_SCREENSHOT_MODE ?? process.env.SCREENSHOT_MODE ?? "errors").toLowerCase();
+const SCREENSHOT_TIMEOUT_MS = Number(process.env.GFA_SCREENSHOT_TIMEOUT_MS ?? process.env.SCREENSHOT_TIMEOUT_MS ?? 2_000);
 
 export class WorkerBrowser {
   private browser: Browser | null = null;
@@ -70,6 +72,10 @@ export class WorkerBrowser {
    * Returns the absolute file path of the saved screenshot.
    */
   async takeScreenshot(taskId: string, label: string): Promise<string | null> {
+    if (SCREENSHOT_MODE === "off") {
+      return null;
+    }
+
     const page = this.getPage();
     const dir = path.join(SCREENSHOTS_DIR, taskId);
     fs.mkdirSync(dir, { recursive: true });
@@ -78,7 +84,7 @@ export class WorkerBrowser {
     const filepath = path.join(dir, filename);
 
     try {
-      await page.screenshot({ path: filepath, fullPage: false, timeout: 10_000 });
+      await page.screenshot({ path: filepath, fullPage: false, timeout: SCREENSHOT_TIMEOUT_MS });
       return filepath;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

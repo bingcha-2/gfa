@@ -12,14 +12,20 @@
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
 const { URL } = require('url');
 
 const {
   DEFAULT_CLOUD_ENDPOINT,
+  createTokenUsageCapture,
+  decodeErrorBody,
   extractModelKeyFromBody,
+  extractTokenUsageFromText,
   prepareForwardRequest,
   sanitizeProxyResponseHeaders,
 } = require('../token-proxy/token-proxy');
+
+const CLIENT_VERSION_FALLBACK = '4.0.2';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -91,6 +97,21 @@ function postJson(url, payload, secret, timeoutMs = 30000) {
     req.write(body);
     req.end();
   });
+}
+
+function readJsonFile(filePath) {
+  if (!filePath) return {};
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeJsonFile(filePath, value) {
+  if (!filePath) return;
+  fs.writeFileSync(filePath, `${JSON.stringify(value || {}, null, 2)}\n`, 'utf8');
 }
 
 function joinUrl(base, urlPath) {
@@ -170,9 +191,13 @@ function createTokenPassthroughServer(config) {
   const statusPort = Number(config.statusPort || 60681);
   const tokenServerUrl = String(config.tokenServerUrl || '').replace(/\/+$/, '');
   const tokenServerSecret = String(config.tokenServerSecret || '');
+  const configPath = String(config.configPath || '');
   const cloudEndpoint = String(config.cloudEndpoint || DEFAULT_CLOUD_ENDPOINT).replace(/\/+$/, '');
   const clientId = String(config.clientId || process.env.BCAI_RELAY_CLIENT_ID || '').trim()
     || `relay-${crypto.randomUUID()}`;
+  const clientVersion = String(config.clientVersion || process.env.BCAI_EXTENSION_VERSION || CLIENT_VERSION_FALLBACK).trim();
+  const clientDistribution = String(config.clientDistribution || process.env.BCAI_DISTRIBUTION || '').trim();
+  let currentSessionId = String(config.sessionId || '').trim();
   const log = config.log || console.log;
 
   const parsedEndpoint = new URL(cloudEndpoint);
@@ -181,6 +206,8 @@ function createTokenPassthroughServer(config) {
   let totalRequests = 0;
   let totalErrors = 0;
   let totalLeases = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
   let lastRequestAt = null;
   let lastError = null;
   const quotaSnapshotMinIntervalMs = Number(config.quotaSnapshotMinIntervalMs || 15 * 60 * 1000);
@@ -189,6 +216,33 @@ function createTokenPassthroughServer(config) {
   const quotaSnapshotState = new Map();
   let lastQuotaSnapshotAt = null;
   let lastQuotaSnapshotError = null;
+
+  function saveSessionId(sessionId) {
+    const cleanSessionId = String(sessionId || '').trim();
+    if (!cleanSessionId || cleanSessionId === currentSessionId) return;
+    currentSessionId = cleanSessionId;
+    if (!configPath) return;
+    try {
+      const runtimeConfig = readJsonFile(configPath);
+      const relay = runtimeConfig.relayProxy || {};
+      runtimeConfig.relayProxy = relay;
+      relay.sessionId = cleanSessionId;
+      if (!relay.clientId) relay.clientId = clientId;
+      writeJsonFile(configPath, runtimeConfig);
+    } catch (error) {
+      log(`[passthrough] failed to persist sessionId: ${error.message}`);
+    }
+  }
+
+  function recordTokenUsage(capture, headers) {
+    const rawBody = capture?.read?.();
+    if (!rawBody) return;
+    const decodedText = decodeErrorBody(rawBody, headers?.['content-encoding'], -1);
+    const usage = extractTokenUsageFromText(decodedText);
+    if (usage.inputTokens <= 0 && usage.outputTokens <= 0) return;
+    totalInputTokens += usage.inputTokens;
+    totalOutputTokens += usage.outputTokens;
+  }
   let quotaSnapshotReports = 0;
 
   function quotaSnapshotKey(lease) {
@@ -295,7 +349,13 @@ function createTokenPassthroughServer(config) {
     );
     let lease;
     try {
-      lease = await postJson(leaseUrl, { modelKey, clientId }, tokenServerSecret);
+      lease = await postJson(leaseUrl, {
+        modelKey,
+        clientId,
+        clientVersion,
+        clientDistribution,
+        sessionId: currentSessionId,
+      }, tokenServerSecret);
     } catch (error) {
       log(
         `[passthrough] lease failed status=${error.statusCode || 'n/a'} ` +
@@ -304,6 +364,7 @@ function createTokenPassthroughServer(config) {
       throw error;
     }
     lease._leasedAt = Date.now();
+    saveSessionId(lease.accessKeySessionId || lease.sessionId);
     cachedLease = lease;
     totalLeases++;
     log(`[passthrough] leased #${lease.accountId || '?'} ${lease.emailHint || ''} project=${lease.projectId || '(none)'}`);
@@ -370,9 +431,50 @@ function createTokenPassthroughServer(config) {
           return;
         }
 
+        const tokenUsageCapture = createTokenUsageCapture();
+        upstreamRes.on('data', (chunk) => tokenUsageCapture.push(chunk));
         res.writeHead(status, sanitizeProxyResponseHeaders(upstreamRes.headers));
         upstreamRes.pipe(res);
-        upstreamRes.on('end', () => resolve({ retryable: false, status }));
+        upstreamRes.on('end', () => {
+          recordTokenUsage(tokenUsageCapture, upstreamRes.headers);
+          resolve({ retryable: false, status });
+        });
+        upstreamRes.on('error', reject);
+      });
+
+      upstreamReq.on('error', reject);
+      upstreamReq.setTimeout(300000, () => upstreamReq.destroy(new Error('Upstream request timeout')));
+      if (prepared.body && prepared.body.length > 0) upstreamReq.write(prepared.body);
+      upstreamReq.end();
+    });
+  }
+
+  function forwardTransparent(req, res, rawBody, reqId) {
+    return new Promise((resolve, reject) => {
+      const target = new URL(req.url, cloudEndpoint);
+      const prepared = prepareForwardRequest(
+        req.headers,
+        rawBody,
+        { token: '', projectId: '' },
+        parsedEndpoint,
+        log,
+        reqId
+      );
+
+      const isHttps = target.protocol === 'https:';
+      const transport = isHttps ? https : http;
+      const upstreamReq = transport.request({
+        method: req.method,
+        hostname: target.hostname,
+        port: target.port || (isHttps ? 443 : 80),
+        path: `${target.pathname}${target.search}`,
+        headers: prepared.headers,
+      }, (upstreamRes) => {
+        const status = upstreamRes.statusCode || 500;
+        log(`[${reqId}] [PASS] ${target.pathname} -> ${status}`);
+        res.writeHead(status, sanitizeProxyResponseHeaders(upstreamRes.headers));
+        upstreamRes.pipe(res);
+        upstreamRes.on('end', () => resolve({ status }));
         upstreamRes.on('error', reject);
       });
 
@@ -405,56 +507,22 @@ function createTokenPassthroughServer(config) {
     const pathname = new URL(req.url, `http://127.0.0.1:${proxyPort}`).pathname;
     const reqId = `P${++requestIdCounter}`;
 
-    // ── IDE internal API mocks ──────────────────────────────────────
-    // The IDE sends these during initialization. We mock them locally
-    // to avoid wasting lease tokens on non-AI requests.
     const isStream = pathname.includes(':streamGenerateContent');
     const isGenerate = pathname.includes(':generateContent') || isStream;
 
-    if (!isGenerate) {
-      if (pathname.includes(':loadCodeAssist')) {
-        log(`[${reqId}] [MOCK] loadCodeAssist`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          currentTier: { name: 'STANDARD' },
-          nextTier: null,
-          codeAssistProjectName: 'passthrough-mode',
-          userState: 'ONBOARDED',
-          currentUserTier: { name: 'STANDARD' },
-          featureSet: {},
-        }));
-        return;
-      }
-
-      if (pathname.includes(':onboardUser')) {
-        log(`[${reqId}] [MOCK] onboardUser`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ userState: 'ONBOARDED' }));
-        return;
-      }
-
-      if (pathname.includes(':fetchAvailableModels') || pathname.includes('fetchAvailableModels')) {
-        log(`[${reqId}] [MOCK] fetchAvailableModels`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ models: [] }));
-        return;
-      }
-
-      if (pathname.includes('v1internal') || pathname.includes(':countTokens')) {
-        log(`[${reqId}] [MOCK] ${pathname}`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({}));
-        return;
-      }
-    }
-
-    // ── Real AI request handling ────────────────────────────────────
+    // Non-generation calls are transparent: keep the IDE's own auth/session
+    // so account setup and login behave exactly like native Antigravity.
     totalRequests++;
     lastRequestAt = new Date().toISOString();
-    log(`[${reqId}] ← ${req.method} ${pathname} (${isStream ? 'stream' : 'sync'})`);
+    log(`[${reqId}] ← ${req.method} ${pathname} (${isGenerate ? (isStream ? 'stream' : 'sync') : 'pass'})`);
 
     try {
       const rawBody = await readBody(req);
+      if (!isGenerate) {
+        await forwardTransparent(req, res, rawBody, reqId);
+        return;
+      }
+
       const modelKey = extractModelKeyFromBody(req.headers, rawBody) || '';
       log(`[${reqId}] model=${modelKey || '(auto)'}`);
       let lease = await getLease(modelKey);
@@ -511,8 +579,8 @@ function createTokenPassthroughServer(config) {
       totalRequests,
       totalErrors,
       totalLeases,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
+      totalInputTokens,
+      totalOutputTokens,
       lastRequestAt,
       lastError,
       quotaSnapshotMinIntervalMs,

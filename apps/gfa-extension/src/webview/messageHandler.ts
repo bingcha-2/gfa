@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { BCAI_CONFIG_SECTION } from "../distribution.js";
 import { handleRosettaMessage } from "./rosettaHandler.js";
 
 type IncomingMessage = {
@@ -48,7 +49,7 @@ async function proxyApiRequest(
   options: { method?: string; body?: any; search?: Record<string, string | number | boolean | undefined> } = {},
   context: vscode.ExtensionContext
 ): Promise<any> {
-  const config = vscode.workspace.getConfiguration("bcai");
+  const config = vscode.workspace.getConfiguration(BCAI_CONFIG_SECTION);
   const baseUrl = config.get<string>("apiBaseUrl") ?? "https://bcai.site/api/proxy";
 
   const cleanPath = path.replace(/^\/+/, "");

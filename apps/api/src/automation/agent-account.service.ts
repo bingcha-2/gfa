@@ -15,6 +15,9 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   QUEUE_NAMES,
@@ -117,7 +120,23 @@ export class AgentAccountService {
    *   email|password|totpSecret
    */
   async bulkImport(rawLines: string[]) {
-    const lines = rawLines.map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+    const lines = rawLines.map((l) => {
+      let trimmed = l.trim();
+      if (!trimmed) return "";
+      // Detect lines with spaces between every character (e.g. copy from some UIs).
+      // Heuristic: if spaces make up >= 40% of the line and removing them yields
+      // a valid-looking credential string, strip all spaces.
+      const spaceCount = (trimmed.match(/ /g) || []).length;
+      const nonSpaceCount = trimmed.replace(/ /g, "").length;
+      if (spaceCount > 0 && nonSpaceCount > 0 && spaceCount / (spaceCount + nonSpaceCount) >= 0.35) {
+        const collapsed = trimmed.replace(/ /g, "");
+        // Only accept if it looks like a credential line (has @ and a delimiter)
+        if (collapsed.includes("@") && (collapsed.includes("---") || collapsed.includes("——") || collapsed.includes("|"))) {
+          trimmed = collapsed;
+        }
+      }
+      return trimmed;
+    }).filter((l) => l && !l.startsWith("#"));
 
     const created: string[] = [];
     const skipped: string[] = [];
@@ -901,5 +920,251 @@ export class AgentAccountService {
       newMotherEmail: newGroup.account.loginEmail,
       status: "PENDING",
     };
+  }
+
+  // ── Upload to Rosetta account pool ──
+
+  private getRosettaDataDir(): string {
+    if (process.env.ROSETTA_DATA_DIR) return process.env.ROSETTA_DATA_DIR;
+    const base =
+      process.platform === "win32"
+        ? process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
+        : process.platform === "darwin"
+          ? path.join(os.homedir(), "Library", "Application Support")
+          : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+    return path.join(base, "Antigravity", "rosetta");
+  }
+
+  /**
+   * Upload agent accounts directly to Rosetta account pool (accounts.json).
+   * This writes the email + refreshToken into accounts.json and triggers
+   * the local token-proxy to reload.
+   */
+  async uploadToRosetta(ids: string[]) {
+    if (!ids.length) throw new BadRequestException("ids is required");
+
+    const accounts = await this.prisma.agentAccount.findMany({
+      where: { id: { in: ids } },
+    });
+
+    const dataDir = this.getRosettaDataDir();
+    const accountsPath = path.join(dataDir, "accounts.json");
+
+    // Read existing Rosetta accounts
+    let rosettaData: { accounts: Array<Record<string, unknown>> } = { accounts: [] };
+    if (fs.existsSync(accountsPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(accountsPath, "utf8"));
+        rosettaData = { accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [] };
+      } catch {
+        this.logger.warn("Failed to parse accounts.json, starting fresh");
+      }
+    } else {
+      // Ensure directory exists
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    const added: Array<{ id: string; email: string }> = [];
+    const updated: Array<{ id: string; email: string }> = [];
+    const errors: Array<{ id: string; email: string; error: string }> = [];
+
+    for (const acc of accounts) {
+      if (!acc.refreshToken) {
+        errors.push({ id: acc.id, email: acc.loginEmail, error: "没有 Token" });
+        continue;
+      }
+
+      // Discover projectId via Google API
+      let projectId = "";
+      try {
+        projectId = await this.discoverProjectId(acc.refreshToken);
+        if (projectId) {
+          this.logger.log(`[uploadToRosetta] ${acc.loginEmail} projectId=${projectId}`);
+        } else {
+          this.logger.warn(`[uploadToRosetta] ${acc.loginEmail} 未拿到 projectId`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[uploadToRosetta] ${acc.loginEmail} projectId discovery failed: ${err.message}`);
+      }
+
+      const emailLower = acc.loginEmail.toLowerCase();
+      const existing = rosettaData.accounts.find(
+        (a: any) => String(a.email || "").toLowerCase() === emailLower,
+      );
+
+      if (existing) {
+        // Update existing account's token
+        (existing as any).refreshToken = acc.refreshToken;
+        (existing as any).enabled = true;
+        if (projectId) (existing as any).projectId = projectId;
+        updated.push({ id: acc.id, email: acc.loginEmail });
+      } else {
+        // Add new account
+        const maxId = rosettaData.accounts.reduce(
+          (m, a: any) => Math.max(m, Number(a.id) || 0), 0,
+        );
+        rosettaData.accounts.push({
+          id: maxId + 1,
+          email: acc.loginEmail,
+          refreshToken: acc.refreshToken,
+          enabled: true,
+          alias: "",
+          oauthProfile: "antigravity",
+          ...(projectId ? { projectId } : {}),
+        });
+        added.push({ id: acc.id, email: acc.loginEmail });
+      }
+    }
+
+    // Write back
+    fs.writeFileSync(accountsPath, JSON.stringify(rosettaData, null, 2), "utf8");
+
+    // Notify running proxy to reload accounts
+    try {
+      const proxyPort = this.getProxyPort();
+      await fetch(`http://127.0.0.1:${proxyPort}/reload-accounts`, {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+      });
+      this.logger.log(`Rosetta proxy reload triggered (port ${proxyPort})`);
+    } catch {
+      this.logger.warn("Rosetta proxy reload failed (proxy may not be running)");
+    }
+
+    // Check for IDs not found in DB
+    const foundIds = new Set(accounts.map((a) => a.id));
+    for (const id of ids) {
+      if (!foundIds.has(id)) {
+        errors.push({ id, email: "", error: "未找到该子号" });
+      }
+    }
+
+    this.logger.log(
+      `uploadToRosetta: added=${added.length}, updated=${updated.length}, errors=${errors.length}`,
+    );
+
+    return {
+      total: ids.length,
+      added: added.length,
+      updated: updated.length,
+      failed: errors.length,
+      addedAccounts: added,
+      updatedAccounts: updated,
+      errors,
+    };
+  }
+
+  private getProxyPort(): number {
+    try {
+      const dataDir = this.getRosettaDataDir();
+      const configPath = path.join(dataDir, "proxy.config.json");
+      if (fs.existsSync(configPath)) {
+        const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        if (cfg.proxyPort) return Number(cfg.proxyPort);
+      }
+    } catch { /* ignore */ }
+    return 60671;
+  }
+
+  /**
+   * Exchange refreshToken for access_token, then call Google's loadCodeAssist
+   * API to discover the cloudaicompanionProject (projectId).
+   */
+  private async discoverProjectId(refreshToken: string): Promise<string> {
+    const clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+    const clientSecret = "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";
+
+    // 1. Exchange refreshToken for access_token
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }).toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const tokenData = await tokenResp.json() as Record<string, unknown>;
+    const accessToken = String(tokenData.access_token || "");
+    if (!accessToken) {
+      throw new Error(String(tokenData.error_description || tokenData.error || "No access_token"));
+    }
+
+    // 2. Call loadCodeAssist to discover projectId
+    const METADATA = {
+      ideName: "antigravity",
+      ideType: "ANTIGRAVITY",
+      ideVersion: "1.21.6",
+      pluginVersion: "1.21.6",
+      platform: "WINDOWS_AMD64",
+      updateChannel: "stable",
+      pluginType: "GEMINI",
+    };
+    const hosts = [
+      "daily-cloudcode-pa.sandbox.googleapis.com",
+      "daily-cloudcode-pa.googleapis.com",
+      "cloudcode-pa.googleapis.com",
+    ];
+    for (const host of hosts) {
+      try {
+        const r = await fetch(`https://${host}/v1internal:loadCodeAssist`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ metadata: METADATA }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (r.ok) {
+          const d = await r.json() as Record<string, unknown>;
+          const p = d.cloudaicompanionProject as any;
+          if (typeof p === "string" && p) return p;
+          if (p?.id) return String(p.id);
+
+          // No project yet — try onboardUser to provision
+          const allowedTiers = (d.allowedTiers as any[]) ?? [];
+          const currentTier = d.currentTier as any;
+          const tierId =
+            allowedTiers.find((t: any) => t.isDefault)?.id ||
+            allowedTiers.find((t: any) => t.id)?.id ||
+            (d.paidTier as any)?.id || currentTier?.id;
+
+          if (tierId) {
+            try {
+              let onboardResult = await fetch(`https://${host}/v1internal:onboardUser`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ tierId, metadata: METADATA }),
+                signal: AbortSignal.timeout(15000),
+              }).then(res => res.json() as Promise<Record<string, any>>);
+
+              // Poll until done
+              let polls = 0;
+              while (!onboardResult?.done && polls < 10) {
+                const opName = String(onboardResult?.name || "").trim();
+                if (!opName) break;
+                await new Promise(resolve => setTimeout(resolve, 500));
+                onboardResult = await fetch(`https://${host}/v1internal/${opName}`, {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                  signal: AbortSignal.timeout(10000),
+                }).then(res => res.json() as Promise<Record<string, any>>);
+                polls++;
+              }
+
+              const onboardProject = onboardResult?.response?.cloudaicompanionProject;
+              if (typeof onboardProject === "string" && onboardProject) return onboardProject;
+              if (onboardProject?.id) return String(onboardProject.id);
+            } catch { /* try next host */ }
+          }
+        }
+      } catch { /* try next host */ }
+    }
+    return "";
   }
 }

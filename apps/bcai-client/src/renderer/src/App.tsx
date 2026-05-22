@@ -7,6 +7,7 @@ declare global {
       send: (type: string, payload?: any) => void
       onStateUpdate: (callback: (state: any) => void) => () => void
       onNotification: (callback: (msg: string) => void) => () => void
+      onUpdateStatus: (callback: (status: any) => void) => () => void
     }
   }
 }
@@ -20,15 +21,20 @@ export default function App() {
   const [keyInput, setKeyInput] = useState('')
   const [showKeyModal, setShowKeyModal] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState<any>(null)
 
   useEffect(() => {
     const unsub = window.electronAPI?.onStateUpdate((newState) => {
       setState(newState)
       setLoading(false)
     })
+    const unsubUpdate = window.electronAPI?.onUpdateStatus((status) => {
+      setUpdateStatus(status)
+    })
     // 请求初始状态
     sendAction('rosetta:getState')
-    return unsub
+    sendAction('rosetta:getUpdateStatus')
+    return () => { unsub?.(); unsubUpdate?.() }
   }, [])
 
   const relay = state?.relay || {}
@@ -39,17 +45,14 @@ export default function App() {
   const portConflict = state?.portConflict
   const hasKey = relay.hasApiKey
   const isRunning = relay.running
-  const gw = state?.gateway || {}
+
 
   const handleToggleRelay = useCallback(() => {
     setLoading(true)
     sendAction('rosetta:toggleRelay')
   }, [])
 
-  const handleToggleGateway = useCallback(() => {
-    setLoading(true)
-    sendAction(gw.enabled ? 'gateway:disable' : 'gateway:enable')
-  }, [gw.enabled])
+
 
   const handleSetKey = useCallback(() => {
     if (!keyInput.trim()) return
@@ -88,6 +91,30 @@ export default function App() {
         <h1>🍵 冰茶AI</h1>
         <span className="app-version">v{state?.config?.relayProxy?.clientVersion || '4.1.0'}</span>
       </header>
+
+      {/* 自动升级状态 */}
+      {updateStatus?.status === 'downloading' && (
+        <div style={{
+          padding: '8px 14px', background: 'rgba(99,102,241,.12)', borderRadius: 8,
+          border: '1px solid rgba(99,102,241,.25)', marginBottom: 10, fontSize: 12,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#a5b4fc', marginBottom: 4 }}>
+            <span>⬇ 正在下载 v{updateStatus.version || ''}...</span>
+            <span>{updateStatus.percent || 0}%</span>
+          </div>
+          <div style={{ height: 3, background: 'rgba(255,255,255,.1)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${updateStatus.percent || 0}%`, background: '#6366f1', borderRadius: 2, transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
+      {updateStatus?.status === 'ready' && (
+        <div style={{
+          padding: '8px 14px', background: 'rgba(34,197,94,.1)', borderRadius: 8,
+          border: '1px solid rgba(34,197,94,.3)', marginBottom: 10, fontSize: 12, color: '#86efac',
+        }}>
+          ✅ 新版本 v{updateStatus.version} 已就绪，下次启动自动安装
+        </div>
+      )}
 
       {/* 端口冲突警告 */}
       {portConflict && (
@@ -217,25 +244,18 @@ export default function App() {
       )}
 
       {/* IDE 状态 */}
+      {/* IDE 接入状态 */}
       {(hasKey || isRunning) && (
         <div className="ide-status-group">
-          {gw.enabled ? (
-            <div className="ide-status">
-              <span className={`ide-dot ${ide.isConfigured ? 'connected' : ''}`} />
-              <span>IDE {ide.isConfigured ? '已接入' : '未接入'}</span>
-              <span className="ide-url">网关模式（自动拦截所有版本）</span>
+          {(ide.instances || []).map((inst: any, i: number) => (
+            <div className="ide-status" key={i}>
+              <span className={`ide-dot ${inst.isConfigured ? 'connected' : ''}`} />
+              <span>{inst.name} {inst.isConfigured ? '已接入' : '未接入'}</span>
+              {inst.isConfigured && inst.configuredUrl && <span className="ide-url">{inst.configuredUrl}</span>}
+              {!inst.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>等待接入</span>}
             </div>
-          ) : (
-            (ide.instances || []).map((inst: any, i: number) => (
-              <div className="ide-status" key={i}>
-                <span className={`ide-dot ${inst.isConfigured ? 'connected' : ''}`} />
-                <span>{inst.name} {inst.isConfigured ? '已接入' : '未接入'}</span>
-                {inst.isConfigured && inst.configuredUrl && <span className="ide-url">{inst.configuredUrl}</span>}
-                {!inst.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>等待接入</span>}
-              </div>
-            ))
-          )}
-          {!gw.enabled && !ide.isConfigured && isRunning && !(ide.instances?.length) && (
+          ))}
+          {!ide.isConfigured && isRunning && !(ide.instances?.length) && (
             <div className="ide-status">
               <span className="ide-dot" />
               <span>IDE 未接入</span>
@@ -245,62 +265,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 网关模式 */}
-      {(hasKey || isRunning) && (
-        <div className="status-card" style={{ marginTop: 8 }}>
-          <div className="status-header">
-            <div className="status-dot" style={{ background: gw.running ? '#22c55e' : '#6b7280' }} />
-            <span className="status-label">HTTPS 网关</span>
-            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
-              {gw.enabled ? (gw.running ? '运行中' : '启动中...') : '未启用'}
-            </span>
-          </div>
-          {gw.enabled && (
-            <div className="key-info" style={{ marginTop: 8 }}>
-              <div className="key-row" style={{ alignItems: 'flex-start' }}>
-                <span>拦截域名</span>
-                <strong style={{ fontSize: 11, textAlign: 'right' }}>
-                  {(gw.domains || [gw.domain]).map((d: string, i: number) => (
-                    <div key={i}>{d}</div>
-                  ))}
-                </strong>
-              </div>
-              <div className="key-row">
-                <span>CA 证书</span>
-                <strong style={{ color: gw.caInstalled ? '#22c55e' : '#ef4444' }}>
-                  {gw.caInstalled ? '✅ 已安装' : '❌ 未安装'}
-                </strong>
-              </div>
-              <div className="key-row">
-                <span>Hosts 劫持</span>
-                <strong style={{ color: gw.hostsActive ? '#22c55e' : '#ef4444' }}>
-                  {gw.hostsActive ? '✅ 已启用' : '❌ 未启用'}
-                </strong>
-              </div>
-              {gw.totalRequests > 0 && (
-                <div className="key-row">
-                  <span>网关请求</span>
-                  <strong>{gw.totalRequests}</strong>
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            className={`btn ${gw.enabled ? 'btn-danger' : 'btn-secondary'}`}
-            style={{ width: '100%', marginTop: 10, fontSize: 13 }}
-            onClick={handleToggleGateway}
-            disabled={loading}
-          >
-            {loading ? '⏳ 处理中...' : gw.enabled ? '🔓 关闭网关' : '🔒 启用 HTTPS 网关'}
-          </button>
-          {!gw.enabled && (
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-              启用后 IDE 无需修改任何配置，流量自动通过本地网关转发。
-              需要管理员权限（首次安装证书 + 修改 hosts）。
-            </p>
-          )}
-        </div>
-      )}
+
 
       {/* 操作按钮 — 有卡密时显示 */}
       {(hasKey || isRunning) && (
