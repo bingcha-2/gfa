@@ -8,6 +8,7 @@ declare global {
       onStateUpdate: (callback: (state: any) => void) => () => void
       onNotification: (callback: (msg: string) => void) => () => void
       onUpdateStatus: (callback: (status: any) => void) => () => void
+      onIDEProducts: (callback: (status: any) => void) => () => void
     }
   }
 }
@@ -243,25 +244,59 @@ export default function App() {
         </div>
       )}
 
-      {/* IDE 状态 */}
-      {/* IDE 接入状态 */}
-      {(hasKey || isRunning) && (
-        <div className="ide-status-group">
-          {(ide.instances || []).map((inst: any, i: number) => (
-            <div className="ide-status" key={i}>
-              <span className={`ide-dot ${inst.isConfigured ? 'connected' : ''}`} />
-              <span>{inst.name} {inst.isConfigured ? '已接入' : '未接入'}</span>
-              {inst.isConfigured && inst.configuredUrl && <span className="ide-url">{inst.configuredUrl}</span>}
-              {!inst.isConfigured && isRunning && <span className="ide-url" style={{ color: 'var(--warning)' }}>等待接入</span>}
+      {/* IDE 产品接管状态 */}
+      {(hasKey || isRunning) && state?.ideProducts?.products?.length > 0 && (
+        <div className="status-card" style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>
+            🖥 IDE 接管状态
+          </div>
+          {state.ideProducts.products.map((p: any) => (
+            <div key={p.id} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 10px', borderRadius: 8, marginBottom: 6,
+              background: p.detected ? 'rgba(255,255,255,.04)' : 'rgba(255,255,255,.02)',
+              border: '1px solid rgba(255,255,255,.06)',
+              opacity: p.detected ? 1 : 0.5,
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+                    background: !p.detected ? '#4b5563' : p.injected ? '#22c55e' : '#f59e0b',
+                  }} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{p.name}</span>
+                  <span style={{
+                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                    background: p.injectionType === 'asar' ? 'rgba(139,92,246,.2)' : p.injectionType === 'env' ? 'rgba(234,179,8,.2)' : 'rgba(99,102,241,.2)',
+                    color: p.injectionType === 'asar' ? '#c4b5fd' : p.injectionType === 'env' ? '#fde68a' : '#a5b4fc',
+                  }}>
+                    {p.injectionType === 'settings' ? 'Settings' : p.injectionType === 'asar' ? 'ASAR Patch' : 'ENV'}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, marginLeft: 16 }}>
+                  {!p.detected ? '未检测到' : p.injected ? '✅ 已接管' : p.running ? '🔶 运行中 · 未接管' : '未接管'}
+                </div>
+              </div>
+              {p.detected && isRunning && p.injectionType !== 'env' && (
+                <button
+                  className={`btn ${p.injected ? 'btn-secondary' : 'btn-primary'}`}
+                  style={{ fontSize: 11, padding: '4px 12px', minWidth: 56 }}
+                  onClick={() => sendAction(p.injected ? 'rosetta:restoreProduct' : 'rosetta:injectProduct', { id: p.id })}
+                >
+                  {p.injected ? '恢复' : '接管'}
+                </button>
+              )}
+              {p.detected && isRunning && p.injectionType === 'env' && (
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 11, padding: '4px 12px', minWidth: 56 }}
+                  onClick={() => sendAction('rosetta:injectProduct', { id: p.id })}
+                >
+                  启动
+                </button>
+              )}
             </div>
           ))}
-          {!ide.isConfigured && isRunning && !(ide.instances?.length) && (
-            <div className="ide-status">
-              <span className="ide-dot" />
-              <span>IDE 未接入</span>
-              <span className="ide-url" style={{ color: 'var(--warning)' }}>开启后自动接入</span>
-            </div>
-          )}
         </div>
       )}
 

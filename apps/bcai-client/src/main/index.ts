@@ -11,6 +11,7 @@ import * as crypto from 'crypto'
 import { spawn, execFileSync } from 'child_process'
 import * as net from 'net'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
+import { setLogger, detectAllProducts, injectProduct, restoreProduct, injectAllDetected, killAndRestartHub } from './ide-products'
 
 // ─── Constants ──────────────────────────────────────────────────────────
 const IS_WIN = process.platform === 'win32'
@@ -54,6 +55,7 @@ function log(msg: string): void {
   const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   console.log(`[${ts}] ${msg}`)
 }
+setLogger(log)
 
 function readJsonFile<T>(filePath: string, fallback: T): T {
   try {
@@ -306,6 +308,7 @@ async function collectState(): Promise<any> {
       expectedUrl: PROXY_URL,
       isConfigured: configuredUrl === PROXY_URL,
     },
+    ideProducts: detectAllProducts(PROXY_PORT),
     accounts: [],
   }
 }
@@ -373,8 +376,16 @@ function setupIpcHandlers(): void {
             await new Promise(r => setTimeout(r, 1500))
 
             // 清除 IDE 配置
-            writeIdeCloudCodeUrl('')
-            log('[relay:off] IDE cloudCodeUrl cleared')
+            // 恢复所有 IDE 产品
+            const offStatus = detectAllProducts(PROXY_PORT)
+            for (const p of offStatus.products) {
+              if (p.injected) {
+                const err = restoreProduct(p.id)
+                if (err) log(`[relay:off] restore ${p.id} failed: ${err}`)
+                else log(`[relay:off] ${p.id} restored`)
+              }
+            }
+            log('[relay:off] all IDE products restored')
           } else {
             // ─── 开启续杯 ─────────────────
             const config = readConfig()
@@ -412,6 +423,43 @@ function setupIpcHandlers(): void {
           break
         }
 
+        case 'rosetta:getIDEProducts': {
+          const products = detectAllProducts(PROXY_PORT)
+          mainWindow?.webContents.send('rosetta:ideProducts', products)
+          break
+        }
+
+        case 'rosetta:injectProduct': {
+          const pid = String(payload?.id || '')
+          const err = injectProduct(pid, PROXY_PORT)
+          if (err) {
+            log(`[inject] ${pid} failed: ${err}`)
+            sendNotification(`接管失败: ${err}`)
+          } else {
+            log(`[inject] ${pid} ok`)
+            sendNotification(`${pid === 'antigravity_hub' ? 'Hub' : 'IDE'} 已接管`)
+            // Hub 注入后需要重启
+            if (pid === 'antigravity_hub') killAndRestartHub()
+          }
+          await refreshAndPush()
+          break
+        }
+
+        case 'rosetta:restoreProduct': {
+          const rid = String(payload?.id || '')
+          const rerr = restoreProduct(rid)
+          if (rerr) {
+            log(`[restore] ${rid} failed: ${rerr}`)
+            sendNotification(`恢复失败: ${rerr}`)
+          } else {
+            log(`[restore] ${rid} ok`)
+            sendNotification(`${rid === 'antigravity_hub' ? 'Hub' : 'IDE'} 已恢复`)
+            if (rid === 'antigravity_hub') killAndRestartHub()
+          }
+          await refreshAndPush()
+          break
+        }
+
         default:
           log(`[IPC] unknown action: ${type}`)
       }
@@ -440,8 +488,9 @@ function startRelay(): void {
   // 等待启动后写入 IDE 配置
   waitForProxy(15000).then((ok) => {
     if (ok) {
-      writeIdeCloudCodeUrl(PROXY_URL)
-      log('[relay:on] started + IDE configured')
+      // 注入所有已检测到的 IDE 产品（IDE: settings.json, Hub: asar patch）
+      injectAllDetected(PROXY_PORT)
+      log('[relay:on] started + all IDE products injected')
 
       // 检查 language_server 是否已连到我们的代理（参照 timo 方案）
       if (IS_WIN) {
@@ -557,10 +606,13 @@ function createTray(): void {
     {
       label: '退出', click: async () => {
         isQuitting = true
-        // 停止续杯 + 清除 IDE 配置
+        // 停止续杯 + 恢复所有 IDE 产品
         if (await isProxyRunning()) {
           await stopTokenProxy()
-          writeIdeCloudCodeUrl('')
+          const quitStatus = detectAllProducts(PROXY_PORT)
+          for (const p of quitStatus.products) {
+            if (p.injected) restoreProduct(p.id)
+          }
         }
         app.quit()
       }

@@ -29,4 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('rosetta:updateStatus', handler)
     return () => ipcRenderer.removeListener('rosetta:updateStatus', handler)
   },
+
+  /** 监听 IDE 产品状态 */
+  onIDEProducts: (callback: (status: any) => void) => {
+    const handler = (_event: any, status: any) => callback(status)
+    ipcRenderer.on('rosetta:ideProducts', handler)
+    return () => ipcRenderer.removeListener('rosetta:ideProducts', handler)
+  },
 })
