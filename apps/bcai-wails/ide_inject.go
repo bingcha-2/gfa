@@ -32,8 +32,9 @@ type IDEProduct struct {
 
 // IDEStatus 注入状态
 type IDEStatus struct {
-	Products []IDEProduct `json:"products"`
-	ProxyURL string       `json:"proxyUrl"`
+	Products         []IDEProduct `json:"products"`
+	ProxyURL         string       `json:"proxyUrl"`
+	IsLSProxyApplied bool         `json:"isLsProxyApplied"` // 所有 LS 是否已连接代理
 }
 
 var (
@@ -80,8 +81,9 @@ func DetectIDEProducts(proxyPort int) IDEStatus {
 	})
 
 	return IDEStatus{
-		Products: products,
-		ProxyURL: proxyURL,
+		Products:         products,
+		ProxyURL:         proxyURL,
+		IsLSProxyApplied: IsLSProxyApplied(proxyPort),
 	}
 }
 
@@ -677,66 +679,138 @@ func copyFile(src, dst string) error {
 
 // ======================== 应用重启 ========================
 
-// RestartLanguageServerIfNeeded 检查 language_server 是否已指向代理，如果没有则杀掉它让 IDE 自动重启
-// 这样不需要杀 IDE 主进程，保留用户的 Google 登录态（与 timo/Electron 行为一致）
-func RestartLanguageServerIfNeeded(proxyPort int) {
-	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+// lsProcessInfo 表示一个 language_server 进程的信息
+type lsProcessInfo struct {
+	PID     string
+	CmdLine string
+}
+
+// queryLanguageServerProcesses 查询所有 language_server 进程，返回逐进程的 PID+CommandLine
+func queryLanguageServerProcesses() []lsProcessInfo {
+	var results []lsProcessInfo
 
 	switch runtime.GOOS {
 	case "windows":
-		// 用 PowerShell Get-CimInstance 查询 language_server 的命令行参数（与 timo 完全相同的命令）
+		// 逐进程查询 PID 和 CommandLine（避免拼接在一起无法区分）
 		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-			`Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%'" | Select-Object -ExpandProperty CommandLine`,
+			`Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%'" | ForEach-Object { Write-Output "PID=$($_.ProcessId)|CMD=$($_.CommandLine)" }`,
 		).Output()
 		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-			Log("[ide-inject] language_server 未运行，跳过")
-			return
+			return results
 		}
-
-		cmdline := string(out)
-		// 检查 --cloud_code_endpoint 参数是否已指向我们的代理
-		if strings.Contains(cmdline, proxyURL) {
-			Log("[ide-inject] language_server 已连接到代理 %s，跳过重启", proxyURL)
-			return
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "PID=") {
+				continue
+			}
+			parts := strings.SplitN(line, "|CMD=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			pid := strings.TrimPrefix(parts[0], "PID=")
+			cmdline := parts[1]
+			if pid != "" {
+				results = append(results, lsProcessInfo{PID: pid, CmdLine: cmdline})
+			}
 		}
-
-		// endpoint 不匹配 → 杀 language_server，IDE 会自动重启它并读取新的 settings.json
-		_ = exec.Command("taskkill", "/IM", "language_server_windows_x64.exe", "/F").Run()
-		Log("[ide-inject] 已杀死 language_server，IDE 将自动重启它（读取新配置）")
 
 	case "darwin":
 		out, err := exec.Command("bash", "-c",
 			"ps -eo pid,command | grep 'language_server_darwin' | grep -v grep",
 		).Output()
-		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-			Log("[ide-inject] language_server 未运行，跳过")
-			return
+		if err != nil {
+			return results
 		}
-		if strings.Contains(string(out), proxyURL) {
-			Log("[ide-inject] language_server 已连接到代理，跳过重启")
-			return
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.SplitN(line, " ", 2)
+			if len(fields) == 2 {
+				results = append(results, lsProcessInfo{PID: fields[0], CmdLine: fields[1]})
+			}
 		}
-		_ = exec.Command("bash", "-c",
-			"pgrep -f 'language_server_darwin' | xargs -r kill 2>/dev/null",
-		).Run()
-		Log("[ide-inject] 已杀死 language_server (macOS)")
 
 	case "linux":
 		out, err := exec.Command("bash", "-c",
 			"ps -eo pid,command | grep 'language_server_linux' | grep -v grep",
 		).Output()
-		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-			Log("[ide-inject] language_server 未运行，跳过")
-			return
+		if err != nil {
+			return results
 		}
-		if strings.Contains(string(out), proxyURL) {
-			Log("[ide-inject] language_server 已连接到代理，跳过重启")
-			return
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.SplitN(line, " ", 2)
+			if len(fields) == 2 {
+				results = append(results, lsProcessInfo{PID: fields[0], CmdLine: fields[1]})
+			}
 		}
-		_ = exec.Command("bash", "-c",
-			"pgrep -f 'language_server_linux' | xargs -r kill 2>/dev/null",
-		).Run()
-		Log("[ide-inject] 已杀死 language_server (Linux)")
+	}
+
+	return results
+}
+
+// IsLSProxyApplied 检查所有正在运行的 language_server 是否都已连接到代理端口
+// 类似 timo 的 is_ls_proxy_applied 字段，前端可用于轮询确认注入是否真正生效
+func IsLSProxyApplied(proxyPort int) bool {
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	processes := queryLanguageServerProcesses()
+
+	if len(processes) == 0 {
+		// 没有 LS 进程运行，视为未生效
+		return false
+	}
+
+	for _, p := range processes {
+		if !strings.Contains(p.CmdLine, proxyURL) {
+			return false
+		}
+	}
+	return true
+}
+
+// RestartLanguageServerIfNeeded 逐进程检查 language_server 是否已指向代理
+// 只杀未连接代理的进程，保留已接管的进程（修复多 LS 场景下的 bug）
+func RestartLanguageServerIfNeeded(proxyPort int) {
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	processes := queryLanguageServerProcesses()
+
+	if len(processes) == 0 {
+		Log("[ide-inject] language_server 未运行，跳过")
+		return
+	}
+
+	Log("[ide-inject] 发现 %d 个 language_server 进程", len(processes))
+
+	killedCount := 0
+	skippedCount := 0
+
+	for _, p := range processes {
+		if strings.Contains(p.CmdLine, proxyURL) {
+			Log("[ide-inject] PID %s 已连接代理 %s，保留", p.PID, proxyURL)
+			skippedCount++
+			continue
+		}
+
+		// 未连接代理 → 精确杀掉该 PID
+		Log("[ide-inject] PID %s 未连接代理，正在终止...", p.PID)
+		switch runtime.GOOS {
+		case "windows":
+			_ = exec.Command("taskkill", "/PID", p.PID, "/F").Run()
+		default:
+			_ = exec.Command("kill", "-9", p.PID).Run()
+		}
+		killedCount++
+	}
+
+	if killedCount > 0 {
+		Log("[ide-inject] 已终止 %d 个未接管的 language_server，保留 %d 个已接管的", killedCount, skippedCount)
+	} else {
+		Log("[ide-inject] 所有 %d 个 language_server 均已连接代理，无需重启", skippedCount)
 	}
 }
 
