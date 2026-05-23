@@ -19,13 +19,24 @@ import (
 const API_BASE = "https://bcai.site/remote-token"
 
 type TokenLease struct {
-	AccessToken string `json:"accessToken"`
-	ProjectId   string `json:"projectId"`
-	AccountId   int    `json:"accountId"`
-	LeaseId     string `json:"leaseId"`
-	EmailHint   string `json:"emailHint"`
-	ExpiresAt   int64  `json:"expiresAt"` // millisecond unix timestamp
-	LeasedAt    int64  `json:"leasedAt"`
+	AccessToken    string                 `json:"accessToken"`
+	ProjectId      string                 `json:"projectId"`
+	AccountId      int                    `json:"accountId"`
+	LeaseId        string                 `json:"leaseId"`
+	EmailHint      string                 `json:"emailHint"`
+	ExpiresAt      int64                  `json:"expiresAt"` // millisecond unix timestamp
+	LeasedAt       int64                  `json:"leasedAt"`
+	RetryPolicy    *RemoteRetryPolicy     `json:"-"` // P1④: server-controlled retry policy
+	CandidateStats map[string]interface{} `json:"-"` // server-reported candidate stats
+	Probation      bool                   `json:"-"`
+}
+
+// RemoteRetryPolicy mirrors the extension's normalizeRemoteRetryPolicy
+// (token-proxy.js L66-96). Sent by the server in lease responses.
+type RemoteRetryPolicy struct {
+	MaxAttempts        int            `json:"maxAttempts"`
+	RetryableStatuses  []int          `json:"retryableStatuses"`
+	StatusMaxAttempts  map[int]int    `json:"statusMaxAttempts"`
 }
 
 type Leaser struct {
@@ -38,6 +49,15 @@ type Leaser struct {
 	leaseRunning    bool
 	cancelLease     context.CancelFunc
 	accessKeyStatus map[string]interface{}
+	// P2⑨: Inflight lease dedup — prevents duplicate concurrent lease requests
+	inflightMu      sync.Mutex
+	inflightLease   map[string]chan struct{} // key → wait channel
+	inflightResult  map[string]*inflightLeaseResult
+}
+
+type inflightLeaseResult struct {
+	lease *TokenLease
+	err   error
 }
 
 var globalLeaser = &Leaser{}
@@ -194,6 +214,7 @@ type LeaseTokenResp struct {
 	AccessTokenExpiresAt string          `json:"accessTokenExpiresAt"`
 	AccessTokenExpiresIn int64           `json:"accessTokenExpiresIn"`
 	ActivationExpiresAt  string          `json:"activationExpiresAt"`
+	Probation            bool            `json:"probation"`
 }
 
 func parseAccountId(raw json.RawMessage) int {
@@ -390,6 +411,26 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		EmailHint:   leaseResp.EmailHint,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixNano() / int64(time.Millisecond),
+		Probation:   leaseResp.Probation,
+	}
+
+	// P1④: Parse retryPolicy from lease response (server-controlled retry)
+	var rawResp2 map[string]json.RawMessage
+	if json.Unmarshal(body, &rawResp2) == nil {
+		if rpRaw, ok := rawResp2["retryPolicy"]; ok {
+			var rp RemoteRetryPolicy
+			if json.Unmarshal(rpRaw, &rp) == nil && rp.MaxAttempts > 0 {
+				lease.RetryPolicy = &rp
+				Log("[token-leaser] Server retryPolicy: maxAttempts=%d retryableStatuses=%v",
+					rp.MaxAttempts, rp.RetryableStatuses)
+			}
+		}
+		if csRaw, ok := rawResp2["candidateStats"]; ok {
+			var cs map[string]interface{}
+			if json.Unmarshal(csRaw, &cs) == nil {
+				lease.CandidateStats = cs
+			}
+		}
 	}
 
 	l.mu.Lock()
@@ -440,6 +481,8 @@ func (l *Leaser) ReportProblemForLease(card, deviceId string, reason string, ups
 	l.ReportProblemForAccount(card, deviceId, reason, upstreamProxy, lease.AccountId)
 }
 
+// ReportProblemForAccount is the legacy report method (simple reason string only).
+// New callers should prefer ReportProblemWithDetails for enriched reporting.
 func (l *Leaser) ReportProblemForAccount(card, deviceId string, reason string, upstreamProxy string, accountId int) {
 	if accountId <= 0 {
 		return
@@ -448,16 +491,16 @@ func (l *Leaser) ReportProblemForAccount(card, deviceId string, reason string, u
 	l.mu.Lock()
 	l.reportCount++
 	if l.cachedToken != nil && l.cachedToken.AccountId == accountId {
-		l.cachedToken = nil // Clear cached token to force rotate on next lease
+		l.cachedToken = nil
 	}
 	l.mu.Unlock()
 
 	Log("[token-leaser] Reporting account %d unavailable, reason=%s", accountId, reason)
 	client := createHttpClient(upstreamProxy)
 	payload := map[string]interface{}{
-		"accountId":   accountId,
-		"reason":      reason,
-		"statusCode":  0,
+		"accountId":  accountId,
+		"reason":     reason,
+		"statusCode": 0,
 	}
 
 	go func() {
@@ -474,6 +517,59 @@ func (l *Leaser) ReportProblemForAccount(card, deviceId string, reason string, u
 		}
 	}()
 }
+// ReportProblemWithDetails sends an enriched report-result to the server,
+// matching the extension's reportRemoteResult (token-proxy.js L1448-1477).
+func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportDetails, upstreamProxy string, lease *TokenLease) {
+	if lease == nil {
+		return
+	}
+
+	l.mu.Lock()
+	l.reportCount++
+	if l.cachedToken != nil && l.cachedToken.AccountId == lease.AccountId {
+		l.cachedToken = nil
+	}
+	l.mu.Unlock()
+
+	Log("[token-leaser] Report account=%d status=%d model=%s reason=%s retryAfter=%dms",
+		lease.AccountId, details.StatusCode, details.ModelKey, details.Reason, details.RetryAfterMs)
+
+	client := createHttpClient(upstreamProxy)
+	payload := map[string]interface{}{
+		"leaseId":      lease.LeaseId,
+		"accountId":    lease.AccountId,
+		"status":       details.StatusCode,
+		"modelKey":     details.ModelKey,
+		"reason":       details.Reason,
+		"retryAfterMs": details.RetryAfterMs,
+		"inputTokens":  details.InputTokens,
+		"outputTokens": details.OutputTokens,
+		"errorText":    getErrorSnippet(details.ErrorText),
+	}
+
+	go func() {
+		body, _, err := postJsonWithSecret(client, "/report-result", payload, card)
+		if err != nil {
+			Log("[token-leaser] Report-result network failed: %v", err)
+			return
+		}
+		var r struct {
+			Success        bool                   `json:"success"`
+			AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
+		}
+		if json.Unmarshal(body, &r) == nil {
+			if r.Success {
+				Log("[token-leaser] Report accepted by server")
+			}
+			if r.AccessKeyStatus != nil {
+				l.mu.Lock()
+				l.accessKeyStatus = r.AccessKeyStatus
+				l.mu.Unlock()
+			}
+		}
+	}()
+}
+
 
 func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 	l.mu.Lock()
