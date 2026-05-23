@@ -270,31 +270,41 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 	}
 
 	// IDE: 先尝试只重启 language_server（保留登录态）
-	// 如果 LS 未能在 8 秒内连接代理，则升级为完整重启 IDE（解决 extension host 端口缓存问题）
+	// 异步验证 LS 是否连接代理，避免阻塞 Wails RPC
 	if restartIDE {
 		if IsIDERunning() {
 			RestartLanguageServerIfNeeded(cfg.ProxyPort)
-			// 等待 LS 生效
-			lsApplied := false
-			for i := 0; i < 8; i++ {
-				time.Sleep(1 * time.Second)
-				if IsLSProxyApplied(cfg.ProxyPort) {
-					lsApplied = true
-					break
+			results = append(results, "Antigravity IDE: ✓ 已接管（正在验证 LS 连接）")
+			// 异步验证：不阻塞前端
+			proxyPort := cfg.ProxyPort
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						Log("[ide-inject] LS 验证 goroutine panic: %v", r)
+					}
+				}()
+				// 等 3 秒让 IDE 拉起新 LS
+				time.Sleep(3 * time.Second)
+				// 检查是否有 LS 进程
+				procs := queryLanguageServerProcesses()
+				if len(procs) == 0 {
+					Log("[ide-inject] 无 LS 进程，等待 IDE 自动拉起...")
+					time.Sleep(5 * time.Second)
+					procs = queryLanguageServerProcesses()
 				}
-				Log("[ide-inject] 等待 LS 连接代理... (%d/8)", i+1)
-			}
-			if lsApplied {
-				results = append(results, "Antigravity IDE: ✓ 已接管（LS 已连接代理）")
-			} else {
-				// LS 未生效 → extension host 可能缓存旧端口，升级为完整重启 IDE
-				Log("[ide-inject] LS 未在 8s 内生效，升级为完整重启 IDE")
+				if len(procs) == 0 {
+					Log("[ide-inject] 仍无 LS 进程，跳过验证")
+					return
+				}
+				if IsLSProxyApplied(proxyPort) {
+					Log("[ide-inject] ✓ LS 已连接代理，接管验证通过")
+					return
+				}
+				Log("[ide-inject] LS 存在但未连接代理，尝试完整重启 IDE")
 				if err := ForceRestartIDE(); err != nil {
-					results = append(results, "Antigravity IDE: ✓ 已接管，但自动重启失败，请手动重启 IDE")
-				} else {
-					results = append(results, "Antigravity IDE: ✓ 已接管并重启 IDE")
+					Log("[ide-inject] 完整重启 IDE 失败: %v", err)
 				}
-			}
+			}()
 		} else {
 			if err := LaunchIDE(); err != nil {
 				results = append(results, "Antigravity IDE: ✓ 已接管，启动失败")
