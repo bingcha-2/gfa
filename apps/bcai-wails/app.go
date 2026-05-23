@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -269,49 +268,22 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		}
 	}
 
-	// IDE: 先尝试只重启 language_server（保留登录态）
-	// 异步验证 LS 是否连接代理，避免阻塞 Wails RPC
+	// IDE: 写入 settings.json 后直接完整重启 IDE（与 Timo 策略一致）
+	// 只杀 LS 行不通：extension host 会缓存旧端口导致 ECONNREFUSED
 	if restartIDE {
-		if IsIDERunning() {
-			RestartLanguageServerIfNeeded(cfg.ProxyPort)
-			results = append(results, "Antigravity IDE: ✓ 已接管（正在验证 LS 连接）")
-			// 异步验证：不阻塞前端
-			proxyPort := cfg.ProxyPort
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						Log("[ide-inject] LS 验证 goroutine panic: %v", r)
-					}
-				}()
-				// 等 3 秒让 IDE 拉起新 LS
-				time.Sleep(3 * time.Second)
-				// 检查是否有 LS 进程
-				procs := queryLanguageServerProcesses()
-				if len(procs) == 0 {
-					Log("[ide-inject] 无 LS 进程，等待 IDE 自动拉起...")
-					time.Sleep(5 * time.Second)
-					procs = queryLanguageServerProcesses()
-				}
-				if len(procs) == 0 {
-					Log("[ide-inject] 仍无 LS 进程，跳过验证")
-					return
-				}
-				if IsLSProxyApplied(proxyPort) {
-					Log("[ide-inject] ✓ LS 已连接代理，接管验证通过")
-					return
-				}
-				Log("[ide-inject] LS 存在但未连接代理，尝试完整重启 IDE")
-				if err := ForceRestartIDE(); err != nil {
-					Log("[ide-inject] 完整重启 IDE 失败: %v", err)
+		results = append(results, "Antigravity IDE: ✓ 已接管，正在重启 IDE...")
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Log("[ide-inject] IDE 重启 goroutine panic: %v", r)
 				}
 			}()
-		} else {
-			if err := LaunchIDE(); err != nil {
-				results = append(results, "Antigravity IDE: ✓ 已接管，启动失败")
+			if err := ForceRestartIDE(); err != nil {
+				Log("[ide-inject] 完整重启 IDE 失败: %v", err)
 			} else {
-				results = append(results, "Antigravity IDE: ✓ 已接管并启动")
+				Log("[ide-inject] ✓ IDE 已完整重启")
 			}
-		}
+		}()
 	}
 
 	if restartHub {
