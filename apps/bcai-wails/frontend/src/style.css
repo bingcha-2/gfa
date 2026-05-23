@@ -41,15 +41,14 @@ html, body {
     user-select: none;
 }
 
-/* Main Container Layout */
+/* Main Container Layout - Sidebar + Content */
 .app-container {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     width: 100vw;
     height: 100vh;
-    padding: 16px;
     background-color: var(--bg-main);
-    gap: 12px;
+    overflow: hidden;
 }
 
 /* Premium Glass Header */
@@ -1895,3 +1894,428 @@ code {
 .pool-add-row select:focus {
     border-color: var(--border-focus);
 }
+
+/* ======================== Sidebar ======================== */
+.sidebar {
+    width: 150px;
+    min-width: 150px;
+    height: 100vh;
+    background: #121218;
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: 12px 0;
+    flex-shrink: 0;
+    --wails-draggable: drag;
+}
+
+.sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 14px 16px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+.sidebar-logo-img {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+}
+
+.sidebar-logo-text {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 8px;
+    flex: 1;
+}
+
+.sidebar-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 8px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 8px;
+}
+
+.sidebar-ver {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 6px 0 0;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+    border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+}
+
+.nav-item.active {
+    background: rgba(99, 102, 241, 0.1);
+    color: #fff;
+    border-left-color: var(--accent);
+    font-weight: 600;
+}
+
+.nav-icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.nav-label {
+    white-space: nowrap;
+}
+
+/* ======================== Main Content ======================== */
+.main-content {
+    flex: 1;
+    min-width: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.main-content::-webkit-scrollbar { width: 5px; }
+.main-content::-webkit-scrollbar-track { background: transparent; }
+.main-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+
+/* ======================== Page Routing ======================== */
+.page {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-height: 0;
+    animation: pageIn 0.2s ease;
+}
+
+.page.active {
+    display: flex;
+}
+
+@keyframes pageIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.page-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+}
+
+/* ======================== Home Grid ======================== */
+.home-grid {
+    display: flex;
+    gap: 14px;
+    flex: 1;
+    min-height: 0;
+}
+
+.home-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    overflow-y: auto;
+}
+
+.home-col::-webkit-scrollbar { width: 4px; }
+.home-col::-webkit-scrollbar-track { background: transparent; }
+.home-col::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.05); border-radius: 2px; }
+
+/* ======================== Generic Card ======================== */
+.card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ======================== LS Status Row ======================== */
+.ls-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 6px;
+    margin-top: 8px;
+    font-size: 11px;
+}
+
+.ls-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.ls-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.ls-dot.partial { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.ls-dot.off { background: var(--text-muted); }
+
+.ls-text { color: var(--text-secondary); }
+
+/* ======================== Log Page ======================== */
+.log-filter-bar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.log-filter-btn {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-outfit);
+    transition: all 0.15s;
+}
+
+.log-filter-btn:hover { background: rgba(255,255,255,0.06); }
+.log-filter-btn.active {
+    background: rgba(99,102,241,0.12);
+    border-color: rgba(99,102,241,0.3);
+    color: #a5b4fc;
+}
+
+.log-search {
+    margin-left: auto;
+    width: 180px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: var(--text-primary);
+    font-family: var(--font-outfit);
+    outline: none;
+}
+
+.log-search:focus { border-color: var(--border-focus); }
+
+.log-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-ghost {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.btn-ghost:hover {
+    background: rgba(255,255,255,0.07);
+    color: var(--text-primary);
+}
+
+.log-view-box {
+    background: #0d0d12;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    flex: 1;
+    min-height: 200px;
+    overflow-y: auto;
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+}
+
+.log-view-box::-webkit-scrollbar { width: 4px; }
+.log-view-box::-webkit-scrollbar-track { background: transparent; }
+.log-view-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+
+/* ======================== Pool Page Enhanced ======================== */
+.pool-account-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 100px;
+}
+
+.pool-account-item {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color 0.15s;
+}
+
+.pool-account-item:hover {
+    border-color: rgba(255,255,255,0.12);
+}
+
+.pool-acc-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pool-acc-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.pool-acc-dot.ok { background: var(--success); box-shadow: 0 0 5px var(--success); }
+.pool-acc-dot.exhausted { background: var(--warn); }
+.pool-acc-dot.error { background: var(--danger); }
+.pool-acc-dot.disabled { background: var(--text-muted); }
+
+.pool-acc-info { flex: 1; min-width: 0; }
+.pool-acc-email { font-size: 12px; font-weight: 600; color: #fff; }
+.pool-acc-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+.pool-acc-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.pool-acc-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    transition: all 0.15s;
+}
+
+.pool-acc-btn:hover { background: rgba(255,255,255,0.06); }
+.pool-acc-btn.btn-remove:hover { color: var(--danger); border-color: rgba(248,113,113,0.3); }
+
+/* Model quota badges inside pool account */
+.pool-model-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0 0 18px;
+}
+
+.model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border-color);
+    background: rgba(255,255,255,0.02);
+}
+
+.model-badge .model-name {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.model-badge .model-countdown {
+    font-weight: 700;
+}
+
+.model-badge.ok .model-countdown { color: var(--success); }
+.model-badge.warning .model-countdown { color: var(--warn); }
+.model-badge.blocked .model-countdown { color: var(--danger); }
+
+.pool-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 20px;
+}
+
+.pool-add-card {
+    flex-shrink: 0;
+}
+
+/* ======================== Refill Countdown ======================== */
+#refill-countdown {
+    font-family: var(--font-mono);
+    color: var(--warn);
+    font-weight: 700;
+}
+
+/* ======================== About ======================== */
+.about-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.about-row {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    align-items: center;
+}
+
+.about-row .label { color: var(--text-secondary); }
+.about-row .val { color: var(--text-primary); }
+

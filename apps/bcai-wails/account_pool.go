@@ -575,7 +575,7 @@ func (p *AccountPool) ListAccounts() []AccountInfo {
 			info.BlockedModels = make(map[string]string)
 			for model, until := range acc.blockedModels {
 				if until.After(now) {
-					info.BlockedModels[model] = until.Format("15:04:05")
+					info.BlockedModels[model] = until.Format(time.RFC3339)
 				}
 			}
 		}

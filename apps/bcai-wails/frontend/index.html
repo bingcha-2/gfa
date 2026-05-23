@@ -10,225 +10,253 @@
 </head>
 <body>
 <div id="app" class="app-container">
-    <!-- 顶部状态栏 -->
-    <header class="app-header">
-        <div class="logo-area">
-            <div class="logo-icon-box">
-                <img src="/src/assets/images/bcai-icon.png" alt="冰茶AI">
-            </div>
-            <div>
-                <span class="logo-text">冰茶AI</span>
-                <span class="ver-badge">v4.2.0</span>
-            </div>
-        </div>
-        <div class="header-right">
-            <button class="btn-header" id="btn-header-shop" title="购买账号卡">🛒 购买账号卡</button>
-            <button class="btn-header" id="btn-open-settings" title="设置">⚙ 设置</button>
-        </div>
-    </header>
 
-    <!-- 更新通知条 -->
-    <div id="update-banner" class="update-banner" style="display: none;"></div>
+    <!-- 侧边导航栏 -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/src/assets/images/bcai-icon.png" alt="冰茶AI" class="sidebar-logo-img">
+            <span class="sidebar-logo-text">冰茶AI</span>
+        </div>
+        <div class="sidebar-nav">
+            <a class="nav-item active" data-page="home" id="nav-home">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">控制台</span>
+            </a>
+            <a class="nav-item" data-page="pool" id="nav-pool">
+                <span class="nav-icon">💻</span>
+                <span class="nav-label">本地号池</span>
+            </a>
+            <a class="nav-item" data-page="logs" id="nav-logs">
+                <span class="nav-icon">📋</span>
+                <span class="nav-label">日志</span>
+            </a>
+        </div>
+        <div class="sidebar-bottom">
+            <a class="nav-item" data-page="settings" id="nav-settings">
+                <span class="nav-icon">⚙</span>
+                <span class="nav-label">设置</span>
+            </a>
+            <div class="sidebar-ver" id="sidebar-ver">v4.2.1</div>
+        </div>
+    </nav>
 
-    <!-- 主面板区：左右分栏 -->
-    <div class="dashboard-body">
-        <!-- 左侧：参数与注入控制 -->
-        <div class="config-panel panel-card">
-            <!-- 状态指示栏 -->
+    <!-- 主内容区 -->
+    <main class="main-content">
+
+        <!-- 更新通知条 -->
+        <div id="update-banner" class="update-banner" style="display: none;"></div>
+
+        <!-- ========== 页面1: 控制台 ========== -->
+        <div class="page active" id="page-home">
+            <!-- 状态条 -->
             <div class="pill" id="pill-status-container">
                 <div class="dot dot-off" id="pill-dot"></div>
                 <div class="pill-text" id="pill-text">正在检查状态...</div>
             </div>
-
-            <!-- 账号到期信息 -->
             <div class="pill expiry-pill-box" id="expiry-box" style="display: none;">
-                <span class="label">账号到期时间:</span>
+                <span class="label">账号到期:</span>
                 <span class="val" id="expiry-text">--</span>
-            </div>
-
-
-            <!-- IDE 注入控制卡片 -->
-            <div class="inner-card" id="ide-inject-card">
-                <div class="inner-card-t">🚀 IDE 接管控制</div>
-                
-                <!-- IDE 产品列表 -->
-                <div class="ide-status-list" id="ide-status-list">
-                    <div class="ide-product-row" id="ide-product-ide" data-target="ide">
-                        <div class="ide-product-info">
-                            <span class="ide-product-name">Antigravity IDE</span>
-                            <span class="ide-product-status" id="ide-status-text">检测中...</span>
-                        </div>
-                        <div class="ide-product-badge" id="ide-toggle-badge" data-selected="false">○</div>
-                    </div>
-                    <div class="ide-product-row" id="ide-product-hub" data-target="hub">
-                        <div class="ide-product-info">
-                            <span class="ide-product-name">Antigravity Hub</span>
-                            <span class="ide-product-status" id="hub-status-text">检测中...</span>
-                        </div>
-                        <div class="ide-product-badge" id="hub-toggle-badge" data-selected="false">○</div>
-                    </div>
-                </div>
-
-                <!-- 注入操作按钮 -->
-                <div class="card-control-section" style="margin-top: 10px;">
-                    <button type="button" class="btn btn-p btn-inject-toggle" id="btn-inject-toggle" style="width: 100%;">🔌 开启接管</button>
-                </div>
-                <div class="hint-text" id="ide-inject-hint" style="margin-top: 8px;">
-                    点击选择要接管的产品，再点击按钮开启接管。
-                </div>
-            </div>
-
-            <!-- 模式切换 + 号池管理 -->
-            <div class="inner-card" id="pool-mode-card">
-                <div class="inner-card-t">⚡ Token 来源</div>
-                <div class="pool-mode-toggle">
-                    <button class="pool-mode-btn active" id="btn-mode-remote" data-mode="remote">
-                        <span class="mode-icon">☁️</span>
-                        <span class="mode-label">远程租约</span>
-                    </button>
-                    <button class="pool-mode-btn" id="btn-mode-local" data-mode="local">
-                        <span class="mode-icon">💻</span>
-                        <span class="mode-label">本地号池</span>
-                    </button>
-                </div>
-
-                <!-- 本地号池面板 (初始隐藏) -->
-                <div id="pool-panel" class="pool-panel" style="display: none;">
-                    <div class="pool-status-bar" id="pool-status-bar">
-                        <span class="pool-stat"><b id="pool-total">0</b> 总数</span>
-                        <span class="pool-stat available"><b id="pool-available">0</b> 可用</span>
-                        <span class="pool-stat exhausted"><b id="pool-exhausted">0</b> 冷却</span>
-                        <span class="pool-stat token"><b id="pool-with-token">0</b> 活跃</span>
-                    </div>
-
-                    <!-- 账号列表 -->
-                    <div class="pool-account-list" id="pool-account-list">
-                        <div class="pool-empty">暂无账号，请在下方添加</div>
-                    </div>
-
-                    <!-- 添加账号表单 -->
-                    <div class="pool-add-form">
-                        <input type="text" id="pool-add-email" placeholder="邮箱地址" autocomplete="off" />
-                        <input type="text" id="pool-add-token" placeholder="Refresh Token (1//...)" autocomplete="off" />
-                        <div class="pool-add-row">
-                            <select id="pool-add-profile">
-                                <option value="antigravity">Antigravity</option>
-                                <option value="legacy">Legacy (Cloud Code)</option>
-                            </select>
-                            <button type="button" class="btn btn-p btn-sm" id="btn-pool-add">+ 添加</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 账号配置卡片 -->
-            <div class="inner-card">
-                <div class="inner-card-t">🔑 账号卡配置</div>
-                <div id="current-card-info" class="current-card-info-box" style="display: none; margin-bottom: 10px;">
-                    <div class="card-info-header">当前生效账号卡</div>
-                    <div class="card-row">
-                        <span class="card-value font-mono" id="current-card-text">AI-XXXXXX...</span>
-                        <button type="button" class="btn-copy" id="btn-copy-card" title="复制账号卡">⌘</button>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-bottom: 8px;">
-                    <input type="text" id="cfg-account-card" placeholder="输入账号卡 (AI...)" autocomplete="off" style="width: 100%; margin-bottom: 8px;" />
-                    <button type="button" class="btn btn-p" id="btn-activate-card" style="width: 100%;">✨ 保存账号卡</button>
-                </div>
-                <div class="hint-text">输入新账号卡后点击保存即可更换</div>
-            </div>
-
-            <!-- 购买账号卡 Banner -->
-            <div class="shop-banner" id="shop-banner">
-                <div class="shop-icon">🛒</div>
-                <div class="shop-text">
-                    <div class="shop-title">购买账号卡</div>
-                    <div class="shop-desc">账号过期？点击前往店铺购买</div>
-                </div>
-                <div class="shop-arrow">→</div>
-            </div>
-            
-            <div style="height: 10px; flex-shrink: 0;"></div>
-        </div>
-
-        <!-- 右侧：统计概览 & 实时日志 -->
-        <div class="stats-logs-panel">
-            <div class="inner-card" style="flex-shrink: 0; padding: 12px 14px;">
-                <div class="inner-card-t">📊 运行信息</div>
-                <div class="stats-mini-grid">
-                    <div class="mini-stat-card">
-                        <span class="mini-stat-value purple-blue" id="stat-total-reqs">0</span>
-                        <span class="mini-stat-label">请求数</span>
-                    </div>
-                    <div class="mini-stat-card">
-                        <span class="mini-stat-value soft-red" id="stat-errors">0</span>
-                        <span class="mini-stat-label">错误数</span>
-                    </div>
-                    <div class="mini-stat-card">
-                        <span class="mini-stat-value bright-violet" id="stat-input-tokens">0</span>
-                        <span class="mini-stat-label">输入 Token</span>
-                    </div>
-                    <div class="mini-stat-card">
-                        <span class="mini-stat-value pink-violet" id="stat-output-tokens">0</span>
-                        <span class="mini-stat-label">输出 Token</span>
-                    </div>
-                </div>
-                <div class="savings-bar" id="savings-bar">
-                    <div class="savings-text">
-                        <div class="savings-amount" id="savings-amount">$0.00</div>
-                        <div class="savings-label">💰 累计已节省 (估算)</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="usage-report panel-card" style="flex-grow: 1; overflow: hidden; display: flex; flex-direction: column;">
-                <div class="log-header">
-                    <span>📊 用量统计</span>
-                    <span class="session-duration" id="session-duration">本次会话: 0分钟</span>
-                </div>
-                <div class="usage-chart-section" style="flex: 1; border-top: none;">
-                    <div class="daily-trend" id="daily-trend-chart">
-                        <div class="trend-empty">暂无使用数据</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="token-status-footer font-mono">
-                <span class="label">设备 ID:</span>
-                <span class="val font-mono" id="cfg-device-id" style="font-size: 9px;">-</span>
                 <span class="divider">|</span>
-                <span class="label">活跃账号:</span>
-                <span class="val" id="info-active-account">无</span>
-                <span class="divider">|</span>
-                <span class="label">令牌状态:</span>
-                <span class="val" id="info-lease-status">未激活</span>
+                <span class="label">5h 倒计时:</span>
+                <span class="val" id="refill-countdown">--</span>
+            </div>
+
+            <!-- 上半区：左右两列 -->
+            <div class="home-grid">
+                <!-- 左列 -->
+                <div class="home-col">
+                    <!-- IDE 接管 -->
+                    <div class="card" id="ide-inject-card">
+                        <div class="card-title">🚀 IDE 接管控制</div>
+                        <div class="ide-status-list" id="ide-status-list">
+                            <div class="ide-product-row" id="ide-product-ide" data-target="ide">
+                                <div class="ide-product-info">
+                                    <span class="ide-product-name">Antigravity IDE</span>
+                                    <span class="ide-product-status" id="ide-status-text">检测中...</span>
+                                </div>
+                                <div class="ide-product-badge" id="ide-toggle-badge" data-selected="false">○</div>
+                            </div>
+                            <div class="ide-product-row" id="ide-product-hub" data-target="hub">
+                                <div class="ide-product-info">
+                                    <span class="ide-product-name">Antigravity Hub</span>
+                                    <span class="ide-product-status" id="hub-status-text">检测中...</span>
+                                </div>
+                                <div class="ide-product-badge" id="hub-toggle-badge" data-selected="false">○</div>
+                            </div>
+                        </div>
+                        <div class="ls-status-row" id="ls-status-row" style="display: none;">
+                            <span class="ls-dot" id="ls-dot"></span>
+                            <span class="ls-text" id="ls-text">LS 状态未知</span>
+                        </div>
+                        <button type="button" class="btn btn-p" id="btn-inject-toggle" style="width: 100%; margin-top: 10px;">🔌 开启接管</button>
+                        <div class="hint-text" id="ide-inject-hint" style="margin-top: 6px;">选择产品后点击按钮开启接管</div>
+                    </div>
+
+                    <!-- Token 来源 -->
+                    <div class="card" id="pool-mode-card">
+                        <div class="card-title">⚡ Token 来源</div>
+                        <div class="pool-mode-toggle">
+                            <button class="pool-mode-btn active" id="btn-mode-remote" data-mode="remote">
+                                <span class="mode-icon">☁️</span><span class="mode-label">远程续杯</span>
+                            </button>
+                            <button class="pool-mode-btn" id="btn-mode-local" data-mode="local">
+                                <span class="mode-icon">💻</span><span class="mode-label">本地号池</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 账号卡 -->
+                    <div class="card">
+                        <div class="card-title">🔑 账号卡配置</div>
+                        <div id="current-card-info" class="current-card-info-box" style="display: none;">
+                            <div class="card-info-header">当前生效</div>
+                            <div class="card-row">
+                                <span class="card-value font-mono" id="current-card-text">AI-XXXXXX...</span>
+                                <button type="button" class="btn-copy" id="btn-copy-card" title="复制">⌘</button>
+                            </div>
+                        </div>
+                        <input type="text" id="cfg-account-card" placeholder="输入账号卡 (AI...)" autocomplete="off" />
+                        <button type="button" class="btn btn-p btn-sm" id="btn-activate-card" style="width: 100%; margin-top: 8px;">✨ 保存账号卡</button>
+                    </div>
+
+                    <!-- 购买 -->
+                    <div class="shop-banner" id="shop-banner">
+                        <div class="shop-icon">🛒</div>
+                        <div class="shop-text">
+                            <div class="shop-title">购买账号卡</div>
+                            <div class="shop-desc">账号过期？点击前往购买</div>
+                        </div>
+                        <div class="shop-arrow">→</div>
+                    </div>
+                </div>
+
+                <!-- 右列 -->
+                <div class="home-col">
+                    <!-- 运行统计 -->
+                    <div class="card">
+                        <div class="card-title">📊 运行信息</div>
+                        <div class="stats-mini-grid">
+                            <div class="mini-stat-card">
+                                <span class="mini-stat-value purple-blue" id="stat-total-reqs">0</span>
+                                <span class="mini-stat-label">请求数</span>
+                            </div>
+                            <div class="mini-stat-card">
+                                <span class="mini-stat-value soft-red" id="stat-errors">0</span>
+                                <span class="mini-stat-label">错误数</span>
+                            </div>
+                            <div class="mini-stat-card">
+                                <span class="mini-stat-value bright-violet" id="stat-input-tokens">0</span>
+                                <span class="mini-stat-label">输入 Token</span>
+                            </div>
+                            <div class="mini-stat-card">
+                                <span class="mini-stat-value pink-violet" id="stat-output-tokens">0</span>
+                                <span class="mini-stat-label">输出 Token</span>
+                            </div>
+                        </div>
+                        <div class="savings-bar" id="savings-bar">
+                            <div class="savings-text">
+                                <div class="savings-amount" id="savings-amount">$0.00</div>
+                                <div class="savings-label">💰 累计已节省</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 用量趋势 -->
+                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>📈 用量趋势</span>
+                            <span class="session-duration" id="session-duration">本次会话: 0分钟</span>
+                        </div>
+                        <div class="daily-trend" id="daily-trend-chart" style="flex: 1;">
+                            <div class="trend-empty">暂无使用数据</div>
+                        </div>
+                    </div>
+
+                    <!-- 底部信息 -->
+                    <div class="token-status-footer font-mono">
+                        <span class="label">设备ID:</span>
+                        <span class="val font-mono" id="cfg-device-id" style="font-size: 9px;">-</span>
+                        <span class="divider">|</span>
+                        <span class="label">活跃账号:</span>
+                        <span class="val" id="info-active-account">无</span>
+                        <span class="divider">|</span>
+                        <span class="label">令牌:</span>
+                        <span class="val" id="info-lease-status">未激活</span>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-</div>
 
-<!-- 设置面板（抽屉） -->
-<div id="settings-overlay" class="settings-overlay" style="display: none;">
-    <div class="settings-drawer">
-        <div class="settings-drawer-header">
-            <span class="settings-drawer-title">⚙ 设置</span>
-            <button class="settings-drawer-close" id="btn-close-settings">&times;</button>
+        <!-- ========== 页面2: 本地号池 ========== -->
+        <div class="page" id="page-pool">
+            <div class="page-header">
+                <h2 class="page-title">💻 本地号池管理</h2>
+            </div>
+            <div class="pool-status-bar" id="pool-status-bar">
+                <span class="pool-stat"><b id="pool-total">0</b> 总数</span>
+                <span class="pool-stat available"><b id="pool-available">0</b> 可用</span>
+                <span class="pool-stat exhausted"><b id="pool-exhausted">0</b> 冷却</span>
+                <span class="pool-stat token"><b id="pool-with-token">0</b> 活跃</span>
+            </div>
+
+            <div class="pool-account-list" id="pool-account-list">
+                <div class="pool-empty">暂无账号，请在下方添加</div>
+            </div>
+
+            <div class="card pool-add-card">
+                <div class="card-title">➕ 添加账号</div>
+                <div class="pool-add-form">
+                    <input type="text" id="pool-add-email" placeholder="邮箱地址" autocomplete="off" />
+                    <input type="text" id="pool-add-token" placeholder="Refresh Token (1//...)" autocomplete="off" />
+                    <div class="pool-add-row">
+                        <select id="pool-add-profile">
+                            <option value="antigravity">Antigravity</option>
+                            <option value="legacy">Legacy (Cloud Code)</option>
+                        </select>
+                        <button type="button" class="btn btn-p btn-sm" id="btn-pool-add">+ 添加</button>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="settings-drawer-body">
-            <!-- 前置代理 -->
-            <div class="settings-section">
-                <div class="settings-section-title">🌐 前置代理</div>
+
+        <!-- ========== 页面3: 日志 ========== -->
+        <div class="page" id="page-logs">
+            <div class="page-header">
+                <h2 class="page-title">📋 实时日志</h2>
+                <div class="log-actions">
+                    <button class="btn btn-sm btn-ghost" id="btn-clear-logs">清空</button>
+                    <button class="btn btn-sm btn-ghost" id="btn-copy-logs">复制</button>
+                </div>
+            </div>
+            <div class="log-filter-bar">
+                <button class="log-filter-btn active" data-filter="all">全部</button>
+                <button class="log-filter-btn" data-filter="error">错误</button>
+                <button class="log-filter-btn" data-filter="warn">警告</button>
+                <button class="log-filter-btn" data-filter="proxy">代理</button>
+                <button class="log-filter-btn" data-filter="inject">注入</button>
+                <button class="log-filter-btn" data-filter="pool">号池</button>
+                <input type="text" class="log-search" id="log-search" placeholder="搜索日志..." />
+            </div>
+            <div class="log-view-box" id="log-view-box"></div>
+        </div>
+
+        <!-- ========== 页面4: 设置 ========== -->
+        <div class="page" id="page-settings">
+            <div class="page-header">
+                <h2 class="page-title">⚙ 设置</h2>
+            </div>
+
+            <div class="card">
+                <div class="card-title">🌐 前置代理</div>
                 <form id="proxy-settings-form" class="settings-form">
                     <input type="text" id="cfg-upstream-proxy" placeholder="例: http://127.0.0.1:7890 (留空直连)" autocomplete="off" />
                     <button type="submit" class="btn btn-secondary btn-sm" style="width: 100%; margin-top: 8px;">保存</button>
                 </form>
             </div>
 
-            <!-- 安装路径 -->
-            <div class="settings-section">
-                <div class="settings-section-title">📂 安装路径</div>
-                <div class="hint-text" style="margin-bottom: 12px;">自动检测或点击「浏览」手动选择安装目录</div>
-
+            <div class="card">
+                <div class="card-title">📂 安装路径</div>
+                <div class="hint-text" style="margin-bottom: 12px;">自动检测或手动选择安装目录</div>
                 <div class="path-item">
                     <div class="path-item-header">
                         <span class="path-item-label">Antigravity IDE</span>
@@ -239,7 +267,6 @@
                         <button type="button" class="btn-browse" id="btn-browse-ide">浏览</button>
                     </div>
                 </div>
-
                 <div class="path-item">
                     <div class="path-item-header">
                         <span class="path-item-label">Antigravity Hub</span>
@@ -250,11 +277,27 @@
                         <button type="button" class="btn-browse" id="btn-browse-hub">浏览</button>
                     </div>
                 </div>
-
                 <button type="button" class="btn btn-secondary btn-sm" id="btn-save-paths" style="width: 100%; margin-top: 4px;">保存路径</button>
             </div>
+
+            <div class="shop-banner" id="shop-banner-settings">
+                <div class="shop-icon">🛒</div>
+                <div class="shop-text">
+                    <div class="shop-title">购买账号卡</div>
+                    <div class="shop-desc">点击前往店铺购买</div>
+                </div>
+                <div class="shop-arrow">→</div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">ℹ️ 关于</div>
+                <div class="about-info">
+                    <div class="about-row"><span class="label">版本:</span><span class="val" id="about-version">v4.2.1</span></div>
+                    <div class="about-row"><span class="label">设备 ID:</span><span class="val font-mono" id="about-device-id" style="font-size: 10px;">-</span></div>
+                </div>
+            </div>
         </div>
-    </div>
+    </main>
 </div>
 
 <!-- 弹窗 -->

@@ -32,10 +32,12 @@ let currentConfig = null;
 let statsInterval = null;
 let lastLogLength = 0;
 let lastLogContent = '';
-// 当前注入状态：是否有任何产品已注入
 let isAnyInjected = false;
+let logPollingInterval = null;
+let countdownInterval = null;
+let refillEpoch = null;
 
-// DOM 元素
+// DOM
 const pillDot = document.getElementById('pill-dot');
 const pillText = document.getElementById('pill-text');
 const pillContainer = document.getElementById('pill-status-container');
@@ -47,23 +49,19 @@ const ideInjectHint = document.getElementById('ide-inject-hint');
 const expiryBox = document.getElementById('expiry-box');
 const expiryText = document.getElementById('expiry-text');
 const btnInjectToggle = document.getElementById('btn-inject-toggle');
-
 const statTotalReqs = document.getElementById('stat-total-reqs');
 const statInputTokens = document.getElementById('stat-input-tokens');
 const statOutputTokens = document.getElementById('stat-output-tokens');
 const statErrors = document.getElementById('stat-errors');
 const savingsBar = document.getElementById('savings-bar');
 const savingsAmount = document.getElementById('savings-amount');
-
 const currentCardInfo = document.getElementById('current-card-info');
 const currentCardText = document.getElementById('current-card-text');
 const btnCopyCard = document.getElementById('btn-copy-card');
-
 const cfgAccountCard = document.getElementById('cfg-account-card');
 const formProxySettings = document.getElementById('proxy-settings-form');
 const cfgUpstreamProxy = document.getElementById('cfg-upstream-proxy');
 const cfgDeviceId = document.getElementById('cfg-device-id');
-
 const btnActivateCard = document.getElementById('btn-activate-card');
 const btnClearLogs = document.getElementById('btn-clear-logs');
 const btnCopyLogs = document.getElementById('btn-copy-logs');
@@ -71,23 +69,66 @@ const logViewBox = document.getElementById('log-view-box');
 const cfgIdePath = document.getElementById('cfg-ide-path');
 const cfgHubPath = document.getElementById('cfg-hub-path');
 const btnSavePaths = document.getElementById('btn-save-paths');
-
-const settingsOverlay = document.getElementById('settings-overlay');
-const btnOpenSettings = document.getElementById('btn-open-settings');
-const btnCloseSettings = document.getElementById('btn-close-settings');
-const btnHeaderShop = document.getElementById('btn-header-shop');
 const detectedIdePath = document.getElementById('detected-ide-path');
 const detectedHubPath = document.getElementById('detected-hub-path');
-
 const customModal = document.getElementById('custom-modal');
 const modalTitle = document.getElementById('modal-title');
 const modalBodyText = document.getElementById('modal-body-text');
 const modalFooterBtns = document.getElementById('modal-footer-btns');
 const modalCloseX = document.getElementById('modal-close-x');
 let modalResolve = null;
-
 const infoActiveAccount = document.getElementById('info-active-account');
 const infoLeaseStatus = document.getElementById('info-lease-status');
+
+// ===== Page Routing =====
+let currentPage = 'home';
+document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+    item.addEventListener('click', () => {
+        const pg = item.dataset.page;
+        currentPage = pg;
+        document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + pg));
+        document.querySelectorAll('.nav-item[data-page]').forEach(n => n.classList.toggle('active', n.dataset.page === pg));
+        if (pg === 'logs' && !logPollingInterval) startLogPolling();
+        if (pg === 'pool') refreshPoolAccounts();
+        if (pg === 'settings') loadSettingsPage();
+    });
+});
+
+// ===== Log Polling =====
+let logFilter = 'all', logSearchQuery = '';
+function startLogPolling() { pollLogs(); if (logPollingInterval) clearInterval(logPollingInterval); logPollingInterval = setInterval(pollLogs, 1500); }
+async function pollLogs() { try { const raw = await GetLogs(); if (raw === lastLogContent) return; lastLogContent = raw; renderFilteredLogs(raw.split('\n').filter(l => l.trim())); } catch(e){} }
+function renderFilteredLogs(lines) {
+    if (!logViewBox) return;
+    const filtered = lines.filter(line => {
+        if (logSearchQuery && !line.toLowerCase().includes(logSearchQuery.toLowerCase())) return false;
+        if (logFilter === 'all') return true;
+        const lo = line.toLowerCase();
+        if (logFilter === 'error') return lo.includes('error') || lo.includes('failed');
+        if (logFilter === 'warn') return lo.includes('warn') || lo.includes('retrying');
+        if (logFilter === 'proxy') return lo.includes('[proxy]');
+        if (logFilter === 'inject') return lo.includes('[ide-inject]');
+        if (logFilter === 'pool') return lo.includes('[pool]') || lo.includes('[local-pool]');
+        return true;
+    });
+    logViewBox.innerHTML = '';
+    filtered.forEach(line => logViewBox.appendChild(createLogElement(line)));
+    logViewBox.scrollTop = logViewBox.scrollHeight;
+}
+document.querySelectorAll('.log-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => { document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); logFilter = btn.dataset.filter; lastLogContent = ''; pollLogs(); });
+});
+const logSearchInput = document.getElementById('log-search');
+if (logSearchInput) logSearchInput.addEventListener('input', () => { logSearchQuery = logSearchInput.value; lastLogContent = ''; pollLogs(); });
+if (btnClearLogs) btnClearLogs.addEventListener('click', async () => { try { await ClearLogs(); lastLogContent = ''; if (logViewBox) logViewBox.innerHTML = ''; } catch(e){} });
+if (btnCopyLogs) btnCopyLogs.addEventListener('click', () => { if (!logViewBox) return; const text = Array.from(logViewBox.querySelectorAll('.log-line')).map(el => el.dataset.raw || el.textContent).join('\n'); navigator.clipboard.writeText(text); });
+
+// ===== 5h Countdown =====
+function startRefillCountdown() { refillEpoch = Date.now(); if (countdownInterval) clearInterval(countdownInterval); countdownInterval = setInterval(updateRefillCountdown, 1000); }
+function updateRefillCountdown() { const el = document.getElementById('refill-countdown'); if (!el||!refillEpoch) return; const r = Math.max(0, 5*3600000-(Date.now()-refillEpoch)); if (r<=0){el.textContent='已恢复';el.style.color='var(--success)';refillEpoch=Date.now();return;} const h=Math.floor(r/3600000),m=Math.floor((r%3600000)/60000),s=Math.floor((r%60000)/1000); el.textContent=`${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`; el.style.color=r<1800000?'var(--success)':'var(--warn)'; }
+
+// ===== Settings Page =====
+async function loadSettingsPage() { try { const cfg=await GetConfig(); if(cfgUpstreamProxy) cfgUpstreamProxy.value=cfg.upstreamProxy||''; const ad=document.getElementById('about-device-id'); if(ad) ad.textContent=cfg.deviceId||'-'; try{const v=await GetAppVersion();const el=document.getElementById('about-version');if(el) el.textContent='v'+v;}catch(e){} const paths=await GetDetectedPaths(); if(cfgIdePath) cfgIdePath.value=cfg.idePath||paths.idePath||''; if(cfgHubPath) cfgHubPath.value=cfg.hubPath||paths.hubPath||''; if(detectedIdePath) detectedIdePath.textContent=cfg.idePath?'自定义':(paths.idePath?'已检测':'未检测到'); if(detectedHubPath) detectedHubPath.textContent=cfg.hubPath?'自定义':(paths.hubPath?'已检测':'未检测到'); } catch(e){} }
 
 // 初始化
 async function initApp() {
@@ -104,6 +145,8 @@ async function initApp() {
         updateStats();
         statsInterval = setInterval(updateStats, 1500);
         updateIDEStatus();
+        startRefillCountdown();
+        startLogPolling();
     } catch (err) {
         addLogLine('[系统] 读取本地配置失败: ' + err, 'error');
     }
@@ -161,7 +204,23 @@ async function updateIDEStatus() {
             }
         }
 
-        // 更新 badge 显示
+        // LS proxy status
+        const lsRow = document.getElementById('ls-status-row');
+        const lsDot = document.getElementById('ls-dot');
+        const lsText = document.getElementById('ls-text');
+        if (lsRow && anyInjected) {
+            lsRow.style.display = 'flex';
+            if (status.isLsProxyApplied) {
+                lsDot.className = 'ls-dot ok';
+                lsText.textContent = 'Language Server 已连接代理';
+            } else {
+                lsDot.className = 'ls-dot partial';
+                lsText.textContent = 'Language Server 尚未全部接管';
+            }
+        } else if (lsRow) {
+            lsRow.style.display = 'none';
+        }
+
         updateBadgeDisplay(ideToggleBadge);
         updateBadgeDisplay(hubToggleBadge);
 
@@ -226,6 +285,24 @@ async function doInject() {
         // 弹出提示让用户选择产品
         showModal('⚠️ 请选择产品', '请先在上方勾选要接管的产品（Antigravity IDE 或 Hub），再点击开启接管。');
         return;
+    }
+
+    // 校验卡密 / 本地号池是否已配置
+    const cfg = await GetConfig();
+    const poolMode = cfg.poolMode || 'remote';
+    if (poolMode === 'remote') {
+        if (!cfg.accountCard || cfg.accountCard.trim() === '') {
+            showModal('⚠️ 请先激活账号卡', '当前为远程续杯模式，请先在下方输入并激活账号卡，再开启接管。');
+            return;
+        }
+    } else if (poolMode === 'local') {
+        try {
+            const poolStatus = await GetPoolStatus();
+            if (!poolStatus.total || poolStatus.total <= 0) {
+                showModal('⚠️ 本地号池为空', '当前为本地号池模式，但尚未添加任何账号。请先添加至少一个账号，再开启接管。');
+                return;
+            }
+        } catch (e) { /* 号池检查失败不阻塞 */ }
     }
 
     btnInjectToggle.disabled = true;
@@ -742,9 +819,8 @@ btnCopyCard.addEventListener('click', () => {
     });
 });
 
-document.getElementById('shop-banner').addEventListener('click', () => {
-    BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ');
-});
+document.getElementById('shop-banner')?.addEventListener('click', () => { BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ'); });
+document.getElementById('shop-banner-settings')?.addEventListener('click', () => { BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ'); });
 
 
 
@@ -790,102 +866,12 @@ function closeModal(val) {
 modalCloseX.addEventListener('click', () => closeModal(false));
 customModal.addEventListener('click', (e) => { if (e.target === customModal) closeModal(false); });
 
-// ====== Settings Drawer ======
-btnOpenSettings.addEventListener('click', async () => {
-    settingsOverlay.style.display = 'block';
-    const cfg = await GetConfig();
-    if (cfgUpstreamProxy) cfgUpstreamProxy.value = cfg.upstreamProxy || '';
-
-    // 获取检测路径，输入框直接显示当前生效路径
-    try {
-        const paths = await GetDetectedPaths();
-        const ideEffective = cfg.idePath || paths.idePath || '';
-        const hubEffective = cfg.hubPath || paths.hubPath || '';
-
-        if (cfgIdePath) cfgIdePath.value = ideEffective;
-        if (cfgHubPath) cfgHubPath.value = hubEffective;
-
-        // 状态标签
-        if (detectedIdePath) {
-            if (cfg.idePath) {
-                detectedIdePath.textContent = '自定义';
-                detectedIdePath.className = 'path-item-status auto';
-            } else if (paths.idePath) {
-                detectedIdePath.textContent = '已检测';
-                detectedIdePath.className = 'path-item-status auto';
-            } else {
-                detectedIdePath.textContent = '未检测到';
-                detectedIdePath.className = 'path-item-status not-found';
-            }
-        }
-        if (detectedHubPath) {
-            if (cfg.hubPath) {
-                detectedHubPath.textContent = '自定义';
-                detectedHubPath.className = 'path-item-status auto';
-            } else if (paths.hubPath) {
-                detectedHubPath.textContent = '已检测';
-                detectedHubPath.className = 'path-item-status auto';
-            } else {
-                detectedHubPath.textContent = '未检测到';
-                detectedHubPath.className = 'path-item-status not-found';
-            }
-        }
-    } catch (e) {
-        if (cfgIdePath) cfgIdePath.value = cfg.idePath || '';
-        if (cfgHubPath) cfgHubPath.value = cfg.hubPath || '';
-    }
-});
-
-btnCloseSettings.addEventListener('click', () => {
-    settingsOverlay.style.display = 'none';
-});
-
-settingsOverlay.addEventListener('click', (e) => {
-    if (e.target === settingsOverlay) {
-        settingsOverlay.style.display = 'none';
-    }
-});
-
-// 浏览按钮
+// ====== Browse Buttons ======
 const btnBrowseIde = document.getElementById('btn-browse-ide');
 const btnBrowseHub = document.getElementById('btn-browse-hub');
-
-if (btnBrowseIde) {
-    btnBrowseIde.addEventListener('click', async () => {
-        const path = await BrowseForPath('选择 Antigravity IDE 安装目录');
-        if (path) cfgIdePath.value = path;
-    });
-}
-
-if (btnBrowseHub) {
-    btnBrowseHub.addEventListener('click', async () => {
-        const path = await BrowseForPath('选择 Antigravity Hub 安装目录');
-        if (path) cfgHubPath.value = path;
-    });
-}
-
-// 保存路径
-if (btnSavePaths) {
-    btnSavePaths.addEventListener('click', async () => {
-        const cfg = await GetConfig();
-        cfg.idePath = cfgIdePath ? cfgIdePath.value.trim() : '';
-        cfg.hubPath = cfgHubPath ? cfgHubPath.value.trim() : '';
-        try {
-            await SaveConfig(cfg);
-            appendLog('[设置] 安装路径已保存');
-            updateIDEStatus();
-        } catch (e) {
-            appendLog('[设置] 保存路径失败: ' + e);
-        }
-    });
-}
-
-// ====== Header Shop Button ======
-if (btnHeaderShop) {
-    btnHeaderShop.addEventListener('click', () => {
-        BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ');
-    });
-}
+if (btnBrowseIde) { btnBrowseIde.addEventListener('click', async () => { const path = await BrowseForPath('选择 Antigravity IDE 安装目录'); if (path) cfgIdePath.value = path; }); }
+if (btnBrowseHub) { btnBrowseHub.addEventListener('click', async () => { const path = await BrowseForPath('选择 Antigravity Hub 安装目录'); if (path) cfgHubPath.value = path; }); }
+if (btnSavePaths) { btnSavePaths.addEventListener('click', async () => { const cfg = await GetConfig(); cfg.idePath = cfgIdePath ? cfgIdePath.value.trim() : ''; cfg.hubPath = cfgHubPath ? cfgHubPath.value.trim() : ''; try { await SaveConfig(cfg); addLogLine('[设置] 安装路径已保存', 'system'); updateIDEStatus(); } catch(e) { addLogLine('[设置] 保存失败: ' + e, 'error'); } }); }
 
 initApp();
 
@@ -1012,39 +998,43 @@ async function refreshPoolAccounts() {
 function renderPoolAccounts(accounts) {
     const container = document.getElementById('pool-account-list');
     if (!container) return;
-
-    if (!accounts || accounts.length === 0) {
-        container.innerHTML = '<div class="pool-empty">暂无账号，请在下方添加</div>';
-        return;
-    }
-
+    if (!accounts || accounts.length === 0) { container.innerHTML = '<div class="pool-empty">暂无账号，请在下方添加</div>'; return; }
     container.innerHTML = accounts.map(acc => {
         let dotClass = 'ok';
         if (!acc.enabled) dotClass = 'disabled';
         else if (acc.quotaStatus === 'exhausted') dotClass = 'exhausted';
         else if (acc.consecutiveErrors >= 3) dotClass = 'error';
-
         const metaParts = [];
         if (acc.oauthProfile) metaParts.push(acc.oauthProfile);
         if (acc.hasAccessToken) metaParts.push(`token: ${acc.tokenExpiresIn}s`);
         if (acc.projectId) metaParts.push(`proj: ${acc.projectId.substring(0, 12)}...`);
         if (acc.quotaStatus === 'exhausted') metaParts.push('❗冷却中');
-
-        return `
-            <div class="pool-account-item ${acc.enabled ? '' : 'disabled'}" data-id="${acc.id}">
+        // Model badges
+        let modelBadgesHtml = '';
+        if (acc.blockedModels && Object.keys(acc.blockedModels).length > 0) {
+            const badges = Object.entries(acc.blockedModels).map(([model, until]) => {
+                const remaining = new Date(until) - Date.now();
+                if (remaining <= 0) return `<span class="model-badge ok"><span class="model-name">${model}</span><span class="model-countdown">可用</span></span>`;
+                const h = Math.floor(remaining/3600000), m = Math.floor((remaining%3600000)/60000);
+                const cls = remaining < 1800000 ? 'warning' : 'blocked';
+                return `<span class="model-badge ${cls}"><span class="model-name">${model}</span><span class="model-countdown">${h}h${m}m</span></span>`;
+            }).join('');
+            modelBadgesHtml = `<div class="pool-model-list">${badges}</div>`;
+        }
+        return `<div class="pool-account-item ${acc.enabled ? '' : 'disabled'}" data-id="${acc.id}">
+            <div class="pool-acc-header">
                 <div class="pool-acc-dot ${dotClass}"></div>
                 <div class="pool-acc-info">
                     <div class="pool-acc-email">${acc.email}</div>
                     <div class="pool-acc-meta">${metaParts.join(' · ')}</div>
                 </div>
                 <div class="pool-acc-actions">
-                    <button class="pool-acc-btn btn-toggle" onclick="togglePoolAcc(${acc.id}, ${!acc.enabled})" title="${acc.enabled ? '禁用' : '启用'}">
-                        ${acc.enabled ? '✅' : '⚪'}
-                    </button>
-                    <button class="pool-acc-btn btn-remove" onclick="removePoolAcc(${acc.id})" title="删除">✖</button>
+                    <button class="pool-acc-btn btn-toggle" onclick="togglePoolAcc(${acc.id}, ${!acc.enabled})">${acc.enabled ? '✅' : '⚪'}</button>
+                    <button class="pool-acc-btn btn-remove" onclick="removePoolAcc(${acc.id})">✖</button>
                 </div>
             </div>
-        `;
+            ${modelBadgesHtml}
+        </div>`;
     }).join('');
 }
 
