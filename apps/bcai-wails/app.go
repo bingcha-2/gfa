@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -225,6 +226,23 @@ func (a *App) BrowseForPath(title string) string {
 // targets: ["ide", "hub"]
 func (a *App) InjectSelected(targets []string) (string, error) {
 	cfg := LoadConfig()
+
+	// 校验：remote 模式必须有卡密，local 模式必须有号池账号
+	poolMode := cfg.PoolMode
+	if poolMode == "" {
+		poolMode = "remote"
+	}
+	if poolMode == "remote" && cfg.AccountCard == "" {
+		return "", fmt.Errorf("请先激活账号卡再开启接管")
+	}
+	if poolMode == "local" {
+		poolStatus := GetAccountPool().GetPoolStatus()
+		total, _ := poolStatus["total"].(int)
+		if total <= 0 {
+			return "", fmt.Errorf("本地号池为空，请先添加账号再开启接管")
+		}
+	}
+
 	var results []string
 	restartIDE := false
 	restartHub := false
@@ -251,11 +269,32 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		}
 	}
 
-	// IDE: 不杀 IDE 主进程，只重启 language_server（保留登录态）
+	// IDE: 先尝试只重启 language_server（保留登录态）
+	// 如果 LS 未能在 8 秒内连接代理，则升级为完整重启 IDE（解决 extension host 端口缓存问题）
 	if restartIDE {
 		if IsIDERunning() {
 			RestartLanguageServerIfNeeded(cfg.ProxyPort)
-			results = append(results, "Antigravity IDE: ✓ 已接管（language_server 将自动重启）")
+			// 等待 LS 生效
+			lsApplied := false
+			for i := 0; i < 8; i++ {
+				time.Sleep(1 * time.Second)
+				if IsLSProxyApplied(cfg.ProxyPort) {
+					lsApplied = true
+					break
+				}
+				Log("[ide-inject] 等待 LS 连接代理... (%d/8)", i+1)
+			}
+			if lsApplied {
+				results = append(results, "Antigravity IDE: ✓ 已接管（LS 已连接代理）")
+			} else {
+				// LS 未生效 → extension host 可能缓存旧端口，升级为完整重启 IDE
+				Log("[ide-inject] LS 未在 8s 内生效，升级为完整重启 IDE")
+				if err := ForceRestartIDE(); err != nil {
+					results = append(results, "Antigravity IDE: ✓ 已接管，但自动重启失败，请手动重启 IDE")
+				} else {
+					results = append(results, "Antigravity IDE: ✓ 已接管并重启 IDE")
+				}
+			}
 		} else {
 			if err := LaunchIDE(); err != nil {
 				results = append(results, "Antigravity IDE: ✓ 已接管，启动失败")

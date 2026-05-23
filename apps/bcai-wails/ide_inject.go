@@ -845,6 +845,69 @@ func KillAndRestartIDE() error {
 	return launchApp(idePath)
 }
 
+// ForceRestartIDE 完整重启 IDE（杀 LS + IDE 主进程 + 等待端口释放 + 重启）
+// 用于解决 extension host 缓存旧 LS 端口导致 ECONNREFUSED 的问题
+// 与 Timo 的 taskkill /IM 策略一致
+func ForceRestartIDE() error {
+	idePath := detectAntigravityIDEPath()
+	if idePath == "" {
+		return fmt.Errorf("未检测到 IDE 安装路径")
+	}
+
+	Log("[ide-inject] [FORCE] 开始完整重启 IDE（解决 extension host 端口缓存）")
+
+	// 1. 先杀所有 language_server
+	switch runtime.GOOS {
+	case "windows":
+		_ = exec.Command("taskkill", "/IM", "language_server_windows_x64.exe", "/F").Run()
+	case "darwin":
+		_ = exec.Command("pkill", "-f", "language_server").Run()
+	case "linux":
+		_ = exec.Command("pkill", "-f", "language_server").Run()
+	}
+	time.Sleep(1 * time.Second)
+
+	// 2. 优雅关闭 IDE 主进程（WM_CLOSE，让其保存数据）
+	switch runtime.GOOS {
+	case "windows":
+		_ = exec.Command("taskkill", "/IM", "Antigravity IDE.exe").Run() // 不带 /F = WM_CLOSE
+		Log("[ide-inject] [FORCE] 已发送优雅关闭请求")
+		time.Sleep(3 * time.Second)
+		// 如果还在运行，强杀
+		if IsIDERunning() {
+			_ = exec.Command("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
+			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			Log("[ide-inject] [FORCE] IDE 未响应，已强杀")
+			time.Sleep(2 * time.Second)
+		}
+	case "darwin":
+		_ = exec.Command("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
+		time.Sleep(3 * time.Second)
+		if IsIDERunning() {
+			_ = exec.Command("pkill", "-9", "-f", "Antigravity IDE").Run()
+			time.Sleep(1 * time.Second)
+		}
+	case "linux":
+		_ = exec.Command("pkill", "-f", "antigravity-ide").Run()
+		_ = exec.Command("pkill", "-f", "kiro").Run()
+		time.Sleep(2 * time.Second)
+	}
+
+	// 3. 确认全部退出
+	if IsIDERunning() {
+		Log("[ide-inject] [FORCE] 警告：IDE 仍在运行")
+	}
+
+	// 4. 重启 IDE
+	Log("[ide-inject] [FORCE] 正在重启 Antigravity IDE...")
+	if err := launchApp(idePath); err != nil {
+		return fmt.Errorf("重启 IDE 失败: %w", err)
+	}
+
+	Log("[ide-inject] [FORCE] IDE 已重启，等待 LS 自动拉起...")
+	return nil
+}
+
 // KillAndRestartHub 杀死并重启 Antigravity Hub
 func KillAndRestartHub() error {
 	hubPath := detectAntigravityHubPath()
