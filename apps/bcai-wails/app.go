@@ -251,14 +251,11 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		}
 	}
 
-	// 自动重启/启动对应应用
+	// IDE: 不杀 IDE 主进程，只重启 language_server（保留登录态）
 	if restartIDE {
 		if IsIDERunning() {
-			if err := KillAndRestartIDE(); err != nil {
-				results = append(results, "Antigravity IDE: 重启失败")
-			} else {
-				results = append(results, "Antigravity IDE: ✓ 已接管并重启")
-			}
+			RestartLanguageServerIfNeeded(cfg.ProxyPort)
+			results = append(results, "Antigravity IDE: ✓ 已接管（language_server 将自动重启）")
 		} else {
 			if err := LaunchIDE(); err != nil {
 				results = append(results, "Antigravity IDE: ✓ 已接管，启动失败")
@@ -312,13 +309,11 @@ func (a *App) RestoreSelected(targets []string) (string, error) {
 		}
 	}
 
+	// IDE: 恢复后重启 language_server 让它重新读取原始配置
 	if restartIDE {
 		if IsIDERunning() {
-			if err := KillAndRestartIDE(); err != nil {
-				results = append(results, "Antigravity IDE: 重启失败")
-			} else {
-				results = append(results, "Antigravity IDE: ✓ 已恢复并重启")
-			}
+			RestartLanguageServerIfNeeded(0) // port=0 确保不匹配，强制杀 LS
+			results = append(results, "Antigravity IDE: ✓ 已恢复（language_server 将自动重启）")
 		} else {
 			results = append(results, "Antigravity IDE: ✓ 已恢复")
 		}

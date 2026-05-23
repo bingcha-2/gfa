@@ -677,6 +677,69 @@ func copyFile(src, dst string) error {
 
 // ======================== 应用重启 ========================
 
+// RestartLanguageServerIfNeeded 检查 language_server 是否已指向代理，如果没有则杀掉它让 IDE 自动重启
+// 这样不需要杀 IDE 主进程，保留用户的 Google 登录态（与 timo/Electron 行为一致）
+func RestartLanguageServerIfNeeded(proxyPort int) {
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+
+	switch runtime.GOOS {
+	case "windows":
+		// 用 PowerShell Get-CimInstance 查询 language_server 的命令行参数（与 timo 完全相同的命令）
+		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			`Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%'" | Select-Object -ExpandProperty CommandLine`,
+		).Output()
+		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+			Log("[ide-inject] language_server 未运行，跳过")
+			return
+		}
+
+		cmdline := string(out)
+		// 检查 --cloud_code_endpoint 参数是否已指向我们的代理
+		if strings.Contains(cmdline, proxyURL) {
+			Log("[ide-inject] language_server 已连接到代理 %s，跳过重启", proxyURL)
+			return
+		}
+
+		// endpoint 不匹配 → 杀 language_server，IDE 会自动重启它并读取新的 settings.json
+		_ = exec.Command("taskkill", "/IM", "language_server_windows_x64.exe", "/F").Run()
+		Log("[ide-inject] 已杀死 language_server，IDE 将自动重启它（读取新配置）")
+
+	case "darwin":
+		out, err := exec.Command("bash", "-c",
+			"ps -eo pid,command | grep 'language_server_darwin' | grep -v grep",
+		).Output()
+		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+			Log("[ide-inject] language_server 未运行，跳过")
+			return
+		}
+		if strings.Contains(string(out), proxyURL) {
+			Log("[ide-inject] language_server 已连接到代理，跳过重启")
+			return
+		}
+		_ = exec.Command("bash", "-c",
+			"pgrep -f 'language_server_darwin' | xargs -r kill 2>/dev/null",
+		).Run()
+		Log("[ide-inject] 已杀死 language_server (macOS)")
+
+	case "linux":
+		out, err := exec.Command("bash", "-c",
+			"ps -eo pid,command | grep 'language_server_linux' | grep -v grep",
+		).Output()
+		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+			Log("[ide-inject] language_server 未运行，跳过")
+			return
+		}
+		if strings.Contains(string(out), proxyURL) {
+			Log("[ide-inject] language_server 已连接到代理，跳过重启")
+			return
+		}
+		_ = exec.Command("bash", "-c",
+			"pgrep -f 'language_server_linux' | xargs -r kill 2>/dev/null",
+		).Run()
+		Log("[ide-inject] 已杀死 language_server (Linux)")
+	}
+}
+
 // KillAndRestartIDE 杀死并重启 Antigravity IDE
 func KillAndRestartIDE() error {
 	idePath := detectAntigravityIDEPath()
@@ -726,8 +789,16 @@ func KillAndRestartHub() error {
 			time.Sleep(1 * time.Second)
 		}
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
-		time.Sleep(2 * time.Second)
+		// 先优雅关闭（WM_CLOSE），让应用保存数据（与 timo 行为一致）
+		_ = exec.Command("taskkill", "/IM", "Antigravity.exe").Run() // 不带 /F = WM_CLOSE
+		Log("[ide-inject] 已发送优雅关闭请求 (WM_CLOSE)")
+		time.Sleep(3 * time.Second)
+		// 如果还在运行，强杀
+		if IsHubRunning() {
+			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			Log("[ide-inject] Hub 未响应优雅关闭，已强杀")
+			time.Sleep(1 * time.Second)
+		}
 	case "linux":
 		_ = exec.Command("pkill", "-f", "antigravity").Run()
 		time.Sleep(2 * time.Second)

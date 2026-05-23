@@ -1,0 +1,8 @@
+{
+  "version": "4.2.1",
+  "url": "https://bcai.site/updates/BingchaAI-4.2.1.exe",
+  "sha256": "430621040D226FBBA9025741F6C62B460F4EAA2B7D4F363A5BC0ED91D49303E9",
+  "size": 12550144,
+  "changelog": "修复IDE重启后登录态丢失问题；优化IDE接管策略（不再重启IDE）；Hub关闭改为优雅退出",
+  "minVersion": "4.0.0"
+}

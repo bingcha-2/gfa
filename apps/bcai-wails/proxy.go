@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,16 +105,23 @@ func isUndefinedEndpoint(path string) bool {
 func isNoiseRequest(path string) bool {
 	lower := strings.ToLower(path)
 	// IDE 启动/保活类接口，直接返回 mock（不转发）
-	// 注意：fetchUserInfo/onboardUser 是认证流程必需，不能 mock
+	// 注意：getUserInfo/onboardUser 等认证接口必须透传，不能 mock
 	return strings.Contains(lower, "listexperiments") ||
 		strings.Contains(lower, "cascadenuxes") ||
 		strings.Contains(lower, "loadcodeassist") ||
 		strings.Contains(lower, "fetchavailablemodels") ||
 		strings.Contains(lower, "counttokens") ||
-		strings.Contains(lower, ":getuserinfo") ||
-		strings.Contains(lower, "getuserinfo") ||
 		strings.Contains(lower, "fetchadmincontrols") ||
 		strings.Contains(lower, "recordcodeassistmetrics")
+}
+
+// isPassthroughRequest 认证相关请求：保留 IDE 原始 OAuth token 直接透传给 Google
+// timo 也采用相同策略 — 不替换 token，不 mock
+func isPassthroughRequest(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.Contains(lower, "getuserinfo") ||
+		strings.Contains(lower, "onboarduser") ||
+		strings.Contains(lower, "fetchuserinfo")
 }
 
 func ideFallbackPayload(path string) (interface{}, bool) {
@@ -124,8 +135,6 @@ func ideFallbackPayload(path string) (interface{}, bool) {
 		strings.Contains(lower, ":counttokens") ||
 		strings.Contains(lower, ":loadcodeassist") ||
 		strings.Contains(lower, "loadcodeassist") ||
-		strings.Contains(lower, ":getuserinfo") ||
-		strings.Contains(lower, "getuserinfo") ||
 		strings.Contains(lower, "fetchadmincontrols") ||
 		strings.Contains(lower, "recordcodeassistmetrics") {
 		return map[string]interface{}{}, true
@@ -199,7 +208,15 @@ func (p *ProxyServer) handleNonGenerationRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 其他非生成请求（auth 等）注入 token 后转发
+	// 认证相关请求（getUserInfo 等）：保留 IDE 原始 OAuth token 透传
+	// 不替换为租用 token，否则 IDE 重启后会认为未登录（与 timo 行为一致）
+	if isPassthroughRequest(r.URL.Path) {
+		Log("[proxy] #%d [PASSTHROUGH] %s (keeping original auth)", reqId, r.URL.Path)
+		p.forwardToGoogle(w, r, body, upstream, reqId)
+		return
+	}
+
+	// 其他非生成请求注入 token 后转发
 	p.forwardWithInjectedToken(w, r, body, card, deviceId, upstream, reqId)
 }
 
@@ -428,6 +445,12 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		Log("[proxy] #%d [INFO] No project/projectId in body, will inject from lease", reqId)
 	}
 
+	// P0: Extract model key from request body (e.g. "gemini-2.5-pro")
+	requestModelKey := extractModelKeyFromBody(body)
+	if requestModelKey != "" {
+		Log("[proxy] #%d [MODEL] %s", reqId, requestModelKey)
+	}
+
 	targetUrl, _ := url.Parse(DefaultCloudEndpoint + r.URL.Path + "?" + r.URL.RawQuery)
 	Log("[proxy] #%d [UPSTREAM] generation host=%s path=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, cfg.PoolMode)
 	client := createHttpClient(upstream)
@@ -441,7 +464,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		var excludeIds []int
 		for attempt := 1; attempt <= MaxCloudCodeGenerationAttempts; attempt++ {
 			pool := GetAccountPool()
-			acc, selErr := pool.SelectAccount("", excludeIds)
+			acc, selErr := pool.SelectAccount(requestModelKey, excludeIds)
 			if selErr != nil {
 				Log("[proxy] #%d [LOCAL-POOL] No available account: %v", reqId, selErr)
 				p.sendJsonError(w, 503, fmt.Sprintf("本地号池: %v", selErr))
@@ -528,7 +551,16 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 
 			Log("[proxy] #%d [LOCAL-POOL] account #%d returned %d (%s), rotating...", reqId, acc.ID, resp.StatusCode, problemReason)
-			pool.MarkExhausted(acc.ID, problemReason, "", 30)
+			// Use retryAfterMs if available, otherwise default 30 min
+			localRetryMs := extractQuotaResetDelayMs(string(readAndResetResponseBody(resp)))
+			cooldownMin := 30
+			if localRetryMs > 0 {
+				cooldownMin = int(localRetryMs / 60000)
+				if cooldownMin < 1 {
+					cooldownMin = 1
+				}
+			}
+			pool.MarkExhausted(acc.ID, problemReason, requestModelKey, cooldownMin)
 			excludeIds = append(excludeIds, acc.ID)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
@@ -543,10 +575,15 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	} else {
 		// ====== REMOTE LEASE MODE (original) ======
 		leaser := GetLeaser()
-	for attempt := 1; attempt <= MaxCloudCodeGenerationAttempts; attempt++ {
+	// P1④: Dynamic max attempts — start with default, update from server retryPolicy
+	remoteMaxAttempts := MaxCloudCodeGenerationAttempts
+	accumulatedCapacityWaitMs := int64(0)
+	const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
+	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
 		var err error
 		leaseOptions := map[string]interface{}{
 			"attemptSessionId": attemptSessionId,
+			"modelKey":         requestModelKey,
 		}
 		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 		if err != nil {
@@ -554,7 +591,14 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			p.forwardToGoogle(w, r, body, upstream, reqId)
 			return
 		}
-		Log("[proxy] #%d [LEASE] attempt=%d accountId=%d project=%s", reqId, attempt, lease.AccountId, lease.ProjectId)
+		// P1④: Update maxAttempts from server retryPolicy
+		if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
+			remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
+			if remoteMaxAttempts > 99 {
+				remoteMaxAttempts = 99
+			}
+		}
+		Log("[proxy] #%d [LEASE] attempt=%d/%d accountId=%d project=%s model=%s", reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
 
 		rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
 		// 生成请求必须有 project 字段，没有则注入
@@ -622,32 +666,99 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		}
 
 		problemReason := ""
+		errorBody := ""
 		if resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusForbidden ||
 			resp.StatusCode == http.StatusServiceUnavailable ||
 			resp.StatusCode == http.StatusInternalServerError {
 			respBytes := readAndResetResponseBody(resp)
-			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, string(respBytes))
+			errorBody = string(respBytes)
+			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
 		}
 		if problemReason == "" {
 			break
 		}
 
-		if attempt < MaxCloudCodeGenerationAttempts {
-			Log("[proxy] #%d Upstream returned %d (%s) for accountId=%d project=%s; rotating and retrying (%d/%d)",
-				reqId, resp.StatusCode, problemReason, lease.AccountId, lease.ProjectId, attempt, MaxCloudCodeGenerationAttempts)
-			leaser.ReportProblemForLease(card, deviceId, problemReason, upstream, lease)
+		// P0: Parse retryAfterMs from 429 error body
+		retryAfterMs := extractQuotaResetDelayMs(errorBody)
+		// P0: Extract model from error response (503 capacity errors contain model name)
+		errorModelKey := extractCapacityModelKey(errorBody)
+		if errorModelKey == "" {
+			errorModelKey = requestModelKey
+		}
+
+		// P0: Build enriched report details
+		reportDetails := ReportDetails{
+			StatusCode:   resp.StatusCode,
+			ModelKey:     errorModelKey,
+			Reason:       problemReason,
+			RetryAfterMs: retryAfterMs,
+			ErrorText:    errorBody,
+		}
+
+		// P2⑪: Verification challenge → return friendly 503 instead of raw 403
+		if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
+			Log("[proxy] #%d [VERIFY] Verification challenge detected for accountId=%d, returning 503", reqId, lease.AccountId)
+			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			resp = nil
+			p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
+			return
+		}
+
+		// P1④: Check if this status is retryable per server retryPolicy
+		canRetry := attempt < remoteMaxAttempts
+		if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
+			statusRetryable := false
+			for _, s := range lease.RetryPolicy.RetryableStatuses {
+				if s == resp.StatusCode {
+					statusRetryable = true
+					break
+				}
+			}
+			if !statusRetryable {
+				canRetry = false
+			}
+		}
+
+		// P2⑩: 503 capacity wait — wait and retry instead of immediate rotate
+		if resp.StatusCode == http.StatusServiceUnavailable &&
+			strings.Contains(strings.ToLower(errorBody), "capacity") &&
+			accumulatedCapacityWaitMs < maxCapacityWaitMs {
+			waitMs := int64(5000) // default 5s
+			if retryAfterMs > 0 && retryAfterMs < 30000 {
+				waitMs = retryAfterMs
+			}
+			accumulatedCapacityWaitMs += waitMs
+			Log("[proxy] #%d [CAPACITY-WAIT] 503 capacity, waiting %dms (total=%dms/%dms) for model=%s",
+				reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			resp = nil
+			time.Sleep(time.Duration(waitMs) * time.Millisecond)
+			continue
+		}
+
+		if canRetry {
+			Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
+				reqId, resp.StatusCode, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			resp = nil
 			atomic.AddInt64(&p.stats.TotalRetries, 1)
 			GetUsageStats().AddRetry()
+			// P1: Exponential backoff between retries
+			time.Sleep(remoteRetryDelay(attempt))
 			continue
 		}
 
-		Log("[proxy] #%d Upstream returned %d (%s) after %d attempts for accountId=%d project=%s, reporting account problem...",
-			reqId, resp.StatusCode, problemReason, attempt, lease.AccountId, lease.ProjectId)
-		leaser.ReportProblemForLease(card, deviceId, problemReason, upstream, lease)
+		Log("[proxy] #%d Upstream returned %d (%s) after %d attempts for accountId=%d, reporting...",
+			reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
+		leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 		break
 	}
 	} // end remote lease mode
@@ -892,20 +1003,92 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) {
 	buffer := make([]byte, 4096)
 	var fullResponse bytes.Buffer
+	streamQuotaDetected := false
 
 	flusher, ok := w.(http.Flusher)
+
+	// P1⑦: Stream inactivity timer with keepalive
+	const streamFirstByteTimeout = 180 * time.Second  // 3 min for initial thinking
+	const streamMidCheckInterval = 60 * time.Second    // 60s between health checks
+	const streamGracePeriod = 30 * time.Second         // 30s per grace extension
+	streamMaxIdle := 5 * time.Minute                   // default max idle
+
+	streamHasData := false
+	lastDataAt := time.Now()
+	streamTimedOut := false
+
+	// Timer goroutine
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		firstTimeout := time.After(streamFirstByteTimeout)
+		select {
+		case <-done:
+			return
+		case <-firstTimeout:
+			if !streamHasData {
+				streamTimedOut = true
+				Log("[proxy] #%d [STREAM-TIMEOUT] First byte timeout (%ds)", reqId, int(streamFirstByteTimeout.Seconds()))
+				if closer, ok := body.(io.Closer); ok {
+					closer.Close()
+				}
+				return
+			}
+		}
+
+		// Mid-stream health checks
+		ticker := time.NewTicker(streamMidCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				idleDuration := time.Since(lastDataAt)
+				if idleDuration >= streamMaxIdle {
+					streamTimedOut = true
+					Log("[proxy] #%d [STREAM-TIMEOUT] Max idle %ds exceeded", reqId, int(idleDuration.Seconds()))
+					if closer, ok := body.(io.Closer); ok {
+						closer.Close()
+					}
+					return
+				}
+				// Send SSE keepalive comment
+				if ok && !streamTimedOut {
+					_, writeErr := w.Write([]byte(fmt.Sprintf(": bcai-keepalive %d\n\n", time.Now().UnixMilli())))
+					if writeErr == nil {
+						flusher.Flush()
+					}
+				}
+				Log("[proxy] #%d [STREAM] idle %ds, socket alive, grace +%ds",
+					reqId, int(idleDuration.Seconds()), int(streamGracePeriod.Seconds()))
+			}
+		}
+	}()
 
 	for {
 		n, err := body.Read(buffer)
 		if n > 0 {
+			chunk := string(buffer[:n])
 			_, _ = w.Write(buffer[:n])
 			_, _ = fullResponse.Write(buffer[:n])
 			if ok {
 				flusher.Flush()
 			}
+			streamHasData = true
+			lastDataAt = time.Now()
+			// P1: Detect mid-stream quota/capacity errors
+			if !streamQuotaDetected {
+				if reason, modelKey, retryAfterMs := checkStreamingQuotaError(chunk); reason != "" {
+					streamQuotaDetected = true
+					Log("[proxy] #%d [STREAM-QUOTA] %s detected mid-stream model=%s retryAfter=%dms",
+						reqId, reason, modelKey, retryAfterMs)
+				}
+			}
 		}
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && !streamTimedOut {
 				Log("[proxy] #%d Stream read error: %v", reqId, err)
 			}
 			break
@@ -1215,4 +1398,246 @@ func buildFallbackModels() map[string]interface{} {
 		},
 		"defaultAgentModelId": "MODEL_GOOGLE_GEMINI_2_5_FLASH",
 	}
+}
+
+// ─── P0/P1: Model Key Extraction ──────────────────────────────────────────
+
+// extractModelKeyFromBody parses the JSON request body and recursively finds
+// the first "model" string field — same behavior as the extension's
+// extractModelKeyFromBody (token-proxy.js L554-566).
+func extractModelKeyFromBody(body []byte) string {
+	var parsed interface{}
+	if json.Unmarshal(body, &parsed) != nil {
+		return ""
+	}
+	return findFirstStringByKey(parsed, "model")
+}
+
+func findFirstStringByKey(v interface{}, key string) string {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		if s, ok := val[key].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+		for _, child := range val {
+			if r := findFirstStringByKey(child, key); r != "" {
+				return r
+			}
+		}
+	case []interface{}:
+		for _, item := range val {
+			if r := findFirstStringByKey(item, key); r != "" {
+				return r
+			}
+		}
+	}
+	return ""
+}
+
+// ─── P0: Quota Reset Delay Parsing ────────────────────────────────────────
+
+// extractQuotaResetDelayMs parses the 429 error response to extract the
+// precise cooldown duration — mirrors the extension's extractQuotaResetDelayMs
+// (token-proxy.js L794-857). Supports:
+//   - error.details[].metadata.quotaResetDelay  ("5h30m0s")
+//   - error.details[].metadata.quotaResetTimeStamp  (ISO timestamp)
+//   - error.message  "reset after 4h59m35s"
+//   - "refresh on 5/24/2026, 3:00 AM"
+func extractQuotaResetDelayMs(errorText string) int64 {
+	if errorText == "" {
+		return 0
+	}
+
+	// Try JSON structured parsing first
+	var payload struct {
+		Error struct {
+			Message string                   `json:"message"`
+			Details []map[string]interface{} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(errorText), &payload) == nil {
+		for _, detail := range payload.Error.Details {
+			metadata, _ := detail["metadata"].(map[string]interface{})
+			if metadata == nil {
+				continue
+			}
+			// quotaResetDelay: "5h30m0s"
+			if delay, ok := metadata["quotaResetDelay"].(string); ok && delay != "" {
+				if ms := parseDurationToMs(delay); ms > 0 {
+					return ms
+				}
+			}
+			// quotaResetTimeStamp: ISO timestamp
+			if ts, ok := metadata["quotaResetTimeStamp"].(string); ok && ts != "" {
+				if t, err := time.Parse(time.RFC3339, ts); err == nil {
+					ms := t.UnixMilli() - time.Now().UnixMilli()
+					if ms > 0 {
+						return ms
+					}
+				}
+			}
+		}
+		// Try parsing duration from error.message: "reset after 4h59m35s"
+		if ms := parseDurationToMs(payload.Error.Message); ms > 0 {
+			return ms
+		}
+	}
+
+	// Fallback: regex "reset after 4h59m35s"
+	re := regexp.MustCompile(`(?i)reset after ([^.:]+(?:\.\d+)?s)`)
+	if m := re.FindStringSubmatch(errorText); len(m) > 1 {
+		if ms := parseDurationToMs(m[1]); ms > 0 {
+			return ms
+		}
+	}
+
+	// Try full text duration parse
+	if ms := parseDurationToMs(errorText); ms > 0 {
+		return ms
+	}
+
+	return 0
+}
+
+// parseDurationToMs parses human-readable durations like "5h30m10s" → milliseconds.
+// Mirrors the extension's parseDurationToMs (token-proxy.js L752-779).
+func parseDurationToMs(text string) int64 {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	re := regexp.MustCompile(`(\d+(?:\.\d+)?)(h|m|s)`)
+	matches := re.FindAllStringSubmatch(strings.ToLower(text), -1)
+	if len(matches) == 0 {
+		return 0
+	}
+	var totalMs float64
+	for _, m := range matches {
+		amount, err := strconv.ParseFloat(m[1], 64)
+		if err != nil {
+			continue
+		}
+		switch m[2] {
+		case "h":
+			totalMs += amount * 3600000
+		case "m":
+			totalMs += amount * 60000
+		case "s":
+			totalMs += amount * 1000
+		}
+	}
+	return int64(math.Ceil(totalMs))
+}
+
+// ─── P0: Capacity Model Key Extraction ────────────────────────────────────
+
+// extractCapacityModelKey extracts model name from 503 capacity error responses.
+// Mirrors the extension's extractCapacityModelKey (token-proxy.js L731-749).
+func extractCapacityModelKey(errorText string) string {
+	if errorText == "" {
+		return ""
+	}
+	// Try structured JSON first
+	var payload struct {
+		Error struct {
+			Details []struct {
+				Metadata struct {
+					Model string `json:"model"`
+				} `json:"metadata"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(errorText), &payload) == nil {
+		for _, d := range payload.Error.Details {
+			if strings.TrimSpace(d.Metadata.Model) != "" {
+				return strings.TrimSpace(d.Metadata.Model)
+			}
+		}
+	}
+	// Regex fallback
+	re := regexp.MustCompile(`(?i)No capacity available for model ([A-Za-z0-9._-]+)`)
+	if m := re.FindStringSubmatch(errorText); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+// ─── P1: Streaming Mid-Stream Quota Detection ─────────────────────────────
+
+// checkStreamingQuotaError detects quota/capacity exhaustion errors in
+// streaming response chunks. Mirrors the extension's getStreamingRotationDetails
+// (token-proxy.js L943-971).
+func checkStreamingQuotaError(chunk string) (reason, modelKey string, retryAfterMs int64) {
+	lower := strings.ToLower(chunk)
+	mk := extractCapacityModelKey(chunk)
+
+	if strings.Contains(lower, "baseline model quota reached") ||
+		strings.Contains(lower, "quota reached") ||
+		strings.Contains(lower, "quota_exhausted") ||
+		strings.Contains(lower, "resource_exhausted") {
+		return "quota", mk, extractQuotaResetDelayMs(chunk)
+	}
+	if strings.Contains(lower, "model_capacity_exhausted") ||
+		strings.Contains(lower, "no capacity available") ||
+		strings.Contains(lower, "capacity available for model") {
+		return "capacity", mk, extractQuotaResetDelayMs(chunk)
+	}
+	return "", "", 0
+}
+
+// ─── P1: Exponential Backoff Delay ────────────────────────────────────────
+
+// remoteRetryDelay calculates exponential backoff for remote lease retries.
+// Mirrors the extension's remoteRetryDelayMs (token-proxy.js L45-51).
+// base=250ms, multiplier=1.3, jitter=0-500ms, max=5000ms
+func remoteRetryDelay(attempt int) time.Duration {
+	base := 250.0
+	multiplier := 1.3
+	delay := base * math.Pow(multiplier, float64(attempt-1))
+	jitter := rand.Float64() * 500
+	total := math.Min(5000, delay+jitter)
+	return time.Duration(total) * time.Millisecond
+}
+
+// ─── P0: Enhanced Report Details ──────────────────────────────────────────
+
+// ReportDetails contains enriched information for report-result, matching
+// the fields sent by the extension's reportRemoteResult (token-proxy.js L1448-1477).
+type ReportDetails struct {
+	StatusCode   int
+	ModelKey     string
+	Reason       string
+	RetryAfterMs int64
+	InputTokens  int64
+	OutputTokens int64
+	ErrorText    string
+}
+
+// getErrorSnippet truncates error text for report payloads (max 1200 chars).
+func getErrorSnippet(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 1200 {
+		return text[:1200]
+	}
+	return text
+}
+
+// ─── P2⑪: Verification Challenge Detection ───────────────────────────────
+
+// isVerificationChallengeError detects Google verification challenges in error
+// responses. Mirrors the extension's isVerificationChallengeText (L910-929).
+func isVerificationChallengeError(errorText string) bool {
+	lower := strings.ToLower(errorText)
+	return strings.Contains(lower, "please verify your account") ||
+		strings.Contains(lower, "verify your account to continue") ||
+		strings.Contains(lower, "verify account") ||
+		strings.Contains(lower, "verify your info to continue") ||
+		strings.Contains(lower, "google needs to verify") ||
+		strings.Contains(lower, "verify some info about your device") ||
+		strings.Contains(lower, "scan the qr code with your phone") ||
+		strings.Contains(lower, "validation_required") ||
+		strings.Contains(lower, "validation_url") ||
+		strings.Contains(lower, "validation_error_message") ||
+		strings.Contains(lower, "permission_denied") ||
+		strings.Contains(lower, "al_alert")
 }
