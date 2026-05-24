@@ -1,0 +1,215 @@
+name: Build & Release BingchaAI (Wails)
+
+on:
+  push:
+    tags:
+      - 'wails-v*'       # 例如 wails-v4.3.0
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如 4.3.0)'
+        required: true
+        default: '4.3.0'
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: BingchaAI
+  WAILS_DIR: apps/bcai-wails
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x64
+          - platform: windows-latest
+            os_name: windows
+            arch: amd64
+            suffix: .exe
+          # macOS Apple Silicon (M1/M2/M3/M4)
+          - platform: macos-latest
+            os_name: macos
+            arch: arm64
+            suffix: ''
+          # macOS Intel
+          - platform: macos-13
+            os_name: macos
+            arch: amd64
+            suffix: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ──── Go 工具链 ────
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: ${{ env.WAILS_DIR }}/go.sum
+
+      # ──── Node.js（前端构建用）────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ──── 安装 Wails CLI ────
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      # ──── 确定版本号 ────
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#wails-v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      # ──── 构建 Wails 应用 ────
+      - name: Build Wails app
+        working-directory: ${{ env.WAILS_DIR }}
+        shell: bash
+        run: |
+          wails build -ldflags "-X main.AppVersion=${{ steps.version.outputs.version }}"
+
+      # ──── Windows: 重命名产物 ────
+      - name: Rename Windows artifact
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          $src = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.exe"
+          $dst = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.exe"
+          Copy-Item $src $dst
+          Write-Host "Created: $dst"
+
+      # ──── macOS: Ad-hoc 签名 ────
+      - name: Codesign macOS app
+        if: matrix.os_name == 'macos'
+        run: |
+          APP_PATH="${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::No .app bundle found at $APP_PATH"
+            exit 1
+          fi
+          echo "Signing: $APP_PATH"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep "$APP_PATH" && echo "✅ Signature verified"
+
+      # ──── macOS: 打包 DMG ────
+      - name: Package DMG
+        if: matrix.os_name == 'macos'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          APP_PATH="${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.app"
+
+          # 创建临时目录，放入 .app + Applications 快捷方式
+          DMG_DIR=$(mktemp -d)
+          cp -R "$APP_PATH" "$DMG_DIR/"
+          ln -s /Applications "$DMG_DIR/Applications"
+          sync && sleep 2
+
+          DMG_OUT="${{ env.WAILS_DIR }}/build/bin"
+          DMG_FILE="${DMG_OUT}/${{ env.APP_NAME }}-${VERSION}-${ARCH}.dmg"
+
+          for i in 1 2 3; do
+            hdiutil create \
+              -volname "${{ env.APP_NAME }}" \
+              -srcfolder "$DMG_DIR" \
+              -ov -format UDZO \
+              "$DMG_FILE" && break
+            echo "hdiutil attempt $i failed, retrying..."
+            sleep 5
+          done
+          rm -rf "$DMG_DIR"
+
+          echo "✅ DMG created:"
+          ls -lh "$DMG_FILE"
+
+      # ──── 上传构建产物 ────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os_name }}-${{ matrix.arch }}
+          path: |
+            ${{ env.WAILS_DIR }}/build/bin/*-${{ steps.version.outputs.version }}*.*
+
+  # ──────────────── 发布 GitHub Release ────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#wails-v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "=== Release assets ==="
+          find release-assets -type f -ls
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="wails-v${VERSION}"
+
+          mapfile -t FILES < <(find release-assets -type f \( -name "*.dmg" -o -name "*.exe" \))
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::No release assets found!"
+            exit 1
+          fi
+
+          echo "Uploading ${#FILES[@]} files:"
+          printf '  %s\n' "${FILES[@]}"
+
+          gh release delete "$TAG" --yes 2>/dev/null || true
+
+          gh release create "$TAG" \
+            "${FILES[@]}" \
+            --title "冰茶AI v${VERSION}" \
+            --notes "## 🍵 冰茶AI v${VERSION}
+
+          | 平台 | 架构 | 文件 |
+          |------|------|------|
+          | Windows | x64 | \`${{ env.APP_NAME }}-${VERSION}.exe\` |
+          | macOS | Apple Silicon (M1/M2/M3) | \`${{ env.APP_NAME }}-${VERSION}-arm64.dmg\` |
+          | macOS | Intel | \`${{ env.APP_NAME }}-${VERSION}-amd64.dmg\` |
+
+          ### macOS 首次打开
+          如果系统提示「无法验证开发者」，请 **右键点击** 应用 → **打开** → 确认。
+
+          ### Windows
+          如果看到 SmartScreen 警告，点击「更多信息」→「仍要运行」。" \
+            --latest
