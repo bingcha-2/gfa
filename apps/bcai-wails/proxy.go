@@ -832,10 +832,10 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
 		GetUsageStats().AddGeneration()
-		// 上报成功请求的 token 用量到服务器（与插件 token-proxy.js L2072 一致）
+		// 上报成功请求的 token 用量到服务器，不释放 lease（保持账号粘性）
 		if lease != nil && !isLocalPool {
 			leaser := GetLeaser()
-			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+			leaser.ReportUsage(card, deviceId, ReportDetails{
 				StatusCode:        resp.StatusCode,
 				ModelKey:          requestModelKey,
 				InputTokens:       tokenResult.InputTokens,
@@ -982,10 +982,10 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
-		// 上报成功请求的 token 用量到服务器
+		// 上报成功请求的 token 用量到服务器，不释放 lease（保持账号粘性）
 		if lease != nil && !isLocalPool {
 			leaser := GetLeaser()
-			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+			leaser.ReportUsage(card, deviceId, ReportDetails{
 				StatusCode:        resp.StatusCode,
 				ModelKey:          requestModelKey,
 				InputTokens:       tokenResult.InputTokens,

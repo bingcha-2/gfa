@@ -629,6 +629,62 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 	}()
 }
 
+// ReportUsage sends token usage to the server WITHOUT releasing the cached token.
+// Use this for successful requests (2xx) to maintain account stickiness.
+// The account stays bound until it expires or encounters an error.
+func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstreamProxy string, lease *TokenLease) {
+	if lease == nil {
+		return
+	}
+
+	l.mu.Lock()
+	l.reportCount++
+	// ❌ 不清 cachedToken — 成功后保留当前号
+	l.mu.Unlock()
+
+	Log("[token-leaser] ReportUsage account=%d status=%d model=%s input=%d output=%d cached=%d billable=%d",
+		lease.AccountId, details.StatusCode, details.ModelKey,
+		details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.BillableTotalTokens)
+
+	client := createHttpClient(upstreamProxy)
+	payload := map[string]interface{}{
+		"leaseId":           lease.LeaseId,
+		"accountId":         lease.AccountId,
+		"status":            details.StatusCode,
+		"modelKey":          details.ModelKey,
+		"reason":            details.Reason,
+		"retryAfterMs":      details.RetryAfterMs,
+		"inputTokens":       details.InputTokens,
+		"outputTokens":      details.OutputTokens,
+		"cachedInputTokens": details.CachedInputTokens,
+		"rawTotalTokens":    details.RawTotalTokens,
+		"totalTokens":       details.BillableTotalTokens,
+		"errorText":         getErrorSnippet(details.ErrorText),
+	}
+
+	go func() {
+		body, _, err := postJsonWithSecret(client, "/report-result", payload, card)
+		if err != nil {
+			Log("[token-leaser] ReportUsage network failed: %v", err)
+			return
+		}
+		var r struct {
+			Success         bool                   `json:"success"`
+			AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
+		}
+		if json.Unmarshal(body, &r) == nil {
+			if r.Success {
+				Log("[token-leaser] Usage report accepted by server")
+			}
+			if r.AccessKeyStatus != nil {
+				l.mu.Lock()
+				l.accessKeyStatus = r.AccessKeyStatus
+				l.accessKeyStatusAt = time.Now()
+				l.mu.Unlock()
+			}
+		}
+	}()
+}
 
 func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 	l.mu.Lock()
