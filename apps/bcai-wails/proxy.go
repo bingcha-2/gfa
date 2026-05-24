@@ -829,6 +829,34 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// [TIMO-STYLE] 流式中途 quota 错误：上报 + 标记账号
+	if tokenResult.StreamError {
+		Log("[proxy] #%d [STREAM-QUOTA-REPORT] reporting mid-stream %s for model=%s",
+			reqId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
+		atomic.AddInt64(&p.stats.TotalErrors, 1)
+		GetUsageStats().AddError()
+		if isLocalPool && lease != nil {
+			pool := GetAccountPool()
+			cooldownMin := 30
+			if tokenResult.StreamRetryAfterMs > 0 {
+				cooldownMin = int(tokenResult.StreamRetryAfterMs / 60000)
+				if cooldownMin < 1 { cooldownMin = 1 }
+			}
+			pool.MarkExhausted(lease.AccountId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel, cooldownMin)
+		} else if lease != nil {
+			leaser := GetLeaser()
+			statusCode := 429
+			if tokenResult.StreamErrorReason == "capacity" { statusCode = 503 }
+			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+				StatusCode:   statusCode,
+				ModelKey:     tokenResult.StreamErrorModel,
+				Reason:       tokenResult.StreamErrorReason,
+				RetryAfterMs: tokenResult.StreamRetryAfterMs,
+			}, upstream, lease)
+		}
+		return
+	}
+
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
 		GetUsageStats().AddGeneration()
@@ -1162,6 +1190,34 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		}
 	}
 
+	// [TIMO-STYLE] 流式中途 quota 错误：上报 + 标记账号
+	if tokenResult.StreamError {
+		Log("[proxy] #%d [STREAM-QUOTA-REPORT-GEMINI] reporting mid-stream %s for model=%s",
+			reqId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
+		atomic.AddInt64(&p.stats.TotalErrors, 1)
+		GetUsageStats().AddError()
+		if isLocalPool && lease != nil {
+			pool := GetAccountPool()
+			cooldownMin := 30
+			if tokenResult.StreamRetryAfterMs > 0 {
+				cooldownMin = int(tokenResult.StreamRetryAfterMs / 60000)
+				if cooldownMin < 1 { cooldownMin = 1 }
+			}
+			pool.MarkExhausted(lease.AccountId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel, cooldownMin)
+		} else if lease != nil {
+			leaser := GetLeaser()
+			statusCode := 429
+			if tokenResult.StreamErrorReason == "capacity" { statusCode = 503 }
+			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+				StatusCode:   statusCode,
+				ModelKey:     tokenResult.StreamErrorModel,
+				Reason:       tokenResult.StreamErrorReason,
+				RetryAfterMs: tokenResult.StreamRetryAfterMs,
+			}, upstream, lease)
+		}
+		return
+	}
+
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
 		GetUsageStats().AddGeneration()
@@ -1269,6 +1325,15 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	var fullResponse bytes.Buffer
 	streamQuotaDetected := false
 
+	// 滑动窗口缓冲：防止 quota 错误 JSON 被 chunk 边界切断（timo 使用 Rust async stream 无此问题）
+	var recentWindow bytes.Buffer
+	const recentWindowMax = 4096
+
+	// 流式错误信息，用于通知调用方上报
+	var streamErrorReason, streamErrorModel string
+	var streamRetryAfterMs int64
+	var totalStreamBytes int64
+
 	flusher, ok := w.(http.Flusher)
 
 	// P1⑦: Stream inactivity timer with keepalive
@@ -1334,21 +1399,48 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	for {
 		n, err := body.Read(buffer)
 		if n > 0 {
-			chunk := string(buffer[:n])
-			_, _ = w.Write(buffer[:n])
+			totalStreamBytes += int64(n)
 			_, _ = fullResponse.Write(buffer[:n])
-			if ok {
-				flusher.Flush()
-			}
 			streamHasData = true
 			lastDataAt = time.Now()
-			// P1: Detect mid-stream quota/capacity errors
+
+			// 更新滑动窗口（用于跨 chunk 检测）
+			recentWindow.Write(buffer[:n])
+			if recentWindow.Len() > recentWindowMax {
+				recentWindow.Next(recentWindow.Len() - recentWindowMax)
+			}
+
+			// [TIMO-STYLE] 检测 mid-stream quota/capacity 错误
+			// timo 检测到后：中断流 + toast 通知 + 换号重试
+			// 插件检测到后：proxyRes.destroy() + res.end() + reportRemoteResult
+			// 我们参照两者：中断上游 + 停止转发 + 通知调用方上报
 			if !streamQuotaDetected {
-				if reason, modelKey, retryAfterMs := checkStreamingQuotaError(chunk); reason != "" {
+				if reason, modelKey, retryAfterMs := checkStreamingQuotaError(recentWindow.String()); reason != "" {
 					streamQuotaDetected = true
-					Log("[proxy] #%d [STREAM-QUOTA] %s detected mid-stream model=%s retryAfter=%dms",
+					streamErrorReason = reason
+					streamErrorModel = modelKey
+					streamRetryAfterMs = retryAfterMs
+
+					Log("[proxy] #%d [STREAM-QUOTA] %s detected mid-stream model=%s retryAfter=%dms, aborting stream (timo-style)",
 						reqId, reason, modelKey, retryAfterMs)
+
+					// 1. 中断上游连接（停止从 Google 读取更多数据）
+					if closer, ok := body.(io.Closer); ok {
+						closer.Close()
+					}
+					// 2. 干净结束下游连接（不再转发脏数据给 IDE）
+					if ok {
+						flusher.Flush()
+					}
+					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended", reqId)
+					break // 退出读取循环
 				}
+			}
+
+			// 只有在非 quota 中断的情况下才转发数据给 IDE
+			_, _ = w.Write(buffer[:n])
+			if ok {
+				flusher.Flush()
 			}
 		}
 		if err != nil {
@@ -1363,7 +1455,17 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	p.mu.Lock()
 	modelKey := p.lastModelKey
 	p.mu.Unlock()
-	return p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
+	result := p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
+
+	// 附加流式错误信息，通知调用方上报
+	if streamQuotaDetected {
+		result.StreamError = true
+		result.StreamErrorReason = streamErrorReason
+		result.StreamErrorModel = streamErrorModel
+		result.StreamRetryAfterMs = streamRetryAfterMs
+		result.StreamBytes = totalStreamBytes
+	}
+	return result
 }
 
 // TokenUsageResult holds parsed token counts and the billable total after
@@ -1374,6 +1476,12 @@ type TokenUsageResult struct {
 	CachedInputTokens int64
 	RawTotalTokens    int64
 	BillableTotalTokens int64 // rawTotal - cached + ceil(cached/10)
+	// Mid-stream quota/capacity error (timo-style detection)
+	StreamError        bool
+	StreamErrorReason  string // "quota" or "capacity"
+	StreamErrorModel   string
+	StreamRetryAfterMs int64
+	StreamBytes        int64  // bytes received before error
 }
 
 // discountedCachedTokens returns the billable portion of cached tokens.
