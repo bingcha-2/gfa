@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -658,9 +661,19 @@ func maskEmail(email string) string {
 // ─── OAuth2 Login Flow ──────────────────────────────────────────────────
 
 const (
-	OAUTH_REDIRECT_PORT = 18372
-	OAUTH_SCOPES        = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid"
+	// Scopes aligned with the plugin (rosettaProcess.ts / add-account.js)
+	OAUTH_SCOPES = "https://www.googleapis.com/auth/cloud-platform " +
+		"https://www.googleapis.com/auth/userinfo.email " +
+		"https://www.googleapis.com/auth/userinfo.profile " +
+		"https://www.googleapis.com/auth/cclog " +
+		"https://www.googleapis.com/auth/experimentsandconfigs"
 )
+
+func generateOAuthState() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 // OAuthLoginResult is the result of a successful OAuth login
 type OAuthLoginResult struct {
@@ -677,7 +690,18 @@ type OAuthLoginResult struct {
 func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error) {
 	profile = normalizeOAuthProfile(profile)
 	clientId, clientSecret := resolveOAuthCreds(profile)
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", OAUTH_REDIRECT_PORT)
+
+	// Use random port (Google Desktop App OAuth allows any loopback port)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("无法启动 OAuth 回调服务: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+	Log("[oauth] Callback server on port %d", port)
+
+	// CSRF protection
+	oauthState := generateOAuthState()
 
 	// Channel to receive the auth code
 	codeChan := make(chan string, 1)
@@ -688,12 +712,21 @@ func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error)
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		errParam := r.URL.Query().Get("error")
+		returnedState := r.URL.Query().Get("state")
 
 		if errParam != "" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			fmt.Fprintf(w, `<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#18181c;color:#f3f4f6">
 				<h2>❌ 授权失败</h2><p>%s</p><p>你可以关闭此页面</p></body></html>`, errParam)
 			errChan <- fmt.Errorf("OAuth error: %s", errParam)
+			return
+		}
+
+		if returnedState != oauthState {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#18181c;color:#f3f4f6">
+				<h2>❌ 无效回调</h2><p>State 校验失败，请重试</p></body></html>`)
+			errChan <- fmt.Errorf("OAuth state mismatch (CSRF check failed)")
 			return
 		}
 
@@ -711,14 +744,11 @@ func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error)
 		codeChan <- code
 	})
 
-	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", OAUTH_REDIRECT_PORT),
-		Handler: mux,
-	}
+	server := &http.Server{Handler: mux}
 
-	// Start the server in the background
+	// Start the server using the already-bound listener
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errChan <- fmt.Errorf("OAuth callback server error: %w", err)
 		}
 	}()
@@ -726,17 +756,18 @@ func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error)
 	// Ensure server shuts down
 	defer func() {
 		go func() {
-			time.Sleep(2 * time.Second) // Give the response time to flush
+			time.Sleep(2 * time.Second)
 			_ = server.Close()
 		}()
 	}()
 
-	// Build the authorization URL
+	// Build the authorization URL (aligned with plugin rosettaProcess.ts)
 	authURL := fmt.Sprintf(
-		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent",
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&include_granted_scopes=true&state=%s",
 		url.QueryEscape(clientId),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(OAUTH_SCOPES),
+		url.QueryEscape(oauthState),
 	)
 
 	Log("[oauth] Opening browser for OAuth login (profile: %s)", profile)
