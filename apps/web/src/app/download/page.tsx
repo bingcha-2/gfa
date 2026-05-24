@@ -2,28 +2,54 @@
 
 import { useEffect, useState } from "react";
 
+interface MacOSPlatform {
+  url: string;
+  sha256: string;
+  size: number;
+}
+
 interface VersionInfo {
   version: string;
   url: string;
+  sha256: string;
   size: number;
   changelog: string;
+  macOS?: {
+    arm64?: MacOSPlatform;
+    amd64?: MacOSPlatform;
+  };
 }
 
 export default function DownloadPage() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
+  const [detectedOS, setDetectedOS] = useState<"windows" | "macos" | "other">("windows");
 
   useEffect(() => {
     fetch("/updates/latest-wails.json")
       .then((r) => r.json())
       .then((data) => setInfo(data))
       .catch(() => {});
+
+    // 检测用户操作系统
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes("mac")) setDetectedOS("macos");
+    else if (ua.includes("win")) setDetectedOS("windows");
+    else setDetectedOS("other");
   }, []);
 
   const version = info?.version || "latest";
-  const sizeMB = info?.size ? Math.round(info.size / 1024 / 1024) : 12;
-  const downloadUrl = info?.url
+
+  // Windows 下载
+  const winUrl = info?.url
     ? `/updates/BingchaAI-${info.version}.exe`
     : "/updates/BingchaAI-latest.exe";
+  const winSizeMB = info?.size ? Math.round(info.size / 1024 / 1024) : 12;
+
+  // macOS 下载
+  const macArm64 = info?.macOS?.arm64;
+  const macAmd64 = info?.macOS?.amd64;
+  const macArm64SizeMB = macArm64?.size ? Math.round(macArm64.size / 1024 / 1024) : null;
+  const macAmd64SizeMB = macAmd64?.size ? Math.round(macAmd64.size / 1024 / 1024) : null;
 
   return (
     <main
@@ -88,9 +114,9 @@ export default function DownloadPage() {
           </p>
         </div>
 
-        {/* Download Card — Windows only */}
+        {/* ── Windows Download Card ── */}
         <a
-          href={downloadUrl}
+          href={winUrl}
           style={{
             display: "flex",
             flexDirection: "column",
@@ -98,11 +124,16 @@ export default function DownloadPage() {
             gap: 16,
             padding: "32px 24px",
             borderRadius: 16,
-            border: "1px solid rgba(99,102,241,.3)",
-            background: "rgba(99,102,241,.08)",
+            border: detectedOS === "windows"
+              ? "1px solid rgba(99,102,241,.5)"
+              : "1px solid rgba(99,102,241,.2)",
+            background: detectedOS === "windows"
+              ? "rgba(99,102,241,.12)"
+              : "rgba(99,102,241,.05)",
             textDecoration: "none",
             transition: "all .2s",
             cursor: "pointer",
+            order: detectedOS === "windows" ? 0 : 1,
           }}
           onMouseOver={(e) => {
             (e.currentTarget as HTMLElement).style.background = "rgba(99,102,241,.15)";
@@ -110,8 +141,8 @@ export default function DownloadPage() {
             (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
           }}
           onMouseOut={(e) => {
-            (e.currentTarget as HTMLElement).style.background = "rgba(99,102,241,.08)";
-            (e.currentTarget as HTMLElement).style.borderColor = "rgba(99,102,241,.3)";
+            (e.currentTarget as HTMLElement).style.background = detectedOS === "windows" ? "rgba(99,102,241,.12)" : "rgba(99,102,241,.05)";
+            (e.currentTarget as HTMLElement).style.borderColor = detectedOS === "windows" ? "rgba(99,102,241,.5)" : "rgba(99,102,241,.2)";
             (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
           }}
         >
@@ -123,7 +154,7 @@ export default function DownloadPage() {
               Windows 版下载
             </div>
             <div style={{ color: "rgba(255,255,255,.4)", fontSize: 12 }}>
-              Windows 10 / 11 (64-bit) · v{version} · {sizeMB} MB
+              Windows 10 / 11 (64-bit) · v{version} · {winSizeMB} MB
             </div>
           </div>
           <div
@@ -142,6 +173,94 @@ export default function DownloadPage() {
             免安装，下载后直接双击运行
           </div>
         </a>
+
+        {/* ── macOS Download Card ── */}
+        {(macArm64 || macAmd64) && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 16,
+              padding: "28px 24px",
+              borderRadius: 16,
+              border: detectedOS === "macos"
+                ? "1px solid rgba(168,162,158,.4)"
+                : "1px solid rgba(168,162,158,.15)",
+              background: detectedOS === "macos"
+                ? "rgba(168,162,158,.08)"
+                : "rgba(168,162,158,.03)",
+              order: detectedOS === "macos" ? 0 : 1,
+            }}
+          >
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.79 22.05 6.8 20.68 5.96 19.47C4.25 16.56 2.93 11.3 4.7 7.72C5.57 5.94 7.36 4.86 9.3 4.83C10.57 4.81 11.78 5.7 12.56 5.7C13.34 5.7 14.82 4.62 16.38 4.79C17.06 4.82 18.89 5.08 20.05 6.8C19.93 6.88 17.62 8.23 17.65 11.06C17.68 14.42 20.53 15.46 20.57 15.47C20.54 15.56 20.12 17 19.03 18.49L18.71 19.5ZM13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z" fill="#a8a29e"/>
+            </svg>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ color: "#d6d3d1", fontWeight: 700, fontSize: 18, marginBottom: 4 }}>
+                macOS 版下载
+              </div>
+              <div style={{ color: "rgba(255,255,255,.4)", fontSize: 12 }}>
+                macOS 12+ · v{version}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+              {macArm64 && (
+                <a
+                  href={`/updates/BingchaAI-${version}-arm64.dmg`}
+                  style={{
+                    padding: "10px 24px",
+                    borderRadius: 8,
+                    background: "rgba(168,162,158,.12)",
+                    border: "1px solid rgba(168,162,158,.25)",
+                    color: "#d6d3d1",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    textDecoration: "none",
+                    transition: "all .2s",
+                  }}
+                  onMouseOver={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "rgba(168,162,158,.2)";
+                  }}
+                  onMouseOut={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "rgba(168,162,158,.12)";
+                  }}
+                >
+                  ⬇ Apple Silicon (M1/M2/M3)
+                  {macArm64SizeMB && <span style={{ color: "rgba(255,255,255,.35)", fontSize: 11, marginLeft: 6 }}>{macArm64SizeMB} MB</span>}
+                </a>
+              )}
+              {macAmd64 && (
+                <a
+                  href={`/updates/BingchaAI-${version}-amd64.dmg`}
+                  style={{
+                    padding: "10px 24px",
+                    borderRadius: 8,
+                    background: "rgba(168,162,158,.08)",
+                    border: "1px solid rgba(168,162,158,.15)",
+                    color: "#a8a29e",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    textDecoration: "none",
+                    transition: "all .2s",
+                  }}
+                  onMouseOver={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "rgba(168,162,158,.15)";
+                  }}
+                  onMouseOut={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "rgba(168,162,158,.08)";
+                  }}
+                >
+                  ⬇ Intel
+                  {macAmd64SizeMB && <span style={{ color: "rgba(255,255,255,.3)", fontSize: 11, marginLeft: 6 }}>{macAmd64SizeMB} MB</span>}
+                </a>
+              )}
+            </div>
+            <div style={{ color: "rgba(255,255,255,.25)", fontSize: 11 }}>
+              首次打开：右键应用 → 打开 → 确认打开
+            </div>
+          </div>
+        )}
 
         {/* Changelog */}
         {info?.changelog && (
@@ -184,7 +303,7 @@ export default function DownloadPage() {
           <div style={{ display: "grid", gap: 8, fontSize: 13, color: "rgba(255,255,255,.45)", lineHeight: 1.6 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <span style={{ color: "#f97316", fontWeight: 700, flexShrink: 0 }}>1.</span>
-              <span>下载 BingchaAI.exe 后直接双击运行，无需安装</span>
+              <span>下载 BingchaAI 后直接运行（Windows 免安装，macOS 拖入应用程序文件夹）</span>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <span style={{ color: "#f97316", fontWeight: 700, flexShrink: 0 }}>2.</span>
@@ -206,7 +325,7 @@ export default function DownloadPage() {
               color: "rgba(34,197,94,.7)",
             }}
           >
-            ✅ 客户端支持自动更新，首次下载后无需手动升级。体积仅 {sizeMB} MB，启动秒开。
+            ✅ 客户端支持自动更新，首次下载后无需手动升级。
           </div>
         </div>
 

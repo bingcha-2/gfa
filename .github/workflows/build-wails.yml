@@ -1,15 +1,16 @@
 name: Build & Release BingchaAI (Wails)
 
 on:
-  push:
-    tags:
-      - 'wails-v*'       # 例如 wails-v4.3.0
   workflow_dispatch:
     inputs:
       version:
         description: '版本号 (例如 4.3.0)'
         required: true
         default: '4.3.0'
+      changelog:
+        description: '更新日志 (简短描述本次更新)'
+        required: false
+        default: '性能优化和问题修复'
 
 permissions:
   contents: write
@@ -17,8 +18,10 @@ permissions:
 env:
   APP_NAME: BingchaAI
   WAILS_DIR: apps/bcai-wails
+  UPDATES_DIR: apps/web/public/updates
 
 jobs:
+  # ──────────────── 阶段 1: 多平台构建 ────────────────
   build:
     strategy:
       fail-fast: false
@@ -28,16 +31,22 @@ jobs:
           - platform: windows-latest
             os_name: windows
             arch: amd64
+            goos: windows
+            goarch: amd64
             suffix: .exe
           # macOS Apple Silicon (M1/M2/M3/M4)
           - platform: macos-latest
             os_name: macos
             arch: arm64
+            goos: darwin
+            goarch: arm64
             suffix: ''
           # macOS Intel
           - platform: macos-13
             os_name: macos
             arch: amd64
+            goos: darwin
+            goarch: amd64
             suffix: ''
 
     runs-on: ${{ matrix.platform }}
@@ -46,75 +55,60 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ──── Go 工具链 ────
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
           cache-dependency-path: ${{ env.WAILS_DIR }}/go.sum
 
-      # ──── Node.js（前端构建用）────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # ──── 安装 Wails CLI ────
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      # ──── 确定版本号 ────
-      - name: Determine version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#wails-v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
-
-      # ──── 构建 Wails 应用 ────
       - name: Build Wails app
         working-directory: ${{ env.WAILS_DIR }}
         shell: bash
         run: |
-          wails build -ldflags "-X main.AppVersion=${{ steps.version.outputs.version }}"
+          VERSION="${{ github.event.inputs.version }}"
+          wails build -ldflags "-X main.AppVersion=${VERSION}"
 
-      # ──── Windows: 重命名产物 ────
-      - name: Rename Windows artifact
+      # ── Windows: 重命名 + 计算 hash ──
+      - name: Prepare Windows artifact
         if: matrix.os_name == 'windows'
         shell: pwsh
         run: |
+          $version = "${{ github.event.inputs.version }}"
           $src = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.exe"
-          $dst = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.exe"
+          $dst = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-${version}.exe"
           Copy-Item $src $dst
-          Write-Host "Created: $dst"
+          $hash = (Get-FileHash $dst -Algorithm SHA256).Hash
+          $size = (Get-Item $dst).Length
+          # 写入 meta 文件供后续 job 使用
+          @{ hash = $hash; size = $size } | ConvertTo-Json | Out-File "${{ env.WAILS_DIR }}/build/bin/windows-meta.json" -Encoding utf8
+          Write-Host "Windows exe: $dst (size=$size, sha256=$hash)"
 
-      # ──── macOS: Ad-hoc 签名 ────
-      - name: Codesign macOS app
+      # ── macOS: Ad-hoc 签名 + 打包 DMG ──
+      - name: Codesign & Package DMG (macOS)
         if: matrix.os_name == 'macos'
         run: |
+          VERSION="${{ github.event.inputs.version }}"
+          ARCH="${{ matrix.arch }}"
           APP_PATH="${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.app"
+
           if [ ! -d "$APP_PATH" ]; then
             echo "::error::No .app bundle found at $APP_PATH"
             exit 1
           fi
-          echo "Signing: $APP_PATH"
+
+          # Ad-hoc 签名
           codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep "$APP_PATH" && echo "✅ Signature verified"
 
-      # ──── macOS: 打包 DMG ────
-      - name: Package DMG
-        if: matrix.os_name == 'macos'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          ARCH="${{ matrix.arch }}"
-          APP_PATH="${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.app"
-
-          # 创建临时目录，放入 .app + Applications 快捷方式
+          # 打包 DMG
           DMG_DIR=$(mktemp -d)
           cp -R "$APP_PATH" "$DMG_DIR/"
           ln -s /Applications "$DMG_DIR/Applications"
@@ -134,65 +128,152 @@ jobs:
           done
           rm -rf "$DMG_DIR"
 
-          echo "✅ DMG created:"
-          ls -lh "$DMG_FILE"
+          # 计算 hash + size
+          HASH=$(shasum -a 256 "$DMG_FILE" | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')
+          SIZE=$(stat -f%z "$DMG_FILE")
+          echo "{\"hash\":\"$HASH\",\"size\":$SIZE}" > "${DMG_OUT}/macos-${ARCH}-meta.json"
+          echo "✅ DMG: $DMG_FILE (size=$SIZE, sha256=$HASH)"
 
-      # ──── 上传构建产物 ────
-      - name: Upload artifacts
+      # ── 上传构建产物 ──
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os_name }}-${{ matrix.arch }}
           path: |
-            ${{ env.WAILS_DIR }}/build/bin/*-${{ steps.version.outputs.version }}*.*
+            ${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-*
+            ${{ env.WAILS_DIR }}/build/bin/*-meta.json
 
-  # ──────────────── 发布 GitHub Release ────────────────
-  release:
+  # ──────────────── 阶段 2: 发布到 bcai.site + GitHub Release ────────────────
+  publish:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#wails-v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          path: artifacts
           merge-multiple: true
 
-      - name: List release assets
-        run: |
-          echo "=== Release assets ==="
-          find release-assets -type f -ls
+      - name: List artifacts
+        run: find artifacts -type f -ls
 
+      # ── 复制构建产物到 web/public/updates/ ──
+      - name: Deploy to bcai.site updates directory
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          CHANGELOG="${{ github.event.inputs.changelog }}"
+          UPDATES="${{ env.UPDATES_DIR }}"
+
+          mkdir -p "$UPDATES"
+
+          # 复制 Windows exe
+          WIN_EXE=$(find artifacts -name "*.exe" | head -1)
+          if [ -n "$WIN_EXE" ]; then
+            cp "$WIN_EXE" "${UPDATES}/${{ env.APP_NAME }}-${VERSION}.exe"
+            echo "✅ Copied Windows exe"
+          fi
+
+          # 复制 macOS DMG (arm64 + amd64)
+          for dmg in $(find artifacts -name "*.dmg"); do
+            BASENAME=$(basename "$dmg")
+            cp "$dmg" "${UPDATES}/${BASENAME}"
+            echo "✅ Copied $BASENAME"
+          done
+
+          # 读取 Windows meta
+          WIN_META=$(find artifacts -name "windows-meta.json" | head -1)
+          WIN_HASH=""
+          WIN_SIZE=0
+          if [ -n "$WIN_META" ] && [ -f "$WIN_META" ]; then
+            WIN_HASH=$(jq -r '.hash' "$WIN_META")
+            WIN_SIZE=$(jq -r '.size' "$WIN_META")
+          fi
+
+          # 读取 macOS arm64 meta
+          MAC_ARM_META=$(find artifacts -name "macos-arm64-meta.json" | head -1)
+          MAC_ARM_HASH=""
+          MAC_ARM_SIZE=0
+          if [ -n "$MAC_ARM_META" ] && [ -f "$MAC_ARM_META" ]; then
+            MAC_ARM_HASH=$(jq -r '.hash' "$MAC_ARM_META")
+            MAC_ARM_SIZE=$(jq -r '.size' "$MAC_ARM_META")
+          fi
+
+          # 读取 macOS amd64 meta
+          MAC_AMD_META=$(find artifacts -name "macos-amd64-meta.json" | head -1)
+          MAC_AMD_HASH=""
+          MAC_AMD_SIZE=0
+          if [ -n "$MAC_AMD_META" ] && [ -f "$MAC_AMD_META" ]; then
+            MAC_AMD_HASH=$(jq -r '.hash' "$MAC_AMD_META")
+            MAC_AMD_SIZE=$(jq -r '.size' "$MAC_AMD_META")
+          fi
+
+          # 生成 latest-wails.json (客户端自动更新用)
+          cat > "${UPDATES}/latest-wails.json" << EOF
+          {
+            "version": "${VERSION}",
+            "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}.exe",
+            "sha256": "${WIN_HASH}",
+            "size": ${WIN_SIZE},
+            "changelog": "${CHANGELOG}",
+            "minVersion": "4.0.0",
+            "macOS": {
+              "arm64": {
+                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
+                "sha256": "${MAC_ARM_HASH}",
+                "size": ${MAC_ARM_SIZE}
+              },
+              "amd64": {
+                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
+                "sha256": "${MAC_AMD_HASH}",
+                "size": ${MAC_AMD_SIZE}
+              }
+            }
+          }
+          EOF
+
+          echo "✅ latest-wails.json updated"
+          cat "${UPDATES}/latest-wails.json"
+
+          # 列出最终 updates 目录
+          echo "=== Final updates directory ==="
+          ls -lh "$UPDATES"
+
+      # ── 提交到 Git (触发 web 部署) ──
+      - name: Commit and push updates
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ env.UPDATES_DIR }}/"
+          git commit -m "release: BingchaAI v${VERSION} — auto-publish build artifacts
+
+          Windows exe + macOS DMG (arm64/amd64) built by CI
+          Files deployed to web/public/updates/" || echo "No changes to commit"
+          git push origin main
+
+      # ── 同时创建 GitHub Release (备份下载) ──
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ github.event.inputs.version }}"
+          CHANGELOG="${{ github.event.inputs.changelog }}"
           TAG="wails-v${VERSION}"
 
-          mapfile -t FILES < <(find release-assets -type f \( -name "*.dmg" -o -name "*.exe" \))
+          mapfile -t FILES < <(find artifacts -type f \( -name "*.dmg" -o -name "*.exe" \))
 
           if [ ${#FILES[@]} -eq 0 ]; then
-            echo "::error::No release assets found!"
-            exit 1
+            echo "::warning::No release assets found, skipping GitHub Release"
+            exit 0
           fi
-
-          echo "Uploading ${#FILES[@]} files:"
-          printf '  %s\n' "${FILES[@]}"
 
           gh release delete "$TAG" --yes 2>/dev/null || true
 
@@ -201,15 +282,20 @@ jobs:
             --title "冰茶AI v${VERSION}" \
             --notes "## 🍵 冰茶AI v${VERSION}
 
-          | 平台 | 架构 | 文件 |
+          ${CHANGELOG}
+
+          ### 下载
+          | 平台 | 架构 | 下载 |
           |------|------|------|
-          | Windows | x64 | \`${{ env.APP_NAME }}-${VERSION}.exe\` |
-          | macOS | Apple Silicon (M1/M2/M3) | \`${{ env.APP_NAME }}-${VERSION}-arm64.dmg\` |
-          | macOS | Intel | \`${{ env.APP_NAME }}-${VERSION}-amd64.dmg\` |
+          | Windows | x64 | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}.exe) |
+          | macOS | Apple Silicon | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
+          | macOS | Intel | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
+
+          > 已安装用户会自动收到更新推送，无需手动下载。
 
           ### macOS 首次打开
-          如果系统提示「无法验证开发者」，请 **右键点击** 应用 → **打开** → 确认。
+          右键点击应用 → 打开 → 确认打开
 
           ### Windows
-          如果看到 SmartScreen 警告，点击「更多信息」→「仍要运行」。" \
+          如 SmartScreen 警告 → 更多信息 → 仍要运行" \
             --latest
