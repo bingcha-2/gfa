@@ -805,7 +805,51 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	}
 	defer resp.Body.Close()
 
-	// 8. Stream/Send back response & parse tokens
+	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
+	// 如果第一个 chunk 就是 quota/capacity 错误（Google 返回 200 但 body 是错误），
+	// 此时还没有向 IDE 发送任何数据，可以换号重试
+	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
+		strings.Contains(r.URL.Path, "streamGenerateContent")
+	var firstChunk []byte
+	if isStreaming {
+		buf := make([]byte, 8192) // 读大一点以覆盖完整的错误 JSON
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			firstChunk = make([]byte, n)
+			copy(firstChunk, buf[:n])
+			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
+				// 首 chunk 就是错误！关闭连接，上报，不向 IDE 发送任何数据
+				Log("[proxy] #%d [FIRST-CHUNK-ERROR] %s in first chunk model=%s retryAfter=%dms, will NOT commit response",
+					reqId, reason, mk, retryMs)
+				_ = resp.Body.Close()
+				// 上报错误
+				if isLocalPool && lease != nil {
+					pool := GetAccountPool()
+					cooldownMin := 30
+					if retryMs > 0 {
+						cooldownMin = int(retryMs / 60000)
+						if cooldownMin < 1 { cooldownMin = 1 }
+					}
+					pool.MarkExhausted(lease.AccountId, reason, mk, cooldownMin)
+				} else if lease != nil {
+					statusCode := 429
+					if reason == "capacity" { statusCode = 503 }
+					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
+						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
+					}, upstream, lease)
+				}
+				// 返回结构化错误给 IDE（此时还能设置正确的 status code）
+				p.sendJsonError(w, 429, fmt.Sprintf("Account quota exhausted (%s), please retry", reason))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+		}
+		if readErr != nil && readErr != io.EOF {
+			Log("[proxy] #%d [FIRST-CHUNK] read error: %v", reqId, readErr)
+		}
+	}
+
+	// 首 chunk 正常 → 提交 HTTP 响应头（此后不可逆）
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
@@ -816,10 +860,20 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	p.mu.Unlock()
 
 	var tokenResult TokenUsageResult
-	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
-		strings.Contains(r.URL.Path, "streamGenerateContent") {
-		// Streaming response: parse chunks on the fly
+	if isStreaming {
+		// 先写出已缓冲的首 chunk
+		if len(firstChunk) > 0 {
+			_, _ = w.Write(firstChunk)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		// Streaming response: parse remaining chunks on the fly
 		tokenResult = p.streamResponse(w, resp.Body, reqId)
+		// 将首 chunk 的 bytes 也计入 token 解析
+		if len(firstChunk) > 0 {
+			tokenResult.StreamBytes += int64(len(firstChunk))
+		}
 	} else {
 		// Single response: read all and parse
 		respBytes, err := io.ReadAll(resp.Body)
@@ -1170,6 +1224,45 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	}
 	defer resp.Body.Close()
 
+	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
+	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
+		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent")
+	var firstChunk []byte
+	if isStreaming {
+		buf := make([]byte, 8192)
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			firstChunk = make([]byte, n)
+			copy(firstChunk, buf[:n])
+			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
+				Log("[proxy] #%d [FIRST-CHUNK-ERROR-GEMINI] %s in first chunk model=%s retryAfter=%dms",
+					reqId, reason, mk, retryMs)
+				_ = resp.Body.Close()
+				if isLocalPool && lease != nil {
+					pool := GetAccountPool()
+					cooldownMin := 30
+					if retryMs > 0 {
+						cooldownMin = int(retryMs / 60000)
+						if cooldownMin < 1 { cooldownMin = 1 }
+					}
+					pool.MarkExhausted(lease.AccountId, reason, mk, cooldownMin)
+				} else if lease != nil {
+					statusCode := 429
+					if reason == "capacity" { statusCode = 503 }
+					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
+						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
+					}, upstream, lease)
+				}
+				p.sendJsonError(w, 429, fmt.Sprintf("Account quota exhausted (%s), please retry", reason))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+		}
+		if readErr != nil && readErr != io.EOF {
+			Log("[proxy] #%d [FIRST-CHUNK-GEMINI] read error: %v", reqId, readErr)
+		}
+	}
+
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
@@ -1179,9 +1272,17 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	p.mu.Unlock()
 
 	var tokenResult TokenUsageResult
-	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
-		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent") {
+	if isStreaming {
+		if len(firstChunk) > 0 {
+			_, _ = w.Write(firstChunk)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
 		tokenResult = p.streamResponse(w, resp.Body, reqId)
+		if len(firstChunk) > 0 {
+			tokenResult.StreamBytes += int64(len(firstChunk))
+		}
 	} else {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
