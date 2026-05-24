@@ -25,7 +25,7 @@ export default function DownloadPage() {
   const [detectedOS, setDetectedOS] = useState<"windows" | "macos" | "other">("windows");
 
   useEffect(() => {
-    fetch("/updates/latest-wails.json")
+    fetch("/updates/latest-wails.json?t=" + Date.now())
       .then((r) => r.json())
       .then((data) => setInfo(data))
       .catch(() => {});

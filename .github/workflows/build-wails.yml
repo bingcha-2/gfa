@@ -97,12 +97,16 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           ARCH="${{ matrix.arch }}"
-          APP_PATH="${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.app"
 
-          if [ ! -d "$APP_PATH" ]; then
-            echo "::error::No .app bundle found at $APP_PATH"
+          # Wails 用 wails.json 的 name 字段（冰茶AI）作为 .app 名，动态查找
+          APP_PATH=$(find "${{ env.WAILS_DIR }}/build/bin" -maxdepth 1 -name "*.app" -type d | head -1)
+
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "::error::No .app bundle found in ${{ env.WAILS_DIR }}/build/bin/"
+            ls -la "${{ env.WAILS_DIR }}/build/bin/" || true
             exit 1
           fi
+          echo "Found .app bundle: $APP_PATH"
 
           # Ad-hoc 签名
           codesign --force --deep --sign - "$APP_PATH"
