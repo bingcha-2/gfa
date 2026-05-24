@@ -308,7 +308,7 @@ async function collectState(): Promise<any> {
       expectedUrl: PROXY_URL,
       isConfigured: configuredUrl === PROXY_URL,
     },
-    ideProducts: detectAllProducts(PROXY_PORT),
+    ideProducts: (() => { try { return detectAllProducts(PROXY_PORT) } catch (e: any) { log(`[collectState] detectAllProducts error: ${e.message}`); return { products: [], proxyUrl: PROXY_URL } } })(),
     accounts: [],
   }
 }
@@ -375,7 +375,6 @@ function setupIpcHandlers(): void {
             await stopTokenProxy()
             await new Promise(r => setTimeout(r, 1500))
 
-            // 清除 IDE 配置
             // 恢复所有 IDE 产品
             const offStatus = detectAllProducts(PROXY_PORT)
             for (const p of offStatus.products) {
@@ -386,6 +385,31 @@ function setupIpcHandlers(): void {
               }
             }
             log('[relay:off] all IDE products restored')
+
+            // [FORCE] 杀掉 language_server 让 IDE 用恢复后的配置重新拉起
+            if (IS_WIN) {
+              try {
+                const lsCmdline = execFileSync('wmic', [
+                  'process', 'where', "name like 'language_server%'",
+                  'get', 'processid,commandline', '/format:list'
+                ], { encoding: 'utf8', windowsHide: true, timeout: 5000 }).trim()
+
+                if (lsCmdline) {
+                  log('[relay:off] [FORCE] killing language_server to apply restored config...')
+                  try {
+                    execFileSync('taskkill', ['/IM', 'language_server_windows_x64.exe', '/F'],
+                      { stdio: 'ignore', windowsHide: true })
+                    log('[relay:off] [FORCE] language_server killed, IDE will auto-restart it with clean config')
+                  } catch {
+                    log('[relay:off] [FORCE] taskkill failed (may already be stopped)')
+                  }
+                } else {
+                  log('[relay:off] language_server not running, skip force restart')
+                }
+              } catch {
+                log('[relay:off] language_server check failed, skip force restart')
+              }
+            }
           } else {
             // ─── 开启续杯 ─────────────────
             const config = readConfig()
