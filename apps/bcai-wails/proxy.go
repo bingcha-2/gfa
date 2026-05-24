@@ -867,40 +867,11 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
-
-	var lease *TokenLease
-	if isLocalPool {
-		pool := GetAccountPool()
-		acc, selErr := pool.SelectAccount("", nil)
-		if selErr != nil {
-			Log("[proxy] #%d [LOCAL-POOL] No available account for Gemini: %v", reqId, selErr)
-			p.sendJsonError(w, 503, fmt.Sprintf("本地号池: %v", selErr))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
-		token, tokenErr := pool.GetAccessToken(acc.ID)
-		if tokenErr != nil {
-			Log("[proxy] #%d [LOCAL-POOL] Token refresh failed for Gemini: %v", reqId, tokenErr)
-			p.sendJsonError(w, 503, fmt.Sprintf("本地号池: token 刷新失败: %v", tokenErr))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
-		lease = &TokenLease{
-			AccessToken: token,
-			ProjectId:   acc.ProjectId,
-			AccountId:   acc.ID,
-			EmailHint:   acc.Email,
-		}
-	} else {
-		leaser := GetLeaser()
-		var err error
-		lease, err = leaser.LeaseTokenToLease(card, deviceId, upstream)
-		if err != nil {
-			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token for Gemini API: %v", reqId, err)
-			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
+	if isLocalPool && GetAccountPool().EnabledCount() == 0 {
+		Log("[proxy] #%d [BLOCK] Gemini generation failed: no accounts in local pool", reqId)
+		p.sendJsonError(w, 503, "BingchaAI: 本地号池中没有可用账号，请先添加账号。")
+		atomic.AddInt64(&p.stats.TotalErrors, 1)
+		return
 	}
 
 	targetUrl, _ := url.Parse(DefaultGeminiEndpoint + r.URL.Path + "?" + r.URL.RawQuery)
@@ -909,68 +880,279 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		query.Del("key")
 		targetUrl.RawQuery = query.Encode()
 	}
-
-	req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
-	if err != nil {
-		Log("[proxy] #%d [REQ-ERROR] Failed to build Gemini API request: %v", reqId, err)
-		p.sendJsonError(w, 500, "Internal request creation error")
-		atomic.AddInt64(&p.stats.TotalErrors, 1)
-		return
-	}
-
-	for k, v := range r.Header {
-		lower := strings.ToLower(k)
-		if lower == "authorization" ||
-			lower == "host" ||
-			lower == "content-length" ||
-			lower == "x-goog-api-key" ||
-			lower == "x-goog-user-project" {
-			continue
-		}
-		for _, val := range v {
-			req.Header.Add(k, val)
-		}
-	}
-	req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
-	if lease.ProjectId != "" {
-		req.Header.Set("X-Goog-User-Project", lease.ProjectId)
-	}
-	req.Header.Set("Host", targetUrl.Host)
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-
-	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
+	Log("[proxy] #%d [UPSTREAM] Gemini generation host=%s path=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, cfg.PoolMode)
 	client := createStreamingHttpClient(upstream)
-	resp, err := client.Do(req)
-	if err != nil {
-		Log("[proxy] #%d [FORWARD-ERROR] Gemini API request failed: %v", reqId, err)
-		p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
+	attemptSessionId := fmt.Sprintf("%d-%d", time.Now().UnixMilli(), reqId)
+
+	var resp *http.Response
+	var lease *TokenLease
+
+	if isLocalPool {
+		// ====== LOCAL POOL MODE with retry ======
+		var excludeIds []int
+		for attempt := 1; attempt <= MaxCloudCodeGenerationAttempts; attempt++ {
+			pool := GetAccountPool()
+			acc, selErr := pool.SelectAccount(requestModelKey, excludeIds)
+			if selErr != nil {
+				Log("[proxy] #%d [LOCAL-POOL-GEMINI] No available account: %v", reqId, selErr)
+				p.sendJsonError(w, 503, fmt.Sprintf("本地号池: %v", selErr))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+			token, tokenErr := pool.GetAccessToken(acc.ID)
+			if tokenErr != nil {
+				Log("[proxy] #%d [LOCAL-POOL-GEMINI] Token refresh failed for #%d: %v", reqId, acc.ID, tokenErr)
+				excludeIds = append(excludeIds, acc.ID)
+				pool.MarkError(acc.ID)
+				if attempt < MaxCloudCodeGenerationAttempts {
+					continue
+				}
+				p.sendJsonError(w, 503, fmt.Sprintf("本地号池: token 刷新失败: %v", tokenErr))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+			lease = &TokenLease{
+				AccessToken: token,
+				ProjectId:   acc.ProjectId,
+				AccountId:   acc.ID,
+				EmailHint:   acc.Email,
+			}
+			Log("[proxy] #%d [LOCAL-POOL-GEMINI] attempt=%d account=#%d (%s)", reqId, attempt, acc.ID, acc.Email)
+
+			req, _ := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
+			for k, v := range r.Header {
+				lower := strings.ToLower(k)
+				if lower == "authorization" || lower == "host" || lower == "content-length" || lower == "x-goog-api-key" || lower == "x-goog-user-project" {
+					continue
+				}
+				for _, val := range v {
+					req.Header.Add(k, val)
+				}
+			}
+			req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+			if lease.ProjectId != "" {
+				req.Header.Set("X-Goog-User-Project", lease.ProjectId)
+			}
+			req.Header.Set("Host", targetUrl.Host)
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+
+			var doErr error
+			resp, doErr = client.Do(req)
+			if doErr != nil {
+				Log("[proxy] #%d [LOCAL-POOL-GEMINI] upstream error: %v", reqId, doErr)
+				p.sendJsonError(w, 502, fmt.Sprintf("Upstream error: %v", doErr))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+
+			problemReason := ""
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden ||
+				resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusInternalServerError {
+				respBytes := readAndResetResponseBody(resp)
+				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, string(respBytes))
+			}
+			if problemReason == "" {
+				pool.MarkSuccess(acc.ID)
+				break
+			}
+
+			Log("[proxy] #%d [LOCAL-POOL-GEMINI] account #%d returned %d (%s), rotating...", reqId, acc.ID, resp.StatusCode, problemReason)
+			localRetryMs := extractQuotaResetDelayMs(string(readAndResetResponseBody(resp)))
+			cooldownMin := 30
+			if localRetryMs > 0 {
+				cooldownMin = int(localRetryMs / 60000)
+				if cooldownMin < 1 {
+					cooldownMin = 1
+				}
+			}
+			pool.MarkExhausted(acc.ID, problemReason, requestModelKey, cooldownMin)
+			excludeIds = append(excludeIds, acc.ID)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			resp = nil
+			atomic.AddInt64(&p.stats.TotalRetries, 1)
+			GetUsageStats().AddRetry()
+			if attempt >= MaxCloudCodeGenerationAttempts {
+				break
+			}
+		}
+	} else {
+		// ====== REMOTE LEASE MODE with retry (aligned with Cloud Code path) ======
+		leaser := GetLeaser()
+		remoteMaxAttempts := MaxCloudCodeGenerationAttempts
+		accumulatedCapacityWaitMs := int64(0)
+		const maxCapacityWaitMs = int64(60000)
+		var excludeAccountIds []int
+
+		for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
+			leaseOptions := map[string]interface{}{
+				"attemptSessionId": attemptSessionId,
+				"modelKey":         requestModelKey,
+			}
+			if len(excludeAccountIds) > 0 {
+				leaseOptions["excludeAccountIds"] = excludeAccountIds
+			}
+			var err error
+			lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
+			if err != nil {
+				Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token for Gemini API: %v", reqId, err)
+				p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+			if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
+				remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
+				if remoteMaxAttempts > 99 {
+					remoteMaxAttempts = 99
+				}
+			}
+			Log("[proxy] #%d [LEASE-GEMINI] attempt=%d/%d accountId=%d project=%s model=%s",
+				reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
+
+			req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
+			if err != nil {
+				Log("[proxy] #%d [REQ-ERROR] Failed to build Gemini API request: %v", reqId, err)
+				p.sendJsonError(w, 500, "Internal request creation error")
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+			for k, v := range r.Header {
+				lower := strings.ToLower(k)
+				if lower == "authorization" || lower == "host" || lower == "content-length" ||
+					lower == "x-goog-api-key" || lower == "x-goog-user-project" {
+					continue
+				}
+				for _, val := range v {
+					req.Header.Add(k, val)
+				}
+			}
+			req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+			if lease.ProjectId != "" {
+				req.Header.Set("X-Goog-User-Project", lease.ProjectId)
+			}
+			req.Header.Set("Host", targetUrl.Host)
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+
+			resp, err = client.Do(req)
+			if err != nil {
+				Log("[proxy] #%d [FORWARD-ERROR] Gemini API request failed: %v", reqId, err)
+				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+
+			problemReason := ""
+			errorBody := ""
+			if resp.StatusCode == http.StatusTooManyRequests ||
+				resp.StatusCode == http.StatusForbidden ||
+				resp.StatusCode == http.StatusServiceUnavailable ||
+				resp.StatusCode == http.StatusInternalServerError {
+				respBytes := readAndResetResponseBody(resp)
+				errorBody = string(respBytes)
+				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
+			}
+			if problemReason == "" {
+				break
+			}
+
+			retryAfterMs := extractQuotaResetDelayMs(errorBody)
+			errorModelKey := extractCapacityModelKey(errorBody)
+			if errorModelKey == "" {
+				errorModelKey = requestModelKey
+			}
+			reportDetails := ReportDetails{
+				StatusCode:   resp.StatusCode,
+				ModelKey:     errorModelKey,
+				Reason:       problemReason,
+				RetryAfterMs: retryAfterMs,
+				ErrorText:    errorBody,
+			}
+
+			// Verification challenge → return 503
+			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
+				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d", reqId, lease.AccountId)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+
+			// Check retryability from server policy
+			canRetry := attempt < remoteMaxAttempts
+			if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
+				statusRetryable := false
+				for _, s := range lease.RetryPolicy.RetryableStatuses {
+					if s == resp.StatusCode {
+						statusRetryable = true
+						break
+					}
+				}
+				if !statusRetryable {
+					canRetry = false
+				}
+			}
+
+			// 503 capacity wait — wait and retry instead of immediate rotate
+			if resp.StatusCode == http.StatusServiceUnavailable &&
+				strings.Contains(strings.ToLower(errorBody), "capacity") &&
+				accumulatedCapacityWaitMs < maxCapacityWaitMs {
+				waitMs := int64(5000)
+				if retryAfterMs > 0 && retryAfterMs < 30000 {
+					waitMs = retryAfterMs
+				}
+				accumulatedCapacityWaitMs += waitMs
+				Log("[proxy] #%d [CAPACITY-WAIT-GEMINI] 503 capacity, waiting %dms (total=%dms/%dms) model=%s",
+					reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				continue
+			}
+
+			if canRetry {
+				Log("[proxy] #%d Gemini API returned %d (%s) model=%s retryAfter=%dms accountId=%d; rotating (%d/%d)",
+					reqId, resp.StatusCode, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				atomic.AddInt64(&p.stats.TotalRetries, 1)
+				GetUsageStats().AddRetry()
+				time.Sleep(remoteRetryDelay(attempt))
+				continue
+			}
+
+			Log("[proxy] #%d Gemini API returned %d (%s) after %d attempts for accountId=%d, reporting...",
+				reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
+			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+			break
+		}
+	} // end mode selection
+
+	if resp == nil {
+		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
-		respBytes := readAndResetResponseBody(resp)
-		if problemReason := cloudCodeAccountProblemReason(resp.StatusCode, string(respBytes)); problemReason != "" {
-			Log("[proxy] #%d Gemini API returned %d (%s), reporting account problem...", reqId, resp.StatusCode, problemReason)
-			if isLocalPool {
-				GetAccountPool().MarkExhausted(lease.AccountId, problemReason, "", 30)
-			} else {
-				GetLeaser().ReportProblemForLease(card, deviceId, problemReason, upstream, lease)
-			}
-		}
-	}
-
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
 
+	p.mu.Lock()
+	p.lastModelKey = requestModelKey
+	p.mu.Unlock()
+
 	var tokenResult TokenUsageResult
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
 		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent") {
-		p.mu.Lock()
-		p.lastModelKey = requestModelKey
-		p.mu.Unlock()
 		tokenResult = p.streamResponse(w, resp.Body, reqId)
 	} else {
 		respBytes, err := io.ReadAll(resp.Body)
@@ -982,21 +1164,23 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
+		GetUsageStats().AddGeneration()
 		// 上报成功请求的 token 用量到服务器，不释放 lease（保持账号粘性）
 		if lease != nil && !isLocalPool {
 			leaser := GetLeaser()
 			leaser.ReportUsage(card, deviceId, ReportDetails{
-				StatusCode:        resp.StatusCode,
-				ModelKey:          requestModelKey,
-				InputTokens:       tokenResult.InputTokens,
-				OutputTokens:      tokenResult.OutputTokens,
-				CachedInputTokens: tokenResult.CachedInputTokens,
-				RawTotalTokens:    tokenResult.RawTotalTokens,
+				StatusCode:          resp.StatusCode,
+				ModelKey:            requestModelKey,
+				InputTokens:         tokenResult.InputTokens,
+				OutputTokens:        tokenResult.OutputTokens,
+				CachedInputTokens:   tokenResult.CachedInputTokens,
+				RawTotalTokens:      tokenResult.RawTotalTokens,
 				BillableTotalTokens: tokenResult.BillableTotalTokens,
 			}, upstream, lease)
 		}
 	} else {
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
+		GetUsageStats().AddError()
 	}
 }
 
