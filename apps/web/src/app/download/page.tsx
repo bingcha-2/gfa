@@ -266,6 +266,7 @@ export default function DownloadPage() {
         {info?.changelog && (
           <div
             style={{
+              order: 2,
               padding: "12px 16px",
               borderRadius: 10,
               background: "rgba(99,102,241,.06)",
@@ -281,6 +282,7 @@ export default function DownloadPage() {
         {/* Info */}
         <div
           style={{
+            order: 3,
             display: "flex",
             flexDirection: "column",
             gap: 12,
@@ -330,7 +332,7 @@ export default function DownloadPage() {
         </div>
 
         {/* Footer link */}
-        <div style={{ textAlign: "center" }}>
+        <div style={{ textAlign: "center", order: 4 }}>
           <a
             href="/"
             style={{

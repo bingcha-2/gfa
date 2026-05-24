@@ -1,8 +1,15 @@
 {
-  "version": "4.5.0",
-  "url": "https://bcai.site/updates/BingchaAI-4.5.0.exe",
-  "sha256": "467AB5A943918CD0C670C0E10650A531E9F138544114EBCF09C740B48DB2C3CD",
-  "size": 12604416,
-  "changelog": "全新UI改版；新增本地号池OAuth登录；用量显示改为服务端实时数据；开启接管前校验卡密；IDE接管改为完整重启策略",
-  "minVersion": "4.0.0"
+  "version": "4.5.1",
+  "url": "https://bcai.site/updates/BingchaAI-4.5.1.exe",
+  "sha256": "F0848760B3FF7AB2EECFD04DA88D6D5AFFCB1C3CD2C9999C9273DDB900A28D23",
+  "size": 12608000,
+  "changelog": "修复下载页面macOS卡片显示问题；移除LS代理状态显示",
+  "minVersion": "4.0.0",
+  "macOS": {
+    "arm64": {
+      "url": "https://bcai.site/updates/BingchaAI-4.5.1-arm64.dmg",
+      "sha256": "",
+      "size": 0
+    }
+  }
 }
