@@ -400,7 +400,16 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	// Parse lease response (same rules as proxy/token-leaser.js: success only when field is explicitly false)
 	var leaseResp LeaseTokenResp
 	if err := json.Unmarshal(body, &leaseResp); err != nil {
-		return nil, fmt.Errorf("invalid lease json: %w", err)
+		// 空/截断 JSON 视为网络问题，尝试重新请求
+		Log("[token-leaser] Invalid lease JSON (len=%d), retrying once: %v", len(body), err)
+		body2, _, err2 := postJsonWithSecret(leaseClient, "/lease-token", payload, card)
+		if err2 != nil {
+			return nil, fmt.Errorf("invalid lease json + retry failed: %w", err2)
+		}
+		if err3 := json.Unmarshal(body2, &leaseResp); err3 != nil {
+			return nil, fmt.Errorf("invalid lease json after retry (len=%d): %w", len(body2), err3)
+		}
+		body = body2
 	}
 
 	if (leaseResp.Success != nil && !*leaseResp.Success) || (leaseResp.Ok != nil && !*leaseResp.Ok) {
@@ -472,6 +481,8 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 			var cs map[string]interface{}
 			if json.Unmarshal(csRaw, &cs) == nil {
 				lease.CandidateStats = cs
+				Log("[token-leaser] CandidateStats: healthyForModel=%.0f total=%.0f cooling=%.0f probation=%.0f excluded=%.0f",
+					cs["healthyForModel"], cs["total"], cs["coolingForModel"], cs["probationForModel"], cs["excluded"])
 			}
 		}
 	}
