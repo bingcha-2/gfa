@@ -479,8 +479,7 @@ const appStartTime = Date.now();
 
 function updateUsageReport(data) {
     const today = data.today || {};
-    const history = data.dailyHistory || [];
-    const cumSaving = data.cumulativeSaving || 0;
+    const stats = data.stats || {};
 
     // ---- 会话时长 ----
     const dur = document.getElementById('session-duration');
@@ -495,27 +494,78 @@ function updateUsageReport(data) {
         }
     }
 
-    // ---- Token 柱状图（当天数据）----
-    const inputTk = today.inputTokens || 0;
-    const outputTk = today.outputTokens || 0;
-    const cachedTk = today.cachedTokens || 0;
-    const maxTk = Math.max(inputTk, outputTk, cachedTk, 1);
+    // ---- Opus 用量 ----
+    const opusInput = stats.opusInputTokens || 0;
+    const opusOutput = stats.opusOutputTokens || 0;
+    const opusTotal = opusInput + opusOutput;
+    const OPUS_LIMIT = 1000000;
+    const GEMINI_LIMIT = 2000000;
 
-    const barInput = document.getElementById('bar-input');
-    const barOutput = document.getElementById('bar-output');
-    const barCached = document.getElementById('bar-cached');
-    if (barInput) barInput.style.width = (inputTk / maxTk * 100) + '%';
-    if (barOutput) barOutput.style.width = (outputTk / maxTk * 100) + '%';
-    if (barCached) barCached.style.width = (cachedTk / maxTk * 100) + '%';
+    const opusTokensText = document.getElementById('opus-tokens-text');
+    const opusBar = document.getElementById('opus-bar');
+    if (opusTokensText && opusBar) {
+        if (opusTotal === 0) {
+            opusTokensText.textContent = `满额度 · ${formatTokens(OPUS_LIMIT)}`;
+            opusBar.style.width = '100%';
+            opusBar.className = 'model-bar opus-bar full';
+        } else {
+            const pct = Math.min(100, (opusTotal / OPUS_LIMIT) * 100);
+            opusTokensText.textContent = `${formatTokens(opusTotal)} / ${formatTokens(OPUS_LIMIT)}`;
+            opusBar.style.width = pct + '%';
+            opusBar.className = 'model-bar opus-bar' + (pct >= 95 ? ' exhausted' : '');
+        }
+    }
 
-    const barInputVal = document.getElementById('bar-input-val');
-    const barOutputVal = document.getElementById('bar-output-val');
-    const barCachedVal = document.getElementById('bar-cached-val');
-    if (barInputVal) barInputVal.textContent = formatTokens(inputTk);
-    if (barOutputVal) barOutputVal.textContent = formatTokens(outputTk);
-    if (barCachedVal) barCachedVal.textContent = formatTokens(cachedTk);
+    // ---- Gemini 用量 ----
+    const geminiInput = stats.geminiInputTokens || 0;
+    const geminiOutput = stats.geminiOutputTokens || 0;
+    const geminiTotal = geminiInput + geminiOutput;
 
-    // ---- 请求统计 ----
+    const geminiTokensText = document.getElementById('gemini-tokens-text');
+    const geminiBar = document.getElementById('gemini-bar');
+    if (geminiTokensText && geminiBar) {
+        if (geminiTotal === 0) {
+            geminiTokensText.textContent = `满额度 · ${formatTokens(GEMINI_LIMIT)}`;
+            geminiBar.style.width = '100%';
+            geminiBar.className = 'model-bar gemini-bar full';
+        } else {
+            const pct = Math.min(100, (geminiTotal / GEMINI_LIMIT) * 100);
+            geminiTokensText.textContent = `${formatTokens(geminiTotal)} / ${formatTokens(GEMINI_LIMIT)}`;
+            geminiBar.style.width = pct + '%';
+            geminiBar.className = 'model-bar gemini-bar' + (pct >= 95 ? ' exhausted' : '');
+        }
+    }
+
+    // ---- 5h 恢复倒计时 ----
+    const recoveryTimeText = document.getElementById('recovery-time-text');
+    const recoveryBar = document.getElementById('recovery-bar');
+    const proxyStartedAt = data.proxyStartedAt;
+    if (recoveryTimeText && recoveryBar && proxyStartedAt) {
+        const startTime = new Date(proxyStartedAt).getTime();
+        if (startTime > 0) {
+            const FIVE_HOURS = 5 * 3600 * 1000;
+            const elapsed = Date.now() - startTime;
+            const remaining = Math.max(0, FIVE_HOURS - elapsed);
+            const progressPct = Math.min(100, (elapsed / FIVE_HOURS) * 100);
+
+            if (remaining <= 0) {
+                recoveryTimeText.textContent = '已恢复';
+                recoveryTimeText.className = 'recovery-time done';
+                recoveryBar.style.width = '100%';
+                recoveryBar.className = 'model-bar recovery-bar done';
+            } else {
+                const h = Math.floor(remaining / 3600000);
+                const m = Math.floor((remaining % 3600000) / 60000);
+                const s = Math.floor((remaining % 60000) / 1000);
+                recoveryTimeText.textContent = `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
+                recoveryTimeText.className = 'recovery-time' + (remaining < 1800000 ? ' done' : '');
+                recoveryBar.style.width = progressPct + '%';
+                recoveryBar.className = 'model-bar recovery-bar';
+            }
+        }
+    }
+
+    // ---- 请求统计（保留旧元素兼容）----
     const metricSuccess = document.getElementById('metric-success');
     const metricErrors = document.getElementById('metric-errors');
     const metricRetries = document.getElementById('metric-retries');
@@ -524,123 +574,8 @@ function updateUsageReport(data) {
     if (metricErrors) metricErrors.textContent = (today.errors || 0).toLocaleString();
     if (metricRetries) metricRetries.textContent = (today.retries || 0).toLocaleString();
     if (metricTotal) metricTotal.textContent = (today.requests || 0).toLocaleString();
-
-    // ---- 费用估算 ----
-    const inputCost = (inputTk / 1000000) * 5;
-    const outputCost = (outputTk / 1000000) * 25;
-    const costInputEl = document.getElementById('cost-input');
-    const costOutputEl = document.getElementById('cost-output');
-    const costTotalEl = document.getElementById('cost-total');
-    if (costInputEl) costInputEl.textContent = `$${inputCost.toFixed(2)}`;
-    if (costOutputEl) costOutputEl.textContent = `$${outputCost.toFixed(2)}`;
-    if (costTotalEl) costTotalEl.textContent = `$${cumSaving.toFixed(2)}`;
-
-    // ---- 使用趋势图 ----
-    const chartMode = data.chartMode || 'daily';
-    const hourlyHistory = data.hourlyHistory || [];
-    updateTrendChart(chartMode, history, hourlyHistory);
 }
 
-function updateTrendChart(mode, dailyHistory, hourlyHistory) {
-    const container = document.getElementById('daily-trend-chart');
-    if (!container) return;
-
-    if (mode === 'hourly') {
-        renderHourlyChart(container, hourlyHistory);
-    } else {
-        renderDailyChart(container, dailyHistory);
-    }
-}
-
-function renderDailyChart(container, history) {
-    const days = [...history].reverse();
-    if (days.length === 0) return;
-
-    const hasData = days.some(d => (d.inputTokens || 0) + (d.outputTokens || 0) > 0);
-    if (!hasData) {
-        container.innerHTML = '<div class="trend-empty">暂无使用数据</div>';
-        return;
-    }
-
-    let maxVal = 1;
-    for (const d of days) {
-        const t = (d.inputTokens || 0) + (d.outputTokens || 0);
-        if (t > maxVal) maxVal = t;
-    }
-
-    const todayStr = new Date().toISOString().substring(0, 10);
-    let html = '';
-    for (const d of days) {
-        const input = d.inputTokens || 0;
-        const output = d.outputTokens || 0;
-        const total = input + output;
-        const barH = total > 0 ? Math.max(total / maxVal * 100, 5) : 0;
-        const label = d.date ? d.date.substring(5) : '--';
-        const isToday = d.date === todayStr;
-        const saving = (input / 1000000) * 5 + (output / 1000000) * 25;
-
-        const tipContent = total > 0
-            ? `<div class="tip-row">输入 ${formatTokens(input)}</div><div class="tip-row">输出 ${formatTokens(output)}</div><div class="tip-row tip-saving">💰 $${saving.toFixed(2)}</div>`
-            : '';
-
-        html += `
-            <div class="trend-col ${isToday ? 'trend-today' : ''}">
-                <div class="trend-top-val">${total > 0 ? formatTokens(total) : ''}</div>
-                <div class="trend-bar-area">
-                    <div class="trend-single-bar" style="height: ${barH}%;"></div>
-                    ${tipContent ? `<div class="trend-tooltip">${tipContent}</div>` : ''}
-                </div>
-                <div class="trend-label">${isToday ? '今天' : label}</div>
-            </div>`;
-    }
-    container.innerHTML = html;
-}
-
-function renderHourlyChart(container, hours) {
-    if (!hours || hours.length === 0) {
-        container.innerHTML = '<div class="trend-empty">暂无使用数据</div>';
-        return;
-    }
-
-    const hasData = hours.some(h => (h.inputTokens || 0) + (h.outputTokens || 0) > 0);
-    if (!hasData) {
-        container.innerHTML = '<div class="trend-empty">暂无使用数据</div>';
-        return;
-    }
-
-    let maxVal = 1;
-    for (const h of hours) {
-        const t = (h.inputTokens || 0) + (h.outputTokens || 0);
-        if (t > maxVal) maxVal = t;
-    }
-
-    const curHour = new Date().getHours();
-    let html = '';
-    for (let i = 0; i < hours.length; i++) {
-        const h = hours[i];
-        const input = h.inputTokens || 0;
-        const output = h.outputTokens || 0;
-        const total = input + output;
-        const barH = total > 0 ? Math.max(total / maxVal * 100, 5) : 0;
-        const isCur = i === curHour;
-        const saving = (input / 1000000) * 5 + (output / 1000000) * 25;
-
-        const tipContent = total > 0
-            ? `<div class="tip-row">输入 ${formatTokens(input)}</div><div class="tip-row">输出 ${formatTokens(output)}</div><div class="tip-row tip-saving">💰 $${saving.toFixed(2)}</div>`
-            : '';
-
-        const hourLabel = String(i).padStart(2, '0');
-        html += `
-            <div class="trend-col ${isCur ? 'trend-today' : ''}" style="flex: 1; min-width: 0;">
-                <div class="trend-bar-area">
-                    <div class="trend-single-bar" style="height: ${barH}%; max-width: 16px;"></div>
-                    ${tipContent ? `<div class="trend-tooltip">${tipContent}</div>` : ''}
-                </div>
-                <div class="trend-label hourly-label">${hourLabel}</div>
-            </div>`;
-    }
-    container.innerHTML = html;
-}
 
 function maskCard(card) {
     if (!card || card.length < 12) return card;

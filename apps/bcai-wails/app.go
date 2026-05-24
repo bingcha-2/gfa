@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx  context.Context
-	lock sync.Mutex
+	ctx            context.Context
+	lock           sync.Mutex
+	proxyStartedAt time.Time // 代理启动时间，用于 5h 恢复倒计时
 }
 
 // NewApp creates a new App application struct
@@ -59,6 +61,7 @@ func (a *App) startup(ctx context.Context) {
 		Log("[app] HTTP proxy start failed: %v", err)
 	} else {
 		Log("[app] HTTP proxy started on 127.0.0.1:%d", cfg.ProxyPort)
+		a.proxyStartedAt = time.Now()
 	}
 
 	// 预热连接池，提前建立 TLS 连接
@@ -165,6 +168,7 @@ func (a *App) GetStats() map[string]interface{} {
 		"updateStatus":     GetUpdater().GetStatus(),
 		"poolMode":         LoadConfig().PoolMode,
 		"poolStatus":       GetAccountPool().GetPoolStatus(),
+		"proxyStartedAt":   a.proxyStartedAt.Format(time.RFC3339),
 	}
 }
 

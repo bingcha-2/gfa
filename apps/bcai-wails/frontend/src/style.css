@@ -2319,3 +2319,128 @@ code {
 .about-row .label { color: var(--text-secondary); }
 .about-row .val { color: var(--text-primary); }
 
+/* ═══════════════════════════════════════════════════════
+   Model Usage Bars (Opus / Gemini / Recovery)
+   ═══════════════════════════════════════════════════════ */
+
+.model-usage-row,
+.recovery-row {
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.model-usage-row:last-of-type {
+    border-bottom: none;
+}
+
+.model-usage-header,
+.recovery-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.model-usage-label {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+}
+
+.opus-label {
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.gemini-label {
+    background: rgba(52, 211, 153, 0.12);
+    color: #6ee7b7;
+    border: 1px solid rgba(52, 211, 153, 0.25);
+}
+
+.model-usage-tokens {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+}
+
+.model-bar-wrap {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.model-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+    min-width: 0;
+}
+
+.opus-bar {
+    background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+}
+
+.opus-bar.full {
+    background: linear-gradient(90deg, #34d399, #6ee7b7);
+    opacity: 0.6;
+}
+
+.opus-bar.exhausted {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+.gemini-bar {
+    background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.gemini-bar.full {
+    background: linear-gradient(90deg, #34d399, #6ee7b7);
+    opacity: 0.6;
+}
+
+.gemini-bar.exhausted {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+.recovery-row {
+    border-bottom: none;
+    padding-top: 12px;
+}
+
+.recovery-icon {
+    font-size: 14px;
+    margin-right: 4px;
+}
+
+.recovery-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.recovery-time {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fbbf24;
+    font-family: var(--font-mono);
+}
+
+.recovery-time.done {
+    color: var(--success);
+}
+
+.recovery-bar {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.recovery-bar.done {
+    background: linear-gradient(90deg, #34d399, #6ee7b7);
+}

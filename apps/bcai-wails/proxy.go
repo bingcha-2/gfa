@@ -31,6 +31,11 @@ type ProxyStats struct {
 	TotalCachedTokens          int64   `json:"totalCachedTokens"`
 	TotalSuccessfulGenerations int64   `json:"totalSuccessfulGenerations"`
 	SavedMoneyUSD              float64 `json:"savedMoneyUSD"`
+	// 按模型分类的 token 统计
+	OpusInputTokens    int64 `json:"opusInputTokens"`
+	OpusOutputTokens   int64 `json:"opusOutputTokens"`
+	GeminiInputTokens  int64 `json:"geminiInputTokens"`
+	GeminiOutputTokens int64 `json:"geminiOutputTokens"`
 }
 
 // ProxyServer 核心代理业务逻辑
@@ -38,6 +43,9 @@ type ProxyServer struct {
 	mu           sync.Mutex
 	stats        ProxyStats
 	upstreamCool int64 // timestamp until upstream is considered cool
+
+	// 当前请求的模型 key（用于 streaming 时传递给 token 统计）
+	lastModelKey string
 
 	// fetchAvailableModels 缓存（timo 的 x-timo-cache 行为）
 	modelsCacheMu   sync.RWMutex
@@ -60,6 +68,10 @@ func (p *ProxyServer) GetStats() ProxyStats {
 		TotalOutputTokens:          atomic.LoadInt64(&p.stats.TotalOutputTokens),
 		TotalCachedTokens:          atomic.LoadInt64(&p.stats.TotalCachedTokens),
 		TotalSuccessfulGenerations: atomic.LoadInt64(&p.stats.TotalSuccessfulGenerations),
+		OpusInputTokens:            atomic.LoadInt64(&p.stats.OpusInputTokens),
+		OpusOutputTokens:           atomic.LoadInt64(&p.stats.OpusOutputTokens),
+		GeminiInputTokens:          atomic.LoadInt64(&p.stats.GeminiInputTokens),
+		GeminiOutputTokens:         atomic.LoadInt64(&p.stats.GeminiOutputTokens),
 	}
 
 	// Calculate savings: $5 / 1M input, $25 / 1M output
@@ -68,6 +80,21 @@ func (p *ProxyServer) GetStats() ProxyStats {
 	stats.SavedMoneyUSD = inputVal + outputVal
 
 	return stats
+}
+
+// classifyModel 将模型名分类为 opus / gemini / other
+func classifyModel(modelKey string) string {
+	if modelKey == "" {
+		return "other"
+	}
+	lower := strings.ToLower(modelKey)
+	if strings.Contains(lower, "opus") || strings.Contains(lower, "claude") {
+		return "opus"
+	}
+	if strings.Contains(lower, "gemini") || strings.Contains(lower, "pro") || strings.Contains(lower, "flash") {
+		return "gemini"
+	}
+	return "other"
 }
 
 func isGenerationRequest(path string) bool {
@@ -774,6 +801,11 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
 
+	// 设置当前模型 key（streaming 时使用）
+	p.mu.Lock()
+	p.lastModelKey = requestModelKey
+	p.mu.Unlock()
+
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
 		strings.Contains(r.URL.Path, "streamGenerateContent") {
 		// Streaming response: parse chunks on the fly
@@ -783,7 +815,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
-			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"))
+			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
 
@@ -799,6 +831,12 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
 	cfg := LoadConfig()
 	isLocalPool := cfg.PoolMode == "local"
+
+	// 提取模型 key（Gemini API 路径包含模型名）
+	requestModelKey := extractModelKeyFromPath(r.URL.Path)
+	if requestModelKey == "" {
+		requestModelKey = extractModelKeyFromBody(body)
+	}
 
 	if !isLocalPool && card == "" {
 		Log("[proxy] #%d [BLOCK] Gemini generation failed: no account card configured", reqId)
@@ -904,12 +942,15 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
 		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent") {
+		p.mu.Lock()
+		p.lastModelKey = requestModelKey
+		p.mu.Unlock()
 		p.streamResponse(w, resp.Body, reqId)
 	} else {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
-			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"))
+			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
 
@@ -1096,10 +1137,13 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	}
 
 	// Parse cumulative tokens from the stream
-	p.parseAndAddTokenUsage(fullResponse.Bytes(), "")
+	p.mu.Lock()
+	modelKey := p.lastModelKey
+	p.mu.Unlock()
+	p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
 }
 
-func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string) {
+func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string, modelKey string) {
 	var text string
 	if strings.Contains(strings.ToLower(contentEncoding), "gzip") {
 		gr, err := gzip.NewReader(bytes.NewReader(data))
@@ -1124,7 +1168,7 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string)
 	cachedTokens := extractFieldCount(text, "cachedContentTokenCount", "cachedPromptTokenCount", "cacheTokenCount")
 
 	if inputTokens > 0 || outputTokens > 0 {
-		Log("[proxy] Token usage: input=%d, output=%d, cached=%d", inputTokens, outputTokens, cachedTokens)
+		Log("[proxy] Token usage: input=%d, output=%d, cached=%d model=%s", inputTokens, outputTokens, cachedTokens, modelKey)
 	}
 
 	if inputTokens > 0 {
@@ -1136,6 +1180,26 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string)
 	if cachedTokens > 0 {
 		atomic.AddInt64(&p.stats.TotalCachedTokens, cachedTokens)
 	}
+
+	// 按模型分类累加
+	category := classifyModel(modelKey)
+	switch category {
+	case "opus":
+		if inputTokens > 0 {
+			atomic.AddInt64(&p.stats.OpusInputTokens, inputTokens)
+		}
+		if outputTokens > 0 {
+			atomic.AddInt64(&p.stats.OpusOutputTokens, outputTokens)
+		}
+	case "gemini":
+		if inputTokens > 0 {
+			atomic.AddInt64(&p.stats.GeminiInputTokens, inputTokens)
+		}
+		if outputTokens > 0 {
+			atomic.AddInt64(&p.stats.GeminiOutputTokens, outputTokens)
+		}
+	}
+
 	// 持久化到每日统计
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
 		GetUsageStats().AddTokens(inputTokens, outputTokens, cachedTokens)
@@ -1401,6 +1465,17 @@ func buildFallbackModels() map[string]interface{} {
 }
 
 // ─── P0/P1: Model Key Extraction ──────────────────────────────────────────
+
+// extractModelKeyFromPath 从 URL 路径提取模型名
+// 例如: /v1beta/models/gemini-2.5-pro:streamGenerateContent → gemini-2.5-pro
+func extractModelKeyFromPath(path string) string {
+	re := regexp.MustCompile(`models/([^/:]+)`)
+	matches := re.FindStringSubmatch(path)
+	if len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
 
 // extractModelKeyFromBody parses the JSON request body and recursively finds
 // the first "model" string field — same behavior as the extension's

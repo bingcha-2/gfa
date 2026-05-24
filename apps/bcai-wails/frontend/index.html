@@ -161,14 +161,45 @@
                         </div>
                     </div>
 
-                    <!-- 用量趋势 -->
+                    <!-- 模型用量 -->
                     <div class="card" style="flex: 1; display: flex; flex-direction: column;">
                         <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>📈 用量趋势</span>
+                            <span>📊 模型用量</span>
                             <span class="session-duration" id="session-duration">本次会话: 0分钟</span>
                         </div>
-                        <div class="daily-trend" id="daily-trend-chart" style="flex: 1;">
-                            <div class="trend-empty">暂无使用数据</div>
+
+                        <!-- Opus 用量 -->
+                        <div class="model-usage-row" id="opus-usage-row">
+                            <div class="model-usage-header">
+                                <span class="model-usage-label opus-label">Opus</span>
+                                <span class="model-usage-tokens" id="opus-tokens-text">0 / 0</span>
+                            </div>
+                            <div class="model-bar-wrap">
+                                <div class="model-bar opus-bar" id="opus-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Gemini 用量 -->
+                        <div class="model-usage-row" id="gemini-usage-row">
+                            <div class="model-usage-header">
+                                <span class="model-usage-label gemini-label">Gemini</span>
+                                <span class="model-usage-tokens" id="gemini-tokens-text">0 / 0</span>
+                            </div>
+                            <div class="model-bar-wrap">
+                                <div class="model-bar gemini-bar" id="gemini-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- 5h 恢复倒计时 -->
+                        <div class="recovery-row" id="recovery-row">
+                            <div class="recovery-header">
+                                <span class="recovery-icon">⏱</span>
+                                <span class="recovery-label">额度恢复</span>
+                                <span class="recovery-time" id="recovery-time-text">--</span>
+                            </div>
+                            <div class="model-bar-wrap">
+                                <div class="model-bar recovery-bar" id="recovery-bar" style="width: 0%;"></div>
+                            </div>
                         </div>
                     </div>
 
