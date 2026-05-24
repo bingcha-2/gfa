@@ -248,7 +248,6 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 
 	var results []string
 	restartIDE := false
-	restartHub := false
 
 	for _, t := range targets {
 		switch strings.ToLower(strings.TrimSpace(t)) {
@@ -264,10 +263,28 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 				results = append(results, "Antigravity Hub: 未检测到应用")
 				continue
 			}
+			// Hub 正在运行时 app.asar 会被 Electron 锁定，必须先关闭再 patch
+			hubWasRunning := IsHubRunning()
+			if hubWasRunning {
+				Log("[ide-inject] Hub 正在运行，先关闭以解锁 app.asar...")
+				killHubForPatch()
+			}
 			if err := PatchAsar(cfg.ProxyPort); err != nil {
-				results = append(results, "Antigravity Hub: 接管失败")
+				Log("[ide-inject] PatchAsar 失败: %v", err)
+				results = append(results, fmt.Sprintf("Antigravity Hub: 接管失败 (%v)", err))
+				// 如果之前关了 Hub，尝试重新启动（即使 patch 失败也要恢复原状）
+				if hubWasRunning {
+					_ = LaunchHub()
+				}
 			} else {
-				restartHub = true
+				Log("[ide-inject] PatchAsar 成功")
+				// patch 成功后启动 Hub
+				if err := LaunchHub(); err != nil {
+					Log("[ide-inject] Hub 启动失败: %v", err)
+					results = append(results, "Antigravity Hub: ✓ 已接管，但启动失败")
+				} else {
+					results = append(results, "Antigravity Hub: ✓ 已接管并启动")
+				}
 			}
 		}
 	}
@@ -288,22 +305,6 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 				Log("[ide-inject] ✓ IDE 已完整重启")
 			}
 		}()
-	}
-
-	if restartHub {
-		if IsHubRunning() {
-			if err := KillAndRestartHub(); err != nil {
-				results = append(results, "Antigravity Hub: 重启失败")
-			} else {
-				results = append(results, "Antigravity Hub: ✓ 已接管并重启")
-			}
-		} else {
-			if err := LaunchHub(); err != nil {
-				results = append(results, "Antigravity Hub: ✓ 已接管，启动失败")
-			} else {
-				results = append(results, "Antigravity Hub: ✓ 已接管并启动")
-			}
-		}
 	}
 
 	msg := strings.Join(results, "\n")
@@ -508,4 +509,58 @@ func (a *App) GetPoolMode() string {
 		return "remote"
 	}
 	return cfg.PoolMode
+}
+
+// OAuthLogin starts a Google OAuth login flow and auto-adds the account to the pool
+func (a *App) OAuthLogin(profile string) map[string]interface{} {
+	result, err := GetAccountPool().StartOAuthLogin(profile)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}
+	}
+
+	// Auto-add to pool
+	id, addErr := GetAccountPool().AddAccount(result.Email, result.RefreshToken, profile)
+	if addErr != nil {
+		return map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("OAuth 登录成功 (%s)，但添加到号池失败: %v", result.Email, addErr),
+		}
+	}
+
+	// Verify token
+	go func() {
+		_, err := GetAccountPool().GetAccessToken(id)
+		if err != nil {
+			Log("[oauth] Warning: token refresh for #%d failed: %v", id, err)
+		} else {
+			Log("[oauth] Account #%d token verified OK", id)
+		}
+	}()
+
+	return map[string]interface{}{
+		"success": true,
+		"email":   result.Email,
+		"id":      id,
+	}
+}
+
+// GetAnnouncement 从服务器获取滚动公告内容
+func (a *App) GetAnnouncement() string {
+	client := createHttpClient("")
+	client.Timeout = 5 * time.Second
+
+	resp, err := client.Get("https://bcai.site/api/remote-token/announcement")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return ""
+	}
+
+	body := make([]byte, 1024) // 公告最多 1KB
+	n, _ := resp.Body.Read(body)
+	text := strings.TrimSpace(string(body[:n]))
+	return text
 }

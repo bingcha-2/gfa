@@ -48,7 +48,8 @@ type Leaser struct {
 	cardExpires     string
 	leaseRunning    bool
 	cancelLease     context.CancelFunc
-	accessKeyStatus map[string]interface{}
+	accessKeyStatus   map[string]interface{}
+	accessKeyStatusAt time.Time // when accessKeyStatus was last received
 	// P2⑨: Inflight lease dedup — prevents duplicate concurrent lease requests
 	inflightMu      sync.Mutex
 	inflightLease   map[string]chan struct{} // key → wait channel
@@ -446,6 +447,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		if aks, ok := rawResp["accessKeyStatus"]; ok {
 			if aksMap, ok := aks.(map[string]interface{}); ok {
 				l.accessKeyStatus = aksMap
+				l.accessKeyStatusAt = time.Now()
 			}
 		}
 	}
@@ -536,15 +538,18 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 
 	client := createHttpClient(upstreamProxy)
 	payload := map[string]interface{}{
-		"leaseId":      lease.LeaseId,
-		"accountId":    lease.AccountId,
-		"status":       details.StatusCode,
-		"modelKey":     details.ModelKey,
-		"reason":       details.Reason,
-		"retryAfterMs": details.RetryAfterMs,
-		"inputTokens":  details.InputTokens,
-		"outputTokens": details.OutputTokens,
-		"errorText":    getErrorSnippet(details.ErrorText),
+		"leaseId":           lease.LeaseId,
+		"accountId":         lease.AccountId,
+		"status":            details.StatusCode,
+		"modelKey":          details.ModelKey,
+		"reason":            details.Reason,
+		"retryAfterMs":      details.RetryAfterMs,
+		"inputTokens":       details.InputTokens,
+		"outputTokens":      details.OutputTokens,
+		"cachedInputTokens": details.CachedInputTokens, // 缓存 token（服务端按 1/10 计费）
+		"rawTotalTokens":    details.RawTotalTokens,     // 原始总量
+		"totalTokens":       details.BillableTotalTokens, // 折扣后计费总量
+		"errorText":         getErrorSnippet(details.ErrorText),
 	}
 
 	go func() {
@@ -564,6 +569,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 			if r.AccessKeyStatus != nil {
 				l.mu.Lock()
 				l.accessKeyStatus = r.AccessKeyStatus
+				l.accessKeyStatusAt = time.Now()
 				l.mu.Unlock()
 			}
 		}
@@ -656,6 +662,27 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		state = "error"
 	}
 
+	// Dynamically adjust tokenWindowResetMs to account for elapsed time
+	aks := l.accessKeyStatus
+	if aks != nil && !l.accessKeyStatusAt.IsZero() {
+		elapsed := time.Since(l.accessKeyStatusAt).Milliseconds()
+		// Make a shallow copy to avoid mutating the cached map
+		aksAdj := make(map[string]interface{}, len(aks))
+		for k, v := range aks {
+			aksAdj[k] = v
+		}
+		if resetMs, ok := aks["tokenWindowResetMs"]; ok {
+			if rmf, ok := resetMs.(float64); ok {
+				adj := rmf - float64(elapsed)
+				if adj < 0 {
+					adj = 0
+				}
+				aksAdj["tokenWindowResetMs"] = adj
+			}
+		}
+		aks = aksAdj
+	}
+
 	return map[string]interface{}{
 		"hasToken":            hasToken,
 		"serviceState":        state,
@@ -667,7 +694,7 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		"lastError":           l.lastError,
 		"activationExpiresAt": l.cardExpires,
 		"autoLeaseRunning":    l.leaseRunning,
-		"accessKeyStatus":     l.accessKeyStatus,
+		"accessKeyStatus":     aks,
 	}
 }
 

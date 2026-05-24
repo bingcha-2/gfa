@@ -908,6 +908,42 @@ func ForceRestartIDE() error {
 	return nil
 }
 
+// killHubForPatch 关闭 Hub 以释放 app.asar 文件锁（用于 PatchAsar 之前）
+// 与 KillAndRestartHub 不同，此函数不重启 Hub，只负责关闭并等待进程完全退出
+func killHubForPatch() {
+	Log("[ide-inject] [PATCH] 正在关闭 Hub 以释放 app.asar 文件锁...")
+
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("osascript", "-e", `tell application "Antigravity" to quit`).Run()
+		time.Sleep(3 * time.Second)
+		if IsHubRunning() {
+			_ = exec.Command("pkill", "-9", "-f", "Antigravity.app").Run()
+			time.Sleep(2 * time.Second)
+		}
+	case "windows":
+		// 优雅关闭
+		_ = exec.Command("taskkill", "/IM", "Antigravity.exe").Run()
+		time.Sleep(3 * time.Second)
+		// 强杀确保文件锁释放
+		if IsHubRunning() {
+			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			Log("[ide-inject] [PATCH] Hub 未响应优雅关闭，已强杀")
+			time.Sleep(2 * time.Second)
+		}
+	case "linux":
+		_ = exec.Command("pkill", "-f", "antigravity").Run()
+		time.Sleep(2 * time.Second)
+	}
+
+	// 最终确认
+	if IsHubRunning() {
+		Log("[ide-inject] [PATCH] 警告：Hub 仍在运行，app.asar 可能仍被锁定")
+	} else {
+		Log("[ide-inject] [PATCH] Hub 已完全退出，文件锁已释放")
+	}
+}
+
 // KillAndRestartHub 杀死并重启 Antigravity Hub
 func KillAndRestartHub() error {
 	hubPath := detectAntigravityHubPath()

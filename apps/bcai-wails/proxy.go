@@ -806,22 +806,36 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	p.lastModelKey = requestModelKey
 	p.mu.Unlock()
 
+	var tokenResult TokenUsageResult
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
 		strings.Contains(r.URL.Path, "streamGenerateContent") {
 		// Streaming response: parse chunks on the fly
-		p.streamResponse(w, resp.Body, reqId)
+		tokenResult = p.streamResponse(w, resp.Body, reqId)
 	} else {
 		// Single response: read all and parse
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
-			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
+			tokenResult = p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
 		GetUsageStats().AddGeneration()
+		// 上报成功请求的 token 用量到服务器（与插件 token-proxy.js L2072 一致）
+		if lease != nil && !isLocalPool {
+			leaser := GetLeaser()
+			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+				StatusCode:        resp.StatusCode,
+				ModelKey:          requestModelKey,
+				InputTokens:       tokenResult.InputTokens,
+				OutputTokens:      tokenResult.OutputTokens,
+				CachedInputTokens: tokenResult.CachedInputTokens,
+				RawTotalTokens:    tokenResult.RawTotalTokens,
+				BillableTotalTokens: tokenResult.BillableTotalTokens,
+			}, upstream, lease)
+		}
 	} else {
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		GetUsageStats().AddError()
@@ -940,22 +954,36 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
 
+	var tokenResult TokenUsageResult
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
 		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent") {
 		p.mu.Lock()
 		p.lastModelKey = requestModelKey
 		p.mu.Unlock()
-		p.streamResponse(w, resp.Body, reqId)
+		tokenResult = p.streamResponse(w, resp.Body, reqId)
 	} else {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
-			p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
+			tokenResult = p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		atomic.AddInt64(&p.stats.TotalSuccessfulGenerations, 1)
+		// 上报成功请求的 token 用量到服务器
+		if lease != nil && !isLocalPool {
+			leaser := GetLeaser()
+			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+				StatusCode:        resp.StatusCode,
+				ModelKey:          requestModelKey,
+				InputTokens:       tokenResult.InputTokens,
+				OutputTokens:      tokenResult.OutputTokens,
+				CachedInputTokens: tokenResult.CachedInputTokens,
+				RawTotalTokens:    tokenResult.RawTotalTokens,
+				BillableTotalTokens: tokenResult.BillableTotalTokens,
+			}, upstream, lease)
+		}
 	} else {
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 	}
@@ -1041,7 +1069,7 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 }
 
 
-func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) {
+func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) TokenUsageResult {
 	buffer := make([]byte, 4096)
 	var fullResponse bytes.Buffer
 	streamQuotaDetected := false
@@ -1140,10 +1168,30 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	p.mu.Lock()
 	modelKey := p.lastModelKey
 	p.mu.Unlock()
-	p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
+	return p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
 }
 
-func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string, modelKey string) {
+// TokenUsageResult holds parsed token counts and the billable total after
+// applying the cached-token discount (cached tokens count as 1/10).
+type TokenUsageResult struct {
+	InputTokens       int64
+	OutputTokens      int64
+	CachedInputTokens int64
+	RawTotalTokens    int64
+	BillableTotalTokens int64 // rawTotal - cached + ceil(cached/10)
+}
+
+// discountedCachedTokens returns the billable portion of cached tokens.
+// Cached tokens are billed at 1/10 of their count (ceil), matching the
+// plugin's discountedCachedTokens (token-proxy.js L306-309).
+func discountedCachedTokens(cached int64) int64 {
+	if cached <= 0 {
+		return 0
+	}
+	return (cached + 9) / 10 // ceil(cached / 10)
+}
+
+func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string, modelKey string) TokenUsageResult {
 	var text string
 	if strings.Contains(strings.ToLower(contentEncoding), "gzip") {
 		gr, err := gzip.NewReader(bytes.NewReader(data))
@@ -1165,10 +1213,33 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 	// Simple regex/substring searches for token counts inside JSON
 	inputTokens := extractFieldCount(text, "promptTokenCount", "inputTokenCount", "promptTokens", "inputTokens")
 	outputTokens := extractFieldCount(text, "candidatesTokenCount", "outputTokenCount", "completionTokens", "outputTokens")
-	cachedTokens := extractFieldCount(text, "cachedContentTokenCount", "cachedPromptTokenCount", "cacheTokenCount")
+	// thoughtsTokenCount 累加到 output（与插件 token-proxy.js L337-339 一致）
+	thoughtTokens := extractFieldCount(text, "thoughtsTokenCount")
+	if thoughtTokens > 0 {
+		outputTokens += thoughtTokens
+	}
+	cachedTokens := extractFieldCount(text, "cachedContentTokenCount", "cachedPromptTokenCount", "cacheTokenCount", "cachedInputTokens")
+	// cachedInputTokens 不能超过 inputTokens
+	if cachedTokens > inputTokens {
+		cachedTokens = inputTokens
+	}
+
+	// 计算 rawTotal 和 billable（缓存 token 按 1/10 计费）
+	rawTotal := inputTokens + outputTokens
+	var billable int64
+	if cachedTokens > 0 {
+		// billable = rawTotal - cachedInput + ceil(cachedInput/10)
+		billable = rawTotal - cachedTokens + discountedCachedTokens(cachedTokens)
+		if billable < 0 {
+			billable = 0
+		}
+	} else {
+		billable = rawTotal
+	}
 
 	if inputTokens > 0 || outputTokens > 0 {
-		Log("[proxy] Token usage: input=%d, output=%d, cached=%d model=%s", inputTokens, outputTokens, cachedTokens, modelKey)
+		Log("[proxy] Token usage: input=%d, output=%d, cached=%d, thought=%d, billable=%d model=%s",
+			inputTokens, outputTokens, cachedTokens, thoughtTokens, billable, modelKey)
 	}
 
 	if inputTokens > 0 {
@@ -1203,6 +1274,14 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 	// 持久化到每日统计
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
 		GetUsageStats().AddTokens(inputTokens, outputTokens, cachedTokens)
+	}
+
+	return TokenUsageResult{
+		InputTokens:       inputTokens,
+		OutputTokens:      outputTokens,
+		CachedInputTokens: cachedTokens,
+		RawTotalTokens:    rawTotal,
+		BillableTotalTokens: billable,
 	}
 }
 
@@ -1679,13 +1758,16 @@ func remoteRetryDelay(attempt int) time.Duration {
 // ReportDetails contains enriched information for report-result, matching
 // the fields sent by the extension's reportRemoteResult (token-proxy.js L1448-1477).
 type ReportDetails struct {
-	StatusCode   int
-	ModelKey     string
-	Reason       string
-	RetryAfterMs int64
-	InputTokens  int64
-	OutputTokens int64
-	ErrorText    string
+	StatusCode        int
+	ModelKey          string
+	Reason            string
+	RetryAfterMs      int64
+	InputTokens       int64
+	OutputTokens      int64
+	CachedInputTokens int64 // 缓存命中的 input token（按 1/10 计费）
+	RawTotalTokens    int64 // input + output 原始总量
+	BillableTotalTokens int64 // 折扣后的计费总量
+	ErrorText         string
 }
 
 // getErrorSnippet truncates error text for report payloads (max 1200 chars).
