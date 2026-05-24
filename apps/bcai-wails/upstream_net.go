@@ -216,6 +216,37 @@ func createHttpClient(upstreamProxy string) *http.Client {
 	return getHttpClient(upstreamProxy)
 }
 
+// createStreamingHttpClient 用于流式生成请求，不设全局 Timeout
+// 流式请求的超时由 proxy.go 中的 stream timer goroutine 控制（first-byte + idle timeout）
+// 全局 Timeout 会截断长生成（thinking model 可能输出 3-5 分钟）
+func createStreamingHttpClient(upstreamProxy string) *http.Client {
+	upstreamProxy = strings.TrimSpace(upstreamProxy)
+
+	transport := newTransport()
+	// 设置更长的 ResponseHeaderTimeout，等待服务端开始返回 header
+	transport.ResponseHeaderTimeout = 180 * time.Second // 3 min for thinking
+
+	if upstreamProxy != "" && !isDirectProxyMode(upstreamProxy) {
+		proxyURL, err := url.Parse(upstreamProxy)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	} else {
+		sysProxy := getSystemProxy()
+		if sysProxy != "" {
+			proxyURL, err := url.Parse(sysProxy)
+			if err == nil {
+				transport.Proxy = http.ProxyURL(proxyURL)
+			}
+		}
+	}
+
+	return &http.Client{
+		Timeout:   0, // 无全局超时，由 stream timer 控制
+		Transport: transport,
+	}
+}
+
 // WarmupConnectionPool 预热连接池，提前建立到上游的 TLS 连接
 // 避免 IDE 启动时并发请求导致冷启动 EOF
 func WarmupConnectionPool(upstreamProxy string) {

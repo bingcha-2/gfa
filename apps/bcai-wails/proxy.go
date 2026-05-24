@@ -480,7 +480,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 	targetUrl, _ := url.Parse(DefaultCloudEndpoint + r.URL.Path + "?" + r.URL.RawQuery)
 	Log("[proxy] #%d [UPSTREAM] generation host=%s path=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, cfg.PoolMode)
-	client := createHttpClient(upstream)
+	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
+	client := createStreamingHttpClient(upstream)
 
 	var resp *http.Response
 	var lease *TokenLease
@@ -606,11 +607,16 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	remoteMaxAttempts := MaxCloudCodeGenerationAttempts
 	accumulatedCapacityWaitMs := int64(0)
 	const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
+	// 记录本次请求中已失败的 accountId，防止 report-result 还没到服务端时又租到同一个号
+	var excludeAccountIds []int
 	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
 		var err error
 		leaseOptions := map[string]interface{}{
 			"attemptSessionId": attemptSessionId,
 			"modelKey":         requestModelKey,
+		}
+		if len(excludeAccountIds) > 0 {
+			leaseOptions["excludeAccountIds"] = excludeAccountIds
 		}
 		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 		if err != nil {
@@ -773,6 +779,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
 				reqId, resp.StatusCode, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+			// 将失败的 accountId 加入排除列表，防止异步 report 还没到时又租到同一个号
+			excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			resp = nil
@@ -928,7 +936,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	req.Header.Set("Host", targetUrl.Host)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 
-	client := createHttpClient(upstream)
+	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
+	client := createStreamingHttpClient(upstream)
 	resp, err := client.Do(req)
 	if err != nil {
 		Log("[proxy] #%d [FORWARD-ERROR] Gemini API request failed: %v", reqId, err)
