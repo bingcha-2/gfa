@@ -1,8 +1,8 @@
 {
-  "version": "4.2.1",
-  "url": "https://bcai.site/updates/BingchaAI-4.2.1.exe",
-  "sha256": "430621040D226FBBA9025741F6C62B460F4EAA2B7D4F363A5BC0ED91D49303E9",
-  "size": 12550144,
-  "changelog": "修复IDE重启后登录态丢失问题；优化IDE接管策略（不再重启IDE）；Hub关闭改为优雅退出",
+  "version": "4.5.0",
+  "url": "https://bcai.site/updates/BingchaAI-4.5.0.exe",
+  "sha256": "467AB5A943918CD0C670C0E10650A531E9F138544114EBCF09C740B48DB2C3CD",
+  "size": 12604416,
+  "changelog": "全新UI改版；新增本地号池OAuth登录；用量显示改为服务端实时数据；开启接管前校验卡密；IDE接管改为完整重启策略",
   "minVersion": "4.0.0"
 }
