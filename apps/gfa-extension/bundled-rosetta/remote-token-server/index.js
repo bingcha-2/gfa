@@ -1845,9 +1845,10 @@ function createRemoteTokenServer(config) {
         continue;
       }
       if (gate?.state === 'cooling' && Number(gate.blockedUntil || 0) > now) continue;
+      // 冷却期已过 → 直接清除 gate，回到 healthy 池（不需要 probation 探测）
       if (gate?.state === 'cooling' && Number(gate.blockedUntil || 0) <= now) {
-        gate.state = 'probation';
-        gate.nextProbeAfter = Math.max(Number(gate.nextProbeAfter || 0), now);
+        clearModelGate(account.id, targetModelKey);
+        gate = null;
       }
 
       if (gate?.state === 'probation') {
