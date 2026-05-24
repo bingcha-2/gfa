@@ -107,6 +107,7 @@ export namespace main {
 	export class IDEStatus {
 	    products: IDEProduct[];
 	    proxyUrl: string;
+	    isLsProxyApplied: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new IDEStatus(source);
@@ -116,6 +117,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.products = this.convertValues(source["products"], IDEProduct);
 	        this.proxyUrl = source["proxyUrl"];
+	        this.isLsProxyApplied = source["isLsProxyApplied"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

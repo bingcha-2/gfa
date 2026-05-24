@@ -552,6 +552,22 @@ input[type="number"]:focus {
     color: var(--text-secondary);
 }
 
+/* API Banner variant (blue-purple) */
+.shop-banner-api {
+    background: rgba(99, 102, 241, 0.04);
+    border-color: rgba(99, 102, 241, 0.15);
+    margin-top: 6px;
+}
+
+.shop-banner-api:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+.shop-banner-api .shop-icon {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
 /* Right Column (Stats + Settings + Logs) */
 .stats-logs-panel {
     display: flex;
@@ -1895,6 +1911,126 @@ code {
     border-color: var(--border-focus);
 }
 
+/* Pool Add Tabs (OAuth / Token) */
+.pool-add-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.pool-tab-btn {
+    flex: 1;
+    padding: 8px 0;
+    font-family: var(--font-outfit);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.18s;
+    outline: none;
+}
+
+.pool-tab-btn:hover {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.pool-tab-btn.active {
+    color: #ffffff;
+    background: rgba(99, 102, 241, 0.12);
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.pool-tab-panel {
+    display: none;
+}
+
+.pool-tab-panel.active {
+    display: block;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.oauth-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.oauth-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.oauth-hint.oauth-loading {
+    color: var(--warn);
+}
+
+.oauth-hint.oauth-success {
+    color: var(--success);
+}
+
+.oauth-hint.oauth-error {
+    color: var(--danger);
+}
+/* ======================== Announcement Bar ======================== */
+.announcement-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: rgba(251, 191, 36, 0.06);
+    border: 1px solid rgba(251, 191, 36, 0.12);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    min-height: 28px;
+}
+
+.announcement-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.announcement-scroll-wrap {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+}
+
+.announcement-text {
+    white-space: nowrap;
+    font-size: 11px;
+    color: #fbbf24;
+    font-weight: 500;
+    animation: marqueeScroll 20s linear infinite;
+    display: inline-block;
+    padding-left: 100%;
+}
+
+@keyframes marqueeScroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+}
+
+.announcement-text:hover {
+    animation-play-state: paused;
+}
+
 /* ======================== Sidebar ======================== */
 .sidebar {
     width: 150px;
@@ -2082,31 +2218,6 @@ code {
 }
 
 /* ======================== LS Status Row ======================== */
-.ls-status-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: rgba(255,255,255,0.02);
-    border-radius: 6px;
-    margin-top: 8px;
-    font-size: 11px;
-}
-
-.ls-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    flex-shrink: 0;
-}
-
-.ls-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
-.ls-dot.partial { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.ls-dot.off { background: var(--text-muted); }
-
-.ls-text { color: var(--text-secondary); }
-
 /* ======================== Log Page ======================== */
 .log-filter-bar {
     display: flex;

@@ -17,6 +17,7 @@ import {
     DownloadUpdate,
     RestartToUpdate,
     GetAppVersion,
+    GetAnnouncement,
     GetPoolAccounts,
     GetPoolStatus,
     AddPoolAccount,
@@ -24,6 +25,7 @@ import {
     TogglePoolAccount,
     SetPoolMode,
     GetPoolMode,
+    OAuthLogin,
 } from '../wailsjs/go/main/App';
 
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime';
@@ -130,6 +132,25 @@ function updateRefillCountdown() { const el = document.getElementById('refill-co
 // ===== Settings Page =====
 async function loadSettingsPage() { try { const cfg=await GetConfig(); if(cfgUpstreamProxy) cfgUpstreamProxy.value=cfg.upstreamProxy||''; const ad=document.getElementById('about-device-id'); if(ad) ad.textContent=cfg.deviceId||'-'; try{const v=await GetAppVersion();const el=document.getElementById('about-version');if(el) el.textContent='v'+v;}catch(e){} const paths=await GetDetectedPaths(); if(cfgIdePath) cfgIdePath.value=cfg.idePath||paths.idePath||''; if(cfgHubPath) cfgHubPath.value=cfg.hubPath||paths.hubPath||''; if(detectedIdePath) detectedIdePath.textContent=cfg.idePath?'自定义':(paths.idePath?'已检测':'未检测到'); if(detectedHubPath) detectedHubPath.textContent=cfg.hubPath?'自定义':(paths.hubPath?'已检测':'未检测到'); } catch(e){} }
 
+// ===== 滚动公告 =====
+async function fetchAnnouncement() {
+    try {
+        const text = await GetAnnouncement();
+        const bar = document.getElementById('announcement-bar');
+        const textEl = document.getElementById('announcement-text');
+        if (!bar || !textEl) return;
+
+        if (text && text.trim()) {
+            textEl.textContent = text.trim();
+            bar.style.display = 'flex';
+        } else {
+            bar.style.display = 'none';
+        }
+    } catch (e) {
+        // 网络失败静默忽略
+    }
+}
+
 // 初始化
 async function initApp() {
     try {
@@ -147,6 +168,8 @@ async function initApp() {
         updateIDEStatus();
         startRefillCountdown();
         startLogPolling();
+        fetchAnnouncement();
+        setInterval(fetchAnnouncement, 5 * 60 * 1000); // 每5分钟刷新公告
     } catch (err) {
         addLogLine('[系统] 读取本地配置失败: ' + err, 'error');
     }
@@ -202,23 +225,6 @@ async function updateIDEStatus() {
                     hubToggleBadge.classList.add('disabled');
                 }
             }
-        }
-
-        // LS proxy status
-        const lsRow = document.getElementById('ls-status-row');
-        const lsDot = document.getElementById('ls-dot');
-        const lsText = document.getElementById('ls-text');
-        if (lsRow && anyInjected) {
-            lsRow.style.display = 'flex';
-            if (status.isLsProxyApplied) {
-                lsDot.className = 'ls-dot ok';
-                lsText.textContent = 'Language Server 已连接代理';
-            } else {
-                lsDot.className = 'ls-dot partial';
-                lsText.textContent = 'Language Server 尚未全部接管';
-            }
-        } else if (lsRow) {
-            lsRow.style.display = 'none';
         }
 
         updateBadgeDisplay(ideToggleBadge);
@@ -494,74 +500,93 @@ function updateUsageReport(data) {
         }
     }
 
+    // ---- 从服务器获取 accessKeyStatus ----
+    const aks = (data.leaser && data.leaser.accessKeyStatus) || {};
+
     // ---- Opus 用量 ----
-    const opusInput = stats.opusInputTokens || 0;
-    const opusOutput = stats.opusOutputTokens || 0;
-    const opusTotal = opusInput + opusOutput;
-    const OPUS_LIMIT = 1000000;
-    const GEMINI_LIMIT = 2000000;
+    const opusUsed = aks.opusTokensUsed;
+    const opusLimit = aks.opusTokenLimit;
 
     const opusTokensText = document.getElementById('opus-tokens-text');
     const opusBar = document.getElementById('opus-bar');
     if (opusTokensText && opusBar) {
-        if (opusTotal === 0) {
-            opusTokensText.textContent = `满额度 · ${formatTokens(OPUS_LIMIT)}`;
+        if (opusUsed == null || opusLimit == null) {
+            // 服务器未返回 → 显示等待状态
+            opusTokensText.textContent = '等待服务器数据...';
+            opusBar.style.width = '0%';
+            opusBar.className = 'model-bar opus-bar';
+        } else if (opusUsed === 0) {
+            opusTokensText.textContent = `满额度 · ${formatTokens(opusLimit)}`;
             opusBar.style.width = '100%';
             opusBar.className = 'model-bar opus-bar full';
         } else {
-            const pct = Math.min(100, (opusTotal / OPUS_LIMIT) * 100);
-            opusTokensText.textContent = `${formatTokens(opusTotal)} / ${formatTokens(OPUS_LIMIT)}`;
+            const pct = Math.min(100, (opusUsed / (opusLimit || 1)) * 100);
+            opusTokensText.textContent = `${formatTokens(opusUsed)} / ${formatTokens(opusLimit)}`;
             opusBar.style.width = pct + '%';
-            opusBar.className = 'model-bar opus-bar' + (pct >= 95 ? ' exhausted' : '');
+            opusBar.className = 'model-bar opus-bar' + (opusUsed >= opusLimit ? ' exhausted' : '');
         }
     }
 
     // ---- Gemini 用量 ----
-    const geminiInput = stats.geminiInputTokens || 0;
-    const geminiOutput = stats.geminiOutputTokens || 0;
-    const geminiTotal = geminiInput + geminiOutput;
+    const geminiUsed = aks.geminiTokensUsed;
+    const geminiLimit = aks.geminiTokenLimit;
 
     const geminiTokensText = document.getElementById('gemini-tokens-text');
     const geminiBar = document.getElementById('gemini-bar');
     if (geminiTokensText && geminiBar) {
-        if (geminiTotal === 0) {
-            geminiTokensText.textContent = `满额度 · ${formatTokens(GEMINI_LIMIT)}`;
+        if (geminiUsed == null || geminiLimit == null) {
+            geminiTokensText.textContent = '等待服务器数据...';
+            geminiBar.style.width = '0%';
+            geminiBar.className = 'model-bar gemini-bar';
+        } else if (geminiUsed === 0) {
+            geminiTokensText.textContent = `满额度 · ${formatTokens(geminiLimit)}`;
             geminiBar.style.width = '100%';
             geminiBar.className = 'model-bar gemini-bar full';
         } else {
-            const pct = Math.min(100, (geminiTotal / GEMINI_LIMIT) * 100);
-            geminiTokensText.textContent = `${formatTokens(geminiTotal)} / ${formatTokens(GEMINI_LIMIT)}`;
+            const pct = Math.min(100, (geminiUsed / (geminiLimit || 1)) * 100);
+            geminiTokensText.textContent = `${formatTokens(geminiUsed)} / ${formatTokens(geminiLimit)}`;
             geminiBar.style.width = pct + '%';
-            geminiBar.className = 'model-bar gemini-bar' + (pct >= 95 ? ' exhausted' : '');
+            geminiBar.className = 'model-bar gemini-bar' + (geminiUsed >= geminiLimit ? ' exhausted' : '');
         }
     }
 
-    // ---- 5h 恢复倒计时 ----
+    // ---- 5h 恢复倒计时（优先用服务器的 tokenWindowResetMs）----
     const recoveryTimeText = document.getElementById('recovery-time-text');
     const recoveryBar = document.getElementById('recovery-bar');
-    const proxyStartedAt = data.proxyStartedAt;
-    if (recoveryTimeText && recoveryBar && proxyStartedAt) {
-        const startTime = new Date(proxyStartedAt).getTime();
-        if (startTime > 0) {
-            const FIVE_HOURS = 5 * 3600 * 1000;
-            const elapsed = Date.now() - startTime;
-            const remaining = Math.max(0, FIVE_HOURS - elapsed);
-            const progressPct = Math.min(100, (elapsed / FIVE_HOURS) * 100);
+    if (recoveryTimeText && recoveryBar) {
+        const resetMs = aks.tokenWindowResetMs;
+        const resetAt = aks.tokenWindowResetAt;
+        let remaining = -1; // -1 means no data
 
-            if (remaining <= 0) {
-                recoveryTimeText.textContent = '已恢复';
-                recoveryTimeText.className = 'recovery-time done';
-                recoveryBar.style.width = '100%';
-                recoveryBar.className = 'model-bar recovery-bar done';
-            } else {
-                const h = Math.floor(remaining / 3600000);
-                const m = Math.floor((remaining % 3600000) / 60000);
-                const s = Math.floor((remaining % 60000) / 1000);
-                recoveryTimeText.textContent = `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
-                recoveryTimeText.className = 'recovery-time' + (remaining < 1800000 ? ' done' : '');
-                recoveryBar.style.width = progressPct + '%';
-                recoveryBar.className = 'model-bar recovery-bar';
+        if (resetMs != null && resetMs > 0) {
+            remaining = resetMs;
+        } else if (resetAt) {
+            const resetDate = new Date(resetAt).getTime();
+            if (resetDate > 0) {
+                remaining = Math.max(0, resetDate - Date.now());
             }
+        }
+
+        if (remaining < 0) {
+            // 无恢复数据 → 已恢复或无需显示
+            recoveryTimeText.textContent = '已恢复';
+            recoveryTimeText.className = 'recovery-time done';
+            recoveryBar.style.width = '100%';
+            recoveryBar.className = 'model-bar recovery-bar done';
+        } else if (remaining <= 0) {
+            recoveryTimeText.textContent = '已恢复';
+            recoveryTimeText.className = 'recovery-time done';
+            recoveryBar.style.width = '100%';
+            recoveryBar.className = 'model-bar recovery-bar done';
+        } else {
+            const FIVE_HOURS = 5 * 3600 * 1000;
+            const progressPct = Math.min(100, ((FIVE_HOURS - remaining) / FIVE_HOURS) * 100);
+            const h = Math.floor(remaining / 3600000);
+            const m = Math.ceil((remaining % 3600000) / 60000);
+            recoveryTimeText.textContent = h > 0 ? `${h}小时${m}分钟` : `${m}分钟`;
+            recoveryTimeText.className = 'recovery-time' + (remaining < 1800000 ? ' done' : '');
+            recoveryBar.style.width = progressPct + '%';
+            recoveryBar.className = 'model-bar recovery-bar';
         }
     }
 
@@ -754,8 +779,10 @@ btnCopyCard.addEventListener('click', () => {
     });
 });
 
-document.getElementById('shop-banner')?.addEventListener('click', () => { BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ'); });
-document.getElementById('shop-banner-settings')?.addEventListener('click', () => { BrowserOpenURL('https://pay.ldxp.cn/shop/3A2TLWOJ'); });
+document.getElementById('shop-banner')?.addEventListener('click', () => { BrowserOpenURL('https://bcai.store'); });
+document.getElementById('shop-banner-settings')?.addEventListener('click', () => { BrowserOpenURL('https://bcai.store'); });
+document.getElementById('api-banner')?.addEventListener('click', () => { BrowserOpenURL('https://bcai.online'); });
+document.getElementById('api-banner-settings')?.addEventListener('click', () => { BrowserOpenURL('https://bcai.online'); });
 
 
 
@@ -1056,6 +1083,42 @@ document.getElementById('btn-pool-add')?.addEventListener('click', async () => {
         addLogLine('[pool] 添加失败: ' + err, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '+ 添加'; }
+    }
+});
+
+// Pool add tab switching (OAuth / Token)
+document.querySelectorAll('.pool-tab-btn').forEach(tabBtn => {
+    tabBtn.addEventListener('click', () => {
+        const tab = tabBtn.dataset.tab;
+        document.querySelectorAll('.pool-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        document.querySelectorAll('.pool-tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+    });
+});
+
+// OAuth login button
+document.getElementById('btn-pool-oauth')?.addEventListener('click', async () => {
+    const profile = document.getElementById('pool-oauth-profile')?.value || 'antigravity';
+    const btn = document.getElementById('btn-pool-oauth');
+    const hint = document.getElementById('oauth-hint');
+
+    if (btn) { btn.disabled = true; btn.textContent = '等待授权...'; }
+    if (hint) { hint.textContent = '已打开浏览器，请在 Google 页面完成登录授权...'; hint.className = 'oauth-hint oauth-loading'; }
+
+    try {
+        const result = await OAuthLogin(profile);
+        if (result.success) {
+            if (hint) { hint.textContent = `✅ 账号 ${result.email} 导入成功 (ID: ${result.id})`; hint.className = 'oauth-hint oauth-success'; }
+            addLogLine(`[oauth] 账号 ${result.email} OAuth 导入成功 (ID: ${result.id})`, 'success');
+            refreshPoolAccounts();
+        } else {
+            if (hint) { hint.textContent = '❌ ' + (result.error || '未知错误'); hint.className = 'oauth-hint oauth-error'; }
+            addLogLine('[oauth] OAuth 登录失败: ' + (result.error || 'unknown'), 'error');
+        }
+    } catch (err) {
+        if (hint) { hint.textContent = '❌ ' + err; hint.className = 'oauth-hint oauth-error'; }
+        addLogLine('[oauth] OAuth 登录失败: ' + err, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🌐 Google 登录'; }
     }
 });
 

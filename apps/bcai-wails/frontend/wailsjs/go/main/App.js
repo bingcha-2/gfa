@@ -30,6 +30,10 @@ export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
 }
 
+export function GetAnnouncement() {
+  return window['go']['main']['App']['GetAnnouncement']();
+}
+
 export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
@@ -80,6 +84,10 @@ export function IsHubRunningCheck() {
 
 export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
+}
+
+export function OAuthLogin(arg1) {
+  return window['go']['main']['App']['OAuthLogin'](arg1);
 }
 
 export function RemovePoolAccount(arg1) {

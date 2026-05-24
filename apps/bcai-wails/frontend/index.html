@@ -46,6 +46,14 @@
         <!-- 更新通知条 -->
         <div id="update-banner" class="update-banner" style="display: none;"></div>
 
+        <!-- 滚动公告条 -->
+        <div class="announcement-bar" id="announcement-bar" style="display: none;">
+            <span class="announcement-icon">📢</span>
+            <div class="announcement-scroll-wrap">
+                <div class="announcement-text" id="announcement-text"></div>
+            </div>
+        </div>
+
         <!-- ========== 页面1: 控制台 ========== -->
         <div class="page active" id="page-home">
             <!-- 状态条 -->
@@ -82,12 +90,8 @@
                                     <span class="ide-product-status" id="hub-status-text">检测中...</span>
                                 </div>
                                 <div class="ide-product-badge" id="hub-toggle-badge" data-selected="false">○</div>
-                            </div>
                         </div>
-                        <div class="ls-status-row" id="ls-status-row" style="display: none;">
-                            <span class="ls-dot" id="ls-dot"></span>
-                            <span class="ls-text" id="ls-text">LS 状态未知</span>
-                        </div>
+                    </div>
                         <button type="button" class="btn btn-p" id="btn-inject-toggle" style="width: 100%; margin-top: 10px;">🔌 开启接管</button>
                         <div class="hint-text" id="ide-inject-hint" style="margin-top: 6px;">选择产品后点击按钮开启接管</div>
                     </div>
@@ -123,8 +127,16 @@
                     <div class="shop-banner" id="shop-banner">
                         <div class="shop-icon">🛒</div>
                         <div class="shop-text">
-                            <div class="shop-title">购买账号卡</div>
-                            <div class="shop-desc">账号过期？点击前往购买</div>
+                            <div class="shop-title">购买更多AI产品</div>
+                            <div class="shop-desc">点击前往冰茶商店</div>
+                        </div>
+                        <div class="shop-arrow">→</div>
+                    </div>
+                    <div class="shop-banner shop-banner-api" id="api-banner">
+                        <div class="shop-icon">⚡</div>
+                        <div class="shop-text">
+                            <div class="shop-title">冰茶API</div>
+                            <div class="shop-desc">高性能 AI 接口服务</div>
                         </div>
                         <div class="shop-arrow">→</div>
                     </div>
@@ -236,15 +248,36 @@
 
             <div class="card pool-add-card">
                 <div class="card-title">➕ 添加账号</div>
-                <div class="pool-add-form">
-                    <input type="text" id="pool-add-email" placeholder="邮箱地址" autocomplete="off" />
-                    <input type="text" id="pool-add-token" placeholder="Refresh Token (1//...)" autocomplete="off" />
+                <div class="pool-add-tabs">
+                    <button class="pool-tab-btn active" id="tab-oauth" data-tab="oauth">🔐 OAuth 录入</button>
+                    <button class="pool-tab-btn" id="tab-token" data-tab="token">🔑 Token 导入</button>
+                </div>
+
+                <!-- OAuth 录入面板 -->
+                <div class="pool-tab-panel active" id="panel-oauth">
+                    <div class="oauth-desc">通过 Google 账号登录自动获取 Refresh Token 并导入号池</div>
                     <div class="pool-add-row">
-                        <select id="pool-add-profile">
+                        <select id="pool-oauth-profile">
                             <option value="antigravity">Antigravity</option>
                             <option value="legacy">Legacy (Cloud Code)</option>
                         </select>
-                        <button type="button" class="btn btn-p btn-sm" id="btn-pool-add">+ 添加</button>
+                        <button type="button" class="btn btn-p btn-sm" id="btn-pool-oauth">🌐 Google 登录</button>
+                    </div>
+                    <div class="oauth-hint" id="oauth-hint">点击登录后将在浏览器中打开 Google 授权页面</div>
+                </div>
+
+                <!-- Token 导入面板 -->
+                <div class="pool-tab-panel" id="panel-token">
+                    <div class="pool-add-form">
+                        <input type="text" id="pool-add-email" placeholder="邮箱地址" autocomplete="off" />
+                        <input type="text" id="pool-add-token" placeholder="Refresh Token (1//...)" autocomplete="off" />
+                        <div class="pool-add-row">
+                            <select id="pool-add-profile">
+                                <option value="antigravity">Antigravity</option>
+                                <option value="legacy">Legacy (Cloud Code)</option>
+                            </select>
+                            <button type="button" class="btn btn-p btn-sm" id="btn-pool-add">+ 添加</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -314,8 +347,16 @@
             <div class="shop-banner" id="shop-banner-settings">
                 <div class="shop-icon">🛒</div>
                 <div class="shop-text">
-                    <div class="shop-title">购买账号卡</div>
-                    <div class="shop-desc">点击前往店铺购买</div>
+                    <div class="shop-title">购买更多AI产品</div>
+                    <div class="shop-desc">点击前往冰茶商店</div>
+                </div>
+                <div class="shop-arrow">→</div>
+            </div>
+            <div class="shop-banner shop-banner-api" id="api-banner-settings">
+                <div class="shop-icon">⚡</div>
+                <div class="shop-text">
+                    <div class="shop-title">冰茶API</div>
+                    <div class="shop-desc">高性能 AI 接口服务</div>
                 </div>
                 <div class="shop-arrow">→</div>
             </div>

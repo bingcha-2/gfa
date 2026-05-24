@@ -16,6 +16,8 @@ export function ClearStats():Promise<boolean>;
 
 export function DownloadUpdate():Promise<void>;
 
+export function GetAnnouncement():Promise<string>;
+
 export function GetAppVersion():Promise<string>;
 
 export function GetConfig():Promise<main.Config>;
@@ -41,6 +43,8 @@ export function InjectSelected(arg1:Array<string>):Promise<string>;
 export function IsHubRunningCheck():Promise<boolean>;
 
 export function IsIDERunningCheck():Promise<boolean>;
+
+export function OAuthLogin(arg1:string):Promise<Record<string, any>>;
 
 export function RemovePoolAccount(arg1:number):Promise<Record<string, any>>;
 
