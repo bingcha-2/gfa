@@ -324,7 +324,12 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	}
 	l.mu.Unlock()
 
+	// 使用独立 client，超时 20s（比默认 120s 短但比波动容忍的 5s 长）
 	client := createHttpClient(upstreamProxy)
+	leaseClient := &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: client.Transport,
+	}
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
@@ -345,14 +350,51 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		}
 	}
 
-	Log("[token-leaser] Requesting token lease...")
-	body, _, err := postJsonWithSecret(client, "/lease-token", payload, card)
-	if err != nil {
+	// 带重试的 lease-token 请求（解决 bcai.site 偶发网络波动）
+	const maxLeaseRetries = 3
+	var body []byte
+	var lastLeaseErr error
+	for leaseAttempt := 1; leaseAttempt <= maxLeaseRetries; leaseAttempt++ {
+		if leaseAttempt == 1 {
+			Log("[token-leaser] Requesting token lease...")
+		} else {
+			Log("[token-leaser] Retrying token lease (%d/%d)...", leaseAttempt, maxLeaseRetries)
+		}
+		var err error
+		body, _, err = postJsonWithSecret(leaseClient, "/lease-token", payload, card)
+		if err == nil {
+			lastLeaseErr = nil
+			break
+		}
+		lastLeaseErr = err
+		Log("[token-leaser] Lease token network error (attempt %d/%d): %v", leaseAttempt, maxLeaseRetries, err)
+
+		// 如果还有缓存 token 且没被 force 刷新，直接返回缓存的
+		if !force {
+			l.mu.Lock()
+			if l.cachedToken != nil {
+				nowMs := time.Now().UnixNano() / int64(time.Millisecond)
+				if nowMs < (l.cachedToken.ExpiresAt - 30*1000) { // 30s 容忍
+					token := *l.cachedToken
+					l.mu.Unlock()
+					Log("[token-leaser] Network failed but using cached token (accountId=%d, expires in %ds)",
+						token.AccountId, (token.ExpiresAt-nowMs)/1000)
+					return &token, nil
+				}
+			}
+			l.mu.Unlock()
+		}
+
+		if leaseAttempt < maxLeaseRetries {
+			backoff := time.Duration(leaseAttempt) * time.Second // 1s, 2s, 3s
+			time.Sleep(backoff)
+		}
+	}
+	if lastLeaseErr != nil {
 		l.mu.Lock()
-		l.lastError = err.Error()
+		l.lastError = lastLeaseErr.Error()
 		l.mu.Unlock()
-		Log("[token-leaser] Lease token network error: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("租号服务暂时不可用 (重试%d次均失败): %w", maxLeaseRetries, lastLeaseErr)
 	}
 
 	// Parse lease response (same rules as proxy/token-leaser.js: success only when field is explicitly false)

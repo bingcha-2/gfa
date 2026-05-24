@@ -620,8 +620,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		}
 		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 		if err != nil {
-			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token, forwarding with original identity: %v", reqId, err)
-			p.forwardToGoogle(w, r, body, upstream, reqId)
+			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token: %v", reqId, err)
+			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
 		}
 		// P1④: Update maxAttempts from server retryPolicy
@@ -895,8 +896,9 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		var err error
 		lease, err = leaser.LeaseTokenToLease(card, deviceId, upstream)
 		if err != nil {
-			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token for Gemini API, forwarding with original identity: %v", reqId, err)
-			p.forwardToGoogle(w, r, body, upstream, reqId)
+			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token for Gemini API: %v", reqId, err)
+			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
 		}
 	}
