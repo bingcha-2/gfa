@@ -916,8 +916,8 @@ function createRemoteTokenServer(config) {
         const now = Date.now();
         let loaded = 0;
         for (const saved of (Array.isArray(data) ? data : [])) {
-          // Skip expired gates
-          if (Number(saved.blockedUntil || 0) <= now && saved.state !== 'probation') continue;
+          // Skip expired gates (cooling or probation) — 冷却期已过直接回 healthy
+          if (Number(saved.blockedUntil || 0) > 0 && Number(saved.blockedUntil || 0) <= now) continue;
           const key = `${Number(saved.accountId)}:${normalizeModelKey(saved.modelKey)}`;
           modelGate.set(key, {
             accountId: Number(saved.accountId),
