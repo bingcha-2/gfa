@@ -116,12 +116,11 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Row 4: Top pair ── */}
+      {/* ── Row 4: Top pair (compact) ── */}
       <div className="grid grid-cols-2 gap-4 items-stretch">
-        {/* Token 来源 */}
         <Card>
-          <CardContent className="pt-5">
-            <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
+          <CardContent className="pt-3 pb-3">
+            <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-1.5">
               <Zap size={13} /> Token 来源
             </div>
             <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
@@ -146,11 +145,10 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* 模型用量 */}
         <Card>
-          <CardContent className="pt-5">
-            <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
-            <div className="flex flex-col gap-3">
+          <CardContent className="pt-3 pb-3">
+            <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-1.5">模型用量</div>
+            <div className="flex flex-col gap-2.5">
               <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
               <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
             </div>
@@ -158,13 +156,13 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* ── Row 5: Bottom pair ── */}
+      {/* ── Row 5: Bottom pair (row-aligned) ── */}
       <div className="grid grid-cols-2 gap-4 items-stretch">
         {/* IDE 接管控制 */}
         <Card className="flex flex-col">
           <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
           <CardContent className="flex-1 flex flex-col">
-            <div className="flex flex-col gap-1.5 mb-3">
+            <div className="flex flex-col gap-1.5">
               {ideProducts.map((product) => {
                 const target = product.id === 'antigravity_ide' ? 'ide' : 'hub'
                 const isSelected = selectedTargets.has(target)
@@ -174,7 +172,7 @@ export function DashboardPage() {
                     onClick={() => product.detected && toggleTarget(target)}
                     disabled={!product.detected}
                     className={cn(
-                      'flex items-center justify-between px-3 py-2 rounded-[8px] transition-all text-left border',
+                      'flex items-center justify-between px-3 rounded-[8px] transition-all text-left border h-[52px]',
                       product.detected ? 'hover:bg-[var(--bg-hover)] cursor-pointer border-[var(--border-light)]' : 'opacity-40 cursor-not-allowed border-transparent',
                     )}
                   >
@@ -195,13 +193,12 @@ export function DashboardPage() {
               })}
             </div>
 
-            <div className="mt-auto">
-              <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full mb-2">
+            <div className="mt-auto pt-3">
+              <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full">
                 {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
               </Button>
-
               {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
-                <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
+                <div className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
                   <CalendarClock size={10} className="flex-shrink-0" />
                   <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
                   <span className="text-[var(--border)]">|</span>
@@ -216,18 +213,25 @@ export function DashboardPage() {
         <Card className="flex flex-col">
           <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
           <CardContent className="flex-1 flex flex-col">
-            {config?.accountCard && (
-              <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
+            <div className="flex flex-col gap-1.5">
+              {/* Row 1 — aligns with Antigravity IDE */}
+              <div className="flex items-center justify-between px-3 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] h-[52px]">
                 <div>
                   <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
-                  <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config.accountCard)}</div>
+                  <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{config?.accountCard ? maskCard(config.accountCard) : '未激活'}</div>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
+                {config?.accountCard && (
+                  <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
+                )}
               </div>
-            )}
-            <div className="mt-auto">
-              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
+              {/* Row 2 — aligns with Antigravity Hub */}
+              <div className="flex items-center px-3 rounded-[8px] border border-[var(--border-light)] h-[52px]">
+                <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
+                  placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="w-full border-0 shadow-none p-0 h-auto" />
+              </div>
+            </div>
+
+            <div className="mt-auto pt-3">
               <Button onClick={handleActivateCard} disabled={activating} className="w-full">
                 {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
               </Button>
