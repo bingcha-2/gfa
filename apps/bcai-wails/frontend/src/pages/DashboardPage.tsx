@@ -116,12 +116,12 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Row 4: Main 2-col — balanced ── */}
-      <div className="grid grid-cols-2 gap-4">
-        {/* Left: IDE 接管 + Token 来源 + 模型用量 */}
-        <Card>
+      {/* ── Row 4: Main 2-col — equal height ── */}
+      <div className="grid grid-cols-2 gap-4 items-stretch">
+        {/* Left: IDE 接管 + Token 来源 */}
+        <Card className="flex flex-col">
           <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 flex flex-col">
             {/* Product list */}
             <div className="flex flex-col gap-1.5 mb-3">
               {ideProducts.map((product) => {
@@ -168,8 +168,8 @@ export function DashboardPage() {
               </div>
             )}
 
-            {/* Token source */}
-            <div className="border-t border-[var(--border-light)] pt-3">
+            {/* Token source — pushed to bottom */}
+            <div className="border-t border-[var(--border-light)] pt-3 mt-auto">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
                 <Zap size={13} /> Token 来源
               </div>
@@ -193,22 +193,13 @@ export function DashboardPage() {
                 ))}
               </div>
             </div>
-
-            {/* 模型用量 */}
-            <div className="border-t border-[var(--border-light)] pt-3 mt-3">
-              <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
-              <div className="flex flex-col gap-3">
-                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-              </div>
-            </div>
           </CardContent>
         </Card>
 
-        {/* Right: 账号卡 */}
-        <Card>
+        {/* Right: 账号卡 + 模型用量 (single card) */}
+        <Card className="flex flex-col">
           <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 flex flex-col">
             {config?.accountCard && (
               <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
                 <div>
@@ -223,6 +214,15 @@ export function DashboardPage() {
             <Button onClick={handleActivateCard} disabled={activating} className="w-full">
               {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
             </Button>
+
+            {/* 模型用量 — pushed to bottom */}
+            <div className="border-t border-[var(--border-light)] pt-3 mt-auto">
+              <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
+              <div className="flex flex-col gap-3">
+                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
