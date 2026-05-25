@@ -354,7 +354,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
-		"clientVersion":      "5.0.1",
+		"clientVersion":      "5.0.2",
 		"clientDistribution": "go-engine",
 		"isGeneration":       true,
 	}
