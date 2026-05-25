@@ -88,7 +88,10 @@ export function DashboardPage() {
         <StatCard icon={ArrowDownRight} value={formatTokens(todayOutputTokens)} label="输出 Token" color="text-purple-600" />
       </div>
 
-      {/* ── Row 2: Summary ── */}
+      {/* ── Row 2: Ads — full-width, 3 columns, prominent ── */}
+      <PromoCard />
+
+      {/* ── Row 3: Savings + Recovery ── */}
       <div className={cn('grid gap-3', recoveryRemainingMs > 0 ? 'grid-cols-2' : 'grid-cols-1')}>
         <Card className="flex items-center gap-3 px-4 py-3">
           <div className="w-9 h-9 rounded-[10px] bg-green-50 flex items-center justify-center shrink-0">
@@ -113,9 +116,9 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Row 3: Main 2-col — balanced height ── */}
+      {/* ── Row 4: Main 2-col — balanced ── */}
       <div className="grid grid-cols-2 gap-4">
-        {/* Left: IDE 接管 + Token 来源 (merged) */}
+        {/* Left: IDE 接管 + Token 来源 */}
         <Card>
           <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
           <CardContent>
@@ -155,7 +158,7 @@ export function DashboardPage() {
               {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
             </Button>
 
-            {/* Expiry + 5h countdown — inline inside inject card (mirrors remote layout) */}
+            {/* Expiry + 5h countdown */}
             {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
               <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
                 <CalendarClock size={10} className="flex-shrink-0" />
@@ -165,7 +168,7 @@ export function DashboardPage() {
               </div>
             )}
 
-            {/* Token source — merged into same card */}
+            {/* Token source */}
             <div className="border-t border-[var(--border-light)] pt-3">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
                 <Zap size={13} /> Token 来源
@@ -193,9 +196,8 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Right: 广告 + 账号卡 + 模型用量 */}
+        {/* Right: 账号卡 + 模型用量 */}
         <div className="flex flex-col gap-4">
-          <PromoCard />
           <Card>
             <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
             <CardContent>
