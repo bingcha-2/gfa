@@ -455,6 +455,14 @@ function writeAccessKeysData(data: { keys: any[]; updatedAt?: string }) {
     keys: Array.isArray(data.keys) ? data.keys : [],
     updatedAt: nowIso(),
   }, null, 2), "utf8");
+  // Notify remote-token-server to invalidate its in-memory cache (fire-and-forget)
+  const rtsPort = getRemoteTokenServerPort();
+  fetch(`http://127.0.0.1:${rtsPort}/reload-access-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => { /* rts might not be running */ });
 }
 
 function accessKeyBackupStamp() {
@@ -1730,6 +1738,26 @@ async function handleUpdateAccessKey(req: NextRequest) {
   }
 }
 
+async function handleDeleteAccessKey(req: NextRequest) {
+  try {
+    const payload = await req.json();
+    const ids: string[] = Array.isArray(payload.ids)
+      ? payload.ids.map((v: any) => String(v).trim()).filter(Boolean)
+      : [String(payload.id || "").trim()].filter(Boolean);
+    if (!ids.length) return json({ ok: false, error: "id or ids required" }, { status: 400 });
+    const data = readAccessKeysData();
+    const idSet = new Set(ids);
+    const before = data.keys.length;
+    data.keys = data.keys.filter((item) => !idSet.has(item.id));
+    const deleted = before - data.keys.length;
+    if (deleted === 0) return json({ ok: false, error: "No matching keys found" }, { status: 404 });
+    writeAccessKeysData(data);
+    return json({ ok: true, deleted });
+  } catch (err: any) {
+    return json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
 async function handleEmployeeRegister(req: NextRequest) {
   try {
     const payload = await req.json();
@@ -2675,6 +2703,8 @@ export async function POST(
       return handleCreateAccessKey(req);
     case "/access-key-update":
       return handleUpdateAccessKey(req);
+    case "/access-key-delete":
+      return handleDeleteAccessKey(req);
     case "/employee/register":
       return handleEmployeeRegister(req);
     case "/employee/login":

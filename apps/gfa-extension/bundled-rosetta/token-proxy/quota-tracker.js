@@ -683,6 +683,9 @@ function createQuotaTracker(config) {
                     successRate: successRate !== null ? Math.round(successRate * 100) : null,
                     qualityTier,
                     requestStats: { total: stats.total, successes: stats.successes, failures: stats.failures },
+                    credits: a.credits || {},
+                    modelQuotaFractions: a.modelQuotaFractions || {},
+                    modelQuotaRefreshedAt: a.modelQuotaRefreshedAt || 0,
                 };
             }),
         };

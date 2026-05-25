@@ -265,13 +265,6 @@ export default function App() {
                     background: !p.detected ? '#4b5563' : p.injected ? '#22c55e' : '#f59e0b',
                   }} />
                   <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{p.name}</span>
-                  <span style={{
-                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                    background: p.injectionType === 'asar' ? 'rgba(139,92,246,.2)' : p.injectionType === 'env' ? 'rgba(234,179,8,.2)' : 'rgba(99,102,241,.2)',
-                    color: p.injectionType === 'asar' ? '#c4b5fd' : p.injectionType === 'env' ? '#fde68a' : '#a5b4fc',
-                  }}>
-                    {p.injectionType === 'settings' ? 'Settings' : p.injectionType === 'asar' ? 'ASAR Patch' : 'ENV'}
-                  </span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, marginLeft: 16 }}>
                   {!p.detected ? '未检测到' : p.injected ? '✅ 已接管' : p.running ? '🔶 运行中 · 未接管' : '未接管'}

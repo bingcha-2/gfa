@@ -120,20 +120,29 @@ function isProcessRunning(names: string[]): boolean {
   try {
     if (IS_WIN) {
       for (const name of names) {
-        const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${name}`, '/NH'],
-          { encoding: 'utf8', windowsHide: true, timeout: 3000 })
-        if (!out.includes('No tasks')) return true
+        try {
+          const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${name}`, '/NH'],
+            { encoding: 'utf8', windowsHide: true, timeout: 3000 })
+          // tasklist 在中文 Windows 返回 "没有运行的任务" 而非 "No tasks"
+          // 如果输出包含进程名说明找到了
+          if (out.toLowerCase().includes(name.toLowerCase())) return true
+        } catch { /* tasklist failed for this name, try next */ }
       }
     } else {
       for (const name of names) {
-        const out = execFileSync('pgrep', ['-f', name],
-          { encoding: 'utf8', timeout: 3000 }).trim()
-        if (out) return true
+        try {
+          const out = execFileSync('pgrep', ['-f', name],
+            { encoding: 'utf8', timeout: 3000 }).trim()
+          if (out) return true
+        } catch { /* not found */ }
       }
     }
-  } catch { /* not found */ }
+  } catch { /* outer safety net */ }
   return false
 }
+
+// ─── Asar patch status cache (avoid reading large file every poll) ───────
+let _asarPatchCache: { path: string; mtime: number; patched: boolean } | null = null
 
 // ─── Settings.json Injection (IDE) ──────────────────────────────────────
 const CLOUD_CODE_KEY = 'jetski.cloudCodeUrl'
@@ -393,9 +402,17 @@ export function restoreAsar(): string {
 
 function checkAsarPatched(asarPath: string, proxyUrl: string): boolean {
   try {
+    const stat = fs.statSync(asarPath)
+    const mtime = stat.mtimeMs
+    // Use cache if file hasn't changed
+    if (_asarPatchCache && _asarPatchCache.path === asarPath && _asarPatchCache.mtime === mtime) {
+      return _asarPatchCache.patched
+    }
     const data = fs.readFileSync(asarPath) as Buffer
     const { jsContent } = readAsarJS(data)
-    return jsContent.includes(proxyUrl)
+    const patched = jsContent.includes(proxyUrl)
+    _asarPatchCache = { path: asarPath, mtime, patched }
+    return patched
   } catch { return false }
 }
 

@@ -70,12 +70,17 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-function progress(message) {
-  emit({ type: "progress", message });
+function progress(message, level = "INFO") {
+  const ts = new Date().toISOString();
+  const formatted = `[${level}] ${message}`;
+  emit({ type: "progress", message: formatted });
   try {
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${message}\n`);
+    fs.appendFileSync(LOG_FILE, `[${ts}][${level}] ${message}\n`);
   } catch (e) {}
 }
+function logDebug(msg) { progress(msg, "DEBUG"); }
+function logWarn(msg) { progress(msg, "WARN"); }
+function logError(msg) { progress(msg, "ERROR"); }
 
 function resultOk(data) {
   emit({ type: "result", ok: true, ...data });
@@ -134,16 +139,119 @@ async function waitUrlChange(page, oldUrl, maxWaitSecs = 15) {
   return changed;
 }
 
-async function waitForNextState(page, timeoutMs = 30000) {
+/**
+ * Event-driven page state detector.
+ * Uses waitForSelector (MutationObserver-based, low CDP overhead) where possible,
+ * and a single lightweight polling loop for text-based checks.
+ * This replaces the previous waitForFunction approach which caused
+ * excessive Runtime.callFunctionOn calls (~90/sec) leading to CDP timeouts.
+ */
+async function waitForNextState(page, timeoutMs = 6000) {
   const currentUrl = page.url();
   const signals = [
-    page.waitForFunction((url) => window.location.href !== url, { timeout: timeoutMs }, currentUrl).then(() => "url-changed").catch(() => ""),
+    // URL changed — single lightweight poll instead of waitForFunction
+    (async () => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await sleep(300);
+        if (page.url() !== currentUrl) return "url-changed";
+      }
+      return "";
+    })(),
+    // DOM-based signals — all use waitForSelector (MutationObserver, NOT polling)
     page.waitForSelector('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])', { visible: true, timeout: timeoutMs }).then(() => "password-visible").catch(() => ""),
-    page.waitForSelector('input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]', { visible: true, timeout: timeoutMs }).then(() => "totp-visible").catch(() => ""),
+    page.waitForSelector('input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]', { visible: true, timeout: timeoutMs }).then(() => "totp-visible").catch(() => ""),
+    page.waitForSelector('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]', { visible: true, timeout: timeoutMs }).then(() => "captcha").catch(() => ""),
+    page.waitForSelector('input[name="phoneNumberId"], div[data-challengetype="12"], div[data-challengetype="9"]', { visible: true, timeout: timeoutMs }).then(() => "phone-challenge").catch(() => ""),
+    page.waitForSelector('select[id*="month" i], select[name*="month" i], input[id*="year" i]', { visible: true, timeout: timeoutMs }).then(() => "age-verify").catch(() => ""),
+    page.waitForSelector('[data-challengetype]', { visible: true, timeout: timeoutMs }).then(() => "challenge-selection").catch(() => ""),
+    // Text-based checks (error popup, ToS) — single poll loop instead of 2x waitForFunction
+    (async () => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const found = await page.evaluate(() => {
+            const btns = document.querySelectorAll('button');
+            for (const b of btns) {
+              const t = (b.textContent || '').trim();
+              if (/^(Restart|重试|重新开始|重新啟動|Try again)$/i.test(t)) return 'error-popup';
+              if (/^(I agree|同意|Accept|接受)$/i.test(t)) return 'tos-prompt';
+            }
+            return '';
+          });
+          if (found) return found;
+        } catch { /* page navigated */ }
+        await sleep(500);
+      }
+      return "";
+    })(),
+    // Hard fallback
     sleep(timeoutMs).then(() => "timeout")
   ];
-  await Promise.race(signals);
+  const winner = await Promise.race(signals);
+  if (winner && winner !== "timeout") {
+    logDebug(`[waitForNextState] signal=${winner}`);
+  }
   await sleep(200);
+  return winner;
+}
+
+/**
+ * Event-driven URL leave detector — replaces polling loops.
+ */
+async function waitForUrlLeave(page, oldUrl, timeoutMs = 8000) {
+  try {
+    await page.waitForFunction((url) => window.location.href !== url, { timeout: timeoutMs }, oldUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Step-aware Next button click with escalation.
+ * step: "identifier" → #identifierNext, "password" → #passwordNext, null → generic
+ * retryRound: 0 = normal click, 1 = safeClick, 2+ = JS click, fallback Enter
+ */
+async function clickStepNext(page, step, retryRound = 0) {
+  let selector;
+  if (step === "identifier") {
+    selector = '#identifierNext';
+  } else if (step === "password") {
+    selector = '#passwordNext';
+  } else {
+    selector = null; // generic — use findButton
+  }
+
+  if (selector) {
+    const btn = await page.$(selector);
+    if (btn) {
+      if (retryRound >= 2) {
+        // Escalation: JS click to bypass overlay
+        try {
+          await btn.evaluate(el => el.click());
+          logDebug(`[clickStepNext] JS click on ${selector} (retry=${retryRound})`);
+        } catch {
+          await page.keyboard.press("Enter");
+          logDebug(`[clickStepNext] JS click failed on ${selector}, used Enter`);
+        }
+      } else {
+        await safeClick(btn, selector);
+        logDebug(`[clickStepNext] safeClick on ${selector}`);
+      }
+      return;
+    }
+  }
+
+  // Fallback: find generic Next button or press Enter
+  const genericBtn = await findButton(page, ["Next", "下一步", "繼續", "继续"]);
+  if (genericBtn) {
+    await safeClick(genericBtn, "generic Next");
+    logDebug(`[clickStepNext] safeClick on generic Next button`);
+  } else {
+    await page.keyboard.press("Enter");
+    logDebug(`[clickStepNext] no button found, used Enter key`);
+  }
 }
 
 async function detectPageLoading(page) {
@@ -225,127 +333,158 @@ async function adspowerCloseProfile(baseUrl, profileId, apiKey) {
   } catch { /* best effort */ }
 }
 
-// ─── Gmail Login (simplified) ─────────────────────────────────────────────────
+// ─── Gmail Login ──────────────────────────────────────────────────────────────
 
 async function gmailLogin(page, creds) {
   const { email, password, totpSecret } = creds;
-  progress(`正在登录 ${email}...`);
+  const _t0 = Date.now();
+  const _elapsed = () => `${((Date.now() - _t0) / 1000).toFixed(1)}s`;
+  progress(`[login] 开始登录 ${email}`);
 
   await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: LOGIN_TIMEOUT_MS });
-  await sleep(2000);
+  logDebug(`[login][${_elapsed()}] 导航完成: ${page.url().substring(0, 80)}`);
 
-  // Email
+  // ── Email phase ──
   const emailInput = await page.waitForSelector(
     'input[type="email"], input[id="identifierId"]',
-    { visible: true, timeout: 30000 }
+    { visible: true, timeout: 5000 }
   ).catch(() => null);
   if (!emailInput) {
     if (page.url().includes(SUCCESS_DOMAIN)) {
-      progress("已登录（免密码）");
+      progress(`[login][${_elapsed()}] 已登录（免密码）`);
       return true;
     }
     throw new Error("找不到邮箱输入框（可能网络极慢或被拦截）");
   }
   await atomicType(page, emailInput, email);
-  try { await page.keyboard.press("Enter"); } catch(e) {}
-  await waitForNextState(page, 8000);
+  logDebug(`[login][${_elapsed()}] 邮箱已填入，点击 #identifierNext`);
+  await clickStepNext(page, "identifier");
+  const emailSignal = await waitForNextState(page, 5000);
+  logDebug(`[login][${_elapsed()}] 邮箱提交后信号=${emailSignal}, URL=${page.url().substring(0, 80)}`);
 
-  // Robust email submission retry
+  // Robust email submission retry with escalation
   for (let nextRetry = 0; nextRetry < 4; nextRetry++) {
     if (!page.url().includes("/identifier")) break;
     const isTransitioning = await detectPageLoading(page);
     if (isTransitioning) {
-      progress("页面正在加载中，耐心等待...");
-      await waitForNextState(page, 15000);
+      logDebug(`[login][${_elapsed()}] 页面正在过渡，耐心等待...`);
+      for (let w = 0; w < 15; w++) {
+        await sleep(1000);
+        if (!page.url().includes("/identifier")) break;
+      }
       if (!page.url().includes("/identifier")) break;
     }
-    progress(`仍在邮箱页面，重试提交 (${nextRetry + 1})...`);
-    await dismissErrorPopup(page);
+    logWarn(`[login][${_elapsed()}] 仍在邮箱页面，重试提交 (${nextRetry + 1}/4)`);
+    const dismissed = await dismissErrorPopup(page);
+    if (dismissed) {
+      logDebug(`[login][${_elapsed()}] 错误弹窗已处理，重填邮箱`);
+    }
     const retryInput = await page.$('input[type="email"], input[id="identifierId"]');
     if (retryInput) {
-      try { await retryInput.click({ clickCount: 3 }); } catch(e) { if(e.message.includes('context') || e.message.includes('detached') || e.message.includes('describeNode')) { emit({ type: "progress", message: "页面跳转，忽略交互错误" }); } else throw e; }
       await atomicType(page, retryInput, email);
     }
-    try { await page.keyboard.press("Enter"); } catch(e) {}
-    await waitForNextState(page, 8000);
+    await clickStepNext(page, "identifier", nextRetry + 1);
+    await waitForNextState(page, 5000);
   }
 
   // reCAPTCHA detection — immediately abort
   if (page.url().includes("recaptcha") || page.url().includes("challenge/recaptcha")) {
-    throw new Error("检测到人机验证 (reCAPTCHA)，由于策略更改，直接结束任务，请更换账号或手动处理");
+    logError(`[login][${_elapsed()}] reCAPTCHA 检测到: ${page.url()}`);
+    throw new Error("检测到人机验证 (reCAPTCHA)，直接结束任务，请更换账号或手动处理");
   }
 
-  // Password
-  progress("等待密码输入框...");
+  // ── Password phase ──
+  logDebug(`[login][${_elapsed()}] 等待密码输入框, URL=${page.url().substring(0, 80)}`);
   let passwordInput = await page.waitForSelector(
     'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])',
     { visible: true, timeout: 15000 }
   ).catch(() => null);
 
   if (!passwordInput) {
-    if (page.url().includes(SUCCESS_DOMAIN)) {
-      progress("已登录（免密码）");
+    const preUrl = page.url();
+    if (preUrl.includes(SUCCESS_DOMAIN)) {
+      progress(`[login][${_elapsed()}] 已登录（免密码）`);
       return true;
     }
-    // Check for reCAPTCHA again
-    if (page.url().includes("recaptcha")) {
-      throw new Error("密码页前遇到人机验证 (reCAPTCHA)，由于策略更改，直接结束任务");
+    // Check intermediate states before blind reload
+    if (preUrl.includes("recaptcha") || preUrl.includes("challenge/recaptcha")) {
+      logError(`[login][${_elapsed()}] 密码页前遇到 reCAPTCHA`);
+      throw new Error("密码页前遇到人机验证 (reCAPTCHA)，直接结束任务");
     }
-    if (!passwordInput) {
-      const currentUrl = page.url();
-      progress(`密码框未出现 (URL: ${currentUrl})，尝试刷新重载...`);
-      await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
-      const retryEmail = await page.waitForSelector('input[type="email"]', { visible: true, timeout: 10000 }).catch(() => null);
-      if (retryEmail) {
-        await atomicType(page, retryEmail, email);
-        try { await page.keyboard.press("Enter"); } catch(e) {}
-        await waitForNextState(page, 15000);
-      }
-      passwordInput = await page.waitForSelector(
-        'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])',
-        { visible: true, timeout: 20000 }
-      ).catch(() => null);
+    if (preUrl.includes("support.google.com")) {
+      logError(`[login][${_elapsed()}] 账号被锁定: ${preUrl}`);
+      throw new Error(`账号被锁定: ${preUrl}`);
+    }
+    if (preUrl.includes("challenge/iap") || preUrl.includes("challenge/sk")) {
+      logWarn(`[login][${_elapsed()}] 密码前遇到手机/安全验证，等待手动处理`);
+      const resolved = await waitForManualResolution(page);
+      if (resolved && page.url().includes(SUCCESS_DOMAIN)) return true;
+    }
 
-      if (!passwordInput) {
-        progress(`重新加载后仍遇到未知页面，请手动处理: ${page.url()}`);
-        const resolved = await waitForManualResolution(page);
-        if (!resolved) throw new Error(`登录需要手动验证: ${page.url()}`);
-        if (page.url().includes(SUCCESS_DOMAIN)) return true;
-        passwordInput = await page.$('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])');
-        if (!passwordInput) throw new Error(`手动验证后仍无法找到密码框: ${page.url()}`);
-      }
+    logWarn(`[login][${_elapsed()}] 密码框未出现 (URL: ${preUrl})，尝试刷新重载...`);
+    await page.goto(GOOGLE_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    const retryEmail = await page.waitForSelector('input[type="email"]', { visible: true, timeout: 10000 }).catch(() => null);
+    if (retryEmail) {
+      await atomicType(page, retryEmail, email);
+      await clickStepNext(page, "identifier");
+      await waitForNextState(page, 8000);
+    }
+    passwordInput = await page.waitForSelector(
+      'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])',
+      { visible: true, timeout: 20000 }
+    ).catch(() => null);
+
+    if (!passwordInput) {
+      logWarn(`[login][${_elapsed()}] 重载后仍遇到未知页面: ${page.url()}`);
+      const resolved = await waitForManualResolution(page);
+      if (!resolved) throw new Error(`登录需要手动验证: ${page.url()}`);
+      if (page.url().includes(SUCCESS_DOMAIN)) return true;
+      passwordInput = await page.$('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])');
+      if (!passwordInput) throw new Error(`手动验证后仍无法找到密码框: ${page.url()}`);
     }
   }
 
+  logDebug(`[login][${_elapsed()}] 密码框已就绪，填入密码`);
   const pwdUrl = page.url();
   await atomicType(page, passwordInput, password);
-  try { await page.keyboard.press("Enter"); } catch(e) {}
-  await waitUrlChange(page, pwdUrl, 10);
+  await clickStepNext(page, "password");
+  const pwdLeft = await waitForUrlLeave(page, pwdUrl, 8000);
+  logDebug(`[login][${_elapsed()}] 密码提交后 URL变化=${pwdLeft}, URL=${page.url().substring(0, 80)}`);
 
-  // Post-login challenges (up to 8 rounds, matching GFA-master)
+  // Post-login challenges (up to 8 rounds)
   let totpSubmitted = false;
   for (let round = 0; round < 8; round++) {
    try {
     await dismissErrorPopup(page);
     const url = page.url();
-    progress(`登录后处理 (round ${round + 1}): ${url.substring(0, 80)}`);
+    logDebug(`[login][${_elapsed()}] Round ${round + 1}/8, URL=${url.substring(0, 100)}`);
 
     if (url.includes(SUCCESS_DOMAIN) || url.includes("mail.google.com")) {
+      progress(`[login][${_elapsed()}] ✅ 登录成功`);
       return true;
     }
 
-    // Google redirected to support page — account locked
+    // Browser-level navigation error
+    if (url.startsWith("chrome-error://") || url.startsWith("about:neterror")) {
+      logError(`[login][${_elapsed()}] 浏览器导航错误: ${url}`);
+      throw new Error(`浏览器导航错误: ${url}`);
+    }
+
+    // Account locked
     if (url.includes("support.google.com")) {
+      logError(`[login][${_elapsed()}] 账号被锁定: ${url}`);
       throw new Error(`账号被锁定或验证失败: ${url}`);
     }
 
-    // reCAPTCHA in post-login challenge
+    // reCAPTCHA
     if (url.includes("recaptcha") || url.includes("challenge/recaptcha")) {
-      throw new Error("登录后遇到人机验证 (reCAPTCHA)，由于策略更改，直接结束任务");
+      logError(`[login][${_elapsed()}] reCAPTCHA: ${url}`);
+      throw new Error("登录后遇到人机验证 (reCAPTCHA)，直接结束任务");
     }
 
     // Password re-entry
     if (url.includes("challenge/pwd")) {
+      logDebug(`[login][${_elapsed()}] 检测到密码重输页面`);
       const pwdInput = await page.waitForSelector(
         'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])',
         { visible: true, timeout: 8000 }
@@ -353,70 +492,107 @@ async function gmailLogin(page, creds) {
       if (pwdInput) {
         const rePwdUrl = page.url();
         await atomicType(page, pwdInput, password);
-        try { await page.keyboard.press("Enter"); } catch(e) {}
-        await waitUrlChange(page, rePwdUrl, 10);
+        await clickStepNext(page, "password");
+        await waitForUrlLeave(page, rePwdUrl, 8000);
+        logDebug(`[login][${_elapsed()}] 密码重输完成, URL=${page.url().substring(0, 80)}`);
         continue;
       }
     }
 
-    // TOTP 2FA — detect by INPUT PRESENCE (not just URL), matching GFA-master approach
-    // Extended timeout if on /challenge/totp to wait out network delays
-    const totpTimeout = url.includes("challenge/totp") ? 30000 : 3000;
-    const totpInput = await page.waitForSelector(
-      'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]',
-      { visible: true, timeout: totpTimeout }
-    ).catch(() => null);
-    
-    if (totpInput && totpSecret) {
-      if (totpSubmitted) {
-        const waitSecs = totpSecondsRemaining() + 2;
-        progress(`TOTP 被拒绝，等待 ${waitSecs}s 获取新验证码...`);
-        await sleep(waitSecs * 1000);
-        const urlAfterWait = page.url();
-        if (urlAfterWait.includes(SUCCESS_DOMAIN) || urlAfterWait.includes("mail.google.com") || urlAfterWait.includes("/o/oauth2")) {
-          progress("TOTP 实际已通过（等待期间页面跳转）");
-          return true;
-        }
+    // ── URL-based intercepts (MUST come before TOTP detection) ──
+    // Speedbump / passkey — may contain input[type="tel"] that falsely matches TOTP
+    if (url.includes("/speedbump/")) {
+      logDebug(`[login][${_elapsed()}] Speedbump 页面，尝试跳过`);
+      const skipBtn = await findButton(page, ["Not now", "Skip", "Cancel", "以后再说", "跳过", "暂不", "取消", "No thanks", "不用了", "Done", "完成"]);
+      if (skipBtn) {
+        await safeClick(skipBtn, "speedbump skip");
+        await waitForNextState(page, 5000);
+        continue;
       }
+    }
 
-      progress("检测到 TOTP 验证...");
-      const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
-        progress(`等待 ${remaining + 1}s 获取新 TOTP...`);
-        await sleep((remaining + 1) * 1000);
+    // GDS recovery pages — MUST be checked before TOTP to avoid input[type="tel"] false match
+    if (url.includes("gds.google.com")) {
+      logDebug(`[login][${_elapsed()}] GDS 页面，尝试跳过`);
+      const skipBtn = await findButton(page, ["Not now", "Skip", "Cancel", "以后再说", "跳过", "暂不", "取消", "No thanks", "不用了", "Done", "完成", "Continue", "继续", "Yes", "是的", "Yes, it was me", "Confirm", "确认"]);
+      if (skipBtn) {
+        await safeClick(skipBtn, "GDS skip");
+        await waitForNextState(page, 5000);
+        continue;
       }
-      const code = generateTOTP(totpSecret);
-
-      try { await totpInput.click({ clickCount: 3 }); } catch(e) { if(e.message.includes('context') || e.message.includes('detached') || e.message.includes('describeNode')) { emit({ type: "progress", message: "页面跳转，忽略交互错误" }); } else throw e; }
-      await atomicType(page, totpInput, code);
-      try { await page.keyboard.press("Enter"); } catch(e) {}
-      progress(`TOTP 已提交: ${code.substring(0, 2)}****`);
-      totpSubmitted = true;
-      // 提交后切勿直接使用 waitForNextState，因为输入框依然可见会导致立刻触发，造成过早判定为失败
-      const preSubmitUrl = page.url();
-      progress("等待 TOTP 验证通过并跳转...");
-      let navigated = false;
-      for (let i = 0; i < 15; i++) {
-        await sleep(1000);
-        if (page.url() !== preSubmitUrl) {
-          navigated = true;
-          break;
-        }
-      }
-      if (!navigated) {
-        progress("警告：TOTP 提交后 15 秒内页面 URL 未发生变化");
-      }
-      await sleep(2000); // Give DOM a moment to settle after URL change
+      logWarn(`[login][${_elapsed()}] GDS 页面无按钮，直接跳转 myaccount`);
+      await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 30000 });
+      await sleep(1500);
       continue;
     }
 
-    // Challenge selection page — auto-select TOTP option (from GFA-master)
+    // ── TOTP 2FA ──
+    // Key fix: narrow selector on non-TOTP pages to avoid matching phone number inputs
+    const onTotpPage = url.includes("challenge/totp");
+    const totpSelector = onTotpPage
+      ? 'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
+      : 'input[name="totpPin"], input[id="totpPin"]';
+    const totpTimeout = onTotpPage ? 30000 : 3000;
+    const totpInput = await page.waitForSelector(totpSelector, { visible: true, timeout: totpTimeout }).catch(() => null);
+
+    if (totpInput && totpSecret) {
+      if (totpSubmitted) {
+        const waitSecs = totpSecondsRemaining() + 1;
+        logWarn(`[login][${_elapsed()}] TOTP 被拒绝，等待 ${waitSecs}s 获取新码...`);
+        await sleep(waitSecs * 1000);
+        const urlAfterWait = page.url();
+        if (urlAfterWait.includes(SUCCESS_DOMAIN) || urlAfterWait.includes("mail.google.com") || urlAfterWait.includes("/o/oauth2")) {
+          progress(`[login][${_elapsed()}] TOTP 实际已通过（等待期间页面跳转）`);
+          return true;
+        }
+        // Confirm TOTP input is still visible after wait
+        const stillVisible = await page.$(totpSelector);
+        if (!stillVisible) {
+          logDebug(`[login][${_elapsed()}] TOTP 输入框已消失，重新检测页面状态`);
+          continue;
+        }
+      }
+
+      progress(`[login][${_elapsed()}] 检测到 TOTP 验证`);
+      const remaining = totpSecondsRemaining();
+      if (remaining < 5) {
+        logDebug(`[login][${_elapsed()}] 等待 ${remaining + 1}s 获取新 TOTP...`);
+        await sleep((remaining + 1) * 1000);
+      }
+
+      let code;
+      try {
+        code = generateTOTP(totpSecret);
+      } catch (e) {
+        logError(`[login][${_elapsed()}] TOTP 密钥无效: ${e.message}`);
+        throw new Error(`TOTP 密钥无效: ${e.message}`);
+      }
+
+      await atomicType(page, totpInput, code);
+      try { await page.keyboard.press("Enter"); } catch(e) {}
+      progress(`[login][${_elapsed()}] TOTP 已提交: ${code.substring(0, 2)}****`);
+      totpSubmitted = true;
+
+      // Event-driven wait for URL change (not polling)
+      const preSubmitUrl = page.url();
+      let navigated = await waitForUrlLeave(page, preSubmitUrl, 8000);
+      if (!navigated) {
+        logDebug(`[login][${_elapsed()}] TOTP 处理较慢，继续等待...`);
+        navigated = await waitForUrlLeave(page, preSubmitUrl, 8000);
+      }
+      if (!navigated) {
+        logWarn(`[login][${_elapsed()}] TOTP 提交后 16s URL 未变化`);
+      }
+      logDebug(`[login][${_elapsed()}] TOTP 提交后 URL=${page.url().substring(0, 80)}`);
+      await sleep(500);
+      continue;
+    }
+
+    // Challenge selection page — auto-select TOTP option
     if (url.includes("challenge/selection") && totpSecret) {
-      progress("检测到验证方式选择页面，尝试选择 TOTP...");
-      // Try data-challengetype=6 (TOTP / Google Authenticator)
+      logDebug(`[login][${_elapsed()}] 验证方式选择页面，尝试选择 TOTP`);
       let totpOption = await page.$('div[data-challengetype="6"], li[data-challengetype="6"], [data-challengeindex][data-challengetype="6"]');
       if (!totpOption) {
-        // Fallback: text-based search
         totpOption = await page.evaluateHandle(() => {
           const items = document.querySelectorAll('li, div[role="link"]');
           for (const item of items) {
@@ -430,55 +606,47 @@ async function gmailLogin(page, creds) {
       }
       if (totpOption) {
         await safeClick(totpOption, "TOTP option");
-        progress("已选择 TOTP 验证方式");
-        await sleep(3000);
+        progress(`[login][${_elapsed()}] 已选择 TOTP 验证方式`);
+        await waitForNextState(page, 5000);
         continue;
       }
-      progress("未找到 TOTP 选项");
-    }
-
-    // Speedbump / passkey enrollment / GDS recovery pages — skip
-    if (url.includes("/speedbump/") || url.includes("gds.google.com")) {
-      const skipBtn = await findButton(page, ["Not now", "Skip", "Cancel", "以后再说", "跳过", "暂不", "取消", "No thanks", "不用了", "Done", "完成", "Continue", "继续", "Yes", "是的"]);
-      if (skipBtn) {
-        await safeClick(skipBtn, "GDS skip");
-        await sleep(3000);
-        continue;
-      }
-      // Fallback: navigate directly to myaccount to exit GDS flow
-      if (url.includes("gds.google.com")) {
-        progress("GDS 页面无可用按钮，直接跳转 myaccount...");
-        await page.goto("https://myaccount.google.com/?hl=en", { waitUntil: "domcontentloaded", timeout: 30000 });
-        await sleep(2000);
-        continue;
-      }
+      logWarn(`[login][${_elapsed()}] 未找到 TOTP 选项`);
     }
 
     // ToS / privacy
     const agreeBtn = await findButton(page, ["I agree", "同意", "接受", "Accept", "Confirm", "確認", "确认"]);
     if (agreeBtn) {
       await safeClick(agreeBtn, "ToS agree");
-      progress("已接受条款");
-      await sleep(3000);
+      progress(`[login][${_elapsed()}] 已接受条款`);
+      await waitForNextState(page, 5000);
       continue;
     }
 
     // Age / birthday
     const monthSelect = await page.$('select[id*="month" i], select[name*="month" i]');
     if (monthSelect) {
+      logDebug(`[login][${_elapsed()}] 年龄验证页面，自动填写`);
       await monthSelect.select("1");
       const dayInput = await page.$('input[id*="day" i], input[name*="day" i]');
       if (dayInput) await atomicType(page, dayInput, "1");
       const yearInput = await page.$('input[id*="year" i], input[name*="year" i]');
       if (yearInput) await atomicType(page, yearInput, "1990");
-      const nextBtn = await findButton(page, ["Next", "下一步"]);
-      if (nextBtn) await safeClick(nextBtn, "Age next");
-      await sleep(3000);
+      await clickStepNext(page, null);
+      await waitForNextState(page, 5000);
       continue;
     }
 
+    // IAP / phone challenge — report clearly
+    if (url.includes("challenge/iap") || url.includes("challenge/sk")) {
+      logWarn(`[login][${_elapsed()}] 手机/安全验证页面，等待手动处理`);
+      const resolved = await waitForManualResolution(page);
+      if (resolved && page.url().includes(SUCCESS_DOMAIN)) return true;
+      if (resolved) continue;
+      throw new Error(`手机验证超时: ${url}`);
+    }
+
     // Any other challenge — wait for manual handling
-    progress(`遇到验证页面，请在 AdsPower 浏览器中手动处理...`);
+    logWarn(`[login][${_elapsed()}] 未知页面，等待手动处理: ${url.substring(0, 100)}`);
     const resolved = await waitForManualResolution(page);
     if (!resolved) throw new Error(`登录挂起: ${url}`);
     if (page.url().includes(SUCCESS_DOMAIN)) return true;
@@ -492,15 +660,23 @@ async function gmailLogin(page, creds) {
         errMsg.includes("timed out") ||
         errMsg.includes("Protocol error")
       ) {
-        progress(`页面临时错误，重试... (${errMsg.substring(0, 60)})`);
-        await sleep(2000);
+        logDebug(`[login][${_elapsed()}] 页面临时错误，重试: ${errMsg.substring(0, 60)}`);
+        await sleep(1500);
         continue;
       }
       throw loopErr; // re-throw non-navigation errors
    }
   }
 
-  if (page.url().includes(SUCCESS_DOMAIN)) return true;
+  if (page.url().includes(SUCCESS_DOMAIN)) {
+    progress(`[login][${_elapsed()}] ✅ 登录成功（循环结束后）`);
+    return true;
+  }
+  if (page.url().includes("challenge/totp")) {
+    logError(`[login][${_elapsed()}] TOTP 密钥错误：多次验证码均被拒绝`);
+    throw new Error("TOTP 密钥错误：连续多次验证码均被 Google 拒绝，请检查该账号的 TOTP 密钥是否正确");
+  }
+  logError(`[login][${_elapsed()}] 登录未完成: ${page.url()}`);
   throw new Error(`登录未完成: ${page.url()}`);
 }
 
@@ -518,36 +694,61 @@ async function atomicType(page, element, text) {
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }, text);
   } catch(e) {
-    if (e.message.includes('context') || e.message.includes('detached') || e.message.includes('describeNode')) {
-      emit({ type: "progress", message: "页面跳转，忽略交互错误" });
-    } else if (e.message.includes('world') || e.message.includes('Argument should belong')) {
+    const msg = e.message || '';
+    if (msg.includes('context') || msg.includes('detached') || msg.includes('describeNode')) {
+      logDebug("[atomicType] 页面跳转，忽略交互错误");
+    } else if (msg.includes('world') || msg.includes('Argument should belong')) {
       // Fallback: use click-to-clear + type if evaluate fails due to world mismatch
-      progress("[atomicType] evaluate 失败，回退到 type() 方式");
+      logWarn("[atomicType] evaluate 失败，回退到 type() 方式");
       try { await element.click({ clickCount: 3 }); } catch(_) {}
       try { await page.keyboard.press('Backspace'); } catch(_) {}
       try { await element.type(text); } catch(_) {}
+    } else if (msg.includes('timed out') || msg.includes('callFunctionOn')) {
+      // CDP protocol timeout — fall back to keyboard.type which uses Input.dispatchKeyEvent (no evaluate)
+      logWarn(`[atomicType] CDP 超时，回退到 keyboard.type: ${msg.substring(0, 60)}`);
+      try {
+        await element.click().catch(() => {});
+        await page.keyboard.type(text, { delay: 20 });
+      } catch(typeErr) {
+        logWarn(`[atomicType] keyboard.type 也失败: ${typeErr.message.substring(0, 60)}`);
+      }
     } else throw e;
   }
 }
 
+/**
+ * Find a visible button matching any of the given texts.
+ * Uses a SINGLE page.evaluate to scan all buttons at once (1 CDP call),
+ * instead of per-element evaluate (N CDP calls) which causes protocol timeouts.
+ */
 async function findButton(page, texts) {
   try {
-    const btns = await page.$$(`button, input[type="submit"], div[role="button"], a[role="button"], span[role="button"]`);
-    for (let i = btns.length - 1; i >= 0; i--) {
-      const btn = btns[i];
-      try {
-        const info = await btn.evaluate((el) => ({
-          text: (el.textContent || el.value || "").trim(),
-          visible: el.offsetWidth > 0 && el.offsetHeight > 0 && !el.disabled,
-        }));
-        if (!info.visible) continue;
-        for (const text of texts) {
-          if (info.text.toLowerCase() === text.toLowerCase() || info.text.toLowerCase().includes(text.toLowerCase())) {
-            return btn;
+    const matchIndex = await page.evaluate((searchTexts) => {
+      const els = document.querySelectorAll('button, input[type="submit"], div[role="button"], a[role="button"], span[role="button"]');
+      // Iterate from bottom to top (form buttons are usually after header buttons)
+      for (let i = els.length - 1; i >= 0; i--) {
+        const el = els[i];
+        if (el.offsetWidth <= 0 || el.offsetHeight <= 0 || el.disabled) continue;
+        const elText = (el.textContent || el.value || '').trim().toLowerCase();
+        for (const t of searchTexts) {
+          if (elText === t.toLowerCase() || elText.includes(t.toLowerCase())) {
+            // Mark the element so we can retrieve it
+            el.setAttribute('data-findbutton-match', 'true');
+            return i;
           }
         }
-      } catch { /* element detached or context destroyed — skip */ }
-    }
+      }
+      return -1;
+    }, texts);
+    if (matchIndex < 0) return null;
+    // Retrieve the matched element handle via selector
+    const matched = await page.$('[data-findbutton-match="true"]');
+    // Clean up marker
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-findbutton-match="true"]');
+      if (el) el.removeAttribute('data-findbutton-match');
+    }).catch(() => {});
+    return matched;
   } catch { /* page navigated — no button found */ }
   return null;
 }
@@ -588,27 +789,35 @@ function detectOAuthPage(url) {
   return "unknown";
 }
 
+/**
+ * Find any clickable element matching the given texts.
+ * Uses a SINGLE page.evaluate (1 CDP call) instead of per-element evaluate.
+ * Wider selector than findButton — includes <a> and [jsname] elements.
+ */
 async function findAnyButton(page, texts) {
   try {
-    // Search: <button>, <input type=submit>, <div role=button>, <a>, <span role=button>
-    const allClickable = await page.$$('button, input[type="submit"], div[role="button"], a[role="button"], span[role="button"], a.button, a, [jsname]');
-    // Iterate from bottom to top so we hit the main form button before header buttons
-    for (let i = allClickable.length - 1; i >= 0; i--) {
-      const el = allClickable[i];
-      try {
-        const info = await el.evaluate((e) => ({
-          text: (e.textContent || e.value || "").trim(),
-          visible: e.offsetWidth > 0 && e.offsetHeight > 0 && !e.disabled,
-        }));
-        if (!info.visible) continue;
-        for (const t of texts) {
-          // Exact equality or strict includes to avoid matching random text blocks
-          if (info.text.toLowerCase() === t.toLowerCase() || info.text.toLowerCase().includes(t.toLowerCase())) {
-            return el;
+    const found = await page.evaluate((searchTexts) => {
+      const els = document.querySelectorAll('button, input[type="submit"], div[role="button"], a[role="button"], span[role="button"], a.button, a, [jsname]');
+      for (let i = els.length - 1; i >= 0; i--) {
+        const el = els[i];
+        if (el.offsetWidth <= 0 || el.offsetHeight <= 0 || el.disabled) continue;
+        const elText = (el.textContent || el.value || '').trim().toLowerCase();
+        for (const t of searchTexts) {
+          if (elText === t.toLowerCase() || elText.includes(t.toLowerCase())) {
+            el.setAttribute('data-findanybutton-match', 'true');
+            return true;
           }
         }
-      } catch { /* element detached */ }
-    }
+      }
+      return false;
+    }, texts);
+    if (!found) return null;
+    const matched = await page.$('[data-findanybutton-match="true"]');
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-findanybutton-match="true"]');
+      if (el) el.removeAttribute('data-findanybutton-match');
+    }).catch(() => {});
+    return matched;
   } catch { /* page navigated */ }
   return null;
 }
