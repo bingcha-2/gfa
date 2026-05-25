@@ -4,7 +4,7 @@ import { usePoolStore } from '@/stores/usePoolStore'
 import { StatusPill } from '@/components/StatusPill'
 import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
-import { PromoSection } from '@/components/PromoSection'
+import { PromoCard } from '@/components/PromoCard'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -193,8 +193,9 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Right: 账号卡 + 模型用量 */}
+        {/* Right: 广告 + 账号卡 + 模型用量 */}
         <div className="flex flex-col gap-4">
+          <PromoCard />
           <Card>
             <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
             <CardContent>
@@ -224,9 +225,6 @@ export function DashboardPage() {
           </Card>
         </div>
       </div>
-
-      {/* ── Row 4: Promo ── */}
-      <PromoSection />
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
