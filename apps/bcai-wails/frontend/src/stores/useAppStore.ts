@@ -78,7 +78,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ideProducts: [],
   updateStatus: null,
   announcement: '',
-  appVersion: '5.0.0',
+  appVersion: '5.0.1',
   appStartTime: Date.now(),
 
   fetchStats: async () => {
