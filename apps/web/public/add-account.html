@@ -367,6 +367,7 @@
         <button class="nav-btn" data-tab="load" onclick="switchWorkspace('load')">账号负载</button>
         <button class="nav-btn" data-tab="users" onclick="switchWorkspace('users')">用户管理</button>
         <button class="nav-btn" data-tab="employees" onclick="switchWorkspace('employees')">员工管理</button>
+        <button class="nav-btn" data-tab="announcement" onclick="switchWorkspace('announcement')">📢 公告管理</button>
       </aside>
 
       <div class="workspace-main">
@@ -389,6 +390,8 @@
             <input id="loadSearch" placeholder="搜索账号 / 状态 / 原因…" oninput="onLoadSearchInput()" onkeydown="if(event.key==='Enter'){event.preventDefault(); renderLoadTable(state.remote);}"/>
             <span class="search-count" id="loadSearchCount"></span>
             <button class="btn small" onclick="clearLoadSearch()">清空</button>
+            <button class="btn small" id="refreshCreditsBtn" onclick="refreshCredits()" title="全量刷新 AI 积分（约2-3分钟）">🔄 刷新积分</button>
+            <button class="btn small" id="refreshQuotaBtn" onclick="refreshQuota()" title="全量刷新模型额度（约5分钟）">📊 刷新额度</button>
             <button class="btn small danger" id="bulkDeleteBtn" onclick="bulkDeleteSelected()" style="display:none;">删除(0)</button>
             <button class="btn small primary" id="bulkExportBtn" onclick="bulkExportSelected()" style="display:none;">导出(0)</button>
           </div>
@@ -580,6 +583,25 @@
           </div>
         </div>
 
+        <!-- ── 公告管理 ── -->
+        <div class="panel nav-section hidden" data-section="announcement">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">📢 公告管理</h2>
+              <div class="panel-note">编辑客户端滚动公告栏内容。保存后客户端将在5分钟内自动更新显示。留空则显示默认欢迎语。</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>公告内容</label>
+            <textarea id="announcementInput" rows="4" style="width:100%;min-height:100px;padding:10px 12px;resize:vertical;line-height:1.45;border:1px solid var(--line-2);border-radius:7px;background:#0e121a;color:var(--text);font-family:inherit;font-size:13px;" placeholder="输入滚动公告内容..."></textarea>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+            <button class="btn primary" onclick="saveAnnouncement()">💾 保存公告</button>
+            <button class="btn" onclick="loadAnnouncement()">刷新</button>
+            <span id="announcementSaveStatus" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+        </div>
+
           </div>
         </section>
       </div>
@@ -605,6 +627,8 @@
     state.loadSearch = "";
     state.loadPage = 1;
     state.userPage = 1;
+    state.userSort = '';
+    state.userSortDir = 'desc';
     state.employeePage = 1;
     let accountSearchTimer = null;
     let motherSearchTimer = null;
@@ -668,6 +692,32 @@
     }
     function goLoadPage(p) { state.loadPage = p; if (state.remote) renderLoadTable(state.remote); }
 
+    async function refreshCredits() {
+      const btn = document.getElementById("refreshCreditsBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "⏳ 刷新中..."; }
+      try {
+        const res = await fetchJson(`${API}/api/pool/refresh-credits`, { method: "POST" });
+        showToast(`✅ 积分刷新完成，更新 ${res.refreshed || 0} 个账号`, "success");
+        await loadRemoteStatus();
+      } catch (err) {
+        showToast(`❌ 积分刷新失败: ${err.message}`, "error");
+      }
+      if (btn) { btn.disabled = false; btn.textContent = "🔄 刷新积分"; }
+    }
+
+    async function refreshQuota() {
+      const btn = document.getElementById("refreshQuotaBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "⏳ 刷新中..."; }
+      try {
+        const res = await fetchJson(`${API}/api/pool/refresh-quota`, { method: "POST" });
+        showToast(`✅ 额度刷新完成: ${res.refreshed || 0} 成功, ${res.errors || 0} 失败 (共 ${res.total || 0})`, "success");
+        await loadRemoteStatus();
+      } catch (err) {
+        showToast(`❌ 额度刷新失败: ${err.message}`, "error");
+      }
+      if (btn) { btn.disabled = false; btn.textContent = "📊 刷新额度"; }
+    }
+
     async function unblockLocationAccounts() {
       if (!confirm("确定解封所有 location_unsupported 封禁的账号？")) return;
       try {
@@ -725,6 +775,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       switchWorkspace("captcha-unblock");
       refreshAll();
+      loadAnnouncement();
       setInterval(refreshAll, 1800000); // 30 minutes
     });
 
@@ -974,6 +1025,46 @@
       document.querySelectorAll(".nav-section").forEach((section) => {
         section.classList.toggle("hidden", section.dataset.section !== tab);
       });
+      if (tab === 'announcement') loadAnnouncement();
+    }
+
+    // ── Announcement Management ──
+    async function loadAnnouncement() {
+      try {
+        const resp = await fetch('/api/remote-token/announcement');
+        if (resp.ok) {
+          const text = await resp.text();
+          const input = document.getElementById('announcementInput');
+          if (input) input.value = text;
+        }
+      } catch (e) {
+        console.warn('Failed to load announcement:', e);
+      }
+    }
+
+    async function saveAnnouncement() {
+      const input = document.getElementById('announcementInput');
+      const statusEl = document.getElementById('announcementSaveStatus');
+      if (!input) return;
+      try {
+        const resp = await fetch('/api/remote-token/announcement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: input.value })
+        });
+        if (resp.ok) {
+          if (statusEl) { statusEl.textContent = '✅ 已保存'; statusEl.style.color = 'var(--accent-2)'; }
+          showToast('公告已保存');
+        } else {
+          const data = await resp.json().catch(() => ({}));
+          if (statusEl) { statusEl.textContent = '❌ ' + (data.error || '保存失败'); statusEl.style.color = 'var(--danger)'; }
+          showToast('保存失败: ' + (data.error || resp.status), true);
+        }
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = '❌ 网络错误'; statusEl.style.color = 'var(--danger)'; }
+        showToast('保存失败: ' + e.message, true);
+      }
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
     }
 
     function accountKey(account) {
@@ -1052,6 +1143,7 @@
       const reason = account.quotaStatusReason ? ` - ${account.quotaStatusReason}` : "";
       if (isPhoneVerificationCooldown(account)) return `手机验证冷却 ${formatMs(account.cooldownRemainingMs)}`;
       if (status === "ok") return `额度正常${reason}`;
+      if (status === "cooling") return `冷却中${reason}`;
       if (status === "exhausted") return `额度受限${reason}`;
       if (status === "error") return `账号错误${reason}`;
       return `额度未知${reason}`;
@@ -1062,6 +1154,7 @@
       if (account.enabled === false || status === "error") return "bad";
       if (isPhoneVerificationCooldown(account)) return "warn";
       if (status === "exhausted" || !account.canRotate) return "warn";
+      if (status === "cooling") return "warn";
       return "ok";
     }
 
@@ -1882,7 +1975,7 @@
 
       document.getElementById("loadTableWrap").innerHTML = `
         <table class="load-table">
-          <thead><tr><th style="width: 32px;"><input type="checkbox" id="selectAllLoadAccounts" onchange="toggleAllLoadAccounts(this)"></th><th>账号</th><th>套餐</th><th>额度状态</th><th>封禁原因</th><th>冷却/剩余</th><th>阻断模型</th><th>Lease</th><th>累计Token</th><th>成功率</th><th>请求/失败</th><th>地区失败</th><th>最近对话</th><th>最近码</th><th>操作</th></tr></thead>
+          <thead><tr><th style="width: 32px;"><input type="checkbox" id="selectAllLoadAccounts" onchange="toggleAllLoadAccounts(this)"></th><th>账号</th><th>套餐</th><th>AI积分</th><th>额度状态</th><th>封禁原因</th><th>冷却/剩余</th><th>阻断模型</th><th>Lease</th><th>累计Token</th><th>成功率</th><th>请求/失败</th><th>地区失败</th><th>最近对话</th><th>最近码</th><th>操作</th></tr></thead>
           <tbody>
             ${pageRows.map((account) => {
               const id = String(account.id ?? "");
@@ -1905,6 +1998,7 @@
                 "auth_forbidden": "认证被拒",
                 "auth_failed": "认证失败",
                 "verification_required": "需验证",
+                "quota_cooling": "冷却中",
               }[reason] || reason || "-";
               const reasonClass = reason.includes("permanent") || reason.includes("token_refresh") ? "err" : reason ? "warn" : "ok";
 
@@ -1941,6 +2035,15 @@
                 <td><input type="checkbox" class="load-account-checkbox" value="${id}" onchange="updateLoadAccountSelection()"></td>
                 <td>#${escapeHtml(id)}<br>${escapeHtml(maskEmail(account.email || ""))}</td>
                 <td>${escapeHtml(account.planType || "-")}</td>
+                <td>${(() => {
+                  const c = account.credits || {};
+                  if (!c.known) return '<span style="color:var(--muted)">-</span>';
+                  const amt = Number(c.creditAmount || 0);
+                  const dot = c.available ? 'ok' : 'bad';
+                  const label = c.available ? amt.toLocaleString(undefined, {maximumFractionDigits: 0}) : '耗尽';
+                  const title = `余额: ${amt} / 最低: ${Number(c.minCreditAmount || 0)} | 刷新: ${c.creditsRefreshedAt ? new Date(c.creditsRefreshedAt).toLocaleString() : '未刷新'}`;
+                  return `<span class="badge" title="${escapeHtml(title)}"><span class="dot ${dot}"></span>${escapeHtml(label)}</span>`;
+                })()}</td>
                 <td><span class="badge"><span class="dot ${quotaDot(account)}"></span>${escapeHtml(account.quotaStatus || "unknown")}</span></td>
                 <td><span class="badge"><span class="dot ${reasonClass}"></span>${reasonLabel}</span></td>
                 <td>${cooldownStr}</td>
@@ -2025,15 +2128,43 @@
         return;
       }
 
+      // Sort keys
+      const sortField = state.userSort;
+      const sortDir = state.userSortDir === 'asc' ? 1 : -1;
+      const sortedKeys = [...keys];
+      if (sortField) {
+        sortedKeys.sort((a, b) => {
+          const av = Number(a[sortField] || 0);
+          const bv = Number(b[sortField] || 0);
+          return (av - bv) * sortDir;
+        });
+      }
+
       // Pagination
-      const totalPages = Math.ceil(keys.length / PAGE_SIZE);
+      const totalPages = Math.ceil(sortedKeys.length / PAGE_SIZE);
       if (state.userPage > totalPages) state.userPage = totalPages;
       const start = (state.userPage - 1) * PAGE_SIZE;
-      const pageKeys = keys.slice(start, start + PAGE_SIZE);
+      const pageKeys = sortedKeys.slice(start, start + PAGE_SIZE);
+
+      const sortBtnStyle = 'cursor:pointer;padding:2px 8px;border-radius:4px;font-size:11px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--muted);transition:all .15s;margin-right:4px';
+      const activeSortStyle = 'background:var(--accent);color:#fff;border-color:var(--accent)';
+      function sortBtn(field, label) {
+        const active = sortField === field;
+        const arrow = active ? (state.userSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+        return `<span style="${sortBtnStyle};${active ? activeSortStyle : ''}" onclick="toggleUserSort('${field}')">${label}${arrow}</span>`;
+      }
 
       wrap.innerHTML = `
+        <div style="margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted);margin-right:4px">排序:</span>
+          ${sortBtn('totalTokensUsed', '总Token')}
+          ${sortBtn('opusTokensUsed', 'Opus用量')}
+          ${sortBtn('geminiTokensUsed', 'Gemini用量')}
+          ${sortBtn('totalRequests', '请求数')}
+          ${sortBtn('anomalyCount', '异常数')}
+        </div>
         <table>
-          <thead><tr><th>卡密</th><th>备注</th><th>状态</th><th>有效期</th><th>首次使用</th><th>到期</th><th>总请求</th><th>总 tokens</th><th>5小时 tokens</th><th>操作</th></tr></thead>
+          <thead><tr><th>卡密</th><th>备注</th><th>状态</th><th>有效期</th><th>首次使用</th><th>到期</th><th>总请求</th><th>总 tokens</th><th>5小时 tokens</th><th>异常</th><th>操作</th></tr></thead>
           <tbody>
             ${pageKeys.map((key) => `
               <tr>
@@ -2049,15 +2180,35 @@
                   <div style="font-size:11px;margin-bottom:2px">Opus: ${Number(key.opusTokensUsed || 0).toLocaleString()} / ${Number(key.opusTokenLimit || 0) > 0 ? Number(key.opusTokenLimit || 0).toLocaleString() : "不限"}</div>
                   <div style="font-size:11px;color:var(--accent)">Gemini: ${Number(key.geminiTokensUsed || 0).toLocaleString()} / ${Number(key.geminiTokenLimit || 0) > 0 ? Number(key.geminiTokenLimit || 0).toLocaleString() : "不限"}</div>
                 </td>
+                <td>${(() => {
+                  const ac = Number(key.anomalyCount || 0);
+                  const ms = Number(key.missingShadowCount || 0);
+                  if (ac === 0 && ms === 0) return '<span style="color:var(--muted)">-</span>';
+                  const dot = ac > 5 ? 'err' : ac > 0 ? 'warn' : 'ok';
+                  const title = `异常: ${ac} 次, 影子缺失: ${ms} 次${key.lastAnomalyAt ? '\n最近: ' + new Date(key.lastAnomalyAt).toLocaleString() : ''}`;
+                  return `<span class="badge" title="${escapeHtml(title)}"><span class="dot ${dot}"></span>${ac}/${ms}</span>`;
+                })()}</td>
                 <td>
                   <button class="btn small" onclick="copyAccessKey('${escapeJs(key.fullKey || "")}')">复制</button>
                   <button class="btn small ${key.status === "active" ? "danger" : ""}" onclick="toggleAccessKey('${escapeJs(key.id)}','${key.status === "active" ? "disabled" : "active"}')">${key.status === "active" ? "禁用" : "启用"}</button>
+                  <button class="btn small danger" onclick="deleteAccessKey('${escapeJs(key.id)}')">删除</button>
                 </td>
               </tr>
             `).join("")}
           </tbody>
         </table>`;
       renderPaginationControls("userPagination", state.userPage, totalPages, "goUserPage");
+    }
+
+    function toggleUserSort(field) {
+      if (state.userSort === field) {
+        state.userSortDir = state.userSortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        state.userSort = field;
+        state.userSortDir = 'desc';
+      }
+      state.userPage = 1;
+      renderAccessKeys();
     }
 
     function renderEmployees() {
@@ -3561,6 +3712,21 @@
       }
       await navigator.clipboard?.writeText(value).catch(() => {});
       showToast("卡密已复制");
+    }
+
+    async function deleteAccessKey(id) {
+      if (!confirm("确定删除该卡密？删除后不可恢复。")) return;
+      try {
+        await fetchJson(`${API}/access-key-delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id })
+        });
+        showToast("卡密已删除");
+        refreshAll();
+      } catch (err) {
+        showToast(`删除失败: ${err.message}`, "error");
+      }
     }
 
     async function bindMother(accountId) {

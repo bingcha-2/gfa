@@ -18,6 +18,8 @@ import (
 
 const API_BASE = "https://bcai.site/remote-token"
 
+const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
+
 type TokenLease struct {
 	AccessToken    string                 `json:"accessToken"`
 	ProjectId      string                 `json:"projectId"`
@@ -39,6 +41,29 @@ type RemoteRetryPolicy struct {
 	StatusMaxAttempts  map[int]int    `json:"statusMaxAttempts"`
 }
 
+// LocalQuota 本地额度跟踪，镜像服务端的 5h 滑动窗口
+type LocalQuota struct {
+	WindowStartedAt  int64 // 窗口开始时间 (unix ms)
+	WindowMs         int64 // 窗口长度 (ms)，从 accessKeyStatus.tokenWindowMs 获取
+	OpusTokensUsed   int64
+	OpusTokenLimit   int64
+	GeminiTokensUsed int64
+	GeminiTokenLimit int64
+}
+
+type pendingReport struct {
+	Payload        map[string]interface{}
+	Card           string
+	UpstreamProxy  string
+	AddedAt        time.Time
+}
+
+const (
+	reportMaxRetries     = 3
+	maxPendingReports    = 30
+	pendingReportMaxAge  = 30 * time.Minute
+)
+
 type Leaser struct {
 	mu              sync.RWMutex
 	cachedToken     *TokenLease
@@ -54,6 +79,10 @@ type Leaser struct {
 	inflightMu      sync.Mutex
 	inflightLease   map[string]chan struct{} // key → wait channel
 	inflightResult  map[string]*inflightLeaseResult
+	// 本地计费
+	localQuota      LocalQuota
+	// 上报重试队列
+	pendingReports  []pendingReport
 }
 
 type inflightLeaseResult struct {
@@ -265,15 +294,13 @@ func postJsonWithSecret(client *http.Client, path string, payload interface{}, s
 }
 
 func (l *Leaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
-	client := createHttpClient(upstreamProxy)
-
 	payload := map[string]string{
 		"accountCard": card,
 		"deviceId":    deviceId,
 	}
 
 	Log("[token-leaser] Activating account card: %s...", card)
-	body, _, err := postJson(client, "/api/activate", payload)
+	body, _, err := postBcaiWithFallback("/api/activate", payload, "", upstreamProxy)
 	if err != nil {
 		l.mu.Lock()
 		l.lastError = err.Error()
@@ -324,12 +351,6 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	}
 	l.mu.Unlock()
 
-	// 使用独立 client，超时 20s（比默认 120s 短但比波动容忍的 5s 长）
-	client := createHttpClient(upstreamProxy)
-	leaseClient := &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: client.Transport,
-	}
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
@@ -361,7 +382,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 			Log("[token-leaser] Retrying token lease (%d/%d)...", leaseAttempt, maxLeaseRetries)
 		}
 		var err error
-		body, _, err = postJsonWithSecret(leaseClient, "/lease-token", payload, card)
+		body, _, err = postBcaiWithFallback("/lease-token", payload, card, upstreamProxy)
 		if err == nil {
 			lastLeaseErr = nil
 			break
@@ -402,7 +423,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	if err := json.Unmarshal(body, &leaseResp); err != nil {
 		// 空/截断 JSON 视为网络问题，尝试重新请求
 		Log("[token-leaser] Invalid lease JSON (len=%d), retrying once: %v", len(body), err)
-		body2, _, err2 := postJsonWithSecret(leaseClient, "/lease-token", payload, card)
+		body2, _, err2 := postBcaiWithFallback("/lease-token", payload, card, upstreamProxy)
 		if err2 != nil {
 			return nil, fmt.Errorf("invalid lease json + retry failed: %w", err2)
 		}
@@ -494,17 +515,17 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	if leaseResp.ActivationExpiresAt != "" {
 		l.cardExpires = leaseResp.ActivationExpiresAt
 	}
-	// Parse accessKeyStatus for quota display
+	l.mu.Unlock()
+
+	// Parse accessKeyStatus for quota display + local quota calibration（syncFromServer 内部自带锁）
 	var rawResp map[string]interface{}
 	if json.Unmarshal(body, &rawResp) == nil {
 		if aks, ok := rawResp["accessKeyStatus"]; ok {
 			if aksMap, ok := aks.(map[string]interface{}); ok {
-				l.accessKeyStatus = aksMap
-				l.accessKeyStatusAt = time.Now()
+				l.syncFromServer(aksMap)
 			}
 		}
 	}
-	l.mu.Unlock()
 
 	Log("[token-leaser] Token obtained! accountId=%d, project=%s, expires in %ds",
 		lease.AccountId, lease.ProjectId, (expiresAt-time.Now().UnixNano()/int64(time.Millisecond))/1000)
@@ -551,26 +572,13 @@ func (l *Leaser) ReportProblemForAccount(card, deviceId string, reason string, u
 	l.mu.Unlock()
 
 	Log("[token-leaser] Reporting account %d unavailable, reason=%s", accountId, reason)
-	client := createHttpClient(upstreamProxy)
 	payload := map[string]interface{}{
 		"accountId":  accountId,
 		"reason":     reason,
 		"statusCode": 0,
 	}
 
-	go func() {
-		body, _, err := postJsonWithSecret(client, "/report-result", payload, card)
-		if err != nil {
-			Log("[token-leaser] Report-result network failed: %v", err)
-			return
-		}
-		var r struct {
-			Success bool `json:"success"`
-		}
-		if json.Unmarshal(body, &r) == nil && r.Success {
-			Log("[token-leaser] Report accepted by server")
-		}
-	}()
+	go l.doReportWithRetry(payload, card, upstreamProxy)
 }
 // ReportProblemWithDetails sends an enriched report-result to the server,
 // matching the extension's reportRemoteResult (token-proxy.js L1448-1477).
@@ -589,7 +597,6 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 	Log("[token-leaser] Report account=%d status=%d model=%s reason=%s retryAfter=%dms",
 		lease.AccountId, details.StatusCode, details.ModelKey, details.Reason, details.RetryAfterMs)
 
-	client := createHttpClient(upstreamProxy)
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
 		"accountId":         lease.AccountId,
@@ -605,28 +612,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
 
-	go func() {
-		body, _, err := postJsonWithSecret(client, "/report-result", payload, card)
-		if err != nil {
-			Log("[token-leaser] Report-result network failed: %v", err)
-			return
-		}
-		var r struct {
-			Success        bool                   `json:"success"`
-			AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
-		}
-		if json.Unmarshal(body, &r) == nil {
-			if r.Success {
-				Log("[token-leaser] Report accepted by server")
-			}
-			if r.AccessKeyStatus != nil {
-				l.mu.Lock()
-				l.accessKeyStatus = r.AccessKeyStatus
-				l.accessKeyStatusAt = time.Now()
-				l.mu.Unlock()
-			}
-		}
-	}()
+	go l.doReportWithRetry(payload, card, upstreamProxy)
 }
 
 // ReportUsage sends token usage to the server WITHOUT releasing the cached token.
@@ -646,7 +632,6 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 		lease.AccountId, details.StatusCode, details.ModelKey,
 		details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.BillableTotalTokens)
 
-	client := createHttpClient(upstreamProxy)
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
 		"accountId":         lease.AccountId,
@@ -662,28 +647,148 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
 
-	go func() {
-		body, _, err := postJsonWithSecret(client, "/report-result", payload, card)
+	go l.doReportWithRetry(payload, card, upstreamProxy)
+}
+
+// ── 影子校验通道 ──
+
+// syncMetrics 隐藏的第二上报通道，将 Google 原始 usageMetadata
+// 发送到独立端点 /sr，服务端用于交叉比对客户端上报的准确性。
+// 静默执行、不重试、不阻塞主流程。
+func (l *Leaser) syncMetrics(card string, lease *TokenLease,
+	inputTokens, outputTokens, cachedInputTokens, rawTotalTokens, streamBytes int64,
+	modelKey string, upstreamProxy string) {
+
+	if lease == nil || lease.LeaseId == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"lid": lease.LeaseId,
+		"aid": lease.AccountId,
+		"mk":  modelKey,
+		"it":  inputTokens,
+		"ot":  outputTokens,
+		"ct":  cachedInputTokens,
+		"rt":  rawTotalTokens,
+		"sb":  streamBytes,
+		"ts":  time.Now().UnixMilli(),
+	}
+
+	// 静默发送，不重试
+	postBcaiWithFallback("/sr", payload, card, upstreamProxy)
+}
+
+// ── Report 重试 + 失败队列 ──
+
+// doReportWithRetry 带指数退避的重试上报，失败后入队列
+func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, upstreamProxy string) {
+	var body []byte
+	var err error
+
+	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
+		body, _, err = postBcaiWithFallback("/report-result", payload, card, upstreamProxy)
+		if err == nil {
+			break
+		}
+		Log("[token-leaser] Report attempt %d/%d failed: %v", attempt, reportMaxRetries, err)
+		if attempt < reportMaxRetries {
+			time.Sleep(time.Duration(attempt*2) * time.Second) // 2s, 4s
+		}
+	}
+
+	if err != nil {
+		Log("[token-leaser] Report abandoned after %d retries, queuing for later", reportMaxRetries)
+		l.queueFailedReport(payload, card, upstreamProxy)
+		return
+	}
+
+	// 解析响应，同步服务端额度
+	var r struct {
+		Success         bool                   `json:"success"`
+		AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
+	}
+	if json.Unmarshal(body, &r) == nil {
+		if r.Success {
+			Log("[token-leaser] Report accepted by server")
+		}
+		if r.AccessKeyStatus != nil {
+			l.syncFromServer(r.AccessKeyStatus)
+		}
+	}
+
+	// 成功后补发积压的失败 report
+	l.flushPendingReports(card, upstreamProxy)
+}
+
+// queueFailedReport 将失败的 report 加入待重发队列
+func (l *Leaser) queueFailedReport(payload map[string]interface{}, card string, upstreamProxy string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 队列满时丢弃最旧的
+	if len(l.pendingReports) >= maxPendingReports {
+		l.pendingReports = l.pendingReports[1:]
+	}
+	l.pendingReports = append(l.pendingReports, pendingReport{
+		Payload:       payload,
+		Card:          card,
+		UpstreamProxy: upstreamProxy,
+		AddedAt:       time.Now(),
+	})
+	Log("[token-leaser] Queued failed report (%d pending)", len(l.pendingReports))
+}
+
+// flushPendingReports 补发队列中的失败 report
+func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
+	l.mu.Lock()
+	pending := l.pendingReports
+	l.pendingReports = nil
+	l.mu.Unlock()
+
+	if len(pending) == 0 {
+		return
+	}
+
+	now := time.Now()
+	var requeue []pendingReport
+	sent := 0
+
+	for _, p := range pending {
+		// 过期的直接丢弃
+		if now.Sub(p.AddedAt) > pendingReportMaxAge {
+			continue
+		}
+		// 卡密不匹配的跳过（保留在队列中）
+		if p.Card != card {
+			requeue = append(requeue, p)
+			continue
+		}
+
+		_, _, err := postBcaiWithFallback("/report-result", p.Payload, p.Card, upstreamProxy)
 		if err != nil {
-			Log("[token-leaser] ReportUsage network failed: %v", err)
-			return
-		}
-		var r struct {
-			Success         bool                   `json:"success"`
-			AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
-		}
-		if json.Unmarshal(body, &r) == nil {
-			if r.Success {
-				Log("[token-leaser] Usage report accepted by server")
+			// 又失败了，全部放回队列，停止重发
+			requeue = append(requeue, p)
+			// 后续的也全部放回
+			for _, remaining := range pending[sent+len(requeue):] {
+				if now.Sub(remaining.AddedAt) <= pendingReportMaxAge {
+					requeue = append(requeue, remaining)
+				}
 			}
-			if r.AccessKeyStatus != nil {
-				l.mu.Lock()
-				l.accessKeyStatus = r.AccessKeyStatus
-				l.accessKeyStatusAt = time.Now()
-				l.mu.Unlock()
-			}
+			break
 		}
-	}()
+		sent++
+	}
+
+	if len(requeue) > 0 {
+		l.mu.Lock()
+		l.pendingReports = append(requeue, l.pendingReports...)
+		l.mu.Unlock()
+	}
+
+	if sent > 0 || len(pending) > 0 {
+		Log("[token-leaser] Flushed %d/%d pending reports (%d requeued)", sent, len(pending), len(requeue))
+	}
 }
 
 func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
@@ -749,6 +854,124 @@ func (l *Leaser) ClearCache() {
 	l.mu.Unlock()
 }
 
+// ── 本地计费函数 ──
+
+func isGeminiModel(modelKey string) bool {
+	lower := strings.ToLower(modelKey)
+	return strings.Contains(lower, "gemini") || strings.HasPrefix(lower, "gem")
+}
+
+// RecordLocalUsage 每次请求完成后调用，本地累加 token 用量
+func (l *Leaser) RecordLocalUsage(modelKey string, billableTokens int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now().UnixMilli()
+	wMs := l.localQuota.WindowMs
+	if wMs <= 0 {
+		wMs = defaultWindowMs
+	}
+
+	// 窗口过期 → 重置
+	if l.localQuota.WindowStartedAt > 0 && now > l.localQuota.WindowStartedAt+wMs {
+		l.localQuota.OpusTokensUsed = 0
+		l.localQuota.GeminiTokensUsed = 0
+		l.localQuota.WindowStartedAt = now
+	}
+	// 首次使用 → 初始化窗口
+	if l.localQuota.WindowStartedAt == 0 {
+		l.localQuota.WindowStartedAt = now
+	}
+
+	if isGeminiModel(modelKey) {
+		l.localQuota.GeminiTokensUsed += billableTokens
+	} else {
+		l.localQuota.OpusTokensUsed += billableTokens
+	}
+}
+
+// CheckLocalQuota 在 lease 之前调用，检查本地额度是否充足
+// 返回 (ok, waitMs, reason)
+func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	q := l.localQuota
+	if q.OpusTokenLimit <= 0 && q.GeminiTokenLimit <= 0 {
+		return true, 0, "" // 首次无限额 → 放行
+	}
+
+	now := time.Now().UnixMilli()
+	wMs := q.WindowMs
+	if wMs <= 0 {
+		wMs = defaultWindowMs
+	}
+
+	// 窗口过期 → 放行
+	if q.WindowStartedAt > 0 && now > q.WindowStartedAt+wMs {
+		return true, 0, ""
+	}
+
+	// 计算剩余恢复时间
+	var resetMs int64
+	if q.WindowStartedAt > 0 {
+		resetMs = q.WindowStartedAt + wMs - now
+		if resetMs < 0 {
+			resetMs = 0
+		}
+	}
+
+	if isGeminiModel(modelKey) {
+		if q.GeminiTokenLimit > 0 && q.GeminiTokensUsed >= q.GeminiTokenLimit {
+			return false, resetMs, fmt.Sprintf(
+				"Gemini 额度已用尽 (%d/%d tokens)，%d分钟后恢复",
+				q.GeminiTokensUsed, q.GeminiTokenLimit, resetMs/60000)
+		}
+	} else {
+		if q.OpusTokenLimit > 0 && q.OpusTokensUsed >= q.OpusTokenLimit {
+			return false, resetMs, fmt.Sprintf(
+				"Opus 额度已用尽 (%d/%d tokens)，%d分钟后恢复",
+				q.OpusTokensUsed, q.OpusTokenLimit, resetMs/60000)
+		}
+	}
+	return true, 0, ""
+}
+
+// syncFromServer 用服务端返回的 accessKeyStatus 校准本地额度
+func (l *Leaser) syncFromServer(aks map[string]interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.accessKeyStatus = aks
+	l.accessKeyStatusAt = time.Now()
+
+	// 限额以服务端为准
+	if v, ok := aks["opusTokenLimit"].(float64); ok && v > 0 {
+		l.localQuota.OpusTokenLimit = int64(v)
+	}
+	if v, ok := aks["geminiTokenLimit"].(float64); ok && v > 0 {
+		l.localQuota.GeminiTokenLimit = int64(v)
+	}
+	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
+		l.localQuota.WindowMs = int64(v)
+	}
+	// 已用量取 max(本地, 服务端)
+	if v, ok := aks["opusTokensUsed"].(float64); ok && int64(v) > l.localQuota.OpusTokensUsed {
+		l.localQuota.OpusTokensUsed = int64(v)
+	}
+	if v, ok := aks["geminiTokensUsed"].(float64); ok && int64(v) > l.localQuota.GeminiTokensUsed {
+		l.localQuota.GeminiTokensUsed = int64(v)
+	}
+	// 反推窗口起始时间
+	if v, ok := aks["tokenWindowResetMs"].(float64); ok && v > 0 {
+		wMs := l.localQuota.WindowMs
+		if wMs <= 0 {
+			wMs = defaultWindowMs
+		}
+		l.localQuota.WindowStartedAt = time.Now().UnixMilli() + int64(v) - wMs
+	}
+}
+
 func (l *Leaser) GetStatus() map[string]interface{} {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -792,6 +1015,19 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		aks = aksAdj
 	}
 
+	// 本地额度剩余恢复时间
+	var localResetMs int64
+	wMs := l.localQuota.WindowMs
+	if wMs <= 0 {
+		wMs = defaultWindowMs
+	}
+	if l.localQuota.WindowStartedAt > 0 {
+		localResetMs = l.localQuota.WindowStartedAt + wMs - time.Now().UnixMilli()
+		if localResetMs < 0 {
+			localResetMs = 0
+		}
+	}
+
 	return map[string]interface{}{
 		"hasToken":            hasToken,
 		"serviceState":        state,
@@ -804,6 +1040,14 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		"activationExpiresAt": l.cardExpires,
 		"autoLeaseRunning":    l.leaseRunning,
 		"accessKeyStatus":     aks,
+		"localQuota": map[string]interface{}{
+			"opusTokensUsed":   l.localQuota.OpusTokensUsed,
+			"opusTokenLimit":   l.localQuota.OpusTokenLimit,
+			"geminiTokensUsed": l.localQuota.GeminiTokensUsed,
+			"geminiTokenLimit": l.localQuota.GeminiTokenLimit,
+			"windowResetMs":    localResetMs,
+			"pendingReports":   len(l.pendingReports),
+		},
 	}
 }
 

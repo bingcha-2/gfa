@@ -603,6 +603,14 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	} else {
 		// ====== REMOTE LEASE MODE (original) ======
 		leaser := GetLeaser()
+		// 本地额度检查
+		if ok, waitMs, reason := leaser.CheckLocalQuota(requestModelKey); !ok {
+			Log("[proxy] #%d [QUOTA-LOCAL] %s", reqId, reason)
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", waitMs/1000))
+			p.sendJsonError(w, 429, fmt.Sprintf("BingchaAI: %s", reason))
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
+			return
+		}
 	// P1④: Dynamic max attempts — start with default, update from server retryPolicy
 	remoteMaxAttempts := MaxCloudCodeGenerationAttempts
 	accumulatedCapacityWaitMs := int64(0)
@@ -917,6 +925,10 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		// 上报成功请求的 token 用量到服务器，不释放 lease（保持账号粘性）
 		if lease != nil && !isLocalPool {
 			leaser := GetLeaser()
+			// 本地记账
+			if tokenResult.BillableTotalTokens > 0 {
+				leaser.RecordLocalUsage(requestModelKey, int64(tokenResult.BillableTotalTokens))
+			}
 			leaser.ReportUsage(card, deviceId, ReportDetails{
 				StatusCode:        resp.StatusCode,
 				ModelKey:          requestModelKey,
@@ -926,6 +938,13 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				RawTotalTokens:    tokenResult.RawTotalTokens,
 				BillableTotalTokens: tokenResult.BillableTotalTokens,
 			}, upstream, lease)
+			// 影子校验通道
+			if tokenResult.RawTotalTokens > 0 {
+				go leaser.syncMetrics(card, lease,
+					tokenResult.InputTokens, tokenResult.OutputTokens,
+					tokenResult.CachedInputTokens, tokenResult.RawTotalTokens,
+					tokenResult.StreamBytes, requestModelKey, upstream)
+			}
 		}
 	} else {
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
@@ -1061,6 +1080,14 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	} else {
 		// ====== REMOTE LEASE MODE with retry (aligned with Cloud Code path) ======
 		leaser := GetLeaser()
+		// 本地额度检查
+		if ok, waitMs, reason := leaser.CheckLocalQuota(requestModelKey); !ok {
+			Log("[proxy] #%d [QUOTA-LOCAL] %s", reqId, reason)
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", waitMs/1000))
+			p.sendJsonError(w, 429, fmt.Sprintf("BingchaAI: %s", reason))
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
+			return
+		}
 		remoteMaxAttempts := MaxCloudCodeGenerationAttempts
 		accumulatedCapacityWaitMs := int64(0)
 		const maxCapacityWaitMs = int64(60000)
@@ -1325,6 +1352,10 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		// 上报成功请求的 token 用量到服务器，不释放 lease（保持账号粘性）
 		if lease != nil && !isLocalPool {
 			leaser := GetLeaser()
+			// 本地记账
+			if tokenResult.BillableTotalTokens > 0 {
+				leaser.RecordLocalUsage(requestModelKey, int64(tokenResult.BillableTotalTokens))
+			}
 			leaser.ReportUsage(card, deviceId, ReportDetails{
 				StatusCode:          resp.StatusCode,
 				ModelKey:            requestModelKey,
@@ -1334,6 +1365,13 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				RawTotalTokens:      tokenResult.RawTotalTokens,
 				BillableTotalTokens: tokenResult.BillableTotalTokens,
 			}, upstream, lease)
+			// 影子校验通道
+			if tokenResult.RawTotalTokens > 0 {
+				go leaser.syncMetrics(card, lease,
+					tokenResult.InputTokens, tokenResult.OutputTokens,
+					tokenResult.CachedInputTokens, tokenResult.RawTotalTokens,
+					tokenResult.StreamBytes, requestModelKey, upstream)
+			}
 		}
 	} else {
 		atomic.AddInt64(&p.stats.TotalErrors, 1)

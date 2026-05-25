@@ -136,18 +136,16 @@ async function loadSettingsPage() { try { const cfg=await GetConfig(); if(cfgUps
 async function fetchAnnouncement() {
     try {
         const text = await GetAnnouncement();
-        const bar = document.getElementById('announcement-bar');
         const textEl = document.getElementById('announcement-text');
-        if (!bar || !textEl) return;
+        if (!textEl) return;
 
         if (text && text.trim()) {
             textEl.textContent = text.trim();
-            bar.style.display = 'flex';
         } else {
-            bar.style.display = 'none';
+            textEl.textContent = '欢迎使用冰茶AI';
         }
     } catch (e) {
-        // 网络失败静默忽略
+        // 网络失败静默忽略，保持当前文字
     }
 }
 

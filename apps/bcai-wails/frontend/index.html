@@ -46,28 +46,16 @@
         <!-- 更新通知条 -->
         <div id="update-banner" class="update-banner" style="display: none;"></div>
 
-        <!-- 滚动公告条 -->
-        <div class="announcement-bar" id="announcement-bar" style="display: none;">
+        <!-- 滚动公告条（始终显示） -->
+        <div class="announcement-bar" id="announcement-bar">
             <span class="announcement-icon">📢</span>
             <div class="announcement-scroll-wrap">
-                <div class="announcement-text" id="announcement-text"></div>
+                <div class="announcement-text" id="announcement-text">欢迎使用冰茶AI</div>
             </div>
         </div>
 
         <!-- ========== 页面1: 控制台 ========== -->
         <div class="page active" id="page-home">
-            <!-- 状态条 -->
-            <div class="pill" id="pill-status-container">
-                <div class="dot dot-off" id="pill-dot"></div>
-                <div class="pill-text" id="pill-text">正在检查状态...</div>
-            </div>
-            <div class="pill expiry-pill-box" id="expiry-box" style="display: none;">
-                <span class="label">账号到期:</span>
-                <span class="val" id="expiry-text">--</span>
-                <span class="divider">|</span>
-                <span class="label">5h 倒计时:</span>
-                <span class="val" id="refill-countdown">--</span>
-            </div>
 
             <!-- 上半区：左右两列 -->
             <div class="home-grid">
@@ -94,19 +82,28 @@
                     </div>
                         <button type="button" class="btn btn-p" id="btn-inject-toggle" style="width: 100%; margin-top: 10px;">🔌 开启接管</button>
                         <div class="hint-text" id="ide-inject-hint" style="margin-top: 6px;">选择产品后点击按钮开启接管</div>
+                        <!-- Pill 状态条（从顶部移到接管卡内） -->
+                        <div class="pill pill-inline" id="pill-status-container" style="margin-top: 8px;">
+                            <div class="dot dot-off" id="pill-dot"></div>
+                            <div class="pill-text" id="pill-text">正在检查状态...</div>
+                        </div>
+                        <div class="pill expiry-pill-box pill-inline" id="expiry-box" style="display: none; margin-top: 4px;">
+                            <span class="label">到期:</span>
+                            <span class="val" id="expiry-text">--</span>
+                            <span class="divider">|</span>
+                            <span class="label">5h:</span>
+                            <span class="val" id="refill-countdown">--</span>
+                        </div>
                     </div>
 
-                    <!-- Token 来源 -->
-                    <div class="card" id="pool-mode-card">
-                        <div class="card-title">⚡ Token 来源</div>
-                        <div class="pool-mode-toggle">
-                            <button class="pool-mode-btn active" id="btn-mode-remote" data-mode="remote">
-                                <span class="mode-icon">☁️</span><span class="mode-label">远程续杯</span>
-                            </button>
-                            <button class="pool-mode-btn" id="btn-mode-local" data-mode="local">
-                                <span class="mode-icon">💻</span><span class="mode-label">本地号池</span>
-                            </button>
-                        </div>
+                    <!-- Token 来源（精简：仅两个按钮） -->
+                    <div class="pool-mode-toggle-standalone" id="pool-mode-card">
+                        <button class="pool-mode-btn active" id="btn-mode-remote" data-mode="remote">
+                            <span class="mode-icon">☁️</span><span class="mode-label">远程续杯</span>
+                        </button>
+                        <button class="pool-mode-btn" id="btn-mode-local" data-mode="local">
+                            <span class="mode-icon">💻</span><span class="mode-label">本地号池</span>
+                        </button>
                     </div>
 
                     <!-- 账号卡 -->

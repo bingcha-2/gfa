@@ -326,16 +326,65 @@ function emptyAccessKeys() {
   return { keys: [], updatedAt: '' };
 }
 
+// ── access-keys in-memory cache + debounced disk persistence ──────────────
+let _accessKeysCache = null;
+let _accessKeysDirty = false;
+let _accessKeysSaveTimer = null;
+const ACCESS_KEYS_SAVE_DEBOUNCE_MS = 3000; // 3s merge window
+
 function readAccessKeys() {
-  const parsed = readJsonFile(ACCESS_KEYS_PATH);
-  return { keys: Array.isArray(parsed.keys) ? parsed.keys : [], updatedAt: parsed.updatedAt || '' };
+  if (!_accessKeysCache) {
+    const parsed = readJsonFile(ACCESS_KEYS_PATH);
+    _accessKeysCache = {
+      keys: Array.isArray(parsed.keys) ? parsed.keys : [],
+      updatedAt: parsed.updatedAt || '',
+    };
+  }
+  return _accessKeysCache;
 }
 
 function writeAccessKeys(data) {
-  writeJsonFile(ACCESS_KEYS_PATH, {
+  _accessKeysCache = {
     keys: Array.isArray(data.keys) ? data.keys : [],
     updatedAt: new Date().toISOString(),
-  });
+  };
+  _accessKeysDirty = true;
+  if (!_accessKeysSaveTimer) {
+    _accessKeysSaveTimer = setTimeout(() => {
+      _accessKeysSaveTimer = null;
+      flushAccessKeys();
+    }, ACCESS_KEYS_SAVE_DEBOUNCE_MS);
+  }
+}
+
+function flushAccessKeys() {
+  if (_accessKeysSaveTimer) {
+    clearTimeout(_accessKeysSaveTimer);
+    _accessKeysSaveTimer = null;
+  }
+  if (!_accessKeysDirty || !_accessKeysCache) return;
+  _accessKeysDirty = false;
+  try {
+    // Prune expired usage events before writing to reduce file size
+    const now = Date.now();
+    for (const key of _accessKeysCache.keys) {
+      if (!key) continue;
+      resetWindowIfExpired(key, now);
+      const windowStart = Number(key.windowStartedAt || 0);
+      if (windowStart > 0) {
+        if (Array.isArray(key.usageEvents)) {
+          key.usageEvents = key.usageEvents.filter((e) => e.at >= windowStart);
+        }
+        if (Array.isArray(key.tokenUsageEvents)) {
+          key.tokenUsageEvents = key.tokenUsageEvents.filter((e) => e.at >= windowStart);
+        }
+      }
+    }
+    writeJsonFile(ACCESS_KEYS_PATH, _accessKeysCache);
+  } catch (err) {
+    _accessKeysDirty = true; // retry on next flush
+    console.error(`[remote-token] flush access-keys failed: ${err.message}`);
+  }
 }
 
 function findAccessKeyRecord(cardId) {
@@ -710,7 +759,11 @@ function recordAccessKeyUsage(cardId, status, usage = {}, modelKey = '') {
       modelKey: modelKey || '',
     });
   }
-  writeAccessKeys(data);
+  // Mark cache dirty (debounced flush) — no separate writeAccessKeys needed
+  _accessKeysDirty = true;
+  if (!_accessKeysSaveTimer) {
+    _accessKeysSaveTimer = setTimeout(() => { _accessKeysSaveTimer = null; flushAccessKeys(); }, ACCESS_KEYS_SAVE_DEBOUNCE_MS);
+  }
 }
 
 function refreshAccessKeySessionById(cardId, sessionId, clientId = '') {
@@ -724,7 +777,11 @@ function refreshAccessKeySessionById(cardId, sessionId, clientId = '') {
   const requestedClientId = String(clientId || '').trim();
   if (activeClientId && requestedClientId && activeClientId !== requestedClientId) return null;
   refreshAccessKeySession(record, { clientId });
-  writeAccessKeys(data);
+  // Mark cache dirty (debounced flush) — no separate writeAccessKeys needed
+  _accessKeysDirty = true;
+  if (!_accessKeysSaveTimer) {
+    _accessKeysSaveTimer = setTimeout(() => { _accessKeysSaveTimer = null; flushAccessKeys(); }, ACCESS_KEYS_SAVE_DEBOUNCE_MS);
+  }
   return record;
 }
 
@@ -735,7 +792,11 @@ function activateAccessKey(cardId) {
   if (!record) return null;
   if (!record.firstUsedAt) {
     record.firstUsedAt = new Date().toISOString();
-    writeAccessKeys(data);
+    // Mark cache dirty (debounced flush) — no separate writeAccessKeys needed
+    _accessKeysDirty = true;
+    if (!_accessKeysSaveTimer) {
+      _accessKeysSaveTimer = setTimeout(() => { _accessKeysSaveTimer = null; flushAccessKeys(); }, ACCESS_KEYS_SAVE_DEBOUNCE_MS);
+    }
   }
   return record;
 }
@@ -787,6 +848,11 @@ function accessKeyPublicStatus(record) {
     sessionLastSeenAt: record.sessionLastSeenAt || '',
     sessionExpiresAt: record.sessionExpiresAt || '',
     sessionTtlMs: accessKeySessionTtlMs(record),
+    anomalyCount: Number(record._anomalyCount || 0),
+    missingShadowCount: Number(record._missingShadowCount || 0),
+    lastAnomalyAt: (record._anomalies && record._anomalies.length)
+      ? new Date(record._anomalies[record._anomalies.length - 1].at).toISOString()
+      : '',
   };
 }
 
@@ -2026,65 +2092,11 @@ function createRemoteTokenServer(config) {
         stats.totalLeases++;
         stats.lastUsedAt = Date.now();
 
-        // ── Lazy planType fetch: if account has no planType, discover it in background.
-        //    Only attempts once per account per server lifetime.
-        if (!account.planType && !planTypeFetchedIds.has(account.id)) {
-          planTypeFetchedIds.add(account.id);
-          setImmediate(async () => {
-            try {
-              const freshToken = await tokenManager.getAccessToken(account.id);
-              const { fetchPlanViaLoadCodeAssist } = require('../token-proxy/token-manager');
-              if (typeof fetchPlanViaLoadCodeAssist !== 'function') return;
-              // Use the instance method if available
-              if (typeof tokenManager.autoFetchPlanTypes === 'function') {
-                // Single-account fetch via internal API
-                const rawAccount = tokenManager.getAccount(account.id);
-                if (!rawAccount || rawAccount.planType) return;
-                const cloudEndpoint = 'https://cloudcode-pa.clients6.google.com';
-                const payload = { metadata: { ideType: 'ANTIGRAVITY' } };
-                const body = JSON.stringify(payload);
-                const https = require('https');
-                const url = new URL(`${cloudEndpoint}/v1internal:loadCodeAssist`);
-                const resData = await new Promise((resolve, reject) => {
-                  const req = https.request(url, {
-                    method: 'POST',
-                    headers: {
-                      'authorization': `Bearer ${freshToken}`,
-                      'content-type': 'application/json',
-                      'content-length': String(Buffer.byteLength(body)),
-                    },
-                  }, (res) => {
-                    let d = '';
-                    res.on('data', c => d += c);
-                    res.on('end', () => resolve({ statusCode: res.statusCode, body: d }));
-                  });
-                  req.on('error', reject);
-                  req.end(body);
-                });
-                if (resData.statusCode >= 200 && resData.statusCode < 300) {
-                  const data = JSON.parse(resData.body);
-                  let tier = data.paidTier?.name || data.paidTier?.id || '';
-                  if (!tier) {
-                    const isIneligible = Array.isArray(data.ineligibleTiers) && data.ineligibleTiers.length > 0;
-                    if (!isIneligible) tier = data.currentTier?.name || data.currentTier?.id || '';
-                  }
-                  const raw = String(tier).toLowerCase();
-                  let planType = '';
-                  if (raw.includes('ultra')) planType = 'ultra';
-                  else if (raw.includes('premium') || raw.includes('ai pro') || raw.includes('helium')) planType = 'premium';
-                  else if (raw.includes('standard')) planType = 'standard';
-                  else if (raw.includes('restricted')) planType = 'standard-restricted';
-                  else if (tier) planType = tier;
-                  if (planType) {
-                    rawAccount.planType = planType;
-                    tokenManager.saveAccounts();
-                    log(`[remote-token] lazy planType: #${account.id} ${account.email} → ${planType}`);
-                  }
-                }
-              }
-            } catch (err) {
-              log(`[remote-token] lazy planType error #${account.id}: ${err.message}`);
-            }
+        // ── Async health refresh: credits + planType + quota (non-blocking)
+        //    Uses maybeRefreshHealth which has 15-min staleness guard and concurrency lock.
+        if (typeof tokenManager.maybeRefreshHealth === 'function') {
+          setImmediate(() => {
+            tokenManager.maybeRefreshHealth(account.id, token).catch(() => {});
           });
         }
 
@@ -2378,6 +2390,49 @@ function createRemoteTokenServer(config) {
       }
     }
     recordAccessKeyUsage(lease.accessKeyId, status, usageForBilling, modelKey);
+
+    // ── 影子交叉比对 ──
+    if (lease._shadow && status >= 200 && status < 400) {
+      const shadow = lease._shadow;
+      const reportedTotal = readTokenCount(payload.totalTokens) ||
+        (readTokenCount(payload.inputTokens) + readTokenCount(payload.outputTokens));
+      const shadowTotal = shadow.rawTotalTokens;
+      const tolerance = 0.2;
+      if (shadowTotal > 0 && reportedTotal > 0) {
+        const ratio = reportedTotal / shadowTotal;
+        if (ratio < (1 - tolerance) || ratio > (1 + tolerance)) {
+          const accessKeyRecord2 = findAccessKeyRecord(lease.accessKeyId);
+          if (accessKeyRecord2) {
+            if (!accessKeyRecord2._anomalies) accessKeyRecord2._anomalies = [];
+            accessKeyRecord2._anomalies.push({
+              at: Date.now(),
+              leaseId,
+              reported: reportedTotal,
+              shadow: shadowTotal,
+              ratio: Math.round(ratio * 100) / 100,
+            });
+            if (accessKeyRecord2._anomalies.length > 50) {
+              accessKeyRecord2._anomalies = accessKeyRecord2._anomalies.slice(-50);
+            }
+            accessKeyRecord2._anomalyCount = (accessKeyRecord2._anomalyCount || 0) + 1;
+            _accessKeysDirty = true;
+            log(`[remote-token] ⚠ ANOMALY key=${accessKeyRecord2.id || lease.accessKeyId} reported=${reportedTotal} shadow=${shadowTotal} ratio=${ratio.toFixed(2)}`);
+          }
+        }
+      }
+    }
+    // 没有影子数据但有成功 report → 记录缺失计数
+    if (!lease._shadow && status >= 200 && status < 400) {
+      const reportedTotal2 = readTokenCount(payload.totalTokens) ||
+        (readTokenCount(payload.inputTokens) + readTokenCount(payload.outputTokens));
+      if (reportedTotal2 > 0) {
+        const accessKeyRecord3 = findAccessKeyRecord(lease.accessKeyId);
+        if (accessKeyRecord3) {
+          accessKeyRecord3._missingShadowCount = (accessKeyRecord3._missingShadowCount || 0) + 1;
+        }
+      }
+    }
+
     const accessKeyRecord = refreshAccessKeySessionById(lease.accessKeyId, lease.accessKeySessionId, lease.clientId);
     // ── Accumulate per-account token usage ──
     const inputTk = readTokenCount(usageForBilling.inputTokens);
@@ -2787,6 +2842,8 @@ function createRemoteTokenServer(config) {
     };
   }
 
+
+  let _creditsRefreshing = false;
   const server = http.createServer((req, res) => {
     if (req.method === 'OPTIONS') return sendJson(res, 204, {});
 
@@ -2795,18 +2852,85 @@ function createRemoteTokenServer(config) {
       return sendJson(res, 200, getStatus());
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/pool/health') {
+      const accounts = typeof tokenManager.listAccounts === 'function' ? tokenManager.listAccounts() : [];
+      const enabled = accounts.filter(a => a.enabled !== false);
+      const withCredits = accounts.filter(a => a.credits?.known && a.credits?.available);
+      const withoutCredits = accounts.filter(a => a.credits?.known && !a.credits?.available);
+      const creditsUnknown = accounts.filter(a => !a.credits?.known);
+      const totalCreditAmount = accounts.reduce((sum, a) => sum + Number(a.credits?.creditAmount || 0), 0);
+      const healthy = accounts.filter(a => a.enabled !== false && a.quotaStatus !== 'exhausted' && a.quotaStatus !== 'error');
+      const exhausted = accounts.filter(a => a.quotaStatus === 'exhausted');
+      const cooling = accounts.filter(a => a.quotaStatus === 'cooling');
+      const errored = accounts.filter(a => a.quotaStatus === 'error');
+      return sendJson(res, 200, {
+        totalAccounts: accounts.length,
+        enabled: enabled.length,
+        healthy: healthy.length,
+        exhausted: exhausted.length,
+        cooling: cooling.length,
+        error: errored.length,
+        summary: {
+          withCredits: withCredits.length,
+          withoutCredits: withoutCredits.length,
+          creditsUnknown: creditsUnknown.length,
+          totalCreditAmount: Math.round(totalCreditAmount * 100) / 100,
+        },
+        accounts: accounts.map(a => ({
+          id: a.id,
+          email: maskEmail(a.email || ''),
+          planType: a.planType || '',
+          enabled: a.enabled,
+          quotaStatus: a.quotaStatus || 'unknown',
+          quotaStatusReason: a.quotaStatusReason || '',
+          credits: a.credits || {},
+          modelQuotaFractions: a.modelQuotaFractions || {},
+          modelQuotaRefreshedAt: a.modelQuotaRefreshedAt || 0,
+          blockedModels: a.blockedModels || [],
+          blockedUntil: a.blockedUntil || 0,
+        })),
+      });
+    }
+
     if (req.method !== 'POST') {
       return sendJson(res, 404, { ok: false, error: 'Not found' });
     }
 
     readBody(req)
-      .then((payload) => {
+      .then(async (payload) => {
         if (url.pathname === '/lease-token') return leaseToken(req, res, payload);
         if (url.pathname === '/report-result') return reportResult(req, res, payload);
+        if (url.pathname === '/sr') {
+          // 影子校验通道：接收 Google 原始 usageMetadata
+          if (!isAuthorized(req, payload, secret)) {
+            return sendJson(res, 200, { ok: true }); // 静默
+          }
+          const srLeaseId = String(payload.lid || '').trim();
+          const srLease = leases.get(srLeaseId);
+          if (srLease) {
+            srLease._shadow = {
+              inputTokens: readTokenCount(payload.it),
+              outputTokens: readTokenCount(payload.ot),
+              cachedInputTokens: readTokenCount(payload.ct),
+              rawTotalTokens: readTokenCount(payload.rt),
+              streamBytes: Number(payload.sb || 0),
+              receivedAt: Date.now(),
+            };
+          }
+          return sendJson(res, 200, { ok: true });
+        }
         if (url.pathname === '/report-quota-snapshot') return reportQuotaSnapshot(req, res, payload);
         if (url.pathname === '/reload-accounts') {
           tokenManager.loadAccounts();
           return sendJson(res, 200, { ok: true, status: getStatus() });
+        }
+        if (url.pathname === '/reload-access-keys') {
+          _accessKeysCache = null;
+          _accessKeysDirty = false;
+          if (_accessKeysSaveTimer) { clearTimeout(_accessKeysSaveTimer); _accessKeysSaveTimer = null; }
+          readAccessKeys(); // re-read from disk
+          log('[remote-token] access-keys cache reloaded from disk');
+          return sendJson(res, 200, { ok: true, reloaded: true });
         }
         if (url.pathname === '/unblock-location') {
           const accounts = typeof tokenManager.listAccounts === 'function' ? tokenManager.listAccounts() : [];
@@ -2940,6 +3064,50 @@ function createRemoteTokenServer(config) {
           log(`[remote-token] toggle-account: #${accountId} ${maskEmail(account.email)} → ${enabled ? 'ENABLED' : 'DISABLED'}`);
           return sendJson(res, 200, { ok: true, accountId, enabled, email: maskEmail(account.email) });
         }
+
+
+        if (url.pathname === '/api/pool/refresh-credits') {
+          if (_creditsRefreshing) return sendJson(res, 429, { ok: false, error: 'Credits refresh already in progress' });
+          _creditsRefreshing = true;
+          try {
+            let refreshed = 0;
+            if (typeof tokenManager.autoFetchPlanTypes === 'function') {
+              refreshed = await tokenManager.autoFetchPlanTypes();
+            }
+            return sendJson(res, 200, { ok: true, refreshed });
+          } catch (err) {
+            return sendJson(res, 500, { ok: false, error: err.message });
+          } finally {
+            _creditsRefreshing = false;
+          }
+        }
+
+        if (url.pathname === '/api/pool/refresh-quota') {
+          // Trigger quota refresh for exhausted/cooling accounts first, then stale ones
+          const accounts = typeof tokenManager.listAccounts === 'function' ? tokenManager.listAccounts() : [];
+          const candidates = accounts
+            .filter(a => a.enabled !== false && a.projectId)
+            .sort((a, b) => {
+              if (a.quotaStatus === 'exhausted' && b.quotaStatus !== 'exhausted') return -1;
+              if (b.quotaStatus === 'exhausted' && a.quotaStatus !== 'exhausted') return 1;
+              return (a.modelQuotaRefreshedAt || 0) - (b.modelQuotaRefreshedAt || 0);
+            });
+          let refreshed = 0;
+          let errors = 0;
+          for (let i = 0; i < candidates.length; i++) {
+            try {
+              const token = await tokenManager.getAccessToken(candidates[i].id);
+              await tokenManager.maybeRefreshHealth(candidates[i].id, token);
+              refreshed++;
+            } catch {
+              errors++;
+            }
+            // Throttle: 1 second between each account
+            if (i < candidates.length - 1) await new Promise(r => setTimeout(r, 1000));
+          }
+          return sendJson(res, 200, { ok: true, refreshed, errors, total: candidates.length });
+        }
+
         return sendJson(res, 404, { ok: false, error: 'Not found' });
       })
       .catch((error) => sendJson(res, 400, { ok: false, error: error.message }));
@@ -3001,8 +3169,8 @@ function main() {
     process.exit(1);
   });
 
-  process.on('SIGINT', () => { service.stop(); logger.destroy(); process.exit(0); });
-  process.on('SIGTERM', () => { service.stop(); logger.destroy(); process.exit(0); });
+  process.on('SIGINT', () => { flushAccessKeys(); service.stop(); logger.destroy(); process.exit(0); });
+  process.on('SIGTERM', () => { flushAccessKeys(); service.stop(); logger.destroy(); process.exit(0); });
 }
 
 if (require.main === module) {

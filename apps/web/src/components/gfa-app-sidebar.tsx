@@ -35,6 +35,7 @@ import {
   CommandIcon,
   BotIcon,
   HelpCircleIcon,
+  MegaphoneIcon,
 } from "lucide-react";
 
 const SECTION_PERM_MAP: Record<string, string> = {
@@ -51,6 +52,7 @@ const SECTION_PERM_MAP: Record<string, string> = {
   "agent-service": "agent_service",
   "rosetta-employees": "agent_service",
   "rosetta-keys": "codes",
+  announcement: "announcement",
   faq: "faq",
 };
 
@@ -203,6 +205,14 @@ export function GfaAppSidebar({
       url: `/${prefix}/rosetta-keys`,
       icon: <KeyIcon />,
       permKey: "codes",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "announcement",
+      title: "公告管理",
+      url: `/${prefix}/announcement`,
+      icon: <MegaphoneIcon />,
+      permKey: "announcement",
       roleGuard: () => isAdminOrOps,
     },
     {

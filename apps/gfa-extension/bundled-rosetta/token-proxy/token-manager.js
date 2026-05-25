@@ -293,11 +293,20 @@ function createTokenManager(config) {
         return Date.now() - refreshedAtMs <= 10 * 60 * 1000;
     }
 
+    // ── mtime guard: skip re-reading 17MB quota-data if unchanged ──
+    let _quotaDataLastMtime = 0;
+
     function applyQuotaDataToAccounts() {
         const quotaFilePath = resolveQuotaDataPath();
         if (!quotaFilePath || !fs.existsSync(quotaFilePath)) {
             return;
         }
+
+        try {
+            const stat = fs.statSync(quotaFilePath);
+            if (stat.mtimeMs === _quotaDataLastMtime) return;
+            _quotaDataLastMtime = stat.mtimeMs;
+        } catch {}
 
         try {
             const quotaData = JSON.parse(fs.readFileSync(quotaFilePath, 'utf8'));
@@ -514,6 +523,9 @@ function createTokenManager(config) {
         }
     }
 
+    // ── mtime guard: skip full rebuild if accounts.json unchanged ──
+    let _accountsLastMtime = 0;
+
     /**
      * Load accounts from the JSON config file.
      */
@@ -523,6 +535,15 @@ function createTokenManager(config) {
             log('[token-manager] No accounts file found at: ' + filePath);
             return;
         }
+
+        // Skip full rebuild if file hasn't changed and pool is already populated
+        try {
+            const stat = fs.statSync(filePath);
+            if (stat.mtimeMs === _accountsLastMtime && accountPool.size > 0) {
+                return;
+            }
+            _accountsLastMtime = stat.mtimeMs;
+        } catch {}
 
         try {
             const raw = fs.readFileSync(filePath, 'utf8');
@@ -840,9 +861,9 @@ function createTokenManager(config) {
                 const project = extractProjectFromOnboardResponse(onboardData);
                 if (project) {
                     // Fetch plan type via loadCodeAssist API
-                    const planType = await fetchPlanViaLoadCodeAssist(token, project.projectId, account.email);
-                    applyDiscoveredProject(account, project.projectId, planType || project.planType);
-                    return { ...project, planType: planType || project.planType };
+                    const health = await fetchAccountHealth(token, project.projectId, account.email);
+                    applyDiscoveredProject(account, project.projectId, health.planType || project.planType);
+                    return { ...project, planType: health.planType || project.planType };
                 }
                 log(`[token-manager] ${account.email}: onboardUser returned empty project`);
             }
@@ -853,9 +874,9 @@ function createTokenManager(config) {
                 if (lroResult) {
                     const project = extractProjectFromOnboardResponse(lroResult);
                     if (project) {
-                        const planType = await fetchPlanViaLoadCodeAssist(token, project.projectId, account.email);
-                        applyDiscoveredProject(account, project.projectId, planType || project.planType);
-                        return { ...project, planType: planType || project.planType };
+                        const health = await fetchAccountHealth(token, project.projectId, account.email);
+                        applyDiscoveredProject(account, project.projectId, health.planType || project.planType);
+                        return { ...project, planType: health.planType || project.planType };
                     }
                 }
             }
@@ -902,7 +923,13 @@ function createTokenManager(config) {
      *   3. allowedTiers default tier (marked as "Restricted")
      * Uses the sandbox endpoint and minimal metadata for accurate results.
      */
-    async function fetchPlanViaLoadCodeAssist(token, projectId, email) {
+    /**
+     * Fetch account health via loadCodeAssist API.
+     * Returns both planType and AI credits (GOOGLE_ONE_AI) balance.
+     * @returns {Promise<{planType: string, credits: {known: boolean, available: boolean, creditAmount: number, minCreditAmount: number, paidTierID: string}}>}
+     */
+    async function fetchAccountHealth(token, projectId, email) {
+        const emptyCredits = { known: false, available: false, creditAmount: 0, minCreditAmount: 0, paidTierID: '' };
         try {
             const payload = {
                 metadata: { ideType: 'ANTIGRAVITY' },
@@ -922,10 +949,27 @@ function createTokenManager(config) {
             );
             if (res.statusCode < 200 || res.statusCode >= 300) {
                 log(`[token-manager] ${email}: loadCodeAssist HTTP ${res.statusCode}`);
-                return '';
+                return { planType: '', credits: emptyCredits };
             }
             const data = JSON.parse(res.body);
 
+            // ── Extract AI credits (GOOGLE_ONE_AI) ──
+            const credits = { ...emptyCredits };
+            credits.paidTierID = String(data.paidTier?.id || data.paidTier?.name || '');
+            const availableCredits = data.paidTier?.availableCredits;
+            if (Array.isArray(availableCredits)) {
+                const g1 = availableCredits.find(c =>
+                    String(c.creditType || '').toUpperCase() === 'GOOGLE_ONE_AI'
+                );
+                if (g1) {
+                    credits.known = true;
+                    credits.creditAmount = parseFloat(g1.creditAmount) || 0;
+                    credits.minCreditAmount = parseFloat(g1.minimumCreditAmountForUsage) || 0;
+                    credits.available = credits.creditAmount >= credits.minCreditAmount;
+                }
+            }
+
+            // ── Extract planType (existing logic) ──
             // Multi-level fallback for tier extraction (matches Antigravity-Manager logic)
             // 1. Paid Tier (Google One AI Premium etc.)
             let subscriptionTier = data.paidTier?.name || data.paidTier?.id || '';
@@ -948,22 +992,27 @@ function createTokenManager(config) {
 
             // Normalize to canonical plan names
             const raw = String(subscriptionTier).toLowerCase();
-            if (raw.includes('ultra')) return 'ultra';
-            if (raw.includes('premium') || raw.includes('ai pro') || raw.includes('helium')) return 'premium';
-            if (raw.includes('standard')) return 'standard';
-            if (raw.includes('restricted')) return 'standard-restricted';
-            if (raw.includes('free')) return 'free';
-
-            if (subscriptionTier) {
+            let planType = '';
+            if (raw.includes('ultra')) planType = 'ultra';
+            else if (raw.includes('premium') || raw.includes('ai pro') || raw.includes('helium')) planType = 'premium';
+            else if (raw.includes('standard')) planType = 'standard';
+            else if (raw.includes('restricted')) planType = 'standard-restricted';
+            else if (raw.includes('free')) planType = 'free';
+            else if (subscriptionTier) {
                 log(`[token-manager] ${email}: loadCodeAssist subscription tier: ${subscriptionTier}`);
-                return subscriptionTier;
+                planType = subscriptionTier;
+            } else {
+                log(`[token-manager] ${email}: loadCodeAssist returned no tier info`);
             }
 
-            log(`[token-manager] ${email}: loadCodeAssist returned no tier info`);
-            return '';
+            if (credits.known) {
+                log(`[token-manager] ${email}: AI credits: ${credits.creditAmount} (min=${credits.minCreditAmount}, available=${credits.available})`);
+            }
+
+            return { planType, credits };
         } catch (error) {
             log(`[token-manager] ${email}: loadCodeAssist error: ${error.message}`);
-            return '';
+            return { planType: '', credits: emptyCredits };
         }
     }
 
@@ -1105,7 +1154,17 @@ function createTokenManager(config) {
         for (const acc of needsPlan) {
             try {
                 const token = await getAccessToken(acc.id);
-                const planType = await fetchPlanViaLoadCodeAssist(token, acc.projectId, acc.email);
+                const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+                // Update credits data
+                if (health.credits.known) {
+                    acc.creditsKnown = true;
+                    acc.creditsAvailable = health.credits.available;
+                    acc.creditAmount = health.credits.creditAmount;
+                    acc.minCreditAmount = health.credits.minCreditAmount;
+                    acc.paidTierID = health.credits.paidTierID;
+                    acc.creditsRefreshedAt = Date.now();
+                }
+                const planType = health.planType;
                 if (planType) {
                     const oldPlan = acc.planType || '';
                     if (oldPlan !== planType) {
@@ -1249,6 +1308,14 @@ function createTokenManager(config) {
                     : 0,
                 lastUsedAt: acc.lastUsedAt,
                 consecutiveErrors: acc.consecutiveErrors,
+                credits: {
+                    known: Boolean(acc.creditsKnown),
+                    available: Boolean(acc.creditsAvailable),
+                    creditAmount: Number(acc.creditAmount || 0),
+                    minCreditAmount: Number(acc.minCreditAmount || 0),
+                    paidTierID: acc.paidTierID || '',
+                    creditsRefreshedAt: Number(acc.creditsRefreshedAt || 0),
+                },
             };
         });
     }
@@ -1275,13 +1342,49 @@ function createTokenManager(config) {
             const now = Date.now();
             const modelKey = normalizeModelKey(details.modelKey);
             cleanupExpiredBlockedModels(acc, now);
+
+            const reason = String(details.reason || 'quota');
+            const isQuotaReason = reason === 'quota' || reason.includes('quota');
+
+            // Dual-condition blocking: only fully block when BOTH quota AND credits are exhausted.
+            // If credits are still available (or unknown), apply a short cooldown instead.
+            const creditsAvailable = acc.creditsKnown ? acc.creditsAvailable : true; // optimistic: unknown → available
+
+            if (isQuotaReason && creditsAvailable) {
+                // Credits still available → short cooldown (5 min), not persistent block
+                const SHORT_COOLDOWN_MS = 5 * 60 * 1000;
+                acc.quotaStatus = 'cooling';
+                acc.quotaStatusReason = 'quota_cooling';
+                acc.exhaustedAt = now;
+                if (modelKey) {
+                    ensureBlockedModels(acc).set(modelKey, {
+                        modelKey,
+                        reason: 'quota_cooling',
+                        blockedAt: now,
+                        blockedUntil: now + SHORT_COOLDOWN_MS,
+                    });
+                }
+                const blockedEntries = Array.from(ensureBlockedModels(acc).values());
+                acc.exhaustedUntil = blockedEntries.length > 0
+                    ? Math.max(...blockedEntries.map(item => Number(item.blockedUntil || 0)))
+                    : now + SHORT_COOLDOWN_MS;
+                saveRuntimeState();
+                log(
+                    `[token-manager] #${id} (${acc.email}) quota cooling 5min` +
+                    (modelKey ? ` [${modelKey}]` : '') +
+                    ` (credits=${acc.creditsKnown ? 'known' : 'unknown'}, available=${creditsAvailable})`
+                );
+                return;
+            }
+
+            // Credits confirmed exhausted OR non-quota reason → full persistent block
             acc.quotaStatus = 'exhausted';
-            acc.quotaStatusReason = String(details.reason || 'quota');
+            acc.quotaStatusReason = reason;
             acc.exhaustedAt = now;
             if (modelKey) {
                 ensureBlockedModels(acc).set(modelKey, {
                     modelKey,
-                    reason: acc.quotaStatusReason,
+                    reason,
                     blockedAt: now,
                     blockedUntil: Number(details.blockedUntil || 0),
                 });
@@ -1294,7 +1397,8 @@ function createTokenManager(config) {
             saveRuntimeState();
             log(
                 `[token-manager] #${id} (${acc.email}) marked exhausted` +
-                (modelKey ? ` [${modelKey}]` : '')
+                (modelKey ? ` [${modelKey}]` : '') +
+                ` (credits=${acc.creditsKnown ? (acc.creditsAvailable ? 'yes' : 'no') : 'unknown'})`
             );
         }
     }
@@ -1500,6 +1604,54 @@ function createTokenManager(config) {
 
     }
 
+    /**
+     * Opportunistically refresh account health (credits + quota) during lease.
+     * Non-blocking: skips if data is fresh (<15 min) or another refresh is in-flight.
+     * Called from index.js after getAccessToken() succeeds in the lease flow.
+     */
+    async function maybeRefreshHealth(accountId, accessToken) {
+        const acc = accountPool.get(accountId);
+        if (!acc || !acc.enabled || !acc.projectId) return;
+        const now = Date.now();
+
+        // Skip if credits were refreshed recently (15 min)
+        const CREDITS_MIN_AGE_MS = 15 * 60 * 1000;
+        if (acc.creditsRefreshedAt && (now - acc.creditsRefreshedAt) < CREDITS_MIN_AGE_MS) return;
+
+        // Concurrency guard: skip if already refreshing this account
+        if (acc._healthRefreshing) return;
+        acc._healthRefreshing = true;
+
+        try {
+            // 1. loadCodeAssist → credits + planType
+            const health = await fetchAccountHealth(accessToken, acc.projectId, acc.email);
+            if (health.credits.known) {
+                acc.creditsKnown = true;
+                acc.creditsAvailable = health.credits.available;
+                acc.creditAmount = health.credits.creditAmount;
+                acc.minCreditAmount = health.credits.minCreditAmount;
+                acc.paidTierID = health.credits.paidTierID;
+                acc.creditsRefreshedAt = Date.now();
+            }
+            if (health.planType && health.planType !== acc.planType) {
+                const oldPlan = acc.planType || '';
+                acc.planType = health.planType;
+                log(`[token-manager] maybeRefreshHealth ${acc.email}: plan ${oldPlan || '(empty)'} → ${health.planType}`);
+            }
+
+            // 2. fetchAvailableModels → remainingFraction (if stale > 30 min)
+            const QUOTA_MIN_AGE_MS = 30 * 60 * 1000;
+            if (!acc.modelQuotaRefreshedAt || (Date.now() - acc.modelQuotaRefreshedAt) > QUOTA_MIN_AGE_MS) {
+                // Use a well-known model key to trigger a full models refresh
+                await verifyModelQuota(accountId, 'gemini-2.5-pro');
+            }
+        } catch (err) {
+            log(`[token-manager] maybeRefreshHealth ${acc.email} error: ${err.message}`);
+        } finally {
+            acc._healthRefreshing = false;
+        }
+    }
+
     // Initialize
     loadAccounts();
 
@@ -1508,7 +1660,7 @@ function createTokenManager(config) {
         getAccessToken, listAccounts, getEnabledCount,
         getAccount, getEnabledAccountIds,
         markExhausted, markError, markSuccess, resetQuotaStatus, recoverExpiredBlocks,
-        updateProjectModels, verifyModelQuota,
+        updateProjectModels, verifyModelQuota, maybeRefreshHealth,
         discoverProjectViaApi, autoDiscoverProjects, autoFetchPlanTypes,
     };
 }

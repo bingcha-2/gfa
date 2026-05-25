@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 
 $releaseDir = Join-Path $PSScriptRoot "release"
-$updatesDir = Join-Path $PSScriptRoot ".." "web" "public" "updates"
+$updatesDir = Join-Path (Join-Path (Join-Path (Join-Path $PSScriptRoot "..") "web") "public") "updates"
 
 # 确保目录存在
 if (!(Test-Path $updatesDir)) {
