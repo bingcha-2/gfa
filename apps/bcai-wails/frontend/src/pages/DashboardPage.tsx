@@ -116,12 +116,12 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Row 4: Top pair (compact) ── */}
+      {/* ── Row 4: Top pair ── */}
       <div className="grid grid-cols-2 gap-4">
         <Card>
-          <CardContent className="flex items-center gap-3 px-4 py-2.5">
-            <div className="text-[11px] font-semibold text-[var(--text-muted)] flex items-center gap-1 shrink-0"><Zap size={11} /> Token</div>
-            <div className="flex-1 flex rounded-[6px] bg-[var(--bg-tertiary)] p-0.5">
+          <CardHeader><CardTitle><Zap size={15} /> Token 来源</CardTitle></CardHeader>
+          <CardContent>
+            <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
               {[
                 { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
                 { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
@@ -130,13 +130,13 @@ export function DashboardPage() {
                   key={mode}
                   onClick={() => setPoolMode(mode)}
                   className={cn(
-                    'flex-1 flex items-center justify-center gap-1 py-1 rounded-[5px] text-[11px] font-semibold transition-all',
+                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all',
                     poolMode === mode
                       ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
                       : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                   )}
                 >
-                  <Icon size={11} /> {label}
+                  <Icon size={13} /> {label}
                 </button>
               ))}
             </div>
@@ -144,9 +144,12 @@ export function DashboardPage() {
         </Card>
 
         <Card>
-          <CardContent className="flex flex-col gap-1.5 px-4 py-2.5">
-            <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-            <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+          <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-2.5">
+              <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+              <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+            </div>
           </CardContent>
         </Card>
       </div>
