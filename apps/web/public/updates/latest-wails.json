@@ -1,15 +1,15 @@
 {
-  "version": "4.3.0",
-  "url": "https://bcai.site/updates/BingchaAI-4.3.0.exe",
-  "sha256": "54441672ADCF0C7F839C41D189387A956FEB66D78F43A24CAACF0FC5EE4B6BC7",
-  "size": 11833344,
-  "changelog": "性能优化和问题修复",
+  "version": "5.0.1",
+  "url": "https://bcai.site/updates/BingchaAI-5.0.1.exe",
+  "sha256": "49249D6B62AB6330DD7DEC83420249ACA2FCB6E41AF540217FC0391D38535B3B",
+  "size": 11831808,
+  "changelog": "v5.0.1: 控制台布局重构，广告卡优化，公告栏跑马灯修复",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-4.3.0-arm64.dmg",
-      "sha256": "E8A7CE4F24198AD87C1140DE047C62F7E8AF94B42663B5DCDF0D2F9A0120B146",
-      "size": 5860155
+      "url": "https://bcai.site/updates/BingchaAI-5.0.1-arm64.dmg",
+      "sha256": "7909D7746092AC4E87BE2DAE82130254A6C9CEE78057C116C3342924BA761207",
+      "size": 5860351
     }
   }
 }
