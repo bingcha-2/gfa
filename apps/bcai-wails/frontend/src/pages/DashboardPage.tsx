@@ -122,7 +122,7 @@ export function DashboardPage() {
         <Card className="flex flex-col">
           <CardContent className="flex-1 flex flex-col pt-5">
             {/* Token source */}
-            <div className="mb-4">
+            <div className="mb-4 min-h-[88px]">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
                 <Zap size={13} /> Token 来源
               </div>
@@ -204,7 +204,7 @@ export function DashboardPage() {
         <Card className="flex flex-col">
           <CardContent className="flex-1 flex flex-col pt-5">
             {/* 模型用量 */}
-            <div className="mb-4">
+            <div className="mb-4 min-h-[88px]">
               <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
               <div className="flex flex-col gap-3">
                 <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
