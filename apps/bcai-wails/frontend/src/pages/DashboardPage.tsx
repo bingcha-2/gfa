@@ -118,7 +118,7 @@ export function DashboardPage() {
 
       {/* ── Row 4: Main 2-col — balanced ── */}
       <div className="grid grid-cols-2 gap-4">
-        {/* Left: IDE 接管 + Token 来源 */}
+        {/* Left: IDE 接管 + Token 来源 + 模型用量 */}
         <Card>
           <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
           <CardContent>
@@ -193,39 +193,38 @@ export function DashboardPage() {
                 ))}
               </div>
             </div>
+
+            {/* 模型用量 */}
+            <div className="border-t border-[var(--border-light)] pt-3 mt-3">
+              <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
+              <div className="flex flex-col gap-3">
+                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+              </div>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Right: 账号卡 + 模型用量 */}
-        <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
-            <CardContent>
-              {config?.accountCard && (
-                <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
-                  <div>
-                    <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
-                    <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config.accountCard)}</div>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
+        {/* Right: 账号卡 */}
+        <Card>
+          <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
+          <CardContent>
+            {config?.accountCard && (
+              <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
+                <div>
+                  <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
+                  <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config.accountCard)}</div>
                 </div>
-              )}
-              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
-              <Button onClick={handleActivateCard} disabled={activating} className="w-full">
-                {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-              <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-            </CardContent>
-          </Card>
-        </div>
+                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
+              </div>
+            )}
+            <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
+              placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
+            <Button onClick={handleActivateCard} disabled={activating} className="w-full">
+              {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
 
       {/* ── Footer: device info ── */}
