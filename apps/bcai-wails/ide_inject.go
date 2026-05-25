@@ -691,31 +691,31 @@ func queryLanguageServerProcesses() []lsProcessInfo {
 
 	switch runtime.GOOS {
 	case "windows":
-		// 逐进程查询 PID 和 CommandLine（避免拼接在一起无法区分）
-		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-			`Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%'" | ForEach-Object { Write-Output "PID=$($_.ProcessId)|CMD=$($_.CommandLine)" }`,
+		// 使用 wmic 替代 PowerShell（避免 CLR 冷启动弹窗和 ~500ms 延迟）
+		out, err := hideCmd("wmic", "process", "where",
+			`name like 'language_server%'`,
+			"get", "ProcessId,CommandLine", "/format:list",
 		).Output()
 		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 			return results
 		}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var curPID, curCmd string
+		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "PID=") {
-				continue
-			}
-			parts := strings.SplitN(line, "|CMD=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			pid := strings.TrimPrefix(parts[0], "PID=")
-			cmdline := parts[1]
-			if pid != "" {
-				results = append(results, lsProcessInfo{PID: pid, CmdLine: cmdline})
+			if strings.HasPrefix(line, "CommandLine=") {
+				curCmd = strings.TrimPrefix(line, "CommandLine=")
+			} else if strings.HasPrefix(line, "ProcessId=") {
+				curPID = strings.TrimPrefix(line, "ProcessId=")
+				if curPID != "" {
+					results = append(results, lsProcessInfo{PID: curPID, CmdLine: curCmd})
+				}
+				curPID = ""
+				curCmd = ""
 			}
 		}
 
 	case "darwin":
-		out, err := exec.Command("bash", "-c",
+		out, err := hideCmd("bash", "-c",
 			"ps -eo pid,command | grep 'language_server_darwin' | grep -v grep",
 		).Output()
 		if err != nil {
@@ -733,7 +733,7 @@ func queryLanguageServerProcesses() []lsProcessInfo {
 		}
 
 	case "linux":
-		out, err := exec.Command("bash", "-c",
+		out, err := hideCmd("bash", "-c",
 			"ps -eo pid,command | grep 'language_server_linux' | grep -v grep",
 		).Output()
 		if err != nil {
@@ -800,9 +800,9 @@ func RestartLanguageServerIfNeeded(proxyPort int) {
 		Log("[ide-inject] PID %s 未连接代理，正在终止...", p.PID)
 		switch runtime.GOOS {
 		case "windows":
-			_ = exec.Command("taskkill", "/PID", p.PID, "/F").Run()
+			_ = hideCmd("taskkill", "/PID", p.PID, "/F").Run()
 		default:
-			_ = exec.Command("kill", "-9", p.PID).Run()
+			_ = hideCmd("kill", "-9", p.PID).Run()
 		}
 		killedCount++
 	}
@@ -825,19 +825,19 @@ func KillAndRestartIDE() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = exec.Command("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
+		_ = hideCmd("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
 		time.Sleep(3 * time.Second)
 		if IsIDERunning() {
-			_ = exec.Command("pkill", "-f", "Antigravity IDE").Run()
+			_ = hideCmd("pkill", "-f", "Antigravity IDE").Run()
 			time.Sleep(1 * time.Second)
 		}
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
-		_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 		time.Sleep(2 * time.Second)
 	case "linux":
-		_ = exec.Command("pkill", "-f", "antigravity-ide").Run()
-		_ = exec.Command("pkill", "-f", "kiro").Run()
+		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
+		_ = hideCmd("pkill", "-f", "kiro").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -859,37 +859,37 @@ func ForceRestartIDE() error {
 	// 1. 先杀所有 language_server
 	switch runtime.GOOS {
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", "language_server_windows_x64.exe", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", "language_server_windows_x64.exe", "/F").Run()
 	case "darwin":
-		_ = exec.Command("pkill", "-f", "language_server").Run()
+		_ = hideCmd("pkill", "-f", "language_server").Run()
 	case "linux":
-		_ = exec.Command("pkill", "-f", "language_server").Run()
+		_ = hideCmd("pkill", "-f", "language_server").Run()
 	}
 	time.Sleep(1 * time.Second)
 
 	// 2. 优雅关闭 IDE 主进程（WM_CLOSE，让其保存数据）
 	switch runtime.GOOS {
 	case "windows":
-		_ = exec.Command("taskkill", "/IM", "Antigravity IDE.exe").Run() // 不带 /F = WM_CLOSE
+		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe").Run() // 不带 /F = WM_CLOSE
 		Log("[ide-inject] [FORCE] 已发送优雅关闭请求")
 		time.Sleep(3 * time.Second)
 		// 如果还在运行，强杀
 		if IsIDERunning() {
-			_ = exec.Command("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
-			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] [FORCE] IDE 未响应，已强杀")
 			time.Sleep(2 * time.Second)
 		}
 	case "darwin":
-		_ = exec.Command("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
+		_ = hideCmd("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
 		time.Sleep(3 * time.Second)
 		if IsIDERunning() {
-			_ = exec.Command("pkill", "-9", "-f", "Antigravity IDE").Run()
+			_ = hideCmd("pkill", "-9", "-f", "Antigravity IDE").Run()
 			time.Sleep(1 * time.Second)
 		}
 	case "linux":
-		_ = exec.Command("pkill", "-f", "antigravity-ide").Run()
-		_ = exec.Command("pkill", "-f", "kiro").Run()
+		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
+		_ = hideCmd("pkill", "-f", "kiro").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -915,24 +915,24 @@ func killHubForPatch() {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = exec.Command("osascript", "-e", `tell application "Antigravity" to quit`).Run()
+		_ = hideCmd("osascript", "-e", `tell application "Antigravity" to quit`).Run()
 		time.Sleep(3 * time.Second)
 		if IsHubRunning() {
-			_ = exec.Command("pkill", "-9", "-f", "Antigravity.app").Run()
+			_ = hideCmd("pkill", "-9", "-f", "Antigravity.app").Run()
 			time.Sleep(2 * time.Second)
 		}
 	case "windows":
 		// 优雅关闭
-		_ = exec.Command("taskkill", "/IM", "Antigravity.exe").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run()
 		time.Sleep(3 * time.Second)
 		// 强杀确保文件锁释放
 		if IsHubRunning() {
-			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] [PATCH] Hub 未响应优雅关闭，已强杀")
 			time.Sleep(2 * time.Second)
 		}
 	case "linux":
-		_ = exec.Command("pkill", "-f", "antigravity").Run()
+		_ = hideCmd("pkill", "-f", "antigravity").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -955,25 +955,25 @@ func KillAndRestartHub() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = exec.Command("osascript", "-e", `tell application "Antigravity" to quit`).Run()
+		_ = hideCmd("osascript", "-e", `tell application "Antigravity" to quit`).Run()
 		time.Sleep(3 * time.Second)
 		if IsHubRunning() {
-			_ = exec.Command("pkill", "-f", "Antigravity.app").Run()
+			_ = hideCmd("pkill", "-f", "Antigravity.app").Run()
 			time.Sleep(1 * time.Second)
 		}
 	case "windows":
 		// 先优雅关闭（WM_CLOSE），让应用保存数据（与 timo 行为一致）
-		_ = exec.Command("taskkill", "/IM", "Antigravity.exe").Run() // 不带 /F = WM_CLOSE
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run() // 不带 /F = WM_CLOSE
 		Log("[ide-inject] 已发送优雅关闭请求 (WM_CLOSE)")
 		time.Sleep(3 * time.Second)
 		// 如果还在运行，强杀
 		if IsHubRunning() {
-			_ = exec.Command("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] Hub 未响应优雅关闭，已强杀")
 			time.Sleep(1 * time.Second)
 		}
 	case "linux":
-		_ = exec.Command("pkill", "-f", "antigravity").Run()
+		_ = hideCmd("pkill", "-f", "antigravity").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -985,16 +985,16 @@ func KillAndRestartHub() error {
 func IsIDERunning() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("pgrep", "-f", "Antigravity IDE").Output()
+		out, err := hideCmd("pgrep", "-f", "Antigravity IDE").Output()
 		if err != nil {
 			return false
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Antigravity IDE.exe", "/NH").Output()
+		out, err := hideCmd("tasklist", "/FI", "IMAGENAME eq Antigravity IDE.exe", "/NH").Output()
 		if err != nil {
 			// 也检查 Antigravity.exe
-			out2, err2 := exec.Command("tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/NH").Output()
+			out2, err2 := hideCmd("tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/NH").Output()
 			if err2 != nil {
 				return false
 			}
@@ -1002,7 +1002,7 @@ func IsIDERunning() bool {
 		}
 		return !strings.Contains(string(out), "No tasks")
 	case "linux":
-		out, err := exec.Command("pgrep", "-f", "antigravity-ide|kiro").Output()
+		out, err := hideCmd("pgrep", "-f", "antigravity-ide|kiro").Output()
 		if err != nil {
 			return false
 		}
@@ -1016,19 +1016,19 @@ func IsIDERunning() bool {
 func IsHubRunning() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("pgrep", "-f", "Antigravity.app/Contents").Output()
+		out, err := hideCmd("pgrep", "-f", "Antigravity.app/Contents").Output()
 		if err != nil {
 			return false
 		}
 		return strings.TrimSpace(string(out)) != ""
 	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/NH").Output()
+		out, err := hideCmd("tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/NH").Output()
 		if err != nil {
 			return false
 		}
 		return !strings.Contains(string(out), "No tasks")
 	case "linux":
-		out, err := exec.Command("pgrep", "-f", "antigravity$").Output()
+		out, err := hideCmd("pgrep", "-f", "antigravity$").Output()
 		if err != nil {
 			return false
 		}

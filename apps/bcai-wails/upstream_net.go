@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -50,7 +49,7 @@ func detectSystemProxy() string {
 }
 
 func detectSystemProxyDarwin() string {
-	out, err := exec.Command("scutil", "--proxy").Output()
+	out, err := hideCmd("scutil", "--proxy").Output()
 	if err != nil {
 		return ""
 	}
@@ -100,7 +99,7 @@ func detectSystemProxyDarwin() string {
 
 func detectSystemProxyWindows() string {
 	// 从注册表读取 Internet Settings 代理配置
-	out, err := exec.Command("reg", "query",
+	out, err := hideCmd("reg", "query",
 		`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
 		"/v", "ProxyEnable").Output()
 	if err != nil {
@@ -110,7 +109,7 @@ func detectSystemProxyWindows() string {
 		return "" // 代理未启用
 	}
 
-	out, err = exec.Command("reg", "query",
+	out, err = hideCmd("reg", "query",
 		`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
 		"/v", "ProxyServer").Output()
 	if err != nil {
