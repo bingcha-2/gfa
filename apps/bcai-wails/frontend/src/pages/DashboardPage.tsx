@@ -117,42 +117,35 @@ export function DashboardPage() {
       </div>
 
       {/* ── Row 4: Top pair (compact) ── */}
-      <div className="grid grid-cols-2 gap-4 items-stretch">
-        <Card>
-          <CardContent className="pt-3 pb-3">
-            <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-1.5">
-              <Zap size={13} /> Token 来源
-            </div>
-            <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
-              {[
-                { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
-                { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
-              ].map(({ mode, icon: Icon, label }) => (
-                <button
-                  key={mode}
-                  onClick={() => setPoolMode(mode)}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all',
-                    poolMode === mode
-                      ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                  )}
-                >
-                  <Icon size={13} /> {label}
-                </button>
-              ))}
-            </div>
-          </CardContent>
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="flex items-center gap-3 px-4 py-2.5">
+          <div className="text-[11px] font-semibold text-[var(--text-muted)] flex items-center gap-1 shrink-0"><Zap size={11} /> Token</div>
+          <div className="flex-1 flex rounded-[6px] bg-[var(--bg-tertiary)] p-0.5">
+            {[
+              { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
+              { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
+            ].map(({ mode, icon: Icon, label }) => (
+              <button
+                key={mode}
+                onClick={() => setPoolMode(mode)}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1 py-1 rounded-[5px] text-[11px] font-semibold transition-all',
+                  poolMode === mode
+                    ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                )}
+              >
+                <Icon size={11} /> {label}
+              </button>
+            ))}
+          </div>
         </Card>
 
-        <Card>
-          <CardContent className="pt-3 pb-3">
-            <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-1.5">模型用量</div>
-            <div className="flex flex-col gap-2.5">
-              <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-              <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-            </div>
-          </CardContent>
+        <Card className="flex items-center gap-3 px-4 py-2.5">
+          <div className="flex-1 flex flex-col gap-1.5">
+            <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+            <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+          </div>
         </Card>
       </div>
 
