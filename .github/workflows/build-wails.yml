@@ -41,6 +41,13 @@ jobs:
             goos: darwin
             goarch: arm64
             suffix: ''
+          # Linux x64
+          - platform: ubuntu-latest
+            os_name: linux
+            arch: amd64
+            goos: linux
+            goarch: amd64
+            suffix: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -58,6 +65,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Install Linux dependencies
+        if: matrix.os_name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
@@ -131,6 +144,34 @@ jobs:
           echo "{\"hash\":\"$HASH\",\"size\":$SIZE}" > "${DMG_OUT}/macos-${ARCH}-meta.json"
           echo "✅ DMG: $DMG_FILE (size=$SIZE, sha256=$HASH)"
 
+      # ── Linux: 打包 tar.gz + 计算 hash ──
+      - name: Package Linux artifact
+        if: matrix.os_name == 'linux'
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          BIN_DIR="${{ env.WAILS_DIR }}/build/bin"
+          # Wails 在 Linux 上输出的二进制名可能是中文名或 APP_NAME
+          BIN_FILE=$(find "$BIN_DIR" -maxdepth 1 -type f -executable | head -1)
+          if [ -z "$BIN_FILE" ]; then
+            echo "::error::No executable found in $BIN_DIR"
+            ls -la "$BIN_DIR" || true
+            exit 1
+          fi
+          echo "Found binary: $BIN_FILE"
+
+          # 重命名并打包
+          DEST="${BIN_DIR}/${{ env.APP_NAME }}-${VERSION}-linux-amd64"
+          cp "$BIN_FILE" "$DEST"
+          chmod +x "$DEST"
+          tar -czf "${DEST}.tar.gz" -C "$BIN_DIR" "$(basename $DEST)"
+
+          # 计算 hash
+          HASH=$(sha256sum "${DEST}.tar.gz" | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')
+          SIZE=$(stat --printf="%s" "${DEST}.tar.gz")
+          echo "{\"hash\":\"$HASH\",\"size\":$SIZE}" > "${BIN_DIR}/linux-amd64-meta.json"
+          echo "✅ Linux: ${DEST}.tar.gz (size=$SIZE, sha256=$HASH)"
+
       # ── 上传构建产物 ──
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -139,6 +180,7 @@ jobs:
           path: |
             ${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-*
             ${{ env.WAILS_DIR }}/build/bin/*-meta.json
+            ${{ env.WAILS_DIR }}/build/bin/*.tar.gz
 
   # ──────────────── 阶段 2: 发布到 bcai.site + GitHub Release ────────────────
   publish:
@@ -185,6 +227,13 @@ jobs:
             echo "✅ Copied $BASENAME"
           done
 
+          # 复制 Linux tar.gz
+          LINUX_TAR=$(find artifacts -name "*.tar.gz" | head -1)
+          if [ -n "$LINUX_TAR" ]; then
+            cp "$LINUX_TAR" "${UPDATES}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz"
+            echo "✅ Copied Linux tar.gz"
+          fi
+
           # 读取 Windows meta
           WIN_META=$(find artifacts -name "windows-meta.json" | head -1)
           WIN_HASH=""
@@ -203,6 +252,15 @@ jobs:
             MAC_ARM_SIZE=$(jq -r '.size' "$MAC_ARM_META")
           fi
 
+          # 读取 Linux amd64 meta
+          LINUX_META=$(find artifacts -name "linux-amd64-meta.json" | head -1)
+          LINUX_HASH=""
+          LINUX_SIZE=0
+          if [ -n "$LINUX_META" ] && [ -f "$LINUX_META" ]; then
+            LINUX_HASH=$(jq -r '.hash' "$LINUX_META")
+            LINUX_SIZE=$(jq -r '.size' "$LINUX_META")
+          fi
+
 
 
           # 生成 latest-wails.json (客户端自动更新用)
@@ -219,6 +277,13 @@ jobs:
                 "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
                 "sha256": "${MAC_ARM_HASH}",
                 "size": ${MAC_ARM_SIZE}
+              }
+            },
+            "linux": {
+              "amd64": {
+                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
+                "sha256": "${LINUX_HASH}",
+                "size": ${LINUX_SIZE}
               }
             }
           }
@@ -253,7 +318,7 @@ jobs:
           CHANGELOG="${{ github.event.inputs.changelog }}"
           TAG="wails-v${VERSION}"
 
-          mapfile -t FILES < <(find artifacts -type f \( -name "*.dmg" -o -name "*.exe" \))
+          mapfile -t FILES < <(find artifacts -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.tar.gz" \))
 
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "::warning::No release assets found, skipping GitHub Release"
@@ -274,6 +339,7 @@ jobs:
           |------|------|------|
           | Windows | x64 | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}.exe) |
           | macOS | Apple Silicon (M1/M2/M3) | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
+          | Linux | x64 | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
 
           > 已安装用户会自动收到更新推送，无需手动下载。
 

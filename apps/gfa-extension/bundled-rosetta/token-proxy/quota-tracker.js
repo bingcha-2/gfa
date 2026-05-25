@@ -684,6 +684,7 @@ function createQuotaTracker(config) {
                     qualityTier,
                     requestStats: { total: stats.total, successes: stats.successes, failures: stats.failures },
                     credits: a.credits || {},
+                    hasToken: true,
                     modelQuotaFractions: a.modelQuotaFractions || {},
                     modelQuotaRefreshedAt: a.modelQuotaRefreshedAt || 0,
                 };

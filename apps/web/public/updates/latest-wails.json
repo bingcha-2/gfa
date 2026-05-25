@@ -3,7 +3,7 @@
   "url": "https://bcai.site/updates/BingchaAI-4.5.4.exe",
   "sha256": "D5411D3C378C41C492641B02E13A1BF9466D5096C61CC9D41C4527EF8D730295",
   "size": 11832320,
-  "changelog": "性能优化和问题修复",
+  "changelog": "公告栏优化；性能改进和问题修复",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
