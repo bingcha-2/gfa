@@ -1,15 +1,15 @@
 {
-  "version": "4.5.3",
-  "url": "https://bcai.site/updates/BingchaAI-4.5.3.exe",
-  "sha256": "99E692DFB325063AFC51654482D3D343C9DB1FEB297F90BA27FC9EFD2A1E2E21",
-  "size": 11943424,
+  "version": "4.3.0",
+  "url": "https://bcai.site/updates/BingchaAI-4.3.0.exe",
+  "sha256": "54441672ADCF0C7F839C41D189387A956FEB66D78F43A24CAACF0FC5EE4B6BC7",
+  "size": 11833344,
   "changelog": "性能优化和问题修复",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-4.5.3-arm64.dmg",
-      "sha256": "0971A814076391F1E2C13417109E21F36F0D205BEAB636FFCFE996445016D515",
-      "size": 6680166
+      "url": "https://bcai.site/updates/BingchaAI-4.3.0-arm64.dmg",
+      "sha256": "E8A7CE4F24198AD87C1140DE047C62F7E8AF94B42663B5DCDF0D2F9A0120B146",
+      "size": 5860155
     }
   }
 }
