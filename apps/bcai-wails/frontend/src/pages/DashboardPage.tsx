@@ -218,10 +218,8 @@ export function DashboardPage() {
                 )}
               </div>
               {/* Row 2 — aligns with Antigravity Hub */}
-              <div className="flex items-center px-3 rounded-[8px] border border-[var(--border-light)] h-[52px]">
-                <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                  placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="w-full border-0 shadow-none p-0 h-auto" />
-              </div>
+              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
+                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="h-[52px]" />
             </div>
 
             <div className="mt-auto pt-3">
