@@ -148,7 +148,7 @@ export function DashboardPage() {
             </div>
 
             {/* IDE 接管 */}
-            <div className="border-t border-[var(--border-light)] pt-3">
+            <div className="border-t border-[var(--border-light)] pt-3 flex-1 flex flex-col">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
                 <Power size={13} /> IDE 接管控制
               </div>
@@ -183,19 +183,21 @@ export function DashboardPage() {
                 })}
               </div>
 
-              <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full mb-2">
-                {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
-              </Button>
+              <div className="mt-auto">
+                <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full mb-2">
+                  {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
+                </Button>
 
-              {/* Expiry + 5h countdown */}
-              {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
-                <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
-                  <CalendarClock size={10} className="flex-shrink-0" />
-                  <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
-                  <span className="text-[var(--border)]">|</span>
-                  <span>5h: <span className="text-[var(--text-secondary)] font-medium">{recoveryDisplay}</span></span>
-                </div>
-              )}
+                {/* Expiry + 5h countdown */}
+                {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
+                  <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
+                    <CalendarClock size={10} className="flex-shrink-0" />
+                    <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
+                    <span className="text-[var(--border)]">|</span>
+                    <span>5h: <span className="text-[var(--text-secondary)] font-medium">{recoveryDisplay}</span></span>
+                  </div>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -213,7 +215,7 @@ export function DashboardPage() {
             </div>
 
             {/* 账号卡 */}
-            <div className="border-t border-[var(--border-light)] pt-3">
+            <div className="border-t border-[var(--border-light)] pt-3 flex-1 flex flex-col">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
                 <Key size={13} /> 账号卡配置
               </div>
@@ -226,11 +228,13 @@ export function DashboardPage() {
                   <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
                 </div>
               )}
-              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
-              <Button onClick={handleActivateCard} disabled={activating} className="w-full">
-                {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
-              </Button>
+              <div className="mt-auto">
+                <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
+                  placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
+                <Button onClick={handleActivateCard} disabled={activating} className="w-full">
+                  {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
