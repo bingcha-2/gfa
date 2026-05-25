@@ -116,125 +116,121 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Row 4: Main 2-col — equal height ── */}
+      {/* ── Row 4: Top pair ── */}
       <div className="grid grid-cols-2 gap-4 items-stretch">
-        {/* Left: Token 来源 (top) + IDE 接管 (bottom) */}
-        <Card className="flex flex-col">
-          <CardContent className="flex-1 flex flex-col pt-5">
-            {/* Token source */}
-            <div className="mb-4 min-h-[88px]">
-              <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
-                <Zap size={13} /> Token 来源
-              </div>
-              <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
-                {[
-                  { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
-                  { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
-                ].map(({ mode, icon: Icon, label }) => (
-                  <button
-                    key={mode}
-                    onClick={() => setPoolMode(mode)}
-                    className={cn(
-                      'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all',
-                      poolMode === mode
-                        ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                    )}
-                  >
-                    <Icon size={13} /> {label}
-                  </button>
-                ))}
-              </div>
+        {/* Token 来源 */}
+        <Card>
+          <CardContent className="pt-5">
+            <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
+              <Zap size={13} /> Token 来源
             </div>
-
-            {/* IDE 接管 */}
-            <div className="border-t border-[var(--border-light)] pt-3 flex-1 flex flex-col">
-              <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
-                <Power size={13} /> IDE 接管控制
-              </div>
-              <div className="flex flex-col gap-1.5 mb-3">
-                {ideProducts.map((product) => {
-                  const target = product.id === 'antigravity_ide' ? 'ide' : 'hub'
-                  const isSelected = selectedTargets.has(target)
-                  return (
-                    <button
-                      key={product.id}
-                      onClick={() => product.detected && toggleTarget(target)}
-                      disabled={!product.detected}
-                      className={cn(
-                        'flex items-center justify-between px-3 py-2 rounded-[8px] transition-all text-left border',
-                        product.detected ? 'hover:bg-[var(--bg-hover)] cursor-pointer border-[var(--border-light)]' : 'opacity-40 cursor-not-allowed border-transparent',
-                      )}
-                    >
-                      <div>
-                        <div className="text-[13px] text-[var(--text-primary)] font-medium">{product.name}</div>
-                        <div className={cn('text-[11px] mt-0.5', product.injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                          {!product.detected ? '未安装' : product.injected ? '✓ 已接管' : '未接管'}
-                        </div>
-                      </div>
-                      <div className={cn(
-                        'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
-                        isSelected || product.injected ? 'border-[var(--primary)] bg-[var(--primary-light)]' : 'border-[var(--border)]'
-                      )}>
-                        {(isSelected || product.injected) && <Check size={11} className="text-[var(--primary)]" />}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-
-              <div className="mt-auto">
-                <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full mb-2">
-                  {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
-                </Button>
-
-                {/* Expiry + 5h countdown */}
-                {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
-                  <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
-                    <CalendarClock size={10} className="flex-shrink-0" />
-                    <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
-                    <span className="text-[var(--border)]">|</span>
-                    <span>5h: <span className="text-[var(--text-secondary)] font-medium">{recoveryDisplay}</span></span>
-                  </div>
-                )}
-              </div>
+            <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
+              {[
+                { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
+                { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
+              ].map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => setPoolMode(mode)}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all',
+                    poolMode === mode
+                      ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                  )}
+                >
+                  <Icon size={13} /> {label}
+                </button>
+              ))}
             </div>
           </CardContent>
         </Card>
 
-        {/* Right: 模型用量 (top) + 账号卡 (bottom) */}
+        {/* 模型用量 */}
+        <Card>
+          <CardContent className="pt-5">
+            <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
+            <div className="flex flex-col gap-3">
+              <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+              <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Row 5: Bottom pair ── */}
+      <div className="grid grid-cols-2 gap-4 items-stretch">
+        {/* IDE 接管控制 */}
         <Card className="flex flex-col">
-          <CardContent className="flex-1 flex flex-col pt-5">
-            {/* 模型用量 */}
-            <div className="mb-4 min-h-[88px]">
-              <div className="text-[12px] font-semibold text-[var(--text-secondary)] mb-2.5">模型用量</div>
-              <div className="flex flex-col gap-3">
-                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-              </div>
+          <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
+          <CardContent className="flex-1 flex flex-col">
+            <div className="flex flex-col gap-1.5 mb-3">
+              {ideProducts.map((product) => {
+                const target = product.id === 'antigravity_ide' ? 'ide' : 'hub'
+                const isSelected = selectedTargets.has(target)
+                return (
+                  <button
+                    key={product.id}
+                    onClick={() => product.detected && toggleTarget(target)}
+                    disabled={!product.detected}
+                    className={cn(
+                      'flex items-center justify-between px-3 py-2 rounded-[8px] transition-all text-left border',
+                      product.detected ? 'hover:bg-[var(--bg-hover)] cursor-pointer border-[var(--border-light)]' : 'opacity-40 cursor-not-allowed border-transparent',
+                    )}
+                  >
+                    <div>
+                      <div className="text-[13px] text-[var(--text-primary)] font-medium">{product.name}</div>
+                      <div className={cn('text-[11px] mt-0.5', product.injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+                        {!product.detected ? '未安装' : product.injected ? '✓ 已接管' : '未接管'}
+                      </div>
+                    </div>
+                    <div className={cn(
+                      'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
+                      isSelected || product.injected ? 'border-[var(--primary)] bg-[var(--primary-light)]' : 'border-[var(--border)]'
+                    )}>
+                      {(isSelected || product.injected) && <Check size={11} className="text-[var(--primary)]" />}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
 
-            {/* 账号卡 */}
-            <div className="border-t border-[var(--border-light)] pt-3 flex-1 flex flex-col">
-              <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--text-secondary)] mb-2">
-                <Key size={13} /> 账号卡配置
-              </div>
-              {config?.accountCard && (
-                <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
-                  <div>
-                    <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
-                    <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config.accountCard)}</div>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
+            <div className="mt-auto">
+              <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full mb-2">
+                {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
+              </Button>
+
+              {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
+                <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
+                  <CalendarClock size={10} className="flex-shrink-0" />
+                  <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
+                  <span className="text-[var(--border)]">|</span>
+                  <span>5h: <span className="text-[var(--text-secondary)] font-medium">{recoveryDisplay}</span></span>
                 </div>
               )}
-              <div className="mt-auto">
-                <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                  placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
-                <Button onClick={handleActivateCard} disabled={activating} className="w-full">
-                  {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
-                </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 账号卡配置 */}
+        <Card className="flex flex-col">
+          <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
+          <CardContent className="flex-1 flex flex-col">
+            {config?.accountCard && (
+              <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] mb-3">
+                <div>
+                  <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
+                  <div className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config.accountCard)}</div>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
               </div>
+            )}
+            <div className="mt-auto">
+              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
+                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="mb-2" />
+              <Button onClick={handleActivateCard} disabled={activating} className="w-full">
+                {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
+              </Button>
             </div>
           </CardContent>
         </Card>
