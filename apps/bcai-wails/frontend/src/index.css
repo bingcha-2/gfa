@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   冰茶AI - Design System
+   Cloned from cockpit-tools base.css
+   ============================================ */
+
+:root {
+  --font-sans: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', monospace;
+
+  --primary: #1d4ed8;
+  --primary-hover: #1e40af;
+  --primary-light: rgba(29, 78, 216, 0.12);
+  --accent: #0ea5a5;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --warning-strong: #f97316;
+  --danger: #ef4444;
+
+  --bg-primary: #f6f5f2;
+  --bg-secondary: #ffffff;
+  --bg-surface: var(--bg-secondary);
+  --bg-tertiary: #eef2f7;
+  --bg-card: rgba(255, 255, 255, 0.75);
+  --bg-hover: rgba(15, 23, 42, 0.06);
+
+  /* Sidebar — same family as content, just slightly different */
+  --sidebar-bg: rgba(255, 255, 255, 0.55);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --border: rgba(15, 23, 42, 0.12);
+  --border-light: rgba(15, 23, 42, 0.06);
+
+  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 12px 24px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 20px 40px rgba(15, 23, 42, 0.18);
+
+  --gradient-primary: linear-gradient(135deg, #1d4ed8 0%, #0ea5a5 100%);
+  --gradient-success: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-full: 9999px;
+
+  --sidebar-width: 200px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  /* Subtle gradient — same tones for both sidebar and content */
+  background:
+    radial-gradient(circle at 20% 20%, rgba(29, 78, 216, 0.06), transparent 50%),
+    radial-gradient(circle at 80% 10%, rgba(14, 165, 165, 0.05), transparent 45%),
+    linear-gradient(180deg, #f4f3f0 0%, #ebeef3 100%);
+  color: var(--text-primary);
+  line-height: 1.6;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.2); }
+
+/* ===== Selection ===== */
+::selection { background: rgba(29, 78, 216, 0.15); color: inherit; }
+
+/* ===== Status Dot Pulse ===== */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.2); }
+}
+.dot-pulse { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ===== Font Mono ===== */
+.font-mono-data {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Marquee ===== */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}

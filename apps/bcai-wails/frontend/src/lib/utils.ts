@@ -1,0 +1,106 @@
+/**
+ * 工具函数集合
+ * 从旧 main.js 提取并规范化
+ */
+
+import { type ClassValue, clsx } from 'clsx'
+import { twMerge } from 'tailwind-merge'
+import type { ParsedLog } from '@/types'
+
+/** 格式化 token 数字：1234567 → "1.2M" */
+export function formatTokens(n: number): string {
+  n = Number(n || 0)
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+/** 遮罩卡号：AI-XXXXXXXX → AI-XXX***XXXX */
+export function maskCard(card: string): string {
+  if (!card || card.length < 12) return card
+  return card.substring(0, 6) + '***' + card.substring(card.length - 4)
+}
+
+/** HTML 转义 */
+export function escapeHtml(s: string): string {
+  const div = document.createElement('div')
+  div.textContent = String(s || '')
+  return div.innerHTML
+}
+
+/** 格式化倒计时 ms → "2h 31m" */
+export function formatCountdown(ms: number): string {
+  if (ms <= 0) return '已恢复'
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
+  return `${m}m ${String(s).padStart(2, '0')}s`
+}
+
+/** 格式化会话时长 */
+export function formatDuration(startTime: number): string {
+  const mins = Math.floor((Date.now() - startTime) / 60000)
+  if (mins < 60) return `${mins}分钟`
+  const hrs = Math.floor(mins / 60)
+  const rm = mins % 60
+  return `${hrs}小时${rm}分钟`
+}
+
+/** 解析单行日志 */
+export function parseLogLine(line: string): ParsedLog {
+  const raw = String(line || '')
+  let time = ''
+  let rest = raw
+
+  // ISO 格式: 2026-05-22T15:04:05.000+08:00 [tag] message
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2}T\S+)\s+(.*)$/)
+  if (isoMatch) {
+    const parsedDate = new Date(isoMatch[1])
+    time = Number.isNaN(parsedDate.getTime())
+      ? isoMatch[1].substring(11, 19)
+      : parsedDate.toLocaleTimeString()
+    rest = isoMatch[2]
+  } else {
+    const simpleMatch = raw.match(/^(\d{1,2}:\d{2}:\d{2})\s+(.*)$/)
+    if (simpleMatch) {
+      time = simpleMatch[1]
+      rest = simpleMatch[2]
+    }
+  }
+
+  const tagMatch = rest.match(/^(\[[^\]]+\])\s*(.*)$/)
+  const tag = tagMatch ? tagMatch[1] : ''
+  const message = tagMatch ? tagMatch[2] || '' : rest
+
+  // Classify level
+  const lower = raw.toLowerCase()
+  let level: ParsedLog['level'] = 'info'
+  if (lower.includes('[error]') || lower.includes('failed') || lower.includes('error:') || lower.includes('失败')) {
+    level = 'error'
+  } else if (lower.includes('warn') || lower.includes('blocked') || lower.includes('retrying')) {
+    level = 'warn'
+  } else if (lower.includes('obtained') || lower.includes('成功') || lower.includes('完成')) {
+    level = 'success'
+  } else if (lower.includes('===') || lower.includes('[system]') || lower.includes('[app]')) {
+    level = 'system'
+  }
+
+  return { raw, time, tag, message, level }
+}
+
+/** 格式化日期 */
+export function formatDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return dateStr
+    return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+  } catch {
+    return dateStr
+  }
+}
+
+/** shadcn/ui cn utility */
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
