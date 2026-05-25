@@ -140,6 +140,9 @@ export function DashboardPage() {
                 </button>
               ))}
             </div>
+            <div className="text-[11px] text-[var(--text-muted)] mt-2">
+              {poolMode === 'remote' ? '从远程服务器自动获取 Token，无需额外配置' : '使用本地配置的账号池轮询 Token'}
+            </div>
           </CardContent>
         </Card>
 
