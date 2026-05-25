@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
-import { Settings as SettingsIcon, Globe, FolderOpen, Info, ArrowUpRight } from 'lucide-react'
+import { PromoSection } from '@/components/PromoSection'
+import { Settings as SettingsIcon, Globe, FolderOpen, Info } from 'lucide-react'
 
 export function SettingsPage() {
   const { config, appVersion, fetchConfig } = useAppStore()
@@ -121,40 +122,8 @@ export function SettingsPage() {
       </Card>
 
       {/* Promo cards */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <button
-          onClick={() => api.openURL('https://bcai.store')}
-          className="group relative overflow-hidden rounded-[14px] p-4 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98]"
-          style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%)' }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10 blur-xl" />
-          <div className="relative">
-            <div className="text-[22px] mb-2">🛒</div>
-            <div className="text-[14px] font-bold text-white leading-tight mb-1">冰茶商店</div>
-            <div className="text-[11px] text-white/75 leading-snug mb-3">Codex Plus · Cursor Pro · Windsurf 一键代理，9.9 元起</div>
-            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/20 backdrop-blur-sm text-[10px] font-semibold text-white">
-              立即选购 <ArrowUpRight size={10} />
-            </div>
-          </div>
-        </button>
-
-        <button
-          onClick={() => api.openURL('https://bcai.online')}
-          className="group relative overflow-hidden rounded-[14px] p-4 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98]"
-          style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #f97316 50%, #ef4444 100%)' }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10 blur-xl" />
-          <div className="relative">
-            <div className="text-[22px] mb-2">⚡</div>
-            <div className="text-[14px] font-bold text-white leading-tight mb-1">冰茶 API</div>
-            <div className="text-[11px] text-white/75 leading-snug mb-3">Claude / Gemini / GPT 低价调用，企业级稳定</div>
-            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/20 backdrop-blur-sm text-[10px] font-semibold text-white">
-              了解更多 <ArrowUpRight size={10} />
-            </div>
-          </div>
-        </button>
+      <div className="mb-4">
+        <PromoSection />
       </div>
 
       {/* About */}

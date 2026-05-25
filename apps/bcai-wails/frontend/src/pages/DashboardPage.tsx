@@ -4,6 +4,7 @@ import { usePoolStore } from '@/stores/usePoolStore'
 import { StatusPill } from '@/components/StatusPill'
 import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
+import { PromoSection } from '@/components/PromoSection'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -223,6 +224,9 @@ export function DashboardPage() {
           </Card>
         </div>
       </div>
+
+      {/* ── Row 4: Promo ── */}
+      <PromoSection />
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
