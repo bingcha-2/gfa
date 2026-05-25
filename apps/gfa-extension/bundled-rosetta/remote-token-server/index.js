@@ -493,6 +493,16 @@ function isGeminiModel(modelKey) {
   return key.includes('gemini') || key.startsWith('gem');
 }
 
+// ── Credits-based gate bypass ────────────────────────────────────────────────
+// Accounts with available credits or unknown credits status should not be
+// subject to long quota cooldowns — the 429 was likely a transient rate limit,
+// not a real quota exhaustion.
+function accountHasCreditsOrUnknown(account) {
+  const credits = account?.credits;
+  if (!credits || !credits.known) return true;   // unknown → treat as has credits
+  return Boolean(credits.available);              // known → check available
+}
+
 function modelBillingMultiplier(modelKey) {
   return 1.0;
 }
@@ -1390,6 +1400,8 @@ function createRemoteTokenServer(config) {
     for (const [key, gate] of modelGate.entries()) {
       if (gate.state === 'healthy') {
         modelGate.delete(key);
+      } else if (gate.state === 'cooling' && Number(gate.blockedUntil || 0) <= now) {
+        modelGate.delete(key);
       }
     }
     for (const [key, pressure] of modelPressure.entries()) {
@@ -1902,15 +1914,29 @@ function createRemoteTokenServer(config) {
       const globalBlock = !modelBlock ? isAccountGloballyBlocked(account, now) : null;
       let gate = targetModelKey ? clearRecoveredModelGate(account, targetModelKey) : null;
       if (targetModelKey && (modelBlock || globalBlock)) {
-        gate = prepareAutoRecheckGate(account, targetModelKey, modelBlock || globalBlock, now);
-        if (gate?.state === 'probation') {
-          const canProbe = Number(gate.nextProbeAfter || 0) <= now &&
-            activeProbationLeaseCount(account.id, targetModelKey, now) === 0;
-          if (canProbe) probationCandidates.push(account);
+        // Credits bypass: if account has credits or unknown, skip the quota/capacity model block
+        if (accountHasCreditsOrUnknown(account) && isQuotaRecoverableGateReason(modelBlock?.reason || globalBlock?.reason)) {
+          if (gate) { clearModelGate(account.id, targetModelKey); gate = null; }
+          // fall through to healthy pool
+        } else {
+          gate = prepareAutoRecheckGate(account, targetModelKey, modelBlock || globalBlock, now);
+          if (gate?.state === 'probation') {
+            const canProbe = Number(gate.nextProbeAfter || 0) <= now &&
+              activeProbationLeaseCount(account.id, targetModelKey, now) === 0;
+            if (canProbe) probationCandidates.push(account);
+          }
+          continue;
         }
-        continue;
       }
-      if (gate?.state === 'cooling' && Number(gate.blockedUntil || 0) > now) continue;
+      // Credits bypass: if account has credits/unknown and gate is cooling for quota, clear it
+      if (gate?.state === 'cooling' && Number(gate.blockedUntil || 0) > now) {
+        if (accountHasCreditsOrUnknown(account) && isQuotaRecoverableGateReason(gate.reason)) {
+          clearModelGate(account.id, targetModelKey);
+          gate = null;
+        } else {
+          continue;
+        }
+      }
       // 冷却期已过 → 直接清除 gate，回到 healthy 池（不需要 probation 探测）
       if (gate?.state === 'cooling' && Number(gate.blockedUntil || 0) <= now) {
         clearModelGate(account.id, targetModelKey);
@@ -2519,15 +2545,20 @@ function createRemoteTokenServer(config) {
       const reason = String(payload.reason || '') || 'quota';
       const probationFailure = Boolean(lease.probation);
 
-      // ── 429 Model-Level Cooldown: use Google's retryAfterMs directly ──
-      // Google tells us exactly when quota resets for this model.
-      // We respect Google's time exactly without a hard cap.
-      // If Google didn't provide a value, default to 1 min.
+      // ── 429 Model-Level Cooldown ──
+      // If the account has credits or credits are unknown, cap the cooldown to
+      // a short duration — the 429 is likely a transient per-minute rate limit,
+      // not a real quota exhaustion.
       const MIN_429_COOLDOWN_MS = 30 * 1000;
-      const DEFAULT_429_COOLDOWN_MS = 60 * 1000;         // 1 min (no Google retryAfterMs)
+      const DEFAULT_429_COOLDOWN_MS = 60 * 1000;
+      const CREDITS_429_CAP_MS = 60 * 1000;              // 1 min cap for accounts with credits/unknown
+      const NO_CREDITS_429_CAP_MS = 6 * 60 * 60 * 1000;  // 6h cap for accounts confirmed without credits
       const googleRetryMs = Math.max(0, Number(payload.retryAfterMs || 0));
+      const leaseAccount = tokenManager.getAccount(lease.accountId);
+      const hasCredits = accountHasCreditsOrUnknown(leaseAccount);
+      const capMs = hasCredits ? CREDITS_429_CAP_MS : NO_CREDITS_429_CAP_MS;
       const cooldownMs = googleRetryMs > 0
-        ? Math.max(MIN_429_COOLDOWN_MS, googleRetryMs)
+        ? Math.min(Math.max(MIN_429_COOLDOWN_MS, googleRetryMs), capMs)
         : DEFAULT_429_COOLDOWN_MS;
 
       // Set per-model gate — account stays available for other models
@@ -3106,6 +3137,19 @@ function createRemoteTokenServer(config) {
             if (i < candidates.length - 1) await new Promise(r => setTimeout(r, 1000));
           }
           return sendJson(res, 200, { ok: true, refreshed, errors, total: candidates.length });
+        }
+
+        if (url.pathname === '/api/pool/refresh-account') {
+          const accountId = Number(body?.accountId);
+          if (!Number.isFinite(accountId) || accountId <= 0) {
+            return sendJson(res, 400, { ok: false, error: 'accountId is required' });
+          }
+          try {
+            const result = await tokenManager.refreshAccountHealth(accountId);
+            return sendJson(res, 200, { ok: true, accountId, ...result });
+          } catch (err) {
+            return sendJson(res, 500, { ok: false, error: err.message });
+          }
         }
 
         return sendJson(res, 404, { ok: false, error: 'Not found' });

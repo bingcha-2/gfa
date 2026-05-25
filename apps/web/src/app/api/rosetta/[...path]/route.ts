@@ -2750,6 +2750,12 @@ export async function POST(
         return json({ ok: false, error: err.message || String(err) }, { status: 500 });
       }
     }
+    case "/api/pool/refresh-credits":
+      return forwardToRemoteTokenServerPost("/api/pool/refresh-credits");
+    case "/api/pool/refresh-account": {
+      const body = await req.text();
+      return forwardToRemoteTokenServerPostWithBody("/api/pool/refresh-account", body);
+    }
     case "/throttle-config": {
       try {
         const payload = await req.json();

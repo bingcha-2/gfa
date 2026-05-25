@@ -677,6 +677,15 @@ function createTokenManager(config) {
                 if (acc.lastConversationOkAt) {
                     entry.lastConversationOkAt = acc.lastConversationOkAt;
                 }
+                // Persist credits data so it survives restarts
+                if (acc.creditsKnown) {
+                    entry.creditsKnown = true;
+                    entry.creditsAvailable = Boolean(acc.creditsAvailable);
+                    entry.creditAmount = Number(acc.creditAmount || 0);
+                    entry.minCreditAmount = Number(acc.minCreditAmount || 0);
+                    entry.paidTierID = acc.paidTierID || '';
+                    entry.creditsRefreshedAt = Number(acc.creditsRefreshedAt || 0);
+                }
                 return entry;
             }),
         };
@@ -1191,11 +1200,12 @@ function createTokenManager(config) {
             await new Promise((r) => setTimeout(r, 500));
         }
 
+        // Always persist — credits data may have changed even if plan types didn't
+        saveAccounts();
         if (fetched > 0) {
-            saveAccounts();
             log(`[token-manager] Plan type discovery complete: ${fetched}/${needsPlan.length}`);
         } else {
-            log(`[token-manager] Plan type discovery: no plans detected (${needsPlan.length} account(s) checked)`);
+            log(`[token-manager] Plan type check complete: no plan changes (${needsPlan.length} account(s) checked, credits updated)`);
         }
         return fetched;
     }
@@ -1652,6 +1662,55 @@ function createTokenManager(config) {
         }
     }
 
+    /**
+     * Force-refresh health (credits + quota) for a single account.
+     * Unlike maybeRefreshHealth, this skips the 15-min debounce so it always runs.
+     * Returns the refreshed data for the API response.
+     */
+    async function refreshAccountHealth(accountId) {
+        const acc = accountPool.get(accountId);
+        if (!acc) throw new Error(`Account #${accountId} not found`);
+        if (!acc.projectId) throw new Error(`Account #${accountId} has no projectId`);
+
+        const token = await getAccessToken(accountId);
+        const result = { credits: null, planType: acc.planType || '', quotaRefreshed: false };
+
+        // 1. loadCodeAssist → credits + planType
+        const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+        if (health.credits.known) {
+            acc.creditsKnown = true;
+            acc.creditsAvailable = health.credits.available;
+            acc.creditAmount = health.credits.creditAmount;
+            acc.minCreditAmount = health.credits.minCreditAmount;
+            acc.paidTierID = health.credits.paidTierID;
+            acc.creditsRefreshedAt = Date.now();
+            result.credits = {
+                known: true,
+                available: health.credits.available,
+                creditAmount: health.credits.creditAmount,
+                minCreditAmount: health.credits.minCreditAmount,
+            };
+        }
+        if (health.planType) {
+            if (health.planType !== acc.planType) {
+                log(`[token-manager] refreshAccountHealth ${acc.email}: plan ${acc.planType || '(empty)'} → ${health.planType}`);
+            }
+            acc.planType = health.planType;
+            result.planType = health.planType;
+        }
+
+        // 2. fetchAvailableModels → remainingFraction
+        try {
+            await verifyModelQuota(accountId, 'gemini-2.5-pro');
+            result.quotaRefreshed = true;
+        } catch (err) {
+            log(`[token-manager] refreshAccountHealth ${acc.email} quota error: ${err.message}`);
+        }
+
+        saveAccounts();
+        return result;
+    }
+
     // Initialize
     loadAccounts();
 
@@ -1661,6 +1720,7 @@ function createTokenManager(config) {
         getAccount, getEnabledAccountIds,
         markExhausted, markError, markSuccess, resetQuotaStatus, recoverExpiredBlocks,
         updateProjectModels, verifyModelQuota, maybeRefreshHealth,
+        refreshAccountHealth,
         discoverProjectViaApi, autoDiscoverProjects, autoFetchPlanTypes,
     };
 }

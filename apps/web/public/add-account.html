@@ -718,6 +718,27 @@
       if (btn) { btn.disabled = false; btn.textContent = "📊 刷新额度"; }
     }
 
+    async function refreshSingleAccount(accountId) {
+      const btn = document.getElementById(`refreshAccBtn${accountId}`);
+      if (btn) { btn.disabled = true; btn.textContent = "⏳"; }
+      try {
+        const res = await fetchJson(`${API}/api/pool/refresh-account`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accountId })
+        });
+        const parts = [];
+        if (res.planType) parts.push(`套餐: ${res.planType}`);
+        if (res.credits) parts.push(`积分: ${res.credits.creditAmount}`);
+        if (res.quotaRefreshed) parts.push("额度已刷新");
+        showToast(`✅ #${accountId} ${parts.join(" · ") || "刷新完成"}`, "success");
+        await loadRemoteStatus();
+      } catch (err) {
+        showToast(`❌ #${accountId} 刷新失败: ${err.message}`, "error");
+      }
+      if (btn) { btn.disabled = false; btn.textContent = "🔄"; }
+    }
+
     async function unblockLocationAccounts() {
       if (!confirm("确定解封所有 location_unsupported 封禁的账号？")) return;
       try {
@@ -1284,7 +1305,7 @@
           </div>
           <div class="row-actions" onclick="event.stopPropagation()">
             <span class="badge"><span class="dot ${!account.hasToken && !account.placeholder ? 'warn' : quotaDot(account)}"></span>${escapeHtml(accountPoolStateLabel(account))}</span>
-            ${account.placeholder || !account.hasToken ? "" : `<button class="btn small" onclick="toggleAcc(${Number(account.id)})">${account.enabled === false ? "启用" : "停用"}</button>`}
+            ${account.placeholder || !account.hasToken ? "" : `<button class="btn small" id="refreshAccBtn${Number(account.id)}" onclick="refreshSingleAccount(${Number(account.id)})" title="刷新该账号额度与积分">🔄</button><button class="btn small" onclick="toggleAcc(${Number(account.id)})">${account.enabled === false ? "启用" : "停用"}</button>`}
           </div>
           ${expanded ? accountQuotaDetail(account, quota) : `<div class="meta" style="grid-column: 1 / -1;">点击查看具体额度</div>`}
         </div>
