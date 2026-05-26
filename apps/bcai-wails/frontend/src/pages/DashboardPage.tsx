@@ -149,10 +149,18 @@ export function DashboardPage() {
         <Card>
           <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
           <CardContent>
-            <div className="flex flex-col gap-2.5">
-              <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-              <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-            </div>
+            {poolMode === 'local' ? (
+              <div className="flex flex-col items-center justify-center gap-1 py-3 text-center">
+                <HardDrive size={20} className="text-[var(--text-muted)]" />
+                <span className="text-[12px] text-[var(--text-muted)]">本地号池模式下，配额按各账号独立计算</span>
+                <span className="text-[11px] text-[var(--text-muted)]">可在「号池管理」页查看各号额度</span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

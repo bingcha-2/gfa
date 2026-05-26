@@ -62,4 +62,49 @@ export class RosettaController {
   saveThrottleConfig(@Body() body: any) {
     return this.rosetta.saveThrottleConfig(body);
   }
+
+  @Post("captcha-unblock")
+  createCaptchaUnblock(@Body() body: any) {
+    return this.rosetta.createCaptchaUnblock(body);
+  }
+
+  @Get("captcha-unblock/status")
+  getCaptchaUnblockStatus() {
+    return this.rosetta.getCaptchaUnblockStatus();
+  }
+
+  @Post("captcha-unblock/retry")
+  retryCaptchaUnblock(@Body() body: any) {
+    return this.rosetta.retryCaptchaUnblock(body);
+  }
+
+  @Post("unblock-location")
+  unblockLocation() {
+    return this.rosetta.unblockLocation();
+  }
+
+  @Post("api/pool/refresh-credits")
+  refreshCredits() {
+    return this.rosetta.refreshCredits();
+  }
+
+  @Post("refresh-quota")
+  refreshQuota() {
+    return this.rosetta.refreshQuota();
+  }
+
+  @Post("adspower-import")
+  adspowerImport(@Body() body: any) {
+    return this.rosetta.adspowerImport(body);
+  }
+
+  @Get("adspower-import-status")
+  adspowerImportStatus(@Query("batchId") batchId: string) {
+    return this.rosetta.adspowerImportStatus(batchId);
+  }
+
+  @Get("adspower-import-history")
+  adspowerImportHistory() {
+    return this.rosetta.adspowerImportHistory();
+  }
 }

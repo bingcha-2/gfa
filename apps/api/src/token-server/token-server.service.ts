@@ -3,15 +3,20 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 
 import { AccessKeyStore } from "./access-key-store";
-import { maskEmail, readJsonFile, writeJsonFile } from "./data-store";
+import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "./data-store";
 import { accountWeight, EnterpriseProbeManager, scoreAccount } from "./lease-scheduler";
+import { ModelGateManager } from "./model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
   DEFAULT_LEASE_TTL_MS,
+  FIRST_QUOTA_COOLDOWN_MS,
+  CAPACITY_COOLDOWN_MS,
   MAX_REMOTE_LEASE_TTL_MS,
+  REMOTE_ACCOUNT_ERROR_THRESHOLD,
+  TOKEN_REFRESH_FAILURE_COOLDOWN_MS,
   accessKeySessionTtlMs,
   affinityKey,
   normalizeModelKey,
@@ -51,6 +56,19 @@ type HttpErrorBody = {
   message: string;
 };
 
+type AccountRuntimeState = {
+  quotaStatus: string;
+  quotaStatusReason: string;
+  exhaustedAt: number;
+  exhaustedUntil: number;
+  consecutiveErrors: number;
+  lastUsedAt: number;
+  blockedModels: Map<string, { modelKey: string; reason: string; blockedAt: number; blockedUntil: number }>;
+};
+
+const MAX_TOKEN_REFRESH_CANDIDATES = 5;
+const DEFAULT_COOLDOWN_MS = FIRST_QUOTA_COOLDOWN_MS || 5 * 60 * 1000;
+
 function defaultDataDir() {
   if (process.env.ROSETTA_DATA_DIR) return process.env.ROSETTA_DATA_DIR;
   const base =
@@ -89,8 +107,40 @@ export class TokenServerService {
   private totalReports = 0;
   private totalErrors = 0;
   private lastError = "";
+  private dailyDate = "";
+  private dailyLeases = 0;
+  private dailySuccesses = 0;
+  private dailyErrors = 0;
+  private dailyTokensUsed = 0;
+  private perAccountStats = new Map<number, {
+    totalLeases: number; successCount: number; errorCount: number;
+    totalTokensUsed: number; totalInputTokens: number; totalOutputTokens: number;
+    lastStatus: string; lastUsedAt: number;
+  }>();
+  private readonly accountRuntime = new Map<number, AccountRuntimeState>();
+  private readonly modelGates = new ModelGateManager({ log: () => undefined });
 
-  constructor(options: ServiceOptions = {}) {
+  private ensureDaily() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.dailyDate !== today) {
+      this.dailyDate = today;
+      this.dailyLeases = 0;
+      this.dailySuccesses = 0;
+      this.dailyErrors = 0;
+      this.dailyTokensUsed = 0;
+    }
+  }
+
+  private ensureAccountStats(accountId: number) {
+    let s = this.perAccountStats.get(accountId);
+    if (!s) {
+      s = { totalLeases: 0, successCount: 0, errorCount: 0, totalTokensUsed: 0, totalInputTokens: 0, totalOutputTokens: 0, lastStatus: "", lastUsedAt: 0 };
+      this.perAccountStats.set(accountId, s);
+    }
+    return s;
+  }
+
+  constructor(@Optional() options: ServiceOptions = {}) {
     const dataDir = defaultDataDir();
     this.accountsFilePath = options.accountsFilePath || path.join(dataDir, "accounts.json");
     this.accessKeyStore = new AccessKeyStore(options.accessKeysFilePath || path.join(dataDir, "access-keys.json"));
@@ -104,7 +154,20 @@ export class TokenServerService {
 
   getStatus() {
     this.cleanupExpiredLeases();
+    const now = this.now();
+    this.modelGates.cleanupExpiredGates(now);
+    for (const accountId of this.accountRuntime.keys()) {
+      this.cleanupExpiredBlocks(accountId, now);
+    }
     const accounts = this.readAccounts();
+    const activeLeaseList = Array.from(this.leases.values()).filter((lease) => !lease.released);
+
+    const activeLeaseCounts: Record<string, number> = {};
+    for (const lease of activeLeaseList) {
+      const key = String(lease.accountId);
+      activeLeaseCounts[key] = (activeLeaseCounts[key] || 0) + 1;
+    }
+
     return {
       running: true,
       mode: "remote-token-server",
@@ -113,7 +176,7 @@ export class TokenServerService {
       totalReports: this.totalReports,
       totalErrors: this.totalErrors,
       lastError: this.lastError,
-      activeLeases: Array.from(this.leases.values()).filter((lease) => !lease.released).length,
+      activeLeases: activeLeaseList.length,
       affinityClients: this.clientAffinity.size,
       accessKeys: this.accessKeyStore.readAll().keys.map((key) => this.accessKeyStore.publicStatus(key)),
       accounts: {
@@ -121,6 +184,49 @@ export class TokenServerService {
         enabled: accounts.filter((account) => account.enabled !== false).length,
         withProject: accounts.filter((account) => account.projectId).length,
       },
+      quota: {
+        accounts: accounts.map((account) => {
+          const runtime = this.accountRuntime.get(account.id);
+          return {
+            id: account.id,
+            email: account.email,
+            enabled: account.enabled !== false,
+            planType: account.planType || "",
+            projectId: account.projectId || "",
+            quotaStatus: runtime?.quotaStatus || account.quotaStatus || "ok",
+            quotaStatusReason: runtime?.quotaStatusReason || account.quotaStatusReason || "",
+            blockedUntil: runtime?.exhaustedUntil || account.blockedUntil || 0,
+            credits: account.credits || {},
+            activeLeases: activeLeaseCounts[String(account.id)] || 0,
+            lastConversationOkAt: account.lastConversationOkAt || "",
+            lastStatus: account.lastStatus || "",
+            blockedModels: runtime
+              ? Array.from(runtime.blockedModels.values()).map((b) => ({
+                  modelKey: b.modelKey,
+                  reason: b.reason,
+                  blockedAt: b.blockedAt,
+                  blockedUntil: b.blockedUntil,
+                }))
+              : [],
+          };
+        }),
+      },
+      daily: {
+        date: this.dailyDate || new Date().toISOString().slice(0, 10),
+        leases: this.dailyLeases,
+        successes: this.dailySuccesses,
+        errors: this.dailyErrors,
+        tokensUsed: this.dailyTokensUsed,
+      },
+      scheduler: {
+        activeLeaseCounts,
+        accountStats: Object.fromEntries(
+          Array.from(this.perAccountStats.entries()).map(([id, s]) => [String(id), s]),
+        ),
+        modelGates: this.modelGates.serializeModelGates(),
+        affinityClients: this.clientAffinity.size,
+      },
+      enterpriseProbe: this.enterpriseProbe.getStatus(),
     };
   }
 
@@ -159,36 +265,66 @@ export class TokenServerService {
       create: sessionCheck.action === "create",
       rotate: sessionCheck.action === "refresh",
     });
-    const account = this.selectAccount(modelKey, clientId, payload);
-    if (!account) throw this.fail(503, "No account with projectId is available.");
 
-    try {
-      const accessToken = await this.tokenProvider(account);
-      this.writeAccounts(this.readAccounts().map((item) => item.id === account.id ? { ...item, ...account } : item));
-      const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload);
-      this.leases.set(lease.leaseId, lease);
-      this.rememberAffinity(clientId, modelKey, account.id);
-      this.totalLeases++;
-      this.accessKeyStore.flush();
-      return {
-        ok: true,
-        leaseId: lease.leaseId,
-        accessKeySessionId,
-        sessionId: accessKeySessionId,
-        sessionExpiresAt: auth.record.sessionExpiresAt || "",
-        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
-        accountId: account.id,
-        emailHint: maskEmail(account.email),
-        accessToken,
-        projectId: account.projectId,
-        expiresAt: lease.expiresAt,
-        probation: false,
-        candidateStats: { healthyForModel: this.availableAccounts(payload).length },
-        retryPolicy: null,
-      };
-    } catch (error) {
-      throw this.fail(503, error instanceof Error ? error.message : "Token lease failed");
+    const tokenFailedIds: number[] = [];
+    let lastError: Error | null = null;
+    let account: TokenAccount | null = null;
+    let accessToken = "";
+
+    for (let attempt = 0; attempt < MAX_TOKEN_REFRESH_CANDIDATES; attempt++) {
+      const extendedPayload = { ...payload };
+      if (tokenFailedIds.length > 0) {
+        const existing = Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [];
+        extendedPayload.excludeAccountIds = [...existing, ...tokenFailedIds];
+      }
+      account = this.selectAccount(modelKey, clientId, extendedPayload);
+      if (!account) break;
+
+      try {
+        accessToken = await this.tokenProvider(account);
+        const runtime = this.ensureRuntime(account.id);
+        runtime.consecutiveErrors = 0;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.markAccountTokenError(account.id, lastError.message);
+        tokenFailedIds.push(account.id);
+        account = null;
+      }
     }
+
+    if (!account || !accessToken) {
+      throw this.fail(503, lastError?.message || "No account with projectId is available.");
+    }
+
+    this.writeAccounts(this.readAccounts().map((item) => item.id === account!.id ? { ...item, ...account } : item));
+    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload);
+    this.leases.set(lease.leaseId, lease);
+    this.rememberAffinity(clientId, modelKey, account.id);
+    this.totalLeases++;
+    this.ensureDaily();
+    this.dailyLeases++;
+    const accStats = this.ensureAccountStats(account.id);
+    accStats.totalLeases++;
+    accStats.lastUsedAt = this.now();
+    this.accessKeyStore.flush();
+    return {
+      ok: true,
+      leaseId: lease.leaseId,
+      accessKeySessionId,
+      sessionId: accessKeySessionId,
+      sessionExpiresAt: auth.record.sessionExpiresAt || "",
+      accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+      accountId: account.id,
+      emailHint: maskEmail(account.email),
+      accessToken,
+      projectId: account.projectId,
+      expiresAt: lease.expiresAt,
+      probation: false,
+      candidateStats: { healthyForModel: this.availableAccounts(payload, modelKey).length },
+      retryPolicy: null,
+    };
   }
 
   async reportResult(req: any, payload: any) {
@@ -212,12 +348,34 @@ export class TokenServerService {
     this.accessKeyStore.flush();
 
     this.totalReports++;
+    this.ensureDaily();
+    const accStats = this.ensureAccountStats(lease.accountId);
+    accStats.lastStatus = String(status);
+    accStats.lastUsedAt = this.now();
+    const tokens = Number(payload?.totalTokens || 0);
+    const inputTokens = Number(payload?.inputTokens || 0);
+    const outputTokens = Number(payload?.outputTokens || 0);
     if (status >= 200 && status < 400) {
       this.enterpriseProbe.reportResult(lease.email, true);
+      this.dailySuccesses++;
+      accStats.successCount++;
+      accStats.totalTokensUsed += tokens;
+      accStats.totalInputTokens += inputTokens;
+      accStats.totalOutputTokens += outputTokens;
+      this.dailyTokensUsed += tokens;
+      this.markAccountSuccess(lease.accountId, modelKey);
     } else if (status >= 400) {
       lease.released = true;
       this.enterpriseProbe.reportResult(lease.email, false);
       this.clearAffinity(lease.accountId, lease.clientId, modelKey);
+      this.dailyErrors++;
+      accStats.errorCount++;
+
+      if (status === 429 || status === 503) {
+        const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
+        const retryAfterMs = Number(payload?.retryAfterMs || 0);
+        this.markAccountExhausted(lease.accountId, modelKey, reason, retryAfterMs);
+      }
     }
     lease.released = true;
 
@@ -320,22 +478,25 @@ export class TokenServerService {
     writeJsonFile(this.accountsFilePath, value);
   }
 
-  private availableAccounts(payload: any) {
+  private availableAccounts(payload: any, modelKey?: string) {
     const excluded = new Set(
       (Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [])
         .map((value: unknown) => Number(value))
         .filter((value: number) => Number.isFinite(value) && value > 0),
     );
+    const now = this.now();
+    this.modelGates.cleanupExpiredGates(now);
     return this.readAccounts().filter((account) =>
       account.enabled !== false &&
       Boolean(account.projectId) &&
       Boolean(account.refreshToken) &&
-      !excluded.has(account.id),
+      !excluded.has(account.id) &&
+      !this.isAccountBlocked(account.id, modelKey || "", now),
     );
   }
 
   private selectAccount(modelKey: string, clientId: string, payload: any): TokenAccount | null {
-    const candidates = this.availableAccounts(payload);
+    const candidates = this.availableAccounts(payload, modelKey);
     if (!candidates.length) return null;
     const preferredAccountId = this.preferredAccountId(clientId, modelKey);
     const now = this.now();
@@ -424,6 +585,117 @@ export class TokenServerService {
     if (!clientId) return;
     const key = affinityKey(clientId, modelKey);
     if (this.clientAffinity.get(key)?.accountId === accountId) this.clientAffinity.delete(key);
+  }
+
+  // ── Account runtime state management ─────────────────────────────────────
+
+  private ensureRuntime(accountId: number): AccountRuntimeState {
+    let state = this.accountRuntime.get(accountId);
+    if (!state) {
+      state = {
+        quotaStatus: "ok", quotaStatusReason: "", exhaustedAt: 0,
+        exhaustedUntil: 0, consecutiveErrors: 0, lastUsedAt: 0,
+        blockedModels: new Map(),
+      };
+      this.accountRuntime.set(accountId, state);
+    }
+    return state;
+  }
+
+  private isAccountBlocked(accountId: number, modelKey: string, now: number): boolean {
+    const state = this.accountRuntime.get(accountId);
+    if (!state) return false;
+
+    this.cleanupExpiredBlocks(accountId, now);
+
+    if (state.quotaStatus === "error") return true;
+
+    if ((state.quotaStatus === "exhausted" || state.quotaStatus === "cooling") && state.exhaustedUntil > now) {
+      if (!modelKey) return true;
+      const normalized = normalizeModelKey(modelKey);
+      if (normalized && state.blockedModels.has(normalized)) return true;
+      if (state.blockedModels.size === 0) return true;
+      return false;
+    }
+    return false;
+  }
+
+  private cleanupExpiredBlocks(accountId: number, now: number) {
+    const state = this.accountRuntime.get(accountId);
+    if (!state) return;
+    for (const [key, block] of state.blockedModels) {
+      if (block.blockedUntil > 0 && block.blockedUntil <= now) {
+        state.blockedModels.delete(key);
+      }
+    }
+    if (state.blockedModels.size === 0 && state.exhaustedUntil > 0 && state.exhaustedUntil <= now) {
+      state.quotaStatus = "ok";
+      state.quotaStatusReason = "";
+      state.exhaustedAt = 0;
+      state.exhaustedUntil = 0;
+    }
+  }
+
+  private markAccountTokenError(accountId: number, errorMessage: string) {
+    const state = this.ensureRuntime(accountId);
+    state.consecutiveErrors++;
+
+    if (isPermanentTokenRefreshError(errorMessage)) {
+      state.quotaStatus = "error";
+      state.quotaStatusReason = "invalid_grant";
+      state.exhaustedUntil = this.now() + TOKEN_REFRESH_FAILURE_COOLDOWN_MS;
+    } else if (state.consecutiveErrors >= REMOTE_ACCOUNT_ERROR_THRESHOLD) {
+      state.quotaStatus = "error";
+      state.quotaStatusReason = "consecutive_errors";
+    }
+  }
+
+  private markAccountExhausted(accountId: number, modelKey: string, reason: string, retryAfterMs: number) {
+    const state = this.ensureRuntime(accountId);
+    const now = this.now();
+    const normalized = normalizeModelKey(modelKey);
+    const isCapacity = reason.includes("capacity");
+    const cooldownMs = retryAfterMs > 0 ? retryAfterMs : isCapacity ? (CAPACITY_COOLDOWN_MS || 15000) : DEFAULT_COOLDOWN_MS;
+    const blockedUntil = now + cooldownMs;
+
+    state.quotaStatus = isCapacity ? "cooling" : "exhausted";
+    state.quotaStatusReason = reason;
+    state.exhaustedAt = now;
+
+    if (normalized) {
+      state.blockedModels.set(normalized, { modelKey: normalized, reason, blockedAt: now, blockedUntil });
+      this.modelGates.blockAccountForModel(accountId, normalized, reason, cooldownMs);
+    }
+
+    state.exhaustedUntil = Math.max(
+      blockedUntil,
+      ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),
+    );
+  }
+
+  private markAccountSuccess(accountId: number, modelKey: string) {
+    const state = this.accountRuntime.get(accountId);
+    if (!state) return;
+
+    state.consecutiveErrors = 0;
+    state.lastUsedAt = this.now();
+
+    const normalized = normalizeModelKey(modelKey);
+    if (normalized) {
+      state.blockedModels.delete(normalized);
+      this.modelGates.clearModelGate(accountId, normalized);
+    }
+
+    if (state.blockedModels.size === 0) {
+      state.quotaStatus = "ok";
+      state.quotaStatusReason = "";
+      state.exhaustedAt = 0;
+      state.exhaustedUntil = 0;
+    } else {
+      state.exhaustedUntil = Math.max(
+        ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),
+      );
+    }
   }
 
   private cleanupExpiredLeases() {

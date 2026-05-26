@@ -18,7 +18,7 @@ import (
 var AppVersion = "5.0.6"
 
 const (
-	UpdateCheckURL  = "http://127.0.0.1:3000/updates/latest-wails.json"
+	UpdateCheckURL  = "https://bcai.site/updates/latest-wails.json"
 	UpdateCheckFreq = 30 * time.Minute
 )
 

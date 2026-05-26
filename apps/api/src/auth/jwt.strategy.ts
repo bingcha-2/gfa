@@ -4,6 +4,12 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 
 import { JwtPayload } from "./auth.service";
 
+const CONSOLE_COOKIE = "gfa.console.token";
+
+function fromCookie(req: { cookies?: Record<string, string> }): string | null {
+  return req?.cookies?.[CONSOLE_COOKIE] ?? null;
+}
+
 // Known weak/placeholder secrets — reject these unconditionally
 const WEAK_SECRETS = [
   "secret",
@@ -51,7 +57,10 @@ function requireJwtSecret(): string {
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        fromCookie,
+      ]),
       ignoreExpiration: false,
       secretOrKey: requireJwtSecret()
     });

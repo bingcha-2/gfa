@@ -74,6 +74,13 @@ export interface StatsResponse {
       tokenWindowResetMs?: number
       tokenWindowResetAt?: string
     }
+    localQuota?: {
+      opusTokensUsed?: number
+      opusTokenLimit?: number
+      geminiTokensUsed?: number
+      geminiTokenLimit?: number
+      windowResetMs?: number
+    }
   }
   today: {
     requests: number

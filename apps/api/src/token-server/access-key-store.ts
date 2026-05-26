@@ -399,6 +399,8 @@ export class AccessKeyStore {
     const resetMs = tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
+    const windowLimit = Number(record.windowLimit || 0);
+
     return {
       id: record.id,
       name: record.name || '',
@@ -407,11 +409,20 @@ export class AccessKeyStore {
       expiresAt,
       remainingMs: expiresAt ? Math.max(0, Date.parse(expiresAt) - now) : 0,
       totalRequests: Number(record.totalRequests || 0),
+      totalInputTokens: Number(record.totalInputTokens || 0),
+      totalOutputTokens: Number(record.totalOutputTokens || 0),
+      totalCachedInputTokens: Number(record.totalCachedInputTokens || 0),
+      totalRawTokensUsed: Number(record.totalRawTokensUsed || 0),
       totalTokensUsed: Number(record.totalTokensUsed || 0),
       recentWindowTokens: recentTokens.totalTokens,
+      opusTokensUsed: recentTokens.opusEffectiveTokens,
+      opusTokenLimit: tLimit > 0 ? tLimit : (windowLimit > 0 ? windowLimit * 100_000 : 0),
+      geminiTokensUsed: recentTokens.geminiEffectiveTokens,
+      geminiTokenLimit: tLimit > 0 ? tLimit * 5 : (windowLimit > 0 ? windowLimit * 500_000 : 0),
       tokenWindowLimit: tLimit,
       tokenWindowRemaining: tLimit > 0 ? Math.max(0, tLimit - recentTokens.totalTokens) : 0,
       tokenWindowResetMs: resetMs,
+      tokenWindowResetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',
       hasActiveSession: Boolean(
         record.activeSessionId && !isAccessKeySessionExpired(record, now),
       ),

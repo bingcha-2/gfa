@@ -36,6 +36,10 @@ import {
   BotIcon,
   HelpCircleIcon,
   MegaphoneIcon,
+  ShieldAlertIcon,
+  ActivityIcon,
+  DatabaseIcon,
+  MonitorSmartphoneIcon,
 } from "lucide-react";
 
 const SECTION_PERM_MAP: Record<string, string> = {
@@ -52,6 +56,10 @@ const SECTION_PERM_MAP: Record<string, string> = {
   "agent-service": "agent_service",
   "rosetta-employees": "agent_service",
   "rosetta-keys": "codes",
+  "rosetta-accounts": "agent_service",
+  "rosetta-load": "agent_service",
+  "rosetta-captcha": "agent_service",
+  "rosetta-adspower": "agent_service",
   announcement: "announcement",
   faq: "faq",
 };
@@ -192,22 +200,6 @@ export function GfaAppSidebar({
       roleGuard: () => isAdminOrOps,
     },
     {
-      id: "rosetta-employees",
-      title: "Rosetta 员工",
-      url: `/${prefix}/rosetta-employees`,
-      icon: <UsersIcon />,
-      permKey: "agent_service",
-      roleGuard: () => isAdminOrOps,
-    },
-    {
-      id: "rosetta-keys",
-      title: "Rosetta 卡密",
-      url: `/${prefix}/rosetta-keys`,
-      icon: <KeyIcon />,
-      permKey: "codes",
-      roleGuard: () => isAdminOrOps,
-    },
-    {
       id: "announcement",
       title: "公告管理",
       url: `/${prefix}/announcement`,
@@ -229,6 +221,57 @@ export function GfaAppSidebar({
       url: `/${prefix}/users`,
       icon: <ShieldIcon />,
       roleGuard: () => isSuperAdmin,
+    },
+  ];
+
+  const rosettaNav: NavItem[] = [
+    {
+      id: "rosetta-captcha",
+      title: "人机解封",
+      url: `/${prefix}/rosetta-captcha`,
+      icon: <ShieldAlertIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-load",
+      title: "账号负载",
+      url: `/${prefix}/rosetta-load`,
+      icon: <ActivityIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-adspower",
+      title: "AdsPower 录入",
+      url: `/${prefix}/rosetta-adspower`,
+      icon: <MonitorSmartphoneIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-accounts",
+      title: "账号池",
+      url: `/${prefix}/rosetta-accounts`,
+      icon: <DatabaseIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-employees",
+      title: "员工管理",
+      url: `/${prefix}/rosetta-employees`,
+      icon: <UsersIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-keys",
+      title: "卡密管理",
+      url: `/${prefix}/rosetta-keys`,
+      icon: <KeyIcon />,
+      permKey: "codes",
+      roleGuard: () => isAdminOrOps,
     },
   ];
 
@@ -310,6 +353,7 @@ export function GfaAppSidebar({
       <SidebarContent>
         {renderNavGroup("运营", mainNav)}
         {renderNavGroup("管理", managementNav)}
+        {renderNavGroup("Rosetta", rosettaNav)}
         {renderNavGroup("设置", settingsNav)}
       </SidebarContent>
 

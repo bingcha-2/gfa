@@ -31,8 +31,8 @@ export function ConsoleLayout({
         <GfaAppSidebar variant="inset" />
         <SidebarInset>
           <SiteHeader />
-          <div className="flex flex-1 flex-col">
-            <div className="flex flex-1 flex-col gap-4 p-4 lg:p-6">
+          <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
+            <div className="flex flex-1 flex-col gap-4 p-4 lg:p-6 min-w-0">
               {children}
             </div>
           </div>

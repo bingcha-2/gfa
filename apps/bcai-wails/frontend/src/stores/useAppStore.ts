@@ -86,6 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = await api.getStats()
       const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, generations: 0, retries: 0 }
       const aks = data.leaser?.accessKeyStatus || {}
+      const lq = data.leaser?.localQuota
 
       // Recovery time
       let recoveryMs = -1
@@ -110,11 +111,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         todayInputTokens: today.inputTokens || 0,
         todayOutputTokens: today.outputTokens || 0,
         cumulativeSaving: data.cumulativeSaving || 0,
-        opusUsed: aks.opusTokensUsed ?? null,
-        opusLimit: aks.opusTokenLimit ?? null,
-        geminiUsed: aks.geminiTokensUsed ?? null,
-        geminiLimit: aks.geminiTokenLimit ?? null,
-        recoveryRemainingMs: recoveryMs,
+        opusUsed: aks.opusTokensUsed ?? lq?.opusTokensUsed ?? null,
+        opusLimit: aks.opusTokenLimit ?? lq?.opusTokenLimit ?? null,
+        geminiUsed: aks.geminiTokensUsed ?? lq?.geminiTokensUsed ?? null,
+        geminiLimit: aks.geminiTokenLimit ?? lq?.geminiTokenLimit ?? null,
+        recoveryRemainingMs: recoveryMs > 0 ? recoveryMs : (lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1),
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,
       })

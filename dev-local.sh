@@ -1,17 +1,19 @@
 #!/bin/bash
 # ============================================================================
-# dev-local.sh — 本地一键拉起 NestJS API + 冰茶 AI 客户端
+# dev-local.sh — 一键拉起全部服务（全部连本地，不连远端）
 #
 # 用法:
-#   ./dev-local.sh              # 同时启动服务端 + 客户端
-#   ./dev-local.sh server       # 仅启动服务端 (NestJS API)
-#   ./dev-local.sh client       # 仅启动客户端 (wails dev)
-#   LOCAL=1 ./dev-local.sh      # 客户端连本地服务端 (自动 patch API_BASE)
+#   ./dev-local.sh              # 启动全部: API + Web + Worker + Wails 客户端
+#   ./dev-local.sh server       # 仅后端 (API + Web + Worker, 即 pnpm dev)
+#   ./dev-local.sh client       # 仅 Wails 客户端（连本地服务端）
 # ============================================================================
 
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
+
+# 默认连本地
+export LOCAL="${LOCAL:-1}"
 
 # ── 颜色 ──
 RED='\033[0;31m'
@@ -28,6 +30,7 @@ API_DIR="$ROOT/apps/api"
 WAILS_DIR="$ROOT/apps/bcai-wails"
 DATA_DIR="$HOME/Library/Application Support/Antigravity/rosetta"
 LEASER_GO="$WAILS_DIR/leaser.go"
+WAILS_BIN="${WAILS_BIN:-$(command -v wails 2>/dev/null || echo "$HOME/go/bin/wails")}"
 
 # ── PID 追踪 ──
 SERVER_PID=""
@@ -40,22 +43,25 @@ cleanup() {
   echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
 
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo -e "${DIM}[shutdown] 停止 NestJS API (PID $SERVER_PID)${NC}"
+    echo -e "${DIM}[shutdown] 停止后端服务 (PID $SERVER_PID)${NC}"
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
 
   if [ -n "$CLIENT_PID" ] && kill -0 "$CLIENT_PID" 2>/dev/null; then
-    echo -e "${DIM}[shutdown] 停止 wails dev (PID $CLIENT_PID)${NC}"
+    echo -e "${DIM}[shutdown] 停止 Wails 客户端 (PID $CLIENT_PID)${NC}"
     kill "$CLIENT_PID" 2>/dev/null || true
     wait "$CLIENT_PID" 2>/dev/null || true
   fi
 
-  # 恢复 leaser.go (如果被 patch 过)
   if [ "$PATCHED" = true ] && [ -f "$LEASER_GO.bak" ]; then
     echo -e "${DIM}[shutdown] 恢复 leaser.go 原始 API_BASE${NC}"
     mv "$LEASER_GO.bak" "$LEASER_GO"
   fi
+
+  # 清理残留端口占用
+  lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
+  lsof -ti :3001 2>/dev/null | xargs kill -9 2>/dev/null || true
 
   echo -e "${GREEN}[shutdown] 已全部停止${NC}"
   exit 0
@@ -64,10 +70,10 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # ── 环境检查 ──
 check_prerequisites() {
+  local mode="$1"
   echo -e "${BOLD}${CYAN}═══ 环境检查 ═══${NC}"
   local ok=true
 
-  # Node.js
   if command -v node &>/dev/null; then
     echo -e "  ${GREEN}✓${NC} Node.js $(node -v)"
   else
@@ -75,20 +81,27 @@ check_prerequisites() {
     ok=false
   fi
 
-  # Go
-  if command -v go &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} Go $(go version | awk '{print $3}')"
-  else
-    echo -e "  ${RED}✗${NC} Go 未安装"
-    ok=false
-  fi
+  if [ "$mode" != "server" ]; then
+    if command -v go &>/dev/null; then
+      echo -e "  ${GREEN}✓${NC} Go $(go version | awk '{print $3}')"
+    else
+      echo -e "  ${RED}✗${NC} Go 未安装"
+      ok=false
+    fi
 
-  # Wails
-  if command -v wails &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} Wails $(wails version 2>/dev/null | head -1)"
-  else
-    echo -e "  ${RED}✗${NC} Wails 未安装 (go install github.com/wailsapp/wails/v2/cmd/wails@latest)"
-    ok=false
+    if [ -x "$WAILS_BIN" ]; then
+      echo -e "  ${GREEN}✓${NC} Wails ($WAILS_BIN)"
+    else
+      echo -e "  ${YELLOW}!${NC} Wails 未找到，尝试自动安装..."
+      go install github.com/wailsapp/wails/v2/cmd/wails@latest 2>&1
+      WAILS_BIN="$HOME/go/bin/wails"
+      if [ -x "$WAILS_BIN" ]; then
+        echo -e "  ${GREEN}✓${NC} Wails 安装成功 ($WAILS_BIN)"
+      else
+        echo -e "  ${RED}✗${NC} Wails 安装失败"
+        ok=false
+      fi
+    fi
   fi
 
   if [ "$ok" = false ]; then
@@ -102,7 +115,6 @@ check_prerequisites() {
 init_data_dir() {
   echo -e "${BOLD}${CYAN}═══ 初始化数据目录 ═══${NC}"
 
-  # 创建数据目录
   if [ ! -d "$DATA_DIR" ]; then
     mkdir -p "$DATA_DIR/logs" "$DATA_DIR/cache"
     echo -e "  ${GREEN}✓${NC} 创建 $DATA_DIR"
@@ -110,7 +122,6 @@ init_data_dir() {
     echo -e "  ${DIM}✓ 数据目录已存在${NC}"
   fi
 
-  # proxy.config.json
   if [ ! -f "$DATA_DIR/proxy.config.json" ]; then
     cat > "$DATA_DIR/proxy.config.json" << 'CONFIGEOF'
 {
@@ -129,18 +140,15 @@ CONFIGEOF
     echo -e "  ${DIM}✓ proxy.config.json 已存在${NC}"
   fi
 
-  # accounts.json
   if [ ! -f "$DATA_DIR/accounts.json" ]; then
     echo '[]' > "$DATA_DIR/accounts.json"
     echo -e "  ${YELLOW}⚠${NC} 创建空 accounts.json — ${YELLOW}需要添加 Google 账号才能租号${NC}"
-    echo -e "    ${DIM}从生产服务器拷贝 accounts.json 到: $DATA_DIR/accounts.json${NC}"
   else
     local count
     count=$(node -e "try{const d=require('$DATA_DIR/accounts.json');console.log(Array.isArray(d)?d.length:(d.accounts||[]).length)}catch{console.log(0)}" 2>/dev/null || echo "?")
     echo -e "  ${GREEN}✓${NC} accounts.json ($count 个账号)"
   fi
 
-  # access-keys.json
   if [ ! -f "$DATA_DIR/access-keys.json" ]; then
     cat > "$DATA_DIR/access-keys.json" << 'KEYSEOF'
 {
@@ -165,73 +173,145 @@ KEYSEOF
   echo ""
 }
 
-# ── 安装 API 依赖 ──
-install_api_deps() {
-  if [ ! -d "$API_DIR/node_modules" ]; then
-    echo -e "${BOLD}${CYAN}═══ 安装 NestJS API 依赖 ═══${NC}"
-    (cd "$ROOT" && pnpm install --filter @gfa/api 2>&1 | tail -3)
+# ── 安装依赖 ──
+install_deps() {
+  if [ ! -d "$ROOT/node_modules" ] || [ ! -d "$API_DIR/node_modules" ]; then
+    echo -e "${BOLD}${CYAN}═══ 安装依赖 ═══${NC}"
+    (cd "$ROOT" && pnpm install 2>&1 | tail -5)
     echo -e "  ${GREEN}✓${NC} 依赖安装完成"
     echo ""
   fi
 }
 
-# ── Patch 客户端 API_BASE 指向本地 ──
+# ── Patch 客户端所有远端地址 → 本地 ──
 patch_client_local() {
-  if [ "${LOCAL:-}" = "1" ]; then
-    echo -e "${BOLD}${CYAN}═══ Patch 客户端 → 本地服务端 ═══${NC}"
-    if grep -q 'const API_BASE = "https://bcai.site/remote-token"' "$LEASER_GO"; then
-      cp "$LEASER_GO" "$LEASER_GO.bak"
-      sed -i '' 's|const API_BASE = "https://bcai.site/remote-token"|const API_BASE = "http://127.0.0.1:60700"|' "$LEASER_GO"
-      PATCHED=true
-      echo -e "  ${GREEN}✓${NC} API_BASE → ${CYAN}http://127.0.0.1:60700${NC}"
-      echo -e "  ${DIM}退出时自动恢复原始值${NC}"
-    else
-      echo -e "  ${YELLOW}⚠${NC} leaser.go 中未找到预期的 API_BASE，跳过 patch"
-    fi
-    echo ""
+  echo -e "${BOLD}${CYAN}═══ Patch 客户端 → 本地服务端 ═══${NC}"
+
+  # 1) leaser.go: API_BASE → 本地 remote-token-server
+  if grep -q 'const API_BASE = "https://bcai.site/remote-token"' "$LEASER_GO"; then
+    cp "$LEASER_GO" "$LEASER_GO.bak"
+    sed -i '' 's|const API_BASE = "https://bcai.site/remote-token"|const API_BASE = "http://127.0.0.1:3001/api/remote-token"|' "$LEASER_GO"
+    PATCHED=true
+    echo -e "  ${GREEN}✓${NC} API_BASE → ${CYAN}http://127.0.0.1:3001/api/remote-token${NC}"
+  else
+    echo -e "  ${DIM}✓ leaser.go API_BASE 已是本地地址${NC}"
   fi
+
+  # 2) updater.go: 更新检查 URL → 本地 web 服务
+  local UPDATER_GO="$WAILS_DIR/updater.go"
+  if [ -f "$UPDATER_GO" ] && grep -q 'https://bcai.site/updates' "$UPDATER_GO"; then
+    if [ ! -f "$UPDATER_GO.bak" ]; then
+      cp "$UPDATER_GO" "$UPDATER_GO.bak"
+    fi
+    sed -i '' 's|https://bcai.site/updates|http://127.0.0.1:3000/updates|g' "$UPDATER_GO"
+    echo -e "  ${GREEN}✓${NC} UpdateCheckURL → ${CYAN}http://127.0.0.1:3000/updates${NC}"
+  fi
+
+  # 3) app.go: 公告 API → 本地
+  local APP_GO="$WAILS_DIR/app.go"
+  if [ -f "$APP_GO" ] && grep -q 'https://bcai.site/api/remote-token/announcement' "$APP_GO"; then
+    if [ ! -f "$APP_GO.bak" ]; then
+      cp "$APP_GO" "$APP_GO.bak"
+    fi
+    sed -i '' 's|https://bcai.site/api/remote-token/announcement|http://127.0.0.1:3001/api/remote-token/announcement|g' "$APP_GO"
+    echo -e "  ${GREEN}✓${NC} Announcement API → ${CYAN}本地${NC}"
+  fi
+
+  echo -e "  ${DIM}退出时自动恢复原始值${NC}"
+  echo ""
 }
 
-# ── 启动 NestJS API Server ──
+# ── 恢复所有 patch ──
+restore_patches() {
+  for f in "$LEASER_GO" "$WAILS_DIR/updater.go" "$WAILS_DIR/app.go"; do
+    if [ -f "$f.bak" ]; then
+      mv "$f.bak" "$f"
+    fi
+  done
+}
+
+# 覆盖 cleanup 以恢复所有文件
+cleanup() {
+  echo ""
+  echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
+
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo -e "${DIM}[shutdown] 停止后端服务 (PID $SERVER_PID)${NC}"
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+
+  if [ -n "$CLIENT_PID" ] && kill -0 "$CLIENT_PID" 2>/dev/null; then
+    echo -e "${DIM}[shutdown] 停止 Wails 客户端 (PID $CLIENT_PID)${NC}"
+    kill "$CLIENT_PID" 2>/dev/null || true
+    wait "$CLIENT_PID" 2>/dev/null || true
+  fi
+
+  # 恢复所有被 patch 的文件
+  restore_patches
+
+  # 清理残留端口占用
+  lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
+  lsof -ti :3001 2>/dev/null | xargs kill -9 2>/dev/null || true
+
+  echo -e "${GREEN}[shutdown] 已全部停止${NC}"
+  exit 0
+}
+trap cleanup SIGINT SIGTERM EXIT
+
+# ── 启动后端 (API + Web + Worker) ──
 start_server() {
-  echo -e "${BOLD}${MAGENTA}═══ 启动 NestJS API Server ═══${NC}"
-  echo -e "  ${DIM}端口: 3001${NC}"
-  echo -e "  ${DIM}数据: $DATA_DIR${NC}"
+  echo -e "${BOLD}${MAGENTA}═══ 启动后端服务 (API + Web + Worker) ═══${NC}"
+  echo -e "  ${DIM}API:    http://localhost:3001${NC}"
+  echo -e "  ${DIM}Web:    http://localhost:3000${NC}"
   echo ""
 
+  # 确保环境变量全部指向本地
+  export DATABASE_URL="${DATABASE_URL:-file:./dev.db}"
+  export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
+  export API_PORT="${API_PORT:-3001}"
+  export WEB_PORT="${WEB_PORT:-3000}"
+  export API_BASE_URL="http://127.0.0.1:3001/api"
+  export CORS_ALLOWED_ORIGINS="http://localhost:3000"
+  export CONSOLE_COOKIE_SECURE=""
+  export ADMIN_IP_ALLOWLIST=""
+  export ADMIN_PATH_PREFIX="${ADMIN_PATH_PREFIX:-console}"
   export ROSETTA_DATA_DIR="$DATA_DIR"
-  (cd "$API_DIR" && pnpm dev 2>&1 | while IFS= read -r line; do
-    echo -e "${MAGENTA}[api]${NC} $line"
+
+  (cd "$ROOT" && pnpm dev 2>&1 | while IFS= read -r line; do
+    echo -e "${MAGENTA}[server]${NC} $line"
   done) &
   SERVER_PID=$!
 
-  echo -e "${DIM}[api] 等待启动...${NC}"
+  echo -e "${DIM}[server] 等待 API + Web 启动...${NC}"
   local retries=0
-  while [ $retries -lt 30 ]; do
+  while [ $retries -lt 60 ]; do
     if curl -s http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
-      echo -e "${GREEN}[api] ✓ NestJS API Server 已启动${NC}"
+      echo -e "${GREEN}[server] ✓ 后端服务已启动${NC}"
       echo ""
       return 0
     fi
-    sleep 0.5
+    sleep 1
     retries=$((retries + 1))
   done
 
-  echo -e "${YELLOW}[api] ⚠ 启动超时，但继续运行...${NC}"
+  echo -e "${YELLOW}[server] ⚠ 启动超时，但继续运行...${NC}"
   echo ""
 }
 
-# ── 启动冰茶 AI 客户端 ──
+# ── 启动 Wails 客户端 ──
 start_client() {
   echo -e "${BOLD}${CYAN}═══ 启动冰茶 AI 客户端 (wails dev) ═══${NC}"
-  if [ "${LOCAL:-}" = "1" ]; then
-    echo -e "  ${DIM}模式: 连接本地服务端 (127.0.0.1:60700)${NC}"
-  else
-    echo -e "  ${DIM}模式: 连接远程 bcai.site${NC}"
-  fi
+  echo -e "  ${DIM}模式: 连接本地服务端 (127.0.0.1:3001)${NC}"
   echo ""
 
-  (cd "$WAILS_DIR" && wails dev 2>&1 | while IFS= read -r line; do
+  # 安装前端依赖
+  if [ ! -d "$WAILS_DIR/frontend/node_modules" ]; then
+    echo -e "${DIM}[client] 安装前端依赖...${NC}"
+    (cd "$WAILS_DIR/frontend" && npm install 2>&1 | tail -3)
+  fi
+
+  (cd "$WAILS_DIR" && "$WAILS_BIN" dev 2>&1 | while IFS= read -r line; do
     echo -e "${CYAN}[client]${NC} $line"
   done) &
   CLIENT_PID=$!
@@ -241,25 +321,23 @@ start_client() {
 print_banner() {
   echo -e ""
   echo -e "${GREEN}${BOLD}┌──────────────────────────────────────────────────────────┐${NC}"
-  echo -e "${GREEN}│${NC}${BOLD}  🍵  冰茶 AI 本地开发环境                                ${NC}${GREEN}│${NC}"
+  echo -e "${GREEN}│${NC}${BOLD}  🍵  冰茶 AI 本地开发环境 (全部本地，不连远端)           ${NC}${GREEN}│${NC}"
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
 
   if [ -n "$SERVER_PID" ]; then
-    echo -e "${GREEN}│${NC}  ${DIM}NestJS API Server${NC}     ${CYAN}http://127.0.0.1:3001/api/health${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}Web Console${NC}          ${CYAN}http://localhost:3000/console${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}API Health${NC}           ${CYAN}http://localhost:3001/api/health${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}Remote Token${NC}         ${CYAN}http://localhost:3001/api/remote-token${NC}"
   fi
 
   if [ -n "$CLIENT_PID" ]; then
-    if [ "${LOCAL:-}" = "1" ]; then
-      echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接本地 :60700${NC}"
-    else
-      echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接远程 bcai.site${NC}"
-    fi
+    echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接本地 API (127.0.0.1:3001)${NC}"
   fi
 
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
   echo -e "${GREEN}│${NC}  ${DIM}卡密 (access key)${NC}     ${YELLOW}local-dev${NC}"
   echo -e "${GREEN}│${NC}  ${DIM}数据目录${NC}              ${DIM}$DATA_DIR${NC}"
-  echo -e "${GREEN}│${NC}  ${DIM}Ctrl+C${NC}                ${DIM}停止所有服务${NC}"
+  echo -e "${GREEN}│${NC}  ${DIM}Ctrl+C${NC}                ${DIM}停止所有服务并恢复代码${NC}"
   echo -e "${GREEN}└──────────────────────────────────────────────────────────┘${NC}"
   echo ""
 }
@@ -268,9 +346,9 @@ print_banner() {
 main() {
   local mode="${1:-all}"
 
-  check_prerequisites
+  check_prerequisites "$mode"
   init_data_dir
-  install_api_deps
+  install_deps
 
   case "$mode" in
     server)
@@ -289,7 +367,6 @@ main() {
       start_server
       start_client
       print_banner
-      # 等待任一进程退出
       wait -n "$SERVER_PID" "$CLIENT_PID" 2>/dev/null || wait "$SERVER_PID" 2>/dev/null || true
       ;;
   esac

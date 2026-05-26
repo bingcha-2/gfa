@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import * as bcrypt from "bcrypt";
 import { join } from "path";
@@ -25,7 +26,7 @@ async function bootstrap() {
   app.useStaticAssets(faqImagesDir, { prefix: "/api/faq-images" });
   const port = Number(process.env.API_PORT ?? 3001);
 
-  // S-01: HTTP security headers
+  app.use(cookieParser());
   app.use(helmet());
 
   // S-02: CORS — allow origins from env, comma-separated

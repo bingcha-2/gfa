@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const API_BASE = "http://127.0.0.1:3001/api/remote-token"
+const API_BASE = "https://bcai.site/remote-token"
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 

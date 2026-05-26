@@ -3,9 +3,18 @@ import * as crypto from "crypto";
 import * as os from "os";
 import * as path from "path";
 
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 
 import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit } from "../token-server/token-billing";
+import {
+  type CachedToken,
+  getAccessToken,
+  fetchAccountHealth,
+  fetchAvailableModels,
+  discoverProject,
+  extractTierFromModelsJson,
+  DEFAULT_CLOUD_ENDPOINT,
+} from "./google-api";
 
 type RosettaServiceOptions = {
   dataDir?: string;
@@ -73,8 +82,11 @@ function newAccessKeyValue() {
 @Injectable()
 export class RosettaService {
   private readonly dataDir: string;
+  private readonly logger = new Logger(RosettaService.name);
+  /** In-memory access_token cache: accountId → { accessToken, expiresAt } */
+  private readonly tokenCache = new Map<number, CachedToken>();
 
-  constructor(options: RosettaServiceOptions = {}) {
+  constructor(@Optional() options: RosettaServiceOptions = {}) {
     this.dataDir = options.dataDir || defaultDataDir();
   }
 
@@ -279,5 +291,340 @@ export class RosettaService {
       name: String(key.name || ""),
       status: String(key.status || "active"),
     };
+  }
+
+  // ── Captcha Unblock ──────────────────────────────────────────────
+
+  private get captchaFile() {
+    return path.join(this.dataDir, "captcha-unblock.json");
+  }
+
+  createCaptchaUnblock(payload: any) {
+    const creds = payload?.credentials;
+    if (!creds?.email || !creds?.password) return { ok: false, error: "email and password required" };
+
+    const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
+    const task = {
+      id: `unblock_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`,
+      email: creds.email,
+      password: creds.password,
+      recoveryEmail: creds.recoveryEmail || "",
+      totpSecret: creds.totpSecret || "",
+      phones: payload.phones || [],
+      phase: String(payload.phase || "first"),
+      source: String(payload.source || "captcha-unblock"),
+      status: "PENDING",
+      createdAt: nowIso(),
+      lastErrorMessage: "",
+      lastErrorCode: "",
+      usedPhone: "",
+    };
+    data.tasks.push(task);
+    writeJson(this.captchaFile, data);
+    return { ok: true, taskId: task.id, email: task.email };
+  }
+
+  getCaptchaUnblockStatus() {
+    const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
+    return { ok: true, tasks: data.tasks || [], phase2: data.phase2 || [] };
+  }
+
+  retryCaptchaUnblock(payload: any) {
+    const taskId = String(payload?.taskId || "");
+    const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
+    const task = (data.tasks || []).find((t: any) => t.id === taskId);
+    if (!task) return { ok: false, error: "task not found" };
+    task.status = "PENDING";
+    task.lastErrorMessage = "";
+    task.lastErrorCode = "";
+    writeJson(this.captchaFile, data);
+    return { ok: true, taskId };
+  }
+
+  // ── Location Unblock ─────────────────────────────────────────────
+
+  unblockLocation() {
+    const accountsFile = path.join(this.dataDir, "accounts.json");
+    const data = readJson(accountsFile, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    let unblocked = 0;
+    for (const acc of accounts) {
+      if (acc.quotaStatusReason === "location_unsupported") {
+        delete acc.quotaStatusReason;
+        delete acc.quotaStatus;
+        delete acc.blockedUntil;
+        unblocked++;
+      }
+    }
+    if (unblocked > 0) writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, unblocked };
+  }
+
+  // ── Refresh Credits / Quota ──────────────────────────────────────
+
+  /** Run async tasks with limited concurrency */
+  private async runConcurrent<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {
+    const queue = [...items];
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (item) await fn(item);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  /**
+   * Refresh AI credits (GOOGLE_ONE_AI) + planType for all enabled accounts.
+   * Calls loadCodeAssist API for each account — mirrors token-manager.js:autoFetchPlanTypes().
+   */
+  async refreshCredits() {
+    const filePath = path.join(this.dataDir, "accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const enabled = accounts.filter((a) => a.enabled !== false && a.refreshToken);
+
+    let refreshed = 0;
+    let errors = 0;
+    const results: any[] = [];
+
+    await this.runConcurrent(enabled, 5, async (acc) => {
+      try {
+        // Auto-discover projectId if missing
+        if (!acc.projectId) {
+          await this.tryDiscoverProject(acc);
+        }
+        if (!acc.projectId) {
+          results.push({ id: acc.id, email: acc.email, error: "no projectId" });
+          errors++;
+          return;
+        }
+
+        const token = await getAccessToken(
+          Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+        );
+        const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+
+        // Update credits (nested object — matches getStatus() + frontend)
+        if (health.credits.known) {
+          acc.credits = {
+            known: true,
+            available: health.credits.available,
+            creditAmount: health.credits.creditAmount,
+            minCreditAmount: health.credits.minCreditAmount,
+            paidTierID: health.credits.paidTierID,
+            creditsRefreshedAt: new Date().toISOString(),
+          };
+        }
+
+        // Update planType (detect upgrades)
+        if (health.planType) {
+          const oldPlan = acc.planType || "";
+          if (oldPlan !== health.planType) {
+            this.logger.log(`${acc.email}: plan ${oldPlan || "(empty)"} → ${health.planType}`);
+            acc.planType = health.planType;
+            // Plan upgrade → clear quota blocks
+            if (oldPlan && oldPlan !== health.planType) {
+              delete acc.quotaStatus;
+              delete acc.quotaStatusReason;
+              delete acc.exhaustedAt;
+              delete acc.exhaustedUntil;
+              acc.blockedModels = [];
+              this.logger.log(`${acc.email}: plan upgrade, cleared blocks`);
+            }
+          }
+        }
+
+        refreshed++;
+        results.push({
+          id: acc.id,
+          email: acc.email,
+          planType: acc.planType || "",
+          credits: health.credits,
+        });
+      } catch (err: any) {
+        errors++;
+        this.logger.warn(`refreshCredits ${acc.email}: ${err.message}`);
+        results.push({ id: acc.id, email: acc.email, error: err.message });
+      }
+    });
+
+    // Persist
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+
+    return { ok: true, refreshed, errors, total: enabled.length, accounts: results };
+  }
+
+  /**
+   * Refresh per-model quota (fetchAvailableModels) + credits for all enabled accounts.
+   * Full refresh: Phase 1 discover projects, Phase 2+3 credits + model quota (concurrent).
+   * Mirrors quota-poller.js:pollAll() + token-manager.js:autoFetchPlanTypes().
+   */
+  async refreshQuota() {
+    const accountsFile = path.join(this.dataDir, "accounts.json");
+    const quotaFile = path.join(this.dataDir, "quota-data.json");
+    const data = readJson(accountsFile, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const enabled = accounts.filter((a) => a.enabled !== false && a.refreshToken);
+
+    // Phase 1: Auto-discover projectId for accounts that lack one
+    const needsDiscovery = enabled.filter((a) => !a.projectId);
+    if (needsDiscovery.length > 0) {
+      this.logger.log(`Phase 1: discovering projects for ${needsDiscovery.length} account(s)...`);
+      await this.runConcurrent(needsDiscovery, 3, (acc) => this.tryDiscoverProject(acc));
+    }
+
+    // Re-filter for accounts with projectId
+    const ready = enabled.filter((a) => a.projectId);
+
+    let refreshed = 0;
+    let errors = 0;
+
+    // Load existing quota-data.json
+    const quotaData: Record<string, any> = readJson(quotaFile, {});
+
+    await this.runConcurrent(ready, 5, async (acc) => {
+      try {
+        const token = await getAccessToken(
+          Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+        );
+
+        // Phase 2: Credits + planType via loadCodeAssist
+        const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+        if (health.credits.known) {
+          acc.credits = {
+            known: true,
+            available: health.credits.available,
+            creditAmount: health.credits.creditAmount,
+            minCreditAmount: health.credits.minCreditAmount,
+            paidTierID: health.credits.paidTierID,
+            creditsRefreshedAt: new Date().toISOString(),
+          };
+        }
+        if (health.planType && health.planType !== acc.planType) {
+          acc.planType = health.planType;
+        }
+
+        // Phase 3: Per-model quota via fetchAvailableModels
+        const modelsResult = await fetchAvailableModels(token, acc.projectId);
+        if (modelsResult) {
+          // Detect tier from models response
+          const detectedTier = extractTierFromModelsJson(modelsResult.rawJson);
+          if (detectedTier && detectedTier !== acc.planType) {
+            this.logger.log(`${acc.email}: tier from models: ${acc.planType || "(empty)"} → ${detectedTier}`);
+            acc.planType = detectedTier;
+          }
+
+          // Store per-model quota fractions on the account
+          acc.modelQuotaFractions = {};
+          acc.modelQuotaRefreshedAt = Date.now();
+          for (const [modelKey, info] of Object.entries(modelsResult.models)) {
+            if (info.remainingFraction != null) {
+              acc.modelQuotaFractions[modelKey] = info.remainingFraction;
+            }
+          }
+
+          // Auto-unblock models that now have quota
+          if (Array.isArray(acc.blockedModels)) {
+            acc.blockedModels = acc.blockedModels.filter((bm: any) => {
+              if (bm.reason !== "quota") return true;
+              const modelInfo = modelsResult.models[bm.modelKey];
+              // Keep block if model still has 0 quota
+              return !(modelInfo && modelInfo.remainingFraction != null && modelInfo.remainingFraction > 0);
+            });
+            if (acc.blockedModels.length === 0 && acc.quotaStatus === "exhausted") {
+              acc.quotaStatus = "ok";
+              delete acc.quotaStatusReason;
+              delete acc.exhaustedAt;
+              delete acc.exhaustedUntil;
+            }
+          }
+
+          // Persist to quota-data.json
+          quotaData[acc.email] = {
+            modelsJson: modelsResult.rawJson,
+            refreshedAt: nowIso(),
+            alias: acc.alias || "",
+            planType: acc.planType || "",
+          };
+
+          refreshed++;
+        } else {
+          // fetchAvailableModels failed but credits may have succeeded
+          errors++;
+        }
+      } catch (err: any) {
+        errors++;
+        this.logger.warn(`refreshQuota ${acc.email}: ${err.message}`);
+      }
+    });
+
+    // Persist both files
+    writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
+    writeJson(quotaFile, quotaData);
+
+    return { ok: true, refreshed, errors, total: ready.length };
+  }
+
+  /**
+   * Try to discover projectId for an account via onboardUser API.
+   * Updates the account object in-place if successful.
+   */
+  private async tryDiscoverProject(acc: any): Promise<void> {
+    if (!acc.refreshToken) return;
+    try {
+      const token = await getAccessToken(
+        Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+      );
+      const result = await discoverProject(token);
+      if (result?.projectId) {
+        acc.projectId = result.projectId;
+        acc.projectIdSource = "api";
+        if (result.planType) acc.planType = result.planType;
+        this.logger.log(`Discovered project for ${acc.email}: ${result.projectId}`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`Project discovery failed for ${acc.email}: ${err.message}`);
+    }
+  }
+
+  // ── AdsPower Import ──────────────────────────────────────────────
+
+  private get adspowerFile() {
+    return path.join(this.dataDir, "adspower-import.json");
+  }
+
+  adspowerImport(payload: any) {
+    const credentials = payload?.credentials;
+    if (!Array.isArray(credentials) || !credentials.length) return { ok: false, error: "credentials array required" };
+
+    const batchId = `batch_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+    const batch = {
+      batchId,
+      status: "pending",
+      total: credentials.length,
+      completed: 0,
+      failed: 0,
+      createdAt: nowIso(),
+      accounts: credentials.map((c: any) => ({
+        email: String(c.email || ""),
+        status: "pending",
+        error: "",
+      })),
+    };
+    writeJson(this.adspowerFile, batch);
+    return { ok: true, batchId };
+  }
+
+  adspowerImportStatus(batchId: string) {
+    const data = readJson(this.adspowerFile, null);
+    if (!data || data.batchId !== batchId) return { ok: false, error: "batch not found" };
+    return { ok: true, ...data };
+  }
+
+  adspowerImportHistory() {
+    const data = readJson(this.adspowerFile, null);
+    if (!data) return { ok: true, batchId: null };
+    return { ok: true, batchId: data.batchId, status: data.status };
   }
 }

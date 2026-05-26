@@ -585,7 +585,7 @@ func (a *App) GetAnnouncement() string {
 	client := createHttpClient("")
 	client.Timeout = 5 * time.Second
 
-	resp, err := client.Get("http://127.0.0.1:3001/api/remote-token/announcement")
+	resp, err := client.Get("https://bcai.site/api/remote-token/announcement")
 	if err != nil {
 		return ""
 	}

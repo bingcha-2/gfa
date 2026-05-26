@@ -161,7 +161,8 @@ func isNoiseRequest(path string) bool {
 		strings.Contains(lower, "fetchavailablemodels") ||
 		strings.Contains(lower, "counttokens") ||
 		strings.Contains(lower, "fetchadmincontrols") ||
-		strings.Contains(lower, "recordcodeassistmetrics")
+		strings.Contains(lower, "recordcodeassistmetrics") ||
+		strings.Contains(lower, "/client/metrics")
 }
 
 // isPassthroughRequest 认证相关请求：保留 IDE 原始 OAuth token 直接透传给 Google
@@ -185,7 +186,8 @@ func ideFallbackPayload(path string) (interface{}, bool) {
 		strings.Contains(lower, ":loadcodeassist") ||
 		strings.Contains(lower, "loadcodeassist") ||
 		strings.Contains(lower, "fetchadmincontrols") ||
-		strings.Contains(lower, "recordcodeassistmetrics") {
+		strings.Contains(lower, "recordcodeassistmetrics") ||
+		strings.Contains(lower, "/client/metrics") {
 		return map[string]interface{}{}, true
 	}
 	return nil, false
@@ -593,7 +595,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 
 			problemReason := ""
-			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusInternalServerError {
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusInternalServerError || resp.StatusCode == http.StatusBadRequest {
 				respBytes := readAndResetResponseBody(resp)
 				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, string(respBytes))
 			}
@@ -738,7 +740,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		if resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusForbidden ||
 			resp.StatusCode == http.StatusServiceUnavailable ||
-			resp.StatusCode == http.StatusInternalServerError {
+			resp.StatusCode == http.StatusInternalServerError ||
+			resp.StatusCode == http.StatusBadRequest {
 			respBytes := readAndResetResponseBody(resp)
 			errorBody = string(respBytes)
 			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
@@ -764,20 +767,41 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			ErrorText:    errorBody,
 		}
 
-		// P2⑪: Verification challenge → return friendly 503 instead of raw 403
+		// P2⑪: Verification challenge → report + rotate to another account
+		// (mirrors token-proxy.js L1812-L1822: shouldRetryRemoteError → continue)
 		if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-			Log("[proxy] #%d [VERIFY] Verification challenge detected for accountId=%d, returning 503", reqId, lease.AccountId)
+			Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d, rotating (%d/%d)",
+				reqId, lease.AccountId, attempt, remoteMaxAttempts)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+			excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			resp = nil
+			if attempt < remoteMaxAttempts {
+				atomic.AddInt64(&p.stats.TotalRetries, 1)
+				GetUsageStats().AddRetry()
+				time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
+				continue
+			}
+			// All attempts exhausted — return friendly 503
+			Log("[proxy] #%d [VERIFY] Verification challenge exhausted after %d attempts", reqId, attempt)
 			p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
 		}
 
 		// P1④: Check if this status is retryable per server retryPolicy
-		canRetry := attempt < remoteMaxAttempts
+		// #5: Use statusMaxAttempts to expand retry limit for specific status codes
+		effectiveMaxAttempts := remoteMaxAttempts
+		if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
+			if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
+				effectiveMaxAttempts = statusLimit
+				if effectiveMaxAttempts > 99 {
+					effectiveMaxAttempts = 99
+				}
+			}
+		}
+		canRetry := attempt < effectiveMaxAttempts
 		if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
 			statusRetryable := false
 			for _, s := range lease.RetryPolicy.RetryableStatuses {
@@ -789,6 +813,23 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			if !statusRetryable {
 				canRetry = false
 			}
+		}
+
+		// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
+		// (mirrors token-proxy.js L1744-L1752)
+		if resp.StatusCode == http.StatusTooManyRequests &&
+			retryAfterMs > 0 && retryAfterMs < 5000 &&
+			strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
+			attempt < effectiveMaxAttempts+2 {
+			waitMs := retryAfterMs + 500
+			Log("[proxy] #%d [SHORT-RATELIMIT] 429 RATE_LIMIT_EXCEEDED retryAfter=%dms, waiting %dms and retrying same account=%d",
+				reqId, retryAfterMs, waitMs, lease.AccountId)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			resp = nil
+			time.Sleep(time.Duration(waitMs) * time.Millisecond)
+			// Don't add to excludeAccountIds — retry same account
+			continue
 		}
 
 		// P2⑩: 503 capacity wait — wait and retry instead of immediate rotate
@@ -811,8 +852,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		}
 
 		if canRetry {
+			respStatus := resp.StatusCode
 			Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
-				reqId, resp.StatusCode, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+				reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 			// 将失败的 accountId 加入排除列表，防止异步 report 还没到时又租到同一个号
 			excludeAccountIds = append(excludeAccountIds, lease.AccountId)
@@ -822,7 +864,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			atomic.AddInt64(&p.stats.TotalRetries, 1)
 			GetUsageStats().AddRetry()
 			// P1: Exponential backoff between retries
-			time.Sleep(remoteRetryDelay(attempt))
+			time.Sleep(remoteRetryDelayForStatus(attempt, respStatus))
 			continue
 		}
 
@@ -1074,7 +1116,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 			problemReason := ""
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden ||
-				resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusInternalServerError {
+				resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusInternalServerError ||
+				resp.StatusCode == http.StatusBadRequest {
 				respBytes := readAndResetResponseBody(resp)
 				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, string(respBytes))
 			}
@@ -1181,7 +1224,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			if resp.StatusCode == http.StatusTooManyRequests ||
 				resp.StatusCode == http.StatusForbidden ||
 				resp.StatusCode == http.StatusServiceUnavailable ||
-				resp.StatusCode == http.StatusInternalServerError {
+				resp.StatusCode == http.StatusInternalServerError ||
+				resp.StatusCode == http.StatusBadRequest {
 				respBytes := readAndResetResponseBody(resp)
 				errorBody = string(respBytes)
 				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
@@ -1203,20 +1247,39 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				ErrorText:    errorBody,
 			}
 
-			// Verification challenge → return 503
+			// Verification challenge → report + rotate to another account
 			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d", reqId, lease.AccountId)
+				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d, rotating (%d/%d)",
+					reqId, lease.AccountId, attempt, remoteMaxAttempts)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
+				if attempt < remoteMaxAttempts {
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
+					continue
+				}
+				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge exhausted after %d attempts", reqId, attempt)
 				p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
 			}
 
 			// Check retryability from server policy
-			canRetry := attempt < remoteMaxAttempts
+			// #5: Use statusMaxAttempts to expand retry limit for specific status codes
+			effectiveMaxAttempts := remoteMaxAttempts
+			if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
+				if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
+					effectiveMaxAttempts = statusLimit
+					if effectiveMaxAttempts > 99 {
+						effectiveMaxAttempts = 99
+					}
+				}
+			}
+			canRetry := attempt < effectiveMaxAttempts
 			if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
 				statusRetryable := false
 				for _, s := range lease.RetryPolicy.RetryableStatuses {
@@ -1228,6 +1291,21 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				if !statusRetryable {
 					canRetry = false
 				}
+			}
+
+			// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
+			if resp.StatusCode == http.StatusTooManyRequests &&
+				retryAfterMs > 0 && retryAfterMs < 5000 &&
+				strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
+				attempt < effectiveMaxAttempts+2 {
+				waitMs := retryAfterMs + 500
+				Log("[proxy] #%d [SHORT-RATELIMIT-GEMINI] 429 retryAfter=%dms, waiting %dms, same account=%d",
+					reqId, retryAfterMs, waitMs, lease.AccountId)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				continue
 			}
 
 			// 503 capacity wait — wait and retry instead of immediate rotate
@@ -1250,8 +1328,9 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			}
 
 			if canRetry {
+				respStatus := resp.StatusCode
 				Log("[proxy] #%d Gemini API returned %d (%s) model=%s retryAfter=%dms accountId=%d; rotating (%d/%d)",
-					reqId, resp.StatusCode, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+					reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -1259,7 +1338,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				resp = nil
 				atomic.AddInt64(&p.stats.TotalRetries, 1)
 				GetUsageStats().AddRetry()
-				time.Sleep(remoteRetryDelay(attempt))
+				time.Sleep(remoteRetryDelayForStatus(attempt, respStatus))
 				continue
 			}
 
@@ -1920,6 +1999,12 @@ func cloudCodeAccountProblemReason(statusCode int, body string) string {
 	lowerBody := strings.ToLower(body)
 	googleStatus, googleDetailReason := googleErrorStatusAndReason(body)
 	switch statusCode {
+	case http.StatusBadRequest:
+		// #2: Detect location_unsupported errors (mirrors token-proxy.js L900-908)
+		if isLocationUnsupportedError(lowerBody) {
+			return buildAccountProblemReason(statusCode, "location_unsupported")
+		}
+		return ""
 	case http.StatusTooManyRequests:
 		return buildAccountProblemReason(statusCode, firstNonEmpty(googleStatus, googleDetailReason, "too_many_requests"))
 	case http.StatusForbidden:
@@ -2236,6 +2321,26 @@ func remoteRetryDelay(attempt int) time.Duration {
 	return time.Duration(total) * time.Millisecond
 }
 
+// remoteRetryDelayForStatus returns a status-aware retry delay.
+// Mirrors the extension's remoteStatusDelayMs (token-proxy.js L54-64).
+// 503 gets at least capacityWait (2s), 429 gets at least quotaWait (1s).
+func remoteRetryDelayForStatus(attempt int, statusCode int) time.Duration {
+	baseDelay := remoteRetryDelay(attempt)
+	switch statusCode {
+	case http.StatusServiceUnavailable: // 503
+		const capacityWaitMs = 2000
+		if baseDelay < capacityWaitMs*time.Millisecond {
+			return capacityWaitMs * time.Millisecond
+		}
+	case http.StatusTooManyRequests: // 429
+		const quotaWaitMs = 1000
+		if baseDelay < quotaWaitMs*time.Millisecond {
+			return quotaWaitMs * time.Millisecond
+		}
+	}
+	return baseDelay
+}
+
 // ─── P0: Enhanced Report Details ──────────────────────────────────────────
 
 // ReportDetails contains enriched information for report-result, matching
@@ -2280,4 +2385,14 @@ func isVerificationChallengeError(errorText string) bool {
 		strings.Contains(lower, "validation_error_message") ||
 		strings.Contains(lower, "permission_denied") ||
 		strings.Contains(lower, "al_alert")
+}
+
+// isLocationUnsupportedError detects Google "user location is not supported" errors.
+// Mirrors the extension's isLocationUnsupportedText (token-proxy.js L900-908).
+func isLocationUnsupportedError(lowerBody string) bool {
+	return strings.Contains(lowerBody, "user location is not supported") ||
+		strings.Contains(lowerBody, "location is not supported for the api use") ||
+		(strings.Contains(lowerBody, "failed_precondition") &&
+			strings.Contains(lowerBody, "location") &&
+			strings.Contains(lowerBody, "not supported"))
 }
