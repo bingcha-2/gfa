@@ -1600,9 +1600,17 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			}
 
 			// 只有在非 quota 中断的情况下才转发数据给 IDE
-			_, _ = w.Write(buffer[:n])
+			_, writeErr := w.Write(buffer[:n])
 			if ok {
 				flusher.Flush()
+			}
+			// 下游断开（broken pipe）→ 停止从上游读取，节省 API 配额
+			if writeErr != nil {
+				Log("[proxy] #%d [STREAM] downstream write error, aborting: %v", reqId, writeErr)
+				if closer, cOk := body.(io.Closer); cOk {
+					closer.Close()
+				}
+				break
 			}
 		}
 		if err != nil {
