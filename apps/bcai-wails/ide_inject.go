@@ -197,9 +197,142 @@ func checkSettingsInjected(settingsPath, proxyURL string) bool {
 	return ok && valStr == proxyURL
 }
 
-// detectAntigravityIDEPath 检测 Antigravity IDE 安装路径（优先用户配置）
+// ======================== 智能应用检测 ========================
+
+// registryFindInstallPath 从 Windows 注册表 Uninstall 键查找应用安装路径
+// 搜索 DisplayName 匹配 appName 的条目，返回 InstallLocation 或 exe 路径
+func registryFindInstallPath(appName string) string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	roots := []string{
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
+	}
+	for _, root := range roots {
+		// /s 递归搜索, /f 过滤含 appName 的值, /d 只搜数据
+		out, err := hideCmd("reg", "query", root, "/s", "/f", appName, "/d").Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			subkey := strings.TrimSpace(line)
+			if !strings.HasPrefix(subkey, "HK") {
+				continue
+			}
+			// 校验 DisplayName 确实包含目标名称
+			dn := registryReadValue(subkey, "DisplayName")
+			if dn == "" || !strings.Contains(dn, appName) {
+				continue
+			}
+			// 优先读 InstallLocation
+			if loc := registryReadValue(subkey, "InstallLocation"); loc != "" {
+				if _, err := os.Stat(loc); err == nil {
+					Log("[detect] 从注册表找到 %s: %s", appName, loc)
+					return loc
+				}
+			}
+			// 备选: DisplayIcon 通常包含 exe 路径
+			if icon := registryReadValue(subkey, "DisplayIcon"); icon != "" {
+				icon = strings.Split(icon, ",")[0]
+				if _, err := os.Stat(icon); err == nil {
+					Log("[detect] 从注册表 DisplayIcon 找到 %s: %s", appName, icon)
+					return icon
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// registryReadValue 读取注册表键的 REG_SZ 值
+func registryReadValue(key, valueName string) string {
+	out, err := hideCmd("reg", "query", key, "/v", valueName).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, valueName) && strings.Contains(line, "REG_SZ") {
+			parts := strings.SplitN(line, "REG_SZ", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+// spotlightFindApp 使用 macOS Spotlight 索引按文件名查找 .app
+func spotlightFindApp(appFileName string) string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	out, err := hideCmd("mdfind", fmt.Sprintf(`kMDItemFSName == "%s"`, appFileName)).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ".app") {
+			if _, err := os.Stat(line); err == nil {
+				Log("[detect] Spotlight 找到 %s: %s", appFileName, line)
+				return line
+			}
+		}
+	}
+	return ""
+}
+
+// desktopFindApp 扫描 Linux .desktop 文件查找应用的 Exec 路径
+func desktopFindApp(appName string) string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	dirs := []string{"/usr/share/applications"}
+	if home := os.Getenv("HOME"); home != "" {
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "applications"))
+	}
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".desktop") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			if !strings.Contains(content, appName) {
+				continue
+			}
+			for _, line := range strings.Split(content, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "Exec=") {
+					execPath := strings.TrimPrefix(line, "Exec=")
+					execPath = strings.Fields(execPath)[0]
+					execPath = strings.Trim(execPath, "\"'")
+					if _, err := os.Stat(execPath); err == nil {
+						Log("[detect] .desktop 找到 %s: %s", appName, execPath)
+						return execPath
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ======================== IDE 路径检测 ========================
+
+// detectAntigravityIDEPath 检测 Antigravity IDE 安装路径
+// 优先级: 用户配置 > 注册表/Spotlight/.desktop > 硬编码路径
 func detectAntigravityIDEPath() string {
-	// 优先用户自定义路径
+	// 1. 用户自定义路径
 	cfg := LoadConfig()
 	if cfg.IDEPath != "" {
 		if _, err := os.Stat(cfg.IDEPath); err == nil {
@@ -207,15 +340,33 @@ func detectAntigravityIDEPath() string {
 		}
 	}
 
+	// 2. 智能检测
+	switch runtime.GOOS {
+	case "windows":
+		if loc := registryFindInstallPath("Antigravity IDE"); loc != "" {
+			if strings.HasSuffix(strings.ToLower(loc), ".exe") {
+				return loc
+			}
+			exe := filepath.Join(loc, "Antigravity IDE.exe")
+			if _, err := os.Stat(exe); err == nil {
+				return exe
+			}
+		}
+	case "darwin":
+		if p := spotlightFindApp("Antigravity IDE.app"); p != "" {
+			return p
+		}
+	case "linux":
+		if p := desktopFindApp("Antigravity IDE"); p != "" {
+			return p
+		}
+	}
+
+	// 3. 硬编码路径兜底
 	switch runtime.GOOS {
 	case "darwin":
-		paths := []string{
-			"/Applications/Antigravity IDE.app",
-		}
-		for _, p := range paths {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
+		if _, err := os.Stat("/Applications/Antigravity IDE.app"); err == nil {
+			return "/Applications/Antigravity IDE.app"
 		}
 	case "windows":
 		localAppData := os.Getenv("LOCALAPPDATA")
@@ -254,13 +405,13 @@ func detectAntigravityIDEPath() string {
 
 // ======================== asar 热补丁 ========================
 
-// detectAntigravityHubPath 检测 Antigravity Hub 安装路径（优先用户配置）
+// detectAntigravityHubPath 检测 Antigravity Hub 安装路径
+// 优先级: 用户配置 > 注册表/Spotlight/.desktop > 硬编码路径
 func detectAntigravityHubPath() string {
+	// 1. 用户自定义路径
 	cfg := LoadConfig()
 	if cfg.HubPath != "" {
 		if info, err := os.Stat(cfg.HubPath); err == nil {
-			// 用户可能配置了 exe 路径（如 D:\Antigravity\Antigravity.exe）
-			// getAsarPath 需要目录，所以如果是文件则取其所在目录
 			if !info.IsDir() {
 				return filepath.Dir(cfg.HubPath)
 			}
@@ -268,15 +419,38 @@ func detectAntigravityHubPath() string {
 		}
 	}
 
+	// 2. 智能检测
+	switch runtime.GOOS {
+	case "windows":
+		// 搜索 "Antigravity" 但排除 "Antigravity IDE"
+		if loc := registryFindInstallPath("Antigravity"); loc != "" {
+			if strings.Contains(loc, "Antigravity IDE") {
+				// 跳过 IDE 的条目
+			} else if strings.HasSuffix(strings.ToLower(loc), ".exe") {
+				return filepath.Dir(loc)
+			} else {
+				if _, err := os.Stat(loc); err == nil {
+					return loc
+				}
+			}
+		}
+	case "darwin":
+		if p := spotlightFindApp("Antigravity.app"); p != "" {
+			return p
+		}
+	case "linux":
+		if p := desktopFindApp("Antigravity"); p != "" {
+			if !strings.Contains(p, "antigravity-ide") {
+				return filepath.Dir(p)
+			}
+		}
+	}
+
+	// 3. 硬编码路径兜底
 	switch runtime.GOOS {
 	case "darwin":
-		paths := []string{
-			"/Applications/Antigravity.app",
-		}
-		for _, p := range paths {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
+		if _, err := os.Stat("/Applications/Antigravity.app"); err == nil {
+			return "/Applications/Antigravity.app"
 		}
 	case "windows":
 		localAppData := os.Getenv("LOCALAPPDATA")
@@ -290,7 +464,7 @@ func detectAntigravityHubPath() string {
 				continue
 			}
 			if _, err := os.Stat(p); err == nil {
-				return filepath.Dir(p) // 返回目录（exe 所在目录）
+				return filepath.Dir(p)
 			}
 		}
 	case "linux":
