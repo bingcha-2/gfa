@@ -276,7 +276,6 @@ func spotlightFindApp(appFileName string) string {
 		line = strings.TrimSpace(line)
 		if strings.HasSuffix(line, ".app") {
 			if _, err := os.Stat(line); err == nil {
-				Log("[detect] Spotlight 找到 %s: %s", appFileName, line)
 				return line
 			}
 		}
