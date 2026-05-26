@@ -35,6 +35,25 @@ export interface IDEStatus {
   isLsProxyApplied: boolean
 }
 
+// ===== Quota =====
+export interface QuotaEntry {
+  key: string
+  label: string
+  percent: number
+  isBlocked: boolean
+  resetTime: string
+  provider: string
+}
+
+export interface QuotaGroup {
+  provider: string
+  percent: number
+  resetTime: string
+  modelCount: number
+  blockedCount: number
+  entries: QuotaEntry[]
+}
+
 // ===== Account Pool =====
 export interface AccountInfo {
   id: number
@@ -52,6 +71,16 @@ export interface AccountInfo {
   consecutiveErrors: number
   lastUsedAt?: string
   blockedModels?: Record<string, string>
+  // ── 新增字段 ──
+  isActive: boolean
+  isLocked: boolean
+  successRate: number | null
+  qualityTier: string
+  requestStats: { total: number; successes: number; failures: number }
+  quotaGroups: QuotaGroup[]
+  quotaRefreshedAt?: string
+  accountStatusLabel: string
+  accountStatusTone: string
 }
 
 // ===== Update =====

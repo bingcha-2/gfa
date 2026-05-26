@@ -527,6 +527,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				Log("[proxy] #%d [LOCAL-POOL] Token refresh failed for #%d (%s): %v", reqId, acc.ID, acc.Email, tokenErr)
 				excludeIds = append(excludeIds, acc.ID)
 				pool.MarkError(acc.ID)
+				pool.RecordRequestStats(acc.ID, false)
 				if attempt < MaxCloudCodeGenerationAttempts {
 					continue
 				}
@@ -543,6 +544,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				EmailHint:   acc.Email,
 			}
 			Log("[proxy] #%d [LOCAL-POOL] attempt=%d account=#%d (%s) project=%s", reqId, attempt, acc.ID, acc.Email, acc.ProjectId)
+			pool.SetActiveAccount(acc.ID)
 
 			rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
 			if !hasProject {
@@ -597,6 +599,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 			if problemReason == "" {
 				pool.MarkSuccess(acc.ID)
+				pool.RecordRequestStats(acc.ID, true)
 				break
 			}
 
@@ -611,6 +614,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				}
 			}
 			pool.MarkExhausted(acc.ID, problemReason, requestModelKey, cooldownMin)
+			pool.RecordRequestStats(acc.ID, false)
 			excludeIds = append(excludeIds, acc.ID)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()

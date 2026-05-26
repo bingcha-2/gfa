@@ -117,3 +117,23 @@ export function SetPoolMode(arg1) {
 export function TogglePoolAccount(arg1, arg2) {
   return window['go']['main']['App']['TogglePoolAccount'](arg1, arg2);
 }
+
+export function RefreshPoolQuota() {
+  return window['go']['main']['App']['RefreshPoolQuota']();
+}
+
+export function SwitchPoolAccount(arg1) {
+  return window['go']['main']['App']['SwitchPoolAccount'](arg1);
+}
+
+export function SetAccountAlias(arg1, arg2) {
+  return window['go']['main']['App']['SetAccountAlias'](arg1, arg2);
+}
+
+export function LockPoolAccount(arg1) {
+  return window['go']['main']['App']['LockPoolAccount'](arg1);
+}
+
+export function UnlockPoolAccount() {
+  return window['go']['main']['App']['UnlockPoolAccount']();
+}

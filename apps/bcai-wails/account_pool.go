@@ -34,6 +34,28 @@ const (
 	REFRESH_BUFFER = 5 * time.Minute
 )
 
+// ─── Quota Data Structures ───────────────────────────────────────────────
+
+// QuotaEntry 单个模型的额度信息
+type QuotaEntry struct {
+	Key       string  `json:"key"`       // 模型 key, e.g. "gemini-2.5-pro"
+	Label     string  `json:"label"`     // 显示名
+	Percent   float64 `json:"percent"`   // 剩余百分比 0-100
+	IsBlocked bool    `json:"isBlocked"` // 是否已耗尽
+	ResetTime string  `json:"resetTime"` // 重置时间 (ISO 8601)
+	Provider  string  `json:"provider"`  // "gemini" / "claude" / "gpt" / "other"
+}
+
+// QuotaGroup 按 provider 分组的额度信息
+type QuotaGroup struct {
+	Provider     string       `json:"provider"`     // "gemini" / "claude" / "other"
+	Percent      float64      `json:"percent"`      // 该组整体剩余百分比
+	ResetTime    string       `json:"resetTime"`    // 组级重置时间
+	ModelCount   int          `json:"modelCount"`
+	BlockedCount int          `json:"blockedCount"`
+	Entries      []QuotaEntry `json:"entries"`
+}
+
 // ─── AccountEntry ────────────────────────────────────────────────────────
 
 type AccountEntry struct {
@@ -55,17 +77,28 @@ type AccountEntry struct {
 	lastUsedAt        time.Time
 	consecutiveErrors int
 	blockedModels     map[string]time.Time // modelKey → blockedUntil
+
+	// 额度快照 (运行时，不持久化)
+	quotaGroups      []QuotaGroup // 按 provider 分组的额度信息
+	quotaRefreshedAt time.Time    // 最后一次额度刷新时间
+
+	// 请求统计 (运行时，不持久化)
+	successCount int // 成功请求数
+	failureCount int // 失败请求数
+	isActive     bool // 当前是否正在服务请求
 }
 
 // ─── AccountPool ─────────────────────────────────────────────────────────
 
 type AccountPool struct {
-	mu            sync.RWMutex
-	accounts      map[int]*AccountEntry
-	nextId        int
-	filePath      string
-	httpClient    *http.Client
-	lastRotateIdx int
+	mu              sync.RWMutex
+	accounts        map[int]*AccountEntry
+	nextId          int
+	filePath        string
+	httpClient      *http.Client
+	lastRotateIdx   int
+	activeAccountId int // 当前正在服务的账号 ID
+	lockedAccountId int // 锁定账号 ID，>0 时强制使用该账号（调试模式）
 }
 
 var (
@@ -400,6 +433,17 @@ func (p *AccountPool) SelectAccount(modelKey string, excludeIds []int) (*Account
 	defer p.mu.Unlock()
 
 	now := time.Now()
+
+	// 锁定模式：强制使用锁定账号，不轮换
+	if p.lockedAccountId > 0 {
+		acc, ok := p.accounts[p.lockedAccountId]
+		if !ok || !acc.Enabled {
+			return nil, fmt.Errorf("锁定账号 #%d 不可用", p.lockedAccountId)
+		}
+		acc.lastUsedAt = now
+		return acc, nil
+	}
+
 	excludeSet := make(map[int]bool, len(excludeIds))
 	for _, id := range excludeIds {
 		excludeSet[id] = true
@@ -529,6 +573,22 @@ type AccountInfo struct {
 	ConsecErrors    int               `json:"consecutiveErrors"`
 	LastUsedAt      string            `json:"lastUsedAt,omitempty"`
 	BlockedModels   map[string]string `json:"blockedModels,omitempty"`
+	// ── 新增字段 ──
+	IsActive           bool             `json:"isActive"`
+	SuccessRate        *float64         `json:"successRate"`        // 成功率百分比，nil 表示无数据
+	QualityTier        string           `json:"qualityTier"`        // "excellent"/"good"/"poor"/"bad"/"new"
+	RequestStats       RequestStatsInfo `json:"requestStats"`
+	QuotaGroups        []QuotaGroup     `json:"quotaGroups"`
+	QuotaRefreshedAt   string           `json:"quotaRefreshedAt,omitempty"`
+	AccountStatusLabel string           `json:"accountStatusLabel"` // 状态文本标签
+	AccountStatusTone  string           `json:"accountStatusTone"`  // "success"/"warning"/"danger"/"muted"
+	IsLocked           bool             `json:"isLocked"`           // 是否被锁定（调试模式）
+}
+
+type RequestStatsInfo struct {
+	Total     int `json:"total"`
+	Successes int `json:"successes"`
+	Failures  int `json:"failures"`
 }
 
 func (p *AccountPool) ListAccounts() []AccountInfo {
@@ -552,6 +612,19 @@ func (p *AccountPool) ListAccounts() []AccountInfo {
 			tokenExpiresIn = int(acc.accessTokenExpiry.Sub(now).Seconds())
 		}
 
+		// 计算成功率和质量等级
+		totalReqs := acc.successCount + acc.failureCount
+		var successRate *float64
+		qualityTier := "new"
+		if totalReqs >= 3 {
+			rate := float64(acc.successCount) / float64(totalReqs) * 100
+			successRate = &rate
+			qualityTier = computeQualityTier(rate, totalReqs)
+		}
+
+		// 生成状态标签和色调
+		statusLabel, statusTone := computeAccountStatus(acc, now)
+
 		info := AccountInfo{
 			ID:             acc.ID,
 			Email:          maskEmail(acc.Email),
@@ -565,8 +638,20 @@ func (p *AccountPool) ListAccounts() []AccountInfo {
 			QuotaStatus:    acc.quotaStatus,
 			QuotaReason:    acc.quotaReason,
 			ConsecErrors:   acc.consecutiveErrors,
+			// 新增字段
+			IsActive:           acc.isActive,
+			SuccessRate:        successRate,
+			QualityTier:        qualityTier,
+			RequestStats:       RequestStatsInfo{Total: totalReqs, Successes: acc.successCount, Failures: acc.failureCount},
+			QuotaGroups:        acc.quotaGroups,
+			AccountStatusLabel: statusLabel,
+			AccountStatusTone:  statusTone,
+			IsLocked:           p.lockedAccountId == acc.ID,
 		}
 
+		if !acc.quotaRefreshedAt.IsZero() {
+			info.QuotaRefreshedAt = acc.quotaRefreshedAt.Format(time.RFC3339)
+		}
 		if acc.quotaStatus == "exhausted" && acc.exhaustedUntil.After(now) {
 			info.ExhaustedUntil = acc.exhaustedUntil.Format(time.RFC3339)
 		}
@@ -617,12 +702,347 @@ func (p *AccountPool) GetPoolStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total":     total,
-		"enabled":   enabled,
-		"available": available,
-		"exhausted": exhausted,
-		"withToken": withToken,
+		"total":           total,
+		"enabled":         enabled,
+		"available":       available,
+		"exhausted":       exhausted,
+		"withToken":       withToken,
+		"lockedAccountId": p.lockedAccountId,
 	}
+}
+
+// ─── Quality / Status Helpers ────────────────────────────────────────────
+
+// computeQualityTier 根据成功率和请求量计算质量等级
+func computeQualityTier(successRate float64, totalReqs int) string {
+	if totalReqs < 3 {
+		return "new"
+	}
+	switch {
+	case successRate >= 90:
+		return "excellent"
+	case successRate >= 70:
+		return "good"
+	case successRate >= 40:
+		return "poor"
+	default:
+		return "bad"
+	}
+}
+
+// computeAccountStatus 生成账号的状态文本标签和色调
+func computeAccountStatus(acc *AccountEntry, now time.Time) (label string, tone string) {
+	if !acc.Enabled {
+		return "已禁用", "muted"
+	}
+	if acc.consecutiveErrors >= 5 {
+		return "连续错误", "danger"
+	}
+	if acc.quotaStatus == "exhausted" && acc.exhaustedUntil.After(now) {
+		remaining := acc.exhaustedUntil.Sub(now)
+		mins := int(remaining.Minutes())
+		if mins > 60 {
+			return fmt.Sprintf("冷却 %dh%dm", mins/60, mins%60), "warning"
+		}
+		return fmt.Sprintf("冷却 %dm", mins), "warning"
+	}
+	// 检查模型级封锁
+	blockedCount := 0
+	for _, until := range acc.blockedModels {
+		if until.After(now) {
+			blockedCount++
+		}
+	}
+	if blockedCount > 0 {
+		return fmt.Sprintf("%d 模型受限", blockedCount), "warning"
+	}
+	if acc.isActive {
+		return "使用中", "success"
+	}
+	if acc.accessToken != "" && acc.accessTokenExpiry.After(now) {
+		return "就绪", "success"
+	}
+	return "待激活", "muted"
+}
+
+// RecordRequestStats 记录一次请求的成功/失败
+func (p *AccountPool) RecordRequestStats(accountId int, success bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	acc, ok := p.accounts[accountId]
+	if !ok {
+		return
+	}
+	if success {
+		acc.successCount++
+	} else {
+		acc.failureCount++
+	}
+}
+
+// SetActiveAccount 标记当前活跃账号
+func (p *AccountPool) SetActiveAccount(accountId int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// 先清除旧的活跃标记
+	for _, acc := range p.accounts {
+		acc.isActive = false
+	}
+	if acc, ok := p.accounts[accountId]; ok {
+		acc.isActive = true
+	}
+	p.activeAccountId = accountId
+}
+
+// SetAccountAlias 设置账号别名
+func (p *AccountPool) SetAccountAlias(accountId int, alias string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	acc, ok := p.accounts[accountId]
+	if !ok {
+		return fmt.Errorf("account %d not found", accountId)
+	}
+	acc.Alias = strings.TrimSpace(alias)
+	go p.SaveAccounts()
+	return nil
+}
+
+// LockAccount 锁定账号（调试模式），后续所有请求都使用该账号
+func (p *AccountPool) LockAccount(accountId int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	acc, ok := p.accounts[accountId]
+	if !ok {
+		return fmt.Errorf("account %d not found", accountId)
+	}
+	if !acc.Enabled {
+		return fmt.Errorf("account %d is disabled", accountId)
+	}
+	p.lockedAccountId = accountId
+	Log("[account-pool] Locked account #%d (%s) — debug mode ON", accountId, acc.Email)
+	return nil
+}
+
+// UnlockAccount 解除锁定，恢复自动轮换
+func (p *AccountPool) UnlockAccount() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.lockedAccountId > 0 {
+		Log("[account-pool] Unlocked account #%d — debug mode OFF", p.lockedAccountId)
+		p.lockedAccountId = 0
+	}
+}
+
+// GetLockedAccountId 获取当前锁定的账号 ID（0 = 未锁定）
+func (p *AccountPool) GetLockedAccountId() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.lockedAccountId
+}
+
+// ─── Quota Refresh (主动采集) ────────────────────────────────────────────
+
+// RefreshAllQuotas 对所有启用且有 projectId 的账号刷新额度快照
+func (p *AccountPool) RefreshAllQuotas() int {
+	p.mu.RLock()
+	var targets []*AccountEntry
+	for _, acc := range p.accounts {
+		if acc.Enabled && acc.ProjectId != "" {
+			targets = append(targets, acc)
+		}
+	}
+	p.mu.RUnlock()
+
+	updated := 0
+	for _, acc := range targets {
+		if err := p.refreshAccountQuota(acc); err != nil {
+			Log("[quota-refresh] %s: %v", acc.Email, err)
+		} else {
+			updated++
+		}
+		time.Sleep(500 * time.Millisecond) // 错开请求避免并发
+	}
+	if updated > 0 {
+		Log("[quota-refresh] %d/%d accounts updated", updated, len(targets))
+	}
+	return updated
+}
+
+// refreshAccountQuota 对单个账号调用 fetchAvailableModels 获取额度快照
+func (p *AccountPool) refreshAccountQuota(acc *AccountEntry) error {
+	// 刷新 access token
+	token, err := p.GetAccessToken(acc.ID)
+	if err != nil {
+		return fmt.Errorf("token refresh: %w", err)
+	}
+	if acc.ProjectId == "" {
+		return fmt.Errorf("no projectId")
+	}
+
+	// 调用 fetchAvailableModels API
+	reqBody, _ := json.Marshal(map[string]string{"project": acc.ProjectId})
+	apiUrl := DefaultCloudEndpoint + "/v1internal:fetchAvailableModels"
+	req, err := http.NewRequest("POST", apiUrl, io.NopCloser(strings.NewReader(string(reqBody))))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "google-antigravity-ls/1.26.0")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("API request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// 解析模型列表并生成额度分组
+	groups := parseModelsResponse(body)
+
+	p.mu.Lock()
+	if entry, ok := p.accounts[acc.ID]; ok {
+		entry.quotaGroups = groups
+		entry.quotaRefreshedAt = time.Now()
+	}
+	p.mu.Unlock()
+
+	return nil
+}
+
+// parseModelsResponse 解析 fetchAvailableModels 的响应，提取模型额度信息
+func parseModelsResponse(body []byte) []QuotaGroup {
+	var resp struct {
+		Models []struct {
+			ModelName    string `json:"modelName"`
+			DisplayName string `json:"displayName"`
+			// 额度相关字段
+			QuotaStatus struct {
+				RemainingPercent float64 `json:"remainingPercent"` // 0-100
+				IsBlocked        bool    `json:"isBlocked"`
+				ResetTime        string  `json:"resetTime"`
+			} `json:"quotaStatus"`
+			// 有些 API 返回的是 rateLimits
+			RateLimits []struct {
+				Key             string  `json:"key"`
+				Remaining       float64 `json:"remaining"`
+				Limit           float64 `json:"limit"`
+				ResetTime       string  `json:"resetTime"`
+			} `json:"rateLimits"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		// 尝试宽松解析：只提取 models 数组
+		var loose map[string]interface{}
+		if json.Unmarshal(body, &loose) != nil {
+			return nil
+		}
+		// 如果有 models 字段但格式不匹配，返回空
+		return nil
+	}
+
+	if len(resp.Models) == 0 {
+		return nil
+	}
+
+	// 按 provider 分组
+	providerEntries := make(map[string][]QuotaEntry)
+	for _, m := range resp.Models {
+		provider := classifyProvider(m.ModelName)
+		percent := m.QuotaStatus.RemainingPercent
+		isBlocked := m.QuotaStatus.IsBlocked
+		resetTime := m.QuotaStatus.ResetTime
+
+		// 如果 quotaStatus 没有数据，尝试从 rateLimits 推断
+		if percent == 0 && !isBlocked && len(m.RateLimits) > 0 {
+			limit := m.RateLimits[0]
+			if limit.Limit > 0 {
+				percent = (limit.Remaining / limit.Limit) * 100
+			}
+			if limit.Remaining <= 0 {
+				isBlocked = true
+			}
+			resetTime = limit.ResetTime
+		}
+
+		entry := QuotaEntry{
+			Key:       m.ModelName,
+			Label:     m.DisplayName,
+			Percent:   percent,
+			IsBlocked: isBlocked,
+			ResetTime: resetTime,
+			Provider:  provider,
+		}
+		if entry.Label == "" {
+			entry.Label = m.ModelName
+		}
+		providerEntries[provider] = append(providerEntries[provider], entry)
+	}
+
+	// 构建 QuotaGroup
+	var groups []QuotaGroup
+	providerOrder := []string{"gemini", "claude", "gpt", "other"}
+	for _, prov := range providerOrder {
+		entries, ok := providerEntries[prov]
+		if !ok {
+			continue
+		}
+		blocked := 0
+		totalPercent := 0.0
+		var groupResetTime string
+		for _, e := range entries {
+			if e.IsBlocked {
+				blocked++
+			}
+			totalPercent += e.Percent
+			if e.ResetTime != "" && groupResetTime == "" {
+				groupResetTime = e.ResetTime
+			}
+		}
+		avgPercent := totalPercent / float64(len(entries))
+
+		groups = append(groups, QuotaGroup{
+			Provider:     prov,
+			Percent:      avgPercent,
+			ResetTime:    groupResetTime,
+			ModelCount:   len(entries),
+			BlockedCount: blocked,
+			Entries:      entries,
+		})
+	}
+
+	return groups
+}
+
+// classifyProvider 将模型名分类为 gemini/claude/gpt/other
+func classifyProvider(modelName string) string {
+	lower := strings.ToLower(modelName)
+	if strings.Contains(lower, "gemini") || strings.Contains(lower, "pro") || strings.Contains(lower, "flash") {
+		return "gemini"
+	}
+	if strings.Contains(lower, "claude") || strings.Contains(lower, "opus") || strings.Contains(lower, "sonnet") {
+		return "claude"
+	}
+	if strings.Contains(lower, "gpt") || strings.Contains(lower, "o3") || strings.Contains(lower, "o4") {
+		return "gpt"
+	}
+	return "other"
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────

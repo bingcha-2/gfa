@@ -564,3 +564,61 @@ func (a *App) GetAnnouncement() string {
 	text := strings.TrimSpace(string(body[:n]))
 	return text
 }
+
+// ─── Pool Quota Management ──────────────────────────────────────────────
+
+// RefreshPoolQuota 手动刷新号池额度（对每个账号调用 Google fetchAvailableModels）
+func (a *App) RefreshPoolQuota() map[string]interface{} {
+	pool := GetAccountPool()
+	refreshed := pool.RefreshAllQuotas()
+	return map[string]interface{}{
+		"success":   true,
+		"refreshed": refreshed,
+	}
+}
+
+// SwitchPoolAccount 手动切换到指定账号
+func (a *App) SwitchPoolAccount(id int) map[string]interface{} {
+	pool := GetAccountPool()
+	pool.SetActiveAccount(id)
+	return map[string]interface{}{
+		"success": true,
+	}
+}
+
+// SetAccountAlias 设置账号别名
+func (a *App) SetAccountAlias(id int, alias string) map[string]interface{} {
+	pool := GetAccountPool()
+	if err := pool.SetAccountAlias(id, alias); err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		}
+	}
+	return map[string]interface{}{
+		"success": true,
+	}
+}
+
+// LockPoolAccount 锁定账号（调试模式），所有请求都使用该账号
+func (a *App) LockPoolAccount(id int) map[string]interface{} {
+	pool := GetAccountPool()
+	if err := pool.LockAccount(id); err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		}
+	}
+	return map[string]interface{}{
+		"success": true,
+	}
+}
+
+// UnlockPoolAccount 解除锁定，恢复自动轮换
+func (a *App) UnlockPoolAccount() map[string]interface{} {
+	pool := GetAccountPool()
+	pool.UnlockAccount()
+	return map[string]interface{}{
+		"success": true,
+	}
+}
