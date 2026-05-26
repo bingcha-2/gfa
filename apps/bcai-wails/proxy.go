@@ -1503,9 +1503,10 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	const streamGracePeriod = 30 * time.Second         // 30s per grace extension
 	streamMaxIdle := 5 * time.Minute                   // default max idle
 
-	streamHasData := false
-	lastDataAt := time.Now()
-	streamTimedOut := false
+	var streamHasData atomic.Bool
+	var lastDataNano atomic.Int64
+	lastDataNano.Store(time.Now().UnixNano())
+	var streamTimedOut atomic.Bool
 
 	// Timer goroutine
 	done := make(chan struct{})
@@ -1517,8 +1518,8 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 		case <-done:
 			return
 		case <-firstTimeout:
-			if !streamHasData {
-				streamTimedOut = true
+			if !streamHasData.Load() {
+				streamTimedOut.Store(true)
 				Log("[proxy] #%d [STREAM-TIMEOUT] First byte timeout (%ds)", reqId, int(streamFirstByteTimeout.Seconds()))
 				if closer, ok := body.(io.Closer); ok {
 					closer.Close()
@@ -1535,9 +1536,9 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			case <-done:
 				return
 			case <-ticker.C:
-				idleDuration := time.Since(lastDataAt)
+				idleDuration := time.Since(time.Unix(0, lastDataNano.Load()))
 				if idleDuration >= streamMaxIdle {
-					streamTimedOut = true
+					streamTimedOut.Store(true)
 					Log("[proxy] #%d [STREAM-TIMEOUT] Max idle %ds exceeded", reqId, int(idleDuration.Seconds()))
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
@@ -1545,7 +1546,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					return
 				}
 				// Send SSE keepalive comment
-				if ok && !streamTimedOut {
+				if ok && !streamTimedOut.Load() {
 					_, writeErr := w.Write([]byte(fmt.Sprintf(": bcai-keepalive %d\n\n", time.Now().UnixMilli())))
 					if writeErr == nil {
 						flusher.Flush()
@@ -1562,8 +1563,8 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 		if n > 0 {
 			totalStreamBytes += int64(n)
 			_, _ = fullResponse.Write(buffer[:n])
-			streamHasData = true
-			lastDataAt = time.Now()
+			streamHasData.Store(true)
+			lastDataNano.Store(time.Now().UnixNano())
 
 			// 更新滑动窗口（用于跨 chunk 检测）
 			recentWindow.Write(buffer[:n])
@@ -1605,7 +1606,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			}
 		}
 		if err != nil {
-			if err != io.EOF && !streamTimedOut {
+			if err != io.EOF && !streamTimedOut.Load() {
 				Log("[proxy] #%d Stream read error: %v", reqId, err)
 			}
 			break
