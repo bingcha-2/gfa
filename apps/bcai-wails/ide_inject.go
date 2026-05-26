@@ -587,6 +587,43 @@ func readAsarJS(asarData []byte) (jsContent string, headerPickleSize uint32, dat
 // 采用两种策略：
 // 1. 替换 args 数组中的 --api_server_url / --cloud_code_endpoint URL
 // 2. 注入/替换 env['CLOUD_CODE_URL'] 环境变量
+// ensureAsarWritable 确保 macOS 上 app 包内的 asar 文件可写
+// 分层尝试: xattr -cr（免密）→ osascript 提权（弹密码框）
+func ensureAsarWritable(appPath string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	// 第一层: 移除隔离属性（大多数情况下足够，不需要密码）
+	Log("[ide-inject] 正在移除 macOS 隔离属性: %s", appPath)
+	_ = hideCmd("xattr", "-cr", appPath).Run()
+	_ = hideCmd("chmod", "-R", "u+w", filepath.Join(appPath, "Contents", "Resources")).Run()
+
+	// 测试写入权限
+	testFile := filepath.Join(appPath, "Contents", "Resources", ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
+		os.Remove(testFile)
+		Log("[ide-inject] 隔离属性移除成功，已获得写入权限")
+		return nil
+	}
+
+	// 第二层: osascript 提权（弹出系统密码框）
+	Log("[ide-inject] 需要管理员权限，正在请求授权...")
+	script := fmt.Sprintf(`do shell script "xattr -cr '%s' && chmod -R u+w '%s/Contents/Resources'" with administrator privileges`, appPath, appPath)
+	if err := hideCmd("osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("获取写入权限失败（用户可能取消了授权）: %w", err)
+	}
+
+	// 再次测试
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
+		os.Remove(testFile)
+		Log("[ide-inject] 管理员授权成功，已获得写入权限")
+		return nil
+	}
+
+	return fmt.Errorf("即使提权后仍无法写入 app 包，可能受 SIP 保护")
+}
+
 func PatchAsar(proxyPort int) error {
 	ideInjectMu.Lock()
 	defer ideInjectMu.Unlock()
@@ -607,6 +644,13 @@ func PatchAsar(proxyPort int) error {
 	asarData, err := os.ReadFile(asarPath)
 	if err != nil {
 		return fmt.Errorf("读取 asar 失败: %w", err)
+	}
+
+	// macOS: 预检写入权限，必要时移除隔离属性或提权
+	if runtime.GOOS == "darwin" {
+		if err := ensureAsarWritable(hubPath); err != nil {
+			return fmt.Errorf("无法获取 asar 写入权限: %w", err)
+		}
 	}
 
 	jsContent, headerPickleSize, dataOffset, absoluteOffset, fileSize, header, lsMap, err := readAsarJS(asarData)
