@@ -211,7 +211,6 @@ func detectAntigravityIDEPath() string {
 	case "darwin":
 		paths := []string{
 			"/Applications/Antigravity IDE.app",
-			"/Applications/Kiro.app",
 		}
 		for _, p := range paths {
 			if _, err := os.Stat(p); err == nil {
@@ -224,9 +223,7 @@ func detectAntigravityIDEPath() string {
 		userProfile := os.Getenv("USERPROFILE")
 		paths := []string{
 			filepath.Join(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe"),
-			filepath.Join(localAppData, "Programs", "Kiro", "Kiro.exe"),
 			filepath.Join(programFiles, "Antigravity IDE", "Antigravity IDE.exe"),
-			filepath.Join(programFiles, "Kiro", "Kiro.exe"),
 			filepath.Join(userProfile, "AppData", "Local", "Programs", "Antigravity IDE", "Antigravity IDE.exe"),
 		}
 		for _, p := range paths {
@@ -240,7 +237,6 @@ func detectAntigravityIDEPath() string {
 	case "linux":
 		paths := []string{
 			"/usr/share/antigravity-ide/antigravity-ide",
-			"/usr/share/kiro/kiro",
 			"/opt/Antigravity IDE/antigravity-ide",
 		}
 		home := os.Getenv("HOME")
@@ -262,7 +258,12 @@ func detectAntigravityIDEPath() string {
 func detectAntigravityHubPath() string {
 	cfg := LoadConfig()
 	if cfg.HubPath != "" {
-		if _, err := os.Stat(cfg.HubPath); err == nil {
+		if info, err := os.Stat(cfg.HubPath); err == nil {
+			// 用户可能配置了 exe 路径（如 D:\Antigravity\Antigravity.exe）
+			// getAsarPath 需要目录，所以如果是文件则取其所在目录
+			if !info.IsDir() {
+				return filepath.Dir(cfg.HubPath)
+			}
 			return cfg.HubPath
 		}
 	}
@@ -837,7 +838,6 @@ func KillAndRestartIDE() error {
 		time.Sleep(2 * time.Second)
 	case "linux":
 		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
-		_ = hideCmd("pkill", "-f", "kiro").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -889,7 +889,6 @@ func ForceRestartIDE() error {
 		}
 	case "linux":
 		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
-		_ = hideCmd("pkill", "-f", "kiro").Run()
 		time.Sleep(2 * time.Second)
 	}
 
@@ -1002,7 +1001,7 @@ func IsIDERunning() bool {
 		}
 		return !strings.Contains(string(out), "No tasks")
 	case "linux":
-		out, err := hideCmd("pgrep", "-f", "antigravity-ide|kiro").Output()
+		out, err := hideCmd("pgrep", "-f", "antigravity-ide").Output()
 		if err != nil {
 			return false
 		}
