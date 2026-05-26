@@ -344,10 +344,12 @@ func detectAntigravityIDEPath() string {
 	case "windows":
 		if loc := registryFindInstallPath("Antigravity IDE"); loc != "" {
 			if strings.HasSuffix(strings.ToLower(loc), ".exe") {
-				return loc
+				if info, err := os.Stat(loc); err == nil && !info.IsDir() {
+					return loc
+				}
 			}
 			exe := filepath.Join(loc, "Antigravity IDE.exe")
-			if _, err := os.Stat(exe); err == nil {
+			if info, err := os.Stat(exe); err == nil && !info.IsDir() {
 				return exe
 			}
 		}
@@ -380,7 +382,7 @@ func detectAntigravityIDEPath() string {
 			if p == "" {
 				continue
 			}
-			if _, err := os.Stat(p); err == nil {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
 				return p
 			}
 		}
@@ -1006,8 +1008,8 @@ func KillAndRestartIDE() error {
 			waitForProcessExit(IsIDERunning, 2*time.Second)
 		}
 	case "windows":
-		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
-		_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T", "/F").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T", "/F").Run()
 		time.Sleep(2 * time.Second)
 	case "linux":
 		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
@@ -1043,11 +1045,11 @@ func ForceRestartIDE() error {
 	// 2. 优雅关闭 IDE 主进程
 	switch runtime.GOOS {
 	case "windows":
-		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe").Run() // 不带 /F = WM_CLOSE
+		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T").Run() // /T 杀进程树, 不带 /F = WM_CLOSE
 		Log("[ide-inject] [FORCE] 已发送优雅关闭请求")
 		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
-			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
-			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/T", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T", "/F").Run()
 			Log("[ide-inject] [FORCE] IDE 未响应，已强杀")
 			waitForProcessExit(IsIDERunning, 2*time.Second)
 		}
@@ -1142,9 +1144,9 @@ func killHubForPatch() {
 		}
 	case "windows":
 		// 优雅关闭
-		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run()
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T").Run()
 		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
-			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T", "/F").Run()
 			Log("[ide-inject] [PATCH] Hub 未响应优雅关闭，已强杀")
 			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
@@ -1181,11 +1183,11 @@ func KillAndRestartHub() error {
 			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
 	case "windows":
-		// 先优雅关闭（WM_CLOSE），让应用保存数据（与 timo 行为一致）
-		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run() // 不带 /F = WM_CLOSE
+		// 先优雅关闭（WM_CLOSE），让应用保存数据
+		_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T").Run()
 		Log("[ide-inject] 已发送优雅关闭请求 (WM_CLOSE)")
 		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
-			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
+			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/T", "/F").Run()
 			Log("[ide-inject] Hub 未响应优雅关闭，已强杀")
 			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
