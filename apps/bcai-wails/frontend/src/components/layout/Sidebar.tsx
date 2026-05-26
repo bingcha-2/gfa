@@ -3,6 +3,7 @@ import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
 import type { PageId } from '@/types'
+import bcaiIcon from '@/assets/images/bcai-icon.png'
 
 const SIDEBAR_EXPANDED = 200
 const SIDEBAR_COLLAPSED = 88
@@ -54,7 +55,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
             className="flex items-center gap-2.5"
             style={{ '--wails-draggable': 'no-drag' } as React.CSSProperties}
           >
-            <img src="/src/assets/images/bcai-icon.png" alt="冰茶AI" className="w-10 h-10 rounded-xl shadow-sm" />
+            <img src={bcaiIcon} alt="冰茶AI" className="w-10 h-10 rounded-xl shadow-sm" />
             {!collapsed && (
               <span className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight select-none">冰茶AI</span>
             )}
