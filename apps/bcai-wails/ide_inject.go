@@ -228,7 +228,6 @@ func registryFindInstallPath(appName string) string {
 			// 优先读 InstallLocation
 			if loc := registryReadValue(subkey, "InstallLocation"); loc != "" {
 				if _, err := os.Stat(loc); err == nil {
-					Log("[detect] 从注册表找到 %s: %s", appName, loc)
 					return loc
 				}
 			}
@@ -236,7 +235,6 @@ func registryFindInstallPath(appName string) string {
 			if icon := registryReadValue(subkey, "DisplayIcon"); icon != "" {
 				icon = strings.Split(icon, ",")[0]
 				if _, err := os.Stat(icon); err == nil {
-					Log("[detect] 从注册表 DisplayIcon 找到 %s: %s", appName, icon)
 					return icon
 				}
 			}

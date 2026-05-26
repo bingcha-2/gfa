@@ -195,6 +195,15 @@ function AccountCard({ acc, isExpanded, onToggleExpand }: {
             {acc.planType && (
               <Badge variant="muted" className="text-[9px] h-4 px-1">{acc.planType}</Badge>
             )}
+            {/* Credits badge */}
+            {acc.credits?.known && (
+              <Badge
+                variant={acc.credits.available ? 'success' : 'danger'}
+                className="text-[9px] h-4 px-1"
+              >
+                积分 {Math.round(acc.credits.creditAmount)}
+              </Badge>
+            )}
             {/* Active badge */}
             {acc.isActive && (
               <Badge className="text-[9px] h-4 px-1 bg-[var(--success)] text-white">使用中</Badge>

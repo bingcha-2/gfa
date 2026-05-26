@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,9 +84,16 @@ type AccountEntry struct {
 	quotaRefreshedAt time.Time    // 最后一次额度刷新时间
 
 	// 请求统计 (运行时，不持久化)
-	successCount int // 成功请求数
-	failureCount int // 失败请求数
+	successCount int  // 成功请求数
+	failureCount int  // 失败请求数
 	isActive     bool // 当前是否正在服务请求
+
+	// AI 积分 (运行时，不持久化)
+	creditsKnown     bool    // 是否已获取积分信息
+	creditsAvailable bool    // 积分是否可用
+	creditAmount     float64 // 当前积分余额
+	minCreditAmount  float64 // 最低使用积分
+	paidTierID       string  // 付费套餐 ID
 }
 
 // ─── AccountPool ─────────────────────────────────────────────────────────
@@ -583,6 +591,15 @@ type AccountInfo struct {
 	AccountStatusLabel string           `json:"accountStatusLabel"` // 状态文本标签
 	AccountStatusTone  string           `json:"accountStatusTone"`  // "success"/"warning"/"danger"/"muted"
 	IsLocked           bool             `json:"isLocked"`           // 是否被锁定（调试模式）
+	Credits            *CreditsInfo     `json:"credits"`            // AI 积分信息
+}
+
+type CreditsInfo struct {
+	Known           bool    `json:"known"`           // 是否已获取
+	Available       bool    `json:"available"`       // 是否可用
+	CreditAmount    float64 `json:"creditAmount"`    // 当前余额
+	MinCreditAmount float64 `json:"minCreditAmount"` // 最低使用量
+	PaidTierID      string  `json:"paidTierID"`      // 付费套餐 ID
 }
 
 type RequestStatsInfo struct {
@@ -647,6 +664,17 @@ func (p *AccountPool) ListAccounts() []AccountInfo {
 			AccountStatusLabel: statusLabel,
 			AccountStatusTone:  statusTone,
 			IsLocked:           p.lockedAccountId == acc.ID,
+		}
+
+		// 积分信息
+		if acc.creditsKnown {
+			info.Credits = &CreditsInfo{
+				Known:           true,
+				Available:       acc.creditsAvailable,
+				CreditAmount:    acc.creditAmount,
+				MinCreditAmount: acc.minCreditAmount,
+				PaidTierID:      acc.paidTierID,
+			}
 		}
 
 		if !acc.quotaRefreshedAt.IsZero() {
@@ -866,6 +894,11 @@ func (p *AccountPool) RefreshAllQuotas() int {
 			Log("[quota-refresh] %s: discovered projectId: %s", acc.Email, acc.ProjectId)
 		}
 
+		// 获取套餐和积分信息
+		if err := p.fetchAccountHealth(acc); err != nil {
+			Log("[quota-refresh] %s: health fetch failed: %v", acc.Email, err)
+		}
+
 		if err := p.refreshAccountQuota(acc); err != nil {
 			Log("[quota-refresh] %s: %v", acc.Email, err)
 		} else {
@@ -877,6 +910,147 @@ func (p *AccountPool) RefreshAllQuotas() int {
 		Log("[quota-refresh] %d/%d accounts updated", updated, len(targets))
 	}
 	return updated
+}
+
+// fetchAccountHealth 通过 loadCodeAssist API 获取账号健康信息（套餐 + 积分）
+// 对应插件中的 fetchAccountHealth 逻辑
+func (p *AccountPool) fetchAccountHealth(acc *AccountEntry) error {
+	token, err := p.GetAccessToken(acc.ID)
+	if err != nil {
+		return fmt.Errorf("token refresh: %w", err)
+	}
+
+	// 调用 loadCodeAssist API
+	payload, _ := json.Marshal(map[string]interface{}{
+		"metadata": map[string]string{
+			"ideType": "ANTIGRAVITY",
+		},
+	})
+
+	apiUrl := DefaultCloudEndpoint + "/v1internal:loadCodeAssist"
+	req, err := http.NewRequest("POST", apiUrl, strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "google-antigravity-ls/1.26.0")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("loadCodeAssist request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("loadCodeAssist HTTP %d", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return fmt.Errorf("parse loadCodeAssist: %w", err)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	entry, ok := p.accounts[acc.ID]
+	if !ok {
+		return nil
+	}
+
+	// ── 提取套餐类型 ──
+	planType := ""
+	if pt, ok := data["paidTier"].(map[string]interface{}); ok {
+		raw := ""
+		if name, ok := pt["name"].(string); ok && name != "" {
+			raw = name
+		} else if id, ok := pt["id"].(string); ok && id != "" {
+			raw = id
+		}
+		lower := strings.ToLower(raw)
+		switch {
+		case strings.Contains(lower, "ultra"):
+			planType = "ultra"
+		case strings.Contains(lower, "premium") || strings.Contains(lower, "ai pro") || strings.Contains(lower, "helium"):
+			planType = "premium"
+		case strings.Contains(lower, "standard"):
+			planType = "standard"
+		case strings.Contains(lower, "free"):
+			planType = "free"
+		case raw != "":
+			planType = raw
+		}
+	}
+	if planType == "" {
+		// fallback: currentTier
+		if ct, ok := data["currentTier"].(map[string]interface{}); ok {
+			if name, ok := ct["name"].(string); ok && name != "" {
+				lower := strings.ToLower(name)
+				switch {
+				case strings.Contains(lower, "ultra"):
+					planType = "ultra"
+				case strings.Contains(lower, "premium"):
+					planType = "premium"
+				case strings.Contains(lower, "standard"):
+					planType = "standard"
+				case strings.Contains(lower, "free"):
+					planType = "free"
+				default:
+					planType = name
+				}
+			}
+		}
+	}
+	if planType != "" && planType != entry.PlanType {
+		Log("[health] %s: plan %s → %s", acc.Email, entry.PlanType, planType)
+		entry.PlanType = planType
+		go p.SaveAccounts()
+	}
+
+	// ── 提取 AI 积分 (GOOGLE_ONE_AI) ──
+	if pt, ok := data["paidTier"].(map[string]interface{}); ok {
+		if credits, ok := pt["availableCredits"].([]interface{}); ok {
+			for _, c := range credits {
+				cm, ok := c.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				creditType, _ := cm["creditType"].(string)
+				if strings.ToUpper(creditType) != "GOOGLE_ONE_AI" {
+					continue
+				}
+				entry.creditsKnown = true
+				entry.creditAmount = toFloat64(cm["creditAmount"])
+				entry.minCreditAmount = toFloat64(cm["minimumCreditAmountForUsage"])
+				entry.creditsAvailable = entry.creditAmount >= entry.minCreditAmount
+				if ptid, ok := pt["id"].(string); ok {
+					entry.paidTierID = ptid
+				}
+				Log("[health] %s: credits=%.0f (min=%.0f, available=%v)",
+					acc.Email, entry.creditAmount, entry.minCreditAmount, entry.creditsAvailable)
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+// toFloat64 安全转换 interface{} 为 float64
+func toFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case string:
+		f, _ := strconv.ParseFloat(n, 64)
+		return f
+	case int:
+		return float64(n)
+	default:
+		return 0
+	}
 }
 
 // discoverProjectId 通过 onboardUser API 自动发现账号的 projectId
@@ -1146,7 +1320,7 @@ func parseModelsResponse(body []byte) []QuotaGroup {
 
 	// 构建 QuotaGroup
 	var groups []QuotaGroup
-	providerOrder := []string{"gemini", "claude", "gpt", "other"}
+	providerOrder := []string{"gemini", "claude", "gpt"}
 	for _, prov := range providerOrder {
 		entries, ok := providerEntries[prov]
 		if !ok {

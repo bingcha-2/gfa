@@ -81,6 +81,15 @@ export interface AccountInfo {
   quotaRefreshedAt?: string
   accountStatusLabel: string
   accountStatusTone: string
+  credits?: CreditsInfo | null
+}
+
+export interface CreditsInfo {
+  known: boolean
+  available: boolean
+  creditAmount: number
+  minCreditAmount: number
+  paidTierID: string
 }
 
 // ===== Update =====
