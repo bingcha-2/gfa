@@ -25,6 +25,68 @@
   font-family: "Aptos", "Segoe UI", "PingFang SC", sans-serif;
 }
 
+/* ── shadcn overrides inside dark scheduler shell ── */
+.scheduler-shell button,
+.scheduler-shell [data-slot="switch"] {
+  font-family: inherit;
+}
+
+.scheduler-shell .sch-input {
+  width: 80px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-color: var(--sch-border);
+  border-radius: 8px;
+  background: var(--sch-bg);
+  color: var(--sch-fg);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.scheduler-shell .sch-input:focus-visible {
+  border-color: var(--sch-accent);
+  box-shadow: 0 0 0 2px var(--sch-accent-dim);
+  outline: none;
+}
+
+.scheduler-shell .sch-input.time {
+  width: 100px;
+}
+
+.scheduler-shell .sch-run-btn {
+  width: 100%;
+  margin-top: 8px;
+  min-height: 40px;
+  border: 1px solid var(--sch-accent);
+  border-radius: 999px;
+  background: var(--sch-accent-dim);
+  color: var(--sch-accent);
+  font-weight: 700;
+  font-size: 14px;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.scheduler-shell .sch-run-btn:hover:not(:disabled) {
+  background: rgba(62, 207, 180, 0.22);
+  box-shadow: 0 0 20px rgba(62, 207, 180, 0.2);
+  transform: translateY(-1px);
+}
+
+.scheduler-shell .sch-save-btn {
+  min-height: 38px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--sch-accent), #2ab896);
+  color: var(--sch-bg);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.scheduler-shell .sch-save-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
 /* ── Layout ── */
 .sch-grid {
   display: grid;
@@ -124,33 +186,6 @@
   line-height: 1.6;
 }
 
-.sch-run-btn {
-  margin-top: 8px;
-  min-height: 40px;
-  padding: 0 28px;
-  border: 1px solid var(--sch-accent);
-  border-radius: 999px;
-  background: var(--sch-accent-dim);
-  color: var(--sch-accent);
-  font-weight: 700;
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
-}
-
-.sch-run-btn:hover {
-  background: rgba(62, 207, 180, 0.22);
-  box-shadow: 0 0 20px rgba(62, 207, 180, 0.2);
-  transform: translateY(-1px);
-}
-
-.sch-run-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
 /* ── Config Form ── */
 .sch-config-form {
   display: grid;
@@ -185,100 +220,6 @@
   margin-top: 2px;
   font-size: 11px;
   color: var(--sch-fg-muted);
-}
-
-/* Toggle Switch */
-.sch-toggle {
-  position: relative;
-  width: 44px;
-  height: 24px;
-  flex-shrink: 0;
-}
-
-.sch-toggle input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.sch-toggle-track {
-  position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  background: rgba(148, 163, 196, 0.2);
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.sch-toggle-track::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--sch-fg-muted);
-  transition: transform 0.2s, background 0.2s;
-}
-
-.sch-toggle input:checked + .sch-toggle-track {
-  background: var(--sch-accent-dim);
-}
-
-.sch-toggle input:checked + .sch-toggle-track::after {
-  transform: translateX(20px);
-  background: var(--sch-accent);
-}
-
-/* Number / Text inputs */
-.sch-input {
-  width: 80px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--sch-border);
-  border-radius: 8px;
-  background: var(--sch-bg);
-  color: var(--sch-fg);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-  transition: border-color 0.2s;
-  flex-shrink: 0;
-}
-
-.sch-input:focus {
-  outline: none;
-  border-color: var(--sch-accent);
-  box-shadow: 0 0 0 2px var(--sch-accent-dim);
-}
-
-.sch-input.time {
-  width: 100px;
-}
-
-.sch-save-btn {
-  min-height: 38px;
-  padding: 0 24px;
-  border: none;
-  border-radius: 999px;
-  background: linear-gradient(135deg, var(--sch-accent), #2ab896);
-  color: var(--sch-bg);
-  font-weight: 700;
-  font-size: 13px;
-  cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
-}
-
-.sch-save-btn:hover {
-  transform: translateY(-1px);
-}
-
-.sch-save-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
 }
 
 /* ── Steps Toggle Section ── */
@@ -396,72 +337,6 @@
   font-size: 14px;
 }
 
-/* ── Confirm dialog ── */
-.sch-confirm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-}
-
-.sch-confirm-box {
-  min-width: 320px;
-  max-width: 440px;
-  padding: 28px;
-  border-radius: var(--sch-radius);
-  background: var(--sch-surface);
-  border: 1px solid var(--sch-border-strong);
-  color: var(--sch-fg);
-}
-
-.sch-confirm-box h3 {
-  margin: 0 0 10px;
-  font-size: 16px;
-}
-
-.sch-confirm-box p {
-  margin: 0 0 20px;
-  font-size: 14px;
-  color: var(--sch-fg-muted);
-  line-height: 1.6;
-}
-
-.sch-confirm-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.sch-confirm-actions button {
-  min-height: 36px;
-  padding: 0 20px;
-  border-radius: 999px;
-  border: 1px solid var(--sch-border);
-  background: var(--sch-bg);
-  color: var(--sch-fg);
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.sch-confirm-actions button:hover {
-  background: var(--sch-surface-hover);
-}
-
-.sch-confirm-actions button.sch-confirm-yes {
-  border-color: var(--sch-accent);
-  background: var(--sch-accent-dim);
-  color: var(--sch-accent);
-}
-
-.sch-confirm-actions button.sch-confirm-yes:hover {
-  background: rgba(62, 207, 180, 0.22);
-}
-
 /* ── Log Header ── */
 .sch-log-header {
   display: flex;
@@ -476,6 +351,42 @@
   font-family: "Cascadia Code", "JetBrains Mono", monospace;
 }
 
+/* ── Filters ── */
+.sch-filters {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--sch-border);
+}
+
+.scheduler-shell .sch-filter-input {
+  flex: 1;
+  min-width: 140px;
+  background: var(--sch-bg);
+  border-color: var(--sch-border);
+  color: var(--sch-fg);
+}
+
+.scheduler-shell .sch-filter-select {
+  width: auto;
+  min-width: 100px;
+  background: var(--sch-bg);
+  border-color: var(--sch-border);
+  color: var(--sch-fg);
+}
+
+.scheduler-shell .sch-filter-btn {
+  border-color: var(--sch-border);
+  color: var(--sch-fg-muted);
+}
+
+.scheduler-shell .sch-filter-btn:hover {
+  background: var(--sch-surface-hover);
+  color: var(--sch-fg);
+}
+
 /* ── Pagination ── */
 .sch-pagination {
   display: flex;
@@ -487,28 +398,15 @@
   margin-top: 4px;
 }
 
-.sch-page-btn {
-  min-height: 32px;
-  padding: 0 14px;
-  border: 1px solid var(--sch-border);
-  border-radius: 8px;
+.scheduler-shell .sch-page-btn {
+  border-color: var(--sch-border);
   background: var(--sch-bg);
   color: var(--sch-fg-muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 
-.sch-page-btn:hover:not(:disabled) {
+.scheduler-shell .sch-page-btn:hover:not(:disabled) {
   background: var(--sch-surface-hover);
   color: var(--sch-fg);
-  border-color: var(--sch-border-strong);
-}
-
-.sch-page-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 .sch-page-nums {
@@ -517,30 +415,20 @@
   gap: 2px;
 }
 
-.sch-page-num {
+.scheduler-shell .sch-page-num {
   min-width: 32px;
-  height: 32px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
   color: var(--sch-fg-muted);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 
-.sch-page-num:hover {
+.scheduler-shell .sch-page-num:hover {
   background: var(--sch-surface-hover);
   color: var(--sch-fg);
 }
 
-.sch-page-num.active {
+.scheduler-shell .sch-page-num.active {
   background: var(--sch-accent-dim);
   color: var(--sch-accent);
-  border-color: rgba(62, 207, 180, 0.3);
-  cursor: default;
+  border: 1px solid rgba(62, 207, 180, 0.3);
 }
 
 .sch-page-ellipsis {
@@ -549,4 +437,11 @@
   color: var(--sch-fg-muted);
   font-size: 14px;
   user-select: none;
+}
+
+/* ── Alert Dialog dark theme ── */
+.sch-dialog {
+  background: var(--sch-surface);
+  border: 1px solid var(--sch-border-strong);
+  color: var(--sch-fg);
 }

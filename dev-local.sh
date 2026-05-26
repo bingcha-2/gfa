@@ -1,10 +1,10 @@
 #!/bin/bash
 # ============================================================================
-# dev-local.sh — 本地一键拉起 Remote Token Server + 冰茶 AI 客户端
+# dev-local.sh — 本地一键拉起 NestJS API + 冰茶 AI 客户端
 #
 # 用法:
 #   ./dev-local.sh              # 同时启动服务端 + 客户端
-#   ./dev-local.sh server       # 仅启动服务端 (remote-token-server)
+#   ./dev-local.sh server       # 仅启动服务端 (NestJS API)
 #   ./dev-local.sh client       # 仅启动客户端 (wails dev)
 #   LOCAL=1 ./dev-local.sh      # 客户端连本地服务端 (自动 patch API_BASE)
 # ============================================================================
@@ -24,8 +24,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ── 路径 ──
-ROSETTA_DIR="$ROOT/apps/gfa-extension/bundled-rosetta"
-REMOTE_TOKEN_DIR="$ROSETTA_DIR/remote-token-server"
+API_DIR="$ROOT/apps/api"
 WAILS_DIR="$ROOT/apps/bcai-wails"
 DATA_DIR="$HOME/Library/Application Support/Antigravity/rosetta"
 LEASER_GO="$WAILS_DIR/leaser.go"
@@ -41,7 +40,7 @@ cleanup() {
   echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
 
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo -e "${DIM}[shutdown] 停止 remote-token-server (PID $SERVER_PID)${NC}"
+    echo -e "${DIM}[shutdown] 停止 NestJS API (PID $SERVER_PID)${NC}"
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
@@ -166,11 +165,11 @@ KEYSEOF
   echo ""
 }
 
-# ── 安装 bundled-rosetta 依赖 ──
-install_rosetta_deps() {
-  if [ ! -d "$ROSETTA_DIR/node_modules" ] || [ ! -d "$ROSETTA_DIR/node_modules/better-sqlite3" ]; then
-    echo -e "${BOLD}${CYAN}═══ 安装 bundled-rosetta 依赖 ═══${NC}"
-    (cd "$ROSETTA_DIR" && npm install --no-audit --no-fund 2>&1 | tail -3)
+# ── 安装 API 依赖 ──
+install_api_deps() {
+  if [ ! -d "$API_DIR/node_modules" ]; then
+    echo -e "${BOLD}${CYAN}═══ 安装 NestJS API 依赖 ═══${NC}"
+    (cd "$ROOT" && pnpm install --filter @gfa/api 2>&1 | tail -3)
     echo -e "  ${GREEN}✓${NC} 依赖安装完成"
     echo ""
   fi
@@ -193,26 +192,24 @@ patch_client_local() {
   fi
 }
 
-# ── 启动 Remote Token Server ──
+# ── 启动 NestJS API Server ──
 start_server() {
-  echo -e "${BOLD}${MAGENTA}═══ 启动 Remote Token Server ═══${NC}"
-  echo -e "  ${DIM}端口: 60700${NC}"
+  echo -e "${BOLD}${MAGENTA}═══ 启动 NestJS API Server ═══${NC}"
+  echo -e "  ${DIM}端口: 3001${NC}"
   echo -e "  ${DIM}数据: $DATA_DIR${NC}"
-  echo -e "  ${DIM}日志: $DATA_DIR/logs/remote-token-server.log${NC}"
   echo ""
 
   export ROSETTA_DATA_DIR="$DATA_DIR"
-  (cd "$ROSETTA_DIR" && node remote-token-server/index.js 2>&1 | while IFS= read -r line; do
-    echo -e "${MAGENTA}[server]${NC} $line"
+  (cd "$API_DIR" && pnpm dev 2>&1 | while IFS= read -r line; do
+    echo -e "${MAGENTA}[api]${NC} $line"
   done) &
   SERVER_PID=$!
 
-  # 等待服务端启动
-  echo -e "${DIM}[server] 等待启动...${NC}"
+  echo -e "${DIM}[api] 等待启动...${NC}"
   local retries=0
-  while [ $retries -lt 20 ]; do
-    if curl -s http://127.0.0.1:60700/health >/dev/null 2>&1; then
-      echo -e "${GREEN}[server] ✓ Remote Token Server 已启动${NC}"
+  while [ $retries -lt 30 ]; do
+    if curl -s http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+      echo -e "${GREEN}[api] ✓ NestJS API Server 已启动${NC}"
       echo ""
       return 0
     fi
@@ -220,7 +217,7 @@ start_server() {
     retries=$((retries + 1))
   done
 
-  echo -e "${YELLOW}[server] ⚠ 启动超时，但继续运行...${NC}"
+  echo -e "${YELLOW}[api] ⚠ 启动超时，但继续运行...${NC}"
   echo ""
 }
 
@@ -248,7 +245,7 @@ print_banner() {
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
 
   if [ -n "$SERVER_PID" ]; then
-    echo -e "${GREEN}│${NC}  ${DIM}Remote Token Server${NC}   ${CYAN}http://127.0.0.1:60700/status${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}NestJS API Server${NC}     ${CYAN}http://127.0.0.1:3001/api/health${NC}"
   fi
 
   if [ -n "$CLIENT_PID" ]; then
@@ -273,7 +270,7 @@ main() {
 
   check_prerequisites
   init_data_dir
-  install_rosetta_deps
+  install_api_deps
 
   case "$mode" in
     server)

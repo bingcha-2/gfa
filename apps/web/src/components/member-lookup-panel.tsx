@@ -6,6 +6,8 @@ import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
 import { Spinner } from "@/components/ui/spinner";
 import { MemberTimeline } from "./member-timeline";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type LookupResult = {
   found: boolean;
@@ -197,26 +199,22 @@ export function MemberLookupPanel({
             <label className="label" htmlFor="lookup-email" style={{ display: "block", marginBottom: "0.375rem" }}>
               邮箱地址
             </label>
-            <input
+            <Input
               id="lookup-email"
               type="email"
-              className="input"
               placeholder="customer@gmail.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
               autoComplete="off"
-              style={{ width: "100%" }}
             />
           </div>
-          <button
+          <Button
             type="submit"
-            className="button"
             disabled={loading || !email.trim()}
-            style={{ minWidth: 110, gap: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
           >
             {loading ? <><Spinner size={14} color="currentColor" /> 查询中…</> : "查询"}
-          </button>
+          </Button>
         </div>
       </form>
 
@@ -336,8 +334,8 @@ export function MemberLookupPanel({
                 )}
 
                 {result.order && onReplaceMember && (
-                  <button
-                    className="button"
+                  <Button
+                    variant="ghost"
                     onClick={() => { setShowReplaceInput(!showReplaceInput); setReplaceEmail(""); }}
                     disabled={actionLoading !== null}
                     style={{
@@ -353,7 +351,7 @@ export function MemberLookupPanel({
                   >
                     {actionLoading === "replace" ? <Spinner size={12} color="currentColor" /> : "🔀"}
                     替换成员
-                  </button>
+                  </Button>
                 )}
               </div>
 
@@ -372,7 +370,7 @@ export function MemberLookupPanel({
                     <label className="label" htmlFor="replace-new-email" style={{ display: "block", marginBottom: "0.25rem", fontSize: "0.85rem" }}>
                       新成员邮箱
                     </label>
-                    <input
+                    <Input
                       id="replace-new-email"
                       type="email"
                       placeholder="new-member@gmail.com"
@@ -380,7 +378,6 @@ export function MemberLookupPanel({
                       onChange={(e) => setReplaceEmail(e.target.value)}
                       disabled={actionLoading !== null}
                       autoComplete="off"
-                      style={{ width: "100%" }}
                     />
                   </div>
                   <ConfirmButton
@@ -403,15 +400,15 @@ export function MemberLookupPanel({
                   >
                     确认替换
                   </ConfirmButton>
-                  <button
-                    className="button secondary"
+                  <Button
+                    variant="outline"
                     type="button"
                     onClick={() => { setShowReplaceInput(false); setReplaceEmail(""); }}
                     disabled={actionLoading !== null}
                     style={{ fontSize: "0.85rem", padding: "0.4rem 0.6rem" }}
                   >
                     取消
-                  </button>
+                  </Button>
                 </div>
               )}
 

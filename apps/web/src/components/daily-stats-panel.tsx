@@ -5,6 +5,8 @@ import { useState, useEffect } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type DailyStatsData = {
   date: string;
@@ -347,57 +349,48 @@ export function DailyStatsPanel({ role }: DailyStatsPanelProps = {}) {
           </div>
 
           <div className="action-row" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <button
-              className="button secondary"
+            <Button
+              variant="outline"
               onClick={() => shiftDate(-1)}
               type="button"
               style={{ minWidth: "36px" }}
             >
               ←
-            </button>
-            <input
+            </Button>
+            <Input
               type="date"
-              className="mono"
+              className="mono w-auto"
               value={date}
               max={todayDateStr()}
               onChange={(e) => handleDateChange(e.target.value)}
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                color: "var(--foreground)",
-                fontSize: "14px",
-              }}
             />
-            <button
-              className="button secondary"
+            <Button
+              variant="outline"
               onClick={() => shiftDate(1)}
               type="button"
               disabled={date >= todayDateStr()}
               style={{ minWidth: "36px" }}
             >
               →
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => handleDateChange(todayDateStr())}
               type="button"
               disabled={date === todayDateStr()}
             >
               今日
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="outline"
               onClick={handleRefresh}
               type="button"
               disabled={isLoading}
-              style={{ gap: 8 }}
             >
               {isLoading ? (
                 <><Spinner size={14} color="currentColor" /> 加载中...</>
               ) : "刷新"}
-            </button>
+            </Button>
           </div>
         </div>
       </article>
@@ -444,13 +437,13 @@ export function DailyStatsPanel({ role }: DailyStatsPanelProps = {}) {
       {/* Detail tabs for SUPER_ADMIN */}
       {isSuperAdmin && stats && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            className={`button ${activeDetailTab === "auditLogs" ? "primary" : "secondary"}`}
+          <Button
+            variant={activeDetailTab === "auditLogs" ? "default" : "outline"}
             onClick={() => setActiveDetailTab(activeDetailTab === "auditLogs" ? null : "auditLogs")}
             type="button"
           >
             📋 操作日志
-          </button>
+          </Button>
         </div>
       )}
 

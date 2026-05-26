@@ -6,6 +6,7 @@ import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { formatDateTime } from "../lib/format";
 import { PublicOrder } from "../lib/types";
 import { StatusBadge } from "./status-badge";
+import { Button } from "@/components/ui/button";
 
 type OrderStatusPanelProps = {
   orderNo: string;
@@ -74,9 +75,9 @@ export function OrderStatusPanel({ orderNo, onOrderLoaded, onRequestRetry }: Ord
               冷却期结束后，系统会自动重试您的换绑/加入请求，您不需要做任何额外操作。
               {onRequestRetry && (
                 <div style={{ marginTop: '12px' }}>
-                  <button className="button secondary small" onClick={onRequestRetry}>
+                  <Button variant="outline" size="sm" onClick={onRequestRetry}>
                     或者，点此换个邮箱重新提交
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>

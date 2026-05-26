@@ -4,6 +4,8 @@ import React, { Fragment, useState, useEffect } from "react";
 import { ConfirmButton } from "./confirm-button";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { 
   formatDate, 
   timeAgo, 
@@ -195,7 +197,7 @@ export function InventoryTab({
         {/* Search input */}
         <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
           <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--foreground-muted, #a3a3a3)' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input
+          <Input
             id="group-search-email"
             type="text"
             placeholder={searchMode === "parent" ? "搜索母号邮箱…" : "搜索子号邮箱…"}
@@ -207,29 +209,18 @@ export function InventoryTab({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && searchMode === "member") fetchGroupsByMember();
             }}
-            style={{
-              paddingLeft: 34,
-              width: '100%',
-              boxSizing: 'border-box',
-              borderRadius: '8px',
-              border: '1px solid var(--border, #e5e5e5)',
-              height: '36px',
-              fontSize: '0.875rem',
-              transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-              outline: 'none',
-            }}
+            style={{ paddingLeft: 34 }}
           />
         </div>
         {searchMode === "member" && (
-          <button
-            className="button small"
+          <Button
+            size="sm"
             type="button"
             onClick={() => fetchGroupsByMember()}
             disabled={memberSearchLoading || searchEmail.trim().length < 2}
-            style={{ height: '36px', borderRadius: '8px', fontWeight: 600, minWidth: 60 }}
           >
             {memberSearchLoading ? '…' : '查询'}
-          </button>
+          </Button>
         )}
         {searchMode === "parent" && (<>
           <select
@@ -268,14 +259,14 @@ export function InventoryTab({
           </select>
         </>)}
         {(searchEmail || filterStatus !== 'ALL' || filterExtra !== 'ALL') && (
-          <button
-            className="button secondary small"
+          <Button
+            variant="outline"
+            size="sm"
             type="button"
             onClick={() => { setSearchEmail(''); setFilterStatus('ALL'); setFilterExtra('ALL'); setCurrentGroupPage(1); }}
-            style={{ whiteSpace: 'nowrap', height: '36px', borderRadius: '8px' }}
           >
             清除
-          </button>
+          </Button>
         )}
       </div>
 
@@ -524,17 +515,18 @@ export function InventoryTab({
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            <button className="button secondary small" onClick={() => void toggleMembers(group.id)} type="button">
+                            <Button variant="outline" size="sm" onClick={() => void toggleMembers(group.id)} type="button">
                               {expandedGroupId === group.id ? "收起" : "查看成员"}
-                            </button>
-                            <button
-                              className="button secondary small"
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={syncingGroupId === group.id}
                               onClick={() => void handleSync(group.id)}
                               type="button"
                             >
                               {syncingGroupId === group.id ? <><Spinner size={12} color="currentColor" /> 同步中...</> : '同步'}
-                            </button>
+                            </Button>
                             {syncStatus?.groupId === group.id && (
                               <span style={{
                                 fontSize: '0.8rem',
@@ -549,8 +541,9 @@ export function InventoryTab({
                                 {' '}{syncStatus.message}
                               </span>
                             )}
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={togglingGroupId === group.id || group.status === 'DISABLED'}
                               onClick={() => void handleToggleAutoAssign(group.id)}
                               type="button"
@@ -561,7 +554,7 @@ export function InventoryTab({
                               }}
                             >
                               {togglingGroupId === group.id ? <Spinner size={12} color="currentColor" /> : group.status === 'ACTIVE' ? '🟢 自动 ON' : group.status === 'MANUAL_ONLY' ? '⏸ 自动 OFF' : '🚫 已停用'}
-                            </button>
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -579,10 +572,10 @@ export function InventoryTab({
                                       {selectedMembers.size > 0 && (
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 500 }}>
                                           <span className="muted">已选 <strong>{selectedMembers.size}</strong> 个</span>
-                                          <button
-                                            className="button secondary small"
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
                                             type="button"
-                                            style={{ fontSize: '0.75rem', padding: '2px 10px', gap: 4 }}
                                             onClick={() => {
                                               const emails = (groupDetail?.members ?? []).filter(m => selectedMembers.has(m.id)).map(m => m.email);
                                               navigator.clipboard.writeText(emails.join('\n'));
@@ -590,15 +583,15 @@ export function InventoryTab({
                                             }}
                                           >
                                             📋 复制邮箱
-                                          </button>
-                                          <button
-                                            className="button secondary small"
+                                          </Button>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
                                             type="button"
-                                            style={{ fontSize: '0.75rem', padding: '2px 10px' }}
                                             onClick={() => setSelectedMembers(new Set())}
                                           >
                                             取消选择
-                                          </button>
+                                          </Button>
                                         </span>
                                       )}
                                     </div>
@@ -750,14 +743,15 @@ export function InventoryTab({
                                                                 移除
                                                               </ConfirmButton>
                                                             )}
-                                                            <button
-                                                              className="button secondary small"
+                                                            <Button
+                                                              variant="outline"
+                                                              size="sm"
                                                               disabled={removingMemberId !== null || (replacingMemberId !== null && replacingMemberId !== m.id) || !!memberTaskMap[m.id]}
                                                               onClick={() => { setReplacingMemberId(replacingMemberId === m.id ? null : m.id); setReplaceEmail(''); }}
                                                               type="button"
                                                             >
                                                               替换
-                                                            </button>
+                                                            </Button>
                                                             {onMigrateMember && (
                                                               <ConfirmButton
                                                                 className="button small"
@@ -798,7 +792,7 @@ export function InventoryTab({
                                                           </div>
                                                           {replacingMemberId === m.id && (
                                                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
-                                                              <input type="email" placeholder="新邮箱" value={replaceEmail} onChange={(e) => setReplaceEmail(e.target.value)} style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }} autoFocus />
+                                                              <Input type="email" placeholder="新邮箱" value={replaceEmail} onChange={(e) => setReplaceEmail(e.target.value)} style={{ fontSize: '0.8rem', padding: '3px 6px', width: '180px' }} autoFocus />
                                                               <ConfirmButton className="button" style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '4px', cursor: 'pointer' }} disabled={!replaceEmail.trim() || removingMemberId !== null}
                                                                 confirmLabel={`确定将 ${m.email} 替换为 ${replaceEmail.trim() || '...'}？`}
                                                                 loadingLabel="提交中..."
@@ -819,7 +813,7 @@ export function InventoryTab({
                                                                   } finally { setRemovingMemberId(null); }
                                                                 }}
                                                               >确认</ConfirmButton>
-                                                              <button className="button secondary" style={{ fontSize: '0.75rem', padding: '3px 6px', borderRadius: '4px', cursor: 'pointer' }} onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }} type="button">取消</button>
+                                                              <Button variant="outline" size="sm" onClick={() => { setReplacingMemberId(null); setReplaceEmail(''); }} type="button">取消</Button>
                                                             </div>
                                                           )}
                                                         </>
@@ -833,15 +827,15 @@ export function InventoryTab({
                                                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', fontSize: '0.8rem' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                           <label style={{ fontWeight: 600, color: 'var(--foreground-muted, #737373)', whiteSpace: 'nowrap' }}>加入时间</label>
-                                                          <input type="datetime-local" value={editJoinedAt} onChange={e => setEditJoinedAt(e.target.value)} style={{ fontSize: '0.8rem', padding: '4px 8px', height: '32px', borderRadius: '6px', border: '1px solid var(--border, #e5e5e5)' }} />
+                                                          <Input type="datetime-local" value={editJoinedAt} onChange={e => setEditJoinedAt(e.target.value)} style={{ fontSize: '0.8rem', height: '32px' }} />
                                                         </div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                           <label style={{ fontWeight: 600, color: 'var(--foreground-muted, #737373)', whiteSpace: 'nowrap' }}>到期时间</label>
-                                                          <input type="datetime-local" value={editExpiresAt} onChange={e => setEditExpiresAt(e.target.value)} style={{ fontSize: '0.8rem', padding: '4px 8px', height: '32px', borderRadius: '6px', border: '1px solid var(--border, #e5e5e5)' }} />
+                                                          <Input type="datetime-local" value={editExpiresAt} onChange={e => setEditExpiresAt(e.target.value)} style={{ fontSize: '0.8rem', height: '32px' }} />
                                                         </div>
                                                         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
-                                                          <button type="button" disabled={savingMemberDates} onClick={() => handleSaveMemberDates(m.id, group.id)} style={{ background: 'var(--accent, #2563eb)', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 16px', height: '32px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>{savingMemberDates ? '保存中...' : '保存'}</button>
-                                                          <button type="button" onClick={() => setEditingMemberId(null)} style={{ background: 'transparent', border: '1px solid var(--border, #d4d4d4)', borderRadius: '6px', padding: '6px 16px', height: '32px', cursor: 'pointer', fontSize: '0.8rem', color: 'var(--foreground-muted, #737373)' }}>取消</button>
+                                                          <Button size="sm" type="button" disabled={savingMemberDates} onClick={() => handleSaveMemberDates(m.id, group.id)}>{savingMemberDates ? '保存中...' : '保存'}</Button>
+                                                          <Button variant="outline" size="sm" type="button" onClick={() => setEditingMemberId(null)}>取消</Button>
                                                         </div>
                                                       </div>
                                                     </td>
@@ -906,7 +900,7 @@ export function InventoryTab({
 
             {totalGroupPages > 1 && (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '12px 0 4px', flexWrap: 'wrap' }}>
-                <button className="button secondary small" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                <Button variant="outline" size="sm" disabled={currentGroupPage <= 1} onClick={() => setCurrentGroupPage(p => Math.max(1, p - 1))} type="button">← 上页</Button>
                 {(() => {
                   const pages: (number | string)[] = [];
                   const delta = 2;
@@ -921,19 +915,20 @@ export function InventoryTab({
                     p === '...' ? (
                       <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
                     ) : (
-                      <button
+                      <Button
                         key={p}
-                        className={`button small ${p === currentGroupPage ? '' : 'secondary'}`}
+                        variant={p === currentGroupPage ? "default" : "outline"}
+                        size="sm"
                         onClick={() => setCurrentGroupPage(p as number)}
                         type="button"
-                        style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentGroupPage ? 700 : 400 }}
+                        style={{ minWidth: 32 }}
                       >
                         {p}
-                      </button>
+                      </Button>
                     )
                   );
                 })()}
-                <button className="button secondary small" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                <Button variant="outline" size="sm" disabled={currentGroupPage >= totalGroupPages} onClick={() => setCurrentGroupPage(p => Math.min(totalGroupPages, p + 1))} type="button">下页 →</Button>
               </div>
             )}
           </>

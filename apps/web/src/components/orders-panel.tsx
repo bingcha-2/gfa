@@ -11,6 +11,17 @@ import { OrderSummary } from "../lib/types";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { StatusBadge } from "./status-badge";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 /** Check if an order was cancelled by the scheduler (not a real failure) */
 function isSchedulerCancelled(order: OrderSummary): boolean {
@@ -26,16 +37,7 @@ function OrderStatusBadge({ order }: { order: OrderSummary }) {
   if (isSchedulerCancelled(order)) {
     const label = order.resultMessage!.startsWith("重复取消") ? "重复清理" : "定时清理";
     return (
-      <span
-        className="status-badge"
-        style={{
-          background: "rgba(120, 140, 180, 0.15)",
-          color: "#8a9dc0",
-          border: "1px solid rgba(120, 140, 180, 0.25)",
-        }}
-      >
-        {label}
-      </span>
+      <Badge variant="secondary">{label}</Badge>
     );
   }
   return <StatusBadge value={order.status} />;
@@ -233,21 +235,21 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
             <p className="muted">按订单号、邮箱、状态和归属家庭组快速检索。</p>
           </div>
           <div className="filter-row" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <input
+            <Input
               className="search-field"
               placeholder="筛选订单号 / 邮箱 / 状态"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
-            <button
-              className="button secondary small"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={loadData}
               disabled={isLoading}
               type="button"
-              style={{ whiteSpace: "nowrap" }}
             >
               {isLoading ? "刷新中..." : "刷新"}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -275,55 +277,55 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
               <Spinner />
             </div>
           )}
-          <table className="data-table data-table-orders">
-            <thead>
-              <tr>
-                <th>订单号</th>
-                <th>类型</th>
-                <th>用户邮箱</th>
-                <th>状态</th>
-                <th>家庭组</th>
-                <th>创建时间</th>
-                <th style={{ minWidth: 160 }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="data-table data-table-orders">
+            <TableHeader>
+              <TableRow>
+                <TableHead>订单号</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>用户邮箱</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>家庭组</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead style={{ minWidth: 160 }}>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {displayOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>
+                <TableRow>
+                  <TableCell colSpan={7}>
                     <div className="empty-state">没有匹配的订单。</div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 <>
                   {displayOrders.map((order) => {
                     const isExpanded = expandedId === order.id;
                     return (
                       <React.Fragment key={order.id}>
-                        <tr className={isExpanded ? "row-expanded" : undefined}>
-                          <td>
+                        <TableRow className={isExpanded ? "row-expanded" : undefined}>
+                          <TableCell>
                             <div className="strong mono" style={{ fontSize: 13 }}>{order.orderNo}</div>
                             <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{order._count?.tasks ?? 0} 个任务</div>
-                          </td>
-                          <td>
+                          </TableCell>
+                          <TableCell>
                             <span className="order-type-tag">
                               {(order.orderType && ORDER_TYPE_LABEL[order.orderType]) ?? order.orderType ?? "–"}
                             </span>
-                          </td>
-                          <td><span style={{ fontSize: 13, wordBreak: "break-all" }}>{order.userEmail}</span></td>
-                          <td><OrderStatusBadge order={order} /></td>
-                          <td>{order.familyGroup?.groupName ?? "–"}</td>
-                          <td style={{ whiteSpace: "nowrap", fontSize: 13 }}>{formatDateTime(order.createdAt)}</td>
-                          <td>
+                          </TableCell>
+                          <TableCell><span style={{ fontSize: 13, wordBreak: "break-all" }}>{order.userEmail}</span></TableCell>
+                          <TableCell><OrderStatusBadge order={order} /></TableCell>
+                          <TableCell>{order.familyGroup?.groupName ?? "–"}</TableCell>
+                          <TableCell style={{ whiteSpace: "nowrap", fontSize: 13 }}>{formatDateTime(order.createdAt)}</TableCell>
+                          <TableCell>
                             <div className="inline-actions" style={{ flexWrap: "nowrap", gap: 6 }}>
-                              <button
-                                className="button secondary small"
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setExpandedId(isExpanded ? null : order.id)}
                                 type="button"
-                                style={{ whiteSpace: "nowrap", padding: "0 10px", minHeight: 32, fontSize: 13 }}
                               >
                                 {isExpanded ? "收起" : "查看"}
-                              </button>
+                              </Button>
                               <Link
                                 className="button secondary small"
                                 href={`/status/${order.orderNo}`}
@@ -332,28 +334,27 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
                                 状态页
                               </Link>
                               {canReplaceMember(role) && order.familyGroup ? (
-                                <button
-                                  className="button secondary small"
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   onClick={() => void handleReplace(order.id)}
                                   type="button"
-                                  style={{ whiteSpace: "nowrap", padding: "0 10px", minHeight: 32, fontSize: 13 }}
                                 >
                                   换成员
-                                </button>
+                                </Button>
                               ) : null}
                               {(order.status === "MANUAL_REVIEW" || order.status === "FAILED") && (
-                                <button
-                                  className="button small"
-                                  style={{ background: "var(--accent)", color: "#fff", whiteSpace: "nowrap", padding: "0 10px", minHeight: 32, fontSize: 13 }}
+                                <Button
+                                  size="sm"
                                   onClick={() => void handleRetry(order.id)}
                                   type="button"
                                 >
                                   重试
-                                </button>
+                                </Button>
                               )}
                             </div>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                         {isExpanded && renderDetailRow(order)}
                       </React.Fragment>
                     );
@@ -361,12 +362,12 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
 
                   {/* Pagination */}
                   {totalPages > 1 && (
-                    <tr>
-                      <td colSpan={7}>
+                    <TableRow>
+                      <TableCell colSpan={7}>
                         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, padding: "8px 0", flexWrap: "wrap" }}>
-                          <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
+                          <Button variant="outline" size="sm" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} type="button">
                             ← 上页
-                          </button>
+                          </Button>
                           {(() => {
                             const pages: (number | string)[] = [];
                             const delta = 2;
@@ -381,30 +382,31 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
                               p === '...' ? (
                                 <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
                               ) : (
-                                <button
+                                <Button
                                   key={p}
-                                  className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                                  variant={p === currentPage ? "default" : "outline"}
+                                  size="sm"
                                   disabled={isLoading}
                                   onClick={() => setCurrentPage(p as number)}
                                   type="button"
-                                  style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                                  style={{ minWidth: 32 }}
                                 >
                                   {p}
-                                </button>
+                                </Button>
                               )
                             );
                           })()}
-                          <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60, minHeight: 32, fontSize: 13 }}>
+                          <Button variant="outline" size="sm" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} type="button">
                             下页 →
-                          </button>
+                          </Button>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )}
                 </>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
     </section>

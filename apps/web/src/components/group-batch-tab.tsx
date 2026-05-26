@@ -3,7 +3,7 @@
 import React from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
-import { SearchableSelect } from "./searchable-select";
+import { ChevronsUpDown } from "lucide-react";
 import {
   BatchInviteResultTable,
   BatchResultTable,
@@ -18,6 +18,26 @@ import type {
   TransferBatchResult,
   TransferStatusResult
 } from "./console-app";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type BatchTabProps = {
   batchSubTab: "cross-invite" | "cross-remove" | "group-invite" | "group-remove" | "transfer";
@@ -50,6 +70,38 @@ type BatchTabProps = {
   startBatchTaskPoll: (emails: string[]) => void;
   setBatchLoading: (loading: boolean) => void;
 };
+
+function SearchableSelect({ id, options, value, onChange, placeholder = "-- 请选择 --", disabled = false }: {
+  id?: string; options: { value: string; label: string }[]; value: string;
+  onChange: (value: string) => void; placeholder?: string; disabled?: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const selectedLabel = options.find((o) => o.value === value)?.label;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<Button id={id} type="button" variant="outline" disabled={disabled} className="w-full justify-between" />}>
+        <span className="truncate">{selectedLabel || placeholder}</span>
+        <ChevronsUpDown data-icon="inline-end" />
+      </PopoverTrigger>
+      <PopoverContent className="w-(--anchor-width) p-0" align="start">
+        <Command>
+          <CommandInput placeholder="搜索..." />
+          <CommandList>
+            <CommandEmpty>无匹配结果</CommandEmpty>
+            <CommandGroup>
+              <CommandItem value="__clear__" onSelect={() => { onChange(""); setOpen(false); }}>{placeholder}</CommandItem>
+              {options.map((o) => (
+                <CommandItem key={o.value} value={o.label} data-checked={o.value === value} onSelect={() => { onChange(o.value); setOpen(false); }}>
+                  <span className="truncate">{o.label}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function BatchTab({
   batchSubTab,
@@ -108,7 +160,7 @@ export function BatchTab({
       {batchSubTab === "transfer" ? (
         <div className="form-card field-grid workspace-form">
           <div className="notice" style={{ background: 'var(--surface-2, #f5f5f4)', border: 'none', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', lineHeight: 1.7 }}>
-            <strong>整组迁移</strong>：将 A 组成员整体迁移到 B 组。自动执行“先踢出、再邀请”两阶段流程，允许部分失败。留空邮箱列表 = 迁移全组。
+            <strong>整组迁移</strong>：将 A 组成员整体迁移到 B 组。自动执行"先踢出、再邀请"两阶段流程，允许部分失败。留空邮箱列表 = 迁移全组。
           </div>
           <div className="field">
             <label>源家庭组（踢出成员）</label>
@@ -120,12 +172,12 @@ export function BatchTab({
           </div>
           <div className="field">
             <label htmlFor="transfer-emails">指定迁移邮箱（可选，留空 = 迁移全组非 Owner 成员）</label>
-            <textarea id="transfer-emails" rows={4} placeholder="留空即迁移全组\n或每行一个邮箱指定迁移哪些" value={transferEmails} onChange={e => setTransferEmails(e.target.value)} style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }} />
+            <Textarea id="transfer-emails" rows={4} placeholder={"留空即迁移全组\n或每行一个邮箱指定迁移哪些"} value={transferEmails} onChange={e => setTransferEmails(e.target.value)} className="font-mono text-sm" />
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="button" type="button" disabled={transferLoading || !transferSourceId || !transferTargetId} onClick={submitTransfer}>
+            <Button type="button" disabled={transferLoading || !transferSourceId || !transferTargetId} onClick={submitTransfer}>
               {transferLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '开始迁移'}
-            </button>
+            </Button>
           </div>
           {transferStatus && (
             <div style={{ marginTop: '8px' }}>
@@ -156,18 +208,24 @@ export function BatchTab({
                   <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{transferStatus.totalMembers}</div>
                 </div>
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead><tr style={{ borderBottom: '1px solid #e5e7eb' }}><th style={{ textAlign: 'left', padding: '6px 8px' }}>邮箱</th><th style={{ textAlign: 'center', padding: '6px 8px' }}>移除</th><th style={{ textAlign: 'center', padding: '6px 8px' }}>邀请</th></tr></thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>邮箱</TableHead>
+                    <TableHead className="text-center">移除</TableHead>
+                    <TableHead className="text-center">邀请</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {transferStatus.memberDetails.map(m => (
-                    <tr key={m.email} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '0.8rem' }}>{m.email}</td>
-                      <td style={{ textAlign: 'center', padding: '6px 8px' }}><StatusBadge value={m.removeStatus} /></td>
-                      <td style={{ textAlign: 'center', padding: '6px 8px' }}>{m.inviteStatus ? <StatusBadge value={m.inviteStatus} /> : <span className="muted">—</span>}</td>
-                    </tr>
+                    <TableRow key={m.email}>
+                      <TableCell className="font-mono text-xs">{m.email}</TableCell>
+                      <TableCell className="text-center"><StatusBadge value={m.removeStatus} /></TableCell>
+                      <TableCell className="text-center">{m.inviteStatus ? <StatusBadge value={m.inviteStatus} /> : <span className="muted">—</span>}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               {transferStatus.errorDetail.length > 0 && (
                 <div style={{ marginTop: '8px', background: '#fef2f2', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
                   <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: '4px' }}>⚠️ 错误详情</div>
@@ -191,13 +249,12 @@ export function BatchTab({
           {(batchSubTab === "cross-invite" || batchSubTab === "group-invite") && (
             <div className="field" style={{ maxWidth: 200 }}>
               <label htmlFor="batch-valid-days">有效天数（默认 30）</label>
-              <input
+              <Input
                 id="batch-valid-days"
                 type="number"
                 min={1}
                 value={batchValidDays}
                 onChange={(e) => setBatchValidDays(parseInt(e.target.value, 10) || 30)}
-                style={{ width: '100%' }}
               />
             </div>
           )}
@@ -224,21 +281,19 @@ export function BatchTab({
             <label htmlFor="batch-emails">
               邮箱列表（每行一个，共 {parseEmails(batchText).length} 个）
             </label>
-            <textarea
+            <Textarea
               id="batch-emails"
               rows={6}
-              placeholder={`user1@gmail.com
-user2@gmail.com`}
+              placeholder={`user1@gmail.com\nuser2@gmail.com`}
               value={batchText}
               onChange={e => { setBatchText(e.target.value); setBatchResult(null); }}
-              style={{ fontFamily: 'monospace', fontSize: '0.875rem', resize: 'vertical' }}
+              className="font-mono text-sm"
             />
           </div>
 
           {/* Action buttons */}
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="button"
+            <Button
               type="button"
               disabled={batchLoading || !parseEmails(batchText).length || ((batchSubTab === "group-invite" || batchSubTab === "group-remove") && !batchGroupId)}
               onClick={async () => {
@@ -269,15 +324,15 @@ user2@gmail.com`}
               }}
             >
               {batchLoading ? <><Spinner size={14} color="currentColor" /> 提交中...</> : '提交任务'}
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="outline"
               type="button"
               disabled={batchLoading}
               onClick={() => { setBatchText(""); setBatchResult(null); }}
             >
               清空
-            </button>
+            </Button>
           </div>
 
           {/* Result display */}
@@ -298,28 +353,28 @@ user2@gmail.com`}
                       return (
                         <div key={i} style={{ background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem' }}>
                           <div style={{ fontWeight: 600, marginBottom: '6px' }}>✅ 已分配到 <strong>{groupName}</strong>（{alloc.queued.length} 个）</div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 600 }}>邮箱</th>
-                                <th style={{ textAlign: 'center', padding: '4px 8px', fontWeight: 600, width: 80 }}>状态</th>
-                              </tr>
-                            </thead>
-                            <tbody>
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>邮箱</TableHead>
+                                <TableHead className="text-center w-20">状态</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
                               {alloc.queued.map(email => {
                                 const s = batchEmailStatuses.find(b => b.email.toLowerCase() === email.toLowerCase());
                                 const taskStatus = s?.status ?? 'QUEUED';
                                 return (
-                                  <tr key={email} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '4px 8px', fontFamily: 'monospace', wordBreak: 'break-all' }}>{email}</td>
-                                    <td style={{ textAlign: 'center', padding: '4px 8px' }}>
+                                  <TableRow key={email}>
+                                    <TableCell className="font-mono break-all">{email}</TableCell>
+                                    <TableCell className="text-center">
                                       <StatusBadge value={taskStatus} />
-                                    </td>
-                                  </tr>
+                                    </TableCell>
+                                  </TableRow>
                                 );
                               })}
-                            </tbody>
-                          </table>
+                            </TableBody>
+                          </Table>
                           {batchPollActive && (
                             <div style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--foreground-muted, #737373)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <Spinner size={10} /> 每 5 秒刷新任务状态…

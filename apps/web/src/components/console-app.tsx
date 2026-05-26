@@ -12,13 +12,15 @@ import {
 } from "../lib/types";
 import { AccountPanel } from "./account-panel";
 import { GroupPanel } from "./group-panel";
-import { MetricTile } from "./metric-tile";
+
 import { OrdersPanel } from "./orders-panel";
 import { RedeemCodesPanel } from "./redeem-codes-panel";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { TasksPanel } from "./tasks-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import { SchedulerPanel } from "./scheduler-panel";
 import { DailyStatsPanel } from "./daily-stats-panel";
@@ -668,9 +670,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
             >
               <label className="field-label">
                 当前密码
-                <input
+                <Input
                   type="password"
-                  className="field-input"
                   value={pwForm.current}
                   onChange={(e) => setPwForm((p) => ({ ...p, current: e.target.value }))}
                   required
@@ -679,9 +680,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               </label>
               <label className="field-label">
                 新密码（至少 6 位）
-                <input
+                <Input
                   type="password"
-                  className="field-input"
                   value={pwForm.newPw}
                   onChange={(e) => setPwForm((p) => ({ ...p, newPw: e.target.value }))}
                   required
@@ -691,9 +691,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               </label>
               <label className="field-label">
                 确认新密码
-                <input
+                <Input
                   type="password"
-                  className="field-input"
                   value={pwForm.confirm}
                   onChange={(e) => setPwForm((p) => ({ ...p, confirm: e.target.value }))}
                   required
@@ -701,9 +700,9 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
                   autoComplete="new-password"
                 />
               </label>
-              <button className="button primary" type="submit" disabled={pwLoading}>
+              <Button type="submit" disabled={pwLoading}>
                 {pwLoading ? "修改中..." : "确认修改"}
-              </button>
+              </Button>
             </form>
           </div>
         );
@@ -739,8 +738,8 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
         </div>
 
         <div className="nav-links">
-          <button
-            className="button secondary"
+          <Button
+            variant="outline"
             disabled={isRefreshing || isActioning}
             onClick={async () => {
               setIsRefreshing(true);
@@ -751,18 +750,17 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               }
             }}
             type="button"
-            style={{ gap: 8 }}
           >
             {isRefreshing ? (
               <><Spinner size={14} color="currentColor" /> 刷新中...</>
             ) : "刷新数据"}
-          </button>
+          </Button>
           <Link className="pill-link" href="/redeem">
             公共提交页
           </Link>
-          <button className="button" onClick={handleLogout} type="button">
+          <Button variant="outline" onClick={handleLogout} type="button">
             退出登录
-          </button>
+          </Button>
         </div>
       </nav>
 

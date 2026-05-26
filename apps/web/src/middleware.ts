@@ -7,7 +7,7 @@ import { CONSOLE_AUTH_COOKIE } from "./lib/auth-cookie";
 // Default: "console" → /console/login
 // Production: set to any random string, e.g. "manage-x7k2p"
 const ADMIN_PREFIX = (process.env.ADMIN_PATH_PREFIX ?? "console").replace(/^\/|\/$/g, "");
-const PROTECTED_STATIC_PAGES = new Set(["/add-account.html"]);
+const PROTECTED_STATIC_PAGES = new Set<string>();
 
 // Comma-separated list of allowed client IPs for admin routes.
 // Leave empty to allow all IPs (useful when client IP is dynamic).

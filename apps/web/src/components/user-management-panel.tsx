@@ -2,6 +2,17 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ManagedUser = {
   id: string;
@@ -34,11 +45,11 @@ const ROLE_LABELS: Record<string, string> = {
   SUPPORT: "客服",
 };
 
-const ROLE_COLORS: Record<string, string> = {
-  SUPER_ADMIN: "#e74c3c",
-  ADMIN: "#f39c12",
-  OPERATIONS: "#2ecc71",
-  SUPPORT: "#3498db",
+const ROLE_VARIANT: Record<string, "default" | "destructive" | "outline" | "secondary"> = {
+  SUPER_ADMIN: "destructive",
+  ADMIN: "default",
+  OPERATIONS: "secondary",
+  SUPPORT: "outline",
 };
 
 type Props = {
@@ -162,10 +173,9 @@ export function UserManagementPanel({ showToast }: Props) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 12px", marginTop: 6 }}>
         {ALL_PERMISSIONS.map((p) => (
           <label key={p.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, cursor: "pointer" }}>
-            <input
-              type="checkbox"
+            <Checkbox
               checked={perms.includes(p.key)}
-              onChange={() => onChange(togglePermission(perms, p.key))}
+              onCheckedChange={() => onChange(togglePermission(perms, p.key))}
             />
             {p.label}
           </label>
@@ -186,9 +196,9 @@ export function UserManagementPanel({ showToast }: Props) {
 
       {/* Create button */}
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn btn-primary" onClick={() => setShowCreateForm(!showCreateForm)}>
+        <Button onClick={() => setShowCreateForm(!showCreateForm)}>
           {showCreateForm ? "取消" : "＋ 创建用户"}
-        </button>
+        </Button>
       </div>
 
       {/* Create form */}
@@ -197,36 +207,40 @@ export function UserManagementPanel({ showToast }: Props) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label className="field-label">
               邮箱
-              <input className="field-input" type="email" required value={createForm.email}
+              <Input type="email" required value={createForm.email}
                 onChange={(e) => setCreateForm((p) => ({ ...p, email: e.target.value }))} placeholder="user@example.com" />
             </label>
             <label className="field-label">
               显示名
-              <input className="field-input" required value={createForm.displayName}
+              <Input required value={createForm.displayName}
                 onChange={(e) => setCreateForm((p) => ({ ...p, displayName: e.target.value }))} placeholder="管理员名称" />
             </label>
             <label className="field-label">
               密码
-              <input className="field-input" type="password" required minLength={6} value={createForm.password}
+              <Input type="password" required minLength={6} value={createForm.password}
                 onChange={(e) => setCreateForm((p) => ({ ...p, password: e.target.value }))} placeholder="至少6位" />
             </label>
-            <label className="field-label">
+            <div className="field-label">
               角色
-              <select className="field-input" value={createForm.role}
-                onChange={(e) => setCreateForm((p) => ({ ...p, role: e.target.value }))}>
-                <option value="ADMIN">管理员</option>
-                <option value="OPERATIONS">运营</option>
-                <option value="SUPPORT">客服</option>
-              </select>
-            </label>
+              <Select value={createForm.role} onValueChange={(v) => setCreateForm((p) => ({ ...p, role: v }))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ADMIN">管理员</SelectItem>
+                  <SelectItem value="OPERATIONS">运营</SelectItem>
+                  <SelectItem value="SUPPORT">客服</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div style={{ marginTop: 12 }}>
             <label className="field-label" style={{ marginBottom: 4 }}>权限模块（留空 = 所有权限）</label>
             {renderPermCheckboxes(createForm.permissions, (newPerms) => setCreateForm((p) => ({ ...p, permissions: newPerms })))}
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button className="btn btn-primary" type="submit">创建</button>
-            <button className="btn" type="button" onClick={() => setShowCreateForm(false)}>取消</button>
+            <Button type="submit">创建</Button>
+            <Button variant="outline" type="button" onClick={() => setShowCreateForm(false)}>取消</Button>
           </div>
         </form>
       )}
@@ -241,36 +255,40 @@ export function UserManagementPanel({ showToast }: Props) {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label className="field-label">
                     显示名
-                    <input className="field-input" value={editForm.displayName}
+                    <Input value={editForm.displayName}
                       onChange={(e) => setEditForm((p) => ({ ...p, displayName: e.target.value }))} />
                   </label>
                   {user.role !== "SUPER_ADMIN" && (
-                    <label className="field-label">
+                    <div className="field-label">
                       角色
-                      <select className="field-input" value={editForm.role}
-                        onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}>
-                        <option value="ADMIN">管理员</option>
-                        <option value="OPERATIONS">运营</option>
-                        <option value="SUPPORT">客服</option>
-                      </select>
-                    </label>
+                      <Select value={editForm.role} onValueChange={(v) => setEditForm((p) => ({ ...p, role: v }))}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ADMIN">管理员</SelectItem>
+                          <SelectItem value="OPERATIONS">运营</SelectItem>
+                          <SelectItem value="SUPPORT">客服</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   )}
                 </div>
                 {user.role !== "SUPER_ADMIN" && (
                   <div style={{ marginTop: 12 }}>
                     <label className="field-label" style={{ marginBottom: 4 }}>权限模块（留空 = 所有权限）</label>
                     <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                      <button type="button" className="btn" style={{ fontSize: 12, padding: "2px 8px" }}
-                        onClick={() => setEditForm((p) => ({ ...p, permissions: ALL_PERMISSIONS.map(pp => pp.key) }))}>全选</button>
-                      <button type="button" className="btn" style={{ fontSize: 12, padding: "2px 8px" }}
-                        onClick={() => setEditForm((p) => ({ ...p, permissions: [] }))}>清空(全部权限)</button>
+                      <Button variant="outline" size="xs" type="button"
+                        onClick={() => setEditForm((p) => ({ ...p, permissions: ALL_PERMISSIONS.map(pp => pp.key) }))}>全选</Button>
+                      <Button variant="outline" size="xs" type="button"
+                        onClick={() => setEditForm((p) => ({ ...p, permissions: [] }))}>清空(全部权限)</Button>
                     </div>
                     {renderPermCheckboxes(editForm.permissions ?? [], (newPerms) => setEditForm((p) => ({ ...p, permissions: newPerms })))}
                   </div>
                 )}
                 <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-                  <button className="btn btn-primary" onClick={() => handleUpdate(user.id)}>保存</button>
-                  <button className="btn" onClick={() => setEditingId(null)}>取消</button>
+                  <Button onClick={() => handleUpdate(user.id)}>保存</Button>
+                  <Button variant="outline" onClick={() => setEditingId(null)}>取消</Button>
                 </div>
               </div>
             ) : resetPwId === user.id ? (
@@ -280,12 +298,12 @@ export function UserManagementPanel({ showToast }: Props) {
                   <strong>{user.displayName}</strong> ({user.email}) — 重置密码
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input className="field-input" type="password" placeholder="新密码（至少6位）" minLength={6}
+                  <Input type="password" placeholder="新密码（至少6位）" minLength={6}
                     value={resetPw} onChange={(e) => setResetPw(e.target.value)}
                     style={{ maxWidth: 300 }} />
-                  <button className="btn btn-primary" onClick={() => handleResetPassword(user.id)}
-                    disabled={resetPw.length < 6}>确认重置</button>
-                  <button className="btn" onClick={() => { setResetPwId(null); setResetPw(""); }}>取消</button>
+                  <Button onClick={() => handleResetPassword(user.id)}
+                    disabled={resetPw.length < 6}>确认重置</Button>
+                  <Button variant="outline" onClick={() => { setResetPwId(null); setResetPw(""); }}>取消</Button>
                 </div>
               </div>
             ) : (
@@ -294,12 +312,9 @@ export function UserManagementPanel({ showToast }: Props) {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <strong style={{ fontSize: 15 }}>{user.displayName}</strong>
-                    <span style={{
-                      display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                      color: "#fff", background: ROLE_COLORS[user.role] ?? "#888",
-                    }}>
+                    <Badge variant={ROLE_VARIANT[user.role] ?? "secondary"}>
                       {ROLE_LABELS[user.role] ?? user.role}
-                    </span>
+                    </Badge>
                   </div>
                   <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{user.email}</div>
                   {user.permissions && user.permissions.length > 0 && (
@@ -307,10 +322,7 @@ export function UserManagementPanel({ showToast }: Props) {
                       {user.permissions.map((p) => {
                         const label = ALL_PERMISSIONS.find((ap) => ap.key === p)?.label ?? p;
                         return (
-                          <span key={p} style={{
-                            display: "inline-block", padding: "1px 6px", borderRadius: 3,
-                            fontSize: 11, background: "var(--surface-2, #333)", color: "var(--text-muted, #aaa)",
-                          }}>{label}</span>
+                          <Badge key={p} variant="secondary">{label}</Badge>
                         );
                       })}
                     </div>
@@ -324,10 +336,10 @@ export function UserManagementPanel({ showToast }: Props) {
                 </div>
                 {user.role !== "SUPER_ADMIN" && (
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button className="btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => startEdit(user)}>编辑</button>
-                    <button className="btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => setResetPwId(user.id)}>重置密码</button>
-                    <button className="btn" style={{ fontSize: 12, padding: "4px 10px", color: "#e74c3c" }}
-                      onClick={() => handleDelete(user.id, user.email)}>删除</button>
+                    <Button variant="outline" size="sm" onClick={() => startEdit(user)}>编辑</Button>
+                    <Button variant="outline" size="sm" onClick={() => setResetPwId(user.id)}>重置密码</Button>
+                    <Button variant="destructive" size="sm"
+                      onClick={() => handleDelete(user.id, user.email)}>删除</Button>
                   </div>
                 )}
               </div>

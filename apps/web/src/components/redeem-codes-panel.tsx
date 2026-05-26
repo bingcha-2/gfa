@@ -9,6 +9,23 @@ import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type CodeTypeFilter = "ALL" | "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
 
@@ -236,7 +253,7 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
               <form className="form-card field-grid workspace-form" onSubmit={submit}>
                 <div className="field">
                   <label htmlFor="code-count">生成数量</label>
-                  <input
+                  <Input
                     id="code-count"
                     max="100"
                     min="1"
@@ -252,7 +269,7 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                 </div>
                 <div className="field">
                   <label htmlFor="code-product">产品标识</label>
-                  <input
+                  <Input
                     id="code-product"
                     required
                     value={form.product}
@@ -265,24 +282,28 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                 </div>
                 <div className="field">
                   <label htmlFor="code-codeType">卡密类型</label>
-                  <select
-                    id="code-codeType"
+                  <Select
                     value={form.codeType}
-                    onChange={(event) => {
+                    onValueChange={(value) => {
                       setNewCodes(null);
-                      setForm((current) => ({ ...current, codeType: event.target.value as "JOIN_GROUP" | "ACCOUNT_SWAP" }));
+                      setForm((current) => ({ ...current, codeType: value as "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION" }));
                     }}
                   >
-                    <option value="JOIN_GROUP">进组卡密（JZ-）</option>
-                    <option value="ACCOUNT_SWAP">换号卡密（HH-）</option>
-                    <option value="SUBSCRIPTION">长效换号卡密（CX-）</option>
-                  </select>
+                    <SelectTrigger id="code-codeType" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="JOIN_GROUP">进组卡密（JZ-）</SelectItem>
+                      <SelectItem value="ACCOUNT_SWAP">换号卡密（HH-）</SelectItem>
+                      <SelectItem value="SUBSCRIPTION">长效换号卡密（CX-）</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 {form.codeType === "SUBSCRIPTION" && (
                   <>
                     <div className="field">
                       <label htmlFor="code-validDays">有效天数</label>
-                      <input
+                      <Input
                         id="code-validDays"
                         min="1"
                         max="3650"
@@ -294,7 +315,7 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                     </div>
                     <div className="field">
                       <label htmlFor="code-swapLimit">窗口内最大替换次数</label>
-                      <input
+                      <Input
                         id="code-swapLimit"
                         min="1"
                         max="100"
@@ -306,7 +327,7 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                     </div>
                     <div className="field">
                       <label htmlFor="code-swapWindow">限流窗口（小时）</label>
-                      <input
+                      <Input
                         id="code-swapWindow"
                         min="1"
                         max="720"
@@ -324,9 +345,9 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                     新生成的卡密默认不带过期时间。只有用户提交卡密、订单真正完成后，才会记录实际生效时间。
                   </p>
                 </div>
-                <button className="button" disabled={isSubmitting} type="submit">
+                <Button disabled={isSubmitting} type="submit">
                   {isSubmitting ? "生成中..." : "批量生成卡密"}
-                </button>
+                </Button>
                 {validationError ? <div className="notice error">{validationError}</div> : null}
               </form>
 
@@ -339,13 +360,12 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                         已生成 {newCodes.length} 条卡密
                       </h3>
                     </div>
-                    <button
-                      className="button"
+                    <Button
                       type="button"
                       onClick={() => void copyText(newCodes.join("\n"), `已复制 ${newCodes.length} 条卡密`)}
                     >
                       一键全部复制
-                    </button>
+                    </Button>
                   </div>
                   <div
                     style={{
@@ -380,21 +400,12 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
             {/* Search bar */}
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               <div style={{ position: "relative", flex: 1 }}>
-                <input
+                <Input
                   id="code-search"
                   type="text"
                   placeholder="搜索卡密编号、订单号或用户邮箱…"
                   value={searchInput}
                   onChange={(e) => handleSearchInput(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "0.5rem 2.25rem 0.5rem 0.75rem",
-                    background: "var(--surface-1, rgba(255,255,255,0.06))",
-                    border: "1px solid var(--border, rgba(255,255,255,0.12))",
-                    borderRadius: "0.5rem",
-                    color: "inherit",
-                    fontSize: "0.875rem",
-                  }}
                 />
                 {searchInput && (
                   <button
@@ -425,14 +436,14 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
               <div style={{ fontSize: '0.875rem', color: 'var(--foreground-muted, #737373)', marginBottom: '2px' }}>
                 搜索 "{searchTerm}" · 找到 {totalItems} 条结果
                 {totalPages > 0 && ` · 第 ${currentPage}/${totalPages} 页`}
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   type="button"
                   onClick={clearSearch}
-                  className="button secondary small"
-                  style={{ marginLeft: "0.5rem", fontSize: "0.75rem", padding: "2px 8px" }}
                 >
                   清除搜索
-                </button>
+                </Button>
               </div>
             ) : (
               <>
@@ -454,23 +465,25 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                   </div>
 
                   <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
-                    <button
-                      className="button secondary small"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={loadData}
                       disabled={isLoading}
                       type="button"
                     >
                       {isLoading ? '刷新中...' : '刷新这页'}
-                    </button>
-                    <button
-                      className="button secondary small"
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       disabled={!codes.length}
                       onClick={handleExportCsv}
                       title="导出当前页视图为 CSV"
                       type="button"
                     >
                       导出本页 CSV
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -544,13 +557,14 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                           {canManage ? (
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                               {code.status === "UNUSED" && (
-                                <button
-                                  className="button secondary small"
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   onClick={() => void onDisable(code.id)}
                                   type="button"
                                 >
                                   禁用
-                                </button>
+                                </Button>
                               )}
                               <ConfirmButton
                                 className="button danger small"
@@ -583,7 +597,7 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
             {/* Server Pagination */}
             {totalPages > 1 && (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '12px 0 4px', flexWrap: 'wrap' }}>
-                <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                <Button variant="outline" size="sm" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button">← 上页</Button>
                 {(() => {
                   const pages: (number | string)[] = [];
                   const delta = 2;
@@ -598,20 +612,21 @@ export function RedeemCodesPanel({ role }: RedeemCodesPanelProps) {
                     p === '...' ? (
                       <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
                     ) : (
-                      <button
-                        key={p}
-                        className={`button small ${p === currentPage ? '' : 'secondary'}`}
-                        disabled={isLoading}
-                        onClick={() => setCurrentPage(p as number)}
-                        type="button"
-                        style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
-                      >
-                        {p}
-                      </button>
+                            <Button
+                              key={p}
+                              variant={p === currentPage ? "default" : "outline"}
+                              size="sm"
+                              disabled={isLoading}
+                              onClick={() => setCurrentPage(p as number)}
+                              type="button"
+                              style={{ minWidth: 32 }}
+                            >
+                              {p}
+                            </Button>
                     )
                   );
                 })()}
-                <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                <Button variant="outline" size="sm" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button">下页 →</Button>
               </div>
             )}
           </div>

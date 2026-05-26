@@ -2,6 +2,29 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
+
 import "./scheduler-panel.css";
 
 type SchedulerConfig = {
@@ -109,7 +132,6 @@ function formatShortTime(iso: string | null): string {
 
 function parseErrorMessage(msg: string | null): { text: string; isCooldown: boolean } {
   if (!msg) return { text: "", isCooldown: false };
-  // Format LOGIN_COOLDOWN: 13s remaining -> human-friendly
   const cooldownMatch = msg.match(/LOGIN_COOLDOWN[:\s]+([\d]+)s\s*remaining/i);
   if (cooldownMatch) {
     return { text: `登录冷却中，还需 ${cooldownMatch[1]}秒`, isCooldown: true };
@@ -240,7 +262,7 @@ export function SchedulerPanel({ showToast }: Props) {
   if (loading || !config || !status) {
     return (
       <div className="scheduler-shell">
-        <div className="sch-empty">加载中...</div>
+        <div className="sch-empty"><Spinner /></div>
       </div>
     );
   }
@@ -248,7 +270,6 @@ export function SchedulerPanel({ showToast }: Props) {
   const hasDraft = Object.keys(draft).length > 0;
   const summary = status.lastRunSummary;
 
-  // Determine status display
   let statusClass: string;
   let statusIcon: string;
   let statusText: string;
@@ -304,14 +325,13 @@ export function SchedulerPanel({ showToast }: Props) {
               </div>
             </div>
 
-            <button
+            <Button
               className="sch-run-btn"
               disabled={status.isRunning}
               onClick={() => setShowConfirm(true)}
-              style={{ width: "100%" }}
             >
               {status.isRunning ? "执行中..." : "▶ 立即执行"}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -324,27 +344,23 @@ export function SchedulerPanel({ showToast }: Props) {
                 启用自动维护
                 <small>每 5 分钟检查一次</small>
               </div>
-              <label className="sch-toggle">
-                <input
-                  type="checkbox"
-                  checked={merged.enabled}
-                  onChange={(e) => field("enabled", e.target.checked)}
-                />
-                <span className="sch-toggle-track" />
-              </label>
+              <Switch
+                checked={merged.enabled}
+                onCheckedChange={(v) => field("enabled", v)}
+              />
             </div>
 
             <div className="sch-field">
               <div className="sch-field-label">执行窗口</div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input
+                <Input
                   className="sch-input time"
                   type="time"
                   value={merged.runWindowStart}
                   onChange={(e) => field("runWindowStart", e.target.value)}
                 />
                 <span style={{ color: "var(--sch-fg-muted)" }}>~</span>
-                <input
+                <Input
                   className="sch-input time"
                   type="time"
                   value={merged.runWindowEnd}
@@ -358,7 +374,7 @@ export function SchedulerPanel({ showToast }: Props) {
                 每轮上限
                 <small>单次最多处理的账号数</small>
               </div>
-              <input
+              <Input
                 className="sch-input"
                 type="number"
                 min={1}
@@ -373,7 +389,7 @@ export function SchedulerPanel({ showToast }: Props) {
                 冷却时间（分钟）
                 <small>同一账号两次维护最小间隔</small>
               </div>
-              <input
+              <Input
                 className="sch-input"
                 type="number"
                 min={5}
@@ -387,7 +403,7 @@ export function SchedulerPanel({ showToast }: Props) {
                 同步阈值（分钟）
                 <small>家庭组距上次同步超过此时间才触发</small>
               </div>
-              <input
+              <Input
                 className="sch-input"
                 type="number"
                 min={60}
@@ -401,7 +417,7 @@ export function SchedulerPanel({ showToast }: Props) {
                 邀请超时（天）
                 <small>超时未接受自动取消</small>
               </div>
-              <input
+              <Input
                 className="sch-input"
                 type="number"
                 min={1}
@@ -414,59 +430,43 @@ export function SchedulerPanel({ showToast }: Props) {
 
             <div className="sch-field">
               <div className="sch-field-label">同步家庭组</div>
-              <label className="sch-toggle">
-                <input
-                  type="checkbox"
-                  checked={merged.syncEnabled}
-                  onChange={(e) => field("syncEnabled", e.target.checked)}
-                />
-                <span className="sch-toggle-track" />
-              </label>
+              <Switch
+                checked={merged.syncEnabled}
+                onCheckedChange={(v) => field("syncEnabled", v)}
+              />
             </div>
 
             <div className="sch-field">
               <div className="sch-field-label">踢出到期成员</div>
-              <label className="sch-toggle">
-                <input
-                  type="checkbox"
-                  checked={merged.removeExpiredMembersEnabled}
-                  onChange={(e) => field("removeExpiredMembersEnabled", e.target.checked)}
-                />
-                <span className="sch-toggle-track" />
-              </label>
+              <Switch
+                checked={merged.removeExpiredMembersEnabled}
+                onCheckedChange={(v) => field("removeExpiredMembersEnabled", v)}
+              />
             </div>
 
             <div className="sch-field">
               <div className="sch-field-label">取消超时邀请</div>
-              <label className="sch-toggle">
-                <input
-                  type="checkbox"
-                  checked={merged.cancelTimedOutInvitesEnabled}
-                  onChange={(e) => field("cancelTimedOutInvitesEnabled", e.target.checked)}
-                />
-                <span className="sch-toggle-track" />
-              </label>
+              <Switch
+                checked={merged.cancelTimedOutInvitesEnabled}
+                onCheckedChange={(v) => field("cancelTimedOutInvitesEnabled", v)}
+              />
             </div>
 
             <div className="sch-field">
               <div className="sch-field-label">跨组去重</div>
-              <label className="sch-toggle">
-                <input
-                  type="checkbox"
-                  checked={merged.deduplicateMembersEnabled}
-                  onChange={(e) => field("deduplicateMembersEnabled", e.target.checked)}
-                />
-                <span className="sch-toggle-track" />
-              </label>
+              <Switch
+                checked={merged.deduplicateMembersEnabled}
+                onCheckedChange={(v) => field("deduplicateMembersEnabled", v)}
+              />
             </div>
 
-            <button
+            <Button
               className="sch-save-btn"
               disabled={saving || !hasDraft}
               onClick={saveConfig}
             >
               {saving ? "保存中..." : "保存配置"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -499,77 +499,68 @@ export function SchedulerPanel({ showToast }: Props) {
         <div className="sch-log-header">
           <div className="sch-card-title" style={{ margin: 0 }}>执行日志（最近 3 天）</div>
           {taskTotal > 0 && (
-            <span className="sch-log-count">
-              共 {taskTotal} 条
-            </span>
+            <span className="sch-log-count">共 {taskTotal} 条</span>
           )}
         </div>
 
         {/* ── Search & Filters ── */}
-        <div style={{
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-          alignItems: "center",
-          padding: "0.75rem 0",
-          borderBottom: "1px solid var(--sch-border)",
-        }}>
-          <input
-            type="text"
-            className="sch-input"
+        <div className="sch-filters">
+          <Input
             placeholder="搜索邮箱..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            style={{ flex: 1, minWidth: 140 }}
+            className="sch-filter-input"
           />
-          <select
-            className="sch-input"
-            value={filterType}
-            onChange={(e) => { setFilterType(e.target.value); }}
-            style={{ width: "auto", minWidth: 100 }}
-          >
-            <option value="">全部类型</option>
-            <option value="SYNC_FAMILY_GROUP">同步</option>
-            <option value="REMOVE_MEMBER">踢人</option>
-            <option value="INVITE_MEMBER">邀请</option>
-            <option value="REPLACE_MEMBER">替换</option>
-          </select>
-          <select
-            className="sch-input"
-            value={filterStatus}
-            onChange={(e) => { setFilterStatus(e.target.value); }}
-            style={{ width: "auto", minWidth: 100 }}
-          >
-            <option value="">全部状态</option>
-            <option value="SUCCESS">成功</option>
-            <option value="INVITE_SENT">邀请已发送</option>
-            <option value="REPLACED_AND_INVITE_SENT">替换完成</option>
-            <option value="PENDING">等待中</option>
-            <option value="RUNNING">执行中</option>
-            <option value="FAILED_FINAL">失败</option>
-            <option value="FAILED_RETRYABLE">可重试</option>
-            <option value="MANUAL_REVIEW">人工审核</option>
-            <option value="CANCELLED">已取消</option>
-          </select>
-          <button
-            className="sch-page-btn"
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="sch-filter-select">
+              <SelectValue placeholder="全部类型" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">全部类型</SelectItem>
+              <SelectItem value="SYNC_FAMILY_GROUP">同步</SelectItem>
+              <SelectItem value="REMOVE_MEMBER">踢人</SelectItem>
+              <SelectItem value="INVITE_MEMBER">邀请</SelectItem>
+              <SelectItem value="REPLACE_MEMBER">替换</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="sch-filter-select">
+              <SelectValue placeholder="全部状态" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">全部状态</SelectItem>
+              <SelectItem value="SUCCESS">成功</SelectItem>
+              <SelectItem value="INVITE_SENT">邀请已发送</SelectItem>
+              <SelectItem value="REPLACED_AND_INVITE_SENT">替换完成</SelectItem>
+              <SelectItem value="PENDING">等待中</SelectItem>
+              <SelectItem value="RUNNING">执行中</SelectItem>
+              <SelectItem value="FAILED_FINAL">失败</SelectItem>
+              <SelectItem value="FAILED_RETRYABLE">可重试</SelectItem>
+              <SelectItem value="MANUAL_REVIEW">人工审核</SelectItem>
+              <SelectItem value="CANCELLED">已取消</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            className="sch-filter-btn"
             onClick={handleSearch}
             disabled={searching}
-            style={{ padding: "0.35rem 0.75rem", fontWeight: 600 }}
           >
             {searching ? "搜索中..." : "🔍 搜索"}
-          </button>
+          </Button>
           {(searchQuery || filterType || filterStatus) && (
-            <button
-              className="sch-page-btn"
+            <Button
+              variant="ghost"
+              className="sch-filter-btn"
               onClick={handleClearFilters}
-              style={{ padding: "0.35rem 0.75rem", color: "var(--sch-danger, #f87171)" }}
+              style={{ color: "var(--sch-danger, #f87171)" }}
             >
               ✕ 清除
-            </button>
+            </Button>
           )}
         </div>
+
         {tasks.length === 0 ? (
           <div className="sch-empty">暂无执行记录</div>
         ) : (
@@ -619,13 +610,15 @@ export function SchedulerPanel({ showToast }: Props) {
             {/* ── Pagination ── */}
             {taskTotal > PAGE_SIZE && (
               <div className="sch-pagination">
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   className="sch-page-btn"
                   disabled={taskPage <= 1}
                   onClick={() => load(taskPage - 1)}
                 >
                   ‹ 上一页
-                </button>
+                </Button>
                 <div className="sch-page-nums">
                   {(() => {
                     const totalPages = Math.ceil(taskTotal / PAGE_SIZE);
@@ -649,24 +642,28 @@ export function SchedulerPanel({ showToast }: Props) {
                       p === "..." ? (
                         <span key={`ellipsis-${idx}`} className="sch-page-ellipsis">…</span>
                       ) : (
-                        <button
+                        <Button
                           key={p}
+                          variant={p === taskPage ? "default" : "ghost"}
+                          size="sm"
                           className={`sch-page-num ${p === taskPage ? "active" : ""}`}
                           onClick={() => load(p as number)}
                         >
                           {p}
-                        </button>
+                        </Button>
                       )
                     );
                   })()}
                 </div>
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   className="sch-page-btn"
                   disabled={taskPage >= Math.ceil(taskTotal / PAGE_SIZE)}
                   onClick={() => load(taskPage + 1)}
                 >
                   下一页 ›
-                </button>
+                </Button>
               </div>
             )}
           </>
@@ -674,23 +671,20 @@ export function SchedulerPanel({ showToast }: Props) {
       </div>
 
       {/* ── Confirm Dialog ── */}
-      {showConfirm && (
-        <div className="sch-confirm-overlay" onClick={() => setShowConfirm(false)}>
-          <div className="sch-confirm-box" onClick={(e) => e.stopPropagation()}>
-            <h3>确认立即执行？</h3>
-            <p>
-              将跳过时间窗口限制，立即开始一轮自动维护。
-              运行期间不会重复触发。
-            </p>
-            <div className="sch-confirm-actions">
-              <button onClick={() => setShowConfirm(false)}>取消</button>
-              <button className="sch-confirm-yes" onClick={triggerRun}>
-                确认执行
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <AlertDialogContent className="sch-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认立即执行？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将跳过时间窗口限制，立即开始一轮自动维护。运行期间不会重复触发。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={triggerRun}>确认执行</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

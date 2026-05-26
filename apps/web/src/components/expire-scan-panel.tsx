@@ -5,6 +5,15 @@ import { useState, useEffect, useTransition } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { OrderSummary } from "../lib/types";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ScanStatus = {
   pendingCount: number;
@@ -148,26 +157,21 @@ export function ExpireScanPanel() {
                 <div className="split-head">
                   <span className="muted">执行频率</span>
                   {config ? (
-                    <select
-                      id="expire-scan-interval"
-                      value={selectedInterval ?? config.intervalMinutes}
-                      onChange={(e) => setSelectedInterval(Number(e.target.value))}
-                      style={{
-                        padding: "0.35rem 0.75rem",
-                        borderRadius: "0.5rem",
-                        border: "1px solid var(--color-border, #444)",
-                        background: "var(--color-surface, #1a1a2e)",
-                        color: "inherit",
-                        fontSize: "0.875rem",
-                        minWidth: "140px",
-                      }}
+                    <Select
+                      value={String(selectedInterval ?? config.intervalMinutes)}
+                      onValueChange={(v) => setSelectedInterval(Number(v))}
                     >
-                      {config.options.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {intervalLabel(opt)}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger id="expire-scan-interval" className="w-[160px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {config.options.map((opt) => (
+                          <SelectItem key={opt} value={String(opt)}>
+                            {intervalLabel(opt)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <span className="strong mono">加载中...</span>
                   )}
@@ -200,21 +204,20 @@ export function ExpireScanPanel() {
             </div>
             {config && selectedInterval !== null && selectedInterval !== config.intervalMinutes ? (
               <div className="action-row">
-                <button
-                  className="button"
+                <Button
                   disabled={isSavingConfig}
                   onClick={saveConfig}
                   type="button"
                 >
                   {isSavingConfig ? "保存中..." : "保存配置"}
-                </button>
-                <button
-                  className="button secondary"
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => setSelectedInterval(config.intervalMinutes)}
                   type="button"
                 >
                   取消
-                </button>
+                </Button>
               </div>
             ) : null}
             {configMsg ? <div className="muted" style={{ fontSize: "0.875rem" }}>{configMsg}</div> : null}
@@ -229,21 +232,20 @@ export function ExpireScanPanel() {
               <p className="muted">查看当前待到期订单数量和上次运行记录。</p>
             </div>
             <div className="action-row">
-              <button
-                className="button secondary"
+              <Button
+                variant="outline"
                 onClick={loadStatus}
                 type="button"
               >
                 查询状态
-              </button>
-              <button
-                className="button"
+              </Button>
+              <Button
                 disabled={isLoading}
                 onClick={triggerScan}
                 type="button"
               >
                 {isLoading ? "扫描中..." : "立即触发扫描"}
-              </button>
+              </Button>
             </div>
             {status ? (
               <div className="list-stack">
@@ -291,7 +293,7 @@ export function ExpireScanPanel() {
                         <div className="strong mono">{o.orderNo}</div>
                         <div className="muted">{o.userEmail}</div>
                       </div>
-                      <span className="status-badge expired">EXPIRED</span>
+                      <Badge variant="destructive">EXPIRED</Badge>
                     </div>
                   </div>
                 ))}
@@ -321,7 +323,7 @@ export function ExpireScanPanel() {
                       <div className="muted">{o.userEmail}</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <span className="status-badge expired">EXPIRED</span>
+                      <Badge variant="destructive">EXPIRED</Badge>
                       <div className="muted" style={{ fontSize: "0.875rem", marginTop: 2 }}>
                         {formatDate(o.updatedAt)}
                       </div>

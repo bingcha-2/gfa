@@ -11,6 +11,16 @@ import {
 import { TaskSummary } from "../lib/types";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 /** 格式化绝对时间为本地可读字符串 */
 function fmtTime(iso: string): string {
@@ -248,7 +258,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
           </div>
 
           <div className="filter-row" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <input
+            <Input
               className="search-field"
               placeholder="搜索 任务ID / 订单号 / 邮箱 / 母号"
               value={filter}
@@ -260,15 +270,15 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                 if (event.key === "Enter") loadData();
               }}
             />
-            <button
-              className="button secondary small"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={loadData}
               disabled={isLoading}
               type="button"
-              style={{ whiteSpace: "nowrap" }}
             >
               {isLoading ? "刷新中..." : "刷新"}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -425,56 +435,57 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                       <td>
                         <div className="inline-actions" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {canRetryTask(role, task.status) && (
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={isActioning}
                               onClick={() => void handleRetry(task.id)}
                               type="button"
-                              style={{ gap: 4, fontSize: '0.78rem' }}
                             >
                               {isActioning && actioning?.action === "retry"
                                 ? <><Spinner size={12} color="currentColor" /> 重试中...</>
                                 : "🔄 重试"}
-                            </button>
+                            </Button>
                           )}
                           {canCancelTask(role, task.status) && (
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={isActioning}
                               onClick={() => void handleCancel(task.id)}
                               type="button"
-                              style={{ gap: 4, fontSize: '0.78rem', color: 'var(--clr-error, #ef4444)' }}
+                              style={{ color: 'var(--clr-error, #ef4444)' }}
                             >
                               {isActioning && actioning?.action === "cancel"
                                 ? <><Spinner size={12} color="currentColor" /> 终止中...</>
                                 : "⛔ 终止"}
-                            </button>
+                            </Button>
                           )}
                           {canManualCompleteTask(role, task.status) && (
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={isActioning}
                               onClick={() => void handleManualComplete(task.id)}
                               type="button"
-                              style={{ gap: 4, fontSize: '0.78rem' }}
                             >
                               {isActioning && actioning?.action === "complete"
                                 ? <><Spinner size={12} color="currentColor" /> 处理中...</>
                                 : "✅ 手动完成"}
-                            </button>
+                            </Button>
                           )}
                           {canManualFailTask(role, task.status) && (
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               disabled={isActioning}
                               onClick={() => void handleManualFail(task.id)}
                               type="button"
-                              style={{ gap: 4, fontSize: '0.78rem' }}
                             >
                               {isActioning && actioning?.action === "fail"
                                 ? <><Spinner size={12} color="currentColor" /> 处理中...</>
                                 : "❌ 手动失败"}
-                            </button>
+                            </Button>
                           )}
                           {!canRetryTask(role, task.status) &&
                           !canManualCompleteTask(role, task.status) &&
@@ -492,7 +503,7 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                 <tr>
                   <td colSpan={5}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '8px 0', flexWrap: 'wrap' }}>
-                      <button className="button secondary small" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                      <Button variant="outline" size="sm" disabled={currentPage <= 1 || isLoading} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button">← 上页</Button>
                       {(() => {
                         const pages: (number | string)[] = [];
                         const delta = 2;
@@ -507,20 +518,21 @@ export function TasksPanel({ role, showToast: externalToast }: TasksPanelProps) 
                           p === '...' ? (
                             <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
                           ) : (
-                            <button
+                            <Button
                               key={p}
-                              className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                              variant={p === currentPage ? "default" : "outline"}
+                              size="sm"
                               disabled={isLoading}
                               onClick={() => setCurrentPage(p as number)}
                               type="button"
-                              style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                              style={{ minWidth: 32 }}
                             >
                               {p}
-                            </button>
+                            </Button>
                           )
                         );
                       })()}
-                      <button className="button secondary small" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                      <Button variant="outline" size="sm" disabled={currentPage >= totalPages || isLoading} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button">下页 →</Button>
                     </div>
                   </td>
                 </tr>

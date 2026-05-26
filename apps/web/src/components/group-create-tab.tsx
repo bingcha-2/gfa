@@ -2,6 +2,15 @@
 
 import React from "react";
 import type { AccountSummary } from "../lib/types";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type CreateTabProps = {
   accounts: AccountSummary[];
@@ -38,29 +47,31 @@ export function CreateTab({
     <form className="form-card field-grid workspace-form" onSubmit={onSubmit}>
       <div className="field">
         <label htmlFor="group-account">归属母号</label>
-        <select
+        <Select
           disabled={!accounts.length}
-          id="group-account"
-          required
           value={form.accountId}
-          onChange={(event) =>
+          onValueChange={(value) =>
             setForm((current) => ({
               ...current,
-              accountId: event.target.value
+              accountId: value
             }))
           }
         >
-          {accounts.length ? null : <option value="">请先创建母号</option>}
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id="group-account" className="w-full">
+            <SelectValue placeholder={accounts.length ? "请选择母号" : "请先创建母号"} />
+          </SelectTrigger>
+          <SelectContent>
+            {accounts.map((account) => (
+              <SelectItem key={account.id} value={account.id}>
+                {account.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="field">
         <label htmlFor="group-name">家庭组名称</label>
-        <input
+        <Input
           id="group-name"
           required
           value={form.groupName}
@@ -74,7 +85,7 @@ export function CreateTab({
       </div>
       <div className="field">
         <label htmlFor="group-max">最大成员数</label>
-        <input
+        <Input
           id="group-max"
           min="1"
           required
@@ -91,13 +102,12 @@ export function CreateTab({
       {!accounts.length ? (
         <div className="notice warn">创建家庭组前，必须先在左侧建立至少一个母号。</div>
       ) : null}
-      <button
-        className="button"
+      <Button
         disabled={isSubmitting || !accounts.length}
         type="submit"
       >
         {isSubmitting ? "创建中..." : "新增家庭组"}
-      </button>
+      </Button>
     </form>
   );
 }

@@ -7,6 +7,16 @@ import { canCreateAccount } from "../lib/permissions";
 import { AccountSummary } from "../lib/types";
 import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type BulkImportResult = {
   total: number;
@@ -208,12 +218,12 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="bulk-preset-expire">预设订阅到期时间</label>
-                <input
+                <Input
                   id="bulk-preset-expire"
                   type="date"
                   value={bulkSubscriptionExpiresAt}
                   onChange={(e) => setBulkSubscriptionExpiresAt(e.target.value)}
-                  style={{ width: "100%", maxWidth: "300px" }}
+                  className="w-auto"
                 />
                 <p className="muted" style={{ fontSize: "0.8rem", marginTop: 4 }}>
                   本次导入的所有新母号将会默认关联此到期时间 (默认当前之后一个月)
@@ -221,7 +231,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="bulk-lines">账号数据（每行一个）</label>
-                <textarea
+                <Textarea
                   id="bulk-lines"
                   rows={8}
                   placeholder={'邮箱----密码----辅助邮箱----2FA密钥\n邮箱——密码——2FA密钥'}
@@ -231,11 +241,10 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 />
               </div>
               <div className="inline-actions">
-                <button className="button secondary" onClick={() => { setActiveTab("list"); setBulkResult(null); }} type="button">
+                <Button variant="outline" onClick={() => { setActiveTab("list"); setBulkResult(null); }} type="button">
                   返回列表
-                </button>
-                <button
-                  className="button"
+                </Button>
+                <Button
                   disabled={isBulkSubmitting || !bulkText.trim()}
                   type="button"
                   onClick={async () => {
@@ -254,7 +263,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   }}
                 >
                   {isBulkSubmitting ? "导入中..." : `导入 (${bulkText.split('\n').filter(l => l.trim()).length} 行)`}
-                </button>
+                </Button>
               </div>
               {bulkResult && (
                 <div className="bulk-result" style={{ marginTop: '12px' }}>
@@ -333,7 +342,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
             <div className="field-grid two-up">
               <div className="field">
                 <label htmlFor="edit-name">名称</label>
-                <input
+                <Input
                   id="edit-name"
                   required
                   value={editForm.name}
@@ -342,7 +351,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="edit-profile">AdsPower Profile ID</label>
-                <input
+                <Input
                   id="edit-profile"
                   required
                   value={editForm.adspowerProfileId}
@@ -351,7 +360,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="edit-password">登录密码</label>
-                <input
+                <Input
                   id="edit-password"
                   type="text"
                   autoComplete="off"
@@ -362,7 +371,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="edit-totp">TOTP 密钥</label>
-                <input
+                <Input
                   id="edit-totp"
                   type="text"
                   autoComplete="off"
@@ -375,7 +384,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
             <div className="field-grid two-up">
               <div className="field">
                 <label htmlFor="edit-sub-expires">订阅到期时间 <span className="muted">(手动填写)</span></label>
-                <input
+                <Input
                   id="edit-sub-expires"
                   type="date"
                   value={editForm.subscriptionExpiresAt}
@@ -384,7 +393,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               </div>
               <div className="field">
                 <label htmlFor="edit-sub-plan">订阅计划 <span className="muted">(如 Google AI Ultra 30 TB)</span></label>
-                <input
+                <Input
                   id="edit-sub-plan"
                   placeholder="订阅计划名称（可选）"
                   value={editForm.subscriptionPlan}
@@ -394,7 +403,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
             </div>
             <div className="field">
               <label htmlFor="edit-notes">备注</label>
-              <textarea
+              <Textarea
                 id="edit-notes"
                 rows={3}
                 value={editForm.notes}
@@ -402,12 +411,12 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               />
             </div>
             <div className="inline-actions">
-              <button className="button secondary" type="button" onClick={() => { setActiveTab("list"); setEditId(null); }}>
+              <Button variant="outline" type="button" onClick={() => { setActiveTab("list"); setEditId(null); }}>
                 取消
-              </button>
-              <button className="button" type="submit" disabled={isEditSubmitting}>
+              </Button>
+              <Button type="submit" disabled={isEditSubmitting}>
                 {isEditSubmitting ? "保存中..." : "保存"}
-              </button>
+              </Button>
             </div>
           </form>
         ) : activeTab === "create" ? (
@@ -416,7 +425,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
               <div className="field-grid two-up">
                 <div className="field">
                   <label htmlFor="account-name">母号名称</label>
-                  <input
+                  <Input
                     id="account-name"
                     required
                     value={form.name}
@@ -430,7 +439,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
                 <div className="field">
                   <label htmlFor="account-email">登录邮箱</label>
-                  <input
+                  <Input
                     id="account-email"
                     required
                     type="email"
@@ -445,7 +454,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
                 <div className="field">
                   <label htmlFor="adspower-profile">AdsPower Profile ID</label>
-                  <input
+                  <Input
                     id="adspower-profile"
                     required
                     value={form.adspowerProfileId}
@@ -459,7 +468,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
                 <div className="field">
                   <label htmlFor="account-password">登录密码</label>
-                  <input
+                  <Input
                     id="account-password"
                     required
                     type="password"
@@ -475,7 +484,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
                 <div className="field">
                   <label htmlFor="account-totp">TOTP 密钥</label>
-                  <input
+                  <Input
                     id="account-totp"
                     type="password"
                     placeholder="Base32 格式（如 JBSWY3DPEHPK3PXP）"
@@ -490,7 +499,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
                 <div className="field field-span-2">
                   <label htmlFor="account-notes">备注</label>
-                  <textarea
+                  <Textarea
                     id="account-notes"
                     value={form.notes}
                     onChange={(event) =>
@@ -503,12 +512,12 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 </div>
               </div>
               <div className="inline-actions">
-                <button className="button secondary" onClick={() => setActiveTab("list")} type="button">
+                <Button variant="outline" onClick={() => setActiveTab("list")} type="button">
                   返回列表
-                </button>
-                <button className="button" disabled={isSubmitting} type="submit">
+                </Button>
+                <Button disabled={isSubmitting} type="submit">
                   {isSubmitting ? "创建中..." : "新增母号"}
-                </button>
+                </Button>
               </div>
             </form>
           ) : (
@@ -528,7 +537,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
               <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 160 }}>
                 <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.9rem', pointerEvents: 'none' }}>🔍</span>
-                <input
+                <Input
                   type="text"
                   placeholder="搜索名称 / 邮箱 / Profile ID…"
                   value={searchTerm}
@@ -567,15 +576,15 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                 <option value="EXPIRED">🔴 已过期</option>
               </select>
               {(searchTerm || filterAccountStatus !== 'ALL' || filterSubStatus !== 'ALL') && (
-                <button className="button secondary small" type="button" onClick={() => { setSearchTerm(''); setFilterAccountStatus('ALL'); setFilterSubStatus('ALL'); setCurrentPage(1); setSelectedIds(new Set()); }} style={{ whiteSpace: 'nowrap' }}>清除</button>
+                <Button variant="outline" size="sm" type="button" onClick={() => { setSearchTerm(''); setFilterAccountStatus('ALL'); setFilterSubStatus('ALL'); setCurrentPage(1); setSelectedIds(new Set()); }}>清除</Button>
               )}
             </div>
             {/* Multi-select action bar */}
             {selectedIds.size > 0 && (
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px', padding: '8px 12px', background: 'var(--surface-2, #f5f5f4)', borderRadius: '8px' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>已选 {selectedIds.size} 个</span>
-                <button
-                  className="button small"
+                <Button
+                  size="sm"
                   type="button"
                   onClick={() => {
                     const emails = filteredAccounts.filter(a => selectedIds.has(a.id)).map(a => a.loginEmail).join('\n');
@@ -583,26 +592,27 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                     setCopyToast(`已复制 ${selectedIds.size} 个邮箱`);
                     setTimeout(() => setCopyToast(''), 2000);
                   }}
-                  style={{ background: 'var(--accent, #6366f1)', color: 'white' }}
                 >
                   📋 复制邮箱
-                </button>
-                <button
-                  className="button secondary small"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   type="button"
                   onClick={() => {
                     setSelectedIds(new Set(filteredAccounts.map(a => a.id)));
                   }}
                 >
                   全选当前 ({filteredAccounts.length})
-                </button>
-                <button
-                  className="button secondary small"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
                 >
                   取消全选
-                </button>
+                </Button>
                 {copyToast && (
                   <span style={{ fontSize: '0.8rem', color: 'var(--emerald, #059669)', fontWeight: 600, animation: 'fadeIn 0.3s ease' }}>✅ {copyToast}</span>
                 )}
@@ -697,13 +707,14 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                       {canManage && (
                         <td>
                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                            <button
-                              className="button secondary small"
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => startEdit(account)}
                               type="button"
                             >
                               编辑
-                            </button>
+                            </Button>
                             <ConfirmButton
                               className="button danger small"
                               confirmLabel="确定删除？"
@@ -751,7 +762,7 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                   <tr>
                     <td colSpan={canManage ? 6 : 5}>
                       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '8px 0', flexWrap: 'wrap' }}>
-                        <button className="button secondary small" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button" style={{ minWidth: 60 }}>← 上页</button>
+                        <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} type="button">← 上页</Button>
                         {(() => {
                           const pages: (number | string)[] = [];
                           const delta = 2;
@@ -766,19 +777,20 @@ export function AccountPanel({ accounts, onCreate, onBulkImport, onDelete, onUpd
                             p === '...' ? (
                               <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: 'var(--foreground-muted, #a3a3a3)', fontSize: '0.85rem' }}>…</span>
                             ) : (
-                              <button
+                              <Button
                                 key={p}
-                                className={`button small ${p === currentPage ? '' : 'secondary'}`}
+                                variant={p === currentPage ? "default" : "outline"}
+                                size="sm"
                                 onClick={() => setCurrentPage(p as number)}
                                 type="button"
-                                style={{ minWidth: 32, padding: '4px 8px', fontWeight: p === currentPage ? 700 : 400 }}
+                                style={{ minWidth: 32 }}
                               >
                                 {p}
-                              </button>
+                              </Button>
                             )
                           );
                         })()}
-                        <button className="button secondary small" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button" style={{ minWidth: 60 }}>下页 →</button>
+                        <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} type="button">下页 →</Button>
                       </div>
                     </td>
                   </tr>

@@ -5,6 +5,9 @@ import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { ConfirmButton } from "./confirm-button";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 /* ================================================================
    Types
@@ -273,7 +276,7 @@ function ReplaceAccountPicker({ onSelect, onCancel, showToast }: {
 
   return (
     <div>
-      <input
+      <Input
         className="field-input"
         placeholder="搜索未上号子号…"
         value={filter}
@@ -295,7 +298,7 @@ function ReplaceAccountPicker({ onSelect, onCancel, showToast }: {
         </div>
       )}
       <div style={{ marginTop: 16, textAlign: "right" }}>
-        <button className="button secondary" type="button" onClick={onCancel}>取消</button>
+        <Button variant="outline" type="button" onClick={onCancel}>取消</Button>
       </div>
     </div>
   );
@@ -894,7 +897,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                   <p className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
                     每行一个子号，格式：<code>邮箱---密码---2FA密钥</code>（或用 <code>——</code> / <code>|</code> 分隔）
                   </p>
-                  <textarea
+                  <Textarea
                     className="field-input"
                     value={agentImportText}
                     onChange={(e) => setAgentImportText(e.target.value)}
@@ -905,16 +908,14 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     <span className="muted" style={{ fontSize: 11, marginRight: "auto" }}>
                       {agentImportText.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).length} 行
                     </span>
-                    <button
-                      className="button primary"
+                    <Button
                       onClick={handleAgentImport}
                       disabled={!agentImportText.trim() || agentImporting}
                       type="button"
-                      style={{ gap: 6 }}
                     >
                       {agentImporting && <Spinner size={14} color="currentColor" />}
                       导入凭证
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </details>
@@ -926,24 +927,26 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     <span>已选 <strong>{agentSelected.size}</strong> 个子号</span>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button className="button primary" type="button" disabled={agentBatchAction}
-                      onClick={() => handleAgentBatch("phone-verify")} style={{ fontSize: 12, gap: 4 }}>
+                    <Button type="button" disabled={agentBatchAction}
+                      onClick={() => handleAgentBatch("phone-verify")} size="sm">
                       {agentBatchAction && <Spinner size={12} color="currentColor" />} 📱 批量验证
-                    </button>
-                    <button className="button primary" type="button" disabled={agentBatchAction}
-                      onClick={() => handleAgentBatch("accept-invite")} style={{ fontSize: 12, gap: 4 }}>
+                    </Button>
+                    <Button type="button" disabled={agentBatchAction}
+                      onClick={() => handleAgentBatch("accept-invite")} size="sm">
                       {agentBatchAction && <Spinner size={12} color="currentColor" />} 📨 批量进组
-                    </button>
-                    <button className="button" type="button"
+                    </Button>
+                    <Button type="button"
                       onClick={() => setShowUploadModal(true)}
-                      style={{ fontSize: 12, gap: 4, background: "var(--emerald, #059669)", color: "white" }}>
+                      size="sm"
+                      style={{ background: "var(--emerald, #059669)", color: "white" }}>
                       🚀 一键上号 ({agentSelected.size})
-                    </button>
-                    <button className="button" type="button" disabled={agentBatchAction}
+                    </Button>
+                    <Button type="button" disabled={agentBatchAction}
                       onClick={handleUploadToRosetta}
-                      style={{ fontSize: 12, gap: 4, background: "var(--blue, #2563eb)", color: "white" }}>
+                      size="sm"
+                      style={{ background: "var(--blue, #2563eb)", color: "white" }}>
                       {agentBatchAction && <Spinner size={12} color="currentColor" />} 🔄 上号Rosetta ({agentSelected.size})
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -953,11 +956,11 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                 <span className="agent-step-badge">📋</span>
                 <span>未上号列表 ({agentTotal})</span>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                  <button className="button secondary" type="button"
+                  <Button variant="outline" size="sm" type="button"
                     onClick={() => { setAgentPage(1); loadAgentAccountsByPool("pending", 1); loadAgentStats(); }}
-                    disabled={agentLoading} style={{ fontSize: 11, padding: "3px 10px" }}>
+                    disabled={agentLoading}>
                     {agentLoading ? <Spinner size={12} color="currentColor" /> : "刷新"}
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -1013,11 +1016,11 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                               {hasToken ? (
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                   <span style={{ color: "var(--green)", fontSize: 12 }}>✅</span>
-                                  <button className="button secondary" type="button" title="复制 Token"
+                                  <Button variant="outline" size="sm" type="button" title="复制 Token"
                                     style={{ fontSize: 10, padding: "1px 5px", lineHeight: 1, minWidth: 0 }}
                                     onClick={() => { navigator.clipboard.writeText(acc.refreshToken!); showToast("success", "已复制 Token"); }}>
                                     📋
-                                  </button>
+                                  </Button>
                                 </span>
                               ) : (
                                 <span style={{ color: "var(--red)", fontSize: 12, opacity: 0.6 }}>❌</span>
@@ -1028,17 +1031,17 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                             </td>
                             <td>
                               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                <button className="button secondary" type="button"
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => handleAgentTrigger(acc.id, "phone-verify")}
-                                  style={{ fontSize: 10, padding: "2px 8px" }}>📱 验证</button>
+                                  style={{ fontSize: 10, padding: "2px 8px" }}>📱 验证</Button>
                                 {!acc.refreshToken && acc.lastTaskId && (
-                                  <button className="button secondary" type="button"
+                                  <Button variant="outline" size="sm" type="button"
                                     onClick={() => handleExtractToken(acc.id)}
-                                    style={{ fontSize: 10, padding: "2px 8px" }}>📥 提取Token</button>
+                                    style={{ fontSize: 10, padding: "2px 8px" }}>📥 提取Token</Button>
                                 )}
-                                <button className="button secondary" type="button"
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => { setShowJoinModal(acc.id); loadMotherOptions(); }}
-                                  style={{ fontSize: 10, padding: "2px 8px" }}>🏠 进组</button>
+                                  style={{ fontSize: 10, padding: "2px 8px" }}>🏠 进组</Button>
                                 <ConfirmButton
                                   className="button"
                                   style={{ fontSize: 10, padding: "2px 8px", color: "var(--red)" }}
@@ -1059,27 +1062,27 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
               {/* Pagination */}
               {agentTotalPages > 1 && (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 12, fontSize: 13 }}>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={agentPage <= 1 || agentLoading}
                     onClick={() => { setAgentPage((p) => Math.max(1, p - 1)); setAgentSelected(new Set()); }}
                     type="button"
                   >
                     ← 上一页
-                  </button>
+                  </Button>
                   <span className="muted">
                     第 {agentPage} / {agentTotalPages} 页 · 共 {agentTotal} 条
                   </span>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={agentPage >= agentTotalPages || agentLoading}
                     onClick={() => { setAgentPage((p) => Math.min(agentTotalPages, p + 1)); setAgentSelected(new Set()); }}
                     type="button"
                   >
                     下一页 →
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
@@ -1092,11 +1095,11 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                 <span className="agent-step-badge">{agentSubTab === "no_ban" ? "✅" : "⚠️"}</span>
                 <span>{agentSubTab === "no_ban" ? "不封号号池" : "封号号池"} ({agentTotal})</span>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                  <button className="button secondary" type="button"
+                  <Button variant="outline" size="sm" type="button"
                     onClick={() => { setAgentPage(1); loadAgentAccountsByPool(agentSubTab, 1); loadAgentStats(); }}
-                    disabled={agentLoading} style={{ fontSize: 11, padding: "3px 10px" }}>
+                    disabled={agentLoading}>
                     {agentLoading ? <Spinner size={12} color="currentColor" /> : "刷新"}
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -1161,20 +1164,20 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                             </td>
                             <td>
                               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                <button className="button secondary" type="button"
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => setShowDetailModal(acc)}
-                                  style={{ fontSize: 10, padding: "2px 8px" }}>📄 详情</button>
-                                <button className="button secondary" type="button"
+                                  style={{ fontSize: 10, padding: "2px 8px" }}>📄 详情</Button>
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => { setShowReplaceModal(acc.id); loadAgentAccountsByPool("pending"); }}
-                                  style={{ fontSize: 10, padding: "2px 8px" }}>🔄 替换</button>
-                                <button className="button secondary" type="button"
+                                  style={{ fontSize: 10, padding: "2px 8px" }}>🔄 替换</Button>
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => { setShowMigrateModal(acc.id); loadMotherOptions(); }}
-                                  style={{ fontSize: 10, padding: "2px 8px" }}>↗️ 迁移</button>
-                                <button className="button secondary" type="button"
+                                  style={{ fontSize: 10, padding: "2px 8px" }}>↗️ 迁移</Button>
+                                <Button variant="outline" size="sm" type="button"
                                   onClick={() => handleToggleBanned(acc.id)}
                                   style={{ fontSize: 10, padding: "2px 8px", color: acc.banned ? "var(--green)" : "var(--red)" }}>
                                   {acc.banned ? "✅ 标记未封" : "🚫 标记封号"}
-                                </button>
+                                </Button>
                               </div>
                             </td>
                           </tr>
@@ -1188,27 +1191,27 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
               {/* Pagination */}
               {agentTotalPages > 1 && (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 12, fontSize: 13 }}>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={agentPage <= 1 || agentLoading}
                     onClick={() => { setAgentPage((p) => Math.max(1, p - 1)); setAgentSelected(new Set()); }}
                     type="button"
                   >
                     ← 上一页
-                  </button>
+                  </Button>
                   <span className="muted">
                     第 {agentPage} / {agentTotalPages} 页 · 共 {agentTotal} 条
                   </span>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={agentPage >= agentTotalPages || agentLoading}
                     onClick={() => { setAgentPage((p) => Math.min(agentTotalPages, p + 1)); setAgentSelected(new Set()); }}
                     type="button"
                   >
                     下一页 →
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
@@ -1244,7 +1247,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                   </div>
                 )}
                 <div style={{ marginTop: 16, textAlign: "right" }}>
-                  <button className="button secondary" type="button" onClick={() => setShowJoinModal(null)}>取消</button>
+                  <Button variant="outline" type="button" onClick={() => setShowJoinModal(null)}>取消</Button>
                 </div>
               </div>
             </div>
@@ -1261,27 +1264,27 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 8 }}>选择目标号池：</label>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      className={`button ${uploadTargetPool === "no_ban" ? "primary" : "secondary"}`}
+                    <Button
+                      variant={uploadTargetPool === "no_ban" ? "default" : "outline"}
                       type="button"
                       onClick={() => setUploadTargetPool("no_ban")}
                       style={{ flex: 1, fontSize: 13 }}
                     >
                       ✅ 不封号池
-                    </button>
-                    <button
-                      className={`button ${uploadTargetPool === "ban_risk" ? "primary" : "secondary"}`}
+                    </Button>
+                    <Button
+                      variant={uploadTargetPool === "ban_risk" ? "default" : "outline"}
                       type="button"
                       onClick={() => setUploadTargetPool("ban_risk")}
                       style={{ flex: 1, fontSize: 13 }}
                     >
                       ⚠️ 封号池
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button className="button secondary" type="button" onClick={() => setShowUploadModal(false)}>取消</button>
-                  <button className="button primary" type="button" onClick={handleBatchUpload}>确认上号</button>
+                  <Button variant="outline" type="button" onClick={() => setShowUploadModal(false)}>取消</Button>
+                  <Button type="button" onClick={handleBatchUpload}>确认上号</Button>
                 </div>
               </div>
             </div>
@@ -1313,7 +1316,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                   <span>{showDetailModal.tokenObtainedAt ? new Date(showDetailModal.tokenObtainedAt).toLocaleString("zh-CN") : "-"}</span>
                 </div>
                 <div style={{ marginTop: 16, textAlign: "right" }}>
-                  <button className="button secondary" type="button" onClick={() => setShowDetailModal(null)}>关闭</button>
+                  <Button variant="outline" type="button" onClick={() => setShowDetailModal(null)}>关闭</Button>
                 </div>
               </div>
             </div>
@@ -1367,7 +1370,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                   </div>
                 )}
                 <div style={{ marginTop: 16, textAlign: "right" }}>
-                  <button className="button secondary" type="button" onClick={() => setShowMigrateModal(null)}>取消</button>
+                  <Button variant="outline" type="button" onClick={() => setShowMigrateModal(null)}>取消</Button>
                 </div>
               </div>
             </div>
@@ -1380,19 +1383,19 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
         <div className="agent-workspace">
           <div className="agent-toolbar">
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button
-                className="button secondary"
+              <Button
+                variant="outline"
                 onClick={() => loadAccountTokens()}
                 disabled={accountTokenLoading}
                 type="button"
               >
                 {accountTokenLoading ? "加载中…" : "🔄 刷新"}
-              </button>
+              </Button>
               {accountTokenSelected.size > 0 && (
                 <>
-                  <button
-                    className="button"
-                    style={{ background: 'var(--accent, #6366f1)', fontSize: 12, padding: '4px 12px' }}
+                  <Button
+                    size="sm"
+                    style={{ background: 'var(--accent, #6366f1)' }}
                     onClick={() => {
                       const emails = accountTokens
                         .filter(a => accountTokenSelected.has(a.id))
@@ -1404,10 +1407,10 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     type="button"
                   >
                     📋 复制邮箱 ({accountTokenSelected.size})
-                  </button>
-                  <button
-                    className="button"
-                    style={{ background: 'var(--emerald, #059669)', fontSize: 12, padding: '4px 12px' }}
+                  </Button>
+                  <Button
+                    size="sm"
+                    style={{ background: 'var(--emerald, #059669)' }}
                     onClick={() => {
                       const tokens = accountTokens
                         .filter(a => accountTokenSelected.has(a.id) && a.refreshToken)
@@ -1424,10 +1427,10 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     type="button"
                   >
                     🔑 复制Token ({accountTokens.filter(a => accountTokenSelected.has(a.id) && a.refreshToken).length})
-                  </button>
-                  <button
-                    className="button"
-                    style={{ background: 'var(--blue, #2563eb)', fontSize: 12, padding: '4px 12px' }}
+                  </Button>
+                  <Button
+                    size="sm"
+                    style={{ background: 'var(--blue, #2563eb)' }}
                     onClick={() => {
                       const lines = accountTokens
                         .filter(a => accountTokenSelected.has(a.id) && a.refreshToken)
@@ -1444,9 +1447,8 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     type="button"
                   >
                     📄 复制邮箱|Token
-                  </button>
-                  <button
-                    className="button primary"
+                  </Button>
+                  <Button
                     onClick={async () => {
                       const ids = Array.from(accountTokenSelected);
                       try {
@@ -1511,7 +1513,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                     type="button"
                   >
                     📱 批量验证 ({accountTokenSelected.size})
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -1661,8 +1663,9 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                               {/* Copy Token */}
                               {account.refreshToken && (
-                                <button
-                                  className="button secondary"
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   style={{ fontSize: 11, padding: "2px 8px" }}
                                   onClick={() => {
                                     navigator.clipboard.writeText(account.refreshToken!);
@@ -1671,12 +1674,13 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                                   type="button"
                                 >
                                   📋 复制
-                                </button>
+                                </Button>
                               )}
                               {/* Toggle used/unused */}
                               {account.refreshToken && (
-                                <button
-                                  className="button secondary"
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   style={{
                                     fontSize: 11,
                                     padding: "2px 8px",
@@ -1702,12 +1706,12 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                                   type="button"
                                 >
                                   {account.tokenStatus === "used" ? "↩ 标记未用" : "✓ 标记已用"}
-                                </button>
+                                </Button>
                               )}
                               {/* Trigger verify */}
                               {!isVerifying && (
-                                <button
-                                  className="button primary"
+                                <Button
+                                  size="sm"
                                   style={{ fontSize: 11, padding: "2px 8px" }}
                                   onClick={async () => {
                                     try {
@@ -1764,7 +1768,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                                   type="button"
                                 >
                                   📱 验证
-                                </button>
+                                </Button>
                               )}
                               {/* Delete Token */}
                               {account.refreshToken && (
@@ -1800,27 +1804,27 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
               {/* Pagination */}
               {accountTokenTotalPages > 1 && (
                 <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, marginTop: 16, fontSize: 13 }}>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={accountTokenPage <= 1}
                     onClick={() => setAccountTokenPage((p) => Math.max(1, p - 1))}
                     type="button"
                   >
                     ← 上一页
-                  </button>
+                  </Button>
                   <span className="muted">
                     {accountTokenPage} / {accountTokenTotalPages}
                   </span>
-                  <button
-                    className="button secondary"
-                    style={{ fontSize: 12, padding: "4px 12px" }}
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={accountTokenPage >= accountTokenTotalPages}
                     onClick={() => setAccountTokenPage((p) => Math.min(accountTokenTotalPages, p + 1))}
                     type="button"
                   >
                     下一页 →
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
@@ -1837,12 +1841,12 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
               {disabledPhones > 0 && <span className="agent-phone-badge danger">❌ {disabledPhones} 不可用</span>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button className="button secondary" onClick={() => loadPhones()} type="button">
+              <Button variant="outline" onClick={() => loadPhones()} type="button">
                 {phoneLoading ? <Spinner size={14} color="currentColor" /> : "刷新"}
-              </button>
-              <button className="button primary" onClick={() => setShowImport(!showImport)} type="button">
+              </Button>
+              <Button onClick={() => setShowImport(!showImport)} type="button">
                 批量导入
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -1853,7 +1857,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                 <br />
                 示例：<code>12345678901|https://sms222.us/?token=abc123</code>
               </p>
-              <textarea
+              <Textarea
                 className="field-input"
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
@@ -1861,8 +1865,8 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                 style={{ minHeight: 100, fontFamily: "var(--mono)", fontSize: 12, resize: "vertical" }}
               />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-                <button className="button secondary" onClick={() => setShowImport(false)} type="button">取消</button>
-                <button className="button primary" onClick={handleImportPhones} disabled={!importText.trim()} type="button">导入</button>
+                <Button variant="outline" onClick={() => setShowImport(false)} type="button">取消</Button>
+                <Button onClick={handleImportPhones} disabled={!importText.trim()} type="button">导入</Button>
               </div>
             </div>
           )}
@@ -1909,8 +1913,9 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                       </td>
                       <td>
                         <div style={{ display: "flex", gap: 4 }}>
-                          <button
-                            className="button secondary"
+                          <Button
+                            variant="outline"
+                            size="sm"
                             style={{ fontSize: 11, padding: "2px 8px", ...(phone.status === "used" ? { opacity: 0.5 } : {}) }}
                             onClick={() => handleTogglePhone(phone.id)}
                             disabled={phone.status === "used"}
@@ -1918,7 +1923,7 @@ export function AgentServicePanel({ showToast }: AgentServicePanelProps) {
                             type="button"
                           >
                             {phone.status === "available" ? "禁用" : phone.status === "used" ? "已使用" : "启用"}
-                          </button>
+                          </Button>
                           <ConfirmButton
                             className="button"
                             style={{ fontSize: 11, padding: "2px 8px", color: "var(--red)" }}
