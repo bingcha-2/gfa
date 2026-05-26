@@ -1,15 +1,22 @@
 {
-  "version": "4.5.5",
-  "url": "https://bcai.site/updates/BingchaAI-4.5.5.exe",
-  "sha256": "6A4213A96859BB10005EDE4BFD2DCF3E489E74EA131EB248CF14BD01289FBBFB",
-  "size": 11835392,
-  "changelog": "性能优化和问题修复",
+  "version": "5.0.5",
+  "url": "https://bcai.site/updates/BingchaAI-5.0.5.exe",
+  "sha256": "7F3FE981D0DF95F6C7B7E7848F565602632457C725E2EBAE7DB2EA378FD040B4",
+  "size": 13253120,
+  "changelog": "修复侧边栏图标不显示; 修复接管崩溃; 修复日志乱码",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-4.5.5-arm64.dmg",
-      "sha256": "033F625DE9138280D4697BBE2AA498058A21CB625D9EFA044D95E115E86A7A9B",
-      "size": 5860971
+      "url": "https://bcai.site/updates/BingchaAI-5.0.5-arm64.dmg",
+      "sha256": "91369400CE2C6DB0A628AF7637238784DC635731FAEC76D3B6569414270FE0C5",
+      "size": 7273351
+    }
+  },
+  "linux": {
+    "amd64": {
+      "url": "https://bcai.site/updates/BingchaAI-5.0.5-linux-amd64.tar.gz",
+      "sha256": "7E0A532E67DDF9FA1E106AF1151FDC4DDA18CF81EDFABEF08631F8F8E7C1723A",
+      "size": 5762688
     }
   }
 }
