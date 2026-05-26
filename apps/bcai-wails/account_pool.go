@@ -952,6 +952,18 @@ func (p *AccountPool) fetchAccountHealth(acc *AccountEntry) error {
 		return fmt.Errorf("parse loadCodeAssist: %w", err)
 	}
 
+	// 调试日志：显示 paidTier 和 currentTier
+	if pt, ok := data["paidTier"]; ok {
+		ptJSON, _ := json.Marshal(pt)
+		Log("[health] %s: paidTier: %s", acc.Email, string(ptJSON[:min(len(ptJSON), 500)]))
+	} else {
+		Log("[health] %s: no paidTier in response", acc.Email)
+	}
+	if ct, ok := data["currentTier"]; ok {
+		ctJSON, _ := json.Marshal(ct)
+		Log("[health] %s: currentTier: %s", acc.Email, string(ctJSON[:min(len(ctJSON), 300)]))
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -1011,7 +1023,17 @@ func (p *AccountPool) fetchAccountHealth(acc *AccountEntry) error {
 
 	// ── 提取 AI 积分 (GOOGLE_ONE_AI) ──
 	if pt, ok := data["paidTier"].(map[string]interface{}); ok {
-		if credits, ok := pt["availableCredits"].([]interface{}); ok {
+		ptid, _ := pt["id"].(string)
+		entry.paidTierID = ptid
+
+		credits, hasCredits := pt["availableCredits"].([]interface{})
+		if !hasCredits {
+			// Pro 等套餐没有 availableCredits 字段
+			// 参考 CLIProxyAPI: Known=true, Available=false
+			entry.creditsKnown = true
+			entry.creditsAvailable = false
+			Log("[health] %s: paidTier=%s, no availableCredits field", acc.Email, ptid)
+		} else {
 			for _, c := range credits {
 				cm, ok := c.(map[string]interface{})
 				if !ok {
@@ -1025,9 +1047,6 @@ func (p *AccountPool) fetchAccountHealth(acc *AccountEntry) error {
 				entry.creditAmount = toFloat64(cm["creditAmount"])
 				entry.minCreditAmount = toFloat64(cm["minimumCreditAmountForUsage"])
 				entry.creditsAvailable = entry.creditAmount >= entry.minCreditAmount
-				if ptid, ok := pt["id"].(string); ok {
-					entry.paidTierID = ptid
-				}
 				Log("[health] %s: credits=%.0f (min=%.0f, available=%v)",
 					acc.Email, entry.creditAmount, entry.minCreditAmount, entry.creditsAvailable)
 				break

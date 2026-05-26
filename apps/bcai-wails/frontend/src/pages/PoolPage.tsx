@@ -193,10 +193,24 @@ function AccountCard({ acc, isExpanded, onToggleExpand }: {
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
             {/* Plan type badge */}
             {acc.planType && (
-              <Badge variant="muted" className="text-[9px] h-4 px-1">{acc.planType}</Badge>
+              <Badge
+                className={`text-[9px] h-4 px-1 ${
+                  acc.planType === 'ultra' ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' :
+                  acc.planType === 'premium' ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white' :
+                  acc.planType === 'standard' ? 'bg-[var(--warning)] text-white' :
+                  ''
+                }`}
+                variant={!['ultra', 'premium', 'standard'].includes(acc.planType) ? 'muted' : undefined}
+              >
+                {acc.planType === 'ultra' ? '✦ Ultra' :
+                 acc.planType === 'premium' ? '✦ AI Pro' :
+                 acc.planType === 'standard' ? 'Standard' :
+                 acc.planType === 'free' ? 'Free' :
+                 acc.planType}
+              </Badge>
             )}
             {/* Credits badge */}
-            {acc.credits?.known && (
+            {acc.credits?.known && acc.credits.creditAmount > 0 && (
               <Badge
                 variant={acc.credits.available ? 'success' : 'danger'}
                 className="text-[9px] h-4 px-1"
