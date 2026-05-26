@@ -1,15 +1,22 @@
 {
-  "version": "4.5.4",
-  "url": "https://bcai.site/updates/BingchaAI-4.5.4.exe",
-  "sha256": "D5411D3C378C41C492641B02E13A1BF9466D5096C61CC9D41C4527EF8D730295",
-  "size": 11832320,
-  "changelog": "公告栏优化；性能改进和问题修复",
+  "version": "5.0.4",
+  "url": "https://bcai.site/updates/BingchaAI-5.0.4.exe",
+  "sha256": "A93F495DF9CD189388D1E3F2417902AE4A33D8B705985D30052DB50A0478A6C0",
+  "size": 11840512,
+  "changelog": "修复点击接管后冰茶AI崩溃; 修复日志乱码; 移除Spotlight高频日志",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-4.5.4-arm64.dmg",
-      "sha256": "1438352718F193B1C2D8E7756C32FB806E979C89444F9CC472C57A8A6B5CECC2",
-      "size": 5861235
+      "url": "https://bcai.site/updates/BingchaAI-5.0.4-arm64.dmg",
+      "sha256": "73905E4C52FA4DCDB5ABAA4974E34377FFE0FE6E3CAFCCE185ADF20D8B24E3BF",
+      "size": 5860231
+    }
+  },
+  "linux": {
+    "amd64": {
+      "url": "https://bcai.site/updates/BingchaAI-5.0.4-linux-amd64.tar.gz",
+      "sha256": "C62E434A741FD7F1221222E6EA6CCBBB5188CD2CA96AAA81FF810129264EB9D7",
+      "size": 4363902
     }
   }
 }
