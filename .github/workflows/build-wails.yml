@@ -307,6 +307,7 @@ jobs:
 
           Windows exe + macOS DMG (arm64/amd64) built by CI
           Files deployed to web/public/updates/" || echo "No changes to commit"
+          git pull --rebase origin main
           git push origin main
 
       # ── 同时创建 GitHub Release (备份下载) ──
