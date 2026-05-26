@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 
 type ProcessingAnimationProps = {
   status: string;
@@ -24,20 +26,12 @@ export function ProcessingAnimation({ status }: ProcessingAnimationProps) {
   }, [status]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', gap: '24px' }}>
-      <svg className="animate-spin" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round">
-        <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
-        <path d="M12 2v4"></path>
-      </svg>
-
-      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <div style={{ color: 'var(--foreground-muted)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Status: {status}
-        </div>
-        <div style={{ color: 'var(--foreground)', fontSize: '16px', fontWeight: 500 }}>
-          {loadingText}
-        </div>
-        <div style={{ color: 'var(--foreground-muted)', fontSize: '13px', marginTop: '8px', fontFamily: 'monospace' }}>
+    <div className="flex flex-col items-center justify-center gap-6 px-6 py-12">
+      <Spinner className="size-12" />
+      <div className="flex flex-col items-center gap-2 text-center">
+        <Badge variant="secondary">Status: {status}</Badge>
+        <div className="text-base font-medium">{loadingText}</div>
+        <div className="font-mono text-sm text-muted-foreground">
           &gt; Please sit tight and do not close this window
         </div>
       </div>

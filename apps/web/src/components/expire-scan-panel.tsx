@@ -4,7 +4,7 @@ import { useState, useEffect, useTransition } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { OrderSummary } from "../lib/types";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 
 type ScanStatus = {
   pendingCount: number;

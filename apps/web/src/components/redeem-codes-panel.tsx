@@ -8,7 +8,7 @@ import { RedeemCodeSummary } from "../lib/types";
 import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 
 type CodeTypeFilter = "ALL" | "JOIN_GROUP" | "ACCOUNT_SWAP" | "SUBSCRIPTION";
 

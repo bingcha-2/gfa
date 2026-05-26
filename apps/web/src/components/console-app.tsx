@@ -15,7 +15,7 @@ import { GroupPanel } from "./group-panel";
 import { MetricTile } from "./metric-tile";
 import { OrdersPanel } from "./orders-panel";
 import { RedeemCodesPanel } from "./redeem-codes-panel";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { TasksPanel } from "./tasks-panel";
 import { MemberLookupPanel } from "./member-lookup-panel";

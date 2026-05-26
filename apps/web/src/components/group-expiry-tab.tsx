@@ -2,7 +2,7 @@
 
 import React from "react";
 import { ConfirmButton } from "./confirm-button";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { BatchResultTable, ExpiredMemberInfo } from "./group-panel-types";
 import type { CrossRemoveResult } from "./console-app";

@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { Megaphone, Save, Trash2, Loader2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 
 export default function AnnouncementPage() {
   const [text, setText] = useState("");
@@ -71,51 +78,68 @@ export default function AnnouncementPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">📢 公告管理</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <Megaphone className="h-6 w-6" />
+          公告管理
+        </h1>
         <p className="text-muted-foreground mt-1">
           管理客户端顶部滚动公告。留空则不显示公告条。
         </p>
       </div>
 
-      <div className="rounded-xl border bg-card p-6 space-y-4">
-        <div>
-          <label className="text-sm font-medium mb-2 block">公告内容</label>
-          <textarea
-            className="w-full min-h-[120px] rounded-lg border border-input bg-transparent px-3 py-2 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 resize-y"
-            placeholder="输入公告内容（留空隐藏公告条）..."
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            disabled={loading}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            公告将在客户端顶部以滚动字幕形式展示，客户端每 5 分钟刷新一次。
-          </p>
-        </div>
-
-        {savedText && (
-          <div className="rounded-lg bg-muted/50 p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-1">当前线上公告：</p>
-            <p className="text-sm">{savedText || <span className="text-muted-foreground italic">（无）</span>}</p>
+      <Card>
+        <CardHeader>
+          <CardTitle>客户端公告</CardTitle>
+          <CardDescription>公告将在客户端顶部以滚动字幕形式展示，客户端每 5 分钟刷新一次。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label htmlFor="announcement-text" className="mb-2">公告内容</Label>
+            {loading ? (
+              <Skeleton className="h-[120px] w-full" />
+            ) : (
+              <Textarea
+                id="announcement-text"
+                className="min-h-[120px] resize-y"
+                placeholder="输入公告内容（留空隐藏公告条）..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                disabled={saving}
+              />
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              保存空内容会隐藏公告条。
+            </p>
           </div>
-        )}
 
-        <div className="flex gap-3">
-          <button
-            onClick={handleSave}
-            disabled={saving || loading || !isDirty}
-            className="inline-flex items-center justify-center rounded-lg bg-primary text-primary-foreground h-9 px-4 text-sm font-medium transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            {saving ? "保存中..." : "保存公告"}
-          </button>
-          <button
-            onClick={handleClear}
-            disabled={saving || loading || !savedText}
-            className="inline-flex items-center justify-center rounded-lg border border-input bg-background h-9 px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:pointer-events-none"
-          >
-            清除公告
-          </button>
-        </div>
-      </div>
+          {savedText && (
+            <div className="rounded-lg bg-muted/50 p-3">
+              <p className="text-xs font-medium text-muted-foreground mb-1">当前线上公告：</p>
+              <p className="text-sm">{savedText || <span className="text-muted-foreground italic">（无）</span>}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <Button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || loading || !isDirty}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              保存公告
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleClear}
+              disabled={saving || loading || !savedText}
+            >
+              <Trash2 className="h-4 w-4" />
+              清除公告
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

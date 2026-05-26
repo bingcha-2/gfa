@@ -1,12 +1,14 @@
 node_modules
 .next
 dist
+target
 .turbo
 coverage
 *.log
 .DS_Store
 .env
 .env.local
+.idea/
 *.tsbuildinfo
 prisma/*.db
 prisma/*.db-journal
@@ -48,15 +50,30 @@ output.json
 task_logs.txt
 *.pre-obfuscate*
 
+# Scratch files (not tracked)
+_scratch/
+
 # Extension builds
 apps/gfa-extension/*.vsix
+_deprecated/gfa-extension/*.vsix
 
-# Client release binaries
+# Client release binaries (deprecated Electron client)
 apps/bcai-client/release/
 apps/bcai-client/out/
 apps/bcai-client/temp-*/
 apps/bcai-client/test-certs/
 apps/bcai-client/dev.*.log
+_deprecated/bcai-client/release/
+_deprecated/bcai-client/out/
+_deprecated/bcai-client/temp-*/
+_deprecated/bcai-client/test-certs/
+_deprecated/bcai-client/dev.*.log
+
+# Local build binaries
+**/build/bin/
+**/wailsjs/runtime/
+**/proxy-engine/bcai-proxy-engine
+**/bundled-rosetta/remote-token-server
 
 # Update distribution binaries
 **/updates/*.exe

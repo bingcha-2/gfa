@@ -12,17 +12,6 @@ module.exports = {
       kill_timeout: 5000,
     },
     {
-      name: 'remote-token-server',
-      script: 'C:\\Users\\Administrator\\Desktop\\GFA\\apps\\gfa-extension\\bundled-rosetta\\remote-token-server\\index.js',
-      cwd: 'C:\\Users\\Administrator\\Desktop\\GFA\\apps\\gfa-extension\\bundled-rosetta\\remote-token-server',
-      interpreter: 'node',
-      node_args: '--max-old-space-size=512',
-      autorestart: true,
-      max_restarts: 10,
-      min_uptime: '10s',
-      kill_timeout: 5000,
-    },
-    {
       name: 'caddy',
       script: 'C:\\Users\\Administrator\\Desktop\\caddy\\caddy.exe',
       args: 'run --config Caddyfile',

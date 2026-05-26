@@ -2,7 +2,7 @@
 
 import React, { Fragment, useState, useEffect } from "react";
 import { ConfirmButton } from "./confirm-button";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { 
   formatDate, 

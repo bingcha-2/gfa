@@ -1,3 +1,5 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
 type MetricTileProps = {
   title: string;
   value: string;
@@ -6,10 +8,14 @@ type MetricTileProps = {
 
 export function MetricTile({ title, value, description }: MetricTileProps) {
   return (
-    <article className="metric-tile">
-      <p className="metric-label">{title}</p>
-      <h3 className="metric-value">{value}</h3>
-      <p className="metric-text">{description}</p>
-    </article>
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-semibold">{value}</div>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardContent>
+    </Card>
   );
 }

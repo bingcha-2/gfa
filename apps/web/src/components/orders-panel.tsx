@@ -10,7 +10,7 @@ import { canReplaceMember } from "../lib/permissions";
 import { OrderSummary } from "../lib/types";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { StatusBadge } from "./status-badge";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 
 /** Check if an order was cancelled by the scheduler (not a real failure) */
 function isSchedulerCancelled(order: OrderSummary): boolean {

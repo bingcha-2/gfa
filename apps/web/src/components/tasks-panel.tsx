@@ -10,7 +10,7 @@ import {
 } from "../lib/permissions";
 import { TaskSummary } from "../lib/types";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 
 /** 格式化绝对时间为本地可读字符串 */
 function fmtTime(iso: string): string {

@@ -1,21 +1,28 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, type ReactNode, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 type ConfirmButtonProps = {
-  /** Label shown in the default (idle) state */
   children: ReactNode;
-  /** Label shown when armed (awaiting second click). Defaults to "确定？" */
   confirmLabel?: ReactNode;
-  /** Label shown while the action is executing */
   loadingLabel?: ReactNode;
-  /** Custom style applied to the confirm popover */
   confirmStyle?: CSSProperties;
-  /** The async action to execute on confirmation */
   onConfirm: () => Promise<unknown> | void;
-  /** How long (ms) the armed state lasts before auto-resetting. Default 5000 */
   timeout?: number;
-  /** Standard button props */
   className?: string;
   style?: CSSProperties;
   armedStyle?: CSSProperties;
@@ -25,112 +32,71 @@ type ConfirmButtonProps = {
   id?: string;
 };
 
-/**
- * A button that requires two clicks to execute a destructive action.
- *
- * - 1st click  → shows a floating confirm popover above the button
- * - 2nd click (on "确认" in the popover) → executes onConfirm()
- * - Auto-resets after `timeout` ms if the 2nd click doesn't happen
- * - Click outside dismisses the popover
- */
 export function ConfirmButton({
   children,
-  confirmLabel = "确定？",
+  confirmLabel = "确定执行这个操作？",
   loadingLabel = "执行中...",
   confirmStyle,
   onConfirm,
-  timeout = 5000,
-  className = "",
+  className,
   style,
-  armedStyle,
   disabled,
   title,
   type = "button",
   id,
 }: ConfirmButtonProps) {
-  const [phase, setPhase] = useState<"idle" | "armed" | "loading">("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const reset = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
-    setPhase("idle");
-  }, []);
-
-  // Click outside to dismiss
-  useEffect(() => {
-    if (phase !== "armed") return;
-    function handleClickOutside(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        reset();
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [phase, reset]);
-
-  const handleTriggerClick = useCallback(() => {
-    if (phase === "idle") {
-      setPhase("armed");
-      timerRef.current = setTimeout(reset, timeout);
-    }
-  }, [phase, timeout, reset]);
-
-  const handleConfirmClick = useCallback(async () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
-    setPhase("loading");
+  async function handleConfirm() {
+    setLoading(true);
     try {
       await onConfirm();
+      setOpen(false);
     } finally {
-      setPhase("idle");
+      setLoading(false);
     }
-  }, [onConfirm]);
-
-  const isArmed = phase === "armed";
-  const isLoading = phase === "loading";
+  }
 
   return (
-    <div ref={wrapperRef} style={{ position: "relative", display: "inline-flex" }}>
-      {/* Trigger button — always stays the same size */}
-      <button
-        id={id}
-        type={type}
-        className={className}
-        style={isArmed ? { ...style, ...armedStyle } : style}
-        disabled={disabled || isLoading}
-        title={title}
-        onClick={handleTriggerClick}
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            id={id}
+            type={type}
+            className={className}
+            style={style}
+            disabled={disabled || loading}
+            title={title}
+            variant="outline"
+          />
+        }
       >
-        {isLoading ? loadingLabel : children}
-      </button>
-
-      {/* Armed popover — floats above */}
-      {isArmed && (
-        <div
-          className="confirm-popover"
-          style={confirmStyle}
-        >
-          <div className="confirm-popover-label">{confirmLabel}</div>
-          <div className="confirm-popover-actions">
-            <button
-              type="button"
-              className="confirm-popover-yes"
-              onClick={handleConfirmClick}
-            >
-              确认
-            </button>
-            <button
-              type="button"
-              className="confirm-popover-no"
-              onClick={reset}
-            >
-              取消
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+        {loading ? (
+          <>
+            <Spinner data-icon="inline-start" />
+            {loadingLabel}
+          </>
+        ) : children}
+      </AlertDialogTrigger>
+      <AlertDialogContent style={confirmStyle}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{confirmLabel}</AlertDialogTitle>
+          <AlertDialogDescription>此操作会立即生效。</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm} disabled={loading}>
+            {loading ? (
+              <>
+                <Spinner data-icon="inline-start" />
+                {loadingLabel}
+              </>
+            ) : "确认"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

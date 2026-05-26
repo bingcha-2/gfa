@@ -22,9 +22,11 @@ import { SchedulerModule } from "./scheduler/scheduler.module";
 import { PhonePoolModule } from "./phone-pool/phone-pool.module";
 import { FaqModule } from "./faq/faq.module";
 import { HealthController } from "./health.controller";
-import { RemoteTokenController } from "./remote-token.controller";
+
 
 import { StatsController } from "./stats.controller";
+import { TokenServerModule } from "./token-server/token-server.module";
+import { RosettaModule } from "./rosetta/rosetta.module";
 
 @Module({
   imports: [
@@ -67,8 +69,10 @@ import { StatsController } from "./stats.controller";
     SchedulerModule,
     PhonePoolModule,
     FaqModule,
+    TokenServerModule,
+    RosettaModule,
   ],
-  controllers: [HealthController, StatsController, RemoteTokenController],
+  controllers: [HealthController, StatsController],
   providers: [
     // RealIpThrottlerGuard must be first so rate-limit is checked before auth
     { provide: APP_GUARD, useClass: RealIpThrottlerGuard },

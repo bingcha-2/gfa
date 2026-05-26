@@ -8,7 +8,7 @@ type ApiRequestOptions = {
 };
 
 function buildUrl(path: string, search?: ApiRequestOptions["search"]) {
-  const targetPath = `/api/proxy/${path.replace(/^\/+/, "")}`;
+  const targetPath = `/api/${path.replace(/^\/+/, "")}`;
 
   if (!search) {
     return targetPath;

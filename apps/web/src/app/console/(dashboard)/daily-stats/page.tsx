@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronLeft, ChevronRight, CalendarDays, RefreshCw, Loader2 } from "lucide-react";
 
@@ -89,12 +90,12 @@ export default function DailyStatsPage() {
               <Button variant="outline" size="icon" onClick={() => shiftDate(-1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <input
+              <Input
                 type="date"
                 value={date}
                 max={todayDateStr()}
                 onChange={(e) => handleDateChange(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                className="w-auto"
               />
               <Button variant="outline" size="icon" onClick={() => shiftDate(1)} disabled={isToday}>
                 <ChevronRight className="h-4 w-4" />

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 import { SearchableSelect } from "./searchable-select";
 import {

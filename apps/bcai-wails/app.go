@@ -513,7 +513,9 @@ func (a *App) GetPoolMode() string {
 
 // OAuthLogin starts a Google OAuth login flow and auto-adds the account to the pool
 func (a *App) OAuthLogin(profile string) map[string]interface{} {
-	result, err := GetAccountPool().StartOAuthLogin(profile)
+	result, err := GetAccountPool().StartOAuthLogin(profile, func(url string) {
+		runtime.BrowserOpenURL(a.ctx, url)
+	})
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}
 	}

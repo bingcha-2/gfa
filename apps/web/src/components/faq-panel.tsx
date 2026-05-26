@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
-import { Spinner } from "./spinner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 
 type FaqItem = {
   id: string;
@@ -299,16 +308,16 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
             <p className="label">FAQ 管理</p>
             <h2 className="panel-title">{mode === "create" ? "新建 FAQ" : "编辑 FAQ"}</h2>
           </div>
-          <button className="button secondary" onClick={() => { resetForm(); setMode("list"); }} type="button">
+          <Button variant="outline" onClick={() => { resetForm(); setMode("list"); }} type="button">
             ← 返回列表
-          </button>
+          </Button>
         </div>
 
         <div className="faq-admin-editor">
           <label>
             分类
             <div style={{ display: "flex", gap: 8 }}>
-              <input
+              <Input
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="例如: 加入家庭组常见问题"
@@ -321,47 +330,52 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
           </label>
           <label>
             问题
-            <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="例如: 提示地区/国家不一致怎么办？" />
+            <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="例如: 提示地区/国家不一致怎么办？" />
           </label>
           <div style={{ display: "flex", gap: 12 }}>
             <label style={{ flex: 1 }}>
               排序权重
-              <input type="number" value={sortOrder} onChange={(e) => setSortOrder(Number(e.target.value))} />
+              <Input type="number" value={sortOrder} onChange={(e) => setSortOrder(Number(e.target.value))} />
             </label>
             <label style={{ flex: 1 }}>
               发布状态
-              <select value={published ? "true" : "false"} onChange={(e) => setPublished(e.target.value === "true")}>
-                <option value="true">✅ 已发布</option>
-                <option value="false">⏸ 未发布</option>
-              </select>
+              <Select value={published ? "true" : "false"} onValueChange={(value) => setPublished(value === "true")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="true">已发布</SelectItem>
+                  <SelectItem value="false">未发布</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
           <label>答案（富文本）</label>
           {/* Hidden file input for image upload */}
-          <input
+          <Input
             ref={fileInputRef}
             type="file"
             accept="image/*"
             multiple
-            style={{ display: "none" }}
+            className="hidden"
             onChange={handleImageFileChange}
           />
           {/* Rich text toolbar */}
           <div className="faq-admin-toolbar">
-            <button type="button" onClick={() => execCmd("bold")} title="粗体"><b>B</b></button>
-            <button type="button" onClick={() => execCmd("italic")} title="斜体"><i>I</i></button>
-            <button type="button" onClick={() => execCmd("underline")} title="下划线"><u>U</u></button>
-            <button type="button" onClick={() => execCmd("strikeThrough")} title="删除线"><s>S</s></button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("bold")} title="粗体"><b>B</b></Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("italic")} title="斜体"><i>I</i></Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("underline")} title="下划线"><u>U</u></Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("strikeThrough")} title="删除线"><s>S</s></Button>
             <span style={{ width: 1, background: "var(--line)", margin: "4px 2px" }} />
-            <button type="button" onClick={() => execCmd("formatBlock", "h3")} title="标题">H</button>
-            <button type="button" onClick={() => execCmd("insertUnorderedList")} title="无序列表">• 列表</button>
-            <button type="button" onClick={() => execCmd("insertOrderedList")} title="有序列表">1. 列表</button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("formatBlock", "h3")} title="标题">H</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("insertUnorderedList")} title="无序列表">• 列表</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("insertOrderedList")} title="有序列表">1. 列表</Button>
             <span style={{ width: 1, background: "var(--line)", margin: "4px 2px" }} />
-            <button type="button" onClick={insertLink} title="插入链接">🔗 链接</button>
-            <button type="button" onClick={insertImage} title="上传图片">📤 上传图片</button>
-            <button type="button" onClick={insertImageUrl} title="图片URL">🔗 图片URL</button>
+            <Button type="button" variant="ghost" size="sm" onClick={insertLink} title="插入链接">链接</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={insertImage} title="上传图片">上传图片</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={insertImageUrl} title="图片URL">图片 URL</Button>
             <span style={{ width: 1, background: "var(--line)", margin: "4px 2px" }} />
-            <button type="button" onClick={() => execCmd("removeFormat")} title="清除格式">✕ 格式</button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => execCmd("removeFormat")} title="清除格式">清除格式</Button>
           </div>
           <p className="muted" style={{ fontSize: 12, margin: "2px 0 6px" }}>
             💡 支持直接粘贴截图或拖放图片文件到编辑区
@@ -378,12 +392,12 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
             onDragOver={(e) => e.preventDefault()}
           />
           <div className="field-actions">
-            <button className="button" onClick={handleSave} disabled={saving} type="button">
+            <Button onClick={handleSave} disabled={saving} type="button">
               {saving ? <><Spinner size={14} color="white" /> 保存中...</> : "💾 保存"}
-            </button>
-            <button className="button secondary" onClick={() => { resetForm(); setMode("list"); }} type="button">
+            </Button>
+            <Button variant="outline" onClick={() => { resetForm(); setMode("list"); }} type="button">
               取消
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -400,8 +414,8 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
           <p className="muted">管理 bcai.site/faq 公开页面上展示的常见问题。共 {faqs.length} 条。</p>
         </div>
         <div className="toolbar">
-          <button className="button" onClick={startCreate} type="button">➕ 新建 FAQ</button>
-          <button className="button secondary" onClick={loadFaqs} type="button">🔄 刷新</button>
+          <Button onClick={startCreate} type="button">新建 FAQ</Button>
+          <Button variant="outline" onClick={loadFaqs} type="button">刷新</Button>
         </div>
       </div>
 
@@ -423,20 +437,21 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
               )}
             </div>
           </div>
-          <button
-            className="button secondary small"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setSettingsEditing(!settingsEditing)}
             type="button"
           >
             {settingsEditing ? '取消' : '⚙️ 编辑'}
-          </button>
+          </Button>
         </div>
         {settingsEditing && (
           <div style={{ display: 'grid', gap: '12px' }}>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
               <label style={{ flex: 1, minWidth: 200, display: 'grid', gap: '4px', fontSize: '12px', fontWeight: 700, color: 'var(--foreground-muted)' }}>
                 客服微信号
-                <input
+                <Input
                   value={settingsWechat}
                   onChange={(e) => setSettingsWechat(e.target.value)}
                   placeholder="例如: BingCha_Service"
@@ -448,17 +463,17 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
               <label style={{ flex: 1, minWidth: 200, display: 'grid', gap: '4px', fontSize: '12px', fontWeight: 700, color: 'var(--foreground-muted)' }}>
                 二维码图片 URL
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
+                  <Input
                     value={settingsQrUrl}
                     onChange={(e) => setSettingsQrUrl(e.target.value)}
                     placeholder="/api/faq-images/xxx.png 或外部 URL"
                     style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--line-strong)', borderRadius: '10px', fontSize: '14px' }}
                   />
-                  <input
+                  <Input
                     ref={qrFileRef}
                     type="file"
                     accept="image/*"
-                    style={{ display: 'none' }}
+                    className="hidden"
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
@@ -480,14 +495,15 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
                       e.target.value = '';
                     }}
                   />
-                  <button
-                    className="button secondary small"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => qrFileRef.current?.click()}
                     type="button"
                     style={{ whiteSpace: 'nowrap' }}
                   >
                     📷 上传图片
-                  </button>
+                  </Button>
                 </div>
               </label>
             </div>
@@ -503,8 +519,7 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
               </div>
             )}
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="button"
+              <Button
                 type="button"
                 disabled={settingsSaving}
                 onClick={async () => {
@@ -524,7 +539,7 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
                 }}
               >
                 {settingsSaving ? <><Spinner size={14} color="white" /> 保存中...</> : '💾 保存设置'}
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -547,15 +562,16 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
                 </div>
               </div>
               <div className="faq-admin-row-actions">
-                <button className="button small secondary" onClick={() => startEdit(faq)} type="button">编辑</button>
-                <button
-                  className="button small secondary"
+                <Button variant="outline" size="sm" onClick={() => startEdit(faq)} type="button">编辑</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => handleTogglePublish(faq)}
                   type="button"
                 >
                   {faq.published ? "取消发布" : "发布"}
-                </button>
-                <button className="button small danger" onClick={() => handleDelete(faq.id)} type="button">删除</button>
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => handleDelete(faq.id)} type="button">删除</Button>
               </div>
             </div>
           ))}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../lib/client-api";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { 
   GroupPanelProps, 
   GroupDetail, 

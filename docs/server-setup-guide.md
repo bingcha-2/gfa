@@ -161,17 +161,18 @@ pnpm start:daemon
 
 ```
 example.com {
+    # Legacy desktop client path. Keep `/remote-token/*` stable.
+    handle /remote-token/* {
+        rewrite * /api{uri}
+        reverse_proxy localhost:3001
+    }
+
     # Next.js session routes (login/logout via httpOnly cookie)
     handle /api/session/* {
         reverse_proxy localhost:3000
     }
 
-    # Next.js proxy routes (console frontend → backend)
-    handle /api/proxy/* {
-        reverse_proxy localhost:3000
-    }
-
-    # NestJS API (all other /api/* go directly to backend)
+    # NestJS API
     handle /api/* {
         reverse_proxy localhost:3001
     }
@@ -183,7 +184,7 @@ example.com {
 }
 ```
 
-> ⚠️ **路由顺序很重要**：`/api/session/*` 和 `/api/proxy/*` 必须在 `/api/*` 前面，否则登录会 404。
+> ⚠️ **路由顺序很重要**：`/api/session/*` 必须在 `/api/*` 前面，否则登录会 404。
 
 ### 3. 启动 Caddy
 

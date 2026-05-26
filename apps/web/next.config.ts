@@ -27,11 +27,42 @@ const nextConfig: NextConfig = {
   },
   // Proxy FAQ images to the backend API server
   async rewrites() {
+    const backendPrefixes = [
+      "auth",
+      "stats",
+      "family-groups",
+      "orders",
+      "tasks",
+      "accounts",
+      "agent-accounts",
+      "redeem-codes",
+      "scheduler",
+      "queue",
+      "admin",
+      "expire-scan",
+      "audit-logs",
+      "users",
+      "public",
+      "automation",
+      "faq",
+      "phone-pool",
+      "remote-token",
+      "rosetta",
+    ];
+
     return [
+      {
+        source: "/remote-token/:path*",
+        destination: `${apiOrigin}/api/remote-token/:path*`,
+      },
       {
         source: "/api/faq-images/:path*",
         destination: `${apiOrigin}/api/faq-images/:path*`,
       },
+      ...backendPrefixes.map((prefix) => ({
+        source: `/api/${prefix}/:path*`,
+        destination: `${apiOrigin}/api/${prefix}/:path*`,
+      })),
     ];
   },
 };

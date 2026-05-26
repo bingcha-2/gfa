@@ -1,3 +1,5 @@
+import { Badge } from "@/components/ui/badge";
+
 type StatusTone = "emerald" | "amber" | "crimson" | "stone" | "sky";
 
 const toneMap: Record<string, StatusTone> = {
@@ -112,10 +114,11 @@ type StatusBadgeProps = {
 export function StatusBadge({ value, tone }: StatusBadgeProps) {
   const resolvedTone = tone ?? toneMap[value] ?? "stone";
   const label = labelMap[value] ?? value.replaceAll("_", " ");
+  const variant =
+    resolvedTone === "crimson" ? "destructive" :
+    resolvedTone === "stone" ? "secondary" :
+    resolvedTone === "sky" ? "outline" :
+    "default";
 
-  return (
-    <span className={`status-badge status-${resolvedTone}`}>
-      {label}
-    </span>
-  );
+  return <Badge variant={variant}>{label}</Badge>;
 }

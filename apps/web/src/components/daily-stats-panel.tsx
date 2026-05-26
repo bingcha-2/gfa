@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "./status-badge";
 
 type DailyStatsData = {

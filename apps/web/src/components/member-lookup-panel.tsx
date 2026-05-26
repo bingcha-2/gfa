@@ -4,7 +4,7 @@ import { useState } from "react";
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { ConfirmButton } from "./confirm-button";
 import { StatusBadge } from "./status-badge";
-import { Spinner } from "./spinner";
+import { Spinner } from "@/components/ui/spinner";
 import { MemberTimeline } from "./member-timeline";
 
 type LookupResult = {

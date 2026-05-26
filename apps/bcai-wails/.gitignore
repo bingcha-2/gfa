@@ -3,3 +3,5 @@ node_modules
 frontend/dist
 *.exe
 .DS_Store
+# macOS build output
+bcai-wails

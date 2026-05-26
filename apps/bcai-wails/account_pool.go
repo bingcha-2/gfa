@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -687,7 +686,7 @@ type OAuthLoginResult struct {
 // 3. Exchanges the auth code for tokens
 // 4. Fetches user email via userinfo API
 // 5. Returns email + refresh_token
-func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error) {
+func (p *AccountPool) StartOAuthLogin(profile string, openURL func(string)) (*OAuthLoginResult, error) {
 	profile = normalizeOAuthProfile(profile)
 	clientId, clientSecret := resolveOAuthCreds(profile)
 
@@ -771,7 +770,7 @@ func (p *AccountPool) StartOAuthLogin(profile string) (*OAuthLoginResult, error)
 	)
 
 	Log("[oauth] Opening browser for OAuth login (profile: %s)", profile)
-	openBrowser(authURL)
+	openURL(authURL)
 
 	// Wait for callback (timeout: 5 minutes)
 	var authCode string
@@ -862,9 +861,4 @@ func (p *AccountPool) fetchUserEmail(accessToken string) (string, error) {
 	return info.Email, nil
 }
 
-// openBrowser opens a URL in the default browser
-func openBrowser(url string) {
-	// Windows: use cmd /c start
-	cmd := exec.Command("cmd", "/c", "start", url)
-	_ = cmd.Start()
-}
+
