@@ -907,7 +907,16 @@ func (p *AccountPool) refreshAccountQuota(acc *AccountEntry) error {
 	}
 
 	// 解析模型列表并生成额度分组
+	Log("[quota-refresh] %s: got %d bytes response", acc.Email, len(body))
+	if len(body) > 0 {
+		preview := string(body)
+		if len(preview) > 300 {
+			preview = preview[:300] + "..."
+		}
+		Log("[quota-refresh] %s: response preview: %s", acc.Email, preview)
+	}
 	groups := parseModelsResponse(body)
+	Log("[quota-refresh] %s: parsed %d quota groups", acc.Email, len(groups))
 
 	p.mu.Lock()
 	if entry, ok := p.accounts[acc.ID]; ok {
@@ -920,71 +929,76 @@ func (p *AccountPool) refreshAccountQuota(acc *AccountEntry) error {
 }
 
 // parseModelsResponse 解析 fetchAvailableModels 的响应，提取模型额度信息
+// 实际 API 返回格式:
+//
+//	{
+//	  "models": {
+//	    "gemini-2.5-pro": { "quotaInfo": { "remainingFraction": 0.85 } },
+//	    "claude-sonnet-4": { "quotaInfo": { "remainingFraction": 0.0 } }
+//	  }
+//	}
+//
+// models 是 Object（key→value map），不是数组！
+// 额度字段是 quotaInfo.remainingFraction（0.0-1.0 的小数）
 func parseModelsResponse(body []byte) []QuotaGroup {
-	var resp struct {
-		Models []struct {
-			ModelName    string `json:"modelName"`
-			DisplayName string `json:"displayName"`
-			// 额度相关字段
-			QuotaStatus struct {
-				RemainingPercent float64 `json:"remainingPercent"` // 0-100
-				IsBlocked        bool    `json:"isBlocked"`
-				ResetTime        string  `json:"resetTime"`
-			} `json:"quotaStatus"`
-			// 有些 API 返回的是 rateLimits
-			RateLimits []struct {
-				Key             string  `json:"key"`
-				Remaining       float64 `json:"remaining"`
-				Limit           float64 `json:"limit"`
-				ResetTime       string  `json:"resetTime"`
-			} `json:"rateLimits"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		// 尝试宽松解析：只提取 models 数组
-		var loose map[string]interface{}
-		if json.Unmarshal(body, &loose) != nil {
-			return nil
-		}
-		// 如果有 models 字段但格式不匹配，返回空
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		Log("[quota-refresh] Failed to parse response: %v", err)
 		return nil
 	}
 
-	if len(resp.Models) == 0 {
+	modelsRaw, ok := raw["models"]
+	if !ok {
+		Log("[quota-refresh] Response has no 'models' field")
 		return nil
 	}
+
+	// models 可能是 Object 或 null
+	modelsMap, ok := modelsRaw.(map[string]interface{})
+	if !ok || len(modelsMap) == 0 {
+		Log("[quota-refresh] 'models' is not a map or is empty")
+		return nil
+	}
+
+	Log("[quota-refresh] Parsing %d models from response", len(modelsMap))
 
 	// 按 provider 分组
 	providerEntries := make(map[string][]QuotaEntry)
-	for _, m := range resp.Models {
-		provider := classifyProvider(m.ModelName)
-		percent := m.QuotaStatus.RemainingPercent
-		isBlocked := m.QuotaStatus.IsBlocked
-		resetTime := m.QuotaStatus.ResetTime
-
-		// 如果 quotaStatus 没有数据，尝试从 rateLimits 推断
-		if percent == 0 && !isBlocked && len(m.RateLimits) > 0 {
-			limit := m.RateLimits[0]
-			if limit.Limit > 0 {
-				percent = (limit.Remaining / limit.Limit) * 100
-			}
-			if limit.Remaining <= 0 {
-				isBlocked = true
-			}
-			resetTime = limit.ResetTime
+	for modelKey, modelDataRaw := range modelsMap {
+		modelData, ok := modelDataRaw.(map[string]interface{})
+		if !ok {
+			continue
 		}
 
+		// 提取 quotaInfo.remainingFraction
+		var fraction float64 = -1 // -1 表示无数据
+		if qi, ok := modelData["quotaInfo"].(map[string]interface{}); ok {
+			if rf, ok := qi["remainingFraction"].(float64); ok {
+				fraction = rf
+			}
+		}
+
+		percent := 0.0
+		isBlocked := false
+		if fraction >= 0 {
+			percent = fraction * 100 // 转换为百分比
+			isBlocked = fraction <= 0
+		}
+
+		provider := classifyProvider(modelKey)
 		entry := QuotaEntry{
-			Key:       m.ModelName,
-			Label:     m.DisplayName,
+			Key:       modelKey,
+			Label:     modelKey,
 			Percent:   percent,
 			IsBlocked: isBlocked,
-			ResetTime: resetTime,
 			Provider:  provider,
 		}
-		if entry.Label == "" {
-			entry.Label = m.ModelName
+
+		// 尝试从 modelData 中获取 displayName
+		if dn, ok := modelData["displayName"].(string); ok && dn != "" {
+			entry.Label = dn
 		}
+
 		providerEntries[provider] = append(providerEntries[provider], entry)
 	}
 
@@ -998,22 +1012,17 @@ func parseModelsResponse(body []byte) []QuotaGroup {
 		}
 		blocked := 0
 		totalPercent := 0.0
-		var groupResetTime string
 		for _, e := range entries {
 			if e.IsBlocked {
 				blocked++
 			}
 			totalPercent += e.Percent
-			if e.ResetTime != "" && groupResetTime == "" {
-				groupResetTime = e.ResetTime
-			}
 		}
 		avgPercent := totalPercent / float64(len(entries))
 
 		groups = append(groups, QuotaGroup{
 			Provider:     prov,
 			Percent:      avgPercent,
-			ResetTime:    groupResetTime,
 			ModelCount:   len(entries),
 			BlockedCount: blocked,
 			Entries:      entries,
