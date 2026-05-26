@@ -55,6 +55,28 @@ type ProxyServer struct {
 
 var globalProxy = &ProxyServer{}
 
+// debugResponseBody 将响应体转换为可读的日志字符串
+// 自动解压 gzip，截断到 maxLen 字符，过滤不可打印字符
+func debugResponseBody(data []byte, contentEncoding string, maxLen int) string {
+	readable := data
+	// 尝试 gzip 解压
+	if strings.Contains(strings.ToLower(contentEncoding), "gzip") || (len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b) {
+		r, err := gzip.NewReader(bytes.NewReader(data))
+		if err == nil {
+			decompressed, err := io.ReadAll(r)
+			_ = r.Close()
+			if err == nil {
+				readable = decompressed
+			}
+		}
+	}
+	s := string(readable)
+	if len(s) > maxLen {
+		s = s[:maxLen] + "..."
+	}
+	return s
+}
+
 func GetProxy() *ProxyServer {
 	return globalProxy
 }
@@ -419,7 +441,7 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
-		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %.500s", reqId, resp.StatusCode, len(respBody), string(respBody))
+		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %s", reqId, resp.StatusCode, len(respBody), debugResponseBody(respBody, resp.Header.Get("Content-Encoding"), 500))
 		for k, v := range resp.Header {
 			for _, val := range v {
 				w.Header().Add(k, val)
@@ -1436,7 +1458,7 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 	// Debug: log response for non-noise requests
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
-		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %.500s", reqId, resp.StatusCode, len(respBody), string(respBody))
+		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %s", reqId, resp.StatusCode, len(respBody), debugResponseBody(respBody, resp.Header.Get("Content-Encoding"), 500))
 
 		// Copy headers
 		for k, v := range resp.Header {

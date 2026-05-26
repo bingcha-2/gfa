@@ -1000,11 +1000,11 @@ func KillAndRestartIDE() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = hideCmd("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
-		time.Sleep(3 * time.Second)
-		if IsIDERunning() {
-			_ = hideCmd("pkill", "-f", "Antigravity IDE").Run()
-			time.Sleep(1 * time.Second)
+		// 使用 SIGTERM 而非 osascript，避免 macOS 自动化权限问题
+		_ = hideCmd("pkill", "-TERM", "-f", "Antigravity IDE.app/Contents/MacOS").Run()
+		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
+			_ = hideCmd("pkill", "-9", "-f", "Antigravity IDE.app/Contents/MacOS").Run()
+			waitForProcessExit(IsIDERunning, 2*time.Second)
 		}
 	case "windows":
 		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
@@ -1041,25 +1041,25 @@ func ForceRestartIDE() error {
 	}
 	time.Sleep(1 * time.Second)
 
-	// 2. 优雅关闭 IDE 主进程（WM_CLOSE，让其保存数据）
+	// 2. 优雅关闭 IDE 主进程
 	switch runtime.GOOS {
 	case "windows":
 		_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe").Run() // 不带 /F = WM_CLOSE
 		Log("[ide-inject] [FORCE] 已发送优雅关闭请求")
-		time.Sleep(3 * time.Second)
-		// 如果还在运行，强杀
-		if IsIDERunning() {
+		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
 			_ = hideCmd("taskkill", "/IM", "Antigravity IDE.exe", "/F").Run()
 			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] [FORCE] IDE 未响应，已强杀")
-			time.Sleep(2 * time.Second)
+			waitForProcessExit(IsIDERunning, 2*time.Second)
 		}
 	case "darwin":
-		_ = hideCmd("osascript", "-e", `tell application "Antigravity IDE" to quit`).Run()
-		time.Sleep(3 * time.Second)
-		if IsIDERunning() {
-			_ = hideCmd("pkill", "-9", "-f", "Antigravity IDE").Run()
-			time.Sleep(1 * time.Second)
+		// 使用 SIGTERM 而非 osascript，避免 macOS 自动化权限问题
+		_ = hideCmd("pkill", "-TERM", "-f", "Antigravity IDE.app/Contents/MacOS").Run()
+		Log("[ide-inject] [FORCE] 已发送 SIGTERM")
+		if !waitForProcessExit(IsIDERunning, 5*time.Second) {
+			_ = hideCmd("pkill", "-9", "-f", "Antigravity IDE.app/Contents/MacOS").Run()
+			Log("[ide-inject] [FORCE] IDE 未响应 SIGTERM，已发送 SIGKILL")
+			waitForProcessExit(IsIDERunning, 2*time.Second)
 		}
 	case "linux":
 		_ = hideCmd("pkill", "-f", "antigravity-ide").Run()
@@ -1081,6 +1081,49 @@ func ForceRestartIDE() error {
 	return nil
 }
 
+// waitForProcessExit 轮询等待进程退出，避免固定 time.Sleep 阻塞 Wails 主线程
+// check 返回 true 表示进程仍在运行，maxWait 为最长等待时间
+func waitForProcessExit(check func() bool, maxWait time.Duration) bool {
+	interval := 200 * time.Millisecond
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		if !check() {
+			return true // 进程已退出
+		}
+	}
+	return false // 超时，进程仍在运行
+}
+
+// killProcessesByPattern 通过 pgrep 查找进程 PID，然后用 kill 逐个终止
+// 比 pkill 更可靠，且能记录每个 PID 的终止情况
+func killProcessesByPattern(pattern string, signal string) int {
+	out, err := hideCmd("pgrep", "-f", pattern).Output()
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		Log("[ide-inject] pgrep '%s' 未找到匹配进程", pattern)
+		return 0
+	}
+
+	pids := strings.Fields(strings.TrimSpace(string(out)))
+	Log("[ide-inject] 找到 %d 个匹配进程 (pattern='%s'): PIDs=%v", len(pids), pattern, pids)
+
+	killedCount := 0
+	for _, pid := range pids {
+		pid = strings.TrimSpace(pid)
+		if pid == "" {
+			continue
+		}
+		err := hideCmd("kill", signal, pid).Run()
+		if err != nil {
+			Log("[ide-inject] kill %s %s 失败: %v", signal, pid, err)
+		} else {
+			Log("[ide-inject] kill %s %s 成功", signal, pid)
+			killedCount++
+		}
+	}
+	return killedCount
+}
+
 // killHubForPatch 关闭 Hub 以释放 app.asar 文件锁（用于 PatchAsar 之前）
 // 与 KillAndRestartHub 不同，此函数不重启 Hub，只负责关闭并等待进程完全退出
 func killHubForPatch() {
@@ -1088,25 +1131,27 @@ func killHubForPatch() {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = hideCmd("osascript", "-e", `tell application "Antigravity" to quit`).Run()
-		time.Sleep(3 * time.Second)
-		if IsHubRunning() {
-			_ = hideCmd("pkill", "-9", "-f", "Antigravity.app").Run()
-			time.Sleep(2 * time.Second)
+		// 使用 pgrep+kill 而非 osascript (Apple Events)，避免 macOS 自动化权限问题导致 Wails 应用崩溃
+		killProcessesByPattern("Antigravity.app/Contents", "-TERM")
+		Log("[ide-inject] [PATCH] 已发送 SIGTERM")
+		// 轮询等待所有进程退出（最多 5 秒）
+		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
+			// 仍有进程存活，SIGKILL 强杀
+			killProcessesByPattern("Antigravity.app/Contents", "-9")
+			Log("[ide-inject] [PATCH] Hub 未响应 SIGTERM，已发送 SIGKILL")
+			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
 	case "windows":
 		// 优雅关闭
 		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run()
-		time.Sleep(3 * time.Second)
-		// 强杀确保文件锁释放
-		if IsHubRunning() {
+		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
 			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] [PATCH] Hub 未响应优雅关闭，已强杀")
-			time.Sleep(2 * time.Second)
+			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
 	case "linux":
-		_ = hideCmd("pkill", "-f", "antigravity").Run()
-		time.Sleep(2 * time.Second)
+		_ = hideCmd("pkill", "-TERM", "-f", "antigravity").Run()
+		waitForProcessExit(IsHubRunning, 3*time.Second)
 	}
 
 	// 最终确认
@@ -1128,26 +1173,26 @@ func KillAndRestartHub() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		_ = hideCmd("osascript", "-e", `tell application "Antigravity" to quit`).Run()
-		time.Sleep(3 * time.Second)
-		if IsHubRunning() {
-			_ = hideCmd("pkill", "-f", "Antigravity.app").Run()
-			time.Sleep(1 * time.Second)
+		// 使用 pgrep+kill 而非 osascript，避免 macOS 自动化权限问题
+		killProcessesByPattern("Antigravity.app/Contents", "-TERM")
+		Log("[ide-inject] 已发送 SIGTERM")
+		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
+			killProcessesByPattern("Antigravity.app/Contents", "-9")
+			Log("[ide-inject] Hub 未响应 SIGTERM，已发送 SIGKILL")
+			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
 	case "windows":
 		// 先优雅关闭（WM_CLOSE），让应用保存数据（与 timo 行为一致）
 		_ = hideCmd("taskkill", "/IM", "Antigravity.exe").Run() // 不带 /F = WM_CLOSE
 		Log("[ide-inject] 已发送优雅关闭请求 (WM_CLOSE)")
-		time.Sleep(3 * time.Second)
-		// 如果还在运行，强杀
-		if IsHubRunning() {
+		if !waitForProcessExit(IsHubRunning, 5*time.Second) {
 			_ = hideCmd("taskkill", "/IM", "Antigravity.exe", "/F").Run()
 			Log("[ide-inject] Hub 未响应优雅关闭，已强杀")
-			time.Sleep(1 * time.Second)
+			waitForProcessExit(IsHubRunning, 2*time.Second)
 		}
 	case "linux":
-		_ = hideCmd("pkill", "-f", "antigravity").Run()
-		time.Sleep(2 * time.Second)
+		_ = hideCmd("pkill", "-TERM", "-f", "antigravity").Run()
+		waitForProcessExit(IsHubRunning, 3*time.Second)
 	}
 
 	Log("[ide-inject] 正在重启 Antigravity Hub...")
