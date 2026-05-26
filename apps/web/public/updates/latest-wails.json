@@ -1,21 +1,21 @@
 {
-  "version": "5.0.5",
-  "url": "https://bcai.site/updates/BingchaAI-5.0.5.exe",
-  "sha256": "7F3FE981D0DF95F6C7B7E7848F565602632457C725E2EBAE7DB2EA378FD040B4",
-  "size": 13253120,
-  "changelog": "修复侧边栏图标不显示; 修复接管崩溃; 修复日志乱码",
+  "version": "5.0.6",
+  "url": "https://bcai.site/updates/BingchaAI-5.0.6.exe",
+  "sha256": "AC1647C0B46E189098A80CAD73AA49F365B6146EE6A05CFDA7586CADEDBAF97D",
+  "size": 13349888,
+  "changelog": "更新 Windows 图标; 版本升级到 5.0.6",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.0.5-arm64.dmg",
-      "sha256": "91369400CE2C6DB0A628AF7637238784DC635731FAEC76D3B6569414270FE0C5",
-      "size": 7273351
+      "url": "https://bcai.site/updates/BingchaAI-5.0.6-arm64.dmg",
+      "sha256": "FCF556249CD44A8DDA3318D790D175B70745518305F03B9144AE2926628A6D5B",
+      "size": 7273362
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.0.5-linux-amd64.tar.gz",
-      "sha256": "7E0A532E67DDF9FA1E106AF1151FDC4DDA18CF81EDFABEF08631F8F8E7C1723A",
+      "url": "https://bcai.site/updates/BingchaAI-5.0.6-linux-amd64.tar.gz",
+      "sha256": "4A0708D9E0E3E347943BB7E5FE09749687255DAAC51DB2AF88F9E4DA48FD639C",
       "size": 5762688
     }
   }
