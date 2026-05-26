@@ -527,6 +527,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				Log("[proxy] #%d [LOCAL-POOL] Token refresh failed for #%d (%s): %v", reqId, acc.ID, acc.Email, tokenErr)
 				excludeIds = append(excludeIds, acc.ID)
 				pool.MarkError(acc.ID)
+				pool.RecordRequestStats(acc.ID, false)
 				if attempt < MaxCloudCodeGenerationAttempts {
 					continue
 				}
@@ -543,6 +544,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				EmailHint:   acc.Email,
 			}
 			Log("[proxy] #%d [LOCAL-POOL] attempt=%d account=#%d (%s) project=%s", reqId, attempt, acc.ID, acc.Email, acc.ProjectId)
+			pool.SetActiveAccount(acc.ID)
 
 			rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
 			if !hasProject {
@@ -597,6 +599,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 			if problemReason == "" {
 				pool.MarkSuccess(acc.ID)
+				pool.RecordRequestStats(acc.ID, true)
 				break
 			}
 
@@ -611,6 +614,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				}
 			}
 			pool.MarkExhausted(acc.ID, problemReason, requestModelKey, cooldownMin)
+			pool.RecordRequestStats(acc.ID, false)
 			excludeIds = append(excludeIds, acc.ID)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
@@ -1482,8 +1486,10 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 
 
 func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) TokenUsageResult {
-	buffer := make([]byte, 4096)
-	var fullResponse bytes.Buffer
+	buffer := make([]byte, 32768) // 32KB read buffer（减少系统调用，提升流式吞吐）
+	// 尾部缓冲：仅保留流的最后 16KB 用于解析 token 用量（usageMetadata 只出现在末尾）
+	var tailBuffer bytes.Buffer
+	const tailBufferMax = 16384
 	streamQuotaDetected := false
 
 	// 滑动窗口缓冲：防止 quota 错误 JSON 被 chunk 边界切断（timo 使用 Rust async stream 无此问题）
@@ -1503,9 +1509,10 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	const streamGracePeriod = 30 * time.Second         // 30s per grace extension
 	streamMaxIdle := 5 * time.Minute                   // default max idle
 
-	streamHasData := false
-	lastDataAt := time.Now()
-	streamTimedOut := false
+	var streamHasData atomic.Bool
+	var lastDataNano atomic.Int64
+	lastDataNano.Store(time.Now().UnixNano())
+	var streamTimedOut atomic.Bool
 
 	// Timer goroutine
 	done := make(chan struct{})
@@ -1517,8 +1524,8 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 		case <-done:
 			return
 		case <-firstTimeout:
-			if !streamHasData {
-				streamTimedOut = true
+			if !streamHasData.Load() {
+				streamTimedOut.Store(true)
 				Log("[proxy] #%d [STREAM-TIMEOUT] First byte timeout (%ds)", reqId, int(streamFirstByteTimeout.Seconds()))
 				if closer, ok := body.(io.Closer); ok {
 					closer.Close()
@@ -1535,9 +1542,9 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			case <-done:
 				return
 			case <-ticker.C:
-				idleDuration := time.Since(lastDataAt)
+				idleDuration := time.Since(time.Unix(0, lastDataNano.Load()))
 				if idleDuration >= streamMaxIdle {
-					streamTimedOut = true
+					streamTimedOut.Store(true)
 					Log("[proxy] #%d [STREAM-TIMEOUT] Max idle %ds exceeded", reqId, int(idleDuration.Seconds()))
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
@@ -1545,7 +1552,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					return
 				}
 				// Send SSE keepalive comment
-				if ok && !streamTimedOut {
+				if ok && !streamTimedOut.Load() {
 					_, writeErr := w.Write([]byte(fmt.Sprintf(": bcai-keepalive %d\n\n", time.Now().UnixMilli())))
 					if writeErr == nil {
 						flusher.Flush()
@@ -1561,9 +1568,12 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 		n, err := body.Read(buffer)
 		if n > 0 {
 			totalStreamBytes += int64(n)
-			_, _ = fullResponse.Write(buffer[:n])
-			streamHasData = true
-			lastDataAt = time.Now()
+			_, _ = tailBuffer.Write(buffer[:n])
+			if tailBuffer.Len() > tailBufferMax {
+				tailBuffer.Next(tailBuffer.Len() - tailBufferMax)
+			}
+			streamHasData.Store(true)
+			lastDataNano.Store(time.Now().UnixNano())
 
 			// 更新滑动窗口（用于跨 chunk 检测）
 			recentWindow.Write(buffer[:n])
@@ -1589,23 +1599,32 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
 					}
-					// 2. 干净结束下游连接（不再转发脏数据给 IDE）
+					// 2. 向 IDE 发送 SSE 结束标记，避免 IDE 侧无限等待
 					if ok {
+						_, _ = w.Write([]byte("\ndata: [DONE]\n\n"))
 						flusher.Flush()
 					}
-					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended", reqId)
+					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended with [DONE]", reqId)
 					break // 退出读取循环
 				}
 			}
 
 			// 只有在非 quota 中断的情况下才转发数据给 IDE
-			_, _ = w.Write(buffer[:n])
+			_, writeErr := w.Write(buffer[:n])
 			if ok {
 				flusher.Flush()
 			}
+			// 下游断开（broken pipe）→ 停止从上游读取，节省 API 配额
+			if writeErr != nil {
+				Log("[proxy] #%d [STREAM] downstream write error, aborting: %v", reqId, writeErr)
+				if closer, cOk := body.(io.Closer); cOk {
+					closer.Close()
+				}
+				break
+			}
 		}
 		if err != nil {
-			if err != io.EOF && !streamTimedOut {
+			if err != io.EOF && !streamTimedOut.Load() {
 				Log("[proxy] #%d Stream read error: %v", reqId, err)
 			}
 			break
@@ -1616,7 +1635,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	p.mu.Lock()
 	modelKey := p.lastModelKey
 	p.mu.Unlock()
-	result := p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
+	result := p.parseAndAddTokenUsage(tailBuffer.Bytes(), "", modelKey)
 
 	// 附加流式错误信息，通知调用方上报
 	if streamQuotaDetected {

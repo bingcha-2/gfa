@@ -86,8 +86,16 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function LockPoolAccount(arg1) {
+  return window['go']['main']['App']['LockPoolAccount'](arg1);
+}
+
 export function OAuthLogin(arg1) {
   return window['go']['main']['App']['OAuthLogin'](arg1);
+}
+
+export function RefreshPoolQuota() {
+  return window['go']['main']['App']['RefreshPoolQuota']();
 }
 
 export function RemovePoolAccount(arg1) {
@@ -110,10 +118,22 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SetAccountAlias(arg1, arg2) {
+  return window['go']['main']['App']['SetAccountAlias'](arg1, arg2);
+}
+
 export function SetPoolMode(arg1) {
   return window['go']['main']['App']['SetPoolMode'](arg1);
 }
 
+export function SwitchPoolAccount(arg1) {
+  return window['go']['main']['App']['SwitchPoolAccount'](arg1);
+}
+
 export function TogglePoolAccount(arg1, arg2) {
   return window['go']['main']['App']['TogglePoolAccount'](arg1, arg2);
+}
+
+export function UnlockPoolAccount() {
+  return window['go']['main']['App']['UnlockPoolAccount']();
 }

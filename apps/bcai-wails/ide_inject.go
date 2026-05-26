@@ -228,7 +228,6 @@ func registryFindInstallPath(appName string) string {
 			// 优先读 InstallLocation
 			if loc := registryReadValue(subkey, "InstallLocation"); loc != "" {
 				if _, err := os.Stat(loc); err == nil {
-					Log("[detect] 从注册表找到 %s: %s", appName, loc)
 					return loc
 				}
 			}
@@ -236,7 +235,6 @@ func registryFindInstallPath(appName string) string {
 			if icon := registryReadValue(subkey, "DisplayIcon"); icon != "" {
 				icon = strings.Split(icon, ",")[0]
 				if _, err := os.Stat(icon); err == nil {
-					Log("[detect] 从注册表 DisplayIcon 找到 %s: %s", appName, icon)
 					return icon
 				}
 			}
@@ -264,6 +262,7 @@ func registryReadValue(key, valueName string) string {
 }
 
 // spotlightFindApp 使用 macOS Spotlight 索引按文件名查找 .app
+// 自动过滤 ShipIt 自动更新暂存目录等临时路径，优先返回 /Applications 下的结果
 func spotlightFindApp(appFileName string) string {
 	if runtime.GOOS != "darwin" {
 		return ""
@@ -272,13 +271,32 @@ func spotlightFindApp(appFileName string) string {
 	if err != nil {
 		return ""
 	}
+	var candidates []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasSuffix(line, ".app") {
-			if _, err := os.Stat(line); err == nil {
-				return line
-			}
+		if !strings.HasSuffix(line, ".app") {
+			continue
 		}
+		// 过滤掉 ShipIt / 临时目录等非正式安装路径
+		if strings.Contains(line, "/var/folders/") ||
+			strings.Contains(line, "ShipIt") ||
+			strings.Contains(line, "/tmp/") ||
+			strings.Contains(line, "/Caches/") {
+			Log("[detect] 跳过临时路径: %s", line)
+			continue
+		}
+		if _, err := os.Stat(line); err == nil {
+			candidates = append(candidates, line)
+		}
+	}
+	// 优先返回 /Applications 下的路径
+	for _, c := range candidates {
+		if strings.HasPrefix(c, "/Applications") {
+			return c
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0]
 	}
 	return ""
 }
@@ -859,6 +877,13 @@ func RestoreAsar() error {
 
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		return fmt.Errorf("未找到 asar 备份文件")
+	}
+
+	// macOS: 确保 asar 可写（与 PatchAsar 一致，防止隔离属性阻止写入）
+	if runtime.GOOS == "darwin" {
+		if err := ensureAsarWritable(hubPath); err != nil {
+			return fmt.Errorf("无法获取 asar 写入权限: %w", err)
+		}
 	}
 
 	if err := copyFile(backupPath, asarPath); err != nil {

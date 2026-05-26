@@ -29,6 +29,11 @@ import {
   SetPoolMode as _SetPoolMode,
   GetPoolMode,
   OAuthLogin as _OAuthLogin,
+  RefreshPoolQuota as _RefreshPoolQuota,
+  SwitchPoolAccount as _SwitchPoolAccount,
+  SetAccountAlias as _SetAccountAlias,
+  LockPoolAccount as _LockPoolAccount,
+  UnlockPoolAccount as _UnlockPoolAccount,
 } from '../../wailsjs/go/main/App'
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -87,6 +92,7 @@ export interface StatsResponse {
     available: number
     exhausted: number
     withToken: number
+    lockedAccountId?: number
   }
   proxyStartedAt: string
 }
@@ -154,7 +160,7 @@ export async function getAnnouncement(): Promise<string> {
 
 // ===== Pool =====
 export async function getPoolAccounts(): Promise<AccountInfo[]> {
-  return GetPoolAccounts()
+  return GetPoolAccounts() as unknown as Promise<AccountInfo[]>
 }
 
 export async function getPoolStatus(): Promise<Record<string, number>> {
@@ -192,6 +198,27 @@ export async function oauthLogin(
   profile: string
 ): Promise<{ success: boolean; email?: string; id?: number; error?: string }> {
   return _OAuthLogin(profile) as any
+}
+
+// ===== Pool Quota Management =====
+export async function refreshPoolQuota(): Promise<{ success: boolean; refreshed?: number }> {
+  return _RefreshPoolQuota() as any
+}
+
+export async function switchPoolAccount(id: number): Promise<{ success: boolean }> {
+  return _SwitchPoolAccount(id) as any
+}
+
+export async function setAccountAlias(id: number, alias: string): Promise<{ success: boolean; error?: string }> {
+  return _SetAccountAlias(id, alias) as any
+}
+
+export async function lockPoolAccount(id: number): Promise<{ success: boolean; error?: string }> {
+  return _LockPoolAccount(id) as any
+}
+
+export async function unlockPoolAccount(): Promise<{ success: boolean }> {
+  return _UnlockPoolAccount() as any
 }
 
 // ===== Browser =====
