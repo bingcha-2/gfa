@@ -1595,11 +1595,12 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
 					}
-					// 2. 干净结束下游连接（不再转发脏数据给 IDE）
+					// 2. 向 IDE 发送 SSE 结束标记，避免 IDE 侧无限等待
 					if ok {
+						_, _ = w.Write([]byte("\ndata: [DONE]\n\n"))
 						flusher.Flush()
 					}
-					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended", reqId)
+					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended with [DONE]", reqId)
 					break // 退出读取循环
 				}
 			}
