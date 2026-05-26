@@ -1482,8 +1482,10 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 
 
 func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) TokenUsageResult {
-	buffer := make([]byte, 4096)
-	var fullResponse bytes.Buffer
+	buffer := make([]byte, 32768) // 32KB read buffer（减少系统调用，提升流式吞吐）
+	// 尾部缓冲：仅保留流的最后 16KB 用于解析 token 用量（usageMetadata 只出现在末尾）
+	var tailBuffer bytes.Buffer
+	const tailBufferMax = 16384
 	streamQuotaDetected := false
 
 	// 滑动窗口缓冲：防止 quota 错误 JSON 被 chunk 边界切断（timo 使用 Rust async stream 无此问题）
@@ -1562,7 +1564,10 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 		n, err := body.Read(buffer)
 		if n > 0 {
 			totalStreamBytes += int64(n)
-			_, _ = fullResponse.Write(buffer[:n])
+			_, _ = tailBuffer.Write(buffer[:n])
+			if tailBuffer.Len() > tailBufferMax {
+				tailBuffer.Next(tailBuffer.Len() - tailBufferMax)
+			}
 			streamHasData.Store(true)
 			lastDataNano.Store(time.Now().UnixNano())
 
@@ -1625,7 +1630,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	p.mu.Lock()
 	modelKey := p.lastModelKey
 	p.mu.Unlock()
-	result := p.parseAndAddTokenUsage(fullResponse.Bytes(), "", modelKey)
+	result := p.parseAndAddTokenUsage(tailBuffer.Bytes(), "", modelKey)
 
 	// 附加流式错误信息，通知调用方上报
 	if streamQuotaDetected {
