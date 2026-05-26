@@ -289,26 +289,12 @@ function AccountCard({ acc, isExpanded, onToggleExpand }: {
           )}
 
           {/* Account details */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] mb-2">
-            <div className="text-[var(--text-muted)]">ProjectId</div>
-            <div className="text-[var(--text-primary)] font-mono truncate">{acc.projectId || '—'}</div>
-            <div className="text-[var(--text-muted)]">请求统计</div>
-            <div className="text-[var(--text-primary)]">
-              {acc.requestStats.total > 0
-                ? `${acc.requestStats.successes}✓ / ${acc.requestStats.failures}✗ (共 ${acc.requestStats.total})`
-                : '暂无'}
+          {acc.quotaRefreshedAt && (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] mb-2">
+              <div className="text-[var(--text-muted)]">额度更新</div>
+              <div className="text-[var(--text-primary)]">{new Date(acc.quotaRefreshedAt).toLocaleTimeString()}</div>
             </div>
-            <div className="text-[var(--text-muted)]">Token</div>
-            <div className="text-[var(--text-primary)]">
-              {acc.hasAccessToken ? `有效 (${acc.tokenExpiresIn}s)` : '未激活'}
-            </div>
-            {acc.quotaRefreshedAt && (
-              <>
-                <div className="text-[var(--text-muted)]">额度更新</div>
-                <div className="text-[var(--text-primary)]">{new Date(acc.quotaRefreshedAt).toLocaleTimeString()}</div>
-              </>
-            )}
-          </div>
+          )}
 
           {/* Blocked models */}
           {acc.blockedModels && Object.keys(acc.blockedModels).length > 0 && (
