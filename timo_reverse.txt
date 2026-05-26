@@ -1,0 +1,763 @@
+﻿?????????Caead::ErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aes-0.8.4\src\soft\fixslice64.rs
+__m128i__m256iSlimAVX2slim128slim256C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\packed\pattern.rs
+SlimSSSE3C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\prefilter.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\primitives.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\alphabet.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\remapper.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\packed\teddy\generic.rs
+assertion failed: patterns.len() >= 1C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\packed\rabinkarp.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\automaton.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\debug.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\fmt.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.102\src\fmt.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.102\src\error.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\atomic-waker-1.1.2\src\lib.rs
+/*__private__axum_nest_tail_paraminternal error: entered unreachable code: we check for this state earlier in this methodC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\routing\url_params.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-body-util-0.1.3\src\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\engine\general_purpose\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\engine\general_purpose\decode_suffix.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\engine\general_purpose\decode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\brotli-decompressor-5.0.0\src\bit_reader\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\brotli-decompressor-5.0.0\src\decode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\brotli-decompressor-5.0.0\src\huffman\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\brotli-decompressor-5.0.0\src\transform.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\chrono-0.4.44\src\naive\date\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\chrono-0.4.44\src\offset\utc.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\chrono-0.4.44\src\format\strftime.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\chrono-0.4.44\src\offset\local\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-codecs-0.4.37\src\gzip\header.rs
+Invalid gzip headerparser used after doneC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-codecs-0.4.37\src\gzip\decoder.rs
+sportpartyClicklowerlivesclasslayerentrystoryusagesoundcourtyour birthpopuptypesapplyImagebeinguppernoteseveryshowsmeansextramatchtrackknownearlybegansuperpapernorthlearngivennamedendedTermspartsGroupbrandusingwomanfalsereadyaudiotakeswhile.com/livedcasesdailychildgreatjudgethoseunitsneverbroadcoastcoverapplefilescyclesceneplansclickwritequeenpieceemailframeolderphotolimitcachecivilscaleenterthemetheretouchboundroyalaskedwholesincestock namefaithheartemptyofferscopeownedmightalbumthinkbloodarraymajortrustcanonunioncountvalidstoneStyleLoginhappyoccurleft:freshquitefilmsgradeneedsurbanfightbasishoverauto;route.htmlmixedfinalYour slidetopicbrownalonedrawnsplitreachRightdatesmarchquotegoodsLinksdoubtasyncthumballowchiefyouthnovel10px;serveuntilhandsCheckSpacequeryjamesequaltwice0,000Startpanel
+coveragechairman.png" />subjectsRichard whateverprobablyrecoverybaseballjudgmentconnect..css" /> websitereporteddefault"/></a>
+unexpected BufErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-codecs-0.4.37\src\brotli\decoder.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\compression-core-0.4.31\src\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cookie-0.18.1\src\lib.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\flt2dec\mod.rs
+!$'+.158;/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\dec2flt\parse.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\fmt\builders.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\net\parser.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\dec2flt\decimal_seq.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\diy_float.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\bignum.rs
+assertion failed: digits < 40/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\wtf8.rs
+0000000000000000000000000000000000000000000000000000000000000000/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\fmt\mod.rs
+called `Option::unwrap()` on a `None` value/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\panicking.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\memchr.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\unicode\printable.rs
+attempt to divide by zeroattempt to calculate the remainder with a divisor of zero`async fn` resumed after completion
+assertion failed: d.mant > 0/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\flt2dec\strategy\grisu.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\flt2dec\strategy\dragon.rs
+user-provided comparison function does not correctly implement a total order/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\sort\shared\smallsort.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\net\ip_addr.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\net\socket_addr.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\net\display_buffer.rs
+RefCell already mutably borrowedRefCell already borrowedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.0\src\specialized\pclmulqdq.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.0\src\baseline.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\iso_2022_jp.rs
+? ?(?)?+?-?4?5?8?<?D?G?I?P?Q?T?V?W?X?Y?`?a?c?e?i?l?p?t?|?}???????????????????C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\data.rs
+???C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\ascii.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\utf_8.rs
+Output buffer must have been too small.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\gb18030.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\handles.rs
+invalid gzip headercorrupt gzip stream does not have a matching checksumNeedsDictionaryC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-core-0.3.32\src\task\__internal\atomic_waker.rs
+getrandom: this target is not supportederrno: did not return a positive valueunexpected situationSecRandomCopyBytes: iOS Security framework failureRtlGenRandom: Windows system function failureRDRAND: failed multiple times: CPU issue likelyRDRAND: instruction not supportedWeb Crypto API is unavailableCalling Web API crypto.getRandomValues failedrandSecure: VxWorks RNG module is not initializedNode.js crypto CommonJS module is unavailableCalling Node.js API crypto.randomFillSync failedNode.js ES modules are not directly supported, see https://docs.rs/getrandom#nodejs-es-module-supportC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\glob-0.3.3\src\lib.rs
+/rust/deps\hashbrown-0.16.1\src\raw\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hashbrown-0.16.1\src\raw\mod.rs
+http://https://C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\uri\authority.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\method.rs
+Switching ProtocolsProcessingEarly HintsCreatedNon Authoritative InformationNo ContentReset ContentPartial ContentMulti-StatusAlready ReportedIM UsedMultiple ChoicesMoved PermanentlyFoundSee OtherNot ModifiedUse ProxyTemporary RedirectPermanent RedirectUnauthorizedPayment RequiredForbiddenNot FoundMethod Not AllowedNot AcceptableProxy Authentication RequiredRequest TimeoutGoneLength RequiredPrecondition FailedPayload Too LargeURI Too LongUnsupported Media TypeRange Not SatisfiableExpectation FailedI'm a teapotMisdirected RequestUnprocessable EntityLockedFailed DependencyToo EarlyUpgrade RequiredPrecondition RequiredToo Many RequestsRequest Header Fields Too LargeUnavailable For Legal ReasonsInternal Server ErrorNot ImplementedBad GatewayService UnavailableGateway TimeoutHTTP Version Not Su
+pportedVariant Also NegotiatesInsufficient StorageLoop DetectedNot ExtendedNetwork Authentication Requiredhttp::ErrorInvalidUriCharInvalidSchemeInvalidAuthoritySchemeMissingAuthorityMissingPathAndQueryMissingTooLongSchemeTooLongHTTP/0.9HTTP/2.0HTTP/3.0C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\version.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\httparse-1.10.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\httparse-1.10.1\src\simd\swar.rs
+   , 00     0000 00:00:00 GMTC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\httpdate-1.0.3\src\date.rs
+assertion failed: (*tail).value.is_none()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-channel-0.3.32\src\mpsc\queue.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\uri\mod.rs
+just sent OkC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\body\incoming.rs
+dy to connectionerror shutting down connectionC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\proto\h1\role.rs
+runtime dropped the dispatch taskuser code panickedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\common\date.rs
+You must supply a timer.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\common\time.rs
+original header value plus ascii is validC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\headers.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\upgrade.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\proxy\matcher.rs
+tunnel error: io error establishing tunnelproxy authorization requiredproxy response headers too longunsuccessful
+REQUEST_METHODALL_PROXYall_proxy?
+HTTP_PROXYhttp_proxy
+HTTPS_PROXYhttps_proxy
+NO_PROXYno_proxyh
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-channel-0.3.32\src\mpsc\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\uri\scheme.rs
+InvalidUriPartsOutputSliceTooSmallWriter must be presentC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\write\encoder.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\encode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\uts46.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\smallvec-1.15.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\icu_normalizer-2.1.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\idna-1.1.0\src\punycode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cfb-0.7.3\src\internal\alloc.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cfb-0.7.3\src\internal\chain.rs
+Invalid CFB file (wrong magic number)C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cfb-0.7.3\src\internal\sector.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cfb-0.7.3\src\internal\direntry.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cfb-0.7.3\src\internal\directory.rs
+word/ppt/xl/00020810-0000-0000-c000-00000000004600020820-0000-0000-c000-00000000004600020906-0000-0000-c000-00000000004664818d10-4f9b-11cf-86ea-00aa00b929e8C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\infer-0.19.0\src\matchers\doc.rs
+mimetypevnd.oasis.opendocument.textvnd.oasis.opendocument.spreadsheetvnd.oasis.opendocument.presentationC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\infer-0.19.0\src\matchers\text.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\infer-0.19.0\src\matchers\image.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\infer-0.19.0\src\matchers\archive.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\parser.rs
+PrefixLenErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\components.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\parser\trusted.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\normalize.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\normalize\pct_case.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\params.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.0\src\arch\all\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.0\src\arch\all\twoway.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mime-0.3.17\src\lib.rs
+charsetutf-8C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mime-0.3.17\src\parse.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\base64.rs
+assertion failed: dst.len() >= src.len()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\crypto\cryptoutil.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\crypto\curve25519.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\crypto\sha512.rs
+??[C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\crypto\blake2b.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\minisign-verify-0.2.5\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\miniz_oxide-0.8.9\src\inflate\output_buffer.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\miniz_oxide-0.8.9\src\inflate\core.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\miniz_oxide-0.8.9\src\inflate\stream.rs
+PhantomPinned/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\os\windows\io\raw.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mio-1.1.1\src\sys\windows\named_pipe.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mio-1.1.1\src\sys\windows\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mio-1.1.1\src\sys\windows\net.rs
+127.0.0.1:0C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mio-1.1.1\src\sys\windows\iocp.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mio-1.1.1\src\sys\windows\selector.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\platform_impl\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\platform_impl\windows\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\platform_impl\windows\icon.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\platform_impl\windows\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\menu.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\notify-rust-4.12.0\src\notification.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\once_cell-1.21.3\src\imp_std.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\panic_abort\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\src\parking_lot.rs
+parking_lot requires either NT Keyed Events (WinXP+) or WaitOnAddress/WakeByAddress (Win8+)C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\src\thread_parker\windows\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\percent-encoding-2.3.2\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rand-0.8.5\src\rngs\thread.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rand-0.9.2\src\rngs\thread.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rand_chacha-0.3.1\src\guts.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-1.12.3\src\builders.rs
+LayoutErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\alphabet.rs
+internal error: entered unreachable code: suffix match plus reverse match implies there must be a matchC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\strategy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\captures.rs
+aho-corasick DFA should never failC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\prefilter\teddy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\prefilter\memchr.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\prefilter\memmem.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\prefilter\byteset.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\primitives.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\literal_trie.rs
+AhoCorasick::try_find is not expected to failC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\ahocorasick.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\dfa.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\nfa\contiguous.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\nfa\noncontiguous.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\util\search.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\packed\api.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aho-corasick-1.1.4\src\packed\teddy\builder.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\error.rs
+multiple epsilon transitions to same statematch states should be a proper subset of all statesC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\dfa\onepass.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\dfa\remapper.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\range_trie.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\map.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\nfa.rs
+byte slice lengths must be less than usize MAXC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\pikevm.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\builder.rs
+non-empty nodesC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\compiler.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\nfa\thompson\backtrack.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\stopat.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\limited.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\literal.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\meta\wrappers.rs
+invalid StateID valueC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\sparse_set.rs
+assertion failed: stack.is_empty()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\determinize\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\determinize\state.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\look.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\utf8.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\wire.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\empty.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\search.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\hybrid\dfa.rs
+cannot build lazy DFAs for regexes with Unicode word boundaries; switch to ASCII word boundaries, or heuristically enable Unicode word boundaries or use a different regex enginereverse search must match if forward search doesC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\hybrid\regex.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\hybrid\search.rs
+DFAC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.0\src\memmem\searcher.rs
+CoreEOITeddyRabinKarpMatchErrorStandardLeftmostFirstLeftmostLongestRegexInfoHybridPikeVMPatternLazyStateIDRegexInfoIpropsprops_unionOnePassByteSetbitsC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\escape.rs
+TryFromCharErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\ast\mod.rs
+alnumasciiblankcntrldigitgraphlowerpunctspaceupperwordxdigitC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\ast\parse.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\ast\visitor.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\hir\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\hir\literal.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\hir\interval.rs
+internal error: entered unreachable code: expected expr or alt, got Unicode classC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\hir\translate.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\utf8.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\debug.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\error.rs
+    General_CategoryScriptC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-syntax-0.8.10\src\unicode.rs
+SuccessFailedIdentFailureIdentMismatchGeneralServerFailureConnectionNotAllowedTtlExpiredCommandNotSupportedAddressTypeNotSupportedSOCKS error: failed to create underlying connectionio error during SOCKS handshakecould not resolve to acceptable address typemissing destination hostmissing destination portfailed parsing server responsefailed serialize requestC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\proxy\socks\mod.rs
+MethodMismatchC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-util-0.7.18\src\io\stream_reader.rs
+unexpected eofC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\proxy\socks\v4\mod.rs
+?C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\proxy\socks\v5\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-util-0.7.18\src\util\poll_buf.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\async_impl\client.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\redirect.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\async-compression-0.4.41\src\tokio\bufread\generic\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\extensions.rs
+InvalidUriC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\connect.rs
+SocksNoHostInUrlSocksLocalResolveSocksConnectsocks proxy destination has no hosterror resolving for socks proxyerror connecting to socks proxyC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\async_impl\body.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\async_impl\request.rs
+missing hostC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\dns\resolve.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\proxy.rs
+proxy scheme expected
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\dns\gai.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tower-http-0.6.8\src\compression_utils.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\mem\maybe_uninit.rs
+ConnectFailedMissingHostProxyAuthRequiredProxyHeadersTooLongTunnelUnexpectedEofTunnelUnsuccessfulalready calledC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\service\oneshot.rs
+unexpected polling after handshakeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\handshake.rs
+retrying requires cloned requestC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tower-0.5.3\src\retry\future.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-rustls-0.27.7\src\connector.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\rt\io.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\pool.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\client.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\dns.rs
+dns errorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\http.rs
+Proxy-Authorization: C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\client\legacy\connect\proxy\tunnel.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\common\lazy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\client\conn\http1.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\client.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-rustls-0.26.4\src\common\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\async_impl\client.rs
+assertion failed: slot.is_none()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-channel-0.3.32\src\oneshot.rs
+Previous URL must be validC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\redirect.rs
+TryFlatten polled after completionC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.32\src\future\try_future\try_flatten.rs
+900901902903904905906907908909910911912913914915916917918919920921922923924925926927928929930931932933934935936937938939940941942943944945946947948949950951952953954955956957958959960961962963964965966967968969970971972973974975976977978979980981982983984985986987988989990991992993994995996997998999BuilderRequestRedirectStatusDecodeUpgradereqwest::ErrorsourceC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\util.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\collections\vec_deque\mod.rs
+current header nameC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\proto\h1\encode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\client\dispatch.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\net\tcp\socket.rs
+EndEntityChainC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\connect.rs
+TooManyRedirectstoo many redirectsPoolDisabledCheckoutNoLongerWantedCheckedOutClosedValueC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\buf\take.rs
+IncompleteBodyReasonPhraseC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\async_impl\body.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\async_impl\request.rs
+should be valid UrlC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\proxy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\dns\gai.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\buf\chain.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-util-0.1.20\src\rt\tokio.rs
+WebPkiServerVerifierC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tower-0.5.3\src\timeout\mod.rs
+Ready polled after completionC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.32\src\future\ready.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tower-0.5.3\src\util\oneshot.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.32\src\future\select.rs
+FromUtf16ErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rfd-0.16.0\src\backend\win_cid\thread_future.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rfd-0.16.0\src\backend\win_cid\file_dialog\dialog_ffi.rs
+??B?U??a?{?C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rfd-0.16.0\src\backend\win_cid\file_dialog\com.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rfd-0.16.0\src\backend\win_cid\message_dialog.rs
+@C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\hmac.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\polyfill\slice\as_chunks.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\quic.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\arithmetic\montgomery.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\arithmetic\ffi.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\arithmetic\limbs\x86_64\mont.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\arithmetic\bigint.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\arithmetic\bigint\modulus.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\curve25519\scalar.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\curve25519\ed25519\signing.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\keys.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\suite_b\private_key.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\suite_b\ops.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\suite_b\ops\p384.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\suite_b\ecdsa\digest_scalar.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\ec\suite_b\ecdsa\signing.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\io\writer.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\io\positive.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\rsa\public_key.rs
+assertion failed: min_bits >= MIN_BITSC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\rsa\public_modulus.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\rsa\padding\pss.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\rsa\padding.rs
+assertion failed: em.len() >= digest_len + 11C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\rsa\padding\pkcs1.rs
+assertion failed: output.len() <= padded.len()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\overlapping\partial_block.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\overlapping\base.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\aes.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\aes\ffi.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\chacha\ffi.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\aes_gcm.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\aes_gcm\vaesclmulavx2.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\aes_gcm\aeshwclmulmovbe.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\algorithm.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\hkdf.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\limb.rs
+RNG failedWrongAlgorithmInvalidEncodingUnexpectedErrorInvalidComponentPublicKeyIsMissingVersionNotSupportedInconsistentComponentsPrivateModulusLenNotMultipleOf512BitsTooLargeTooSmallC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\pkcs8.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\digest\dynstate.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\polyfill\slice\as_chunks_mut.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\polyfill\slice.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\signature.rs
+{invalid syntax}{recursion limit reached}?`fmt::Error`s should be impossible without a `fmt::Formatter`/rust/deps\rustc-demangle-0.1.27\src\v0.rs
+" fn( ->  + punycode{.llvm./rust/deps\rustc-demangle-0.1.27\src\lib.rs
+/rust/deps\rustc-demangle-0.1.27\src\legacy.rs
+SizeLimitExhaustedParseIntErrorInvalidDigitPosOverflowNegOverflowZero/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\ops\function.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\tls13.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\handshake.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\ring\tls13.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\ring\tls12.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\webpki\server_verifier.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\message\outbound.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\deframer\handshake.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\client\handy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\client\tls13.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\client\hs.rs
+'?chunk size must be non-zerodest is out of bounds/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\sort\unstable\quicksort.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\aead\less_safe_key.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\agreement.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\str.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\slice.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\conn.rs
+algorithmPKCS1digestinfo_prefixCertificateDerRingAlgorithmpublic_key_alg_idsignature_alg_idverification_algC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\common_state.rs
+assertion failed: self.next_pre_encrypt_action() != PreEncryptAction::RefuseC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\record_layer.rs
+received plaintext buffer fullTLS 1.2 session tickets may not be sent once the handshake has completedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\ffdhe_groups.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\codec.rs
+??H??[C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\message\inbound.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\deframer\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\msgs\deframer\buffers.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\x509.rs
+ or C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\tls12\mod.rs
+res binderc e trafficc hs traffics hs trafficc ap traffics ap trafficexp masterres masterderivedech accept confirmationhrr ech accept confirmationCLIENT_EARLY_TRAFFIC_SECRETCLIENT_HANDSHAKE_TRAFFIC_SECRETSERVER_HANDSHAKE_TRAFFIC_SECRETCLIENT_TRAFFIC_SECRET_0SERVER_TRAFFIC_SECRET_0EXPORTER_SECRETC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\tls13\key_schedule.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\tls13\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\client\client_conn.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\client\ech.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\hash.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\hmac.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\ring\quic.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\ring\sign.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\tls12.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\crypto\cipher.rs
+illegal `BufRead::consume` usageC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\vecbuf.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\webpki\verify.rs
+no kx groups configuredC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-0.23.37\src\compress.rs
+CompressionECCurveTypeEchConfigContentskey_configmaximum_name_lengthpublic_nameDefaultTimeProviderDisabledReadyAcceptedFinishedRejectedEcdsaSigningKeyEchClientHelloTypeSingleProtocolNameOwnedCertRevocationListrevoked_certsissuerissuing_distribution_pointsigned_dataC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ring-0.17.14\src\digest.rs
+SystemTimeErrorC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-pki-types-1.14.0\src\server_name.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-pki-types-1.14.0\src\lib.rs
+CERTIFICATEPUBLIC KEYRSA PRIVATE KEYPRIVATE KEYEC PRIVATE KEYX509 CRLCERTIFICATE REQUESTECHCONFIG-----END -----C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-pki-types-1.14.0\src\pem.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-pki-types-1.14.0\src\base64.rs
+CryptoProvidercipher_suiteskx_groupssignature_verification_algorithmssecure_randomkey_providerCertEngineinnermajor version numberminor version numberpatch version numberpre-release identifierbuild metadata'\0'C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\semver-1.0.27\src\identifier.rs
+unexpected character after wildcard in version reqexcessive number of version comparatorsC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\semver-1.0.27\src\parse.rs
+u8f64i32i64u16u32u64usizeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_core-1.0.228\src\de\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\error.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\itoa-1.0.17\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\raw.rs
+JSON.parse('C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serialize-to-javascript-0.1.2\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\shared_child-1.1.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.3\src\sys\windows.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\process\windows.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\io\stdio.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\pal\windows\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\args\windows.rs
+<unnamed>/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\panicking.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\process\windows\child_pipe.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\id.rs
+too many running threads in thread scope/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\scoped.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\helpers\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\stdio\windows.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\thread\windows.rs
+too many active read locks on RwLock/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\sync\rwlock\futex.rs
+RUST_LIB_BACKTRACERUST_BACKTRACE/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\wtf8\mod.rs
+16e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\reentrant_lock.rs
+advancing IoSlice beyond its length/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\io\io_slice\windows.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\fs\windows.rs
+\\.\NUL/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\ffi\os_str.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\rt.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\..\..\backtrace\src\dbghelp.rs
+???/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\..\..\backtrace\src\symbolize\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\process\mod.rs
+LazyLock instance has previously been poisoned/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\lazy_lock.rs
+use of std::thread::current() is not possible after the thread's local data has been destroyed/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\current.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\env\windows.rs
+\cmd.exe/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\thread_local\destructors\list.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\io\error\windows.rs
+assertion failed: len >= size_of::<c::sockaddr_in>()/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\net\connection\socket\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\pal\windows\os.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\pal\windows\winsock.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\pal\windows\time.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\backtrace.rs
+thread name may not contain interior null bytes/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\thread.rs
+overflow when subtracting duration from instant/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\time.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sysinfo-0.33.1\src\windows\process.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sysinfo-0.33.1\src\windows\sid.rs
+IdleSystemC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sysinfo-0.33.1\src\windows\cpu.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\num\f64.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\char\methods.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-segmentation-1.12.0\src\grapheme.rs
+Window ClassC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\drop_handler.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\mod.rsTao::ExecMsg
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\keyboard_layout.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\dpi.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\icon.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\monitor.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\keyboard.rs
+DISP_CHANGEC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-0.61.3\src\Windows\Win32\UI\WindowsAndMessaging\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\window.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\window.rsUnexpected ClientToScreen failure
+NotAChildOfThisMenuNotInitializedAlreadyInitializedAcceleratorParseErrorCreateWebviewCreateWindowInvalidWindowLabelFailedToSendMessageFailedToGetMonitorFailedToGetCursorPositionInvalidHeaderNameInvalidHeaderValueInvalidStatusCodeInvalidMethodEventLoopClosedInvalidProxyUrlWebviewRuntimeNotInstalled
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\format_callback.rs
+patternbrownfieldassertion failed: removed_resource.is_none()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\resources\mod.rs
+SetupErrorgranted__internal_unstable_listeners_function_id____internal_unstable_listeners_object_id__UnsupportedKeyEmptyTokenInvalidFormatC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-0.61.3\src\Windows\Win32\UI\Input\Touch\mod.rs
+struct Attachmentstruct NotificationDatastruct ScheduleIntervalC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-notification-2.3.3\src\desktop.rs
+keyboard:alt+ctrl+meta+shift+altKeyctrlKeymetaKeyshiftKeyC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-utils-2.8.3\src\io.rs
+tauri^C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-shell-2.3.5\src\process\mod.rs
+/i/promptrestartAUTOLAUNCHAPP=TrueSYSTEMROOTo
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zip-4.6.1\src\crc32.rs
+the event loop has been closedInvalid proxy urlwindow not foundCould not find the webview runtime, make sure it is installedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\softbuffer-0.4.8\src\backends\win32.rs
+__tauriWindow?C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-runtime-wry-2.10.1\src\undecorated_resizing.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-runtime-wry-2.10.1\src\util.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-runtime-wry-2.10.1\src\window\windows.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\path.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-utils-2.8.3\src\acl\value.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\phf_shared-0.11.3\src\lib.rs
+path contains invalid UTF-8 charactersC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\urlpattern-0.3.0\src\matcher.rs
+Tauri AppC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-utils-2.8.3\src\config.rs
+dmgAccess-Control-Allow-CredentialsAccess-Control-Allow-HeadersAccess-Control-Allow-MethodsAccess-Control-Expose-HeadersAccess-Control-Max-AgeCross-Origin-Embedder-PolicyCross-Origin-Opener-PolicyCross-Origin-Resource-PolicyService-Worker-AllowedTiming-Allow-OriginX-Content-Type-OptionsTauri-Custom-Headerdrag-drop-enabledmin-widthmin-heightmax-widthmax-heightprevent-overflowalways-on-bottomalways-on-topvisible-on-all-workspacescontent-protectedskip-taskbartitle-bar-styletraffic-light-positionhidden-titleaccept-first-mousetabbing-identifieradditional-browser-argswindow-effectsproxy-urlzoom-hotkeys-enabledbrowser-extensions-enableduse-https-schemebackground-colorbackground-throttlingjavascript-disabledallow-link-previewdisable-input-accessory-viewdisable_input_accessory_viewdata-directorydat
+14.010.13__TAURI_BUNDLE_TYPE_VAR_DEB__TAURI_BUNDLE_TYPE_VAR_RPM__TAURI_BUNDLE_TYPE_VAR_APP__TAURI_BUNDLE_TYPE_VAR_MSI__TAURI_BUNDLE_TYPE_VAR_NSSC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-utils-2.8.3\src\platform.rs
+__TAURI_BUNDLE_TYPE_VAR_NSS.svgcsslesssassstylcsvhtmlicojsjsonldmjsmp4rtfsvgtxtC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-utils-2.8.3\src\platform\starting_binary.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\brotli-decompressor-5.0.0\src\lib.rs
+a tuple of size 4C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\phf-0.11.3\src\map.rs
+Invalid hex color length, must be either 3, 6 or 8, for example: #fff, #ffffff, or #ffffffffPermission-Policy/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\collections\btree\map.rs
+DefaultIMMailReminderSMSAlarmAlarm2Alarm3Alarm4Alarm5Alarm6Alarm7Alarm8Alarm9Alarm10CallCall2Call3Call4Call5Call6Call7Call8Call9Call10C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-xml-0.37.5\src\escape.rs
+RecvErrorNulError$serde_json::private::RawValueC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cipher-0.4.4\src\stream_core.rs
+?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\iter.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-shell-2.3.5\src\scope.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.32\src\future\future\map.rs
+MapAccess::next_value called before next_keyC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\channel.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-body-util-0.1.3\src\combinators\collect.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-runtime-wry-2.10.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\generic-array-0.14.7\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\mod.rs
+ullruealseC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\de.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\ser.rs
+capacity overflow/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\vec\spec_from_iter_nested.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\server\conn\http1.rs
+Out of bounds accessC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\menu\mod.rs
+??C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\encoding_rs-0.8.35\src\lib.rs
+darkmenutooltipdata did not match any variant of untagged enum PreventOverflowConfigdata did not match any variant of untagged enum InnerColorlabelcreateurluser-agentuserAgentdragDropEnabledcenterxywidthheightminWidthminHeightmaxWidthmaxHeightpreventOverflowresizablemaximizableminimizableclosabletitlefullscreenfocusfocusabletransparentmaximizedvisibledecorationsalwaysOnBottomalwaysOnTopvisibleOnAllWorkspacescontentProtectedskipTaskbarwindowClassnamethemetitleBarStyletrafficLightPositionhiddenTitleacceptFirstMousetabbingIdentifieradditionalBrowserArgsshadowwindowEffectsincognitoparentproxyUrlzoomHotkeysEnabledbrowserExtensionsEnableduseHttpsSchemedevtoolsbackgroundColorbackgroundThrottlingjavascriptDisabledallowLinkPreviewdisableInputAccessoryViewdataDirectorydataStoreIdentifierscrollBarSty
+ledefaultLogicalPositioneffectsstateradiuscolorusername length should between 1 to 255C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-socks-0.5.2\src\tcp\socks5.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\extract\state.rs
+SelectNextSome polled after terminatedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.32\src\stream\stream\select_next_some.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\block-buffer-0.10.4\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\universal-hash-0.5.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\window\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\menu\plugin.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.0\src\lib.rs
+data did not match any variant of untagged enum ShellAllowedArgdata did not match any variant of untagged enum ShellAllowedArgscmdargssidecarshell!function(){"use strict";async function e(e,t={},n){return window.__TAURI_INTERNALS__.invoke(e,t,n)}function t(){document.querySelector("body")?.addEventListener("click",(function(t){let n=t.target;for(;n;){if(n.matches("a")){const r=n;""!==r.href&&["http://","https://","mailto:","tel:"].some((e=>r.href.startsWith(e)))&&"_blank"===r.target&&(e("plugin:shell|open",{path:r.href}),t.preventDefault());break}n=n.parentElement}}))}"function"==typeof SuppressedError&&SuppressedError,"complete"===document.readyState||"interactive"===document.readyState?t():window.addEventListener("DOMContentLoaded",t,!0)}();
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-shell-2.3.5\src\lib.rs
+rawC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-shell-2.3.5\src\commands.rs
+legacy_ideantigravity_ideagentic_desktopcli
+extensionsfiltersmultipledirectorydefaultPathrecursivecanCreateDirectoriespickerModefileAccessModeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.0\src\commands.rs
+validatorprocessexitrestartappbasicUiquietpassive
+updatercheckdownloadinstalldownload_and_installwebviewupdateRidbytesRidC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-updater-2.10.0\src\lib.rs
+ridheaderstimeoutproxytargetallowDowngradeswindowsC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-updater-2.10.0\src\updater.rs
+?unknown%7B%7Bcurrent_version%7D%7D%7B%7Btarget%7D%7D%7B%7Barch%7D%7D%7B%7Bbundle_type%7D%7D{{current_version}}{{target}}{{arch}}{{bundle_type}}appimagedebrpmmsinsisDownloadEventeventStartedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-updater-2.10.0\src\commands.rs
+contentLengthchunkLengtha mapC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\protocol.rs
+__TEMPLATE_windows__notifyrequest_permissionis_permission_grantedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-notification-2.3.3\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-notification-2.3.3\src\commands.rs
+prevent-defaultC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-single-instance-2.4.0\src\platform_impl\windows.rs
+dangerous-insecure-transport-protocoldangerous-accept-invalid-certsdangerous-accept-invalid-hostnamesC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aead-0.5.2\src\lib.rs
+assertion failed: n <= self.buf.init - self.buf.filled/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\io\borrowed_buf.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\io\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\env.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\once.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\once_lock.rs
+failed to spawn thread/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\functions.rs
+Initializing the event loop outside of the main thread is a significant cross-platform compatibility hazard. If you absolutely need to create an EventLoop on a different thread, you can use the `EventLoopBuilderExtWindows::any_thread` function.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\event_loop.rs
+assertion failed: old_event_handler.is_none()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.6\src\platform_impl\windows\event_loop\runner.rs
+--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --proxy-server=http:// --proxy-server=socks5://
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\body\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\boxed.rs
+/*__private__axum_fallbackOver `u32::MAX` routes created. If you need this, please file an issue.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\routing\path_router.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\routing\method_routing.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\routing\route.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\uri\path.rs
+acceptaccept-charsetaccept-encodingaccept-languageaccept-rangesaccess-control-allow-credentialsaccess-control-allow-headersaccess-control-allow-methodsaccess-control-allow-originaccess-control-expose-headersaccess-control-max-ageaccess-control-request-headersaccess-control-request-methodageallowalt-svcauthorizationcache-controlcache-statuscdn-cache-controlconnectioncontent-dispositioncontent-encodingcontent-languagecontent-lengthcontent-locationcontent-rangecontent-security-policycontent-security-policy-report-onlycontent-typecookiedntetagexpectforwardedfromif-matchif-modified-sinceif-none-matchif-rangeif-unmodified-sincelast-modifiedlinklocationmax-forwardsoriginpragmaproxy-authenticateproxy-authorizationpublic-key-pinspublic-key-pins-report-onlyrangerefererreferrer-policyrefreshretry-aft
+ersec-websocket-acceptsec-websocket-extensionssec-websocket-keysec-websocket-protocolsec-websocket-versionserverset-cookiestrict-transport-securitytetrailertransfer-encodingupgradeupgrade-insecure-requestsvaryviawarningwww-authenticatex-content-type-optionsx-dns-prefetch-controlx-frame-optionsx-xss-protectionC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\header\name.rs
+Not a MenuC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\items\predefined.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\items\icon.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\items\check.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\items\normal.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\muda-0.17.1\src\items\submenu.rs
+cannot sample empty rangeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rand-0.8.5\src\rng.rs
+nanosecondC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-0.3.45\src\parsing\combinator\mod.rs
+because leap seconds are not supportedoffset secondoffset minuteoffset hourweekInitScriptErrorRpcScriptErrorReceiverErrorSenderErrorMessageSenderIoWebView2ErrorHttpErrorProxyEndpointCreationFailedWindowHandleErrorUnsupportedWindowHandleNotMainThreadCustomProtocolTaskInvalidUrlSchemeRegisterErrorDuplicateCustomProtocolContextDuplicateCustomProtocolPatternErrorposmsgByteCountNotDivisibleBy4byte_countDimensionsVsPixelCountwidth_x_heightpixel_countOsErrorRuntimeWindowLabelAlreadyExistsWebviewLabelAlreadyExistsCannotReparentWebviewWindowAssetNotFoundJsonInvalidIconInvalidArgsSetupPluginInitializationInvalidUrlJoinErrorInvalidWebviewUrlGlobPatternInvalidWindowHandleFailedToReceiveMessageBadMenuIconTrayBadTrayIconNoParentNoExtensionNoBasenameCurrentDirUnknownPathWindowNotFoundBadResourceIdAnyhowW
+ebviewNotFoundUnstableFeatureNotSupportedCannotDeserializeScopeRawHandleErrorCsprngInvokeKeyIllegalEventNameTokioOneshotRecv/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\collections\btree\map\entry.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\collections\btree\navigate.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\vec\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\bytes.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\bytes_mut.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\rt\io.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\proto\h1\io.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\proto\h1\conn.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\proto\h1\decode.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\async_runtime.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\app.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\app\plugin.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\command.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\ipc\authority.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\menu\submenu.rs
+_root__up_;C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\path\plugin.rs
+resolve_directoryresolvenormalizejoindirnameextnamebasenameis_absolutepathsresolverextlogsC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\tray\mod.rs
+trayget_by_idremove_by_idset_menuset_tooltipset_titleset_visibleset_temp_dir_pathset_icon_as_templateset_show_menu_on_left_clickasTemplateonLeftEventTargetinternally tagged enum EventTargetC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\event\plugin.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\event\listener.rs
+data did not match any variant of untagged enum JsImagefrom_bytes is only supported if the `image-ico` or `image-png` Cargo features are enabledfrom_bytesfrom_pathfrom_path is only supported if the `image-ico` or `image-png` Cargo features are enabledC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\scope\fs.rs
+**C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\state.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\plugin.rs
+tauri://window-createdC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\window\plugin.rs
+valueC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\manager\mod.rs
+poisoned menu mutexC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\manager\menu.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\manager\tray.rs
+tauri://resizeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\manager\window.rs
+script-srcstyle-src__TAURI_STYLE_NONCE____TAURI_SCRIPT_NONCE__C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\manager\webview.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\webview\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\webview\plugin.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.10.3\src\protocol\tauri.rs
+resourcesC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\io\util\copy.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\io\split.rs
+assertion failed: self.inner.semaphore.is_idle()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\mpsc\chan.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\mpsc\list.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\mpsc\bounded.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\mutex.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\rwlock.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\future\maybe_done.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bytes-1.11.1\src\buf\buf_impl.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\flate2-1.1.9\src\crc.rs
+TauriPathForbiddenInvalidPathUrlUnsafePathBufInitContinueBodyKeepAliveClosedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\read.rs
+CurrentExeHasNoParentUnknownProgramNameScopeSidecarNotAllowedProgramNotAllowedUnknownEncodingUtf8BadSidecarFlagSidecarNotFoundMissingVarValidationindexvalidationInvalidInputC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\base64-0.22.1\src\engine\mod.rs
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHJHLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJLJPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNPNRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPRPVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTVTXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVXVZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZXZX^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\^\`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^`^dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b
+557f\chrono-0.4.44\src\naive\internals.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\chrono-0.4.44\src\format\formatting.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\flate2-1.1.9\src\gz\mod.rs
+corrupt deflate streamStreamCipherErrorFsC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\routing\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\flate2-1.1.9\src\bufreader.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\flate2-1.1.9\src\gz\bufread.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rand_core-0.6.4\src\block.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-0.7.9\src\handler\mod.rs
+: data did not match any variant of untagged enum WebviewUrlDeserializerC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aes-gcm-0.10.3\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\tree.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\error.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\async_impl\response.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.13.2\src\async_impl\response.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\reqwest-0.12.28\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ctr-0.9.2\src\flavors\ctr32.rs
+crosshairhandarrowmovewaithelpnotallowedcontextmenucellverticaltextaliasnodropgrabgrabbingallscrollzoominzoomouteresizenresizeneresizenwresizesresizeseresizeswresizewresizeewresizensresizeneswresizenwseresizecolresizerowresizeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\hyper-1.8.1\src\common\buf.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.149\src\value\ser.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-socks-0.5.2\src\io\mod.rs
+`Ready` polled after completion/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\future\ready.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\core_api.rs
+com.timo.appproxy_active_accountsrc\lib.rs
+src\ide\asar.rs
+        env['CLOUD_CODE_URL'] = '?!';
+Failed to parse settings.json: ?
+g??R?-??m\src\ide\sync.rs
+proxy_porthttp://127.0.0.1:.geminiantigravity-clisettings.jsonAPPDATAsetting_antigravity_args????????? Antigravity ???????????????????????????????????????????
+{}http.proxyhttp.proxyStrictSSL????????? IDE ????????????
+?????? settings.json ??????: ?
+Proxy port not availablepowershell-NoProfile-NonInteractive-CommandGet-CimInstance Win32_Process -Filter "Name LIKE 'language_server%'" | Select-Object -ExpandProperty CommandLine--cloud_code_endpoint
+setting_antigravity_pathcached_antigravity_pathlanguage_serverjson.tmp
+Antigravity IDEAntigravity{
+}???????????? Antigravity ????????????IdeSyncStatusis_proxy_configuredis_ls_proxy_appliedsettings_pathproxy_endpointsrc\ide\commands.rs
+Antigravity IDE.exeAntigravity.exetaskkill/IM
+npm_config_proxynpm_config_https_proxynpm_config_noproxynpm_config_all_proxyCARGO_HTTP_PROXYCARGO_HTTPS_PROXY+?\@
+Antigravity ????????????Antigravity CLIsetting_legacy_ide_pathsetting_antigravity_ide_pathsetting_agentic_desktop_pathsetting_cli_pathsetting_legacy_ide_enabledsetting_antigravity_ide_enabledsetting_agentic_desktop_enabledsetting_cli_enabled
+[AG] Restarting ?
+ restarted successfully
+ restart failed: ?
+antigravity-ide
+antigravity
+ProductInfovariantdisplay_nameexe_pathis_runningsupports_injection%[CLI] Launching with CLOUD_CODE_URL: ?
+/c-NoExitCLOUD_CODE_URL
+auth_checkpointauth_loginauth_registerauth_checkget_startup_check_resultauth_logoutchange_passwordget_access_tokenget_user_infoget_profilerefresh_user_infostart_heartbeatget_last_emailget_last_passwordget_device_idgenerate_profilegenerate_spoofed_profileread_current_fingerprintget_setting_valueset_setting_valueget_noticesget_chart_dataget_user_usageget_tutorial_listget_tutorial_detailget_faq_listredeem_activaterefill_accountstop_auto_refillrecover_refill_accountget_refill_statusget_event_logsclear_event_logsdetect_antigravity_pathget_shop_planscreate_shop_orderverify_shop_orderget_shop_historyget_ide_sync_statusset_ide_proxyis_antigravity_runningdetect_all_productsset_product_enabledset_product_pathget_exe_versiontunfree_is_enabledtunfree_test_connectionget_support_sessionscreate_support_s
+sessionIdpagedurationMstray.tooltip????????????levelmoduleperiodkeyoldPasswordnewPasswordplanIdpaymentMethodidempotentKey???????????????????????????????????????????????????????????????orderNominimize_to_trayskipRestartenabletray.minimizegenerated tauri context creationunable to create thread with 8MiB stack
+ove_activedeny-batchdeny-canceldeny-check-permissionsdeny-create-channeldeny-delete-channeldeny-get-activedeny-get-pendingdeny-is-permission-granteddeny-list-channelsdeny-notifydeny-permission-statedeny-register-action-typesdeny-remove-activedeny-request-permissionallow-exitallow-restartdeny-exitdeny-restartallow-executeallow-killallow-spawnallow-stdin-writedeny-executedeny-killdeny-spawndeny-stdin-writeallow-checkallow-downloadallow-installallow-download-and-installdeny-checkdeny-downloaddeny-download-and-installdeny-installplugin:app|bundle_typetoastplugin:app|identifierplugin:app|nameplugin:app|register_listenerplugin:app|remove_listenerplugin:app|tauri_versionplugin:app|versionplugin:dialog|openplugin:event|emitplugin:event|emit_toplugin:event|listenplugin:event|unlistenplugin:image|fr
+ification|is_permission_grantedplugin:notification|list_channelsplugin:notification|notifyplugin:notification|permission_stateplugin:notification|register_action_typesplugin:notification|register_listenerplugin:notification|remove_activeplugin:notification|request_permissionplugin:notification|showplugin:path|basenameplugin:path|dirnameplugin:path|extnameplugin:path|is_absoluteplugin:path|joinplugin:path|normalizeplugin:path|resolveplugin:path|resolve_directoryplugin:process|exitplugin:process|restartplugin:resources|closeplugin:shell|openplugin:tray|get_by_idplugin:tray|newplugin:tray|remove_by_idplugin:tray|set_iconplugin:tray|set_icon_as_templateplugin:tray|set_menuplugin:tray|set_show_menu_on_left_clickplugin:tray|set_temp_dir_pathplugin:tray|set_titleplugin:tray|set_tooltipplugin:tray
+",{bytes:g(e)}).then(e=>new y(e))}static async fromPath(e){return h("plugin:image|from_path",{path:e}).then(e=>new y(e))}async rgba(){return h("plugin:image|rgba",{rid:this.rid}).then(e=>new Uint8Array(e))}async size(){return h("plugin:image|size",{rid:this.rid})}}function g(e){return null==e?null:"string"==typeof e?e:e instanceof y?e.rid:e}var b,m=Object.freeze({__proto__:null,Image:y,transformImage:g});!function(e){e.Nsis="nsis",e.Msi="msi",e.Deb="deb",e.Rpm="rpm",e.AppImage="appimage",e.App="app"}(b||(b={}));var f=Object.freeze({__proto__:null,get BundleType(){return b},defaultWindowIcon:async function(){return h("plugin:app|default_window_icon").then(e=>e?new y(e):null)},fetchDataStoreIdentifiers:async function(){return h("plugin:app|fetch_data_store_identifiers")},getBundleType:async 
+function(){return h("plugin:app|bundle_type")},getIdentifier:async function(){return h("plugin:app|identifier")},getName:async function(){return h("plugin:app|name")},getTauriVersion:async function(){return h("plugin:app|tauri_version")},getVersion:async function(){return h("plugin:app|version")},hide:async function(){return h("plugin:app|app_hide")},onBackButtonPress:async function(e){return p("app","back-button",e)},removeDataStore:async function(e){return h("plugin:app|remove_data_store",{uuid:e})},setDockVisibility:async function(e){return h("plugin:app|set_dock_visibility",{visible:e})},setTheme:async function(e){return h("plugin:app|set_app_theme",{theme:e})},show:async function(){return h("plugin:app|app_show")}});class v{constructor(...e){this.type="Logical",1===e.length?"Logical"i
+ure=8]="Picture",e[e.Public=9]="Public",e[e.Video=10]="Video",e[e.Resource=11]="Resource",e[e.Temp=12]="Temp",e[e.AppConfig=13]="AppConfig",e[e.AppData=14]="AppData",e[e.AppLocalData=15]="AppLocalData",e[e.AppCache=16]="AppCache",e[e.AppLog=17]="AppLog",e[e.Desktop=18]="Desktop",e[e.Executable=19]="Executable",e[e.Font=20]="Font",e[e.Home=21]="Home",e[e.Runtime=22]="Runtime",e[e.Template=23]="Template"}(Z||(Z={}));var Y=Object.freeze({__proto__:null,get BaseDirectory(){return Z},appCacheDir:async function(){return h("plugin:path|resolve_directory",{directory:Z.AppCache})},appConfigDir:async function(){return h("plugin:path|resolve_directory",{directory:Z.AppConfig})},appDataDir:async function(){return h("plugin:path|resolve_directory",{directory:Z.AppData})},appLocalDataDir:async function(
+ function(){return h("plugin:path|resolve_directory",{directory:Z.Template})},videoDir:async function(){return h("plugin:path|resolve_directory",{directory:Z.Video})}});class X extends w{constructor(e,n){super(e),this.id=n}static async getById(e){return h("plugin:tray|get_by_id",{id:e}).then(n=>n?new X(n,e):null)}static async removeById(e){return h("plugin:tray|remove_by_id",{id:e})}static async new(e){(null==e?void 0:e.menu)&&(e.menu=[e.menu.rid,e.menu.kind]),(null==e?void 0:e.icon)&&(e.icon=g(e.icon));const n=new c;if(null==e?void 0:e.action){const t=e.action;n.onmessage=e=>t(function(e){const n=e;return n.position=new I(e.position),n.rect.position=new I(e.rect.position),n.rect.size=new k(e.rect.size),n}(e)),delete e.action}return h("plugin:tray|new",{options:null!=e?e:{},handler:n}).the
+this.listeners[e]=[n],!0)}async position(){return h("plugin:webview|webview_position",{label:this.label}).then(e=>new I(e))}async size(){return h("plugin:webview|webview_size",{label:this.label}).then(e=>new k(e))}async close(){return h("plugin:webview|webview_close",{label:this.label})}async setSize(e){return h("plugin:webview|set_webview_size",{label:this.label,value:e instanceof A?e:new A(e)})}async setPosition(e){return h("plugin:webview|set_webview_position",{label:this.label,value:e instanceof E?e:new E(e)})}async setFocus(){return h("plugin:webview|set_webview_focus",{label:this.label})}async setAutoResize(e){return h("plugin:webview|set_webview_auto_resize",{label:this.label,value:e})}async hide(){return h("plugin:webview|webview_hide",{label:this.label})}async show(){return h("plu
+if("__TAURI__"in window){var __TAURI_PLUGIN_PROCESS__=function(_){"use strict";async function n(_,n={},e){return window.__TAURI_INTERNALS__.invoke(_,n,e)}return"function"==typeof SuppressedError&&SuppressedError,_.exit=async function(_=0){await n("plugin:process|exit",{code:_})},_.relaunch=async function(){await n("plugin:process|restart")},_}({});Object.defineProperty(window.__TAURI__,"process",{value:__TAURI_PLUGIN_PROCESS__})}
+){const s=i=>{this.removeListener(e,s),t(i)};return this.prependListener(e,s)}}class u{constructor(e){this.pid=e}async write(e){await c("plugin:shell|stdin_write",{pid:this.pid,buffer:e})}async kill(){await c("plugin:shell|kill",{cmd:"killChild",pid:this.pid})}}class p extends l{constructor(e,t=[],s){super(),this.stdout=new l,this.stderr=new l,this.program=e,this.args="string"==typeof t?[t]:t,this.options=s??{}}static create(e,t=[],s){return new p(e,t,s)}static sidecar(e,t=[],s){const i=new p(e,t,s);return i.options.sidecar=!0,i}async spawn(){const e=this.program,t=this.args,s=this.options;"object"==typeof t&&Object.freeze(t);const i=new h;return i.onmessage=e=>{switch(e.event){case"Error":this.emit("error",e.payload);break;case"Terminated":this.emit("close",e.payload);break;case"Stdout":t
+UserInfoCheckResultLoginResponseaccess_expires_atrefresh_expires_atProfileResultsrc\auth\polling.rs
+auth_access_token/user/profilesrc\auth\service.rs
+src\auth\commands.rs
+src\core\http_client.rs
+3aa00e7ab5f4997bafb1b092e2ea1be53dfa1d7fb4bb52d47a0ac6ceb654cec4c4facc9e7288src\core\config.rs
+src\core\crypto.rs
+Cannot determine data directorysetting_localezh-CNzh-TWapp.nametray.showtray.quittray.start_refilltray.stop_refilltray.websitetray.status_unknowntray.status_idletray.status_oktray.status_waitingtray.refill_cooldowntray.refill_failedtray.stop_failedauth.token_expiredauth.session_invalidauth.refresh_failedauth.refresh_no_tokenauth.response_parse_failedauth.retry_parse_failedauth.data_abnormalauth.session_revokedrefill.already_runningrefill.data_abnormalrefill.cooldownrefill.recover_failedide.path_unknownide.sync_failedproxy.prompt_too_longproxy.image_unsupportedproxy.schema_missingproxy.invalid_payloadproxy.prefill_unsupportedproxy.size_exceededproxy.base64_invalidproxy.model_busyproxy.not_foundproxy.timeout_retryproxy.generic_retryproxy.heartbeat_firstproxy.sso_frozenproxy.session_invalidpr
+oxy.token_exhaustedproxy.usage_cooldownupdate.auto_failedupdate.init_failedupdate.check_failedupdate.install_failedUpdate failedUpdate check failedUpdater initialization failedAuto-update failed, please download manuallyRate limit exceeded, service resumes after cooldownQuota exhausted, please recharge to continueSession expired, please restart refillAbnormal activity detected, service temporarily frozenTimo is ready, you can start coding anytimeUnexpected error, retrying automaticallyLong-context inference timed out, retrying automaticallyUnrecognized request format, please retryAntigravity server overloaded, retrying automaticallyInvalid Base64 image format, please retryImage or message too large, please reduce and retryIncompatible Claude syntax detected, please retryRequest contains un
+parseable content, please retryMissing required fields in tool call, please retryScreenshot upload failed, undo and remove the imagePrompt too long, please shorten and retryAntigravity IDE sync failedUnable to locate Antigravity settings pathRefill recovery failed, please restartAccount in cooldown, {0} min remainingAbnormal response dataRefill is already runningSession revoked, please log in again.Abnormal server responseRetry response parse errorResponse parse errorRefresh succeeded but no new token receivedToken refresh failedSession expired, please log in againToken expiredStop failed: {0}Refill failed: {0}Refill cooling down, please wait {0} minRefill: Waiting for callbackRefill: Active (last request {0})Refill: Not startedRefill: UnknownMinimized to system tray. Double-click the icon
+ to restore.Visit WebsiteStop RefillStart RefillShow WindowTimo AssistantActualizaci??n fallidaError al verificar actualizacionesError al inicializar actualizadorActualizaci??n fallida, descarga manualmenteL??mite de frecuencia excedido, espera el enfriamientoCuota agotada, recarga para continuarSesi??n expirada, reinicia la recargaActividad anormal detectada, servicio congeladoTimo est?? listo, puedes empezar a programarError inesperado, reintentandoTiempo de espera agotado, reintentandoFormato de solicitud no reconocido, reintentaServidor Antigravity sobrecargado, reintentandoFormato Base64 inv??lido, reintentaImagen o mensaje demasiado grande, reduce y reintentaSintaxis incompatible con Claude, reintentaContenido no analizable en la solicitud, reintentaCampos requeridos faltantes, reint
+entaError al subir captura, deshaz y elimina la imagenPrompt demasiado largo, ajusta y reintentaSincronizaci??n de Antigravity IDE fallidaNo se pudo encontrar la ruta de AntigravityRecuperaci??n fallida, reinicia la recargaCuenta en enfriamiento, {0} min restantesDatos de respuesta anormalesLa recarga ya est?? en cursoSesi??n revocada, inicia sesi??n de nuevo.Respuesta anormal del servidorError al analizar respuesta de reintentoError al analizar respuestaRefresco exitoso pero sin nuevo tokenError al refrescar tokenSesi??n expirada, inicia sesi??n de nuevoToken expiradoError al detener: {0}Recarga fallida: {0}Recarga en enfriamiento, espera {0} minRecarga: Esperando respuestaRecarga: Activa (??ltima solicitud {0})Recarga: No iniciadaRecarga: DesconocidoMinimizado a la bandeja. Doble clic en
+?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????Base64 ?????????????????????????????????????????????????????????????????????????????? Claude ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????? Undo ?????????????????????Prompt ???????????????????????????????????? IDE ???????????????????????? Antigravity ?????????????????????????????????????????????????????????????????????????????? {0} ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+???????????????????????????????????????????????????????????????????????????????????????{0}???????????????{0}??????????????????????????? {0} ??????????????????????????????????????????????????????????????? (???????????? {0})????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????start_refillstop_refillrefill_statusquitsrc\tray\setup.rs
+https://timo.guruUpdateAvailablePayloadis_current_disabledAuthStatePayloadsrc\event\commands.rs
+src\proxy\interceptor.rs
+quotaResetDelaymssrc\proxy\idle_monitor.rs
+elapsed_secsthreshold_secsrefill:idle_stoppedsrc\proxy\mod.rs
+;[Proxy] ???? TunFree upstream proxy configured
+*[Proxy] ?????? TunFree proxy URL invalid (?
+;[Proxy] ?????? reqwest client build failed, using default: ?
+recordTrajectoryAnalyticsrecordCodeAssistMetricsTrajectorytrajectory<binary>src\proxy\server.rs
+Proxy-Authorization: Basic ?
+200!Upstream proxy CONNECT rejected: ?
+Proxy URL missing host
+Connect to proxy ?
+Invalid proxy URL: ?
+streamGenerateContentlatest_user_agentsrc\proxy\handler.rs
+Proxy not active!??? Failed to read request body: ?
+x-timo-sessionx-forwarded-forx-real-ipproxy-connection
+/session/issuesrc\proxy\session.rs
+infowarnEventEntryproxy:logtoast_position_xtoast_position_ysrc\toast\window.rs
+telemetry.sqmIdtelemetry.devDeviceIdDeviceProfilemachine_idmac_machine_iddev_device_idsqm_idsrc\device\commands.rs
+src\system\usage.rs
+usagesrc\system\refill.rs
+Antigravity ????????????: ?
+??? ???????????????src\system\commands.rs
+????????? Antigravity ??????????????????????????????src\system\recovery.rs
+Proxy start failed: ?
+src\update\service.rs
+setting_tunfree_enabledsetting_tunfree_proxy_typesetting_tunfree_proxy_hostsetting_tunfree_proxy_portsetting_tunfree_proxy_usernamesetting_tunfree_proxy_password?
+src\tunfree\commands.rs
+the `signature` field was not set on the updater responsethe `url` field was not set on the updater responseC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\io\util\write_all.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\axum-core-0.4.5\src\extract\request_parts.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\sync\atomic.rs
+[internal exception] blocking task ran twice.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\blocking\task.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\blocking\schedule.rs
+queue not emptyC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\queue.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\net\tcp\stream.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\worker.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\net\tcp\listener.rs
+RUST_MIN_STACKthreads should not terminate unexpectedly/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\lifecycle.rs
+Tried to shrink to a larger capacity/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\raw_vec\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\io\poll_evented.rs
+filled must not become larger than initializedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\io\read_buf.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\net\addr.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\net\windows\named_pipe.rs
+TOKIO_WORKER_THREADSC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\loom\std\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\batch_semaphore.rs
+assertion failed: actual_state == EMPTY || actual_state == NOTIFIEDC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\notify.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\sync\oneshot.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\time\sleep.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\time\interval.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\util\linked_list.rs
+assertion failed: sharded_size.is_power_of_two()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\util\sharded_list.rs
+assertion failed: value <= self.max_value()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\util\bit.rs
+RNG seed generator is internally corruptC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\util\rand\rt.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\util\wake_list.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\io\registration.rs
+A Tokio 1.x context was found, but it is being shutdown.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\io\scheduled_io.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\io\driver.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\park.rs
+JoinHandle polled after completionC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\task\core.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\task\list.rs
+task was cancelledtask panickedassertion failed: curr.is_join_interested()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\task\state.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\task\harness.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\time\mod.rs
+inner should already be initialized by `self.reset()`C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\time\entry.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\time\wheel\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\time\wheel\level.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\handle.rs
+tokio-rt-workerC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\context\current.rs
+Cannot start a runtime from within a runtime. This happens because a function (like `block_on`) attempted to block the current thread while the thread is being used to drive asynchronous tasks.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\context\runtime.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\metrics\worker.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\blocking\pool.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\multi_thread\park.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\current_thread\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\defer.rs
+not a CurrentThread handleC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-1.50.0\src\runtime\scheduler\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tokio-socks-0.5.2\src\lib.rs
+Proxy server unreachableInvalid response versionNo acceptable auth methodsUnknown auth methodGeneral SOCKS server failureConnection not allowed by rulesetNetwork unreachableHost unreachableConnection refusedTTL expiredCommand not supportedAddress type not supportedUnknown errorInvalid reserved byteUnknown address type
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\time.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tower-0.5.3\src\retry\budget\tps_budget.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\parser\str.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\parser\char.rs
+internal error: entered unreachable code: this case should be handled by the callerC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\parser\validate\path.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\iri-string-0.7.10\src\normalize\path.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\header\map.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\http-1.4.0\src\header\value.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\sync.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\waker.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\channel.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\context.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\flavors\list.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\flavors\zero.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crossbeam-channel-0.5.15\src\flavors\array.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tray-icon-0.21.3\src\platform_impl\windows\icon.rs
+tray_icon_appC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tray-icon-0.21.3\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-segmentation-1.12.0\src\tables.rs
+Input/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\str\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\index.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\url-2.5.8\src\parser.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\url-2.5.8\src\host.rs
+()C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\urlpattern-0.3.0\src\lib.rs
+http://dummy.testC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\urlpattern-0.3.0\src\canonicalize_and_process.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\urlpattern-0.3.0\src\quirks.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-automata-0.4.14\src\util\pool.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\url-2.5.8\src\quirks.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\regex-1.12.3\src\regex\string.rs
+EmptyHostIdnaErrorInvalidPortInvalidIpv4AddressInvalidIpv6AddressInvalidDomainCharacterRelativeUrlWithoutBaseRelativeUrlWithCannotBeABaseBaseSetHostOnCannotBeABaseUrlOverflowExpectedTokenDuplicateNameOpenCloseRegexpNameCharEscapedCharOtherModifierAsteriskEndInvalidCharC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\url-2.5.8\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf8_iter-1.0.4\src\lib.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\uuid-1.22.0\src\fmt.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\uuid-1.22.0\src\rng.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\want-0.3.1\src\lib.rs
+UnsupportedSignatureAlgorithmForPublicKeyContextsignature_algorithm_idpublic_key_algorithm_idC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\verify_cert.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\der.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\slice\sort\stable\quicksort.rs
+CrlVersionUnsupportedDeltaCrlUnsupportedIndirectCrlUnsupportedNameTypeUnsupportedRevocationReasonUnsupportedRevocationReasonsPartitioningUnsupportedCrlSignatureAlgorithmUnsupportedCrlSignatureAlgorithmContextUnsupportedSignatureAlgorithmUnsupportedSignatureAlgorithmContextUnsupportedCrlSignatureAlgorithmForPublicKeyUnsupportedCrlSignatureAlgorithmForPublicKeyContextUnsupportedSignatureAlgorithmForPublicKeyassertion failed: len > 0/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\collections\btree\node.rs
+BitStringBoolCertificateCertificateExtensionsCertificateTbsCertificateCertRevocationListCertRevocationListExtensionCrlDistributionPointCommonNameInnerCommonNameOuterDistributionPointNameExtensionGeneralNameRevocationReasonSignatureSignatureAlgorithmSignedDataSubjectPublicKeyInfoTimeTrustAnchorV1TrustAnchorV1TbsCertificateU8RevokedCertificateRevokedCertificateExtensionRevokedCertEntryIssuingDistributionPointUnixTimeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\x509.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\subject_name\ip_address.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\subject_name\dns_name.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\crl\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\crl\types.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustls-webpki-0.103.9\src\time.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\untrusted-0.9.0\src\reader.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\webview2-com-0.38.2\src\callback.rs
+???*v`/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\thread_local\native\lazy.rs
+a Display implementation returned an error unexpectedly/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\alloc\src\string.rs
+?PDC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\window-vibrancy-0.6.0\src\windows.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-core-0.61.2\src\imp\factory_cache.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-core-0.61.2\src\imp\marshaler.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-core-0.61.2\src\imp\ref_count.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-strings-0.4.2\src\hstring.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-strings-0.4.2\src\hstring_header.rs
+Object has been over-released.C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-strings-0.4.2\src\ref_count.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\waker.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\core\src\str\pattern.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wry-0.54.2\src\webview2\drag_drop.rs
+?j>??J3U4?Bnassertion failed: validate_scale_factor(scale_factor)C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\dpi-0.1.2\src\lib.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\mod.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\list.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\zero.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\array.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sync\mpmc\context.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wry-0.54.2\src\webview2\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wry-0.54.2\src\webview2\util.rs
+julian_dayC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\time-0.3.45\src\interop\offsetdatetime_systemtime.rs
+Failed to create proxy endpointthe window handle kind is not supportednot on the main threadCustom protocol task is invalid.
+SendErrorsending on a closed channelC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-0.61.3\src\Windows\Win32\UI\Shell\mod.rs
+Lazy instance has previously been poisonedC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\once_cell-1.21.3\src\lib.rs
+FromUtf8ErrorbyteserrorTryFromIntError/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\io\impls.rs
+Utf8Errorvalid_up_toerror_lenZIP64 footer indicates more files on this disk than in the whole archiveInvalid central directory size or offsetC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zip-4.6.1\src\read.rs
+internal error: entered unreachable code/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\io\cursor.rs
+/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\thread\local.rs
+ZIP64 extra-data field is the wrong lengthInvalid AES encryption strengthInvalid AES vendor versionInvalid AES vendorAES extra data field has an unsupported lengthC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zip-4.6.1\src\cp437.rs
+Invalid checksumC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zip-4.6.1\src\types.rs
+specified file not found in archiveprovided password is incorrectNoneSomeC:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.0\src\arch\all\packedpair\mod.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.0\src\arch\generic\packedpair.rs
+internal error: entered unreachable code: invalid Once state/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library\std\src\sys\sync\once\futex.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\indexmap-2.13.0\src\inner.rs
+C:\Users\runneradmin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zip-4.6.1\src\read\magic_finder.rs
