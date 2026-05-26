@@ -842,12 +842,13 @@ func (p *AccountPool) GetLockedAccountId() int {
 
 // ─── Quota Refresh (主动采集) ────────────────────────────────────────────
 
-// RefreshAllQuotas 对所有启用且有 projectId 的账号刷新额度快照
+// RefreshAllQuotas 对所有启用的账号刷新额度快照
+// 如果账号没有 projectId，会先自动发现
 func (p *AccountPool) RefreshAllQuotas() int {
 	p.mu.RLock()
 	var targets []*AccountEntry
 	for _, acc := range p.accounts {
-		if acc.Enabled && acc.ProjectId != "" {
+		if acc.Enabled {
 			targets = append(targets, acc)
 		}
 	}
@@ -855,6 +856,16 @@ func (p *AccountPool) RefreshAllQuotas() int {
 
 	updated := 0
 	for _, acc := range targets {
+		// 自动发现 projectId
+		if acc.ProjectId == "" {
+			Log("[quota-refresh] %s: no projectId, attempting auto-discovery...", acc.Email)
+			if err := p.discoverProjectId(acc); err != nil {
+				Log("[quota-refresh] %s: project discovery failed: %v", acc.Email, err)
+				continue
+			}
+			Log("[quota-refresh] %s: discovered projectId: %s", acc.Email, acc.ProjectId)
+		}
+
 		if err := p.refreshAccountQuota(acc); err != nil {
 			Log("[quota-refresh] %s: %v", acc.Email, err)
 		} else {
@@ -866,6 +877,144 @@ func (p *AccountPool) RefreshAllQuotas() int {
 		Log("[quota-refresh] %d/%d accounts updated", updated, len(targets))
 	}
 	return updated
+}
+
+// discoverProjectId 通过 onboardUser API 自动发现账号的 projectId
+// 对应插件中的 discoverProjectViaApi 逻辑
+func (p *AccountPool) discoverProjectId(acc *AccountEntry) error {
+	token, err := p.GetAccessToken(acc.ID)
+	if err != nil {
+		return fmt.Errorf("token refresh: %w", err)
+	}
+
+	// 调用 onboardUser API
+	onboardPayload, _ := json.Marshal(map[string]interface{}{
+		"tierId": "standard-tier",
+		"metadata": map[string]string{
+			"ideType": "ANTIGRAVITY",
+		},
+	})
+
+	apiUrl := DefaultCloudEndpoint + "/v1internal:onboardUser"
+	req, err := http.NewRequest("POST", apiUrl, strings.NewReader(string(onboardPayload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "google-antigravity-ls/1.26.0")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("onboardUser request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("onboardUser HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+
+	// 解析响应，提取 projectId
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parse onboardUser response: %w", err)
+	}
+
+	Log("[quota-refresh] %s: onboardUser response: %s", acc.Email, string(body[:min(len(body), 500)]))
+
+	// 尝试从 response.cloudaicompanionProject 提取 projectId
+	projectId := extractProjectIdFromOnboard(result)
+
+	// 如果是 LRO（长轮询操作），需要等待
+	if projectId == "" {
+		if name, ok := result["name"].(string); ok && name != "" {
+			done, _ := result["done"].(bool)
+			if !done {
+				Log("[quota-refresh] %s: onboardUser returned LRO: %s, polling...", acc.Email, name)
+				projectId = p.pollOnboardLRO(token, name, acc.Email)
+			}
+		}
+	}
+
+	if projectId == "" {
+		return fmt.Errorf("onboardUser returned no projectId")
+	}
+
+	// 更新账号
+	p.mu.Lock()
+	if entry, ok := p.accounts[acc.ID]; ok {
+		entry.ProjectId = projectId
+	}
+	p.mu.Unlock()
+	acc.ProjectId = projectId
+
+	go p.SaveAccounts()
+	return nil
+}
+
+// extractProjectIdFromOnboard 从 onboardUser 响应中提取 projectId
+func extractProjectIdFromOnboard(data map[string]interface{}) string {
+	// 可能直接在 response 中
+	response := data
+	if r, ok := data["response"].(map[string]interface{}); ok {
+		response = r
+	}
+
+	projectObj, ok := response["cloudaicompanionProject"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	// 尝试多个可能的字段名
+	for _, key := range []string{"projectId", "project", "id", "name"} {
+		if v, ok := projectObj[key].(string); ok && v != "" {
+			// 清理 projects/ 前缀
+			v = strings.TrimPrefix(v, "projects/")
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// pollOnboardLRO 轮询 onboardUser 的长轮询操作
+func (p *AccountPool) pollOnboardLRO(token string, operationName string, email string) string {
+	for attempt := 1; attempt <= 15; attempt++ {
+		time.Sleep(800 * time.Millisecond)
+
+		apiUrl := DefaultCloudEndpoint + "/v1/" + operationName
+		req, err := http.NewRequest("GET", apiUrl, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			continue
+		}
+
+		var result map[string]interface{}
+		if json.Unmarshal(body, &result) != nil {
+			continue
+		}
+
+		done, _ := result["done"].(bool)
+		if done {
+			Log("[quota-refresh] %s: LRO completed after %d poll(s)", email, attempt)
+			return extractProjectIdFromOnboard(result)
+		}
+	}
+	return ""
 }
 
 // refreshAccountQuota 对单个账号调用 fetchAvailableModels 获取额度快照
@@ -908,13 +1057,6 @@ func (p *AccountPool) refreshAccountQuota(acc *AccountEntry) error {
 
 	// 解析模型列表并生成额度分组
 	Log("[quota-refresh] %s: got %d bytes response", acc.Email, len(body))
-	if len(body) > 0 {
-		preview := string(body)
-		if len(preview) > 300 {
-			preview = preview[:300] + "..."
-		}
-		Log("[quota-refresh] %s: response preview: %s", acc.Email, preview)
-	}
 	groups := parseModelsResponse(body)
 	Log("[quota-refresh] %s: parsed %d quota groups", acc.Email, len(groups))
 
