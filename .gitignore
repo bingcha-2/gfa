@@ -5,6 +5,7 @@ dist
 coverage
 *.log
 .DS_Store
+.idea/
 .env
 .env.local
 *.tsbuildinfo
@@ -62,3 +63,4 @@ apps/bcai-client/dev.*.log
 **/updates/*.exe
 **/updates/*.dmg
 **/updates/*.blockmap
+apps/bcai-wails/bcai-wails

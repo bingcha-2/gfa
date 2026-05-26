@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
 
@@ -24,16 +23,9 @@ var (
 )
 
 func getAppDataDir() string {
-	var base string
-	switch runtime.GOOS {
-	case "windows":
-		base = os.Getenv("APPDATA")
-		if base == "" {
-			base = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
-		}
-	case "darwin":
-		base = filepath.Join(os.Getenv("HOME"), "Library", "Application Support")
-	default:
+	base, err := os.UserConfigDir()
+	if err != nil {
+		// fallback: 极端情况下 $HOME 未定义等
 		base = filepath.Join(os.Getenv("HOME"), ".config")
 	}
 	return filepath.Join(base, "BingchaAI")

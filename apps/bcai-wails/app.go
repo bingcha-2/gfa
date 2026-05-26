@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -211,15 +212,28 @@ func (a *App) GetDetectedPaths() DetectedPaths {
 }
 
 // BrowseForPath 打开系统文件浏览对话框，让用户选择应用程序
+// macOS: 不设置文件过滤器，NSOpenPanel 默认将 .app bundle 视为可选择的包
 func (a *App) BrowseForPath(title string) string {
-	result, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:                title,
-		CanCreateDirectories: false,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "应用程序", Pattern: "*.app;*.exe"},
-			{DisplayName: "所有文件", Pattern: "*"},
-		},
-	})
+	var result string
+	var err error
+
+	if goruntime.GOOS == "darwin" {
+		// macOS: 不加 Filters，NSOpenPanel 默认 treatsFilePackagesAsDirectories=false
+		// .app 会显示为可选择的不透明包，而非可进入的目录
+		result, err = runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+			Title:            title,
+			DefaultDirectory: "/Applications",
+		})
+	} else {
+		result, err = runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+			Title:                title,
+			CanCreateDirectories: false,
+			Filters: []runtime.FileFilter{
+				{DisplayName: "应用程序", Pattern: "*.exe"},
+				{DisplayName: "所有文件", Pattern: "*"},
+			},
+		})
+	}
 	if err != nil {
 		return ""
 	}
@@ -316,7 +330,6 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 func (a *App) RestoreSelected(targets []string) (string, error) {
 	var results []string
 	restartIDE := false
-	restartHub := false
 
 	for _, t := range targets {
 		switch strings.ToLower(strings.TrimSpace(t)) {
@@ -327,34 +340,49 @@ func (a *App) RestoreSelected(targets []string) (string, error) {
 				restartIDE = true
 			}
 		case "hub":
+			// Hub 运行时 app.asar 被 Electron 锁定，必须先关闭再恢复（与 InjectSelected 一致）
+			hubWasRunning := IsHubRunning()
+			if hubWasRunning {
+				Log("[ide-inject] Hub 正在运行，先关闭以解锁 app.asar...")
+				killHubForPatch()
+			}
 			if err := RestoreAsar(); err != nil {
-				results = append(results, "Antigravity Hub: 恢复失败")
+				Log("[ide-inject] RestoreAsar 失败: %v", err)
+				results = append(results, fmt.Sprintf("Antigravity Hub: 恢复失败 (%v)", err))
+				// 恢复失败，重新启动之前关掉的 Hub
+				if hubWasRunning {
+					_ = LaunchHub()
+				}
+			} else if hubWasRunning {
+				// 恢复成功 + Hub 之前在运行 → 重新启动加载原始 asar
+				if err := LaunchHub(); err != nil {
+					Log("[ide-inject] Hub 重启失败: %v", err)
+					results = append(results, "Antigravity Hub: ✓ 已恢复，但重启失败")
+				} else {
+					results = append(results, "Antigravity Hub: ✓ 已恢复并重启")
+				}
 			} else {
-				restartHub = true
+				results = append(results, "Antigravity Hub: ✓ 已恢复")
 			}
 		}
 	}
 
-	// IDE: 恢复后重启 language_server 让它重新读取原始配置
+	// IDE: 恢复后完整重启 IDE（与接管时一致）
+	// extension host 会缓存代理端口，只杀 LS 不够，需要完整重启
 	if restartIDE {
-		if IsIDERunning() {
-			RestartLanguageServerIfNeeded(0) // port=0 确保不匹配，强制杀 LS
-			results = append(results, "Antigravity IDE: ✓ 已恢复（language_server 将自动重启）")
-		} else {
-			results = append(results, "Antigravity IDE: ✓ 已恢复")
-		}
-	}
-
-	if restartHub {
-		if IsHubRunning() {
-			if err := KillAndRestartHub(); err != nil {
-				results = append(results, "Antigravity Hub: 重启失败")
+		results = append(results, "Antigravity IDE: ✓ 已恢复，正在重启 IDE...")
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Log("[ide-inject] IDE 重启 goroutine panic: %v", r)
+				}
+			}()
+			if err := ForceRestartIDE(); err != nil {
+				Log("[ide-inject] 恢复后重启 IDE 失败: %v", err)
 			} else {
-				results = append(results, "Antigravity Hub: ✓ 已恢复并重启")
+				Log("[ide-inject] ✓ IDE 已恢复并重启")
 			}
-		} else {
-			results = append(results, "Antigravity Hub: ✓ 已恢复")
-		}
+		}()
 	}
 
 	msg := strings.Join(results, "\n")
