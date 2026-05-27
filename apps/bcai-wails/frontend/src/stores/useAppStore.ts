@@ -81,7 +81,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ideProducts: [],
   updateStatus: null,
   announcement: '',
-  appVersion: '5.1.2',
+  appVersion: '5.1.3',
   appStartTime: Date.now(),
   activeAccount: null,
 
