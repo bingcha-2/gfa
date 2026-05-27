@@ -3,20 +3,20 @@
   "url": "https://bcai.site/updates/BingchaAI-5.0.8.exe",
   "sha256": "43B3B0FF09B7492996925CA793B90C3D6C5F645CFB2F8B5C3B430C2B20FADA05",
   "size": 13489664,
-  "changelog": "账号负载卡片式额度视图+Rosetta负载页面升级+IDE检测修复+代理重试逻辑+自动更新DMG支持",
+  "changelog": "性能优化和问题修复",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.8-arm64.dmg",
-      "sha256": "AAC6E78C873961356B94E9A83B622B92F700A0DBC8CD1A14E390F027418C416E",
-      "size": 7339984
+      "sha256": "6B051126D8333B54905766000AA6C92F8319AA402C18FF854968072DEA735A5A",
+      "size": 7339980
     }
   },
   "linux": {
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.8-linux-amd64.tar.gz",
-      "sha256": "119F2E5F1CCEE52100719ED54CB653A0BB23E1AAEF2E17C8E060B7E7C824F6DF",
-      "size": 5822162
+      "sha256": "D2BF29C1B2ECD97D84ABFBDA5D16819C216026B3A2853FA272667C96ECC1C832",
+      "size": 5822238
     }
   }
 }
