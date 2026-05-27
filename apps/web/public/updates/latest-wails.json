@@ -8,14 +8,19 @@
   "macOS": {
     "arm64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.8-arm64.dmg",
-      "sha256": "6B051126D8333B54905766000AA6C92F8319AA402C18FF854968072DEA735A5A",
-      "size": 7339980
+      "sha256": "E95F6100F1E3D181D6C298232EDAD95080E12B697B3DE7DEE73B2A4D55FAB523",
+      "size": 7339983
+    },
+    "amd64": {
+      "url": "https://bcai.site/updates/BingchaAI-5.0.8-amd64.dmg",
+      "sha256": "36CB8C205AFAABFD2D2E94F789A645C3E1C4AB53A6CA49FB16E753855268AD99",
+      "size": 7721354
     }
   },
   "linux": {
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.8-linux-amd64.tar.gz",
-      "sha256": "D2BF29C1B2ECD97D84ABFBDA5D16819C216026B3A2853FA272667C96ECC1C832",
+      "sha256": "10FA018696861A16608FBDB1951FFEF98F31E5468D19D6ED72CCC2AB4AAC64B4",
       "size": 5822238
     }
   }
