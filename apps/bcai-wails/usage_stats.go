@@ -263,6 +263,19 @@ func (s *UsageStatsStore) GetCumulativeTokens() (input, output, cached int64) {
 	return
 }
 
+// Reset 清空所有用量统计（换卡时调用）
+func (s *UsageStatsStore) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Records = make(map[string]*DailyRecord)
+	s.HourlyRecords = make(map[string]*HourlyRecord)
+	s.dirty = false
+	// 删除磁盘文件
+	path := filepath.Join(getAppDataDir(), "usage_stats.json")
+	_ = os.Remove(path)
+	Log("[stats] Usage stats reset (card changed)")
+}
+
 // StartAutoSave 定期保存
 func (s *UsageStatsStore) StartAutoSave() {
 	go func() {

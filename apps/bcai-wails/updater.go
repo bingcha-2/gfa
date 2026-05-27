@@ -17,10 +17,10 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.0.8"
+var AppVersion = "5.0.9"
 
 const (
-	UpdateCheckURL  = "http://127.0.0.1:3000/updates/latest-wails.json"
+	UpdateCheckURL  = "https://bcai.site/updates/latest-wails.json"
 	UpdateCheckFreq = 30 * time.Minute
 )
 

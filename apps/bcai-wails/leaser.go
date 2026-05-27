@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const API_BASE = "http://127.0.0.1:3001/api/remote-token"
+const API_BASE = "https://bcai.site/remote-token"
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 
@@ -354,7 +354,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
-		"clientVersion":      "5.0.8",
+		"clientVersion":      "5.0.9",
 		"clientDistribution": "go-engine",
 		"isGeneration":       true,
 	}
@@ -852,6 +852,22 @@ func (l *Leaser) ClearCache() {
 	l.mu.Lock()
 	l.cachedToken = nil
 	l.mu.Unlock()
+}
+
+// ResetAll 清空所有 leaser 状态（换卡时调用）
+func (l *Leaser) ResetAll() {
+	l.mu.Lock()
+	l.cachedToken = nil
+	l.lastError = ""
+	l.leaseCount = 0
+	l.reportCount = 0
+	l.cardExpires = ""
+	l.accessKeyStatus = nil
+	l.accessKeyStatusAt = time.Time{}
+	l.localQuota = LocalQuota{}
+	l.pendingReports = nil
+	l.mu.Unlock()
+	Log("[token-leaser] All leaser state reset (card changed)")
 }
 
 // ── 本地计费函数 ──

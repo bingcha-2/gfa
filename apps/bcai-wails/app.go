@@ -104,6 +104,19 @@ func (a *App) SaveConfig(cfg Config) error {
 
 		Log("[app] Core settings changed. Restarting services...")
 
+		// 换卡时清空所有本地数据
+		if oldCfg.AccountCard != cfg.AccountCard {
+			Log("[app] Account card changed, clearing all local data...")
+			GetLeaser().ResetAll()
+			GetUsageStats().Reset()
+			p := GetProxy()
+			p.mu.Lock()
+			p.stats = ProxyStats{}
+			p.mu.Unlock()
+			ClearInMemoryLogs()
+			a.proxyStartedAt = time.Now()
+		}
+
 		GetLeaser().StopAutoLease()
 		GetHTTPProxy().Stop()
 
@@ -124,8 +137,22 @@ func (a *App) SaveConfig(cfg Config) error {
 // ActivateCard saves the account card/access key and tests a token lease
 func (a *App) ActivateCard(card string) (string, error) {
 	cfg := LoadConfig()
+	oldCard := cfg.AccountCard
 	cfg.AccountCard = card
 	_ = SaveConfig(cfg)
+
+	// 换卡时清空所有本地数据
+	if oldCard != card {
+		Log("[app] Account card changed via ActivateCard, clearing all local data...")
+		GetLeaser().ResetAll()
+		GetUsageStats().Reset()
+		p := GetProxy()
+		p.mu.Lock()
+		p.stats = ProxyStats{}
+		p.mu.Unlock()
+		ClearInMemoryLogs()
+		a.proxyStartedAt = time.Now()
+	}
 
 	// Test lease to verify the card is valid
 	lease, err := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, cfg.UpstreamProxy)
@@ -585,7 +612,7 @@ func (a *App) GetAnnouncement() string {
 	client := createHttpClient("")
 	client.Timeout = 5 * time.Second
 
-	resp, err := client.Get("http://127.0.0.1:3001/api/remote-token/announcement")
+	resp, err := client.Get("https://bcai.site/remote-token/announcement")
 	if err != nil {
 		return ""
 	}
