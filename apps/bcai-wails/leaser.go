@@ -855,6 +855,14 @@ func (l *Leaser) ClearCache() {
 	l.mu.Unlock()
 }
 
+// ResetLocalQuota 换卡时清空本地额度跟踪
+func (l *Leaser) ResetLocalQuota() {
+	l.mu.Lock()
+	l.localQuota = LocalQuota{}
+	l.mu.Unlock()
+	Log("[token-leaser] Local quota reset (card changed)")
+}
+
 // ── 本地计费函数 ──
 
 func isGeminiModel(modelKey string) bool {

@@ -104,6 +104,13 @@ func (a *App) SaveConfig(cfg Config) error {
 
 		Log("[app] Core settings changed. Restarting services...")
 
+		// 换卡时清空本地统计数据
+		if oldCfg.AccountCard != cfg.AccountCard {
+			Log("[app] Account card changed: clearing local stats")
+			GetUsageStats().Reset()
+			GetLeaser().ResetLocalQuota()
+		}
+
 		GetLeaser().StopAutoLease()
 		GetHTTPProxy().Stop()
 

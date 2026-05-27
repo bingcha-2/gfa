@@ -329,6 +329,11 @@ func (u *Updater) DownloadAndApply() error {
 		Changelog: info.Changelog,
 	})
 
+	// 自动重启以应用更新
+	Log("[updater] Auto-restarting to apply update...")
+	time.Sleep(1 * time.Second) // 给前端一点时间显示状态
+	u.RestartApp()
+
 	return nil
 }
 
