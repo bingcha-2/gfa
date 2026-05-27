@@ -468,13 +468,12 @@ export function PoolPage() {
   const { modalProps } = useModal()
   const [addDialogOpen, setAddDialogOpen] = useState(false)
 
-  // 自动轮询（local 模式下每 3s 刷新账号列表）
+  // 自动轮询（每 3s 刷新账号列表）
   useEffect(() => {
-    if (mode !== 'local') return
     fetchAccounts()
     const timer = setInterval(fetchAccounts, 3000)
     return () => clearInterval(timer)
-  }, [mode, fetchAccounts])
+  }, [fetchAccounts])
 
   // 筛选
   const filteredAccounts = accounts.filter((a) => {
