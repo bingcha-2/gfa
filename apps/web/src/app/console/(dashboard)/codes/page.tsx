@@ -63,6 +63,7 @@ export default function CodesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [typeFilter, setTypeFilter] = useState("ALL");
+  const [sortValue, setSortValue] = useState("createdAt:desc");
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,12 +75,14 @@ export default function CodesPage() {
     validDays: "30", swapLimit: "2", swapWindowHours: "5",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCleaningExpired, setIsCleaningExpired] = useState(false);
   const [newCodes, setNewCodes] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      let url = `redeem-codes?page=${currentPage}&pageSize=${PAGE_SIZE}${typeFilter !== "ALL" ? `&codeType=${typeFilter}` : ""}`;
+      const [sortBy, sortOrder] = sortValue.split(":");
+      let url = `redeem-codes?page=${currentPage}&pageSize=${PAGE_SIZE}&sortBy=${sortBy}&sortOrder=${sortOrder}${typeFilter !== "ALL" ? `&codeType=${typeFilter}` : ""}`;
       if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
       const res = await apiRequest<{ items: RedeemCodeSummary[]; total: number; stats: any }>(url);
       setCodes(res.items);
@@ -87,7 +90,7 @@ export default function CodesPage() {
       if (res.stats) setStats(res.stats);
     } catch (err) { toast.error(getErrorMessage(err)); }
     finally { setIsLoading(false); }
-  }, [currentPage, typeFilter, searchTerm]);
+  }, [currentPage, typeFilter, searchTerm, sortValue]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -133,6 +136,16 @@ export default function CodesPage() {
       setCodes((prev) => prev.filter((c) => c.id !== codeId));
       toast.success("卡密已删除");
     } catch (err) { toast.error(getErrorMessage(err)); }
+  }
+
+  async function handleCleanupExpired() {
+    setIsCleaningExpired(true);
+    try {
+      const result = await apiRequest<{ deleted: number }>("redeem-codes/cleanup-expired", { method: "POST" });
+      toast.success(result.deleted > 0 ? `已清理 ${result.deleted} 条过期卡密` : "没有需要清理的过期卡密");
+      await loadData();
+    } catch (err) { toast.error(getErrorMessage(err)); }
+    finally { setIsCleaningExpired(false); }
   }
 
   async function copyText(text: string) {
@@ -186,7 +199,39 @@ export default function CodesPage() {
             {canManage && <TabsTrigger value="create">批量生成</TabsTrigger>}
           </TabsList>
           <div className="flex items-center gap-2">
+            <Select value={sortValue} onValueChange={(value) => { setSortValue(value); setCurrentPage(1); }} items={[
+              { label: "新增时间：新到旧", value: "createdAt:desc" },
+              { label: "新增时间：旧到新", value: "createdAt:asc" },
+            ]}>
+              <SelectTrigger className="w-44" size="sm" aria-label="排序方式">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="createdAt:desc">新增时间：新到旧</SelectItem>
+                  <SelectItem value="createdAt:asc">新增时间：旧到新</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <Input placeholder="搜索卡密码 / 邮箱…" value={searchInput} onChange={(e) => handleSearchInput(e.target.value)} className="w-64" />
+            {canManage && (
+              <AlertDialog>
+                <AlertDialogTrigger render={<Button variant="outline" size="sm" disabled={isCleaningExpired} />}>
+                  {isCleaningExpired ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  清理过期
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>清理过期卡密？</AlertDialogTitle>
+                    <AlertDialogDescription>将删除状态为 EXPIRED 或已超过 expiresAt 的卡密记录，不可恢复。</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>取消</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void handleCleanupExpired()}>确认清理</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             <Button variant="outline" size="sm" onClick={loadData} disabled={isLoading}>
               <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
             </Button>

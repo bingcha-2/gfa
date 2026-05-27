@@ -69,11 +69,22 @@ export class RedeemCodeController {
     @Query("status") status?: string,
     @Query("codeType") codeType?: string,
     @Query("skipStats") skipStats?: string,
-    @Query("search") search?: string
+    @Query("search") search?: string,
+    @Query("sortBy") sortBy?: string,
+    @Query("sortOrder") sortOrder?: string
   ) {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 30;
-    return this.redeemCodeService.findAll(pageNum, sizeNum, status, codeType, skipStats === "true", search?.trim());
+    return this.redeemCodeService.findAll(
+      pageNum,
+      sizeNum,
+      status,
+      codeType,
+      skipStats === "true",
+      search?.trim(),
+      sortBy,
+      sortOrder
+    );
   }
 
   @Post("batch-create")
@@ -103,6 +114,22 @@ export class RedeemCodeController {
     });
 
     return codes;
+  }
+
+  @Post("cleanup-expired")
+  @Roles("ADMIN", "OPERATIONS")
+  async cleanupExpired(@Request() req: any) {
+    const result = await this.redeemCodeService.cleanupExpiredCodes();
+
+    await this.auditLog.log({
+      operatorId: req.user.id,
+      action: "CLEANUP_EXPIRED_CODES",
+      targetType: "RedeemCode",
+      targetId: "expired",
+      detail: result
+    });
+
+    return result;
   }
 
   @Patch(":id/disable")

@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { randomInt } from "node:crypto";
-import { RedeemCodeType } from "@prisma/client";
+import { Prisma, RedeemCodeStatus, RedeemCodeType } from "@prisma/client";
 
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -13,6 +13,8 @@ const CODE_PREFIX: Record<RedeemCodeType, string> = {
 
 @Injectable()
 export class RedeemCodeService {
+  private readonly logger = new Logger(RedeemCodeService.name);
+
   constructor(private readonly prisma: PrismaService) { }
 
   private generateCode(codeType: RedeemCodeType, length = 16) {
@@ -22,7 +24,23 @@ export class RedeemCodeService {
     return prefix ? `${prefix}-${body}` : body;
   }
 
-  async findAll(page = 1, pageSize = 30, status?: string, codeType?: string, skipStats = false, search?: string) {
+  async findAll(
+    page = 1,
+    pageSize = 30,
+    status?: string,
+    codeType?: string,
+    skipStats = false,
+    search?: string,
+    sortBy?: string,
+    sortOrder?: string
+  ) {
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safePageSize = Number.isFinite(pageSize) ? Math.min(Math.max(pageSize, 1), 200) : 30;
+    const orderDirection: Prisma.SortOrder = sortOrder === "asc" ? "asc" : "desc";
+    const orderBy: Prisma.RedeemCodeOrderByWithRelationInput = sortBy === "createdAt"
+      ? { createdAt: orderDirection }
+      : { createdAt: "desc" };
+
     const where: any = {};
     if (status && status !== 'ALL') where.status = status;
     if (codeType && codeType !== 'ALL') where.codeType = codeType;
@@ -41,9 +59,9 @@ export class RedeemCodeService {
     const [items, total] = await Promise.all([
       this.prisma.redeemCode.findMany({
         where,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        orderBy,
+        skip: (safePage - 1) * safePageSize,
+        take: safePageSize,
         include: {
           order: {
             select: { id: true, orderNo: true, userEmail: true, status: true }
@@ -189,5 +207,22 @@ export class RedeemCodeService {
         usedAt: new Date()
       }
     });
+  }
+
+  async cleanupExpiredCodes(now = new Date()) {
+    const result = await this.prisma.redeemCode.deleteMany({
+      where: {
+        OR: [
+          { status: RedeemCodeStatus.EXPIRED },
+          { expiresAt: { lte: now } }
+        ]
+      }
+    });
+
+    if (result.count > 0) {
+      this.logger.log(`Cleaned up ${result.count} expired redeem code(s)`);
+    }
+
+    return { deleted: result.count };
   }
 }
