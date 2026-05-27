@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-const API_BASE = "https://bcai.site/remote-token"
+// API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.site/remote-token")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 

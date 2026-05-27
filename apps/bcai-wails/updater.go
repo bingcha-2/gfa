@@ -15,10 +15,11 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.0.6"
+var AppVersion = "5.0.9"
 
-const (
-	UpdateCheckURL  = "https://bcai.site/updates/latest-wails.json"
+var (
+	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
+	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.site/updates/latest-wails.json")
 	UpdateCheckFreq = 30 * time.Minute
 )
 

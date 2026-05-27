@@ -31,6 +31,14 @@ func getAppDataDir() string {
 	return filepath.Join(base, "BingchaAI")
 }
 
+// getEnvOrDefault 读取环境变量，为空则返回默认值
+func getEnvOrDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
 func configFilePath() string {
 	return filepath.Join(getAppDataDir(), "config.json")
 }

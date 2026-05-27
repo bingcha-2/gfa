@@ -1,11 +1,13 @@
 #!/bin/bash
 # ============================================================================
-# dev-local.sh — 一键拉起全部服务（全部连本地，不连远端）
+# dev-local.sh — 一键拉起全部服务
 #
 # 用法:
-#   ./dev-local.sh              # 启动全部: API + Web + Worker + Wails 客户端
+#   ./dev-local.sh              # 启动全部: API + Web + Worker + Wails 客户端 (连本地)
 #   ./dev-local.sh server       # 仅后端 (API + Web + Worker, 即 pnpm dev)
 #   ./dev-local.sh client       # 仅 Wails 客户端（连本地服务端）
+#   ./dev-local.sh remote       # 仅 Wails 客户端（连远端 bcai.site）
+#   ./dev-local.sh build        # 本地编译客户端二进制
 # ============================================================================
 
 set -euo pipefail
@@ -29,13 +31,11 @@ NC='\033[0m'
 API_DIR="$ROOT/apps/api"
 WAILS_DIR="$ROOT/apps/bcai-wails"
 DATA_DIR="$HOME/Library/Application Support/Antigravity/rosetta"
-LEASER_GO="$WAILS_DIR/leaser.go"
 WAILS_BIN="${WAILS_BIN:-$(command -v wails 2>/dev/null || echo "$HOME/go/bin/wails")}"
 
 # ── PID 追踪 ──
 SERVER_PID=""
 CLIENT_PID=""
-PATCHED=false
 
 # ── 清理函数 ──
 cleanup() {
@@ -183,54 +183,20 @@ install_deps() {
   fi
 }
 
-# ── Patch 客户端所有远端地址 → 本地 ──
-patch_client_local() {
-  echo -e "${BOLD}${CYAN}═══ Patch 客户端 → 本地服务端 ═══${NC}"
+# ── 设置客户端环境变量 → 连本地服务端 ──
+setup_client_env() {
+  echo -e "${BOLD}${CYAN}═══ 客户端环境变量 → 本地服务端 ═══${NC}"
 
-  # 1) leaser.go: API_BASE → 本地 remote-token-server
-  if grep -q 'const API_BASE = "https://bcai.site/remote-token"' "$LEASER_GO"; then
-    cp "$LEASER_GO" "$LEASER_GO.bak"
-    sed -i '' 's|const API_BASE = "https://bcai.site/remote-token"|const API_BASE = "http://127.0.0.1:3001/api/remote-token"|' "$LEASER_GO"
-    PATCHED=true
-    echo -e "  ${GREEN}✓${NC} API_BASE → ${CYAN}http://127.0.0.1:3001/api/remote-token${NC}"
-  else
-    echo -e "  ${DIM}✓ leaser.go API_BASE 已是本地地址${NC}"
-  fi
+  export BCAI_API_BASE="http://127.0.0.1:3001/api/remote-token"
+  export BCAI_UPDATE_URL="http://127.0.0.1:3000/updates/latest-wails.json"
 
-  # 2) updater.go: 更新检查 URL → 本地 web 服务
-  local UPDATER_GO="$WAILS_DIR/updater.go"
-  if [ -f "$UPDATER_GO" ] && grep -q 'https://bcai.site/updates' "$UPDATER_GO"; then
-    if [ ! -f "$UPDATER_GO.bak" ]; then
-      cp "$UPDATER_GO" "$UPDATER_GO.bak"
-    fi
-    sed -i '' 's|https://bcai.site/updates|http://127.0.0.1:3000/updates|g' "$UPDATER_GO"
-    echo -e "  ${GREEN}✓${NC} UpdateCheckURL → ${CYAN}http://127.0.0.1:3000/updates${NC}"
-  fi
-
-  # 3) app.go: 公告 API → 本地
-  local APP_GO="$WAILS_DIR/app.go"
-  if [ -f "$APP_GO" ] && grep -q 'https://bcai.site/api/remote-token/announcement' "$APP_GO"; then
-    if [ ! -f "$APP_GO.bak" ]; then
-      cp "$APP_GO" "$APP_GO.bak"
-    fi
-    sed -i '' 's|https://bcai.site/api/remote-token/announcement|http://127.0.0.1:3001/api/remote-token/announcement|g' "$APP_GO"
-    echo -e "  ${GREEN}✓${NC} Announcement API → ${CYAN}本地${NC}"
-  fi
-
-  echo -e "  ${DIM}退出时自动恢复原始值${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_API_BASE  → ${CYAN}$BCAI_API_BASE${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_UPDATE_URL → ${CYAN}$BCAI_UPDATE_URL${NC}"
+  echo -e "  ${DIM}无需修改源码，环境变量仅在本次运行生效${NC}"
   echo ""
 }
 
-# ── 恢复所有 patch ──
-restore_patches() {
-  for f in "$LEASER_GO" "$WAILS_DIR/updater.go" "$WAILS_DIR/app.go"; do
-    if [ -f "$f.bak" ]; then
-      mv "$f.bak" "$f"
-    fi
-  done
-}
-
-# 覆盖 cleanup 以恢复所有文件
+# 覆盖 cleanup
 cleanup() {
   echo ""
   echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
@@ -246,9 +212,6 @@ cleanup() {
     kill "$CLIENT_PID" 2>/dev/null || true
     wait "$CLIENT_PID" 2>/dev/null || true
   fi
-
-  # 恢复所有被 patch 的文件
-  restore_patches
 
   # 清理残留端口占用
   lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
@@ -319,9 +282,16 @@ start_client() {
 
 # ── 打印启动摘要 ──
 print_banner() {
+  local target="${1:-local}"
   echo -e ""
   echo -e "${GREEN}${BOLD}┌──────────────────────────────────────────────────────────┐${NC}"
-  echo -e "${GREEN}│${NC}${BOLD}  🍵  冰茶 AI 本地开发环境 (全部本地，不连远端)           ${NC}${GREEN}│${NC}"
+
+  if [ "$target" = "remote" ]; then
+    echo -e "${GREEN}│${NC}${BOLD}  🍵  冰茶 AI 开发环境 (客户端连远端 bcai.site)           ${NC}${GREEN}│${NC}"
+  else
+    echo -e "${GREEN}│${NC}${BOLD}  🍵  冰茶 AI 本地开发环境 (全部本地，不连远端)           ${NC}${GREEN}│${NC}"
+  fi
+
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
 
   if [ -n "$SERVER_PID" ]; then
@@ -331,15 +301,60 @@ print_banner() {
   fi
 
   if [ -n "$CLIENT_PID" ]; then
-    echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接本地 API (127.0.0.1:3001)${NC}"
+    if [ "$target" = "remote" ]; then
+      echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接远端 (bcai.site)${NC}"
+    else
+      echo -e "${GREEN}│${NC}  ${DIM}冰茶 AI 客户端${NC}       ${CYAN}连接本地 API (127.0.0.1:3001)${NC}"
+    fi
   fi
 
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
-  echo -e "${GREEN}│${NC}  ${DIM}卡密 (access key)${NC}     ${YELLOW}local-dev${NC}"
+  if [ "$target" != "remote" ]; then
+    echo -e "${GREEN}│${NC}  ${DIM}卡密 (access key)${NC}     ${YELLOW}local-dev${NC}"
+  fi
   echo -e "${GREEN}│${NC}  ${DIM}数据目录${NC}              ${DIM}$DATA_DIR${NC}"
-  echo -e "${GREEN}│${NC}  ${DIM}Ctrl+C${NC}                ${DIM}停止所有服务并恢复代码${NC}"
+  echo -e "${GREEN}│${NC}  ${DIM}Ctrl+C${NC}                ${DIM}停止所有服务${NC}"
   echo -e "${GREEN}└──────────────────────────────────────────────────────────┘${NC}"
   echo ""
+}
+
+# ── 本地构建客户端 ──
+build_client() {
+  echo -e "${BOLD}${CYAN}═══ 构建冰茶 AI 客户端 ═══${NC}"
+
+  # 读取版本号
+  local version
+  version=$(grep -o 'AppVersion = "[^"]*"' "$WAILS_DIR/updater.go" | cut -d'"' -f2)
+  echo -e "  ${DIM}版本: v${version}${NC}"
+
+  # 安装前端依赖
+  if [ ! -d "$WAILS_DIR/frontend/node_modules" ]; then
+    echo -e "${DIM}[build] 安装前端依赖...${NC}"
+    (cd "$WAILS_DIR/frontend" && npm install 2>&1 | tail -3)
+  fi
+
+  echo -e "  ${DIM}编译中...${NC}"
+  (cd "$WAILS_DIR" && "$WAILS_BIN" build -ldflags "-X main.AppVersion=${version}" 2>&1)
+
+  if [ $? -eq 0 ]; then
+    # 找到编译产物
+    local bin_path
+    bin_path=$(find "$WAILS_DIR/build/bin" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -1)
+    if [ -z "$bin_path" ]; then
+      bin_path=$(find "$WAILS_DIR/build/bin" -maxdepth 1 -type f -executable 2>/dev/null | head -1)
+    fi
+    echo -e "  ${GREEN}✓${NC} 构建成功: ${CYAN}${bin_path}${NC}"
+    echo -e "  ${DIM}版本: v${version}${NC}"
+
+    # macOS: 直接打开
+    if [ "$(uname)" = "Darwin" ] && [ -d "$bin_path" ]; then
+      echo -e "  ${DIM}启动应用...${NC}"
+      open "$bin_path"
+    fi
+  else
+    echo -e "  ${RED}✗${NC} 构建失败"
+    exit 1
+  fi
 }
 
 # ── Main ──
@@ -353,23 +368,38 @@ main() {
   case "$mode" in
     server)
       start_server
-      print_banner
+      print_banner "local"
       wait "$SERVER_PID" 2>/dev/null || true
       ;;
     client)
-      patch_client_local
+      setup_client_env
       start_client
-      print_banner
+      print_banner "local"
       wait "$CLIENT_PID" 2>/dev/null || true
       ;;
-    all|*)
-      patch_client_local
+    remote)
+      # 启动全部服务，但客户端连远端 bcai.site（不设环境变量，使用代码默认值）
+      echo -e "${BOLD}${CYAN}═══ 客户端连接远端 bcai.site ═══${NC}"
+      echo -e "  ${DIM}API_BASE  → https://bcai.site/remote-token (默认)${NC}"
+      echo -e "  ${DIM}更新检查  → https://bcai.site/updates/latest-wails.json (默认)${NC}"
+      echo ""
       start_server
       start_client
-      print_banner
+      print_banner "remote"
+      wait -n "$SERVER_PID" "$CLIENT_PID" 2>/dev/null || wait "$SERVER_PID" 2>/dev/null || true
+      ;;
+    build)
+      build_client
+      ;;
+    all|*)
+      setup_client_env
+      start_server
+      start_client
+      print_banner "local"
       wait -n "$SERVER_PID" "$CLIENT_PID" 2>/dev/null || wait "$SERVER_PID" 2>/dev/null || true
       ;;
   esac
 }
 
 main "$@"
+
