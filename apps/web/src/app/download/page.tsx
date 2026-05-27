@@ -18,11 +18,14 @@ interface VersionInfo {
     arm64?: MacOSPlatform;
     amd64?: MacOSPlatform;
   };
+  linux?: {
+    amd64?: MacOSPlatform;
+  };
 }
 
 export default function DownloadPage() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
-  const [detectedOS, setDetectedOS] = useState<"windows" | "macos" | "other">("windows");
+  const [detectedOS, setDetectedOS] = useState<"windows" | "macos" | "linux" | "other">("windows");
 
   useEffect(() => {
     fetch("/updates/latest-wails.json?t=" + Date.now())
@@ -33,6 +36,7 @@ export default function DownloadPage() {
     // 检测用户操作系统
     const ua = navigator.userAgent.toLowerCase();
     if (ua.includes("mac")) setDetectedOS("macos");
+    else if (ua.includes("linux")) setDetectedOS("linux");
     else if (ua.includes("win")) setDetectedOS("windows");
     else setDetectedOS("other");
   }, []);
@@ -50,6 +54,10 @@ export default function DownloadPage() {
   const macAmd64 = info?.macOS?.amd64;
   const macArm64SizeMB = macArm64?.size ? Math.round(macArm64.size / 1024 / 1024) : null;
   const macAmd64SizeMB = macAmd64?.size ? Math.round(macAmd64.size / 1024 / 1024) : null;
+
+  // Linux 下载
+  const linuxAmd64 = info?.linux?.amd64;
+  const linuxSizeMB = linuxAmd64?.size ? Math.round(linuxAmd64.size / 1024 / 1024) : null;
 
   return (
     <main
@@ -260,6 +268,69 @@ export default function DownloadPage() {
               首次打开：右键应用 → 打开 → 确认打开
             </div>
           </div>
+        )}
+
+        {/* ── Linux Download Card ── */}
+        {linuxAmd64 && (
+          <a
+            href={`/updates/BingchaAI-${version}-linux-amd64.tar.gz`}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 16,
+              padding: "28px 24px",
+              borderRadius: 16,
+              border: detectedOS === "linux"
+                ? "1px solid rgba(250,204,21,.4)"
+                : "1px solid rgba(250,204,21,.15)",
+              background: detectedOS === "linux"
+                ? "rgba(250,204,21,.08)"
+                : "rgba(250,204,21,.03)",
+              textDecoration: "none",
+              transition: "all .2s",
+              cursor: "pointer",
+              order: detectedOS === "linux" ? 0 : 2,
+            }}
+            onMouseOver={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "rgba(250,204,21,.12)";
+              (e.currentTarget as HTMLElement).style.borderColor = "rgba(250,204,21,.4)";
+              (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
+            }}
+            onMouseOut={(e) => {
+              (e.currentTarget as HTMLElement).style.background = detectedOS === "linux" ? "rgba(250,204,21,.08)" : "rgba(250,204,21,.03)";
+              (e.currentTarget as HTMLElement).style.borderColor = detectedOS === "linux" ? "rgba(250,204,21,.4)" : "rgba(250,204,21,.15)";
+              (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
+            }}
+          >
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12.5 2C11.3 2 10.2 2.6 9.5 3.5C8.9 4.3 8.6 5.3 8.6 6.3C8.6 6.5 8.6 6.7 8.7 6.9C7.2 7.8 6.2 9.4 6 11.2C5.5 11.5 5.1 12 4.8 12.5C4.3 13.4 4 14.5 4 15.5C4 16.8 4.5 18 5.3 18.9C5.5 19.8 6 20.5 6.7 21C7.4 21.5 8.2 21.8 9.1 21.9C9.7 22 10.3 22 11 22H13C13.7 22 14.3 22 14.9 21.9C15.8 21.8 16.6 21.5 17.3 21C18 20.5 18.5 19.8 18.7 18.9C19.5 18 20 16.8 20 15.5C20 14.5 19.7 13.4 19.2 12.5C18.9 12 18.5 11.5 18 11.2C17.8 9.4 16.8 7.8 15.3 6.9C15.4 6.7 15.4 6.5 15.4 6.3C15.4 5.3 15.1 4.3 14.5 3.5C13.8 2.6 12.7 2 12.5 2ZM10.5 8.5C11 8.2 11.5 8.5 11.5 9C11.5 9.3 11.3 9.5 11 9.6C10.7 9.7 10.5 9.5 10.5 9.2C10.3 9 10.3 8.7 10.5 8.5ZM13.5 8.5C13.7 8.7 13.7 9 13.5 9.2C13.5 9.5 13.3 9.7 13 9.6C12.7 9.5 12.5 9.3 12.5 9C12.5 8.5 13 8.2 13.5 8.5Z" fill="#facc15"/>
+            </svg>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ color: "#fde68a", fontWeight: 700, fontSize: 18, marginBottom: 4 }}>
+                Linux 版下载
+              </div>
+              <div style={{ color: "rgba(255,255,255,.4)", fontSize: 12 }}>
+                x86_64 · v{version}{linuxSizeMB && ` · ${linuxSizeMB} MB`} · tar.gz
+              </div>
+            </div>
+            <div
+              style={{
+                padding: "10px 32px",
+                borderRadius: 8,
+                background: "rgba(250,204,21,.12)",
+                border: "1px solid rgba(250,204,21,.25)",
+                color: "#fde68a",
+                fontWeight: 600,
+                fontSize: 15,
+              }}
+            >
+              ⬇ 下载 tar.gz
+            </div>
+            <div style={{ color: "rgba(255,255,255,.25)", fontSize: 11 }}>
+              解压后 chmod +x 运行
+            </div>
+          </a>
         )}
 
         {/* Changelog */}
