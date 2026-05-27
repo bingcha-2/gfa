@@ -3,24 +3,24 @@
   "url": "https://bcai.site/updates/BingchaAI-5.0.9.exe",
   "sha256": "BF6E700C77945B78109AED970C4B511BB673A65A3BA9EF581180707C96DD92F6",
   "size": 13420544,
-  "changelog": "恢复bcai.site域名+换卡清空本地数据+URL环境变量化",
+  "changelog": "恢复bcai.site域名+换卡清空本地数据+URL环境变量化+key缓存同步",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.9-arm64.dmg",
-      "sha256": "497097D54B687149233A6C0E95041EFD9F2001B15E4069B9D6CFE938C71062DD",
-      "size": 7304100
+      "sha256": "A7C994DB657F4E9017A27C7A8231D3CE40907E9EF5FA8C28F42DF438FF444388",
+      "size": 7304101
     },
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.9-amd64.dmg",
-      "sha256": "21C863E8212DCF2F80EFD2873CE03AF6DDC70BAC72B118124BE7B5292421C055",
-      "size": 7696345
+      "sha256": "C368DBF77B44C6C88141B04EC2867ACCA2D9C5905FC7C772EA7A8E71E18E4167",
+      "size": 7700350
     }
   },
   "linux": {
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.0.9-linux-amd64.tar.gz",
-      "sha256": "26415078766BB1F231448FD7C41663C86BB6A057F93DEA50960C68E29AEF58E1",
+      "sha256": "5CB562DA7127A8091BB634381B6D30262781ACBC6DB64A10DF579749414D4F6D",
       "size": 5789375
     }
   }
