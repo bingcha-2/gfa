@@ -178,7 +178,6 @@ export class TokenServerService {
       lastError: this.lastError,
       activeLeases: activeLeaseList.length,
       affinityClients: this.clientAffinity.size,
-      accessKeys: this.accessKeyStore.readAll().keys.map((key) => this.accessKeyStore.publicStatus(key)),
       accounts: {
         total: accounts.length,
         enabled: accounts.filter((account) => account.enabled !== false).length,

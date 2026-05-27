@@ -109,6 +109,7 @@ export class RosettaService {
         totalTokensUsed: Number(key.totalTokensUsed || 0),
         recentWindowTokens: recentTokenUsage(key),
         tokenWindowLimit: tokenWindowLimit(key),
+        durationMs: Number(key.durationMs || 0),
         createdAt: String(key.createdAt || ""),
         lastUsedAt: String(key.lastUsedAt || ""),
         expiresAt: accessKeyExpiresAt(key),

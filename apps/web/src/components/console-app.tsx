@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
@@ -733,8 +734,17 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
 
       <nav className="nav-strip">
         <div className="nav-brand">
-          <div className="nav-mark">GO</div>
-          <span>Operations Console</span>
+          <div className="nav-mark">
+            <Image
+              src="/bcai-icon.png"
+              alt="冰茶"
+              width={32}
+              height={32}
+              className="nav-mark-image"
+              priority
+            />
+          </div>
+          <span>冰茶管理后台</span>
         </div>
 
         <div className="nav-links">

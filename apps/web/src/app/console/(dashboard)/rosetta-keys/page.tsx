@@ -622,7 +622,18 @@ export default function RosettaKeysPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          {formatDuration(item.durationMs)}
+                          <div className="flex flex-col">
+                            <span>{formatDuration(item.durationMs)}</span>
+                            {item.expiresAt && (() => {
+                              const remaining = new Date(item.expiresAt).getTime() - Date.now();
+                              if (remaining <= 0) return <span className="text-xs text-destructive">已过期</span>;
+                              const remainHours = remaining / 3600000;
+                              const remainText = remainHours < 24
+                                ? `剩余 ${Math.ceil(remainHours)}h`
+                                : `剩余 ${Math.ceil(remainHours / 24)}d`;
+                              return <span className="text-xs text-muted-foreground">{remainText}</span>;
+                            })()}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           {item.recentWindowTokens.toLocaleString()} /{" "}

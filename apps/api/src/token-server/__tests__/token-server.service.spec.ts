@@ -74,7 +74,6 @@ describe("TokenServerService", () => {
     expect(status.running).toBe(true);
     expect(status.mode).toBe("remote-token-server");
     expect(status.activeLeases).toBe(0);
-    expect(status.accessKeys).toHaveLength(1);
     expect(status.accounts.total).toBe(1);
     expect(status.accounts.enabled).toBe(1);
     expect(status.quota.accounts[0].modelQuotaFractions).toEqual({

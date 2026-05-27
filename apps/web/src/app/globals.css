@@ -172,9 +172,14 @@ img {
     linear-gradient(145deg, rgba(234, 88, 12, 0.18), rgba(234, 88, 12, 0.04)),
     rgba(255, 252, 248, 0.75);
   border: 1px solid rgba(234, 88, 12, 0.18);
-  font-family: "Iowan Old Style", "Baskerville Old Face", "STSong", serif;
-  font-size: 20px;
-  color: var(--accent-strong);
+  overflow: hidden;
+}
+
+.nav-mark-image {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  object-fit: cover;
 }
 
 .nav-links {

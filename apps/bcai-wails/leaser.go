@@ -354,7 +354,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
-		"clientVersion":      "5.0.9",
+		"clientVersion":      "5.0.6",
 		"clientDistribution": "go-engine",
 		"isGeneration":       true,
 	}
@@ -854,22 +854,6 @@ func (l *Leaser) ClearCache() {
 	l.mu.Unlock()
 }
 
-// ResetAll 清空所有 leaser 状态（换卡时调用）
-func (l *Leaser) ResetAll() {
-	l.mu.Lock()
-	l.cachedToken = nil
-	l.lastError = ""
-	l.leaseCount = 0
-	l.reportCount = 0
-	l.cardExpires = ""
-	l.accessKeyStatus = nil
-	l.accessKeyStatusAt = time.Time{}
-	l.localQuota = LocalQuota{}
-	l.pendingReports = nil
-	l.mu.Unlock()
-	Log("[token-leaser] All leaser state reset (card changed)")
-}
-
 // ── 本地计费函数 ──
 
 func isGeminiModel(modelKey string) bool {
@@ -971,12 +955,11 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
 		l.localQuota.WindowMs = int64(v)
 	}
-	// 已用量以服务端为准（校准本地计数）
-	// 服务端基于所有已收到的 report 计算，是权威数据源
-	if v, ok := aks["opusTokensUsed"].(float64); ok {
+	// 已用量取 max(本地, 服务端)
+	if v, ok := aks["opusTokensUsed"].(float64); ok && int64(v) > l.localQuota.OpusTokensUsed {
 		l.localQuota.OpusTokensUsed = int64(v)
 	}
-	if v, ok := aks["geminiTokensUsed"].(float64); ok {
+	if v, ok := aks["geminiTokensUsed"].(float64); ok && int64(v) > l.localQuota.GeminiTokensUsed {
 		l.localQuota.GeminiTokensUsed = int64(v)
 	}
 	// 反推窗口起始时间
