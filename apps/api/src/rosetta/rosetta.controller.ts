@@ -2,11 +2,15 @@ import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 
 import { Public } from "../auth/public.decorator";
 import { RosettaService } from "./rosetta.service";
+import { TokenServerService } from "../token-server/token-server.service";
 
 @Public()
 @Controller("rosetta")
 export class RosettaController {
-  constructor(private readonly rosetta: RosettaService) {}
+  constructor(
+    private readonly rosetta: RosettaService,
+    private readonly tokenServer: TokenServerService,
+  ) {}
 
   @Get("access-keys")
   listAccessKeys(@Query("search") search?: string) {
@@ -40,17 +44,23 @@ export class RosettaController {
 
   @Post("access-key")
   createAccessKey(@Body() body: any) {
-    return this.rosetta.createAccessKey(body);
+    const result = this.rosetta.createAccessKey(body);
+    this.tokenServer.reloadAccessKeys();
+    return result;
   }
 
   @Post("access-key-update")
   updateAccessKey(@Body() body: any) {
-    return this.rosetta.updateAccessKey(body);
+    const result = this.rosetta.updateAccessKey(body);
+    this.tokenServer.reloadAccessKeys();
+    return result;
   }
 
   @Post("access-key-delete")
   deleteAccessKey(@Body() body: any) {
-    return this.rosetta.deleteAccessKey(body);
+    const result = this.rosetta.deleteAccessKey(body);
+    this.tokenServer.reloadAccessKeys();
+    return result;
   }
 
   @Get("throttle-config")
