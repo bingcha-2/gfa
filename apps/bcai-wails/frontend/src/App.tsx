@@ -30,7 +30,7 @@ export default function App() {
   // 降低频率 + 后端缓存，避免 IPC 阻塞导致界面卡死
   usePolling(fetchStats, 2000)
   usePolling(fetchIDEStatus, 15000)
-  usePolling(fetchAnnouncement, 5 * 60 * 1000)
+  usePolling(fetchAnnouncement, 30 * 60 * 1000)
 
   // 日志仅在日志页时才轮询（减少非活跃页的 IPC 开销）
   usePolling(fetchLogs, 3000, currentPage === 'logs')

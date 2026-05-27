@@ -602,6 +602,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			if problemReason == "" {
 				pool.MarkSuccess(acc.ID)
 				pool.RecordRequestStats(acc.ID, true)
+				pool.PostRequestHealthRefresh(acc.ID)
 				break
 			}
 
@@ -1123,6 +1124,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			}
 			if problemReason == "" {
 				pool.MarkSuccess(acc.ID)
+				pool.PostRequestHealthRefresh(acc.ID)
 				break
 			}
 

@@ -390,6 +390,42 @@ export class TokenServerService {
         this.markAccountExhausted(lease.accountId, modelKey, reason, retryAfterMs);
       }
     }
+    // ── 接收客户端上报的 Google 账号额度快照 ──
+    if (payload?.accountQuota && typeof payload.accountQuota === "object") {
+      const quota = payload.accountQuota;
+      const accounts = this.readAccounts();
+      const idx = accounts.findIndex((a: any) => a.id === lease.accountId);
+      if (idx >= 0) {
+        const account = { ...accounts[idx] };
+        if (quota.credits && typeof quota.credits === "object") {
+          account.credits = {
+            known: Boolean(quota.credits.known),
+            available: Boolean(quota.credits.available),
+            creditAmount: Number(quota.credits.creditAmount || 0),
+            minCreditAmount: Number(quota.credits.minCreditAmount || 0),
+            paidTierID: String(quota.credits.paidTierID || ""),
+            creditsRefreshedAt: new Date().toISOString(),
+          };
+        }
+        if (quota.planType && typeof quota.planType === "string") {
+          account.planType = quota.planType;
+        }
+        if (quota.modelQuota && typeof quota.modelQuota === "object") {
+          account.modelQuotaFractions = {};
+          for (const [key, info] of Object.entries(
+            quota.modelQuota as Record<string, any>,
+          )) {
+            account.modelQuotaFractions[key] = Number(
+              info?.remainingFraction || 0,
+            );
+          }
+          account.modelQuotaRefreshedAt = Date.now();
+        }
+        accounts[idx] = account;
+        this.writeAccounts(accounts);
+      }
+    }
+
     lease.released = true;
 
     return {

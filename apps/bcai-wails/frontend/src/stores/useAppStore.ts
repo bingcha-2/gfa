@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import * as api from '@/services/wails'
-import type { Config, IDEProduct, UpdateStatus } from '@/types'
+import type { Config, IDEProduct, UpdateStatus, ActiveAccountSummary } from '@/types'
 
 interface AppState {
   // ===== Data =====
@@ -46,6 +46,9 @@ interface AppState {
   appVersion: string
   appStartTime: number
 
+  // Active account (本地号池)
+  activeAccount: ActiveAccountSummary | null
+
   // ===== Actions =====
   fetchStats: () => Promise<void>
   fetchConfig: () => Promise<void>
@@ -78,8 +81,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   ideProducts: [],
   updateStatus: null,
   announcement: '',
-  appVersion: '5.0.2',
+  appVersion: '5.1.2',
   appStartTime: Date.now(),
+  activeAccount: null,
 
   fetchStats: async () => {
     try {
@@ -109,6 +113,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         recoveryRemainingMs: lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1,
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,
+        activeAccount: data.activeAccount || null,
       })
     } catch (err) {
       console.error('fetchStats failed:', err)

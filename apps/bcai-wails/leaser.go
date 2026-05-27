@@ -84,7 +84,11 @@ type Leaser struct {
 	localQuota      LocalQuota
 	// 上报重试队列
 	pendingReports  []pendingReport
+	// 远程租号的 quota 采集（quota_sync.go）
+	cachedQuotaSnapshot *AccountQuotaSnapshot
+	quotaFetching       int32 // atomic CAS flag，防并发
 }
+
 
 type inflightLeaseResult struct {
 	lease *TokenLease
@@ -684,6 +688,11 @@ func (l *Leaser) syncMetrics(card string, lease *TokenLease,
 
 // doReportWithRetry 带指数退避的重试上报，失败后入队列
 func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, upstreamProxy string) {
+	// 附带上次缓存的 quota snapshot（一次性消费）
+	if snapshot := l.ConsumeQuotaSnapshot(); snapshot != nil {
+		payload["accountQuota"] = snapshot
+	}
+
 	var body []byte
 	var err error
 
@@ -720,7 +729,11 @@ func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, 
 
 	// 成功后补发积压的失败 report
 	l.flushPendingReports(card, upstreamProxy)
+
+	// 成功上报后，异步查询 Google API 获取最新 quota
+	go l.fetchAccountQuotaAsync()
 }
+
 
 // queueFailedReport 将失败的 report 加入待重发队列
 func (l *Leaser) queueFailedReport(payload map[string]interface{}, card string, upstreamProxy string) {

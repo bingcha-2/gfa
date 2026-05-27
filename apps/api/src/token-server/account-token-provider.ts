@@ -37,6 +37,11 @@ export type TokenAccount = {
   accessToken?: string;
   accessTokenExpiresAt?: number;
   oauthProfile?: string;
+  planType?: string;
+  credits?: Record<string, unknown>;
+  modelQuotaFractions?: Record<string, number>;
+  modelQuotaResetTimes?: Record<string, string>;
+  modelQuotaRefreshedAt?: number;
   [key: string]: unknown;
 };
 

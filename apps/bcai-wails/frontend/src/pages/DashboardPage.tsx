@@ -18,6 +18,79 @@ import {
   Activity, AlertCircle, ArrowUpRight, ArrowDownRight, DollarSign,
   Power, Check, Key, Zap, Cloud, HardDrive, Timer, CalendarClock,
 } from 'lucide-react'
+import type { ActiveAccountSummary } from '@/types'
+
+const planLabels: Record<string, string> = {
+  ultra: 'Ultra', premium: 'Premium', standard: 'Standard', free: 'Free',
+}
+
+const providerColors: Record<string, string> = {
+  gemini: 'bg-[var(--accent)]',
+  claude: 'bg-purple-500',
+  gpt: 'bg-emerald-500',
+}
+
+function LocalPoolQuotaDisplay() {
+  const activeAccount = useAppStore((s) => s.activeAccount) as ActiveAccountSummary | null
+
+  if (!activeAccount) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 py-3 text-center">
+        <HardDrive size={20} className="text-[var(--text-muted)]" />
+        <span className="text-[12px] text-[var(--text-muted)]">本地号池模式下，配额按各账号独立计算</span>
+        <span className="text-[11px] text-[var(--text-muted)]">可在「号池管理」页查看各号额度</span>
+      </div>
+    )
+  }
+
+  const { planType, credits, quotaGroups, email, alias } = activeAccount
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* 账号 + 套餐 */}
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] text-[var(--text-secondary)] truncate max-w-[140px]">
+          {alias || email}
+        </span>
+        <Badge variant={planType === 'ultra' ? 'success' : planType === 'premium' ? 'default' : 'muted'}>
+          {planLabels[planType] || planType || 'Unknown'}
+        </Badge>
+      </div>
+
+      {/* AI 积分 */}
+      {credits?.known && (
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-[var(--text-muted)]">AI 积分</span>
+          <span className={cn('font-mono-data font-semibold', credits.available ? 'text-[var(--success)]' : 'text-[var(--danger)]')}>
+            {credits.creditAmount.toLocaleString()}
+          </span>
+        </div>
+      )}
+
+      {/* 模型额度条 */}
+      {quotaGroups && quotaGroups.length > 0 ? (
+        quotaGroups.map((g) => (
+          <div key={g.provider} className="flex flex-col gap-0.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-[var(--text-muted)] capitalize">{g.provider}</span>
+              <span className="text-[var(--text-muted)] font-mono-data">{Math.round(g.percent)}%</span>
+            </div>
+            <Progress
+              value={g.percent}
+              className="h-1.5"
+              indicatorClassName={cn(
+                providerColors[g.provider] || 'bg-[var(--primary)]',
+                g.percent <= 0 && 'bg-[var(--danger)]',
+              )}
+            />
+          </div>
+        ))
+      ) : (
+        <span className="text-[11px] text-[var(--text-muted)]">额度数据加载中...</span>
+      )}
+    </div>
+  )
+}
 
 export function DashboardPage() {
   const {
@@ -150,11 +223,7 @@ export function DashboardPage() {
           <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
           <CardContent>
             {poolMode === 'local' ? (
-              <div className="flex flex-col items-center justify-center gap-1 py-3 text-center">
-                <HardDrive size={20} className="text-[var(--text-muted)]" />
-                <span className="text-[12px] text-[var(--text-muted)]">本地号池模式下，配额按各账号独立计算</span>
-                <span className="text-[11px] text-[var(--text-muted)]">可在「号池管理」页查看各号额度</span>
-              </div>
+              <LocalPoolQuotaDisplay />
             ) : (
               <div className="flex flex-col gap-2.5">
                 <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
@@ -200,6 +269,13 @@ export function DashboardPage() {
                   </button>
                 )
               })}
+              {/* macOS 权限引导提示 */}
+              {/mac/i.test(navigator.platform) && ideProducts.some((p) => p.id === 'antigravity_hub' && p.detected && !p.injected) && (
+                <div className="text-[11px] text-[var(--text-muted)] leading-relaxed px-1 pt-1">
+                  💡 接管 Hub 需要修改应用文件。若提示权限不足，请前往
+                  <span className="text-[var(--text-secondary)] font-medium"> 系统设置 → 隐私与安全性 → App 管理</span>，开启冰茶AI 的权限。
+                </div>
+              )}
             </div>
 
             <div className="mt-auto pt-3">

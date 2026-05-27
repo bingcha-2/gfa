@@ -175,6 +175,7 @@ func (a *App) GetStats() map[string]interface{} {
 		"updateStatus":     GetUpdater().GetStatus(),
 		"poolMode":         LoadConfig().PoolMode,
 		"poolStatus":       GetAccountPool().GetPoolStatus(),
+		"activeAccount":    GetAccountPool().GetActiveAccountInfo(),
 		"proxyStartedAt":   a.proxyStartedAt.Format(time.RFC3339),
 	}
 }

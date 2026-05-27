@@ -643,3 +643,157 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(result2.candidateStats.healthyForModel).toBeLessThan(3);
   });
 });
+
+// ── Client-reported accountQuota via report-result ────────────────────────
+
+describe("TokenServerService — accountQuota in report-result", () => {
+  let tempDir: string;
+  let accountsFilePath: string;
+  let accessKeysFilePath: string;
+  const tokenProvider = vi.fn();
+  let leaseCounter: number;
+
+  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-quota-sync-"));
+    accountsFilePath = path.join(tempDir, "accounts.json");
+    accessKeysFilePath = path.join(tempDir, "access-keys.json");
+    tokenProvider.mockReset();
+    leaseCounter = 0;
+
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "alpha@example.com", refreshToken: "rt-alpha", projectId: "proj-alpha", enabled: true },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 24 * 60 * 60 * 1000,
+        windowLimit: 100,
+      }],
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function makeService() {
+    return new TokenServerService({
+      accountsFilePath,
+      accessKeysFilePath,
+      tokenProvider,
+      now: () => Date.now(),
+      randomId: () => `lease-${++leaseCounter}`,
+    });
+  }
+
+  it("report-result with accountQuota updates account credits and modelQuotaFractions", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      accountQuota: {
+        accountId: 1,
+        planType: "ultra",
+        credits: {
+          known: true,
+          available: true,
+          creditAmount: 2380,
+          minCreditAmount: 100,
+          paidTierID: "AI_ULTRA",
+        },
+        modelQuota: {
+          "gemini-2.5-pro": { remainingFraction: 0.85 },
+          "claude-sonnet-4": { remainingFraction: 0.42 },
+        },
+        fetchedAt: Date.now(),
+      },
+    });
+
+    // 验证 accounts.json 被更新
+    const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
+    const account = stored.accounts[0];
+
+    expect(account.planType).toBe("ultra");
+    expect(account.credits.creditAmount).toBe(2380);
+    expect(account.credits.available).toBe(true);
+    expect(account.credits.known).toBe(true);
+    expect(account.credits.paidTierID).toBe("AI_ULTRA");
+    expect(account.credits.creditsRefreshedAt).toBeTruthy();
+    expect(account.modelQuotaFractions["gemini-2.5-pro"]).toBe(0.85);
+    expect(account.modelQuotaFractions["claude-sonnet-4"]).toBe(0.42);
+    expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
+  });
+
+  it("report-result without accountQuota does not touch existing credits", async () => {
+    // 先写入已有 credits 数据
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "alpha@example.com",
+        refreshToken: "rt-alpha",
+        projectId: "proj-alpha",
+        enabled: true,
+        credits: {
+          known: true,
+          available: true,
+          creditAmount: 9999,
+          paidTierID: "AI_ULTRA",
+        },
+        planType: "ultra",
+      }],
+    });
+
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    // 不带 accountQuota 的上报
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+    });
+
+    // 已有数据不应被清空
+    const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
+    const account = stored.accounts[0];
+    expect(account.credits.creditAmount).toBe(9999);
+    expect(account.planType).toBe("ultra");
+  });
+
+  it("accountQuota with invalid format is silently ignored", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    // 传入非 object 的 accountQuota
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+      accountQuota: "not-an-object",
+    });
+
+    // 不应 crash，数据不变
+    const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
+    expect(stored.accounts[0].email).toBe("alpha@example.com");
+  });
+});
