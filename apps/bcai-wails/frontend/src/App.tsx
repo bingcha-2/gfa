@@ -26,11 +26,14 @@ export default function App() {
     initMode()
   }, [])
 
-  // Polling: stats every 1.5s, logs every 1.5s, IDE every 5s, announcement every 5min
-  usePolling(fetchStats, 1500)
-  usePolling(fetchLogs, 1500)
-  usePolling(fetchIDEStatus, 5000)
+  // Polling: stats every 2s, IDE every 15s, announcement every 5min
+  // 降低频率 + 后端缓存，避免 IPC 阻塞导致界面卡死
+  usePolling(fetchStats, 2000)
+  usePolling(fetchIDEStatus, 15000)
   usePolling(fetchAnnouncement, 5 * 60 * 1000)
+
+  // 日志仅在日志页时才轮询（减少非活跃页的 IPC 开销）
+  usePolling(fetchLogs, 3000, currentPage === 'logs')
 
   const renderPage = () => {
     switch (currentPage) {

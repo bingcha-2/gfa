@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +17,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.0.6"
+var AppVersion = "5.0.8"
 
 const (
 	UpdateCheckURL  = "http://127.0.0.1:3000/updates/latest-wails.json"
@@ -24,13 +26,24 @@ const (
 
 // ─── Update Info ─────────────────────────────────────────────────────────
 
+// PlatformAsset 平台特定的下载信息
+type PlatformAsset struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
 type UpdateInfo struct {
 	Version   string `json:"version"`
-	URL       string `json:"url"`       // 下载地址
-	SHA256    string `json:"sha256"`     // 校验和
+	URL       string `json:"url"`       // 下载地址（默认/Windows）
+	SHA256    string `json:"sha256"`    // 校验和
 	Size      int64  `json:"size"`      // 文件大小
 	Changelog string `json:"changelog"` // 更新日志
 	MinVer    string `json:"minVersion"` // 最低支持版本（低于此版本强制更新）
+
+	// 平台特定下载信息 (OS -> ARCH -> asset)
+	MacOS map[string]PlatformAsset `json:"macOS"`
+	Linux map[string]PlatformAsset `json:"linux"`
 }
 
 type UpdateStatus struct {
@@ -184,6 +197,9 @@ func (u *Updater) CheckForUpdate() *UpdateInfo {
 		return nil
 	}
 
+	// 根据当前操作系统和架构选择对应的下载地址
+	resolvePlatformAsset(&info)
+
 	if !isNewerVersion(info.Version, AppVersion) {
 		Log("[updater] Already up to date (v%s)", AppVersion)
 		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion})
@@ -302,8 +318,18 @@ func (u *Updater) DownloadAndApply() error {
 
 	Log("[updater] Download complete: %d bytes", written)
 
+	// 从下载文件中提取二进制（macOS .dmg / Linux .tar.gz 需要解包）
+	newBinary, err := extractBinary(tmpFile, downloadURL, info.Version)
+	if err != nil {
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("解包失败: %v", err)})
+		return err
+	}
+	// 如果提取出了新文件，清理原始下载文件
+	if newBinary != tmpFile {
+		_ = os.Remove(tmpFile)
+	}
+
 	// 替换当前 exe
-	// Windows: 不能直接替换正在运行的 exe，使用 rename 策略
 	oldExe := u.exePath + ".old"
 	_ = os.Remove(oldExe) // 清理上次残留的 .old
 
@@ -313,12 +339,17 @@ func (u *Updater) DownloadAndApply() error {
 		return fmt.Errorf("rename current exe: %w", err)
 	}
 
-	// 2. 把下载的临时文件移到 exe 位置
-	if err := os.Rename(tmpFile, u.exePath); err != nil {
+	// 2. 把提取出的新二进制移到 exe 位置
+	if err := os.Rename(newBinary, u.exePath); err != nil {
 		// 回滚
 		_ = os.Rename(oldExe, u.exePath)
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("替换失败(move): %v", err)})
 		return fmt.Errorf("move new exe: %w", err)
+	}
+
+	// 确保新二进制有执行权限 (macOS/Linux)
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(u.exePath, 0755)
 	}
 
 	Log("[updater] Update applied: v%s → v%s", AppVersion, info.Version)
@@ -360,6 +391,199 @@ func (u *Updater) CleanupOldBinary() {
 		} else {
 			Log("[updater] Cleaned up old binary")
 		}
+	}
+}
+
+// ─── Platform-specific Extraction ────────────────────────────────────────
+
+// extractBinary 从下载文件中提取可执行二进制
+// Windows (.exe): 直接返回，无需解包
+// Linux (.tar.gz): 解压并找到可执行文件
+// macOS (.dmg): 挂载 DMG，拷贝 .app 内的二进制，卸载
+func extractBinary(downloadedFile, downloadURL, version string) (string, error) {
+	lurl := strings.ToLower(downloadURL)
+	dir := filepath.Dir(downloadedFile)
+
+	switch {
+	case strings.HasSuffix(lurl, ".tar.gz") || strings.HasSuffix(lurl, ".tgz"):
+		return extractFromTarGz(downloadedFile, dir, version)
+	case strings.HasSuffix(lurl, ".dmg"):
+		return extractFromDMG(downloadedFile, dir, version)
+	default:
+		// Windows .exe 或其他：直接使用下载文件
+		return downloadedFile, nil
+	}
+}
+
+// extractFromTarGz 从 .tar.gz 中提取第一个可执行文件
+func extractFromTarGz(archive, destDir, version string) (string, error) {
+	Log("[updater] Extracting binary from tar.gz: %s", archive)
+
+	f, err := os.Open(archive)
+	if err != nil {
+		return "", fmt.Errorf("open archive: %w", err)
+	}
+	defer f.Close()
+
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return "", fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("tar read: %w", err)
+		}
+
+		// 跳过目录，只找普通文件
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		// tar 中应该只有一个二进制文件（CI 构建方式决定的）
+		// 提取第一个普通文件作为新二进制
+		outPath := filepath.Join(destDir, fmt.Sprintf(".update-binary-%s", version))
+		out, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			return "", fmt.Errorf("create output: %w", err)
+		}
+		if _, err := io.Copy(out, tr); err != nil {
+			out.Close()
+			_ = os.Remove(outPath)
+			return "", fmt.Errorf("extract file: %w", err)
+		}
+		out.Close()
+		Log("[updater] Extracted binary from tar.gz: %s (%s)", hdr.Name, outPath)
+		return outPath, nil
+	}
+
+	return "", fmt.Errorf("tar.gz 中未找到可执行文件")
+}
+
+// extractFromDMG 挂载 macOS DMG，从 .app bundle 中拷贝二进制
+func extractFromDMG(dmgFile, destDir, version string) (string, error) {
+	Log("[updater] Extracting binary from DMG: %s", dmgFile)
+
+	mountPoint := filepath.Join(destDir, fmt.Sprintf(".update-dmg-mount-%s", version))
+	_ = os.MkdirAll(mountPoint, 0755)
+	defer func() {
+		// 卸载并清理挂载点
+		_ = exec.Command("hdiutil", "detach", mountPoint, "-quiet", "-force").Run()
+		_ = os.RemoveAll(mountPoint)
+	}()
+
+	// 挂载 DMG
+	cmd := exec.Command("hdiutil", "attach", dmgFile, "-mountpoint", mountPoint, "-nobrowse", "-quiet")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("mount DMG failed: %w\noutput: %s", err, string(out))
+	}
+
+	// 在挂载点中找 .app bundle
+	entries, err := os.ReadDir(mountPoint)
+	if err != nil {
+		return "", fmt.Errorf("read mount point: %w", err)
+	}
+
+	var appPath string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasSuffix(e.Name(), ".app") {
+			appPath = filepath.Join(mountPoint, e.Name())
+			break
+		}
+	}
+	if appPath == "" {
+		return "", fmt.Errorf("DMG 中未找到 .app bundle")
+	}
+
+	// .app/Contents/MacOS/ 下的二进制
+	macOSDir := filepath.Join(appPath, "Contents", "MacOS")
+	binEntries, err := os.ReadDir(macOSDir)
+	if err != nil {
+		return "", fmt.Errorf("read MacOS dir: %w", err)
+	}
+
+	var srcBin string
+	for _, e := range binEntries {
+		if !e.IsDir() {
+			srcBin = filepath.Join(macOSDir, e.Name())
+			break
+		}
+	}
+	if srcBin == "" {
+		return "", fmt.Errorf(".app/Contents/MacOS/ 中未找到二进制文件")
+	}
+
+	// 拷贝到目标目录
+	outPath := filepath.Join(destDir, fmt.Sprintf(".update-binary-%s", version))
+	src, err := os.Open(srcBin)
+	if err != nil {
+		return "", fmt.Errorf("open binary: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return "", fmt.Errorf("create output: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		_ = os.Remove(outPath)
+		return "", fmt.Errorf("copy binary: %w", err)
+	}
+	dst.Close()
+
+	Log("[updater] Extracted binary from DMG: %s → %s", srcBin, outPath)
+	return outPath, nil
+}
+
+// ─── Platform Resolution ─────────────────────────────────────────────────
+
+// resolvePlatformAsset 根据 runtime.GOOS / runtime.GOARCH 覆盖顶层下载字段
+func resolvePlatformAsset(info *UpdateInfo) {
+	var assets map[string]PlatformAsset
+
+	switch runtime.GOOS {
+	case "darwin":
+		assets = info.MacOS
+	case "linux":
+		assets = info.Linux
+	default:
+		// Windows 或其他：使用顶层字段，无需覆盖
+		return
+	}
+
+	if assets == nil {
+		Log("[updater] No platform-specific asset for %s, using default URL", runtime.GOOS)
+		return
+	}
+
+	// 优先匹配精确架构，其次尝试通用 key
+	arch := runtime.GOARCH
+	asset, ok := assets[arch]
+	if !ok {
+		// 尝试 "universal" key（macOS universal binary 场景）
+		asset, ok = assets["universal"]
+	}
+	if !ok {
+		Log("[updater] No asset for %s/%s, using default URL", runtime.GOOS, arch)
+		return
+	}
+
+	Log("[updater] Resolved platform asset: %s/%s → %s", runtime.GOOS, arch, asset.URL)
+	if asset.URL != "" {
+		info.URL = asset.URL
+	}
+	if asset.SHA256 != "" {
+		info.SHA256 = asset.SHA256
+	}
+	if asset.Size > 0 {
+		info.Size = asset.Size
 	}
 }
 

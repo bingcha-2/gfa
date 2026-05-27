@@ -197,6 +197,9 @@ export class TokenServerService {
             quotaStatusReason: runtime?.quotaStatusReason || account.quotaStatusReason || "",
             blockedUntil: runtime?.exhaustedUntil || account.blockedUntil || 0,
             credits: account.credits || {},
+            modelQuotaFractions: account.modelQuotaFractions || {},
+            modelQuotaResetTimes: account.modelQuotaResetTimes || {},
+            modelQuotaRefreshedAt: account.modelQuotaRefreshedAt || 0,
             activeLeases: activeLeaseCounts[String(account.id)] || 0,
             lastConversationOkAt: account.lastConversationOkAt || "",
             lastStatus: account.lastStatus || "",
@@ -341,6 +344,17 @@ export class TokenServerService {
     }
 
     const status = Number(payload?.status || 0);
+
+    // 去重：已处理过的成功请求不再重复记账
+    // client 的 doReportWithRetry / postBcaiWithFallback 可能导致同一个 report 被发送多次
+    if (lease.released && status >= 200 && status < 400) {
+      return {
+        ok: true, ignored: true, reason: "already_reported",
+        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+        status: this.getStatus(),
+      };
+    }
+
     const modelKey = String(payload?.modelKey || lease.modelKey || "").trim();
     const usage = this.usageForBilling(lease, status, payload);
     this.accessKeyStore.recordUsage(lease.accessKeyId, status, usage, modelKey);

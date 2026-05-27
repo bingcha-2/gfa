@@ -1,22 +1,22 @@
 {
-  "version": "5.0.7",
-  "url": "https://bcai.site/updates/BingchaAI-5.0.7.exe",
-  "sha256": "5E237B81A54B7D95A8E950F97B842F7D18DC5444E4E5529BB456DC0C89867784",
-  "size": 13406720,
-  "changelog": "修复IDE/Hub检测(过滤ShipIt临时路径)、停止接管修复(权限+进程+重启)、macOS文件浏览器修复",
+  "version": "5.0.8",
+  "url": "https://bcai.site/updates/BingchaAI-5.0.8.exe",
+  "sha256": "",
+  "size": 0,
+  "changelog": "账号负载卡片式额度视图+Rosetta负载页面升级+IDE检测修复+代理重试逻辑+自动更新DMG支持",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.0.7-arm64.dmg",
-      "sha256": "D4F91D50125549F30532334697494866A4C888C9F3C5CE20C617283DD7621C4F",
-      "size": 7295981
+      "url": "https://bcai.site/updates/BingchaAI-5.0.8-arm64.dmg",
+      "sha256": "",
+      "size": 0
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.0.7-linux-amd64.tar.gz",
-      "sha256": "6ADA0A3E7403BDD3A348CE48F86E36D093FABF33D35DA81F5FD23D1C7004FEE9",
-      "size": 5784806
+      "url": "https://bcai.site/updates/BingchaAI-5.0.8-linux-amd64.tar.gz",
+      "sha256": "",
+      "size": 0
     }
   }
 }

@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -45,6 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   RefreshCw,
   Search,
@@ -99,6 +99,9 @@ type QuotaAccount = {
   lastStatus?: string;
   activeLeases?: number;
   blockedModels?: BlockedModel[];
+  modelQuotaFractions?: Record<string, number>;
+  modelQuotaResetTimes?: Record<string, string>;
+  modelQuotaRefreshedAt?: number;
 };
 
 type DailyStats = {
@@ -228,12 +231,7 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
-function maskEmail(email: string): string {
-  const text = String(email || "");
-  const at = text.indexOf("@");
-  if (at <= 2) return text;
-  return `${text.slice(0, 2)}***${text.slice(at)}`;
-}
+
 
 function formatDateTime(iso: string | undefined | null): string {
   if (!iso) return "";
@@ -280,12 +278,189 @@ function uid() {
   return String(++nextId);
 }
 
+// ── Canonical model mapping (aligned with cockpit-tools) ──
+
+interface CanonicalModel {
+  id: string;
+  displayName: string;
+  aliases: string[];
+}
+
+const CANONICAL_MODELS: CanonicalModel[] = [
+  {
+    id: "gemini-3.1-pro-high",
+    displayName: "Gemini 3.1 Pro (High)",
+    aliases: ["gemini-3-pro-high", "MODEL_PLACEHOLDER_M37", "MODEL_PLACEHOLDER_M8"],
+  },
+  {
+    id: "gemini-3.1-pro-low",
+    displayName: "Gemini 3.1 Pro (Low)",
+    aliases: ["gemini-3-pro-low", "MODEL_PLACEHOLDER_M36", "MODEL_PLACEHOLDER_M7"],
+  },
+  {
+    id: "gemini-3-flash",
+    displayName: "Gemini 3 Flash",
+    aliases: ["MODEL_PLACEHOLDER_M18"],
+  },
+  {
+    id: "gemini-3.5-flash-low",
+    displayName: "Gemini 3.5 Flash (Low)",
+    aliases: [],
+  },
+  {
+    id: "gemini-3.5-flash-extra-low",
+    displayName: "Gemini 3.5 Flash (Extra Low)",
+    aliases: [],
+  },
+  {
+    id: "claude-sonnet-4-6",
+    displayName: "Claude Sonnet 4.6",
+    aliases: ["claude-sonnet-4-6-thinking", "claude-sonnet-4-5", "claude-sonnet-4-5-thinking", "MODEL_PLACEHOLDER_M35"],
+  },
+  {
+    id: "claude-opus-4-6-thinking",
+    displayName: "Claude Opus 4.6",
+    aliases: ["claude-opus-4-6", "claude-opus-4-5-thinking", "MODEL_PLACEHOLDER_M26", "MODEL_PLACEHOLDER_M12"],
+  },
+];
+
+const _normalizeKey = (v: string) => (v || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const CANONICAL_ALIAS_MAP = (() => {
+  const map = new Map<string, CanonicalModel>();
+  for (const item of CANONICAL_MODELS) {
+    for (const v of [item.id, item.displayName, ...item.aliases]) {
+      const key = _normalizeKey(v);
+      if (key && !map.has(key)) map.set(key, item);
+    }
+  }
+  return map;
+})();
+
+function resolveCanonicalModel(name: string): CanonicalModel | undefined {
+  const key = _normalizeKey(name);
+  return key ? CANONICAL_ALIAS_MAP.get(key) : undefined;
+}
+
+type QuotaDisplayItem = {
+  key: string;
+  label: string;
+  percentage: number;
+  resetTime: string;
+};
+
+function getQuotaDisplayItem(
+  modelId: string,
+  fractions: Record<string, number>,
+  resetTimes?: Record<string, string>,
+): QuotaDisplayItem | null {
+  for (const [modelKey, fraction] of Object.entries(fractions)) {
+    const canonical = resolveCanonicalModel(modelKey);
+    if (!canonical || canonical.id !== modelId) continue;
+    return {
+      key: modelKey,
+      label: canonical.displayName,
+      percentage: Math.round(Math.min(1, Math.max(0, fraction)) * 100),
+      resetTime: resetTimes?.[modelKey] || "",
+    };
+  }
+  return null;
+}
+
+function quotaBarColor(pct: number): string {
+  if (pct > 60) return "bg-emerald-500";
+  if (pct > 25) return "bg-amber-500";
+  return "bg-red-500";
+}
+
+function quotaTextColor(pct: number): string {
+  if (pct > 60) return "text-emerald-500";
+  if (pct > 25) return "text-amber-500";
+  return "text-red-500";
+}
+
+function formatResetTime(rt: string): string {
+  if (!rt) return "";
+  try {
+    const d = new Date(rt);
+    const diff = d.getTime() - Date.now();
+    if (diff <= 0) return "已重置";
+    const dayMs = 24 * 3600000;
+    if (diff >= dayMs) {
+      const days = Math.floor(diff / dayMs);
+      const hours = Math.floor((diff % dayMs) / 3600000);
+      return hours > 0 ? `${days}天 ${hours}小时` : `${days}天`;
+    }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  } catch { return ""; }
+}
+
+function formatQuotaRefreshedAt(ts: number | undefined | null): string {
+  const n = Number(ts || 0);
+  if (!n) return "";
+  try {
+    return new Date(n).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function ModelQuotaCell({
+  item,
+  refreshedAt,
+}: {
+  item: QuotaDisplayItem | null;
+  refreshedAt?: number;
+}) {
+  if (!item) {
+    return <span className="text-xs text-muted-foreground">暂无</span>;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger className="flex min-w-[140px] flex-col gap-1 text-left">
+        <div className="flex items-center justify-between gap-2">
+          <span className={cn("text-xs font-semibold tabular-nums", quotaTextColor(item.percentage))}>
+            {item.percentage}%
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            {item.resetTime ? formatResetTime(item.resetTime) : "未记录重置"}
+          </span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all duration-500",
+              quotaBarColor(item.percentage),
+            )}
+            style={{ width: `${item.percentage}%` }}
+          />
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        {item.label}
+        <br />
+        重置: {item.resetTime ? formatResetTime(item.resetTime) : "未记录"}
+        <br />
+        更新: {formatQuotaRefreshedAt(refreshedAt) || "未刷新"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 // ── Column configuration ──
 
 const COLUMN_CONFIG: { key: string; label: string }[] = [
   { key: "account", label: "账号" },
   { key: "plan", label: "套餐" },
   { key: "credits", label: "AI积分" },
+  { key: "modelQuota", label: "模型额度" },
   { key: "quotaStatus", label: "额度状态" },
   { key: "reason", label: "封禁原因" },
   { key: "cooldown", label: "冷却/剩余" },
@@ -302,11 +477,29 @@ const COLUMN_CONFIG: { key: string; label: string }[] = [
 const DEFAULT_VISIBLE_COLS = new Set<string>([
   "account",
   "plan",
+  "modelQuota",
   "quotaStatus",
   "reason",
   "lease",
   "successRate",
 ]);
+
+const MODEL_QUOTA_OPTIONS = CANONICAL_MODELS.filter((model) =>
+  model.id.startsWith("gemini-3") || model.id.startsWith("claude-"),
+);
+
+const DEFAULT_VISIBLE_MODEL_QUOTAS = new Set<string>(
+  MODEL_QUOTA_OPTIONS.map((model) => model.id),
+);
+
+const COLUMN_KEYS = new Set(COLUMN_CONFIG.map((col) => col.key));
+
+function migrateVisibleColumns(values: string[]): Set<string> {
+  const next = new Set(values.filter((key) => COLUMN_KEYS.has(key)));
+  next.add("modelQuota");
+  next.delete("blockedModels");
+  return next.size > 0 ? next : new Set(DEFAULT_VISIBLE_COLS);
+}
 
 // ── Component ──
 
@@ -322,18 +515,37 @@ export default function RosettaLoadPage() {
         const saved = localStorage.getItem("rosetta-load-visible-cols");
         if (saved) {
           const arr = JSON.parse(saved) as string[];
-          if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
+          if (Array.isArray(arr) && arr.length > 0) return migrateVisibleColumns(arr);
         }
       } catch { /* ignore */ }
     }
     return new Set(DEFAULT_VISIBLE_COLS);
+  });
+  const [visibleModelQuotaIds, setVisibleModelQuotaIds] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("rosetta-load-visible-model-quotas");
+        if (saved) {
+          const arr = JSON.parse(saved) as string[];
+          const allowed = new Set(MODEL_QUOTA_OPTIONS.map((model) => model.id));
+          const filtered = arr.filter((id) => allowed.has(id));
+          if (filtered.length > 0) return new Set(filtered);
+        }
+      } catch { /* ignore */ }
+    }
+    return new Set(DEFAULT_VISIBLE_MODEL_QUOTAS);
   });
   useEffect(() => {
     try {
       localStorage.setItem("rosetta-load-visible-cols", JSON.stringify([...visibleCols]));
     } catch { /* ignore */ }
   }, [visibleCols]);
-  const [refreshingCredits, setRefreshingCredits] = useState(false);
+  useEffect(() => {
+    try {
+      localStorage.setItem("rosetta-load-visible-model-quotas", JSON.stringify([...visibleModelQuotaIds]));
+    } catch { /* ignore */ }
+  }, [visibleModelQuotaIds]);
+
   const [refreshingQuota, setRefreshingQuota] = useState(false);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
@@ -445,20 +657,6 @@ export default function RosettaLoadPage() {
 
   // ── Actions ──
 
-  async function handleRefreshCredits() {
-    setRefreshingCredits(true);
-    try {
-      const res = await fetch("/api/rosetta/api/pool/refresh-credits", { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      toast.success(`积分刷新完成，更新 ${data.refreshed || 0} 个账号`);
-      await fetchStatus(true);
-    } catch (err) {
-      toast.error(`积分刷新失败: ${err instanceof Error ? err.message : "未知错误"}`);
-    } finally {
-      setRefreshingCredits(false);
-    }
-  }
 
   async function handleRefreshQuota() {
     setRefreshingQuota(true);
@@ -754,11 +952,23 @@ export default function RosettaLoadPage() {
     });
   }
 
+  function toggleModelQuota(id: string) {
+    setVisibleModelQuotaIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   useEffect(() => {
     setPage(1);
   }, [search]);
 
   const show = (key: string) => visibleCols.has(key);
+  const visibleModelQuotaOptions = MODEL_QUOTA_OPTIONS.filter((model) =>
+    visibleModelQuotaIds.has(model.id),
+  );
 
   // ── Render ──
 
@@ -954,7 +1164,7 @@ export default function RosettaLoadPage() {
                 </Button>
               }
             />
-            <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>显示列</DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -967,6 +1177,18 @@ export default function RosettaLoadPage() {
                     {col.label}
                   </DropdownMenuCheckboxItem>
                 ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>模型额度</DropdownMenuLabel>
+                {MODEL_QUOTA_OPTIONS.map((model) => (
+                  <DropdownMenuCheckboxItem
+                    key={model.id}
+                    checked={visibleModelQuotaIds.has(model.id)}
+                    onCheckedChange={() => toggleModelQuota(model.id)}
+                    disabled={!visibleCols.has("modelQuota")}
+                  >
+                    {model.displayName}
+                  </DropdownMenuCheckboxItem>
+                ))}
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -974,19 +1196,6 @@ export default function RosettaLoadPage() {
           {/* Right: action buttons */}
           <div className="flex items-center gap-1.5 ml-auto">
             {/* Maintenance group */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefreshCredits}
-              disabled={refreshingCredits}
-            >
-              {refreshingCredits ? (
-                <Spinner size={14} className="mr-1" />
-              ) : (
-                <RefreshCw data-icon className="size-3.5" />
-              )}
-              刷新积分
-            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -1067,14 +1276,16 @@ export default function RosettaLoadPage() {
           </div>
         )}
 
-        {/* ── 4. Accounts Table ── */}
-        <Card>
-          <CardContent className="p-0">
-            {filteredAccounts.length === 0 ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                {search.trim() ? "没有匹配的负载数据" : "暂无账号负载数据"}
-              </div>
-            ) : (
+        {/* ── 4. Accounts ── */}
+        {filteredAccounts.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center text-sm text-muted-foreground">
+              {search.trim() ? "没有匹配的负载数据" : "暂无账号负载数据"}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
               <>
                 <div className="overflow-x-auto">
                   <Table>
@@ -1092,6 +1303,10 @@ export default function RosettaLoadPage() {
                         {show("account") && <TableHead>账号</TableHead>}
                         {show("plan") && <TableHead>套餐</TableHead>}
                         {show("credits") && <TableHead>AI积分</TableHead>}
+                        {show("modelQuota") &&
+                          visibleModelQuotaOptions.map((model) => (
+                            <TableHead key={model.id}>{model.displayName}</TableHead>
+                          ))}
                         {show("quotaStatus") && <TableHead>额度状态</TableHead>}
                         {show("reason") && <TableHead>封禁原因</TableHead>}
                         {show("cooldown") && <TableHead>冷却/剩余</TableHead>}
@@ -1138,6 +1353,7 @@ export default function RosettaLoadPage() {
                               : "bg-green-500";
                         const credits = account.credits || ({} as Credits);
                         const creditsDotClass = credits.available ? "bg-green-500" : "bg-red-500";
+                        const modelQuotaFractions = account.modelQuotaFractions || {};
 
                         return (
                           <TableRow
@@ -1154,7 +1370,7 @@ export default function RosettaLoadPage() {
                               <TableCell className="font-mono text-xs whitespace-nowrap">
                                 <span className="text-muted-foreground">#{id}</span>
                                 <br />
-                                {maskEmail(account.email || "")}
+                                {account.email || ""}
                               </TableCell>
                             )}
                             {show("plan") && (
@@ -1168,16 +1384,18 @@ export default function RosettaLoadPage() {
                                       <span
                                         className={`inline-block size-1.5 rounded-full ${creditsDotClass}`}
                                       />
-                                      {credits.available
-                                        ? Number(credits.creditAmount || 0).toLocaleString(
-                                            undefined,
-                                            { maximumFractionDigits: 0 }
-                                          )
-                                        : "耗尽"}
+                                      <span className={credits.available ? "" : "text-red-500"}>
+                                        {Number(credits.creditAmount || 0).toLocaleString(
+                                          undefined,
+                                          { maximumFractionDigits: 0 },
+                                        )}
+                                        <span className="text-muted-foreground">/{credits.minCreditAmount || 0}</span>
+                                      </span>
                                     </TooltipTrigger>
                                     <TooltipContent>
                                       余额: {credits.creditAmount} / 最低:{" "}
                                       {credits.minCreditAmount || 0}
+                                      {!credits.available && <><br />低于最低使用门槛</>}
                                       <br />
                                       刷新:{" "}
                                       {credits.creditsRefreshedAt
@@ -1186,10 +1404,36 @@ export default function RosettaLoadPage() {
                                     </TooltipContent>
                                   </Tooltip>
                                 ) : (
-                                  <span className="text-muted-foreground">-</span>
+                                  <Tooltip>
+                                    <TooltipTrigger className="inline-flex items-center gap-1 text-muted-foreground">
+                                      <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
+                                      未知
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      Google 未返回 AI 积分数据
+                                      <br />
+                                      刷新:{" "}
+                                      {credits.creditsRefreshedAt
+                                        ? new Date(credits.creditsRefreshedAt).toLocaleString()
+                                        : "未刷新"}
+                                    </TooltipContent>
+                                  </Tooltip>
                                 )}
                               </TableCell>
                             )}
+                            {show("modelQuota") &&
+                              visibleModelQuotaOptions.map((model) => (
+                                <TableCell key={model.id}>
+                                  <ModelQuotaCell
+                                    item={getQuotaDisplayItem(
+                                      model.id,
+                                      modelQuotaFractions,
+                                      account.modelQuotaResetTimes,
+                                    )}
+                                    refreshedAt={account.modelQuotaRefreshedAt}
+                                  />
+                                </TableCell>
+                              ))}
                             {show("quotaStatus") && (
                               <TableCell className="text-xs">
                                 <span className="inline-flex items-center gap-1">
@@ -1320,12 +1564,12 @@ export default function RosettaLoadPage() {
                                   <Spinner size={12} />
                                 ) : isDisabled ? (
                                   <>
-                                    <Unlock data-icon className="size-3" />
+                                    <Unlock data-icon />
                                     解封
                                   </>
                                 ) : (
                                   <>
-                                    <Lock data-icon className="size-3" />
+                                    <Lock data-icon />
                                     禁用
                                   </>
                                 )}
@@ -1347,7 +1591,7 @@ export default function RosettaLoadPage() {
                       disabled={safePage <= 1}
                       onClick={() => setPage(safePage - 1)}
                     >
-                      <ChevronLeft className="size-3.5" />
+                      <ChevronLeft />
                     </Button>
                     <div className="flex items-center gap-1">
                       {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
@@ -1379,7 +1623,7 @@ export default function RosettaLoadPage() {
                       disabled={safePage >= totalPages}
                       onClick={() => setPage(safePage + 1)}
                     >
-                      <ChevronRight className="size-3.5" />
+                      <ChevronRight />
                     </Button>
                     <span className="text-xs text-muted-foreground ml-2">
                       {safePage} / {totalPages} 页
@@ -1387,9 +1631,9 @@ export default function RosettaLoadPage() {
                   </div>
                 )}
               </>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── 5. Throttle Config ── */}
         <Separator />

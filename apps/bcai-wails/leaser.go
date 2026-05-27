@@ -354,7 +354,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	payload := map[string]interface{}{
 		"reason":             "token-proxy-remote-mode",
 		"clientId":           deviceId,
-		"clientVersion":      "5.0.6",
+		"clientVersion":      "5.0.8",
 		"clientDistribution": "go-engine",
 		"isGeneration":       true,
 	}
@@ -955,11 +955,12 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
 		l.localQuota.WindowMs = int64(v)
 	}
-	// 已用量取 max(本地, 服务端)
-	if v, ok := aks["opusTokensUsed"].(float64); ok && int64(v) > l.localQuota.OpusTokensUsed {
+	// 已用量以服务端为准（校准本地计数）
+	// 服务端基于所有已收到的 report 计算，是权威数据源
+	if v, ok := aks["opusTokensUsed"].(float64); ok {
 		l.localQuota.OpusTokensUsed = int64(v)
 	}
-	if v, ok := aks["geminiTokensUsed"].(float64); ok && int64(v) > l.localQuota.GeminiTokensUsed {
+	if v, ok := aks["geminiTokensUsed"].(float64); ok {
 		l.localQuota.GeminiTokensUsed = int64(v)
 	}
 	// 反推窗口起始时间

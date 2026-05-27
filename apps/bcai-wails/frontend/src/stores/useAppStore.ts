@@ -85,17 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const data = await api.getStats()
       const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, generations: 0, retries: 0 }
-      const aks = data.leaser?.accessKeyStatus || {}
       const lq = data.leaser?.localQuota
-
-      // Recovery time
-      let recoveryMs = -1
-      if (aks.tokenWindowResetMs && aks.tokenWindowResetMs > 0) {
-        recoveryMs = aks.tokenWindowResetMs
-      } else if (aks.tokenWindowResetAt) {
-        const resetDate = new Date(aks.tokenWindowResetAt).getTime()
-        if (resetDate > 0) recoveryMs = Math.max(0, resetDate - Date.now())
-      }
 
       set({
         proxyRunning: data.proxyRunning,
@@ -111,11 +101,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         todayInputTokens: today.inputTokens || 0,
         todayOutputTokens: today.outputTokens || 0,
         cumulativeSaving: data.cumulativeSaving || 0,
-        opusUsed: aks.opusTokensUsed ?? lq?.opusTokensUsed ?? null,
-        opusLimit: aks.opusTokenLimit ?? lq?.opusTokenLimit ?? null,
-        geminiUsed: aks.geminiTokensUsed ?? lq?.geminiTokensUsed ?? null,
-        geminiLimit: aks.geminiTokenLimit ?? lq?.geminiTokenLimit ?? null,
-        recoveryRemainingMs: recoveryMs > 0 ? recoveryMs : (lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1),
+        // localQuota 是唯一 source of truth（和 CheckLocalQuota 读同一个值，保证一致）
+        opusUsed: lq?.opusTokensUsed ?? null,
+        opusLimit: lq?.opusTokenLimit ?? null,
+        geminiUsed: lq?.geminiTokensUsed ?? null,
+        geminiLimit: lq?.geminiTokenLimit ?? null,
+        recoveryRemainingMs: lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1,
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,
       })

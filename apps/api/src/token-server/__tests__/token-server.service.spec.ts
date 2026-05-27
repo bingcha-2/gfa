@@ -31,6 +31,13 @@ describe("TokenServerService", () => {
           projectId: "project-alpha",
           enabled: true,
           planType: "ultra",
+          modelQuotaFractions: {
+            MODEL_PLACEHOLDER_M35: 0.72,
+          },
+          modelQuotaResetTimes: {
+            MODEL_PLACEHOLDER_M35: "2026-05-28T01:30:00.000Z",
+          },
+          modelQuotaRefreshedAt: 1779800000000,
         },
       ],
     });
@@ -70,6 +77,13 @@ describe("TokenServerService", () => {
     expect(status.accessKeys).toHaveLength(1);
     expect(status.accounts.total).toBe(1);
     expect(status.accounts.enabled).toBe(1);
+    expect(status.quota.accounts[0].modelQuotaFractions).toEqual({
+      MODEL_PLACEHOLDER_M35: 0.72,
+    });
+    expect(status.quota.accounts[0].modelQuotaResetTimes).toEqual({
+      MODEL_PLACEHOLDER_M35: "2026-05-28T01:30:00.000Z",
+    });
+    expect(status.quota.accounts[0].modelQuotaRefreshedAt).toBe(1779800000000);
   });
 
   it("rejects lease-token when the access key is invalid", async () => {

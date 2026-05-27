@@ -405,17 +405,16 @@ export class RosettaService {
         );
         const health = await fetchAccountHealth(token, acc.projectId, acc.email);
 
-        // Update credits (nested object — matches getStatus() + frontend)
-        if (health.credits.known) {
-          acc.credits = {
-            known: true,
-            available: health.credits.available,
-            creditAmount: health.credits.creditAmount,
-            minCreditAmount: health.credits.minCreditAmount,
-            paidTierID: health.credits.paidTierID,
-            creditsRefreshedAt: new Date().toISOString(),
-          };
-        }
+        // Update credits even when GOOGLE_ONE_AI is absent, so stale "exhausted"
+        // values do not survive a successful refresh with unknown credit data.
+        acc.credits = {
+          known: health.credits.known,
+          available: health.credits.available,
+          creditAmount: health.credits.creditAmount,
+          minCreditAmount: health.credits.minCreditAmount,
+          paidTierID: health.credits.paidTierID,
+          creditsRefreshedAt: new Date().toISOString(),
+        };
 
         // Update planType (detect upgrades)
         if (health.planType) {
@@ -491,16 +490,14 @@ export class RosettaService {
 
         // Phase 2: Credits + planType via loadCodeAssist
         const health = await fetchAccountHealth(token, acc.projectId, acc.email);
-        if (health.credits.known) {
-          acc.credits = {
-            known: true,
-            available: health.credits.available,
-            creditAmount: health.credits.creditAmount,
-            minCreditAmount: health.credits.minCreditAmount,
-            paidTierID: health.credits.paidTierID,
-            creditsRefreshedAt: new Date().toISOString(),
-          };
-        }
+        acc.credits = {
+          known: health.credits.known,
+          available: health.credits.available,
+          creditAmount: health.credits.creditAmount,
+          minCreditAmount: health.credits.minCreditAmount,
+          paidTierID: health.credits.paidTierID,
+          creditsRefreshedAt: new Date().toISOString(),
+        };
         if (health.planType && health.planType !== acc.planType) {
           acc.planType = health.planType;
         }
@@ -515,12 +512,16 @@ export class RosettaService {
             acc.planType = detectedTier;
           }
 
-          // Store per-model quota fractions on the account
+          // Store per-model quota fractions + reset times on the account
           acc.modelQuotaFractions = {};
+          acc.modelQuotaResetTimes = {};
           acc.modelQuotaRefreshedAt = Date.now();
           for (const [modelKey, info] of Object.entries(modelsResult.models)) {
             if (info.remainingFraction != null) {
               acc.modelQuotaFractions[modelKey] = info.remainingFraction;
+            }
+            if (info.resetTime) {
+              acc.modelQuotaResetTimes[modelKey] = info.resetTime;
             }
           }
 

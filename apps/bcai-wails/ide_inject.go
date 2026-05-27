@@ -39,15 +39,51 @@ type IDEStatus struct {
 
 var (
 	ideInjectMu sync.Mutex
+
+	// ── 检测结果缓存（避免每次轮询都执行耗时的系统命令） ──
+	detectCacheMu sync.RWMutex
+
+	// IDE/Hub 路径缓存 (30s TTL)
+	cachedIDEPath     string
+	cachedIDEPathAt   time.Time
+	cachedHubPath     string
+	cachedHubPathAt   time.Time
+	pathCacheTTL      = 30 * time.Second
+
+	// asar 补丁检查缓存 (基于 mtime+size, 30s TTL)
+	cachedAsarResult  bool
+	cachedAsarKey     string // "mtime|size" 作为 cache key
+	cachedAsarAt      time.Time
+	asarCacheTTL      = 30 * time.Second
+
+	// LS 进程查询缓存 (5s TTL)
+	cachedLSProcs     []lsProcessInfo
+	cachedLSProcsAt   time.Time
+	lsProcsCacheTTL   = 5 * time.Second
+
+	// DetectIDEProducts 整体结果缓存 (5s TTL)
+	cachedIDEStatus   *IDEStatus
+	cachedIDEStatusAt time.Time
+	ideStatusCacheTTL = 5 * time.Second
 )
 
 // DetectIDEProducts 检测所有支持的产品
+// 使用缓存避免每次轮询都执行耗时的系统命令（mdfind、ps 等）
 func DetectIDEProducts(proxyPort int) IDEStatus {
+	// 顶层缓存：5 秒内直接返回上次结果
+	detectCacheMu.RLock()
+	if cachedIDEStatus != nil && time.Since(cachedIDEStatusAt) < ideStatusCacheTTL {
+		result := *cachedIDEStatus
+		detectCacheMu.RUnlock()
+		return result
+	}
+	detectCacheMu.RUnlock()
+
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	products := []IDEProduct{}
 
 	// 1. Antigravity IDE (settings.json 注入)
-	idePath := detectAntigravityIDEPath()
+	idePath := detectAntigravityIDEPathCached()
 	ideSettingsPath := getIDESettingsPath()
 	ideInjected := false
 	if ideSettingsPath != "" {
@@ -64,11 +100,11 @@ func DetectIDEProducts(proxyPort int) IDEStatus {
 	})
 
 	// 2. Antigravity Hub / Antigravity.app (asar 补丁)
-	hubPath := detectAntigravityHubPath()
+	hubPath := detectAntigravityHubPathCached()
 	hubInjected := false
 	if hubPath != "" {
 		asarPath := getAsarPath(hubPath)
-		hubInjected = checkAsarPatchedForUs(asarPath, proxyURL)
+		hubInjected = checkAsarPatchedCached(asarPath, proxyURL)
 	}
 	products = append(products, IDEProduct{
 		ID:                "antigravity_hub",
@@ -80,11 +116,139 @@ func DetectIDEProducts(proxyPort int) IDEStatus {
 		InjectionType:     "asar",
 	})
 
-	return IDEStatus{
+	result := IDEStatus{
 		Products:         products,
 		ProxyURL:         proxyURL,
-		IsLSProxyApplied: IsLSProxyApplied(proxyPort),
+		IsLSProxyApplied: IsLSProxyAppliedCached(proxyPort),
 	}
+
+	// 写入缓存
+	detectCacheMu.Lock()
+	cachedIDEStatus = &result
+	cachedIDEStatusAt = time.Now()
+	detectCacheMu.Unlock()
+
+	return result
+}
+
+// ── 带缓存的检测函数 ──
+
+// detectAntigravityIDEPathCached 带 30s 缓存的 IDE 路径检测
+func detectAntigravityIDEPathCached() string {
+	detectCacheMu.RLock()
+	if time.Since(cachedIDEPathAt) < pathCacheTTL {
+		p := cachedIDEPath
+		detectCacheMu.RUnlock()
+		return p
+	}
+	detectCacheMu.RUnlock()
+
+	p := detectAntigravityIDEPath()
+
+	detectCacheMu.Lock()
+	cachedIDEPath = p
+	cachedIDEPathAt = time.Now()
+	detectCacheMu.Unlock()
+	return p
+}
+
+// detectAntigravityHubPathCached 带 30s 缓存的 Hub 路径检测
+func detectAntigravityHubPathCached() string {
+	detectCacheMu.RLock()
+	if time.Since(cachedHubPathAt) < pathCacheTTL {
+		p := cachedHubPath
+		detectCacheMu.RUnlock()
+		return p
+	}
+	detectCacheMu.RUnlock()
+
+	p := detectAntigravityHubPath()
+
+	detectCacheMu.Lock()
+	cachedHubPath = p
+	cachedHubPathAt = time.Now()
+	detectCacheMu.Unlock()
+	return p
+}
+
+// checkAsarPatchedCached 带缓存的 asar 补丁检查
+// 使用文件 mtime+size 作为 cache key，文件未变时直接返回缓存
+func checkAsarPatchedCached(asarPath string, proxyURL string) bool {
+	if asarPath == "" {
+		return false
+	}
+
+	// 用 stat 获取 mtime+size 构造 cache key（比读整个文件快几个数量级）
+	info, err := os.Stat(asarPath)
+	if err != nil {
+		return false
+	}
+	key := fmt.Sprintf("%d|%d|%s", info.ModTime().UnixNano(), info.Size(), proxyURL)
+
+	detectCacheMu.RLock()
+	if key == cachedAsarKey && time.Since(cachedAsarAt) < asarCacheTTL {
+		result := cachedAsarResult
+		detectCacheMu.RUnlock()
+		return result
+	}
+	detectCacheMu.RUnlock()
+
+	// 缓存未命中，执行完整检查
+	result := checkAsarPatchedForUs(asarPath, proxyURL)
+
+	detectCacheMu.Lock()
+	cachedAsarResult = result
+	cachedAsarKey = key
+	cachedAsarAt = time.Now()
+	detectCacheMu.Unlock()
+	return result
+}
+
+// IsLSProxyAppliedCached 带 5s 缓存的 LS 代理检查
+func IsLSProxyAppliedCached(proxyPort int) bool {
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	processes := queryLanguageServerProcessesCached()
+
+	if len(processes) == 0 {
+		return false
+	}
+
+	for _, p := range processes {
+		if !strings.Contains(p.CmdLine, proxyURL) {
+			return false
+		}
+	}
+	return true
+}
+
+// queryLanguageServerProcessesCached 带 5s 缓存的 LS 进程查询
+func queryLanguageServerProcessesCached() []lsProcessInfo {
+	detectCacheMu.RLock()
+	if time.Since(cachedLSProcsAt) < lsProcsCacheTTL {
+		result := cachedLSProcs
+		detectCacheMu.RUnlock()
+		return result
+	}
+	detectCacheMu.RUnlock()
+
+	result := queryLanguageServerProcesses()
+
+	detectCacheMu.Lock()
+	cachedLSProcs = result
+	cachedLSProcsAt = time.Now()
+	detectCacheMu.Unlock()
+	return result
+}
+
+// InvalidateIDEDetectCache 清除所有检测缓存（注入/恢复操作后调用）
+func InvalidateIDEDetectCache() {
+	detectCacheMu.Lock()
+	defer detectCacheMu.Unlock()
+	cachedIDEStatus = nil
+	cachedIDEPathAt = time.Time{}
+	cachedHubPathAt = time.Time{}
+	cachedAsarKey = ""
+	cachedLSProcsAt = time.Time{}
 }
 
 // ======================== settings.json 注入 ========================
