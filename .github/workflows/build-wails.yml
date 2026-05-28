@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (例如 4.3.0)'
+        description: '版本号 (例如 5.2.0)'
         required: true
-        default: '4.3.0'
+        default: '5.2.0'
       changelog:
         description: '更新日志 (简短描述本次更新)'
         required: false
