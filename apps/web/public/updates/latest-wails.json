@@ -3,25 +3,25 @@
   "url": "https://bcai.site/updates/BingchaAI-5.2.0.exe",
   "sha256": "8BB056DBB6F3162F7627B39D0786C984B77565BEBFF0A2AD7A21558BCF96FCB8",
   "size": 13462016,
-  "changelog": "性能优化，新增额度统计及卡密校验，大版本升级到 5.2.0",
+  "changelog": "预热续租带模型选号+版本强制升级+积分消耗页面",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
       "url": "https://bcai.site/updates/BingchaAI-5.2.0-arm64.dmg",
-      "sha256": "5C8E97BA84DC8D6D77BA35B7B73C65A808300785D3DCC7F7B854B9FD63DB057C",
-      "size": 7331206
+      "sha256": "6FB3F342244A7238FE1358F19699160C36ABF35638248EDAE9D6832F327728A7",
+      "size": 7331201
     },
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.2.0-amd64.dmg",
-      "sha256": "7F71F6CD17544E2AEB5A4A185AC3E840888ED64898A850BFEA4459B9712C92D1",
-      "size": 7706226
+      "sha256": "07256D53FF3760155732E0B320DD6E5C7382D9C0473AD125B664CA8D9CAD7272",
+      "size": 7706248
     }
   },
   "linux": {
     "amd64": {
       "url": "https://bcai.site/updates/BingchaAI-5.2.0-linux-amd64.tar.gz",
-      "sha256": "70FDDD5537E39BA9CFD21CBF9EE66F0B2F6A25D26DD428E5E038068313A25923",
-      "size": 5805716
+      "sha256": "73507B1A0DAE654FB17837BABF661FC73C1B5C2BEB7AE6CA072F7E49ADA3D01D",
+      "size": 5805697
     }
   }
 }
