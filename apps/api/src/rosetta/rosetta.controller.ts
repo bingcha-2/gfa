@@ -63,6 +63,20 @@ export class RosettaController {
     return result;
   }
 
+  @Post("cleanup-expired-keys")
+  cleanupExpiredKeys() {
+    const result = this.rosetta.cleanupExpiredKeys();
+    this.tokenServer.reloadAccessKeys();
+    return result;
+  }
+
+  @Post("cleanup-unbound-keys")
+  cleanupUnboundKeys() {
+    const result = this.rosetta.cleanupUnboundKeys();
+    this.tokenServer.reloadAccessKeys();
+    return result;
+  }
+
   @Get("throttle-config")
   getThrottleConfig() {
     return this.rosetta.getThrottleConfig();

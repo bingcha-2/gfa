@@ -38,7 +38,8 @@ type IDEStatus struct {
 }
 
 var (
-	ideInjectMu sync.Mutex
+	ideInjectMu            sync.Mutex
+	asarNeedsPrivilege     bool // 当前 asar 操作是否需要提权写入（受 ideInjectMu 保护）
 
 	// ── 检测结果缓存（避免每次轮询都执行耗时的系统命令） ──
 	detectCacheMu sync.RWMutex
@@ -771,39 +772,126 @@ func readAsarJS(asarData []byte) (jsContent string, headerPickleSize uint32, dat
 // 2. 注入/替换 env['CLOUD_CODE_URL'] 环境变量
 // ensureAsarWritable 确保 macOS 上 app 包内的 asar 文件可写
 // 分层尝试: xattr -cr（免密）→ osascript 提权（弹密码框）
+// 当 Go 进程受 macOS TCC App Management 限制无法直接写入时，
+// 设置 asarNeedsPrivilege=true，后续操作通过 osascript 提权写入
 func ensureAsarWritable(appPath string) error {
 	if runtime.GOOS != "darwin" {
+		asarNeedsPrivilege = false
 		return nil
 	}
 
-	// 第一层: 移除隔离属性（大多数情况下足够，不需要密码）
+	asarNeedsPrivilege = false
+	testFile := filepath.Join(appPath, "Contents", "Resources", ".write_test")
+
+	// 第一层: 移除隔离属性 + chmod（大多数情况下足够，不需要密码）
 	Log("[ide-inject] 正在移除 macOS 隔离属性: %s", appPath)
 	_ = hideCmd("xattr", "-cr", appPath).Run()
 	_ = hideCmd("chmod", "-R", "u+w", filepath.Join(appPath, "Contents", "Resources")).Run()
 
-	// 测试写入权限
-	testFile := filepath.Join(appPath, "Contents", "Resources", ".write_test")
+	// 测试 Go 进程是否能直接写入
 	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
 		os.Remove(testFile)
-		Log("[ide-inject] 隔离属性移除成功，已获得写入权限")
+		Log("[ide-inject] 直接写入权限正常")
 		return nil
+	} else {
+		Log("[ide-inject] Go 进程直接写入失败: %v", err)
 	}
 
 	// 第二层: osascript 提权（弹出系统密码框）
+	// macOS Ventura+ 的 App Management (TCC) 可能阻止本进程写入其他 app 包，
+	// 即使文件权限允许也不行，必须通过 osascript 以 root 身份操作
 	Log("[ide-inject] 需要管理员权限，正在请求授权...")
 	script := fmt.Sprintf(`do shell script "xattr -cr '%s' && chmod -R u+w '%s/Contents/Resources'" with administrator privileges`, appPath, appPath)
 	if err := hideCmd("osascript", "-e", script).Run(); err != nil {
+		Log("[ide-inject] 管理员授权失败: %v", err)
 		return fmt.Errorf("获取写入权限失败（用户可能取消了授权）: %w", err)
 	}
 
-	// 再次测试
+	// 再次测试 Go 进程直接写入
 	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
 		os.Remove(testFile)
-		Log("[ide-inject] 管理员授权成功，已获得写入权限")
+		Log("[ide-inject] 管理员授权成功，已获得直接写入权限")
 		return nil
+	} else {
+		Log("[ide-inject] 管理员授权后 Go 进程仍无法直接写入: %v (可能受 TCC App Management 限制)", err)
 	}
 
-	return fmt.Errorf("即使提权后仍无法写入 app 包，可能受 SIP 保护")
+	// 第三层: Go 进程受 TCC 限制，但 osascript 可以写入
+	// 验证 osascript 方式是否能写入
+	touchScript := fmt.Sprintf(`do shell script "echo test > '%s'" with administrator privileges`, testFile)
+	if err := hideCmd("osascript", "-e", touchScript).Run(); err != nil {
+		Log("[ide-inject] osascript 提权写入也失败: %v，可能受 SIP 保护", err)
+		return fmt.Errorf("即使提权后仍无法写入 app 包，可能受 SIP 保护: %w", err)
+	}
+	_ = hideCmd("rm", "-f", testFile).Run()
+
+	// osascript 可以写入，设置标志让后续操作通过 osascript 执行
+	asarNeedsPrivilege = true
+	Log("[ide-inject] 已切换到提权写入模式（通过 osascript 操作文件）")
+	return nil
+}
+
+// ── 提权文件操作 helpers（受 ideInjectMu 保护，仅在 asarNeedsPrivilege=true 时使用）──
+
+// asarWriteFile 写入文件，自动选择直接写入或提权写入
+func asarWriteFile(path string, data []byte, perm os.FileMode) error {
+	if !asarNeedsPrivilege {
+		return os.WriteFile(path, data, perm)
+	}
+	// 提权模式: 先写到临时目录（Go 进程有权限），再用 osascript 移动到目标
+	tmpFile, err := os.CreateTemp("", "asar_priv_*")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("写入临时文件失败: %w", err)
+	}
+	tmpFile.Close()
+
+	script := fmt.Sprintf(`do shell script "cp '%s' '%s' && chmod %o '%s'" with administrator privileges`,
+		tmpPath, path, perm, path)
+	if err := hideCmd("osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("提权写入 %s 失败: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+// asarRename 重命名/移动文件，自动选择直接操作或提权操作
+func asarRename(src, dst string) error {
+	if !asarNeedsPrivilege {
+		return os.Rename(src, dst)
+	}
+	script := fmt.Sprintf(`do shell script "mv -f '%s' '%s'" with administrator privileges`, src, dst)
+	if err := hideCmd("osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("提权移动 %s 失败: %w", filepath.Base(src), err)
+	}
+	return nil
+}
+
+// asarCopyFile 复制文件，自动选择直接操作或提权操作
+func asarCopyFile(src, dst string) error {
+	if !asarNeedsPrivilege {
+		return copyFile(src, dst)
+	}
+	script := fmt.Sprintf(`do shell script "cp '%s' '%s'" with administrator privileges`, src, dst)
+	if err := hideCmd("osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("提权复制 %s 失败: %w", filepath.Base(src), err)
+	}
+	return nil
+}
+
+// asarRemove 删除文件，自动选择直接操作或提权操作
+func asarRemove(path string) error {
+	if !asarNeedsPrivilege {
+		return os.Remove(path)
+	}
+	script := fmt.Sprintf(`do shell script "rm -f '%s'" with administrator privileges`, path)
+	_ = hideCmd("osascript", "-e", script).Run()
+	return nil
 }
 
 func PatchAsar(proxyPort int) error {
@@ -908,7 +996,7 @@ func PatchAsar(proxyPort int) error {
 
 	// 备份原 asar（仅在没有备份时才备份，避免覆盖干净备份）
 	if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
-		if err := copyFile(asarPath, backupPath); err != nil {
+		if err := asarCopyFile(asarPath, backupPath); err != nil {
 			return fmt.Errorf("备份 asar 失败: %w", err)
 		}
 		Log("[ide-inject] 已备份 app.asar -> app.asar.bak")
@@ -932,10 +1020,10 @@ func PatchAsar(proxyPort int) error {
 	copy(newAsar[absoluteOffset:], newJsBytes)
 
 	tmpPath := asarPath + "_patch_tmp"
-	if err := os.WriteFile(tmpPath, newAsar, 0644); err != nil {
+	if err := asarWriteFile(tmpPath, newAsar, 0644); err != nil {
 		return fmt.Errorf("写入补丁 asar 失败: %w", err)
 	}
-	if err := os.Rename(tmpPath, asarPath); err != nil {
+	if err := asarRename(tmpPath, asarPath); err != nil {
 		return fmt.Errorf("替换 asar 失败: %w", err)
 	}
 
@@ -990,10 +1078,10 @@ func rebuildAsarWithPatchedJS(origAsar []byte, header *asarHeader, headerPickleS
 	}
 
 	tmpPath := outputPath + "_patch_tmp"
-	if err := os.WriteFile(tmpPath, newAsar, 0644); err != nil {
+	if err := asarWriteFile(tmpPath, newAsar, 0644); err != nil {
 		return fmt.Errorf("写入补丁 asar 失败: %w", err)
 	}
-	if err := os.Rename(tmpPath, outputPath); err != nil {
+	if err := asarRename(tmpPath, outputPath); err != nil {
 		return fmt.Errorf("替换 asar 失败: %w", err)
 	}
 
@@ -1050,12 +1138,12 @@ func RestoreAsar() error {
 		}
 	}
 
-	if err := copyFile(backupPath, asarPath); err != nil {
+	if err := asarCopyFile(backupPath, asarPath); err != nil {
 		return fmt.Errorf("恢复 asar 失败: %w", err)
 	}
 
 	// 恢复后删除备份文件
-	_ = os.Remove(backupPath)
+	_ = asarRemove(backupPath)
 
 	Log("[ide-inject] 已从备份恢复 app.asar")
 	return nil

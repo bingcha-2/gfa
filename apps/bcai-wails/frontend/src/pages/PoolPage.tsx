@@ -206,7 +206,7 @@ function AccountRow({ acc, isExpanded, onToggleExpand }: {
               </Badge>
             )}
             {/* Credits */}
-            {acc.credits?.known && acc.credits.creditAmount > 0 && (
+            {acc.credits?.known && (
               <Badge variant={acc.credits.available ? 'success' : 'danger'} className="text-[9px] h-4 px-1">
                 积分 {Math.round(acc.credits.creditAmount)}
               </Badge>

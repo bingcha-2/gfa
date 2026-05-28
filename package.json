@@ -27,8 +27,11 @@
     "db:reset:sqlite": "node scripts/init-sqlite.mjs --reset",
     "db:seed": "node scripts/seed.mjs",
     "lint": "pnpm db:generate && pnpm -r lint",
-    "test": "pnpm -r test",
-    "test:e2e": "pnpm --filter @gfa/api test && pnpm --filter @gfa/worker test"
+    "test": "pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e",
+    "test:unit": "pnpm -r --if-present run test:unit && pnpm test:go",
+    "test:integration": "pnpm -r --if-present run test:integration",
+    "test:e2e": "pnpm -r --if-present run test:e2e",
+    "test:go": "cd apps/bcai-wails && go test ./..."
   },
   "dependencies": {
     "@prisma/client": "^6.19.2"

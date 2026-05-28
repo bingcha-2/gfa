@@ -66,6 +66,8 @@ import {
   ArrowUpIcon,
   KeyIcon,
   AlertTriangleIcon,
+  Loader2Icon,
+  UnplugIcon,
 } from "lucide-react";
 
 type AccessKey = {
@@ -94,6 +96,7 @@ type SortField =
   | "recentWindowTokens"
   | "totalRequests"
   | "anomalyCount"
+  | "createdAt"
   | null;
 
 function formatDuration(ms: number | undefined | null): string {
@@ -141,6 +144,12 @@ export default function RosettaKeysPage() {
   const [deleteTarget, setDeleteTarget] = useState<AccessKey | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Cleanup states
+  const [cleaningExpired, setCleaningExpired] = useState(false);
+  const [cleanExpiredOpen, setCleanExpiredOpen] = useState(false);
+  const [cleaningUnbound, setCleaningUnbound] = useState(false);
+  const [cleanUnboundOpen, setCleanUnboundOpen] = useState(false);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -203,6 +212,11 @@ export default function RosettaKeysPage() {
     if (!sortField) return keys;
     const dir = sortDir === "asc" ? 1 : -1;
     return [...keys].sort((a, b) => {
+      if (sortField === "createdAt") {
+        const av = new Date(a.createdAt || 0).getTime();
+        const bv = new Date(b.createdAt || 0).getTime();
+        return (av - bv) * dir;
+      }
       const av = Number((a as Record<string, unknown>)[sortField] || 0);
       const bv = Number((b as Record<string, unknown>)[sortField] || 0);
       return (av - bv) * dir;
@@ -349,6 +363,40 @@ export default function RosettaKeysPage() {
     }
   };
 
+  // Cleanup expired keys
+  const handleCleanupExpired = async () => {
+    setCleaningExpired(true);
+    try {
+      const res = await fetch("/api/rosetta/cleanup-expired-keys", { method: "POST" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "清理失败");
+      toast.success(data.deleted > 0 ? `已清理 ${data.deleted} 条过期卡密` : "没有需要清理的过期卡密");
+      setCleanExpiredOpen(false);
+      fetchKeys();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "清理失败");
+    } finally {
+      setCleaningExpired(false);
+    }
+  };
+
+  // Cleanup unbound keys
+  const handleCleanupUnbound = async () => {
+    setCleaningUnbound(true);
+    try {
+      const res = await fetch("/api/rosetta/cleanup-unbound-keys", { method: "POST" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "清理失败");
+      toast.success(data.deleted > 0 ? `已清理 ${data.deleted} 条未绑定设备的卡密` : "没有需要清理的未绑定卡密");
+      setCleanUnboundOpen(false);
+      fetchKeys();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "清理失败");
+    } finally {
+      setCleaningUnbound(false);
+    }
+  };
+
   const statusVariant = (status: string) => {
     switch (status) {
       case "active":
@@ -478,6 +526,45 @@ export default function RosettaKeysPage() {
               <XIcon data-icon className="size-4" />
               清空
             </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <AlertDialog open={cleanExpiredOpen} onOpenChange={setCleanExpiredOpen}>
+              <Button variant="outline" size="sm" disabled={cleaningExpired} onClick={() => setCleanExpiredOpen(true)}>
+                {cleaningExpired ? <Loader2Icon data-icon className="size-4 animate-spin" /> : <Trash2Icon data-icon className="size-4" />}
+                清理过期
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>清理过期卡密？</AlertDialogTitle>
+                  <AlertDialogDescription>将删除状态为 expired 或已超过有效期的卡密记录，不可恢复。</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCleanupExpired} disabled={cleaningExpired}>
+                    {cleaningExpired && <Loader2Icon data-icon className="size-4 animate-spin" />}
+                    确认清理
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <AlertDialog open={cleanUnboundOpen} onOpenChange={setCleanUnboundOpen}>
+              <Button variant="outline" size="sm" disabled={cleaningUnbound} onClick={() => setCleanUnboundOpen(true)}>
+                {cleaningUnbound ? <Loader2Icon data-icon className="size-4 animate-spin" /> : <UnplugIcon data-icon className="size-4" />}
+                清理未绑定
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>清理未绑定设备的卡密？</AlertDialogTitle>
+                  <AlertDialogDescription>将删除所有没有绑定客户端ID的卡密记录，不可恢复。</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCleanupUnbound} disabled={cleaningUnbound}>
+                    {cleaningUnbound && <Loader2Icon data-icon className="size-4 animate-spin" />}
+                    确认清理
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </CardHeader>
         <CardContent>
@@ -497,6 +584,7 @@ export default function RosettaKeysPage() {
                 ["totalTokensUsed", "总Token"],
                 ["totalRequests", "请求数"],
                 ["anomalyCount", "异常"],
+                ["createdAt", "创建时间"],
               ] as [SortField, string][]
             ).map(([field, label]) => (
               <Button

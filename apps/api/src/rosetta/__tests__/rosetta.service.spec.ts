@@ -145,4 +145,81 @@ describe("RosettaService", () => {
     expect(service.saveThrottleConfig({ delete: true })).toMatchObject({ ok: true, deleted: true });
     expect(service.getThrottleConfig()).toMatchObject({ ok: true, config: null });
   });
+
+  it("cleanupExpiredKeys removes expired keys and keeps active ones", () => {
+    const now = Date.now();
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [
+        // Explicitly expired status
+        { id: "k1", key: "key1", status: "expired", createdAt: new Date(now - 86400000).toISOString() },
+        // Expired by firstUsedAt + durationMs (used 2 hours ago, duration 1 hour)
+        {
+          id: "k2", key: "key2", status: "active",
+          firstUsedAt: new Date(now - 7200000).toISOString(),
+          durationMs: 3600000,
+          createdAt: new Date(now - 86400000).toISOString(),
+        },
+        // Still active (used 30 min ago, duration 1 hour)
+        {
+          id: "k3", key: "key3", status: "active",
+          firstUsedAt: new Date(now - 1800000).toISOString(),
+          durationMs: 3600000,
+          createdAt: new Date(now - 86400000).toISOString(),
+        },
+        // Never used, no duration — should be kept
+        { id: "k4", key: "key4", status: "active", createdAt: new Date(now).toISOString() },
+      ],
+    });
+
+    const service = new RosettaService({ dataDir: tempDir });
+    const result = service.cleanupExpiredKeys();
+
+    expect(result).toMatchObject({ ok: true, deleted: 2 });
+    const remaining = service.listAccessKeys({});
+    expect(remaining.keys.map((k) => k.id)).toEqual(["k3", "k4"]);
+  });
+
+  it("cleanupExpiredKeys returns deleted:0 when no expired keys exist", () => {
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [
+        { id: "k1", key: "key1", status: "active", createdAt: new Date().toISOString() },
+      ],
+    });
+
+    const result = new RosettaService({ dataDir: tempDir }).cleanupExpiredKeys();
+    expect(result).toMatchObject({ ok: true, deleted: 0 });
+  });
+
+  it("cleanupUnboundKeys removes keys without sessionClientId", () => {
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [
+        // No sessionClientId
+        { id: "k1", key: "key1", status: "active" },
+        // Empty string sessionClientId
+        { id: "k2", key: "key2", status: "active", sessionClientId: "" },
+        // Whitespace-only sessionClientId
+        { id: "k3", key: "key3", status: "active", sessionClientId: "  " },
+        // Has a real sessionClientId — should be kept
+        { id: "k4", key: "key4", status: "active", sessionClientId: "client-abc-123" },
+      ],
+    });
+
+    const service = new RosettaService({ dataDir: tempDir });
+    const result = service.cleanupUnboundKeys();
+
+    expect(result).toMatchObject({ ok: true, deleted: 3 });
+    const remaining = service.listAccessKeys({});
+    expect(remaining.keys.map((k) => k.id)).toEqual(["k4"]);
+  });
+
+  it("cleanupUnboundKeys returns deleted:0 when all keys have clients", () => {
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [
+        { id: "k1", key: "key1", status: "active", sessionClientId: "client-1" },
+      ],
+    });
+
+    const result = new RosettaService({ dataDir: tempDir }).cleanupUnboundKeys();
+    expect(result).toMatchObject({ ok: true, deleted: 0 });
+  });
 });

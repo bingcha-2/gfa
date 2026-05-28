@@ -267,6 +267,43 @@ export class RosettaService {
     return { ok: true, totalKeys: filtered.length };
   }
 
+  cleanupExpiredKeys() {
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const now = Date.now();
+    const filtered = keys.filter((key: any) => {
+      // Explicitly expired status
+      if (String(key.status || "").toLowerCase() === "expired") return false;
+      // Compute expiresAt from firstUsedAt + durationMs
+      if (key.firstUsedAt && Number(key.durationMs || 0) > 0) {
+        const expiresAt = Date.parse(key.firstUsedAt) + Number(key.durationMs);
+        if (expiresAt <= now) return false;
+      }
+      return true;
+    });
+    const deleted = keys.length - filtered.length;
+    if (deleted > 0) {
+      writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
+    }
+    return { ok: true, deleted };
+  }
+
+  cleanupUnboundKeys() {
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const filtered = keys.filter((key: any) => {
+      const clientId = String(key.sessionClientId || "").trim();
+      return clientId.length > 0;
+    });
+    const deleted = keys.length - filtered.length;
+    if (deleted > 0) {
+      writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
+    }
+    return { ok: true, deleted };
+  }
+
   getThrottleConfig() {
     const filePath = path.join(this.dataDir, "throttle-config.json");
     if (!fs.existsSync(filePath)) return { ok: true, config: null, path: filePath };

@@ -623,6 +623,21 @@ func (p *AccountPool) MarkError(id int) {
 	acc.consecutiveErrors++
 }
 
+// ClearAccessToken clears the cached access token for an account,
+// forcing a refresh on the next GetAccessToken call.
+// Used when Google returns 401 (token expired/revoked).
+func (p *AccountPool) ClearAccessToken(id int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	acc, ok := p.accounts[id]
+	if !ok {
+		return
+	}
+	acc.accessToken = ""
+	acc.accessTokenExpiry = time.Time{}
+}
+
 // ─── Status / Listing ────────────────────────────────────────────────────
 
 type AccountInfo struct {
