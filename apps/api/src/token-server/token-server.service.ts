@@ -33,7 +33,7 @@ type ServiceOptions = {
   minClientVersion?: string;
   leaseTtlMs?: number;
   affinityTtlMs?: number;
-  creditTracker?: { record: (accountId: number, email: string, oldAmount: number, newAmount: number) => void };
+  creditTracker?: { record: (accountId: number, email: string, oldAmount: number, newAmount: number, accessKeyId?: string, accessKeyName?: string) => void };
 };
 
 type LeaseRecord = {
@@ -101,7 +101,7 @@ export class TokenServerService {
   private readonly minClientVersion: string;
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
-  private readonly creditTracker: { record: (accountId: number, email: string, oldAmount: number, newAmount: number) => void } | null;
+  private readonly creditTracker: { record: (accountId: number, email: string, oldAmount: number, newAmount: number, accessKeyId?: string, accessKeyName?: string) => void } | null;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
@@ -408,7 +408,7 @@ export class TokenServerService {
           if (this.creditTracker) {
             this.creditTracker.record(
               account.id, account.email, oldCreditAmount, newCreditAmount,
-              lease.accessKeyId, auth.record.name || undefined,
+              lease.accessKeyId, auth.record?.name || undefined,
             );
           }
           account.credits = {
