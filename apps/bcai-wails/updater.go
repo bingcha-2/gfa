@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +17,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.1.4"
+var AppVersion = "5.1.5"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
@@ -25,13 +27,51 @@ var (
 
 // ─── Update Info ─────────────────────────────────────────────────────────
 
+// PlatformAsset 平台特定的下载资源
+type PlatformAsset struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
 type UpdateInfo struct {
 	Version   string `json:"version"`
-	URL       string `json:"url"`       // 下载地址
-	SHA256    string `json:"sha256"`     // 校验和
+	URL       string `json:"url"`       // Windows 默认下载地址（向后兼容）
+	SHA256    string `json:"sha256"`    // 校验和
 	Size      int64  `json:"size"`      // 文件大小
 	Changelog string `json:"changelog"` // 更新日志
 	MinVer    string `json:"minVersion"` // 最低支持版本（低于此版本强制更新）
+
+	// 平台特定资源
+	MacOS map[string]PlatformAsset `json:"macOS"`
+	Linux map[string]PlatformAsset `json:"linux"`
+}
+
+// resolveAsset 根据当前平台和架构选择正确的下载资源
+func (info *UpdateInfo) resolveAsset() (downloadURL, checksum string, size int64, err error) {
+	arch := runtime.GOARCH
+
+	switch runtime.GOOS {
+	case "darwin":
+		if info.MacOS != nil {
+			if asset, ok := info.MacOS[arch]; ok && asset.URL != "" {
+				return asset.URL, asset.SHA256, asset.Size, nil
+			}
+		}
+		return "", "", 0, fmt.Errorf("manifest 中没有 macOS/%s 的下载地址", arch)
+	case "linux":
+		if info.Linux != nil {
+			if asset, ok := info.Linux[arch]; ok && asset.URL != "" {
+				return asset.URL, asset.SHA256, asset.Size, nil
+			}
+		}
+		return "", "", 0, fmt.Errorf("manifest 中没有 Linux/%s 的下载地址", arch)
+	default: // windows
+		if info.URL == "" {
+			return "", "", 0, fmt.Errorf("manifest 中没有 Windows 下载地址")
+		}
+		return info.URL, info.SHA256, info.Size, nil
+	}
 }
 
 type UpdateStatus struct {
@@ -53,7 +93,6 @@ type Updater struct {
 	stopCh     chan struct{}
 	running    bool
 	exePath    string // 当前 exe 路径
-	httpClient *http.Client
 }
 
 var (
@@ -70,12 +109,30 @@ func GetUpdater() *Updater {
 				Current: AppVersion,
 			},
 			exePath: exePath,
-			httpClient: &http.Client{
-				Timeout: 30 * time.Second,
-			},
 		}
 	})
 	return updaterInstance
+}
+
+// updaterHttpDo 执行 HTTP 请求，优先直连 bcai.site，失败回退到代理
+func updaterHttpDo(req *http.Request) (*http.Response, error) {
+	// 优先直连（和 leaser 等对 bcai.site 的请求保持一致）
+	resp, err := createBcaiClient().Do(req)
+	if err == nil {
+		return resp, nil
+	}
+	Log("[updater] Direct request failed (%v), retrying via proxy...", err)
+
+	// 直连失败，回退到系统代理 / 用户配置的上游代理
+	cfg := LoadConfig()
+	proxyClient := createHttpClient(cfg.UpstreamProxy)
+	// 需要重建 request，因为 body 可能已被消费（GET 没有 body，但保险起见）
+	retryReq, reqErr := http.NewRequest(req.Method, req.URL.String(), nil)
+	if reqErr != nil {
+		return nil, err // 返回原始错误
+	}
+	retryReq.Header = req.Header
+	return proxyClient.Do(retryReq)
 }
 
 // Start 启动自动检查更新（后台循环）
@@ -143,7 +200,7 @@ func (u *Updater) setStatus(s UpdateStatus) {
 // CheckForUpdate 检查是否有新版本
 func (u *Updater) CheckForUpdate() *UpdateInfo {
 	u.setStatus(UpdateStatus{Status: "checking"})
-	Log("[updater] Checking for updates...")
+	Log("[updater] Checking for updates... (platform: %s/%s)", runtime.GOOS, runtime.GOARCH)
 
 	req, err := http.NewRequest("GET", UpdateCheckURL, nil)
 	if err != nil {
@@ -152,7 +209,7 @@ func (u *Updater) CheckForUpdate() *UpdateInfo {
 	}
 	req.Header.Set("User-Agent", fmt.Sprintf("BingchaAI/%s (%s/%s)", AppVersion, runtime.GOOS, runtime.GOARCH))
 
-	resp, err := u.httpClient.Do(req)
+	resp, err := updaterHttpDo(req)
 	if err != nil {
 		Log("[updater] Check failed: %v", err)
 		u.setStatus(UpdateStatus{Status: "error", Error: fmt.Sprintf("网络错误: %v", err)})
@@ -191,6 +248,13 @@ func (u *Updater) CheckForUpdate() *UpdateInfo {
 		return nil
 	}
 
+	// 检查当前平台是否有对应的下载资源
+	if _, _, _, assetErr := info.resolveAsset(); assetErr != nil {
+		Log("[updater] New version v%s available but no asset for %s/%s: %v", info.Version, runtime.GOOS, runtime.GOARCH, assetErr)
+		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion})
+		return nil
+	}
+
 	Log("[updater] New version available: v%s (current: v%s)", info.Version, AppVersion)
 	u.mu.Lock()
 	u.info = &info
@@ -215,34 +279,46 @@ func (u *Updater) DownloadAndApply() error {
 		return fmt.Errorf("没有可用的更新")
 	}
 
-	downloadURL := info.URL
-	if downloadURL == "" {
-		return fmt.Errorf("更新下载地址为空")
+	downloadURL, expectedHash, expectedSize, err := info.resolveAsset()
+	if err != nil {
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: err.Error()})
+		return err
 	}
 
-	Log("[updater] Downloading v%s from %s", info.Version, downloadURL)
+	Log("[updater] Downloading v%s from %s (platform: %s/%s)", info.Version, downloadURL, runtime.GOOS, runtime.GOARCH)
 	u.setStatus(UpdateStatus{
 		Status:  "downloading",
 		Version: info.Version,
 		Percent: 0,
 	})
 
-	// 下载到临时文件
-	tmpDir := filepath.Dir(u.exePath)
-	tmpFile := filepath.Join(tmpDir, fmt.Sprintf(".update-%s.tmp", info.Version))
+	// 下载到临时目录
+	tmpDir := os.TempDir()
+	ext := ".tmp"
+	if runtime.GOOS == "darwin" {
+		ext = ".dmg"
+	} else if runtime.GOOS == "windows" {
+		ext = ".exe"
+	}
+	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("bcai-update-%s%s", info.Version, ext))
 	defer func() {
-		if _, err := os.Stat(tmpFile); err == nil {
-			// 如果更新失败，清理临时文件
-			u.mu.RLock()
-			status := u.status.Status
-			u.mu.RUnlock()
-			if status == "error" {
-				_ = os.Remove(tmpFile)
-			}
+		// 如果更新失败，清理临时文件
+		u.mu.RLock()
+		status := u.status.Status
+		u.mu.RUnlock()
+		if status == "error" {
+			_ = os.Remove(tmpFile)
 		}
 	}()
 
-	resp, err := u.httpClient.Do(mustNewRequest("GET", downloadURL))
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("请求创建失败: %v", err)})
+		return err
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("BingchaAI/%s (%s/%s)", AppVersion, runtime.GOOS, runtime.GOARCH))
+
+	resp, err := updaterHttpDo(req)
 	if err != nil {
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("下载失败: %v", err)})
 		return err
@@ -261,10 +337,11 @@ func (u *Updater) DownloadAndApply() error {
 	}
 
 	totalSize := resp.ContentLength
-	if totalSize <= 0 && info.Size > 0 {
-		totalSize = info.Size
+	if totalSize <= 0 && expectedSize > 0 {
+		totalSize = expectedSize
 	}
 
+	hasher := sha256.New()
 	var written int64
 	buf := make([]byte, 64*1024)
 	lastReport := time.Now()
@@ -277,6 +354,7 @@ func (u *Updater) DownloadAndApply() error {
 				u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("写入失败: %v", wErr)})
 				return wErr
 			}
+			hasher.Write(buf[:n])
 			written += int64(n)
 
 			// 每 200ms 更新一次进度
@@ -303,10 +381,140 @@ func (u *Updater) DownloadAndApply() error {
 
 	Log("[updater] Download complete: %d bytes", written)
 
+	// SHA256 校验
+	if expectedHash != "" {
+		actualHash := strings.ToUpper(hex.EncodeToString(hasher.Sum(nil)))
+		expectedUpper := strings.ToUpper(expectedHash)
+		if actualHash != expectedUpper {
+			errMsg := fmt.Sprintf("SHA256 校验失败: 期望 %s, 实际 %s", expectedUpper[:16]+"...", actualHash[:16]+"...")
+			Log("[updater] %s", errMsg)
+			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
+			return fmt.Errorf(errMsg)
+		}
+		Log("[updater] SHA256 verified OK")
+	}
+
+	// 根据平台执行不同的安装策略
+	if runtime.GOOS == "darwin" {
+		return u.applyMacOSUpdate(tmpFile, info)
+	}
+	return u.applyWindowsLinuxUpdate(tmpFile, info)
+}
+
+// applyMacOSUpdate macOS: 挂载 DMG，拷贝 .app 到原位置，卸载 DMG
+func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
+	Log("[updater] Applying macOS update from DMG: %s", dmgPath)
+
+	// 1. 找到当前 .app bundle 的路径
+	appBundlePath := findAppBundlePath(u.exePath)
+	if appBundlePath == "" {
+		errMsg := "无法定位当前 .app 路径"
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
+		return fmt.Errorf(errMsg)
+	}
+	Log("[updater] Current app bundle: %s", appBundlePath)
+
+	// 2. 挂载 DMG
+	mountPoint := filepath.Join(os.TempDir(), "bcai-update-mount")
+	_ = os.MkdirAll(mountPoint, 0755)
+	// 先尝试卸载残留
+	_ = exec.Command("hdiutil", "detach", mountPoint, "-force").Run()
+
+	mountCmd := exec.Command("hdiutil", "attach", dmgPath, "-mountpoint", mountPoint, "-nobrowse", "-noautoopen")
+	mountOut, err := mountCmd.CombinedOutput()
+	if err != nil {
+		errMsg := fmt.Sprintf("挂载 DMG 失败: %v\n%s", err, string(mountOut))
+		Log("[updater] %s", errMsg)
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: "挂载 DMG 失败"})
+		return fmt.Errorf(errMsg)
+	}
+	defer func() {
+		_ = exec.Command("hdiutil", "detach", mountPoint, "-force").Run()
+		_ = os.Remove(dmgPath)
+	}()
+	Log("[updater] DMG mounted at %s", mountPoint)
+
+	// 3. 在挂载卷中找到 .app
+	entries, err := os.ReadDir(mountPoint)
+	if err != nil {
+		errMsg := fmt.Sprintf("读取 DMG 内容失败: %v", err)
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
+		return fmt.Errorf(errMsg)
+	}
+
+	var sourceApp string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".app") {
+			sourceApp = filepath.Join(mountPoint, entry.Name())
+			break
+		}
+	}
+	if sourceApp == "" {
+		errMsg := "DMG 中未找到 .app 文件"
+		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
+		return fmt.Errorf(errMsg)
+	}
+	Log("[updater] Found app in DMG: %s", sourceApp)
+
+	// 4. 备份旧 .app，然后用新 .app 替换
+	backupPath := appBundlePath + ".old"
+	_ = os.RemoveAll(backupPath)
+
+	if err := os.Rename(appBundlePath, backupPath); err != nil {
+		// 可能没权限，尝试用 osascript 提权
+		Log("[updater] Rename failed (%v), trying with admin privileges...", err)
+		script := fmt.Sprintf(`do shell script "rm -rf %q && cp -R %q %q" with administrator privileges`,
+			appBundlePath, sourceApp, appBundlePath)
+		adminCmd := exec.Command("osascript", "-e", script)
+		if adminOut, adminErr := adminCmd.CombinedOutput(); adminErr != nil {
+			errMsg := fmt.Sprintf("替换应用失败（需要管理员权限）: %v\n%s", adminErr, string(adminOut))
+			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: "替换应用失败，权限不足"})
+			return fmt.Errorf(errMsg)
+		}
+	} else {
+		// rename 成功，用 cp -R 复制新 .app
+		cpCmd := exec.Command("cp", "-R", sourceApp, appBundlePath)
+		if cpOut, cpErr := cpCmd.CombinedOutput(); cpErr != nil {
+			// 回滚
+			Log("[updater] Copy failed, rolling back: %v\n%s", cpErr, string(cpOut))
+			_ = os.Rename(backupPath, appBundlePath)
+			errMsg := fmt.Sprintf("复制新版本失败: %v", cpErr)
+			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
+			return fmt.Errorf(errMsg)
+		}
+		// 清理备份
+		_ = os.RemoveAll(backupPath)
+	}
+
+	// 5. 清除 macOS quarantine 属性（从 DMG 复制的文件可能带有此属性）
+	_ = exec.Command("xattr", "-rd", "com.apple.quarantine", appBundlePath).Run()
+
+	Log("[updater] macOS update applied: v%s → v%s", AppVersion, info.Version)
+	u.setStatus(UpdateStatus{
+		Status:    "ready",
+		Version:   info.Version,
+		Changelog: info.Changelog,
+	})
+
+	// 自动重启
+	Log("[updater] Auto-restarting to apply update...")
+	time.Sleep(1 * time.Second)
+	u.RestartApp()
+
+	return nil
+}
+
+// applyWindowsLinuxUpdate Windows/Linux: 直接替换 exe 二进制
+func (u *Updater) applyWindowsLinuxUpdate(tmpFile string, info *UpdateInfo) error {
 	// 替换当前 exe
 	// Windows: 不能直接替换正在运行的 exe，使用 rename 策略
 	oldExe := u.exePath + ".old"
 	_ = os.Remove(oldExe) // 清理上次残留的 .old
+
+	// 设置可执行权限（Linux）
+	if runtime.GOOS == "linux" {
+		_ = os.Chmod(tmpFile, 0755)
+	}
 
 	// 1. 把当前 exe 重命名为 .old
 	if err := os.Rename(u.exePath, oldExe); err != nil {
@@ -324,8 +532,8 @@ func (u *Updater) DownloadAndApply() error {
 
 	Log("[updater] Update applied: v%s → v%s", AppVersion, info.Version)
 	u.setStatus(UpdateStatus{
-		Status:  "ready",
-		Version: info.Version,
+		Status:    "ready",
+		Version:   info.Version,
 		Changelog: info.Changelog,
 	})
 
@@ -344,12 +552,31 @@ func (u *Updater) RestartApp() error {
 	// 保存统计数据
 	GetUsageStats().Save()
 
-	cmd := exec.Command(u.exePath)
-	cmd.Dir = filepath.Dir(u.exePath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("restart failed: %w", err)
+	if runtime.GOOS == "darwin" {
+		// macOS: 用 open 命令启动 .app bundle
+		appBundlePath := findAppBundlePath(u.exePath)
+		if appBundlePath != "" {
+			cmd := exec.Command("open", "-a", appBundlePath)
+			if err := cmd.Start(); err != nil {
+				Log("[updater] open -a failed: %v, trying direct exec...", err)
+				// 降级：直接启动二进制
+				cmd2 := exec.Command(u.exePath)
+				cmd2.Dir = filepath.Dir(u.exePath)
+				_ = cmd2.Start()
+			}
+		} else {
+			cmd := exec.Command(u.exePath)
+			cmd.Dir = filepath.Dir(u.exePath)
+			_ = cmd.Start()
+		}
+	} else {
+		cmd := exec.Command(u.exePath)
+		cmd.Dir = filepath.Dir(u.exePath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("restart failed: %w", err)
+		}
 	}
 
 	// 退出当前进程
@@ -370,6 +597,22 @@ func (u *Updater) CleanupOldBinary() {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+// findAppBundlePath 从二进制路径向上找到 .app bundle 路径
+// 例如: /Applications/冰茶AI.app/Contents/MacOS/BingchaAI → /Applications/冰茶AI.app
+func findAppBundlePath(exePath string) string {
+	dir := exePath
+	for i := 0; i < 5; i++ {
+		dir = filepath.Dir(dir)
+		if strings.HasSuffix(dir, ".app") {
+			return dir
+		}
+		if dir == "/" || dir == "." {
+			break
+		}
+	}
+	return ""
+}
 
 // isNewerVersion 判断 a 是否比 b 新（简单数字版本比较）
 func isNewerVersion(a, b string) bool {
