@@ -447,7 +447,7 @@ func (p *AccountPool) GetAccessToken(id int) (string, error) {
 // ─── Account Selection ──────────────────────────────────────────────────
 
 // SelectAccount picks the best available account for a request.
-// Strategy: prefer enabled, non-exhausted, least-recently-used.
+// Strategy: prefer 5h model quota > unknown > credits-only, then LRU within each tier.
 func (p *AccountPool) SelectAccount(modelKey string, excludeIds []int) (*AccountEntry, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -502,14 +502,62 @@ func (p *AccountPool) SelectAccount(modelKey string, excludeIds []int) (*Account
 		return nil, fmt.Errorf("号池中无可用账号 (总数: %d, 启用: %d)", total, enabled)
 	}
 
-	// Sort by lastUsedAt (ascending) → pick least recently used
+	// Sort by quotaTier (ascending) first, then LRU within same tier.
+	// tier 0: has 5h model quota → tier 1: unknown → tier 2: quota exhausted (credits only)
 	sort.Slice(candidates, func(i, j int) bool {
+		tierI := candidates[i].quotaTier(modelKey)
+		tierJ := candidates[j].quotaTier(modelKey)
+		if tierI != tierJ {
+			return tierI < tierJ
+		}
 		return candidates[i].lastUsedAt.Before(candidates[j].lastUsedAt)
 	})
 
 	selected := candidates[0]
+	tier := selected.quotaTier(modelKey)
 	selected.lastUsedAt = now
+	if tier == 2 {
+		Log("[account-pool] Selected #%d (tier=%d: credits-only, no 5h quota for %s)", selected.ID, tier, modelKey)
+	} else if tier == 0 {
+		Log("[account-pool] Selected #%d (tier=%d: has 5h quota for %s)", selected.ID, tier, modelKey)
+	}
 	return selected, nil
+}
+
+// quotaTier classifies an account into selection priority tiers based on model quota data.
+//   - tier 0: has 5h model quota remaining (remainingFraction > 0)
+//   - tier 1: no quota data available (never refreshed) — treated as possibly having quota
+//   - tier 2: model quota exhausted (remainingFraction == 0), will consume credits
+func (acc *AccountEntry) quotaTier(modelKey string) int {
+	if len(acc.quotaGroups) == 0 {
+		return 1 // no quota data → unknown, medium priority
+	}
+	if modelKey == "" {
+		return 1 // no model specified → can't check
+	}
+	for _, group := range acc.quotaGroups {
+		for _, entry := range group.Entries {
+			if matchModelKey(entry.Key, modelKey) {
+				if entry.Percent > 0 {
+					return 0 // has 5h quota
+				}
+				return 2 // quota exhausted
+			}
+		}
+	}
+	return 1 // model not found in quota data → unknown
+}
+
+// matchModelKey checks if a quota entry key matches the requested model key.
+// Supports exact match and substring containment for flexibility
+// (e.g. "gemini-2.5-pro" matches "gemini-2.5-pro-preview").
+func matchModelKey(quotaKey, requestKey string) bool {
+	if quotaKey == requestKey {
+		return true
+	}
+	qLower := strings.ToLower(quotaKey)
+	rLower := strings.ToLower(requestKey)
+	return strings.Contains(qLower, rLower) || strings.Contains(rLower, qLower)
 }
 
 // MarkExhausted marks an account as quota-exhausted

@@ -191,6 +191,36 @@ export function accountWeight(
 // ── Account scoring for candidate selection ──────────────────────────────────
 
 /**
+ * Check if an account has remaining 5h model quota for a given model key.
+ * Returns true (no penalty) when:
+ *   - No modelQuotaFractions data exists (unknown → assume has quota)
+ *   - The requested model is not in the fractions map (no data for this model)
+ *   - The fraction is > 0 (has remaining quota)
+ * Returns false (should penalize) only when fraction === 0 for the exact model.
+ */
+export function hasModelQuotaRemaining(account: any, modelKey: string): boolean {
+  const fractions = account?.modelQuotaFractions;
+  if (!fractions || typeof fractions !== 'object') return true;
+
+  const normalized = normalizeModelKey(modelKey);
+  if (!normalized) return true;
+
+  // Exact match
+  if (normalized in fractions) {
+    return Number(fractions[normalized]) > 0;
+  }
+
+  // Fuzzy match (e.g. "gemini-2.5-pro" ↔ "gemini-2.5-pro-preview")
+  for (const key of Object.keys(fractions)) {
+    if (key.includes(normalized) || normalized.includes(key)) {
+      return Number(fractions[key]) > 0;
+    }
+  }
+
+  return true; // model not found in quota data → no penalty
+}
+
+/**
  * Score an account for lease candidate selection. Lower score = better candidate.
  */
 export function scoreAccount(
@@ -212,12 +242,17 @@ export function scoreAccount(
     : 0;
   const recentUsePenalty = Math.ceil(recentlyUsedMs / 1000);
 
+  // Quota priority: penalize accounts with exhausted 5h model quota.
+  // 25000 > 20000 affinity bonus → breaks affinity to save credits.
+  const quotaPenalty = hasModelQuotaRemaining(account, options.modelKey) ? 0 : 25000;
+
   return (
     modelActive * 2000 +
     totalActive * 1000 +
     recentUsePenalty -
     options.accountWeight * 20 +
-    affinity
+    affinity +
+    quotaPenalty
   );
 }
 

@@ -195,3 +195,99 @@ describe('buildRetryPolicy', () => {
     expect(policy.maxAttempts).toBe(2);
   });
 });
+
+// ── scoreAccount: quota-aware prioritization ─────────────────────────────────
+// TDD: These tests define the desired behavior BEFORE implementation.
+// They should FAIL until scoreAccount is updated with quotaPenalty logic.
+
+describe('scoreAccount — quota priority (prefer 5h quota over credits)', () => {
+  const baseOptions = {
+    now: Date.now(),
+    preferredAccountId: 0,
+    modelKey: 'gemini-2.5-pro',
+    activeLeaseCount: () => 0,
+    accountStats: { lastUsedAt: 0 },
+    accountWeight: 1,
+  };
+
+  it('should prefer account with remaining model quota over account with zero quota', () => {
+    const withQuota = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0.72 } };
+    const noQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0 } };
+
+    const scoreWith = scoreAccount(withQuota, baseOptions);
+    const scoreWithout = scoreAccount(noQuota, baseOptions);
+
+    expect(scoreWith).toBeLessThan(scoreWithout);
+  });
+
+  it('should treat account with no modelQuotaFractions as neutral (no penalty)', () => {
+    const noData = { id: 1 };
+    const withQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.5 } };
+
+    const scoreNoData = scoreAccount(noData, baseOptions);
+    const scoreWithQuota = scoreAccount(withQuota, baseOptions);
+
+    // No data → no penalty, roughly same score as account with quota
+    expect(Math.abs(scoreNoData - scoreWithQuota)).toBeLessThan(100);
+  });
+
+  it('should penalize exhausted account enough to break affinity bonus', () => {
+    // Affinity account but with exhausted quota
+    const affinityExhausted = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0 } };
+    // Non-affinity account with remaining quota
+    const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.8 } };
+
+    const scoreAffinity = scoreAccount(affinityExhausted, {
+      ...baseOptions,
+      preferredAccountId: 1, // affinity for account 1
+    });
+    const scoreFresh = scoreAccount(freshWithQuota, baseOptions);
+
+    // Fresh account with quota should beat affinity account without quota
+    expect(scoreFresh).toBeLessThan(scoreAffinity);
+  });
+
+  it('should NOT break affinity when the affinity account still has quota', () => {
+    const affinityWithQuota = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0.6 } };
+    const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.8 } };
+
+    const scoreAffinity = scoreAccount(affinityWithQuota, {
+      ...baseOptions,
+      preferredAccountId: 1,
+    });
+    const scoreFresh = scoreAccount(freshWithQuota, baseOptions);
+
+    // Affinity with quota should still win
+    expect(scoreAffinity).toBeLessThan(scoreFresh);
+  });
+
+  it('should handle mismatched model keys gracefully (no penalty for unrelated models)', () => {
+    // Account has quota data but for a different model
+    const differentModel = { id: 1, modelQuotaFractions: { 'claude-sonnet-4': 0 } };
+
+    const score = scoreAccount(differentModel, {
+      ...baseOptions,
+      modelKey: 'gemini-2.5-pro',
+    });
+    const scoreBaseline = scoreAccount({ id: 1 }, baseOptions);
+
+    // Should not be penalized for a different model being exhausted
+    expect(Math.abs(score - scoreBaseline)).toBeLessThan(100);
+  });
+
+  it('should penalize when exact model key matches with zero fraction', () => {
+    const exhausted = { id: 1, modelQuotaFractions: { 'claude-opus-4-6-thinking': 0 } };
+    const hasQuota = { id: 2, modelQuotaFractions: { 'claude-opus-4-6-thinking': 0.3 } };
+
+    const scoreExhausted = scoreAccount(exhausted, {
+      ...baseOptions,
+      modelKey: 'claude-opus-4-6-thinking',
+    });
+    const scoreHasQuota = scoreAccount(hasQuota, {
+      ...baseOptions,
+      modelKey: 'claude-opus-4-6-thinking',
+    });
+
+    expect(scoreHasQuota).toBeLessThan(scoreExhausted);
+  });
+});

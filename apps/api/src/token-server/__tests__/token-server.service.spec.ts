@@ -797,3 +797,200 @@ describe("TokenServerService — accountQuota in report-result", () => {
     expect(stored.accounts[0].email).toBe("alpha@example.com");
   });
 });
+
+// ── Quota-priority account selection (lease-token prefers 5h quota) ──────────
+// TDD: These integration tests define the desired behavior BEFORE implementation.
+// They should FAIL until scoreAccount is updated with quotaPenalty logic.
+
+describe("TokenServerService — quota-priority account selection", () => {
+  let tempDir: string;
+  let accountsFilePath: string;
+  let accessKeysFilePath: string;
+  const tokenProvider = vi.fn();
+  let currentTime: number;
+  let leaseCounter: number;
+
+  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-quota-prio-"));
+    accountsFilePath = path.join(tempDir, "accounts.json");
+    accessKeysFilePath = path.join(tempDir, "access-keys.json");
+    tokenProvider.mockReset();
+    currentTime = Date.now();
+    leaseCounter = 0;
+
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 24 * 60 * 60 * 1000,
+        windowLimit: 100,
+      }],
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function makeService() {
+    return new TokenServerService({
+      accountsFilePath,
+      accessKeysFilePath,
+      tokenProvider,
+      now: () => currentTime,
+      randomId: () => `lease-${++leaseCounter}`,
+    });
+  }
+
+  it("prefers account with remaining 5h quota over account with zero quota", async () => {
+    // Account 1: gemini-2.5-pro quota exhausted (fraction=0)
+    // Account 2: gemini-2.5-pro quota available (fraction=0.6)
+    writeJson(accountsFilePath, {
+      accounts: [
+        {
+          id: 1, email: "exhausted@example.com", refreshToken: "rt-1",
+          projectId: "proj-1", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0 },
+        },
+        {
+          id: 2, email: "fresh@example.com", refreshToken: "rt-2",
+          projectId: "proj-2", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0.6 },
+        },
+      ],
+    });
+
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    // Should prefer account 2 (has quota)
+    const result = await service.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.accountId).toBe(2);
+  });
+
+  it("falls back to exhausted account when all accounts have zero quota", async () => {
+    // Both accounts have zero quota — should still work (use credits)
+    writeJson(accountsFilePath, {
+      accounts: [
+        {
+          id: 1, email: "a@example.com", refreshToken: "rt-1",
+          projectId: "proj-1", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0 },
+        },
+        {
+          id: 2, email: "b@example.com", refreshToken: "rt-2",
+          projectId: "proj-2", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0 },
+        },
+      ],
+    });
+
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result = await service.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+
+    // Should still succeed (fallback to credits)
+    expect(result.ok).toBe(true);
+    expect([1, 2]).toContain(result.accountId);
+  });
+
+  it("breaks affinity to prefer account with quota over affinity account without quota", async () => {
+    writeJson(accountsFilePath, {
+      accounts: [
+        {
+          id: 1, email: "affinity@example.com", refreshToken: "rt-1",
+          projectId: "proj-1", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0.8 },
+        },
+        {
+          id: 2, email: "other@example.com", refreshToken: "rt-2",
+          projectId: "proj-2", enabled: true,
+          modelQuotaFractions: { "gemini-2.5-pro": 0.5 },
+        },
+      ],
+    });
+
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    // First lease: build affinity for account 1
+    const result1 = await service.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+    // Report success to cement affinity
+    await service.reportResult(REQ, {
+      leaseId: result1.leaseId, status: 200, modelKey: "gemini-2.5-pro",
+      inputTokens: 100, outputTokens: 50, totalTokens: 150,
+    });
+    const affinityAccountId = result1.accountId;
+
+    // Now exhaust the affinity account's quota in the accounts file
+    const accounts = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
+    const affinityAccount = accounts.accounts.find((a: any) => a.id === affinityAccountId);
+    affinityAccount.modelQuotaFractions = { "gemini-2.5-pro": 0 };
+    const otherAccount = accounts.accounts.find((a: any) => a.id !== affinityAccountId);
+    otherAccount.modelQuotaFractions = { "gemini-2.5-pro": 0.7 };
+    writeJson(accountsFilePath, accounts);
+
+    // Create new service (reload accounts)
+    tokenProvider.mockClear();
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service2 = makeService();
+
+    // Re-establish affinity
+    const r = await service2.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+    await service2.reportResult(REQ, {
+      leaseId: r.leaseId, status: 200, modelKey: "gemini-2.5-pro",
+      inputTokens: 100, outputTokens: 50, totalTokens: 150,
+    });
+
+    // Next lease: should break affinity and pick the account with quota
+    tokenProvider.mockClear();
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const result2 = await service2.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+
+    expect(result2.ok).toBe(true);
+    expect(result2.accountId).toBe(otherAccount.id);
+  });
+
+  it("does not penalize when modelQuotaFractions has no data for the requested model", async () => {
+    writeJson(accountsFilePath, {
+      accounts: [
+        {
+          id: 1, email: "a@example.com", refreshToken: "rt-1",
+          projectId: "proj-1", enabled: true,
+          modelQuotaFractions: { "claude-sonnet-4": 0 }, // different model
+        },
+        {
+          id: 2, email: "b@example.com", refreshToken: "rt-2",
+          projectId: "proj-2", enabled: true,
+          // no quota data at all
+        },
+      ],
+    });
+
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result = await service.leaseToken(REQ, {
+      clientId: "client-a", modelKey: "gemini-2.5-pro", bodyBytes: 500,
+    });
+
+    // Neither should be penalized — normal selection rules apply
+    expect(result.ok).toBe(true);
+  });
+});
