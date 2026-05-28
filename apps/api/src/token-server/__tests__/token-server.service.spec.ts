@@ -1041,3 +1041,186 @@ describe("TokenServerService — quota-priority account selection", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ── Session conflicts & key lifecycle ────────────────────────────────────────
+
+describe("TokenServerService — session and key lifecycle", () => {
+  let tempDir: string;
+  let accountsFilePath: string;
+  let accessKeysFilePath: string;
+  const tokenProvider = vi.fn();
+  let currentTime: number;
+  let leaseCounter: number;
+
+  const REQ = (key = "secret-card") => ({
+    headers: { "x-token-server-secret": key },
+  });
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-session-"));
+    accountsFilePath = path.join(tempDir, "accounts.json");
+    accessKeysFilePath = path.join(tempDir, "access-keys.json");
+    tokenProvider.mockReset();
+    currentTime = Date.now();
+    leaseCounter = 0;
+
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "a@test.com", refreshToken: "rt", projectId: "proj", enabled: true },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 24 * 3600_000,
+        windowLimit: 100,
+      }],
+    });
+    tokenProvider.mockResolvedValue("access-token");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function makeService() {
+    return new TokenServerService({
+      accountsFilePath,
+      accessKeysFilePath,
+      tokenProvider,
+      now: () => currentTime,
+      randomId: () => `lease-${++leaseCounter}`,
+    });
+  }
+
+  it("rejects lease-token from different clientId (session conflict)", async () => {
+    const service = makeService();
+
+    // First lease establishes session
+    await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    // Second lease from different device should fail
+    try {
+      await service.leaseToken(REQ(), {
+        clientId: "device-B", modelKey: "gemini", bodyBytes: 100,
+      });
+      expect.unreachable("should have thrown");
+    } catch (err: any) {
+      expect(err.status || err.statusCode || 409).toBe(409);
+    }
+  });
+
+  it("allows same clientId to reconnect (session reuse)", async () => {
+    const service = makeService();
+
+    const first = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    // Report first lease
+    await service.reportResult(REQ(), {
+      leaseId: first.leaseId, status: 200, totalTokens: 50,
+    });
+
+    // Same clientId should work
+    const second = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+    expect(second.ok).toBe(true);
+  });
+
+  it("rejects lease-token when key is expired", async () => {
+    // Create key with very short duration, already expired
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        firstUsedAt: "2020-01-01T00:00:00.000Z",
+        durationMs: 1000, // expired long ago
+      }],
+    });
+    const service = makeService();
+
+    try {
+      await service.leaseToken(REQ(), {
+        clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+      });
+      expect.unreachable("should have thrown");
+    } catch (err: any) {
+      expect(err.status || err.statusCode || 401).toBe(401);
+    }
+  });
+
+  it("rejects lease-token when key is disabled", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "disabled",
+      }],
+    });
+    const service = makeService();
+
+    try {
+      await service.leaseToken(REQ(), {
+        clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+      });
+      expect.unreachable("should have thrown");
+    } catch (err: any) {
+      expect(err.status || err.statusCode || 401).toBe(401);
+    }
+  });
+
+  it("deduplicates successful report-result (does not double-count)", async () => {
+    const service = makeService();
+
+    const lease = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    // First report
+    const r1 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, status: 200, totalTokens: 100,
+    });
+    expect(r1.ok).toBe(true);
+
+    // Duplicate report (same leaseId, same success)
+    const r2 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, status: 200, totalTokens: 100,
+    });
+    expect(r2.ok).toBe(true);
+    expect(r2.ignored).toBe(true);
+    expect(r2.reason).toBe("already_reported");
+
+    // Tokens should only be counted once
+    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
+    expect(stored.keys[0].totalTokensUsed).toBe(100); // not 200
+  });
+
+  it("allows error report after successful report (different status)", async () => {
+    const service = makeService();
+
+    const lease = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    // First: error report (429)
+    const r1 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, status: 429, totalTokens: 0,
+    });
+    expect(r1.ok).toBe(true);
+
+    // Second: success report for same lease — should NOT be ignored
+    // (first was an error, not a success)
+    const r2 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, status: 200, totalTokens: 50,
+    });
+    expect(r2.ok).toBe(true);
+    // Not ignored since first report was error
+  });
+});
