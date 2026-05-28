@@ -48,7 +48,7 @@ type ModelQuotaEntry struct {
 // fetchHealthViaToken 用 access_token 调用 loadCodeAssist API
 // 返回 (credits, planType)。失败时 credits=nil, planType="free"。
 func fetchHealthViaToken(accessToken string) (*AccountCreditsInfo, string) {
-	return fetchHealthViaTokenWithEndpoint(DefaultCloudEndpoint, accessToken)
+	return fetchHealthViaTokenWithEndpoint(DailyCloudEndpoint, accessToken)
 }
 
 // fetchHealthViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）
@@ -146,9 +146,10 @@ func fetchHealthViaTokenWithEndpoint(endpoint, accessToken string) (*AccountCred
 }
 
 // fetchModelsViaToken 用 access_token + projectId 调用 fetchAvailableModels
+// 使用 DailyCloudEndpoint 以获取完整模型列表（包含 Claude/GPT 第三方模型）。
 // 返回 map[modelKey]ModelQuotaEntry，失败时返回 nil。
 func fetchModelsViaToken(accessToken, projectId string) map[string]ModelQuotaEntry {
-	return fetchModelsViaTokenWithEndpoint(DefaultCloudEndpoint, accessToken, projectId)
+	return fetchModelsViaTokenWithEndpoint(DailyCloudEndpoint, accessToken, projectId)
 }
 
 // fetchModelsViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）

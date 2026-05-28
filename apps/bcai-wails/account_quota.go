@@ -77,7 +77,7 @@ func (p *AccountPool) fetchAccountHealth(acc *AccountEntry) error {
 		},
 	})
 
-	apiUrl := DefaultCloudEndpoint + "/v1internal:loadCodeAssist"
+	apiUrl := DailyCloudEndpoint + "/v1internal:loadCodeAssist"
 	req, err := http.NewRequest("POST", apiUrl, strings.NewReader(string(payload)))
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func (p *AccountPool) discoverProjectId(acc *AccountEntry) error {
 		},
 	})
 
-	apiUrl := DefaultCloudEndpoint + "/v1internal:onboardUser"
+	apiUrl := DailyCloudEndpoint + "/v1internal:onboardUser"
 	req, err := http.NewRequest("POST", apiUrl, strings.NewReader(string(onboardPayload)))
 	if err != nil {
 		return err
@@ -328,7 +328,7 @@ func (p *AccountPool) pollOnboardLRO(token string, operationName string, email s
 	for attempt := 1; attempt <= 15; attempt++ {
 		time.Sleep(800 * time.Millisecond)
 
-		apiUrl := DefaultCloudEndpoint + "/v1/" + operationName
+		apiUrl := DailyCloudEndpoint + "/v1/" + operationName
 		req, err := http.NewRequest("GET", apiUrl, nil)
 		if err != nil {
 			continue
@@ -373,7 +373,7 @@ func (p *AccountPool) refreshAccountQuota(acc *AccountEntry) error {
 
 	// 调用 fetchAvailableModels API
 	reqBody, _ := json.Marshal(map[string]string{"project": acc.ProjectId})
-	apiUrl := DefaultCloudEndpoint + "/v1internal:fetchAvailableModels"
+	apiUrl := DailyCloudEndpoint + "/v1internal:fetchAvailableModels"
 	req, err := http.NewRequest("POST", apiUrl, io.NopCloser(strings.NewReader(string(reqBody))))
 	if err != nil {
 		return err

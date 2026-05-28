@@ -412,12 +412,16 @@ export class TokenServerService {
         }
         if (quota.modelQuota && typeof quota.modelQuota === "object") {
           account.modelQuotaFractions = {};
+          account.modelQuotaResetTimes = {};
           for (const [key, info] of Object.entries(
             quota.modelQuota as Record<string, any>,
           )) {
             account.modelQuotaFractions[key] = Number(
               info?.remainingFraction || 0,
             );
+            if (info?.resetTime) {
+              account.modelQuotaResetTimes[key] = String(info.resetTime);
+            }
           }
           account.modelQuotaRefreshedAt = Date.now();
         }

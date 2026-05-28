@@ -33,7 +33,7 @@ export const ANTIGRAVITY_OAUTH_CLIENT_SECRET =
 
 export const DEFAULT_CLOUD_ENDPOINT =
   process.env.ROSETTA_CLOUD_ENDPOINT ||
-  "https://daily-cloudcode-pa.sandbox.googleapis.com";
+  "https://daily-cloudcode-pa.googleapis.com";
 
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const REQUEST_TIMEOUT_MS = 15_000;

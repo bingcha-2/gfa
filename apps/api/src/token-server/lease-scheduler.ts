@@ -188,8 +188,6 @@ export function accountWeight(
   return baseWeight;
 }
 
-// ── Account scoring for candidate selection ──────────────────────────────────
-
 /**
  * Check if an account has remaining 5h model quota for a given model key.
  * Returns true (no penalty) when:
@@ -199,25 +197,40 @@ export function accountWeight(
  * Returns false (should penalize) only when fraction === 0 for the exact model.
  */
 export function hasModelQuotaRemaining(account: any, modelKey: string): boolean {
+  const f = getModelQuotaFraction(account, modelKey);
+  return f === null || f === -1 || f > 0;
+}
+
+/**
+ * Get the remaining 5h model quota fraction for a given model key.
+ * Returns:
+ *   - null:  no fractions data at all (truly unknown → no penalty)
+ *   - -1:   fractions exist for other models but not the target (暂无 → moderate penalty)
+ *   - 0..1: the remaining fraction (0 = exhausted, 1 = full)
+ */
+export function getModelQuotaFraction(account: any, modelKey: string): number | null {
   const fractions = account?.modelQuotaFractions;
-  if (!fractions || typeof fractions !== 'object') return true;
+  if (!fractions || typeof fractions !== 'object') return null;
 
   const normalized = normalizeModelKey(modelKey);
-  if (!normalized) return true;
+  if (!normalized) return null;
 
   // Exact match
   if (normalized in fractions) {
-    return Number(fractions[normalized]) > 0;
+    return Math.max(0, Math.min(1, Number(fractions[normalized]) || 0));
   }
 
   // Fuzzy match (e.g. "gemini-2.5-pro" ↔ "gemini-2.5-pro-preview")
   for (const key of Object.keys(fractions)) {
     if (key.includes(normalized) || normalized.includes(key)) {
-      return Number(fractions[key]) > 0;
+      return Math.max(0, Math.min(1, Number(fractions[key]) || 0));
     }
   }
 
-  return true; // model not found in quota data → no penalty
+  // Has fractions for other models but not this one → 暂无
+  if (Object.keys(fractions).length > 0) return -1;
+
+  return null; // empty object → same as no data
 }
 
 /**
@@ -242,9 +255,35 @@ export function scoreAccount(
     : 0;
   const recentUsePenalty = Math.ceil(recentlyUsedMs / 1000);
 
-  // Quota priority: penalize accounts with exhausted 5h model quota.
-  // 25000 > 20000 affinity bonus → breaks affinity to save credits.
-  const quotaPenalty = hasModelQuotaRemaining(account, options.modelKey) ? 0 : 25000;
+  // Quota priority — confirmed 5h remaining quota = HIGHEST priority.
+  //
+  // Three tiers:
+  //   Tier 1: Confirmed has quota (fraction > 0) → 0~5000 penalty (always selected first)
+  //   Tier 2: Unknown / 暂无 (null or -1)        → 20000 penalty (deprioritized)
+  //   Tier 3: Confirmed exhausted (fraction = 0)  → 25000 penalty (last resort)
+  //
+  // Affinity is -20000, so:
+  //   - Affinity + confirmed quota  → net ≤ -15000 (best)
+  //   - Affinity + unknown          → net = 0 (ties with non-affinity confirmed)
+  //   - Affinity + exhausted        → net = 5000 (loses to non-affinity confirmed)
+  const fraction = getModelQuotaFraction(account, options.modelKey);
+  let quotaPenalty: number;
+  if (fraction !== null && fraction >= 0) {
+    // Confirmed data: gradient within 0-5000 (small spread, keeps confirmed accounts together)
+    if (fraction === 0) {
+      quotaPenalty = 25000;        // Tier 3: confirmed exhausted
+    } else {
+      quotaPenalty = Math.round((1 - fraction) * 5000);  // Tier 1: 1.0→0, 0.5→2500, 0.01→4950
+    }
+  } else {
+    quotaPenalty = 20000;          // Tier 2: null (unknown) or -1 (暂无)
+  }
+
+  // Reset-time bonus: prefer accounts whose 5h quota resets sooner.
+  // Accounts resetting soon → negative bonus (preferred, use them up before reset).
+  // Range: 0 (reset >5h away or unknown) to -4000 (reset imminent).
+  // Stays within Tier 1 range so it never crosses tier boundaries.
+  const resetBonus = getModelResetBonus(account, options.modelKey, options.now);
 
   return (
     modelActive * 2000 +
@@ -252,8 +291,49 @@ export function scoreAccount(
     recentUsePenalty -
     options.accountWeight * 20 +
     affinity +
-    quotaPenalty
+    quotaPenalty +
+    resetBonus
   );
+}
+
+/**
+ * Calculate a bonus (negative = preferred) based on how soon the model quota resets.
+ * Accounts resetting sooner should be used first (their quota refreshes soon anyway).
+ * Returns 0 when no reset time data, or value between -4000 (imminent) and 0 (>5h away).
+ */
+function getModelResetBonus(account: any, modelKey: string, now: number): number {
+  const resetTimes = account?.modelQuotaResetTimes;
+  if (!resetTimes || typeof resetTimes !== 'object') return 0;
+
+  const normalized = normalizeModelKey(modelKey);
+  let resetTimeStr: string | undefined;
+
+  // Exact match first
+  if (resetTimes[modelKey]) {
+    resetTimeStr = resetTimes[modelKey];
+  } else if (normalized) {
+    // Fuzzy match
+    for (const key of Object.keys(resetTimes)) {
+      if (normalizeModelKey(key) === normalized) {
+        resetTimeStr = resetTimes[key];
+        break;
+      }
+    }
+  }
+
+  if (!resetTimeStr) return 0;
+
+  const resetMs = new Date(resetTimeStr).getTime();
+  if (!Number.isFinite(resetMs)) return 0;
+
+  const msUntilReset = resetMs - now;
+  if (msUntilReset <= 0) return -4000; // already past reset → imminent refresh, most preferred
+
+  const MAX_WINDOW_MS = 5 * 3600_000; // 5 hours
+  if (msUntilReset >= MAX_WINDOW_MS) return 0; // too far away, no bonus
+
+  // Linear: 0ms → -4000, 5h → 0
+  return Math.round(-4000 * (1 - msUntilReset / MAX_WINDOW_MS));
 }
 
 // ── Retry policy builder ─────────────────────────────────────────────────────

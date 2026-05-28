@@ -220,22 +220,23 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     expect(scoreWith).toBeLessThan(scoreWithout);
   });
 
-  it('should treat account with no modelQuotaFractions as neutral (no penalty)', () => {
+  it('should heavily penalize account with no modelQuotaFractions (unknown)', () => {
     const noData = { id: 1 };
-    const withQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.5 } };
+    const fullQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
 
     const scoreNoData = scoreAccount(noData, baseOptions);
-    const scoreWithQuota = scoreAccount(withQuota, baseOptions);
+    const scoreFullQuota = scoreAccount(fullQuota, baseOptions);
 
-    // No data → no penalty, roughly same score as account with quota
-    expect(Math.abs(scoreNoData - scoreWithQuota)).toBeLessThan(100);
+    // No data → high penalty, confirmed quota always wins
+    expect(scoreFullQuota).toBeLessThan(scoreNoData);
+    expect(scoreNoData - scoreFullQuota).toBeGreaterThan(10000);
   });
 
   it('should penalize exhausted account enough to break affinity bonus', () => {
     // Affinity account but with exhausted quota
     const affinityExhausted = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0 } };
-    // Non-affinity account with remaining quota
-    const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.8 } };
+    // Non-affinity account with full quota
+    const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
 
     const scoreAffinity = scoreAccount(affinityExhausted, {
       ...baseOptions,
@@ -243,7 +244,7 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     });
     const scoreFresh = scoreAccount(freshWithQuota, baseOptions);
 
-    // Fresh account with quota should beat affinity account without quota
+    // Fresh account with full quota should beat affinity account without quota
     expect(scoreFresh).toBeLessThan(scoreAffinity);
   });
 
@@ -261,7 +262,7 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     expect(scoreAffinity).toBeLessThan(scoreFresh);
   });
 
-  it('should handle mismatched model keys gracefully (no penalty for unrelated models)', () => {
+  it('should handle mismatched model keys gracefully (moderate penalty, not full exhaustion)', () => {
     // Account has quota data but for a different model
     const differentModel = { id: 1, modelQuotaFractions: { 'claude-sonnet-4': 0 } };
 
@@ -269,10 +270,13 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
       ...baseOptions,
       modelKey: 'gemini-2.5-pro',
     });
-    const scoreBaseline = scoreAccount({ id: 1 }, baseOptions);
+    const scoreExhausted = scoreAccount(
+      { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0 } },
+      baseOptions,
+    );
 
-    // Should not be penalized for a different model being exhausted
-    expect(Math.abs(score - scoreBaseline)).toBeLessThan(100);
+    // Should get moderate penalty (暂无), not full exhaustion penalty
+    expect(score).toBeLessThan(scoreExhausted);
   });
 
   it('should penalize when exact model key matches with zero fraction', () => {
@@ -289,5 +293,162 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     });
 
     expect(scoreHasQuota).toBeLessThan(scoreExhausted);
+  });
+
+  // ── Gradient scoring: prefer higher remainingFraction ──────────────────
+
+  it('should prefer account with 100% quota over account with 20% quota', () => {
+    const full = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
+    const low = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.2 } };
+
+    const scoreFull = scoreAccount(full, baseOptions);
+    const scoreLow = scoreAccount(low, baseOptions);
+
+    expect(scoreFull).toBeLessThan(scoreLow);
+  });
+
+  it('should score accounts monotonically by remainingFraction', () => {
+    const fractions = [1.0, 0.8, 0.5, 0.2, 0.0];
+    const scores = fractions.map((f, i) =>
+      scoreAccount(
+        { id: i + 1, modelQuotaFractions: { 'gemini-2.5-pro': f } },
+        baseOptions,
+      ),
+    );
+
+    // Each score should be <= the next (lower fraction → higher penalty)
+    for (let i = 0; i < scores.length - 1; i++) {
+      expect(scores[i]).toBeLessThanOrEqual(scores[i + 1]);
+    }
+  });
+
+  it('should produce meaningful score difference between 100% and 20% quota', () => {
+    const full = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
+    const low = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.2 } };
+
+    const scoreFull = scoreAccount(full, baseOptions);
+    const scoreLow = scoreAccount(low, baseOptions);
+
+    // Difference should be significant enough to influence selection (> 100 points)
+    expect(scoreLow - scoreFull).toBeGreaterThan(100);
+  });
+
+  it('should NOT break affinity when affinity account still has confirmed quota (even low)', () => {
+    // With the new scale (0-5000 for confirmed quota), affinity (-20000) always wins
+    const affinityLow = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0.1 } };
+    const freshFull = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
+
+    const scoreAffinity = scoreAccount(affinityLow, {
+      ...baseOptions,
+      preferredAccountId: 1,
+    });
+    const scoreFresh = scoreAccount(freshFull, baseOptions);
+
+    // Affinity with ANY confirmed quota should still win (penalty gap is only 0-5000)
+    expect(scoreAffinity).toBeLessThan(scoreFresh);
+  });
+
+  it('should NOT break affinity when both accounts have similar quota', () => {
+    const affinityAccount = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0.6 } };
+    const freshAccount = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.8 } };
+
+    const scoreAffinity = scoreAccount(affinityAccount, {
+      ...baseOptions,
+      preferredAccountId: 1,
+    });
+    const scoreFresh = scoreAccount(freshAccount, baseOptions);
+
+    // Affinity bonus (-20000) should still dominate small quota difference
+    expect(scoreAffinity).toBeLessThan(scoreFresh);
+  });
+
+  // ── "暂无" handling: has fractions for other models but not the target ──
+
+  it('should give moderate penalty when account has fractions but lacks data for target model', () => {
+    // Account has Gemini fractions but no Claude data (Google API didn't return Claude)
+    const hasGeminiOnly = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 1.0, 'gemini-3-flash': 0.8 } };
+    // Account has explicit Claude quota data
+    const hasClaudeQuota = { id: 2, modelQuotaFractions: { 'claude-sonnet-4-6': 0.7 } };
+
+    const scoreNoClaudeData = scoreAccount(hasGeminiOnly, {
+      ...baseOptions,
+      modelKey: 'claude-sonnet-4-6',
+    });
+    const scoreHasClaudeData = scoreAccount(hasClaudeQuota, {
+      ...baseOptions,
+      modelKey: 'claude-sonnet-4-6',
+    });
+
+    // Account with explicit quota data should be preferred over "暂无" account
+    expect(scoreHasClaudeData).toBeLessThan(scoreNoClaudeData);
+  });
+
+  it('should rank "暂无" (missing model data) between has-quota and exhausted', () => {
+    // 3 accounts for claude-sonnet-4-6:
+    const hasQuota = { id: 1, modelQuotaFractions: { 'claude-sonnet-4-6': 0.8 } };
+    const missingData = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } }; // has fracs but not claude
+    const exhausted = { id: 3, modelQuotaFractions: { 'claude-sonnet-4-6': 0 } };
+
+    const opts = { ...baseOptions, modelKey: 'claude-sonnet-4-6' };
+    const scoreHas = scoreAccount(hasQuota, opts);
+    const scoreMissing = scoreAccount(missingData, opts);
+    const scoreExhausted = scoreAccount(exhausted, opts);
+
+    // has-quota < missing-data < exhausted
+    expect(scoreHas).toBeLessThan(scoreMissing);
+    expect(scoreMissing).toBeLessThan(scoreExhausted);
+  });
+
+  it('should heavily penalize accounts with no modelQuotaFractions (never refreshed)', () => {
+    // Truly unknown account (never had any quota data)
+    const neverRefreshed = { id: 1 };
+    const fullQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
+
+    const scoreUnknown = scoreAccount(neverRefreshed, baseOptions);
+    const scoreFull = scoreAccount(fullQuota, baseOptions);
+
+    // Confirmed quota always beats unknown
+    expect(scoreFull).toBeLessThan(scoreUnknown);
+    expect(scoreUnknown - scoreFull).toBeGreaterThan(10000);
+  });
+
+  // ── Reset time: prefer accounts whose quota resets sooner ──────────────
+
+  it('should prefer account resetting in 30min over account resetting in 4h', () => {
+    const now = Date.now();
+    const resetsSoon = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.5 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 30 * 60_000).toISOString() }, // 30 min
+    };
+    const resetsLater = {
+      id: 2,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.5 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 4 * 3600_000).toISOString() }, // 4h
+    };
+
+    const opts = { ...baseOptions, now };
+    const scoreSoon = scoreAccount(resetsSoon, opts);
+    const scoreLater = scoreAccount(resetsLater, opts);
+
+    // Sooner reset = lower score = preferred
+    expect(scoreSoon).toBeLessThan(scoreLater);
+  });
+
+  it('should not let resetTime override the tier gap (confirmed > unknown)', () => {
+    const now = Date.now();
+    const confirmedLateReset = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.8 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 5 * 3600_000).toISOString() }, // 5h
+    };
+    const unknown = { id: 2 }; // no data
+
+    const opts = { ...baseOptions, now };
+    const scoreConfirmed = scoreAccount(confirmedLateReset, opts);
+    const scoreUnknown = scoreAccount(unknown, opts);
+
+    // Confirmed with late reset still beats unknown
+    expect(scoreConfirmed).toBeLessThan(scoreUnknown);
   });
 });
