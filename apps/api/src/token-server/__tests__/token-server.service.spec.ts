@@ -920,7 +920,7 @@ describe("TokenServerService — CreditTracker integration", () => {
       },
     });
 
-    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450);
+    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450, "card-1", undefined);
   });
 
   it("calls creditTracker.record when credits increase (tracker handles filtering)", async () => {
@@ -941,7 +941,7 @@ describe("TokenServerService — CreditTracker integration", () => {
     });
 
     // record() is called with both values; the tracker itself decides whether to queue
-    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 800);
+    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 800, "card-1", undefined);
   });
 
   it("does NOT call creditTracker.record when no accountQuota in report", async () => {

@@ -468,14 +468,17 @@ model CreditSnapshot {
 
 /// Per-event credit consumption: recorded in reportResult() when creditAmount decreases.
 model CreditConsumption {
-  id        String   @id @default(cuid())
-  accountId Int                        // Rosetta account ID
-  email     String                     // Account email
-  oldAmount Float                      // Credit balance before change
-  newAmount Float                      // Credit balance after change
-  consumed  Float                      // oldAmount - newAmount
-  timestamp DateTime @default(now())
+  id            String   @id @default(cuid())
+  accountId     Int                        // Rosetta account ID
+  email         String                     // Account email
+  oldAmount     Float                      // Credit balance before change
+  newAmount     Float                      // Credit balance after change
+  consumed      Float                      // oldAmount - newAmount
+  accessKeyId   String?                    // Access key that triggered this consumption
+  accessKeyName String?                    // Access key display name (snapshot at record time)
+  timestamp     DateTime @default(now())
 
   @@index([timestamp])
   @@index([accountId, timestamp])
+  @@index([accessKeyId, timestamp])
 }

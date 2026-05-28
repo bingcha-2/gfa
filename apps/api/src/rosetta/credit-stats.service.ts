@@ -118,6 +118,61 @@ export class CreditStatsService {
     };
   }
 
+  // ── API: paginated consumption records ─────────────────────────────────
+
+  async getConsumptionRecords(opts: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    days?: number;
+  }) {
+    const page = Math.max(1, opts.page || 1);
+    const pageSize = Math.min(100, Math.max(1, opts.pageSize || 30));
+    const days = opts.days || 7;
+    const search = (opts.search || "").trim();
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+
+    const where: any = { timestamp: { gte: since } };
+    if (search) {
+      where.OR = [
+        { email: { contains: search } },
+        { accessKeyId: { contains: search } },
+        { accessKeyName: { contains: search } },
+      ];
+    }
+
+    const [records, total] = await Promise.all([
+      this.prisma.creditConsumption.findMany({
+        where,
+        orderBy: { timestamp: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.creditConsumption.count({ where }),
+    ]);
+
+    return {
+      records: records.map((r: any) => ({
+        id: r.id,
+        accountId: r.accountId,
+        email: r.email,
+        oldAmount: Math.round(r.oldAmount * 100) / 100,
+        newAmount: Math.round(r.newAmount * 100) / 100,
+        consumed: Math.round(r.consumed * 100) / 100,
+        accessKeyId: r.accessKeyId || null,
+        accessKeyName: r.accessKeyName || null,
+        timestamp: r.timestamp.toISOString(),
+      })),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
+  }
+
   // ── API: balance trend snapshots ───────────────────────────────────────
 
   async getCreditSnapshots(days = 7) {

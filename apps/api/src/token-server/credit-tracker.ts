@@ -14,6 +14,8 @@ interface CreditEvent {
   oldAmount: number;
   newAmount: number;
   consumed: number;
+  accessKeyId?: string;
+  accessKeyName?: string;
   timestamp: Date;
 }
 
@@ -31,7 +33,14 @@ export class CreditTracker {
    * Record a credit change. Only queues an event when credits DECREASE.
    * Pure in-memory push — never blocks.
    */
-  record(accountId: number, email: string, oldAmount: number, newAmount: number): void {
+  record(
+    accountId: number,
+    email: string,
+    oldAmount: number,
+    newAmount: number,
+    accessKeyId?: string,
+    accessKeyName?: string,
+  ): void {
     if (oldAmount <= 0 || newAmount >= oldAmount) return;
     this.queue.push({
       accountId,
@@ -39,6 +48,8 @@ export class CreditTracker {
       oldAmount,
       newAmount,
       consumed: oldAmount - newAmount,
+      accessKeyId,
+      accessKeyName,
       timestamp: new Date(),
     });
   }

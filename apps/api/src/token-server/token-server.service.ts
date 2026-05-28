@@ -406,7 +406,10 @@ export class TokenServerService {
           const oldCreditAmount = Number(account.credits?.creditAmount || 0);
           const newCreditAmount = Number(quota.credits.creditAmount || 0);
           if (this.creditTracker) {
-            this.creditTracker.record(account.id, account.email, oldCreditAmount, newCreditAmount);
+            this.creditTracker.record(
+              account.id, account.email, oldCreditAmount, newCreditAmount,
+              lease.accessKeyId, auth.record.name || undefined,
+            );
           }
           account.credits = {
             known: Boolean(quota.credits.known),

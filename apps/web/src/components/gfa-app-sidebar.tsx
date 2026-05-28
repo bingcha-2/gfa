@@ -40,6 +40,7 @@ import {
   ActivityIcon,
   DatabaseIcon,
   MonitorSmartphoneIcon,
+  CoinsIcon,
 } from "lucide-react";
 
 const SECTION_PERM_MAP: Record<string, string> = {
@@ -60,6 +61,7 @@ const SECTION_PERM_MAP: Record<string, string> = {
   "rosetta-load": "agent_service",
   "rosetta-captcha": "agent_service",
   "rosetta-adspower": "agent_service",
+  "rosetta-credits": "agent_service",
   announcement: "announcement",
   faq: "faq",
 };
@@ -271,6 +273,14 @@ export function GfaAppSidebar({
       url: `/${prefix}/rosetta-keys`,
       icon: <KeyIcon />,
       permKey: "codes",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-credits",
+      title: "积分消耗",
+      url: `/${prefix}/rosetta-credits`,
+      icon: <CoinsIcon />,
+      permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
   ];

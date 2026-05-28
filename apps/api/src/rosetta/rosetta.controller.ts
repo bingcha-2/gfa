@@ -143,4 +143,19 @@ export class RosettaController {
   getCreditSnapshots(@Query("days") days?: string) {
     return this.creditStats.getCreditSnapshots(Number(days) || 7);
   }
+
+  @Get("credit-consumption")
+  getCreditConsumption(
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+    @Query("search") search?: string,
+    @Query("days") days?: string,
+  ) {
+    return this.creditStats.getConsumptionRecords({
+      page: Number(page) || 1,
+      pageSize: Number(pageSize) || 30,
+      search,
+      days: Number(days) || 7,
+    });
+  }
 }
