@@ -1,27 +1,27 @@
 {
-  "version": "5.1.5",
-  "url": "https://bcai.site/updates/BingchaAI-5.1.5.exe",
-  "sha256": "B67B941D4F217FC3B479146C1C7CEF563FC777EAAD1C6425B55A5E80FA1E5E5F",
-  "size": 13453312,
-  "changelog": "修复自动更新：Windows代理网络环境下无法检测更新；macOS更新后软件不可用",
+  "version": "5.1.6",
+  "url": "https://bcai.site/updates/BingchaAI-5.1.6.exe",
+  "sha256": "187703F6D2B1CB85E06C48FC670DFBFB6E0DF2F9FEED9AE6991DE982F8142D87",
+  "size": 13451264,
+  "changelog": "服务运维流程更新和问题修复",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.1.5-arm64.dmg",
-      "sha256": "E2C5473C1F835F982BB36670E0E129536FA79D36A4C48C3A39CFD5E1B8DE4236",
-      "size": 7320153
+      "url": "https://bcai.site/updates/BingchaAI-5.1.6-arm64.dmg",
+      "sha256": "8A396D57C24E5782FFDB9276AD36092423F24228D1C73232F71C9707E155A968",
+      "size": 7319561
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.1.5-amd64.dmg",
-      "sha256": "6FD5A5D64133AF26E901388A32948B79F6B783E6C1D38FAEA06207BD7308D7A4",
-      "size": 7699794
+      "url": "https://bcai.site/updates/BingchaAI-5.1.6-amd64.dmg",
+      "sha256": "84DD0409302716ED15862FF687340F8C556884B6E07D33EF5608A81CCBF31F33",
+      "size": 7699563
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-5.1.5-linux-amd64.tar.gz",
-      "sha256": "DCD83AF2729D73C46ABD17CC3222BD5BB1C2638A383DB9D49A94E10BFAEACFB8",
-      "size": 5802749
+      "url": "https://bcai.site/updates/BingchaAI-5.1.6-linux-amd64.tar.gz",
+      "sha256": "210B52F380CCA28DF8B0C7CDB936751213521386D9491DE0EA1CA6D9CC5AA316",
+      "size": 5801403
     }
   }
 }
