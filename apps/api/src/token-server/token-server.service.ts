@@ -154,7 +154,7 @@ export class TokenServerService {
     this.tokenProvider = options.tokenProvider || refreshGoogleAccessToken;
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion || process.env.BCAI_MIN_CLIENT_VERSION || "";
+    this.minClientVersion = options.minClientVersion ?? process.env.BCAI_MIN_CLIENT_VERSION ?? "5.2.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.creditTracker = options.creditTracker || null;

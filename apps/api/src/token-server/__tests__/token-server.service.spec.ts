@@ -65,6 +65,7 @@ describe("TokenServerService", () => {
       tokenProvider,
       now: () => Date.now(),
       randomId: () => "lease-fixed",
+      minClientVersion: "",
     });
   }
 
@@ -287,6 +288,7 @@ describe("TokenServerService — account cooling and retry", () => {
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
+      minClientVersion: "",
     });
   }
 
@@ -737,6 +739,7 @@ describe("TokenServerService — accountQuota in report-result", () => {
       tokenProvider,
       now: () => Date.now(),
       randomId: () => `lease-${++leaseCounter}`,
+      minClientVersion: "",
     });
   }
 
@@ -899,6 +902,7 @@ describe("TokenServerService — CreditTracker integration", () => {
       tokenProvider,
       now: () => Date.now(),
       randomId: () => `lease-${++leaseCounter}`,
+      minClientVersion: "",
       creditTracker,
     });
   }
@@ -1024,6 +1028,7 @@ describe("TokenServerService — quota-priority account selection", () => {
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
+      minClientVersion: "",
     });
   }
 
@@ -1227,6 +1232,7 @@ describe("TokenServerService — session and key lifecycle", () => {
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
+      minClientVersion: "",
     });
   }
 
