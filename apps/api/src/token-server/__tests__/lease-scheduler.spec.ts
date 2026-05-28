@@ -248,6 +248,48 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     expect(scoreFresh).toBeLessThan(scoreAffinity);
   });
 
+  it('should penalize UNKNOWN quota account enough to break affinity bonus (regression: was a tie before fix)', () => {
+    // BUG: Before fix, affinity(-20000) + unknown(20000) = 0, which tied with
+    // non-affinity + has-quota(0) = 0, allowing unknown-quota accounts to be selected.
+    // This caused credit-bearing accounts without 5h quota to be picked over free accounts.
+    const affinityUnknown = { id: 1 }; // no modelQuotaFractions at all
+    const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 1.0 } };
+
+    const scoreAffinity = scoreAccount(affinityUnknown, {
+      ...baseOptions,
+      preferredAccountId: 1,
+    });
+    const scoreFresh = scoreAccount(freshWithQuota, baseOptions);
+
+    // Account with confirmed 5h quota MUST beat affinity account with unknown quota
+    expect(scoreFresh).toBeLessThan(scoreAffinity);
+    // Gap must be large enough that no other factor can bridge it
+    expect(scoreAffinity - scoreFresh).toBeGreaterThan(50000);
+  });
+
+  it('should never select unknown-quota account over has-quota account even in worst case scenario', () => {
+    // Worst case: unknown account has affinity + ultra weight + zero load
+    // vs has-quota account with no affinity + basic weight + heavy load
+    const unknownIdeal = { id: 1 }; // unknown quota, zero load, affinity
+    const hasQuotaWorstCase = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.01 } }; // barely any quota left
+
+    const scoreUnknown = scoreAccount(unknownIdeal, {
+      ...baseOptions,
+      preferredAccountId: 1, // affinity
+      accountWeight: 3,      // ultra
+      activeLeaseCount: () => 0,
+    });
+    const scoreHasQuota = scoreAccount(hasQuotaWorstCase, {
+      ...baseOptions,
+      preferredAccountId: 0, // no affinity
+      accountWeight: 1,      // basic
+      activeLeaseCount: (id) => id === 2 ? 5 : 0, // heavily loaded
+    });
+
+    // Has-quota MUST still win despite all disadvantages
+    expect(scoreHasQuota).toBeLessThan(scoreUnknown);
+  });
+
   it('should NOT break affinity when the affinity account still has quota', () => {
     const affinityWithQuota = { id: 1, modelQuotaFractions: { 'gemini-2.5-pro': 0.6 } };
     const freshWithQuota = { id: 2, modelQuotaFractions: { 'gemini-2.5-pro': 0.8 } };

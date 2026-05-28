@@ -255,28 +255,28 @@ export function scoreAccount(
     : 0;
   const recentUsePenalty = Math.ceil(recentlyUsedMs / 1000);
 
-  // Quota priority — confirmed 5h remaining quota = HIGHEST priority.
+  // Quota priority — confirmed 5h remaining quota = ABSOLUTE HIGHEST priority.
   //
-  // Three tiers:
+  // Three tiers with UNCROSSABLE gaps — no combination of affinity, accountWeight,
+  // active leases, or other factors can bridge the tier boundaries:
   //   Tier 1: Confirmed has quota (fraction > 0) → 0~5000 penalty (always selected first)
-  //   Tier 2: Unknown / 暂无 (null or -1)        → 20000 penalty (deprioritized)
-  //   Tier 3: Confirmed exhausted (fraction = 0)  → 25000 penalty (last resort)
+  //   Tier 2: Unknown / 暂无 (null or -1)        → 100000 penalty (deprioritized)
+  //   Tier 3: Confirmed exhausted (fraction = 0)  → 200000 penalty (last resort)
   //
-  // Affinity is -20000, so:
-  //   - Affinity + confirmed quota  → net ≤ -15000 (best)
-  //   - Affinity + unknown          → net = 0 (ties with non-affinity confirmed)
-  //   - Affinity + exhausted        → net = 5000 (loses to non-affinity confirmed)
+  // Previously Tier 2 was 20000, which affinity (-20000) could cancel out,
+  // causing accounts WITHOUT 5h quota to be selected over accounts WITH quota.
+  // This led to unnecessary credit consumption on accounts that lack free 5h quota.
   const fraction = getModelQuotaFraction(account, options.modelKey);
   let quotaPenalty: number;
   if (fraction !== null && fraction >= 0) {
     // Confirmed data: gradient within 0-5000 (small spread, keeps confirmed accounts together)
     if (fraction === 0) {
-      quotaPenalty = 25000;        // Tier 3: confirmed exhausted
+      quotaPenalty = 200_000;      // Tier 3: confirmed exhausted — absolute last resort
     } else {
       quotaPenalty = Math.round((1 - fraction) * 5000);  // Tier 1: 1.0→0, 0.5→2500, 0.01→4950
     }
   } else {
-    quotaPenalty = 20000;          // Tier 2: null (unknown) or -1 (暂无)
+    quotaPenalty = 100_000;        // Tier 2: null (unknown) or -1 (暂无)
   }
 
   // Reset-time bonus: prefer accounts whose 5h quota resets sooner.
