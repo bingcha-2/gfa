@@ -25,7 +25,7 @@ export const ACCESS_KEY_BINDING_GRACE_MS = Math.max(
 );
 export const MAX_REMOTE_LEASE_TTL_MS = Math.max(
   60 * 1000,
-  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 5 * 60 * 1000),
+  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 60 * 1000),
 );
 export const PHONE_VERIFICATION_COOLDOWN_MS = Math.max(
   60 * 60 * 1000,

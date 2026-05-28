@@ -331,6 +331,7 @@ export class TokenServerService {
       accessToken,
       projectId: account.projectId,
       expiresAt: lease.expiresAt,
+      accessTokenExpiresAt: lease.expiresAt,
       probation: false,
       candidateStats: { healthyForModel: this.availableAccounts(payload, modelKey).length },
       retryPolicy: null,
