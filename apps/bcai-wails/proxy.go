@@ -443,7 +443,6 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
-		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %s", reqId, resp.StatusCode, len(respBody), debugResponseBody(respBody, resp.Header.Get("Content-Encoding"), 500))
 		for k, v := range resp.Header {
 			for _, val := range v {
 				w.Header().Add(k, val)
@@ -461,8 +460,6 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 		_, _ = io.Copy(w, resp.Body)
 	}
 }
-
-
 
 func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
 	cfg := LoadConfig()
@@ -640,240 +637,240 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
 		}
-	// P1④: Dynamic max attempts — start with default, update from server retryPolicy
-	remoteMaxAttempts := MaxCloudCodeGenerationAttempts
-	accumulatedCapacityWaitMs := int64(0)
-	const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
-	// 记录本次请求中已失败的 accountId，防止 report-result 还没到服务端时又租到同一个号
-	var excludeAccountIds []int
-	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
-		var err error
-		leaseOptions := map[string]interface{}{
-			"attemptSessionId": attemptSessionId,
-			"modelKey":         requestModelKey,
-		}
-		if len(excludeAccountIds) > 0 {
-			leaseOptions["excludeAccountIds"] = excludeAccountIds
-		}
-		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
-		if err != nil {
-			Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token: %v", reqId, err)
-			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
-		// P1④: Update maxAttempts from server retryPolicy
-		if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
-			remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
-			if remoteMaxAttempts > 99 {
-				remoteMaxAttempts = 99
+		// P1④: Dynamic max attempts — start with default, update from server retryPolicy
+		remoteMaxAttempts := MaxCloudCodeGenerationAttempts
+		accumulatedCapacityWaitMs := int64(0)
+		const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
+		// 记录本次请求中已失败的 accountId，防止 report-result 还没到服务端时又租到同一个号
+		var excludeAccountIds []int
+		for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
+			var err error
+			leaseOptions := map[string]interface{}{
+				"attemptSessionId": attemptSessionId,
+				"modelKey":         requestModelKey,
 			}
-		}
-		Log("[proxy] #%d [LEASE] attempt=%d/%d accountId=%d project=%s model=%s", reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
-
-		rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
-		// 生成请求必须有 project 字段，没有则注入
-		if !hasProject {
-			if bodyMap, ok := rewrittenBody.(map[string]interface{}); ok {
-				bodyMap["project"] = lease.ProjectId
-				rewrittenBody = bodyMap
+			if len(excludeAccountIds) > 0 {
+				leaseOptions["excludeAccountIds"] = excludeAccountIds
 			}
-		}
-		// 注入 enabledCreditTypes: GOOGLE_ONE_AI（默认消耗积分，与 token-proxy.js 行为一致）
-		if bodyMap, ok := rewrittenBody.(map[string]interface{}); ok {
-			credits, _ := bodyMap["enabledCreditTypes"].([]interface{})
-			hasGoogleOneAI := false
-			for _, c := range credits {
-				if s, ok := c.(string); ok && s == "GOOGLE_ONE_AI" {
-					hasGoogleOneAI = true
-					break
+			lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
+			if err != nil {
+				Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token: %v", reqId, err)
+				p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+			// P1④: Update maxAttempts from server retryPolicy
+			if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
+				remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
+				if remoteMaxAttempts > 99 {
+					remoteMaxAttempts = 99
 				}
 			}
-			if !hasGoogleOneAI {
-				bodyMap["enabledCreditTypes"] = append(credits, "GOOGLE_ONE_AI")
-				rewrittenBody = bodyMap
+			Log("[proxy] #%d [LEASE] attempt=%d/%d accountId=%d project=%s model=%s", reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
+
+			rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
+			// 生成请求必须有 project 字段，没有则注入
+			if !hasProject {
+				if bodyMap, ok := rewrittenBody.(map[string]interface{}); ok {
+					bodyMap["project"] = lease.ProjectId
+					rewrittenBody = bodyMap
+				}
 			}
-		}
-		newBodyBytes, err := json.Marshal(rewrittenBody)
-		if err != nil {
-			Log("[proxy] #%d [REWRITE-ERROR] Failed to marshal rewritten body: %v", reqId, err)
-			p.sendJsonError(w, 500, "Internal rewrite error")
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
+			// 注入 enabledCreditTypes: GOOGLE_ONE_AI（默认消耗积分，与 token-proxy.js 行为一致）
+			if bodyMap, ok := rewrittenBody.(map[string]interface{}); ok {
+				credits, _ := bodyMap["enabledCreditTypes"].([]interface{})
+				hasGoogleOneAI := false
+				for _, c := range credits {
+					if s, ok := c.(string); ok && s == "GOOGLE_ONE_AI" {
+						hasGoogleOneAI = true
+						break
+					}
+				}
+				if !hasGoogleOneAI {
+					bodyMap["enabledCreditTypes"] = append(credits, "GOOGLE_ONE_AI")
+					rewrittenBody = bodyMap
+				}
+			}
+			newBodyBytes, err := json.Marshal(rewrittenBody)
+			if err != nil {
+				Log("[proxy] #%d [REWRITE-ERROR] Failed to marshal rewritten body: %v", reqId, err)
+				p.sendJsonError(w, 500, "Internal rewrite error")
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 
-		req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(newBodyBytes))
-		if err != nil {
-			Log("[proxy] #%d [REQ-ERROR] Failed to build proxy request: %v", reqId, err)
-			p.sendJsonError(w, 500, "Internal request creation error")
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
+			req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(newBodyBytes))
+			if err != nil {
+				Log("[proxy] #%d [REQ-ERROR] Failed to build proxy request: %v", reqId, err)
+				p.sendJsonError(w, 500, "Internal request creation error")
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 
-		// Copy headers and inject the leased bearer token
-		for k, v := range r.Header {
-			lower := strings.ToLower(k)
-			if lower == "authorization" ||
-				lower == "host" ||
-				lower == "content-length" ||
-				lower == "x-goog-api-key" ||
-				lower == "x-goog-user-project" {
+			// Copy headers and inject the leased bearer token
+			for k, v := range r.Header {
+				lower := strings.ToLower(k)
+				if lower == "authorization" ||
+					lower == "host" ||
+					lower == "content-length" ||
+					lower == "x-goog-api-key" ||
+					lower == "x-goog-user-project" {
+					continue
+				}
+				for _, val := range v {
+					req.Header.Add(k, val)
+				}
+			}
+			req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+			req.Header.Set("Host", targetUrl.Host)
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBodyBytes)))
+
+			resp, err = client.Do(req)
+			if err != nil {
+				Log("[proxy] #%d [FORWARD-ERROR] Upstream request failed: %v", reqId, err)
+				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+
+			problemReason := ""
+			errorBody := ""
+			if resp.StatusCode == http.StatusTooManyRequests ||
+				resp.StatusCode == http.StatusForbidden ||
+				resp.StatusCode == http.StatusServiceUnavailable ||
+				resp.StatusCode == http.StatusInternalServerError ||
+				resp.StatusCode == http.StatusBadRequest {
+				respBytes := readAndResetResponseBody(resp)
+				errorBody = string(respBytes)
+				problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
+			}
+			if problemReason == "" {
+				break
+			}
+
+			// P0: Parse retryAfterMs from 429 error body
+			retryAfterMs := extractQuotaResetDelayMs(errorBody)
+			// P0: Extract model from error response (503 capacity errors contain model name)
+			errorModelKey := extractCapacityModelKey(errorBody)
+			if errorModelKey == "" {
+				errorModelKey = requestModelKey
+			}
+
+			// P0: Build enriched report details
+			reportDetails := ReportDetails{
+				StatusCode:   resp.StatusCode,
+				ModelKey:     errorModelKey,
+				Reason:       problemReason,
+				RetryAfterMs: retryAfterMs,
+				ErrorText:    errorBody,
+			}
+
+			// P2⑪: Verification challenge → report + rotate to another account
+			// (mirrors token-proxy.js L1812-L1822: shouldRetryRemoteError → continue)
+			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
+				Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d, rotating (%d/%d)",
+					reqId, lease.AccountId, attempt, remoteMaxAttempts)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				if attempt < remoteMaxAttempts {
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
+					continue
+				}
+				// All attempts exhausted — return friendly 503
+				Log("[proxy] #%d [VERIFY] Verification challenge exhausted after %d attempts", reqId, attempt)
+				p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
+
+			// P1④: Check if this status is retryable per server retryPolicy
+			// #5: Use statusMaxAttempts to expand retry limit for specific status codes
+			effectiveMaxAttempts := remoteMaxAttempts
+			if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
+				if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
+					effectiveMaxAttempts = statusLimit
+					if effectiveMaxAttempts > 99 {
+						effectiveMaxAttempts = 99
+					}
+				}
+			}
+			canRetry := attempt < effectiveMaxAttempts
+			if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
+				statusRetryable := false
+				for _, s := range lease.RetryPolicy.RetryableStatuses {
+					if s == resp.StatusCode {
+						statusRetryable = true
+						break
+					}
+				}
+				if !statusRetryable {
+					canRetry = false
+				}
+			}
+
+			// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
+			// (mirrors token-proxy.js L1744-L1752)
+			if resp.StatusCode == http.StatusTooManyRequests &&
+				retryAfterMs > 0 && retryAfterMs < 5000 &&
+				strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
+				attempt < effectiveMaxAttempts+2 {
+				waitMs := retryAfterMs + 500
+				Log("[proxy] #%d [SHORT-RATELIMIT] 429 RATE_LIMIT_EXCEEDED retryAfter=%dms, waiting %dms and retrying same account=%d",
+					reqId, retryAfterMs, waitMs, lease.AccountId)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				// Don't add to excludeAccountIds — retry same account
 				continue
 			}
-			for _, val := range v {
-				req.Header.Add(k, val)
+
+			// P2⑩: 503 capacity wait — wait and retry instead of immediate rotate
+			if resp.StatusCode == http.StatusServiceUnavailable &&
+				strings.Contains(strings.ToLower(errorBody), "capacity") &&
+				accumulatedCapacityWaitMs < maxCapacityWaitMs {
+				waitMs := int64(5000) // default 5s
+				if retryAfterMs > 0 && retryAfterMs < 30000 {
+					waitMs = retryAfterMs
+				}
+				accumulatedCapacityWaitMs += waitMs
+				Log("[proxy] #%d [CAPACITY-WAIT] 503 capacity, waiting %dms (total=%dms/%dms) for model=%s",
+					reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+				time.Sleep(time.Duration(waitMs) * time.Millisecond)
+				continue
 			}
-		}
-		req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
-		req.Header.Set("Host", targetUrl.Host)
-		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBodyBytes)))
 
-		resp, err = client.Do(req)
-		if err != nil {
-			Log("[proxy] #%d [FORWARD-ERROR] Upstream request failed: %v", reqId, err)
-			p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
-
-		problemReason := ""
-		errorBody := ""
-		if resp.StatusCode == http.StatusTooManyRequests ||
-			resp.StatusCode == http.StatusForbidden ||
-			resp.StatusCode == http.StatusServiceUnavailable ||
-			resp.StatusCode == http.StatusInternalServerError ||
-			resp.StatusCode == http.StatusBadRequest {
-			respBytes := readAndResetResponseBody(resp)
-			errorBody = string(respBytes)
-			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
-		}
-		if problemReason == "" {
-			break
-		}
-
-		// P0: Parse retryAfterMs from 429 error body
-		retryAfterMs := extractQuotaResetDelayMs(errorBody)
-		// P0: Extract model from error response (503 capacity errors contain model name)
-		errorModelKey := extractCapacityModelKey(errorBody)
-		if errorModelKey == "" {
-			errorModelKey = requestModelKey
-		}
-
-		// P0: Build enriched report details
-		reportDetails := ReportDetails{
-			StatusCode:   resp.StatusCode,
-			ModelKey:     errorModelKey,
-			Reason:       problemReason,
-			RetryAfterMs: retryAfterMs,
-			ErrorText:    errorBody,
-		}
-
-		// P2⑪: Verification challenge → report + rotate to another account
-		// (mirrors token-proxy.js L1812-L1822: shouldRetryRemoteError → continue)
-		if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-			Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d, rotating (%d/%d)",
-				reqId, lease.AccountId, attempt, remoteMaxAttempts)
-			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-			excludeAccountIds = append(excludeAccountIds, lease.AccountId)
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			resp = nil
-			if attempt < remoteMaxAttempts {
+			if canRetry {
+				respStatus := resp.StatusCode
+				Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
+					reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				// 将失败的 accountId 加入排除列表，防止异步 report 还没到时又租到同一个号
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
 				atomic.AddInt64(&p.stats.TotalRetries, 1)
 				GetUsageStats().AddRetry()
-				time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
+				// P1: Exponential backoff between retries
+				time.Sleep(remoteRetryDelayForStatus(attempt, respStatus))
 				continue
 			}
-			// All attempts exhausted — return friendly 503
-			Log("[proxy] #%d [VERIFY] Verification challenge exhausted after %d attempts", reqId, attempt)
-			p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
-		}
 
-		// P1④: Check if this status is retryable per server retryPolicy
-		// #5: Use statusMaxAttempts to expand retry limit for specific status codes
-		effectiveMaxAttempts := remoteMaxAttempts
-		if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
-			if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
-				effectiveMaxAttempts = statusLimit
-				if effectiveMaxAttempts > 99 {
-					effectiveMaxAttempts = 99
-				}
-			}
-		}
-		canRetry := attempt < effectiveMaxAttempts
-		if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
-			statusRetryable := false
-			for _, s := range lease.RetryPolicy.RetryableStatuses {
-				if s == resp.StatusCode {
-					statusRetryable = true
-					break
-				}
-			}
-			if !statusRetryable {
-				canRetry = false
-			}
-		}
-
-		// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
-		// (mirrors token-proxy.js L1744-L1752)
-		if resp.StatusCode == http.StatusTooManyRequests &&
-			retryAfterMs > 0 && retryAfterMs < 5000 &&
-			strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
-			attempt < effectiveMaxAttempts+2 {
-			waitMs := retryAfterMs + 500
-			Log("[proxy] #%d [SHORT-RATELIMIT] 429 RATE_LIMIT_EXCEEDED retryAfter=%dms, waiting %dms and retrying same account=%d",
-				reqId, retryAfterMs, waitMs, lease.AccountId)
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			resp = nil
-			time.Sleep(time.Duration(waitMs) * time.Millisecond)
-			// Don't add to excludeAccountIds — retry same account
-			continue
-		}
-
-		// P2⑩: 503 capacity wait — wait and retry instead of immediate rotate
-		if resp.StatusCode == http.StatusServiceUnavailable &&
-			strings.Contains(strings.ToLower(errorBody), "capacity") &&
-			accumulatedCapacityWaitMs < maxCapacityWaitMs {
-			waitMs := int64(5000) // default 5s
-			if retryAfterMs > 0 && retryAfterMs < 30000 {
-				waitMs = retryAfterMs
-			}
-			accumulatedCapacityWaitMs += waitMs
-			Log("[proxy] #%d [CAPACITY-WAIT] 503 capacity, waiting %dms (total=%dms/%dms) for model=%s",
-				reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+			Log("[proxy] #%d Upstream returned %d (%s) after %d attempts for accountId=%d, reporting...",
+				reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			resp = nil
-			time.Sleep(time.Duration(waitMs) * time.Millisecond)
-			continue
+			break
 		}
-
-		if canRetry {
-			respStatus := resp.StatusCode
-			Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
-				reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
-			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-			// 将失败的 accountId 加入排除列表，防止异步 report 还没到时又租到同一个号
-			excludeAccountIds = append(excludeAccountIds, lease.AccountId)
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			resp = nil
-			atomic.AddInt64(&p.stats.TotalRetries, 1)
-			GetUsageStats().AddRetry()
-			// P1: Exponential backoff between retries
-			time.Sleep(remoteRetryDelayForStatus(attempt, respStatus))
-			continue
-		}
-
-		Log("[proxy] #%d Upstream returned %d (%s) after %d attempts for accountId=%d, reporting...",
-			reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
-		leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-		break
-	}
 	} // end remote lease mode
 	if resp == nil {
 		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
@@ -905,12 +902,16 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 					cooldownMin := 30
 					if retryMs > 0 {
 						cooldownMin = int(retryMs / 60000)
-						if cooldownMin < 1 { cooldownMin = 1 }
+						if cooldownMin < 1 {
+							cooldownMin = 1
+						}
 					}
 					pool.MarkExhausted(lease.AccountId, reason, mk, cooldownMin)
 				} else if lease != nil {
 					statusCode := 429
-					if reason == "capacity" { statusCode = 503 }
+					if reason == "capacity" {
+						statusCode = 503
+					}
 					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
 						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
 					}, upstream, lease)
@@ -971,13 +972,17 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			cooldownMin := 30
 			if tokenResult.StreamRetryAfterMs > 0 {
 				cooldownMin = int(tokenResult.StreamRetryAfterMs / 60000)
-				if cooldownMin < 1 { cooldownMin = 1 }
+				if cooldownMin < 1 {
+					cooldownMin = 1
+				}
 			}
 			pool.MarkExhausted(lease.AccountId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel, cooldownMin)
 		} else if lease != nil {
 			leaser := GetLeaser()
 			statusCode := 429
-			if tokenResult.StreamErrorReason == "capacity" { statusCode = 503 }
+			if tokenResult.StreamErrorReason == "capacity" {
+				statusCode = 503
+			}
 			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
 				StatusCode:   statusCode,
 				ModelKey:     tokenResult.StreamErrorModel,
@@ -999,12 +1004,12 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				leaser.RecordLocalUsage(requestModelKey, int64(tokenResult.BillableTotalTokens))
 			}
 			leaser.ReportUsage(card, deviceId, ReportDetails{
-				StatusCode:        resp.StatusCode,
-				ModelKey:          requestModelKey,
-				InputTokens:       tokenResult.InputTokens,
-				OutputTokens:      tokenResult.OutputTokens,
-				CachedInputTokens: tokenResult.CachedInputTokens,
-				RawTotalTokens:    tokenResult.RawTotalTokens,
+				StatusCode:          resp.StatusCode,
+				ModelKey:            requestModelKey,
+				InputTokens:         tokenResult.InputTokens,
+				OutputTokens:        tokenResult.OutputTokens,
+				CachedInputTokens:   tokenResult.CachedInputTokens,
+				RawTotalTokens:      tokenResult.RawTotalTokens,
 				BillableTotalTokens: tokenResult.BillableTotalTokens,
 			}, upstream, lease)
 			// 影子校验通道
@@ -1377,12 +1382,16 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 					cooldownMin := 30
 					if retryMs > 0 {
 						cooldownMin = int(retryMs / 60000)
-						if cooldownMin < 1 { cooldownMin = 1 }
+						if cooldownMin < 1 {
+							cooldownMin = 1
+						}
 					}
 					pool.MarkExhausted(lease.AccountId, reason, mk, cooldownMin)
 				} else if lease != nil {
 					statusCode := 429
-					if reason == "capacity" { statusCode = 503 }
+					if reason == "capacity" {
+						statusCode = 503
+					}
 					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
 						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
 					}, upstream, lease)
@@ -1436,13 +1445,17 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			cooldownMin := 30
 			if tokenResult.StreamRetryAfterMs > 0 {
 				cooldownMin = int(tokenResult.StreamRetryAfterMs / 60000)
-				if cooldownMin < 1 { cooldownMin = 1 }
+				if cooldownMin < 1 {
+					cooldownMin = 1
+				}
 			}
 			pool.MarkExhausted(lease.AccountId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel, cooldownMin)
 		} else if lease != nil {
 			leaser := GetLeaser()
 			statusCode := 429
-			if tokenResult.StreamErrorReason == "capacity" { statusCode = 503 }
+			if tokenResult.StreamErrorReason == "capacity" {
+				statusCode = 503
+			}
 			leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
 				StatusCode:   statusCode,
 				ModelKey:     tokenResult.StreamErrorModel,
@@ -1540,11 +1553,8 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 	}
 	defer resp.Body.Close()
 
-	// Debug: log response for non-noise requests
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
-		Log("[proxy] #%d [DEBUG] <- Status: %d, Body(%d bytes): %s", reqId, resp.StatusCode, len(respBody), debugResponseBody(respBody, resp.Header.Get("Content-Encoding"), 500))
-
 		// Copy headers
 		for k, v := range resp.Header {
 			for _, val := range v {
@@ -1565,7 +1575,6 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 	}
 }
 
-
 func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) TokenUsageResult {
 	buffer := make([]byte, 32768) // 32KB read buffer（减少系统调用，提升流式吞吐）
 	// 尾部缓冲：仅保留流的最后 16KB 用于解析 token 用量（usageMetadata 只出现在末尾）
@@ -1585,10 +1594,10 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	flusher, ok := w.(http.Flusher)
 
 	// P1⑦: Stream inactivity timer with keepalive
-	const streamFirstByteTimeout = 180 * time.Second  // 3 min for initial thinking
-	const streamMidCheckInterval = 60 * time.Second    // 60s between health checks
-	const streamGracePeriod = 30 * time.Second         // 30s per grace extension
-	streamMaxIdle := 5 * time.Minute                   // default max idle
+	const streamFirstByteTimeout = 180 * time.Second // 3 min for initial thinking
+	const streamMidCheckInterval = 60 * time.Second  // 60s between health checks
+	const streamGracePeriod = 30 * time.Second       // 30s per grace extension
+	streamMaxIdle := 5 * time.Minute                 // default max idle
 
 	var streamHasData atomic.Bool
 	var lastDataNano atomic.Int64
@@ -1732,17 +1741,17 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 // TokenUsageResult holds parsed token counts and the billable total after
 // applying the cached-token discount (cached tokens count as 1/10).
 type TokenUsageResult struct {
-	InputTokens       int64
-	OutputTokens      int64
-	CachedInputTokens int64
-	RawTotalTokens    int64
+	InputTokens         int64
+	OutputTokens        int64
+	CachedInputTokens   int64
+	RawTotalTokens      int64
 	BillableTotalTokens int64 // rawTotal - cached + ceil(cached/10)
 	// Mid-stream quota/capacity error (timo-style detection)
 	StreamError        bool
 	StreamErrorReason  string // "quota" or "capacity"
 	StreamErrorModel   string
 	StreamRetryAfterMs int64
-	StreamBytes        int64  // bytes received before error
+	StreamBytes        int64 // bytes received before error
 }
 
 // discountedCachedTokens returns the billable portion of cached tokens.
@@ -1841,10 +1850,10 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 	}
 
 	return TokenUsageResult{
-		InputTokens:       inputTokens,
-		OutputTokens:      outputTokens,
-		CachedInputTokens: cachedTokens,
-		RawTotalTokens:    rawTotal,
+		InputTokens:         inputTokens,
+		OutputTokens:        outputTokens,
+		CachedInputTokens:   cachedTokens,
+		RawTotalTokens:      rawTotal,
 		BillableTotalTokens: billable,
 	}
 }
@@ -2348,16 +2357,16 @@ func remoteRetryDelayForStatus(attempt int, statusCode int) time.Duration {
 // ReportDetails contains enriched information for report-result, matching
 // the fields sent by the extension's reportRemoteResult (token-proxy.js L1448-1477).
 type ReportDetails struct {
-	StatusCode        int
-	ModelKey          string
-	Reason            string
-	RetryAfterMs      int64
-	InputTokens       int64
-	OutputTokens      int64
-	CachedInputTokens int64 // 缓存命中的 input token（按 1/10 计费）
-	RawTotalTokens    int64 // input + output 原始总量
+	StatusCode          int
+	ModelKey            string
+	Reason              string
+	RetryAfterMs        int64
+	InputTokens         int64
+	OutputTokens        int64
+	CachedInputTokens   int64 // 缓存命中的 input token（按 1/10 计费）
+	RawTotalTokens      int64 // input + output 原始总量
 	BillableTotalTokens int64 // 折扣后的计费总量
-	ErrorText         string
+	ErrorText           string
 }
 
 // getErrorSnippet truncates error text for report payloads (max 1200 chars).

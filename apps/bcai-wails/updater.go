@@ -17,7 +17,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.1.5"
+var AppVersion = "5.1.6"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
@@ -36,10 +36,10 @@ type PlatformAsset struct {
 
 type UpdateInfo struct {
 	Version   string `json:"version"`
-	URL       string `json:"url"`       // Windows 默认下载地址（向后兼容）
-	SHA256    string `json:"sha256"`    // 校验和
-	Size      int64  `json:"size"`      // 文件大小
-	Changelog string `json:"changelog"` // 更新日志
+	URL       string `json:"url"`        // Windows 默认下载地址（向后兼容）
+	SHA256    string `json:"sha256"`     // 校验和
+	Size      int64  `json:"size"`       // 文件大小
+	Changelog string `json:"changelog"`  // 更新日志
 	MinVer    string `json:"minVersion"` // 最低支持版本（低于此版本强制更新）
 
 	// 平台特定资源
@@ -75,24 +75,24 @@ func (info *UpdateInfo) resolveAsset() (downloadURL, checksum string, size int64
 }
 
 type UpdateStatus struct {
-	Status     string  `json:"status"`     // checking, available, downloading, ready, up-to-date, error
-	Version    string  `json:"version"`
-	Current    string  `json:"current"`
-	Changelog  string  `json:"changelog"`
-	Percent    float64 `json:"percent"`
-	Error      string  `json:"error"`
-	CanSkip    bool    `json:"canSkip"`    // 是否可以跳过
+	Status    string  `json:"status"` // checking, available, downloading, ready, up-to-date, error
+	Version   string  `json:"version"`
+	Current   string  `json:"current"`
+	Changelog string  `json:"changelog"`
+	Percent   float64 `json:"percent"`
+	Error     string  `json:"error"`
+	CanSkip   bool    `json:"canSkip"` // 是否可以跳过
 }
 
 // ─── Updater ─────────────────────────────────────────────────────────────
 
 type Updater struct {
-	mu         sync.RWMutex
-	status     UpdateStatus
-	info       *UpdateInfo
-	stopCh     chan struct{}
-	running    bool
-	exePath    string // 当前 exe 路径
+	mu      sync.RWMutex
+	status  UpdateStatus
+	info    *UpdateInfo
+	stopCh  chan struct{}
+	running bool
+	exePath string // 当前 exe 路径
 }
 
 var (

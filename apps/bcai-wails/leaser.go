@@ -37,9 +37,9 @@ type TokenLease struct {
 // RemoteRetryPolicy mirrors the extension's normalizeRemoteRetryPolicy
 // (token-proxy.js L66-96). Sent by the server in lease responses.
 type RemoteRetryPolicy struct {
-	MaxAttempts        int            `json:"maxAttempts"`
-	RetryableStatuses  []int          `json:"retryableStatuses"`
-	StatusMaxAttempts  map[int]int    `json:"statusMaxAttempts"`
+	MaxAttempts       int         `json:"maxAttempts"`
+	RetryableStatuses []int       `json:"retryableStatuses"`
+	StatusMaxAttempts map[int]int `json:"statusMaxAttempts"`
 }
 
 // LocalQuota 本地额度跟踪，镜像服务端的 5h 滑动窗口
@@ -53,42 +53,41 @@ type LocalQuota struct {
 }
 
 type pendingReport struct {
-	Payload        map[string]interface{}
-	Card           string
-	UpstreamProxy  string
-	AddedAt        time.Time
+	Payload       map[string]interface{}
+	Card          string
+	UpstreamProxy string
+	AddedAt       time.Time
 }
 
 const (
-	reportMaxRetries     = 3
-	maxPendingReports    = 30
-	pendingReportMaxAge  = 30 * time.Minute
+	reportMaxRetries    = 3
+	maxPendingReports   = 30
+	pendingReportMaxAge = 30 * time.Minute
 )
 
 type Leaser struct {
-	mu              sync.RWMutex
-	cachedToken     *TokenLease
-	lastError       string
-	leaseCount      int
-	reportCount     int
-	cardExpires     string
-	leaseRunning    bool
-	cancelLease     context.CancelFunc
+	mu                sync.RWMutex
+	cachedToken       *TokenLease
+	lastError         string
+	leaseCount        int
+	reportCount       int
+	cardExpires       string
+	leaseRunning      bool
+	cancelLease       context.CancelFunc
 	accessKeyStatus   map[string]interface{}
 	accessKeyStatusAt time.Time // when accessKeyStatus was last received
 	// P2⑨: Inflight lease dedup — prevents duplicate concurrent lease requests
-	inflightMu      sync.Mutex
-	inflightLease   map[string]chan struct{} // key → wait channel
-	inflightResult  map[string]*inflightLeaseResult
+	inflightMu     sync.Mutex
+	inflightLease  map[string]chan struct{} // key → wait channel
+	inflightResult map[string]*inflightLeaseResult
 	// 本地计费
-	localQuota      LocalQuota
+	localQuota LocalQuota
 	// 上报重试队列
-	pendingReports  []pendingReport
+	pendingReports []pendingReport
 	// 远程租号的 quota 采集（quota_sync.go）
 	cachedQuotaSnapshot *AccountQuotaSnapshot
 	quotaFetching       int32 // atomic CAS flag，防并发
 }
-
 
 type inflightLeaseResult struct {
 	lease *TokenLease
@@ -240,7 +239,7 @@ type LeaseTokenResp struct {
 	Ok                   *bool           `json:"ok"`      // remote-token-server uses "ok" field
 	Code                 string          `json:"code"`
 	Message              string          `json:"message"`
-	Error                string          `json:"error"`   // remote-token-server uses "error" field
+	Error                string          `json:"error"` // remote-token-server uses "error" field
 	AccessToken          string          `json:"accessToken"`
 	ProjectId            string          `json:"projectId"`
 	AccountId            json.RawMessage `json:"accountId"` // API may return number or string
@@ -507,8 +506,16 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 			var cs map[string]interface{}
 			if json.Unmarshal(csRaw, &cs) == nil {
 				lease.CandidateStats = cs
+				getF := func(key string) float64 {
+					if v, ok := cs[key]; ok {
+						if f, ok := v.(float64); ok {
+							return f
+						}
+					}
+					return 0
+				}
 				Log("[token-leaser] CandidateStats: healthyForModel=%.0f total=%.0f cooling=%.0f probation=%.0f excluded=%.0f",
-					cs["healthyForModel"], cs["total"], cs["coolingForModel"], cs["probationForModel"], cs["excluded"])
+					getF("healthyForModel"), getF("total"), getF("coolingForModel"), getF("probationForModel"), getF("excluded"))
 			}
 		}
 	}
@@ -585,6 +592,7 @@ func (l *Leaser) ReportProblemForAccount(card, deviceId string, reason string, u
 
 	go l.doReportWithRetry(payload, card, upstreamProxy)
 }
+
 // ReportProblemWithDetails sends an enriched report-result to the server,
 // matching the extension's reportRemoteResult (token-proxy.js L1448-1477).
 func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportDetails, upstreamProxy string, lease *TokenLease) {
@@ -611,8 +619,8 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 		"retryAfterMs":      details.RetryAfterMs,
 		"inputTokens":       details.InputTokens,
 		"outputTokens":      details.OutputTokens,
-		"cachedInputTokens": details.CachedInputTokens, // 缓存 token（服务端按 1/10 计费）
-		"rawTotalTokens":    details.RawTotalTokens,     // 原始总量
+		"cachedInputTokens": details.CachedInputTokens,   // 缓存 token（服务端按 1/10 计费）
+		"rawTotalTokens":    details.RawTotalTokens,      // 原始总量
 		"totalTokens":       details.BillableTotalTokens, // 折扣后计费总量
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
@@ -733,7 +741,6 @@ func (l *Leaser) doReportWithRetry(payload map[string]interface{}, card string, 
 	// 成功上报后，异步查询 Google API 获取最新 quota
 	go l.fetchAccountQuotaAsync()
 }
-
 
 // queueFailedReport 将失败的 report 加入待重发队列
 func (l *Leaser) queueFailedReport(payload map[string]interface{}, card string, upstreamProxy string) {
