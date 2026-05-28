@@ -87,6 +87,7 @@ type Leaser struct {
 	// 远程租号的 quota 采集（quota_sync.go）
 	cachedQuotaSnapshot *AccountQuotaSnapshot
 	quotaFetching       int32 // atomic CAS flag，防并发
+	lastModelKey        string // 上次 generation 使用的 modelKey，用于预热选号
 }
 
 type inflightLeaseResult struct {
@@ -639,6 +640,10 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 	l.mu.Lock()
 	l.reportCount++
 	// ❌ 不清 cachedToken — 成功后保留当前号
+	// 记录最近使用的 modelKey，用于预热/续租时的 5h 额度感知选号
+	if details.ModelKey != "" {
+		l.lastModelKey = details.ModelKey
+	}
 	l.mu.Unlock()
 
 	Log("[token-leaser] ReportUsage account=%d status=%d model=%s input=%d output=%d cached=%d billable=%d",
@@ -828,8 +833,15 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 
-		// Warmup lease immediately
-		_, _ = l.LeaseToken(card, deviceId, false, nil, upstreamProxy)
+		// Warmup lease immediately (use last known model for quota-aware selection)
+		l.mu.RLock()
+		warmupModel := l.lastModelKey
+		l.mu.RUnlock()
+		var warmupOpts map[string]interface{}
+		if warmupModel != "" {
+			warmupOpts = map[string]interface{}{"modelKey": warmupModel}
+		}
+		_, _ = l.LeaseToken(card, deviceId, false, warmupOpts, upstreamProxy)
 
 		for {
 			select {
@@ -851,7 +863,14 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 				l.mu.RUnlock()
 
 				if needLease {
-					_, _ = l.LeaseToken(card, deviceId, false, nil, upstreamProxy)
+					l.mu.RLock()
+					renewalModel := l.lastModelKey
+					l.mu.RUnlock()
+					var renewOpts map[string]interface{}
+					if renewalModel != "" {
+						renewOpts = map[string]interface{}{"modelKey": renewalModel}
+					}
+					_, _ = l.LeaseToken(card, deviceId, false, renewOpts, upstreamProxy)
 				}
 			}
 		}
