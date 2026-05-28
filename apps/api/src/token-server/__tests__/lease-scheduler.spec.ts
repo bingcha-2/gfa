@@ -451,4 +451,109 @@ describe('scoreAccount — quota priority (prefer 5h quota over credits)', () =>
     // Confirmed with late reset still beats unknown
     expect(scoreConfirmed).toBeLessThan(scoreUnknown);
   });
+
+  it('should give maximum bonus when resetTime is already past', () => {
+    const now = Date.now();
+    const pastReset = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.3 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now - 60_000).toISOString() }, // 1 min ago
+    };
+    const futureReset = {
+      id: 2,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.3 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 3 * 3600_000).toISOString() }, // 3h
+    };
+
+    const opts = { ...baseOptions, now };
+    const scorePast = scoreAccount(pastReset, opts);
+    const scoreFuture = scoreAccount(futureReset, opts);
+
+    // Past reset = imminent refresh = most preferred
+    expect(scorePast).toBeLessThan(scoreFuture);
+  });
+
+  it('should give zero bonus when resetTime is >= 5h away', () => {
+    const now = Date.now();
+    const farReset = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.5 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 6 * 3600_000).toISOString() }, // 6h
+    };
+    const noResetData = {
+      id: 2,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.5 },
+      // no resetTimes
+    };
+
+    const opts = { ...baseOptions, now };
+    const scoreFar = scoreAccount(farReset, opts);
+    const scoreNoData = scoreAccount(noResetData, opts);
+
+    // Both should have 0 reset bonus → same score
+    expect(scoreFar).toBe(scoreNoData);
+  });
+
+  it('should produce monotonically decreasing scores as resetTime gets closer', () => {
+    const now = Date.now();
+    const resetOffsets = [4 * 3600_000, 2 * 3600_000, 60 * 60_000, 10 * 60_000]; // 4h, 2h, 1h, 10min
+    const scores = resetOffsets.map((offset, i) =>
+      scoreAccount(
+        {
+          id: i + 1,
+          modelQuotaFractions: { 'gemini-2.5-pro': 0.5 },
+          modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + offset).toISOString() },
+        },
+        { ...baseOptions, now },
+      ),
+    );
+
+    // Closer reset → lower score
+    for (let i = 0; i < scores.length - 1; i++) {
+      expect(scores[i]).toBeGreaterThan(scores[i + 1]);
+    }
+  });
+
+  it('should not give reset bonus when resetTimes has no entry for target model', () => {
+    const now = Date.now();
+    const wrongModel = {
+      id: 1,
+      modelQuotaFractions: { 'claude-sonnet-4-6': 0.5 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 10 * 60_000).toISOString() }, // reset data for wrong model
+    };
+    const noResetData = {
+      id: 2,
+      modelQuotaFractions: { 'claude-sonnet-4-6': 0.5 },
+    };
+
+    const opts = { ...baseOptions, now, modelKey: 'claude-sonnet-4-6' };
+    const scoreWrong = scoreAccount(wrongModel, opts);
+    const scoreNone = scoreAccount(noResetData, opts);
+
+    // No matching reset data → same score
+    expect(scoreWrong).toBe(scoreNone);
+  });
+
+  it('should combine quota fraction and resetTime correctly: low quota + soon reset beats high quota + far reset', () => {
+    const now = Date.now();
+    const lowQuotaSoonReset = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.2 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 5 * 60_000).toISOString() }, // 5min
+    };
+    const highQuotaFarReset = {
+      id: 2,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0.9 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': new Date(now + 4.5 * 3600_000).toISOString() }, // 4.5h
+    };
+
+    const opts = { ...baseOptions, now };
+    const scoreLow = scoreAccount(lowQuotaSoonReset, opts);
+    const scoreHigh = scoreAccount(highQuotaFarReset, opts);
+
+    // Low quota (penalty ~4000) + soon reset (bonus ~-3960) ≈ 40
+    // High quota (penalty ~500) + far reset (bonus ~-400) ≈ 100
+    // Low+soon should win
+    expect(scoreLow).toBeLessThan(scoreHigh);
+  });
 });

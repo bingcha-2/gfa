@@ -147,6 +147,53 @@ describe("TokenServerService", () => {
     expect(stored.keys[0].totalRequests).toBe(1);
   });
 
+  it("persists modelQuotaFractions and modelQuotaResetTimes from accountQuota in report-result", async () => {
+    tokenProvider.mockResolvedValue("access-token-alpha");
+    const service = makeService();
+    await service.leaseToken(
+      { headers: { "x-token-server-secret": "secret-card" } },
+      { clientId: "client-a", modelKey: "gemini", bodyBytes: 500 },
+    );
+
+    await service.reportResult(
+      { headers: { "x-token-server-secret": "secret-card" } },
+      {
+        leaseId: "lease-fixed",
+        status: 200,
+        modelKey: "gemini",
+        totalTokens: 50,
+        accountQuota: {
+          planType: "premium",
+          modelQuota: {
+            "gemini-2.5-pro": { remainingFraction: 0.65, resetTime: "2026-06-01T10:00:00Z" },
+            "claude-sonnet-4-6": { remainingFraction: 0.3, resetTime: "2026-06-01T08:00:00Z" },
+            "gemini-2.5-flash": { remainingFraction: 1.0 }, // no resetTime
+          },
+        },
+      },
+    );
+
+    const accounts = JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts;
+    const account = accounts.find((a: any) => a.id === 1);
+
+    // modelQuotaFractions should be updated
+    expect(account.modelQuotaFractions["gemini-2.5-pro"]).toBe(0.65);
+    expect(account.modelQuotaFractions["claude-sonnet-4-6"]).toBe(0.3);
+    expect(account.modelQuotaFractions["gemini-2.5-flash"]).toBe(1.0);
+
+    // modelQuotaResetTimes should be persisted
+    expect(account.modelQuotaResetTimes["gemini-2.5-pro"]).toBe("2026-06-01T10:00:00Z");
+    expect(account.modelQuotaResetTimes["claude-sonnet-4-6"]).toBe("2026-06-01T08:00:00Z");
+    // gemini-2.5-flash has no resetTime → should not be in resetTimes
+    expect(account.modelQuotaResetTimes["gemini-2.5-flash"]).toBeUndefined();
+
+    // planType should be updated
+    expect(account.planType).toBe("premium");
+
+    // refreshedAt should be set
+    expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
+  });
+
   it("activates a Wails accountCard and binds it to the device session", () => {
     const service = makeService();
 
