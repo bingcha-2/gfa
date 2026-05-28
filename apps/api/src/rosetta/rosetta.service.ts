@@ -39,6 +39,33 @@ function readJson(filePath: string, fallback: any) {
   }
 }
 
+/** mtime-based file cache: skips re-read if file hasn't changed on disk. */
+class CachedJsonFile {
+  private cache: any = null;
+  private mtimeMs = 0;
+
+  constructor(private readonly filePath: string, private readonly fallback: any) {}
+
+  read(): any {
+    try {
+      const stat = fs.statSync(this.filePath);
+      if (this.cache !== null && stat.mtimeMs === this.mtimeMs) {
+        return this.cache;
+      }
+      this.mtimeMs = stat.mtimeMs;
+    } catch {
+      return this.fallback;
+    }
+    this.cache = readJson(this.filePath, this.fallback);
+    return this.cache;
+  }
+
+  /** Invalidate cache so next read() re-reads from disk. */
+  invalidate() {
+    this.cache = null;
+  }
+}
+
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
@@ -85,13 +112,18 @@ export class RosettaService {
   private readonly logger = new Logger(RosettaService.name);
   /** In-memory access_token cache: accountId → { accessToken, expiresAt } */
   private readonly tokenCache = new Map<number, CachedToken>();
+  /** mtime-cached file readers for hot-path list queries */
+  private readonly accessKeysFile: CachedJsonFile;
+  private readonly accountsFile: CachedJsonFile;
 
   constructor(@Optional() options: RosettaServiceOptions = {}) {
     this.dataDir = options.dataDir || defaultDataDir();
+    this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
+    this.accountsFile = new CachedJsonFile(path.join(this.dataDir, "accounts.json"), { accounts: [] });
   }
 
   listAccessKeys(query: { search?: string }) {
-    const data = readJson(path.join(this.dataDir, "access-keys.json"), { keys: [] });
+    const data = this.accessKeysFile.read();
     const term = String(query.search || "").trim().toLowerCase();
     const keys = (Array.isArray(data.keys) ? data.keys : [])
       .filter((key: any) => {
@@ -149,7 +181,7 @@ export class RosettaService {
   }
 
   listAccounts() {
-    const data = readJson(path.join(this.dataDir, "accounts.json"), { accounts: [] });
+    const data = this.accountsFile.read();
     const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
       id: Number(account.id || 0),
       email: String(account.email || ""),

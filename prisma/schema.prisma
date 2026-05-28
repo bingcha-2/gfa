@@ -452,3 +452,30 @@ model SiteSetting {
   value     String                     // Value (text, URL, etc.)
   updatedAt DateTime @updatedAt
 }
+
+/// 30-minute balance snapshot: total AI credits across all Rosetta accounts.
+model CreditSnapshot {
+  id            String   @id @default(cuid())
+  timestamp     DateTime @default(now())
+  totalCredits  Float                  // Sum of creditAmount across all accounts
+  accountCount  Int                    // Number of accounts with credits > 0
+  totalAccounts Int                    // Total number of accounts at snapshot time
+  details       String                 // JSON: [{accountId, email, creditAmount}]
+  createdAt     DateTime @default(now())
+
+  @@index([timestamp])
+}
+
+/// Per-event credit consumption: recorded in reportResult() when creditAmount decreases.
+model CreditConsumption {
+  id        String   @id @default(cuid())
+  accountId Int                        // Rosetta account ID
+  email     String                     // Account email
+  oldAmount Float                      // Credit balance before change
+  newAmount Float                      // Credit balance after change
+  consumed  Float                      // oldAmount - newAmount
+  timestamp DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([accountId, timestamp])
+}

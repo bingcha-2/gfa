@@ -33,6 +33,7 @@ type ServiceOptions = {
   minClientVersion?: string;
   leaseTtlMs?: number;
   affinityTtlMs?: number;
+  creditTracker?: { record: (accountId: number, email: string, oldAmount: number, newAmount: number) => void };
 };
 
 type LeaseRecord = {
@@ -100,6 +101,7 @@ export class TokenServerService {
   private readonly minClientVersion: string;
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
+  private readonly creditTracker: { record: (accountId: number, email: string, oldAmount: number, newAmount: number) => void } | null;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
@@ -119,6 +121,11 @@ export class TokenServerService {
   }>();
   private readonly accountRuntime = new Map<number, AccountRuntimeState>();
   private readonly modelGates = new ModelGateManager({ log: () => undefined });
+  private _cachedAccounts: TokenAccount[] | null = null;
+  private _cachedMtimeMs = 0;
+  private _accountsDirty = false;
+  private _accountsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
 
   private ensureDaily() {
     const today = new Date().toISOString().slice(0, 10);
@@ -150,6 +157,7 @@ export class TokenServerService {
     this.minClientVersion = options.minClientVersion || process.env.BCAI_MIN_CLIENT_VERSION || "";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
+    this.creditTracker = options.creditTracker || null;
   }
 
   getStatus() {
@@ -300,7 +308,7 @@ export class TokenServerService {
       throw this.fail(503, lastError?.message || "No account with projectId is available.");
     }
 
-    this.writeAccounts(this.readAccounts().map((item) => item.id === account!.id ? { ...item, ...account } : item));
+    this.mutateAccount(account.id, () => ({ ...account! }));
     const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload);
     this.leases.set(lease.leaseId, lease);
     this.rememberAffinity(clientId, modelKey, account.id);
@@ -393,15 +401,17 @@ export class TokenServerService {
     // ── 接收客户端上报的 Google 账号额度快照 ──
     if (payload?.accountQuota && typeof payload.accountQuota === "object") {
       const quota = payload.accountQuota;
-      const accounts = this.readAccounts();
-      const idx = accounts.findIndex((a: any) => a.id === lease.accountId);
-      if (idx >= 0) {
-        const account = { ...accounts[idx] };
+      this.mutateAccount(lease.accountId, (account) => {
         if (quota.credits && typeof quota.credits === "object") {
+          const oldCreditAmount = Number(account.credits?.creditAmount || 0);
+          const newCreditAmount = Number(quota.credits.creditAmount || 0);
+          if (this.creditTracker) {
+            this.creditTracker.record(account.id, account.email, oldCreditAmount, newCreditAmount);
+          }
           account.credits = {
             known: Boolean(quota.credits.known),
             available: Boolean(quota.credits.available),
-            creditAmount: Number(quota.credits.creditAmount || 0),
+            creditAmount: newCreditAmount,
             minCreditAmount: Number(quota.credits.minCreditAmount || 0),
             paidTierID: String(quota.credits.paidTierID || ""),
             creditsRefreshedAt: new Date().toISOString(),
@@ -425,9 +435,8 @@ export class TokenServerService {
           }
           account.modelQuotaRefreshedAt = Date.now();
         }
-        accounts[idx] = account;
-        this.writeAccounts(accounts);
-      }
+        return account;
+      });
     }
 
     lease.released = true;
@@ -513,9 +522,21 @@ export class TokenServerService {
   }
 
   private readAccounts(): TokenAccount[] {
+    // mtime-based cache: skip re-read if file hasn't changed
+    try {
+      const stat = fs.statSync(this.accountsFilePath);
+      if (this._cachedAccounts && stat.mtimeMs === this._cachedMtimeMs) {
+        return this._cachedAccounts;
+      }
+      this._cachedMtimeMs = stat.mtimeMs;
+    } catch {
+      // File doesn't exist
+      return [];
+    }
+
     const data = readJsonFile(this.accountsFilePath);
     const accounts = Array.isArray(data) ? data : Array.isArray(data.accounts) ? data.accounts : [];
-    return accounts.map((account: any) => ({
+    this._cachedAccounts = accounts.map((account: any) => ({
       ...account,
       id: Number(account.id),
       email: String(account.email || ""),
@@ -523,12 +544,64 @@ export class TokenServerService {
       projectId: String(account.projectId || "").trim(),
       enabled: account.enabled !== false,
     }));
+    return this._cachedAccounts;
   }
 
   private writeAccounts(accounts: TokenAccount[]) {
     const previous = readJsonFile(this.accountsFilePath);
     const value = Array.isArray(previous) ? accounts : { ...previous, accounts };
     writeJsonFile(this.accountsFilePath, value);
+    // Write-through: update cache directly to avoid re-read after frequent writes
+    this._cachedAccounts = accounts;
+    this._accountsDirty = false;
+    try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
+  }
+
+  private markAccountsDirty(): void {
+    this._accountsDirty = true;
+    if (!this._accountsSaveTimer) {
+      this._accountsSaveTimer = setTimeout(() => {
+        this._accountsSaveTimer = null;
+        this.flushAccounts();
+      }, TokenServerService.ACCOUNTS_FLUSH_MS);
+    }
+  }
+
+  /** Modify a single account in-memory and schedule a debounced disk write. */
+  mutateAccount(accountId: number, updater: (account: TokenAccount) => TokenAccount): void {
+    const accounts = this.readAccounts();
+    const idx = accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) return;
+    accounts[idx] = updater({ ...accounts[idx] });
+    this._cachedAccounts = accounts;
+    this.markAccountsDirty();
+  }
+
+  /** Flush dirty accounts to disk. Discards buffer if external modification detected. */
+  flushAccounts(): void {
+    if (this._accountsSaveTimer) {
+      clearTimeout(this._accountsSaveTimer);
+      this._accountsSaveTimer = null;
+    }
+    if (!this._accountsDirty || !this._cachedAccounts) return;
+
+    // External modification detection: if mtime changed since our last read/write,
+    // someone else modified the file → discard dirty buffer, reload from disk
+    try {
+      const currentMtime = fs.statSync(this.accountsFilePath).mtimeMs;
+      if (currentMtime !== this._cachedMtimeMs) {
+        this._cachedAccounts = null;
+        this._accountsDirty = false;
+        this.readAccounts(); // reload from disk
+        return;
+      }
+    } catch { /* file deleted, proceed with write to recreate */ }
+
+    this._accountsDirty = false;
+    const previous = readJsonFile(this.accountsFilePath);
+    const value = Array.isArray(previous) ? this._cachedAccounts : { ...previous, accounts: this._cachedAccounts };
+    writeJsonFile(this.accountsFilePath, value);
+    try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
   }
 
   private availableAccounts(payload: any, modelKey?: string) {

@@ -173,6 +173,7 @@ describe("TokenServerService", () => {
       },
     );
 
+    service.flushAccounts();
     const accounts = JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts;
     const account = accounts.find((a: any) => a.id === 1);
 
@@ -771,6 +772,7 @@ describe("TokenServerService — accountQuota in report-result", () => {
     });
 
     // 验证 accounts.json 被更新
+    service.flushAccounts();
     const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
     const account = stored.accounts[0];
 
@@ -842,6 +844,139 @@ describe("TokenServerService — accountQuota in report-result", () => {
     // 不应 crash，数据不变
     const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
     expect(stored.accounts[0].email).toBe("alpha@example.com");
+  });
+});
+
+// ── CreditTracker integration ────────────────────────────────────────────────
+
+describe("TokenServerService — CreditTracker integration", () => {
+  let tempDir: string;
+  let accountsFilePath: string;
+  let accessKeysFilePath: string;
+  const tokenProvider = vi.fn();
+  let leaseCounter: number;
+
+  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-credit-int-"));
+    accountsFilePath = path.join(tempDir, "accounts.json");
+    accessKeysFilePath = path.join(tempDir, "access-keys.json");
+    tokenProvider.mockReset();
+    leaseCounter = 0;
+
+    writeJson(accountsFilePath, {
+      accounts: [
+        {
+          id: 1,
+          email: "alpha@example.com",
+          refreshToken: "rt-alpha",
+          projectId: "proj-alpha",
+          enabled: true,
+          credits: { known: true, available: true, creditAmount: 500, minCreditAmount: 100 },
+        },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 24 * 60 * 60 * 1000,
+        windowLimit: 100,
+      }],
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function makeService(creditTracker?: any) {
+    return new TokenServerService({
+      accountsFilePath,
+      accessKeysFilePath,
+      tokenProvider,
+      now: () => Date.now(),
+      randomId: () => `lease-${++leaseCounter}`,
+      creditTracker,
+    });
+  }
+
+  it("calls creditTracker.record when credits decrease in accountQuota", async () => {
+    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(mockTracker);
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+      accountQuota: {
+        credits: { known: true, available: true, creditAmount: 450, minCreditAmount: 100 },
+      },
+    });
+
+    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450);
+  });
+
+  it("calls creditTracker.record when credits increase (tracker handles filtering)", async () => {
+    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(mockTracker);
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+      accountQuota: {
+        credits: { known: true, available: true, creditAmount: 800, minCreditAmount: 100 },
+      },
+    });
+
+    // record() is called with both values; the tracker itself decides whether to queue
+    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 800);
+  });
+
+  it("does NOT call creditTracker.record when no accountQuota in report", async () => {
+    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(mockTracker);
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    await service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+    });
+
+    expect(mockTracker.record).not.toHaveBeenCalled();
+  });
+
+  it("works without a creditTracker (backwards compatible)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(); // no creditTracker
+
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+
+    // Should not throw
+    await expect(service.reportResult(REQ, {
+      leaseId: result.leaseId,
+      status: 200,
+      modelKey: "gemini",
+      totalTokens: 50,
+      accountQuota: {
+        credits: { known: true, available: true, creditAmount: 450, minCreditAmount: 100 },
+      },
+    })).resolves.toMatchObject({ ok: true });
   });
 });
 

@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 
 import { Public } from "../auth/public.decorator";
 import { RosettaService } from "./rosetta.service";
+import { CreditStatsService } from "./credit-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 
 @Public()
@@ -9,6 +10,7 @@ import { TokenServerService } from "../token-server/token-server.service";
 export class RosettaController {
   constructor(
     private readonly rosetta: RosettaService,
+    private readonly creditStats: CreditStatsService,
     private readonly tokenServer: TokenServerService,
   ) {}
 
@@ -130,5 +132,15 @@ export class RosettaController {
   @Get("adspower-import-history")
   adspowerImportHistory() {
     return this.rosetta.adspowerImportHistory();
+  }
+
+  @Get("credit-stats")
+  getCreditStats(@Query("days") days?: string) {
+    return this.creditStats.getCreditStats(Number(days) || 7);
+  }
+
+  @Get("credit-snapshots")
+  getCreditSnapshots(@Query("days") days?: string) {
+    return this.creditStats.getCreditSnapshots(Number(days) || 7);
   }
 }
