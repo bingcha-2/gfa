@@ -405,7 +405,9 @@ export class TokenServerService {
         if (quota.credits && typeof quota.credits === "object") {
           const oldCreditAmount = Number(account.credits?.creditAmount || 0);
           const newCreditAmount = Number(quota.credits.creditAmount || 0);
-          if (this.creditTracker) {
+          // Only record consumption when credits are genuinely available.
+          // Pro/Premium accounts report creditAmount=0 with available=false — NOT real consumption.
+          if (this.creditTracker && quota.credits.available !== false) {
             this.creditTracker.record(
               account.id, account.email, oldCreditAmount, newCreditAmount,
               lease.accessKeyId, auth.record?.name || undefined,
