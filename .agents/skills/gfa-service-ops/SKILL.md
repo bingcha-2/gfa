@@ -1,6 +1,6 @@
 ---
 name: gfa-service-ops
-description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub API + curl downloads from private repositories, extracting release artifacts into apps/web/public/updates, editing latest-wails.json, or bumping apps/bcai-wails/updater.go AppVersion.
+description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, extracting release artifacts into apps/web/public/updates, editing latest-wails.json, or bumping apps/bcai-wails/updater.go AppVersion.
 ---
 
 # GFA Service Ops
@@ -12,6 +12,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 - Do not touch Caddy during normal code updates.
 - Do not delete `.env`, `prisma/dev.db`, backups, logs, or `apps\web\public\updates\*` unless explicitly requested.
 - Check the deployed branch before pulling. This repo currently uses `main`; old servers may use `master`.
+- For GitHub operations, prefer `gh` CLI. If `gh` is not in PATH, search common install paths before falling back to GitHub API + `curl.exe`.
 
 ## Paths
 
@@ -112,7 +113,61 @@ Get-FileHash ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe -Algorithm SHA256
 (Get-Item ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe).Length
 ```
 
-Private GitHub Actions artifact download. Prefer this for private repos; use `curl.exe` and `$env:GITHUB_TOKEN`:
+## GitHub CLI
+
+For GitHub operations, first resolve `gh`:
+
+```powershell
+$gh = (Get-Command gh.exe -ErrorAction SilentlyContinue).Source
+if (-not $gh) {
+  $gh = @(
+    "$env:ProgramFiles\GitHub CLI\gh.exe",
+    "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe",
+    "$env:LOCALAPPDATA\GitHub CLI\gh.exe",
+    "$env:USERPROFILE\scoop\apps\gh\current\bin\gh.exe"
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $gh) { throw "gh CLI not found; use the curl fallback below." }
+& $gh auth status
+```
+
+Private GitHub Actions artifact download with `gh`:
+
+```powershell
+cd C:\Users\Administrator\Desktop\GFA
+$repo = "<github-owner>/<private-repo>"
+$artifactName = "BingchaAI"
+$outDir = ".\apps\web\public\updates"
+New-Item -ItemType Directory -Force $outDir | Out-Null
+
+$runId = (& $gh run list --repo $repo --workflow build-wails.yml --branch main --json databaseId,status,conclusion,createdAt --limit 20 |
+  ConvertFrom-Json | Where-Object { $_.conclusion -eq "success" } | Select-Object -First 1).databaseId
+if (-not $runId) { throw "No successful build-wails.yml run found." }
+
+& $gh run download $runId --repo $repo --name $artifactName --dir $outDir
+Get-ChildItem $outDir -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 20
+```
+
+If the artifact name is platform-specific, list available artifact names:
+
+```powershell
+& $gh run view $runId --repo $repo --json artifacts
+```
+
+Private GitHub Release asset download with `gh`:
+
+```powershell
+cd C:\Users\Administrator\Desktop\GFA
+$repo = "<github-owner>/<private-repo>"
+$assetName = "BingchaAI-5.1.6.exe"
+$outDir = ".\apps\web\public\updates"
+New-Item -ItemType Directory -Force $outDir | Out-Null
+& $gh release download --repo $repo --pattern $assetName --dir $outDir --clobber
+Get-FileHash "$outDir\$assetName" -Algorithm SHA256
+(Get-Item "$outDir\$assetName").Length
+```
+
+If `gh` cannot be installed or authenticated, use GitHub API + `curl.exe` and `$env:GITHUB_TOKEN`:
 
 ```powershell
 cd C:\Users\Administrator\Desktop\GFA
