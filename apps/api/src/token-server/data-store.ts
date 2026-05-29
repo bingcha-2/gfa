@@ -86,6 +86,11 @@ export function readJsonFile(filePath: string): Record<string, any> {
  * Write a JSON object to disk with pretty-printing and trailing newline.
  * Auto-creates parent directories. Backs up access-keys.json if no recent
  * backup exists.
+ *
+ * Atomic: serializes to a temp file in the same directory, then renames over
+ * the target (rename is atomic on a single filesystem). A crash mid-write can
+ * only leave an orphan .tmp file — the live file is never truncated/corrupted,
+ * which matters for the billing-critical access-keys.json.
  */
 export function writeJsonFile(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -98,7 +103,14 @@ export function writeJsonFile(filePath: string, value: unknown): void {
       pruneAccessKeyBackups(filePath, MAX_ACCESS_KEY_BACKUPS);
     } catch { /* backup is best-effort; never block the write */ }
   }
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const tmpPath = `${filePath}.tmp-${process.pid}-${now}`;
+  try {
+    fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* nothing to clean up */ }
+    throw err;
+  }
 }
 
 // ── Integrity hashes ─────────────────────────────────────────────────────────

@@ -131,6 +131,15 @@ describe('writeJsonFile backup for access-keys.json', () => {
     expect(backups.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('writes atomically: correct content and no leftover .tmp file', () => {
+    const filePath = path.join(tmpDir, 'accounts.json');
+    writeJsonFile(filePath, { accounts: [{ id: 7 }] });
+
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).accounts[0].id).toBe(7);
+    const leftovers = fs.readdirSync(tmpDir).filter((f) => f.includes('.tmp-'));
+    expect(leftovers).toEqual([]);
+  });
+
   it('prunes old backups, keeping only the newest 24', () => {
     const filePath = path.join(tmpDir, 'access-keys.json');
     fs.writeFileSync(filePath, '{"keys":[]}');
