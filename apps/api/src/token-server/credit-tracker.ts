@@ -41,7 +41,7 @@ export class CreditTracker {
     accessKeyId?: string,
     accessKeyName?: string,
   ): void {
-    if (oldAmount <= 0 || newAmount >= oldAmount) return;
+    if (oldAmount <= 0 || newAmount >= oldAmount || newAmount <= 0) return;
     this.queue.push({
       accountId,
       email,

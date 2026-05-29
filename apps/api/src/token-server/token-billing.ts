@@ -9,7 +9,7 @@ import { compareVersions } from './data-store';
 
 // ── Default constants ────────────────────────────────────────────────────────
 
-export const DEFAULT_LEASE_TTL_MS = 45 * 60 * 1000;
+export const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1000;
 export const DEFAULT_AFFINITY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
 export const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
