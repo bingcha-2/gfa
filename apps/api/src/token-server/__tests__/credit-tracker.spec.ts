@@ -19,7 +19,7 @@ describe("CreditTracker", () => {
     tracker.destroy();
   });
 
-  // ── record() only tracks decreases ──────────────────────────────────────
+  // ── record() tracks every change, skips only no-op ──────────────────────
 
   it("records a consumption event when credits decrease", () => {
     tracker.record(1, "alpha@example.com", 500, 450);
@@ -35,11 +35,18 @@ describe("CreditTracker", () => {
     });
   });
 
-  it("does NOT record when credits increase (refill)", () => {
+  it("records when credits increase (refill)", () => {
     tracker.record(1, "alpha@example.com", 200, 500);
 
     const queue = tracker.getQueueForTesting();
-    expect(queue).toHaveLength(0);
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({
+      accountId: 1,
+      email: "alpha@example.com",
+      oldAmount: 200,
+      newAmount: 500,
+      consumed: -300,
+    });
   });
 
   it("does NOT record when credits stay the same", () => {
@@ -49,11 +56,18 @@ describe("CreditTracker", () => {
     expect(queue).toHaveLength(0);
   });
 
-  it("does NOT record when old amount is zero (new account)", () => {
+  it("records when old amount is zero (new account)", () => {
     tracker.record(1, "alpha@example.com", 0, 500);
 
     const queue = tracker.getQueueForTesting();
-    expect(queue).toHaveLength(0);
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({
+      accountId: 1,
+      email: "alpha@example.com",
+      oldAmount: 0,
+      newAmount: 500,
+      consumed: -500,
+    });
   });
 
   // ── flush() batch writes ────────────────────────────────────────────────

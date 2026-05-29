@@ -30,7 +30,8 @@ export class CreditTracker {
   }
 
   /**
-   * Record a credit change. Only queues an event when credits DECREASE.
+   * Record a credit change. Queues an event for any change (consumption,
+   * refill, recharge); skips only when the amount is unchanged.
    * Pure in-memory push — never blocks.
    */
   record(
