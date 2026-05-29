@@ -637,16 +637,15 @@ export class BrowserPool {
    *   - The lock is held by a different workerId
    */
   createForceCloseGuard(
-    _workerId: string
+    workerId: string
   ): (profileId: string) => Promise<boolean> {
     return async (profileId: string) => {
       const key = `${POOL_KEY_PREFIX}${profileId}`;
       const holder = await this.redis.get(key);
-      // Only allow force-close if NO lock exists (truly stale/abandoned browser).
-      // If any lock exists — even from the same workerId — another task may be
-      // actively using this profile. In a single-worker setup all tasks share
-      // the same workerId, so checking `holder === workerId` is not sufficient.
-      return !holder;
+      // Allow force-close if:
+      // - No lock exists (truly stale/abandoned browser)
+      // - The lock is held by the same workerId (our own current task/worker)
+      return !holder || holder === workerId;
     };
   }
 

@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import { AutomationService } from "../automation/automation.service";
 
 import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit } from "../token-server/token-billing";
 import {
@@ -116,7 +117,10 @@ export class RosettaService {
   private readonly accessKeysFile: CachedJsonFile;
   private readonly accountsFile: CachedJsonFile;
 
-  constructor(@Optional() options: RosettaServiceOptions = {}) {
+  constructor(
+    @Optional() options: RosettaServiceOptions = {},
+    @Optional() private readonly automation?: AutomationService,
+  ) {
     this.dataDir = options.dataDir || defaultDataDir();
     this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
     this.accountsFile = new CachedJsonFile(path.join(this.dataDir, "accounts.json"), { accounts: [] });
@@ -369,45 +373,208 @@ export class RosettaService {
     return path.join(this.dataDir, "captcha-unblock.json");
   }
 
-  createCaptchaUnblock(payload: any) {
-    const creds = payload?.credentials;
+  async createCaptchaUnblock(payload: any) {
+    let creds = payload?.credentials;
+    let inputPhones = payload?.phones || [];
+
+    if (!creds && Array.isArray(payload?.accounts) && payload.accounts.length > 0) {
+      const acc = payload.accounts[0];
+      creds = {
+        email: acc.email,
+        password: acc.password,
+        recoveryEmail: acc.recoveryEmail,
+        totpSecret: acc.totpSecret,
+      };
+      if (acc.phone) {
+        inputPhones = [{
+          phoneNumber: acc.phone,
+          smsUrl: acc.smsUrl || "",
+        }];
+      }
+    }
+
     if (!creds?.email || !creds?.password) return { ok: false, error: "email and password required" };
 
     const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
-    const task = {
+    
+    const normalizeEmail = (e: string) => String(e || "").trim().toLowerCase();
+    const emailNorm = normalizeEmail(creds.email);
+    const phase = String(payload.phase || "first");
+    const source = phase === "second" ? "captcha-unblock-phase2" : "captcha-unblock";
+
+    const task: any = {
       id: `unblock_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`,
       email: creds.email,
       password: creds.password,
       recoveryEmail: creds.recoveryEmail || "",
       totpSecret: creds.totpSecret || "",
-      phones: payload.phones || [],
-      phase: String(payload.phase || "first"),
-      source: String(payload.source || "captcha-unblock"),
+      phones: inputPhones,
+      phase,
+      source,
       status: "PENDING",
       createdAt: nowIso(),
       lastErrorMessage: "",
       lastErrorCode: "",
       usedPhone: "",
     };
+
+    // For phase 2, try to find existing phase 1 task to get usedPhone
+    if (phase === "second") {
+      const existing = (data.tasks || []).find(
+        (t: any) => normalizeEmail(t.email) === emailNorm && t.usedPhone && t.status === "WAITING_SECOND_VERIFY"
+      );
+      if (existing) {
+        task.usedPhone = existing.usedPhone;
+        existing.status = "PHASE2_STARTED";
+        existing.updatedAt = nowIso();
+      }
+    }
+
     data.tasks.push(task);
+
+    // Keep last 500 tasks
+    if (data.tasks.length > 500) {
+      data.tasks = data.tasks.slice(-500);
+    }
+
     writeJson(this.captchaFile, data);
+
+    // Submit to backend worker queue
+    if (this.automation) {
+      try {
+        const autoResult = await this.automation.startAutomation(
+          "oauth",
+          {
+            email: creds.email,
+            password: creds.password,
+            recoveryEmail: creds.recoveryEmail || "",
+            totpSecret: creds.totpSecret || "",
+          },
+          task.phones?.map((p: any) => ({
+            phoneNumber: p.phoneNumber,
+            countryCode: p.countryCode ?? "+1",
+            smsUrl: p.smsUrl || "",
+          })),
+          undefined,
+          {
+            source,
+            keepBrowserOpenOnChallenge: true,
+          }
+        );
+        if (autoResult?.taskId) {
+          task.taskId = autoResult.taskId;
+          task.status = "RUNNING";
+          task.updatedAt = nowIso();
+          writeJson(this.captchaFile, data);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[captcha-unblock] Failed to submit to queue for ${creds.email}: ${err.message}`);
+      }
+    }
+
     return { ok: true, taskId: task.id, email: task.email };
   }
 
-  getCaptchaUnblockStatus() {
+  async getCaptchaUnblockStatus() {
     const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
-    return { ok: true, tasks: data.tasks || [], phase2: data.phase2 || [] };
+
+    // Sync status from DB for running/pending tasks
+    if (this.automation) {
+      for (const task of (data.tasks || [])) {
+        if (task.taskId && ["RUNNING", "PENDING"].includes(task.status)) {
+          try {
+            const taskData = await this.automation.getTaskStatus(task.taskId);
+            if (taskData) {
+              const backendStatus = String(taskData.status || "");
+              if (backendStatus === "SUCCESS") {
+                task.status = task.phase === "second" ? "UNBLOCKED" : "APPEAL_REQUIRED";
+                task.updatedAt = nowIso();
+              } else if (backendStatus === "MANUAL_REVIEW") {
+                const code = String(taskData.lastErrorCode || "");
+                if (code === "PHONE_VERIFIED_APPEAL_REQUIRED") {
+                  task.status = "APPEAL_REQUIRED";
+                  // Extract used phone from task result
+                  const res = taskData.result as any;
+                  if (res?.usedPhone?.phoneNumber) {
+                    task.usedPhone = res.usedPhone.phoneNumber;
+                  } else if (res?.usedPhone) {
+                    task.usedPhone = res.usedPhone;
+                  }
+                } else if (code === "CAPTCHA") {
+                  task.status = "CAPTCHA_WAITING";
+                } else {
+                  task.status = "MANUAL_REVIEW";
+                  task.lastErrorCode = code;
+                  task.lastErrorMessage = taskData.lastErrorMessage || "";
+                }
+                task.updatedAt = nowIso();
+              } else if (backendStatus === "FAILED_FINAL" || backendStatus === "FAILED_RETRYABLE") {
+                task.status = "FAILED_FINAL";
+                task.lastErrorCode = taskData.lastErrorCode || "";
+                task.lastErrorMessage = taskData.lastErrorMessage || "";
+                task.updatedAt = nowIso();
+              }
+            }
+          } catch (err) {
+            // silent
+          }
+        }
+      }
+      writeJson(this.captchaFile, data);
+    }
+
+    // Split into active tasks and phase2 waiting
+    const tasks = (data.tasks || []).filter((t: any) => t.status !== "WAITING_SECOND_VERIFY");
+    const phase2 = (data.tasks || []).filter((t: any) => t.status === "WAITING_SECOND_VERIFY" || t.status === "APPEAL_REQUIRED");
+
+    return { ok: true, tasks, phase2 };
   }
 
-  retryCaptchaUnblock(payload: any) {
+  async retryCaptchaUnblock(payload: any) {
     const taskId = String(payload?.taskId || "");
     const data = readJson(this.captchaFile, { tasks: [], phase2: [] });
     const task = (data.tasks || []).find((t: any) => t.id === taskId);
     if (!task) return { ok: false, error: "task not found" };
+
     task.status = "PENDING";
     task.lastErrorMessage = "";
     task.lastErrorCode = "";
+    task.updatedAt = nowIso();
     writeJson(this.captchaFile, data);
+
+    // Re-submit to automation service
+    if (this.automation) {
+      try {
+        const autoResult = await this.automation.startAutomation(
+          "oauth",
+          {
+            email: task.email,
+            password: task.password,
+            recoveryEmail: task.recoveryEmail || "",
+            totpSecret: task.totpSecret || "",
+          },
+          task.phones?.map((p: any) => ({
+            phoneNumber: p.phoneNumber,
+            countryCode: p.countryCode ?? "+1",
+            smsUrl: p.smsUrl || "",
+          })),
+          undefined,
+          {
+            source: task.source || "captcha-unblock",
+            keepBrowserOpenOnChallenge: true,
+          }
+        );
+        if (autoResult?.taskId) {
+          task.taskId = autoResult.taskId;
+          task.status = "RUNNING";
+          task.updatedAt = nowIso();
+          writeJson(this.captchaFile, data);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[captcha-unblock] Retry submit failed for ${task.email}: ${err.message}`);
+      }
+    }
+
     return { ok: true, taskId };
   }
 

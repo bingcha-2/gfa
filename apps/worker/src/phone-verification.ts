@@ -884,8 +884,11 @@ async function enterVerificationCode(page: Page, code: string, logger: TaskLogge
     return false;
   }
 
-  await codeInput.first().fill(code);
-  await logger.log("INFO", "[phone-verify] Entered verification code");
+  const firstInput = codeInput.first();
+  await firstInput.focus();
+  await firstInput.fill(""); // 清空已有文本
+  await firstInput.pressSequentially(code, { delay: 100 }); // 模拟真实按键，触发 Google 的前端状态监听器
+  await logger.log("INFO", "[phone-verify] Entered verification code sequentially");
   return true;
 }
 
@@ -902,12 +905,21 @@ async function clickVerifyButton(page: Page, logger: TaskLogger): Promise<void> 
     ].join(", ")
   );
 
-  if ((await verifyBtn.count()) > 0) {
-    await verifyBtn.first().evaluate((el: HTMLElement) => el.click());
-    await logger.log("INFO", "[phone-verify] Clicked verify/submit button");
+  const firstBtn = verifyBtn.first();
+  if ((await firstBtn.count()) > 0 && await firstBtn.isVisible()) {
+    try {
+      // 1. 优先尝试 Playwright 原生物理点击（模拟真实鼠标动作，更加可靠）
+      await firstBtn.click({ timeout: 5000 });
+      await logger.log("INFO", "[phone-verify] Clicked verify/submit button via Playwright click");
+    } catch (err) {
+      await logger.log("WARN", `[phone-verify] Playwright click failed (${err}), trying JS evaluate click fallback...`);
+      // 2. 备用方案：如因元素覆盖或点击拦截，回退到 JS click 触发
+      await firstBtn.evaluate((el: HTMLElement) => el.click());
+      await logger.log("INFO", "[phone-verify] Clicked verify/submit button via JS click fallback");
+    }
   } else {
     await page.keyboard.press("Enter");
-    await logger.log("INFO", "[phone-verify] Pressed Enter to submit code");
+    await logger.log("INFO", "[phone-verify] No visible button, pressed Enter to submit code");
   }
 }
 
