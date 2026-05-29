@@ -141,7 +141,7 @@ describe("TokenServerService", () => {
 
     expect(report.ok).toBe(true);
     expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
-    expect(service.getStatus().activeLeases).toBe(0);
+    expect(service.getStatus().activeLeases).toBe(1);
 
     // Persistence is debounced now — force a flush before reading the file.
     service.flushAccessKeys();
@@ -746,6 +746,196 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(tokenProvider).toHaveBeenCalledTimes(30);
   });
 
+  // ── active-lease index (O(N+L) scoring) correctness ─────────────────────
+
+  it("getStatus active-lease counts reflect multiple concurrent leases", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "alpha@example.com", refreshToken: "rt-alpha", projectId: "proj-alpha", enabled: true },
+      ],
+    });
+    const service = makeService();
+
+    await service.leaseToken(REQ, leasePayload());
+    await service.leaseToken(REQ, leasePayload());
+
+    const status = service.getStatus();
+    expect(status.activeLeases).toBe(2);
+    expect(status.scheduler.activeLeaseCounts["1"]).toBe(2);
+  });
+
+  // ── expired leases are pruned from memory (no unbounded Map growth) ──────
+
+  it("prunes expired leases from the in-memory map", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const r1 = await service.leaseToken(REQ, leasePayload());
+    expect(service.getStatus().activeLeases).toBe(1);
+
+    // Advance well past the lease TTL (capped at MAX_REMOTE_LEASE_TTL_MS = 5min).
+    currentTime += 10 * 60 * 1000;
+
+    // getStatus() runs cleanupExpiredLeases() which DELETES leases past TTL+grace.
+    const status = service.getStatus();
+    expect(status.activeLeases).toBe(0);
+    expect(status.scheduler.activeLeaseCounts).toEqual({});
+
+    // A late report whose lease is long gone is NOT dropped — counting is now
+    // lease-independent: it still records card usage (attributed via payload).
+    const late = await service.reportResult(REQ, {
+      leaseId: r1.leaseId, accountId: r1.accountId, reportId: "late-1",
+      status: 200, modelKey: "claude-opus-4-6-thinking", totalTokens: 1,
+    });
+    expect(late.ok).toBe(true);
+    expect(late.ignored).toBeUndefined(); // counted, not ignored
+    service.flushAccessKeys();
+    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
+    expect(stored.keys[0].totalRequests).toBe(1); // the late report counted
+  });
+
+  // ── report-result response shape (client contract) ──────────────────────
+
+  it("report-result response keeps accessKeyStatus but drops the full status blob", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const r = await service.leaseToken(REQ, leasePayload());
+    const report = await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 200, modelKey: "claude-opus-4-6-thinking", totalTokens: 10,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.accessKeyStatus).toBeDefined(); // client's syncFromServer needs this
+    expect((report as any).status).toBeUndefined(); // big O(N+L) blob no longer sent
+  });
+
+  // ── cooldown policy: 503→10s, 429→until 5h reset (cap 1h), 403→retryAfter/1h ──
+
+  it("503 unavailable without retryAfter cools ~10s, not the long quota cooldown", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    // reason has NO "capacity" substring — the bug that used to route it to the
+    // 30-min quota branch. Now any 503 → short capacity cooldown.
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 503, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_503_unavailable", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).toBe("cooling");
+    expect(acct.blockedUntil - currentTime).toBe(10_000);
+  });
+
+  it("429 without retryAfter parks until the model's 5h quota reset", async () => {
+    const resetIso = new Date(currentTime + 20 * 60 * 1000).toISOString();
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1, email: "a@example.com", refreshToken: "rt", projectId: "p", enabled: true,
+        modelQuotaResetTimes: { "claude-opus-4-6-thinking": resetIso },
+      }],
+    });
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 429, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_429_resource_exhausted", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
+    expect(acct.quotaStatus).toBe("exhausted");
+    expect(acct.blockedUntil - currentTime).toBe(20 * 60 * 1000);
+  });
+
+  it("429 caps the quota cooldown at 1h when the reset is far out", async () => {
+    const resetIso = new Date(currentTime + 3 * 60 * 60 * 1000).toISOString();
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1, email: "a@example.com", refreshToken: "rt", projectId: "p", enabled: true,
+        modelQuotaResetTimes: { "claude-opus-4-6-thinking": resetIso },
+      }],
+    });
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 429, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_429_resource_exhausted", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
+    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+  });
+
+  it("429 without retryAfter falls back to 1h when the reset time is unknown", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(); // default accounts have no modelQuotaResetTimes
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 429, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_429_resource_exhausted", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+  });
+
+  it("403 benches the account for the reported retryAfter, skipped next lease", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_service_disabled", retryAfterMs: 72 * 60 * 1000,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).toBe("exhausted");
+    expect(acct.blockedUntil - currentTime).toBe(72 * 60 * 1000);
+
+    tokenProvider.mockClear();
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const r2 = await service.leaseToken(REQ, leasePayload());
+    expect(r2.accountId).not.toBe(id);
+  });
+
+  it("403 without a retry hint benches the account for 1h", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_service_disabled", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+  });
+
+  it("duplicate error report (same reportId) does not re-extend the cooldown", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, reportId: "err-1", status: 503,
+      modelKey: "claude-opus-4-6-thinking", reason: "http_503_unavailable", retryAfterMs: 0,
+    });
+    const t1 = (service.getStatus().quota.accounts.find((a: any) => a.id === id) as any).blockedUntil;
+
+    currentTime += 5_000;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, reportId: "err-1", status: 503,
+      modelKey: "claude-opus-4-6-thinking", reason: "http_503_unavailable", retryAfterMs: 0,
+    });
+    const t2 = (service.getStatus().quota.accounts.find((a: any) => a.id === id) as any).blockedUntil;
+
+    // Re-applying would push blockedUntil to (t+5000)+10000 = t1+5000; dedup keeps it.
+    expect(t2).toBe(t1);
+  });
+
   // ── excludeAccountIds passthrough ───────────────────────────────────────
 
   it("respects excludeAccountIds from client payload", async () => {
@@ -1103,6 +1293,35 @@ describe("TokenServerService — CreditTracker integration", () => {
       },
     })).resolves.toMatchObject({ ok: true });
   });
+
+  // ── dedup boundary: duplicate refreshes state (B) but counts once (A) ──────
+  it("duplicate reportId refreshes accountQuota state but counts usage + credit event only once", async () => {
+    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService(mockTracker);
+
+    const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
+    const report = (creditAmount: number) => service.reportResult(REQ, {
+      leaseId: r.leaseId, reportId: "rep-1", status: 200, modelKey: "gemini", totalTokens: 50,
+      accountQuota: { credits: { known: true, available: true, creditAmount, minCreditAmount: 100 } },
+    });
+
+    await report(450);              // first: counts + credit event (500→450)
+    const dup = await report(420);  // same reportId → duplicate
+    expect(dup.ignored).toBe(true);
+    expect(dup.reason).toBe("already_reported");
+
+    // A (gated by dedup): credit event + usage counted exactly once
+    expect(mockTracker.record).toHaveBeenCalledTimes(1);
+    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450, "card-1", undefined);
+    service.flushAccessKeys();
+    expect(JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8")).keys[0].totalRequests).toBe(1);
+
+    // B (always): accountQuota state refreshed to the LATEST snapshot (420), even
+    // though the second report was a duplicate.
+    service.flushAccounts();
+    expect(JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts[0].credits.creditAmount).toBe(420);
+  });
 });
 
 // ── Quota-priority account selection (lease-token prefers 5h quota) ──────────
@@ -1438,7 +1657,31 @@ describe("TokenServerService — session and key lifecycle", () => {
     }
   });
 
-  it("deduplicates successful report-result (does not double-count)", async () => {
+  it("counts distinct successful reports for a cached lease", async () => {
+    const service = makeService();
+
+    const lease = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    const r1 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, reportId: "report-1", status: 200, totalTokens: 100,
+    });
+    expect(r1.ok).toBe(true);
+
+    const r2 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, reportId: "report-2", status: 200, totalTokens: 200,
+    });
+    expect(r2.ok).toBe(true);
+    expect(r2.ignored).toBeUndefined();
+
+    service.flushAccessKeys();
+    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
+    expect(stored.keys[0].totalTokensUsed).toBe(300);
+    expect(stored.keys[0].totalRequests).toBe(2);
+  });
+
+  it("deduplicates successful report-result with the same reportId", async () => {
     const service = makeService();
 
     const lease = await service.leaseToken(REQ(), {
@@ -1447,13 +1690,13 @@ describe("TokenServerService — session and key lifecycle", () => {
 
     // First report
     const r1 = await service.reportResult(REQ(), {
-      leaseId: lease.leaseId, status: 200, totalTokens: 100,
+      leaseId: lease.leaseId, reportId: "report-1", status: 200, totalTokens: 100,
     });
     expect(r1.ok).toBe(true);
 
-    // Duplicate report (same leaseId, same success)
+    // Duplicate report (same leaseId + reportId, same success)
     const r2 = await service.reportResult(REQ(), {
-      leaseId: lease.leaseId, status: 200, totalTokens: 100,
+      leaseId: lease.leaseId, reportId: "report-1", status: 200, totalTokens: 100,
     });
     expect(r2.ok).toBe(true);
     expect(r2.ignored).toBe(true);
@@ -1463,6 +1706,32 @@ describe("TokenServerService — session and key lifecycle", () => {
     service.flushAccessKeys();
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
     expect(stored.keys[0].totalTokensUsed).toBe(100); // not 200
+  });
+
+  it("deduplicates error report-result with the same reportId", async () => {
+    const service = makeService();
+
+    const lease = await service.leaseToken(REQ(), {
+      clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
+    });
+
+    const r1 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, reportId: "report-error-1", status: 429, reason: "quota",
+    });
+    expect(r1.ok).toBe(true);
+
+    const r2 = await service.reportResult(REQ(), {
+      leaseId: lease.leaseId, reportId: "report-error-1", status: 429, reason: "quota",
+    });
+    expect(r2.ok).toBe(true);
+    expect(r2.ignored).toBe(true);
+    expect(r2.reason).toBe("already_reported");
+
+    const status = service.getStatus();
+    expect(status.totalReports).toBe(1);
+    service.flushAccessKeys();
+    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
+    expect(stored.keys[0].totalRequests).toBe(1);
   });
 
   it("allows error report after successful report (different status)", async () => {

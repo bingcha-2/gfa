@@ -11,6 +11,7 @@ import {
   readTokenCount,
   billableTokenUsageTotal,
   resetWindowIfExpired,
+  tokenWindowMs,
   tokenWindowLimit,
   recentTokenUsage,
   tokenWindowResetMs,
@@ -79,11 +80,20 @@ export interface SessionValidation {
 // ── AccessKeyStore ───────────────────────────────────────────────────────────
 
 const SAVE_DEBOUNCE_MS = 10_000;
+// Hard cap on the per-card reportId dedup ring (bounds access-keys.json size on
+// very busy cards; the ring is also cleared on window reset / pruned in flush).
+const MAX_RECENT_REPORT_IDS = 5000;
 
 export class AccessKeyStore {
   private cache: AccessKeysData | null = null;
   private dirty = false;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // In-memory reportId dedup: cardId → (reportId → seenAt). NOT persisted — keeps
+  // access-keys.json from growing with every request. Bounded per card by
+  // MAX_RECENT_REPORT_IDS (oldest evicted). A server restart clears it, so the
+  // only un-deduped case is a duplicate report arriving after a restart for a
+  // report counted before it — negligible (leases are in-memory and also reset).
+  private reportDedup = new Map<string, Map<string, number>>();
 
   constructor(private readonly filePath: string) {}
 
@@ -252,13 +262,37 @@ export class AccessKeyStore {
 
   // ── Usage recording ────────────────────────────────────────────────────
 
-  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = ''): void {
-    if (!cardId) return;
+  /**
+   * Record a usage report against a card. Idempotent by reportId: a reportId
+   * already seen within the current usage window is NOT counted again, and the
+   * method returns false. Returns true when this report was newly counted.
+   *
+   * Dedup uses an in-memory ring (reportDedup) keyed by card+reportId, so it
+   * survives lease expiry (a retried/late report for a long-gone lease is still
+   * deduplicated) WITHOUT bloating access-keys.json. Reports without a reportId
+   * (legacy clients) cannot be deduped here; the caller handles their
+   * once-per-success semantics via lease.successfulReportSeen.
+   */
+  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = ''): boolean {
+    if (!cardId) return false;
     const record = this.findById(cardId);
-    if (!record) return;
+    if (!record) return false;
 
     const now = Date.now();
     resetWindowIfExpired(record, now);
+
+    if (reportId) {
+      let seen = this.reportDedup.get(cardId);
+      if (!seen) { seen = new Map(); this.reportDedup.set(cardId, seen); }
+      if (seen.has(reportId)) return false; // duplicate — already counted
+      seen.set(reportId, now);
+      // Bound memory: evict oldest (Map preserves insertion order).
+      while (seen.size > MAX_RECENT_REPORT_IDS) {
+        const oldest = seen.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        seen.delete(oldest);
+      }
+    }
 
     const inputTokens = readTokenCount(usage.inputTokens);
     const outputTokens = readTokenCount(usage.outputTokens);
@@ -290,6 +324,7 @@ export class AccessKeyStore {
     }
 
     this.markDirty();
+    return true;
   }
 
   // ── Session management ─────────────────────────────────────────────────
@@ -417,6 +452,7 @@ export class AccessKeyStore {
       geminiTokensUsed: recentTokens.geminiEffectiveTokens,
       geminiTokenLimit: tLimit > 0 ? tLimit * 5 : (windowLimit > 0 ? windowLimit * 500_000 : 0),
       tokenWindowLimit: tLimit,
+      tokenWindowMs: tokenWindowMs(record),
       tokenWindowRemaining: tLimit > 0 ? Math.max(0, tLimit - recentTokens.totalTokens) : 0,
       tokenWindowResetMs: resetMs,
       tokenWindowResetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',

@@ -9,7 +9,6 @@
 
 import {
   normalizeModelKey,
-  MIN_HEALTHY_CANDIDATES,
 } from './token-billing';
 
 // ── Error rate tracking (sliding 60s window) ─────────────────────────────────
@@ -208,29 +207,51 @@ export function hasModelQuotaRemaining(account: any, modelKey: string): boolean 
  *   - -1:   fractions exist for other models but not the target (暂无 → moderate penalty)
  *   - 0..1: the remaining fraction (0 = exhausted, 1 = full)
  */
+/**
+ * Resolve a model key against a per-model map (modelQuotaFractions /
+ * modelQuotaResetTimes), with exact then fuzzy matching
+ * (e.g. "gemini-2.5-pro" ↔ "gemini-2.5-pro-preview"). Returns the matched map
+ * key, or null if no match. Shared by getModelQuotaFraction/getModelQuotaResetAt.
+ */
+export function resolveModelQuotaKey(
+  map: Record<string, any> | undefined | null,
+  modelKey: string,
+): string | null {
+  if (!map || typeof map !== 'object') return null;
+  const normalized = normalizeModelKey(modelKey);
+  if (!normalized) return null;
+  if (normalized in map) return normalized;
+  for (const key of Object.keys(map)) {
+    if (key.includes(normalized) || normalized.includes(key)) return key;
+  }
+  return null;
+}
+
 export function getModelQuotaFraction(account: any, modelKey: string): number | null {
   const fractions = account?.modelQuotaFractions;
   if (!fractions || typeof fractions !== 'object') return null;
+  if (!normalizeModelKey(modelKey)) return null;
 
-  const normalized = normalizeModelKey(modelKey);
-  if (!normalized) return null;
-
-  // Exact match
-  if (normalized in fractions) {
-    return Math.max(0, Math.min(1, Number(fractions[normalized]) || 0));
-  }
-
-  // Fuzzy match (e.g. "gemini-2.5-pro" ↔ "gemini-2.5-pro-preview")
-  for (const key of Object.keys(fractions)) {
-    if (key.includes(normalized) || normalized.includes(key)) {
-      return Math.max(0, Math.min(1, Number(fractions[key]) || 0));
-    }
-  }
+  const key = resolveModelQuotaKey(fractions, modelKey);
+  if (key) return Math.max(0, Math.min(1, Number(fractions[key]) || 0));
 
   // Has fractions for other models but not this one → 暂无
   if (Object.keys(fractions).length > 0) return -1;
 
   return null; // empty object → same as no data
+}
+
+/**
+ * Resolve when a model's 5h rolling quota next refreshes, as an epoch-ms
+ * timestamp. Returns 0 if unknown / unparseable. Used to park a 429-exhausted
+ * account until its quota actually resets instead of a flat cooldown.
+ */
+export function getModelQuotaResetAt(account: any, modelKey: string): number {
+  const resets = account?.modelQuotaResetTimes;
+  const key = resolveModelQuotaKey(resets, modelKey);
+  if (!key) return 0;
+  const t = Date.parse(String(resets[key]));
+  return Number.isFinite(t) ? t : 0;
 }
 
 /**

@@ -34,7 +34,7 @@ export const PHONE_VERIFICATION_COOLDOWN_MS = Math.max(
 export const FIRST_QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
 export const SECOND_QUOTA_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 export const MAX_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-export const CAPACITY_COOLDOWN_MS = 15 * 1000;
+export const CAPACITY_COOLDOWN_MS = 10 * 1000;
 export const MAX_CAPACITY_COOLDOWN_MS = 2 * 60 * 1000;
 export const REMOTE_ACCOUNT_ERROR_THRESHOLD = Math.max(
   1,

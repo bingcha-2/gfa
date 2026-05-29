@@ -520,6 +520,7 @@ describe('AccessKeyStore', () => {
       expect(status.totalRequests).toBe(5);
       expect(status.totalTokensUsed).toBe(1234);
       expect(status.tokenWindowLimit).toBe(100_000);
+      expect(status.tokenWindowMs).toBe(5 * 60 * 60 * 1000);
       expect(status.remainingMs).toBeGreaterThan(0);
       expect(status.expiresAt).toBeTruthy();
       expect(status.tokenWindowResetMs).toBeGreaterThan(0);
