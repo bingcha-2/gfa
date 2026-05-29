@@ -16,6 +16,7 @@ import {
   CAPACITY_COOLDOWN_MS,
   MAX_REMOTE_LEASE_TTL_MS,
   REMOTE_ACCOUNT_ERROR_THRESHOLD,
+  REMOTE_TRANSIENT_ERROR_COOLDOWN_MS,
   TOKEN_REFRESH_FAILURE_COOLDOWN_MS,
   accessKeySessionTtlMs,
   affinityKey,
@@ -63,11 +64,15 @@ type AccountRuntimeState = {
   exhaustedAt: number;
   exhaustedUntil: number;
   consecutiveErrors: number;
+  transientErrors: number;
   lastUsedAt: number;
   blockedModels: Map<string, { modelKey: string; reason: string; blockedAt: number; blockedUntil: number }>;
 };
 
 const MAX_TOKEN_REFRESH_CANDIDATES = 5;
+// Hard ceiling on how many candidates a single lease will scan, so a large
+// account pool can't turn one lease into dozens of token-refresh round trips.
+const MAX_TOKEN_CANDIDATE_SCAN_CAP = 30;
 const DEFAULT_COOLDOWN_MS = FIRST_QUOTA_COOLDOWN_MS || 5 * 60 * 1000;
 
 function defaultDataDir() {
@@ -281,7 +286,19 @@ export class TokenServerService {
     let account: TokenAccount | null = null;
     let accessToken = "";
 
-    for (let attempt = 0; attempt < MAX_TOKEN_REFRESH_CANDIDATES; attempt++) {
+    // Scan candidates (not just the top few) until one's token refreshes
+    // successfully. Each failed candidate is excluded from the next
+    // selectAccount() via tokenFailedIds, so selectAccount() returns null once
+    // the pool is drained — the loop is guaranteed to terminate. Bounded to
+    // [MAX_TOKEN_REFRESH_CANDIDATES, MAX_TOKEN_CANDIDATE_SCAN_CAP] so a small
+    // pool still gets a floor of attempts and a large pool can't blow up into
+    // dozens of token-refresh round trips on a single lease.
+    const candidatePoolSize = this.availableAccounts(payload, modelKey).length;
+    const maxAttempts = Math.min(
+      MAX_TOKEN_CANDIDATE_SCAN_CAP,
+      Math.max(MAX_TOKEN_REFRESH_CANDIDATES, candidatePoolSize),
+    );
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const extendedPayload = { ...payload };
       if (tokenFailedIds.length > 0) {
         const existing = Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [];
@@ -397,6 +414,14 @@ export class TokenServerService {
         const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
         const retryAfterMs = Number(payload?.retryAfterMs || 0);
         this.markAccountExhausted(lease.accountId, modelKey, reason, retryAfterMs);
+      } else {
+        // Other upstream failures (4xx/5xx, network) don't carry a retryAfter and
+        // aren't necessarily the account's fault, so we don't hard-exhaust on the
+        // first one. But a *run* of consecutive failures means the account is bad
+        // for this model — apply a short, self-healing cooldown so selection stops
+        // handing it back. A single success resets the counter.
+        const reason = String(payload?.reason || `http_${status}`);
+        this.markAccountTransientError(lease.accountId, modelKey, reason);
       }
     }
     // ── 接收客户端上报的 Google 账号额度快照 ──
@@ -726,7 +751,7 @@ export class TokenServerService {
     if (!state) {
       state = {
         quotaStatus: "ok", quotaStatusReason: "", exhaustedAt: 0,
-        exhaustedUntil: 0, consecutiveErrors: 0, lastUsedAt: 0,
+        exhaustedUntil: 0, consecutiveErrors: 0, transientErrors: 0, lastUsedAt: 0,
         blockedModels: new Map(),
       };
       this.accountRuntime.set(accountId, state);
@@ -805,11 +830,43 @@ export class TokenServerService {
     );
   }
 
+  /**
+   * Record a non-429/503 upstream failure (4xx/5xx/network). Only cools the
+   * account once REMOTE_ACCOUNT_ERROR_THRESHOLD *consecutive* failures pile up,
+   * using a short self-healing cooldown. The counter is reset by any success
+   * (markAccountSuccess), so isolated failures interleaved with successes never
+   * trip it — only a sustained run of failures takes the account out of rotation.
+   */
+  private markAccountTransientError(accountId: number, modelKey: string, reason: string) {
+    const state = this.ensureRuntime(accountId);
+    state.transientErrors++;
+    if (state.transientErrors < REMOTE_ACCOUNT_ERROR_THRESHOLD) return;
+
+    const now = this.now();
+    const normalized = normalizeModelKey(modelKey);
+    const blockedUntil = now + REMOTE_TRANSIENT_ERROR_COOLDOWN_MS;
+
+    state.quotaStatus = "cooling";
+    state.quotaStatusReason = reason;
+    state.exhaustedAt = now;
+
+    if (normalized) {
+      state.blockedModels.set(normalized, { modelKey: normalized, reason, blockedAt: now, blockedUntil });
+      this.modelGates.blockAccountForModel(accountId, normalized, reason, REMOTE_TRANSIENT_ERROR_COOLDOWN_MS);
+    }
+
+    state.exhaustedUntil = Math.max(
+      blockedUntil,
+      ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),
+    );
+  }
+
   private markAccountSuccess(accountId: number, modelKey: string) {
     const state = this.accountRuntime.get(accountId);
     if (!state) return;
 
     state.consecutiveErrors = 0;
+    state.transientErrors = 0;
     state.lastUsedAt = this.now();
 
     const normalized = normalizeModelKey(modelKey);

@@ -625,6 +625,125 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(accountAfter!.blockedUntil).toBe(0);
   });
 
+  // ── Non-429/503 failures cool the account after a run ───────────────────
+
+  it("does NOT cool an account after a single non-429 failure", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+
+    const result1 = await service.leaseToken(REQ, leasePayload());
+    const leasedAccountId = result1.accountId;
+
+    // One 500 failure — below threshold, account stays available
+    await service.reportResult(REQ, {
+      leaseId: result1.leaseId,
+      status: 500,
+      modelKey: "claude-opus-4-6-thinking",
+    });
+
+    const account = service.getStatus().quota.accounts.find((a: any) => a.id === leasedAccountId);
+    expect(account!.quotaStatus).toBe("ok");
+    expect(account!.blockedUntil).toBe(0);
+  });
+
+  it("cools an account after REMOTE_ACCOUNT_ERROR_THRESHOLD consecutive non-429 failures", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+
+    // Single account so the same one is leased every time
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "alpha@example.com", refreshToken: "rt-alpha", projectId: "proj-alpha", enabled: true },
+      ],
+    });
+    const service = makeService();
+
+    // 3 consecutive 500s on the same model → cooled
+    for (let i = 0; i < 3; i++) {
+      const r = await service.leaseToken(REQ, leasePayload());
+      await service.reportResult(REQ, {
+        leaseId: r.leaseId,
+        status: 500,
+        modelKey: "claude-opus-4-6-thinking",
+      });
+    }
+
+    const account = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
+    expect(account!.quotaStatus).toBe("cooling");
+    expect(account!.blockedUntil).toBeGreaterThan(currentTime);
+
+    // Cooled account is skipped → only candidate is blocked → 503
+    await expect(service.leaseToken(REQ, leasePayload())).rejects.toMatchObject({ statusCode: 503 });
+  });
+
+  it("a success resets the transient-failure counter (no premature cooling)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "alpha@example.com", refreshToken: "rt-alpha", projectId: "proj-alpha", enabled: true },
+      ],
+    });
+    const service = makeService();
+
+    // fail, fail, success, fail, fail — never 3 in a row → never cooled
+    for (const status of [500, 500, 200, 500, 500]) {
+      const r = await service.leaseToken(REQ, leasePayload());
+      await service.reportResult(REQ, { leaseId: r.leaseId, status, modelKey: "claude-opus-4-6-thinking", totalTokens: 1 });
+    }
+
+    const account = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
+    expect(account!.quotaStatus).toBe("ok");
+  });
+
+  // ── lease scans ALL candidates, not just the first few ──────────────────
+
+  it("tries every available account when more than 5 fail token refresh", async () => {
+    writeJson(accountsFilePath, {
+      accounts: Array.from({ length: 7 }, (_, i) => ({
+        id: i + 1,
+        email: `acct${i + 1}@example.com`,
+        refreshToken: `rt-${i + 1}`,
+        projectId: `proj-${i + 1}`,
+        enabled: true,
+      })),
+    });
+
+    // First 6 token refreshes fail, 7th succeeds — old 5-candidate cap would 503.
+    tokenProvider
+      .mockRejectedValueOnce(new Error("Transient network error 1"))
+      .mockRejectedValueOnce(new Error("Transient network error 2"))
+      .mockRejectedValueOnce(new Error("Transient network error 3"))
+      .mockRejectedValueOnce(new Error("Transient network error 4"))
+      .mockRejectedValueOnce(new Error("Transient network error 5"))
+      .mockRejectedValueOnce(new Error("Transient network error 6"))
+      .mockResolvedValueOnce("access-token-lucky");
+
+    const service = makeService();
+    const result = await service.leaseToken(REQ, leasePayload());
+
+    expect(result.ok).toBe(true);
+    expect(result.accessToken).toBe("access-token-lucky");
+    expect(tokenProvider).toHaveBeenCalledTimes(7);
+  });
+
+  it("caps the candidate scan at 30 even with a large account pool", async () => {
+    writeJson(accountsFilePath, {
+      accounts: Array.from({ length: 40 }, (_, i) => ({
+        id: i + 1,
+        email: `acct${i + 1}@example.com`,
+        refreshToken: `rt-${i + 1}`,
+        projectId: `proj-${i + 1}`,
+        enabled: true,
+      })),
+    });
+
+    // Every token refresh fails → lease should give up after the 30-candidate cap.
+    tokenProvider.mockRejectedValue(new Error("Transient network error"));
+
+    const service = makeService();
+    await expect(service.leaseToken(REQ, leasePayload())).rejects.toMatchObject({ statusCode: 503 });
+    expect(tokenProvider).toHaveBeenCalledTimes(30);
+  });
+
   // ── excludeAccountIds passthrough ───────────────────────────────────────
 
   it("respects excludeAccountIds from client payload", async () => {
