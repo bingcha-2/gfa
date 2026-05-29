@@ -15,6 +15,10 @@ import { PrismaService } from "./prisma/prisma.service";
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Fire onModuleDestroy/onApplicationShutdown on SIGTERM/SIGINT so services
+  // (e.g. TokenServerService) can flush buffered state before the process exits.
+  app.enableShutdownHooks();
+
   // Increase JSON body size limit for FAQ rich-text content with images
   app.useBodyParser("json", { limit: "20mb" });
 

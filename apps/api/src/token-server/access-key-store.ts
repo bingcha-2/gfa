@@ -14,13 +14,10 @@ import {
   tokenWindowLimit,
   recentTokenUsage,
   tokenWindowResetMs,
-  tokenWindowMs as getTokenWindowMs,
   keyExpiresAt,
   accessKeySessionTtlMs,
   isAccessKeySessionExpired,
   isGeminiModel,
-  DEFAULT_KEY_WINDOW_MS,
-  DEFAULT_KEY_SESSION_TTL_MS,
   ACCESS_KEY_BINDING_GRACE_MS,
 } from './token-billing';
 
@@ -81,7 +78,7 @@ export interface SessionValidation {
 
 // ── AccessKeyStore ───────────────────────────────────────────────────────────
 
-const SAVE_DEBOUNCE_MS = 3000;
+const SAVE_DEBOUNCE_MS = 10_000;
 
 export class AccessKeyStore {
   private cache: AccessKeysData | null = null;

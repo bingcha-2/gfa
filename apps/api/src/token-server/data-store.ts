@@ -2,7 +2,9 @@
  * data-store.ts — JSON file I/O, backup, integrity hashes, and pure utility functions.
  *
  * Extracted from remote-token-server/index.js (L24-L303).
- * All functions are pure or file-system only, no in-memory state.
+ * Mostly pure / file-system-only. The one piece of in-memory state is
+ * `lastBackupAtByPath`, used to decide whether an access-keys.json backup is
+ * due without scanning the directory on every write (the write path is hot).
  */
 
 import * as crypto from 'crypto';
@@ -16,33 +18,51 @@ const ACCESS_KEY_BACKUP_INTERVAL_MS = Math.max(
   Number(process.env.BCAI_ACCESS_KEY_BACKUP_INTERVAL_MS || 60 * 60 * 1000),
 );
 
+// How many timestamped access-keys.json backups to retain. Older ones are
+// pruned whenever a new backup is made (default 24 ≈ one day at hourly).
+const MAX_ACCESS_KEY_BACKUPS = Math.max(
+  1,
+  Number(process.env.BCAI_ACCESS_KEY_MAX_BACKUPS || 24),
+);
+
+// In-memory record of the last backup time per file path, so the hot write
+// path never has to scan the backup directory to decide whether a backup is
+// due. Lost on restart — at most one extra backup is made after a restart,
+// which is harmless (and arguably a useful checkpoint).
+const lastBackupAtByPath = new Map<string, number>();
+
 // ── JSON file I/O ────────────────────────────────────────────────────────────
 
 /**
- * Check whether access-keys.json needs a timestamped backup.
- * Returns true if no recent backup exists within the interval.
+ * Check whether access-keys.json needs a timestamped backup, using the
+ * in-memory last-backup timestamp (no directory scan).
  */
-export function shouldBackupAccessKeys(filePath: string): boolean {
-  if (!fs.existsSync(filePath) || path.basename(filePath) !== 'access-keys.json') {
+export function shouldBackupAccessKeys(filePath: string, now = Date.now()): boolean {
+  if (path.basename(filePath) !== 'access-keys.json' || !fs.existsSync(filePath)) {
     return false;
   }
+  const last = lastBackupAtByPath.get(filePath) || 0;
+  return now - last >= ACCESS_KEY_BACKUP_INTERVAL_MS;
+}
+
+/**
+ * Delete the oldest access-keys.json backups, keeping only the newest `keep`.
+ * Backup names are `<file>.bak-<ISO timestamp>`, which sort lexicographically
+ * in chronological order. Only invoked right after a new backup is created.
+ */
+function pruneAccessKeyBackups(filePath: string, keep: number): void {
   const dir = path.dirname(filePath);
   const prefix = `${path.basename(filePath)}.bak-`;
-  const now = Date.now();
   try {
-    const hasRecentBackup = fs.readdirSync(dir).some((name) => {
-      if (!name.startsWith(prefix)) return false;
-      try {
-        const stat = fs.statSync(path.join(dir, name));
-        return now - stat.mtimeMs < ACCESS_KEY_BACKUP_INTERVAL_MS;
-      } catch {
-        return false;
-      }
-    });
-    return !hasRecentBackup;
-  } catch {
-    return true;
-  }
+    const backups = fs
+      .readdirSync(dir)
+      .filter((name) => name.startsWith(prefix))
+      .sort(); // ISO timestamps → lexicographic sort == oldest-first
+    const toDelete = backups.slice(0, Math.max(0, backups.length - keep));
+    for (const name of toDelete) {
+      try { fs.unlinkSync(path.join(dir, name)); } catch { /* best-effort */ }
+    }
+  } catch { /* best-effort */ }
 }
 
 /**
@@ -69,9 +89,14 @@ export function readJsonFile(filePath: string): Record<string, any> {
  */
 export function writeJsonFile(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  if (shouldBackupAccessKeys(filePath)) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.copyFileSync(filePath, `${filePath}.bak-${stamp}`);
+  const now = Date.now();
+  if (shouldBackupAccessKeys(filePath, now)) {
+    const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
+    try {
+      fs.copyFileSync(filePath, `${filePath}.bak-${stamp}`);
+      lastBackupAtByPath.set(filePath, now);
+      pruneAccessKeyBackups(filePath, MAX_ACCESS_KEY_BACKUPS);
+    } catch { /* backup is best-effort; never block the write */ }
   }
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }

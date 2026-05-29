@@ -143,6 +143,8 @@ describe("TokenServerService", () => {
     expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
     expect(service.getStatus().activeLeases).toBe(0);
 
+    // Persistence is debounced now — force a flush before reading the file.
+    service.flushAccessKeys();
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
     expect(stored.keys[0].totalTokensUsed).toBe(150);
     expect(stored.keys[0].totalRequests).toBe(1);
@@ -1458,6 +1460,7 @@ describe("TokenServerService — session and key lifecycle", () => {
     expect(r2.reason).toBe("already_reported");
 
     // Tokens should only be counted once
+    service.flushAccessKeys();
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
     expect(stored.keys[0].totalTokensUsed).toBe(100); // not 200
   });

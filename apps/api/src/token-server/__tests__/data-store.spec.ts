@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -109,12 +109,11 @@ describe('shouldBackupAccessKeys', () => {
     expect(shouldBackupAccessKeys(filePath)).toBe(true);
   });
 
-  it('should return false for access-keys.json with a recent backup', () => {
+  it('should return false right after a backup was just made (in-memory recency)', () => {
     const filePath = path.join(tmpDir, 'access-keys.json');
     fs.writeFileSync(filePath, '{}');
-    // Create a recent backup
-    const bakName = `access-keys.json.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    fs.writeFileSync(path.join(tmpDir, bakName), '{}');
+    // writeJsonFile records the backup time in memory
+    writeJsonFile(filePath, { keys: [] });
     expect(shouldBackupAccessKeys(filePath)).toBe(false);
   });
 });
@@ -130,6 +129,46 @@ describe('writeJsonFile backup for access-keys.json', () => {
     const files = fs.readdirSync(tmpDir);
     const backups = files.filter((f) => f.startsWith('access-keys.json.bak-'));
     expect(backups.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('prunes old backups, keeping only the newest 24', () => {
+    const filePath = path.join(tmpDir, 'access-keys.json');
+    fs.writeFileSync(filePath, '{"keys":[]}');
+    // Pre-seed 30 old backups with chronologically-sortable stamps.
+    for (let i = 0; i < 30; i++) {
+      const stamp = `2020-01-01T00-00-${String(i).padStart(2, '0')}-000Z`;
+      fs.writeFileSync(path.join(tmpDir, `access-keys.json.bak-${stamp}`), '{}');
+    }
+    // One real write creates a new (newest) backup, then prunes.
+    writeJsonFile(filePath, { keys: [{ id: 'x' }] });
+
+    const backups = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.startsWith('access-keys.json.bak-'))
+      .sort();
+    expect(backups.length).toBe(24);
+    // The newest (the real 2026 backup) must survive; the oldest 2020 ones go.
+    expect(backups[backups.length - 1].startsWith('access-keys.json.bak-2020')).toBe(false);
+    expect(backups[0].startsWith('access-keys.json.bak-2020')).toBe(true);
+  });
+
+  it('does not prune (or scan) on writes that do not back up within the interval', () => {
+    const filePath = path.join(tmpDir, 'access-keys.json');
+    fs.writeFileSync(filePath, '{}');
+    writeJsonFile(filePath, { keys: [] }); // first write backs up + records lastBackupAt
+
+    // Seed many extra backups AFTER the first write. A within-interval write must
+    // not touch them (no backup ⇒ no prune ⇒ no directory scan).
+    for (let i = 0; i < 30; i++) {
+      const stamp = `2020-01-01T00-00-${String(i).padStart(2, '0')}-000Z`;
+      fs.writeFileSync(path.join(tmpDir, `access-keys.json.bak-${stamp}`), '{}');
+    }
+    const before = fs.readdirSync(tmpDir).filter((f) => f.startsWith('access-keys.json.bak-')).length;
+
+    writeJsonFile(filePath, { keys: [{ id: 'y' }] }); // within interval → no backup, no prune
+
+    const after = fs.readdirSync(tmpDir).filter((f) => f.startsWith('access-keys.json.bak-')).length;
+    expect(after).toBe(before); // untouched: no new backup, nothing pruned
   });
 });
 

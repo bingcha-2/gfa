@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional, OnModuleDestroy } from "@nestjs/common";
 
 import { AccessKeyStore } from "./access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "./data-store";
@@ -97,7 +97,7 @@ export class TokenServerHttpError extends Error {
 }
 
 @Injectable()
-export class TokenServerService {
+export class TokenServerService implements OnModuleDestroy {
   private readonly accountsFilePath: string;
   private readonly accessKeyStore: AccessKeyStore;
   private readonly tokenProvider: (account: TokenAccount) => Promise<string>;
@@ -335,7 +335,11 @@ export class TokenServerService {
     const accStats = this.ensureAccountStats(account.id);
     accStats.totalLeases++;
     accStats.lastUsedAt = this.now();
-    this.accessKeyStore.flush();
+    // NOTE: do NOT flush() here. refreshSession() already called markDirty(),
+    // which schedules a debounced write. Flushing synchronously on every lease
+    // forces a full-file writeFileSync of access-keys.json (+ a backup-dir scan)
+    // on the event loop per request — under load that serializes all requests
+    // and was the root of the lease/report timeout storm.
     return {
       ok: true,
       leaseId: lease.leaseId,
@@ -384,7 +388,9 @@ export class TokenServerService {
     const usage = this.usageForBilling(lease, status, payload);
     this.accessKeyStore.recordUsage(lease.accessKeyId, status, usage, modelKey);
     this.accessKeyStore.refreshSession(auth.record, { clientId: lease.clientId }, this.now());
-    this.accessKeyStore.flush();
+    // NOTE: no flush() here — recordUsage()/refreshSession() already markDirty();
+    // the debounced timer persists it. See the leaseToken() note above for why
+    // a per-request synchronous flush is the wrong thing under load.
 
     this.totalReports++;
     this.ensureDaily();
@@ -578,16 +584,6 @@ export class TokenServerService {
     return this._cachedAccounts;
   }
 
-  private writeAccounts(accounts: TokenAccount[]) {
-    const previous = readJsonFile(this.accountsFilePath);
-    const value = Array.isArray(previous) ? accounts : { ...previous, accounts };
-    writeJsonFile(this.accountsFilePath, value);
-    // Write-through: update cache directly to avoid re-read after frequent writes
-    this._cachedAccounts = accounts;
-    this._accountsDirty = false;
-    try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
-  }
-
   private markAccountsDirty(): void {
     this._accountsDirty = true;
     if (!this._accountsSaveTimer) {
@@ -633,6 +629,27 @@ export class TokenServerService {
     const value = Array.isArray(previous) ? this._cachedAccounts : { ...previous, accounts: this._cachedAccounts };
     writeJsonFile(this.accountsFilePath, value);
     try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
+  }
+
+  /**
+   * Shutdown hook: force a final synchronous flush of any buffered state so the
+   * debounce windows don't lose the last few seconds of writes on a clean exit.
+   * This is the "critical node" flush — the per-request hot-path flushes were
+   * removed in favour of the debounced timers. Requires the Nest app to enable
+   * shutdown hooks (app.enableShutdownHooks()).
+   */
+  onModuleDestroy(): void {
+    if (this._accountsSaveTimer) {
+      clearTimeout(this._accountsSaveTimer);
+      this._accountsSaveTimer = null;
+    }
+    try { this.flushAccounts(); } catch (err) { console.error("[token-server] flushAccounts on shutdown failed:", err); }
+    try { this.flushAccessKeys(); } catch (err) { console.error("[token-server] accessKeyStore flush on shutdown failed:", err); }
+  }
+
+  /** Force the debounced access-key cache to persist now (shutdown / tests). */
+  flushAccessKeys(): void {
+    this.accessKeyStore.flush();
   }
 
   private availableAccounts(payload: any, modelKey?: string) {
