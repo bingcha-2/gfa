@@ -11,16 +11,23 @@ interface UsageBarProps {
 
 export function UsageBar({ label, used, limit, color, subtitle }: UsageBarProps) {
   const noData = used == null || limit == null
-  const pct = noData ? 0 : limit === 0 ? 0 : Math.min(100, (used / limit) * 100)
+  const unlimited = !noData && limit === 0
+  const pct = noData || unlimited ? 0 : Math.min(100, (used / limit) * 100)
   const isFull = !noData && used === 0
-  const isExhausted = !noData && used >= limit
+  const isExhausted = !noData && !unlimited && used >= limit
 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <span className="text-[12px] font-medium text-[var(--text-secondary)]">{label}</span>
         <span className="text-[11px] font-mono-data text-[var(--text-muted)]">
-          {noData ? '等待数据...' : isFull ? `满额度 · ${fmtNum(limit)}` : `${fmtNum(used)} / ${fmtNum(limit)}`}
+          {noData
+            ? '等待数据...'
+            : unlimited
+              ? `${fmtNum(used)} / 不限额`
+              : isFull
+                ? `满额度 · ${fmtNum(limit)}`
+                : `${fmtNum(used)} / ${fmtNum(limit)}`}
         </span>
       </div>
       <Progress

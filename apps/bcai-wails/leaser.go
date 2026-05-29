@@ -613,6 +613,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
+		"reportId":          newReportID(lease.LeaseId),
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -652,6 +653,7 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
+		"reportId":          newReportID(lease.LeaseId),
 		"accountId":         lease.AccountId,
 		"status":            details.StatusCode,
 		"modelKey":          details.ModelKey,
@@ -666,6 +668,10 @@ func (l *Leaser) ReportUsage(card, deviceId string, details ReportDetails, upstr
 	}
 
 	go l.doReportWithRetry(payload, card, upstreamProxy)
+}
+
+func newReportID(leaseID string) string {
+	return fmt.Sprintf("%s:%d", leaseID, time.Now().UnixNano())
 }
 
 // ── 影子校验通道 ──
@@ -999,6 +1005,15 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	}
 	if v, ok := aks["geminiTokenLimit"].(float64); ok && v > 0 {
 		l.localQuota.GeminiTokenLimit = int64(v)
+	}
+	if v, ok := aks["tokenWindowLimit"].(float64); ok && v > 0 {
+		baseLimit := int64(v)
+		if l.localQuota.OpusTokenLimit <= 0 {
+			l.localQuota.OpusTokenLimit = baseLimit
+		}
+		if l.localQuota.GeminiTokenLimit <= 0 {
+			l.localQuota.GeminiTokenLimit = baseLimit * 5
+		}
 	}
 	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
 		l.localQuota.WindowMs = int64(v)
