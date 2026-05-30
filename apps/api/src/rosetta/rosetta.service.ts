@@ -832,37 +832,273 @@ export class RosettaService {
     return path.join(this.dataDir, "adspower-import.json");
   }
 
+  private adspowerBatchRunning = false;
+
+  /** Resolve the employee-auto-import script path */
+  private get importScriptPath() {
+    // Prefer the _deprecated copy that is always present on this server
+    const deprecated = path.resolve(__dirname, "..", "..", "..", "..", "_deprecated", "gfa-extension", "bundled-rosetta", "employee-auto-import", "index.js");
+    if (fs.existsSync(deprecated)) return deprecated;
+    // Fallback: bcai-tools node_modules copy
+    const nm = path.resolve(__dirname, "..", "..", "..", "..", "node_modules", ".pnpm", "node_modules", "bcai-tools", "bundled-rosetta", "employee-auto-import", "index.js");
+    if (fs.existsSync(nm)) return nm;
+    return "";
+  }
+
   adspowerImport(payload: any) {
     const credentials = payload?.credentials;
     if (!Array.isArray(credentials) || !credentials.length) return { ok: false, error: "credentials array required" };
 
+    if (this.adspowerBatchRunning) return { ok: false, error: "另一个批量录入正在进行中" };
+
+    const scriptPath = this.importScriptPath;
+    if (!scriptPath) return { ok: false, error: "employee-auto-import script not found" };
+
     const batchId = `batch_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
     const batch = {
       batchId,
-      status: "pending",
+      status: "running",
       total: credentials.length,
       completed: 0,
       failed: 0,
       createdAt: nowIso(),
-      accounts: credentials.map((c: any) => ({
+      items: credentials.map((c: any) => ({
         email: String(c.email || ""),
+        password: String(c.password || ""),
+        recoveryEmail: String(c.recoveryEmail || ""),
+        totpSecret: String(c.totpSecret || ""),
         status: "pending",
         error: "",
       })),
     };
     writeJson(this.adspowerFile, batch);
+
+    // Fire-and-forget the batch executor
+    this.runAdspowerBatch(scriptPath, batch).catch((err) => {
+      this.logger.error(`[adspower-import] batch executor crashed: ${err.message}`);
+    });
+
     return { ok: true, batchId };
+  }
+
+  /** Background batch executor: runs import script for each pending account sequentially */
+  private async runAdspowerBatch(scriptPath: string, batch: any) {
+    this.adspowerBatchRunning = true;
+    const adspowerUrl = "http://127.0.0.1:50325";
+    const adspowerApiKey = process.env.ADSPOWER_API_KEY || "";
+    const poolIds = (process.env.ADSPOWER_POOL_IDS || "").split(",").filter(Boolean);
+    // Use last profile in pool for import to avoid conflicts with worker
+    const profileId = poolIds.length > 0 ? poolIds[poolIds.length - 1] : "";
+
+    if (!profileId) {
+      this.logger.error("[adspower-import] No ADSPOWER_POOL_IDS configured");
+      batch.status = "failed";
+      batch.done = true;
+      writeJson(this.adspowerFile, batch);
+      this.adspowerBatchRunning = false;
+      return;
+    }
+
+    this.logger.log(`[adspower-import] Starting batch ${batch.batchId}: ${batch.total} accounts, profile=${profileId}`);
+
+    try {
+      for (let i = 0; i < batch.items.length; i++) {
+        const item = batch.items[i];
+        if (item.status !== "pending") continue;
+
+        item.status = "running";
+        writeJson(this.adspowerFile, batch);
+
+        this.logger.log(`[adspower-import] Processing ${i + 1}/${batch.total}: ${item.email}`);
+
+        try {
+          const result = await this.spawnImportScript(scriptPath, {
+            adspowerUrl,
+            adspowerApiKey,
+            profileId,
+            email: item.email,
+            password: item.password,
+            totpSecret: item.totpSecret,
+            recoveryEmail: item.recoveryEmail,
+          });
+
+          if (result.ok) {
+            item.status = "success";
+            item.message = `refreshToken: ${(result.refreshToken || "").substring(0, 15)}...`;
+            if (result.projectId) item.message += ` | projectId: ${result.projectId}`;
+            batch.completed++;
+            this.logger.log(`[adspower-import] ✅ ${item.email} success`);
+
+            // Auto-add to accounts.json if we got a refresh token
+            if (result.refreshToken) {
+              this.tryAddAccount(item.email, result.refreshToken, result.projectId);
+            }
+          } else {
+            item.status = "failed";
+            item.error = result.error || "unknown error";
+            batch.failed++;
+            this.logger.warn(`[adspower-import] ❌ ${item.email} failed: ${item.error}`);
+          }
+        } catch (err: any) {
+          item.status = "failed";
+          item.error = err.message || String(err);
+          batch.failed++;
+          this.logger.error(`[adspower-import] ❌ ${item.email} exception: ${item.error}`);
+        }
+
+        // Clear sensitive fields after processing
+        delete item.password;
+        delete item.totpSecret;
+        delete item.recoveryEmail;
+        writeJson(this.adspowerFile, batch);
+
+        // Small delay between accounts to let AdsPower settle
+        if (i < batch.items.length - 1) {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+    } finally {
+      batch.status = "completed";
+      batch.done = true;
+      writeJson(this.adspowerFile, batch);
+      this.adspowerBatchRunning = false;
+      this.logger.log(`[adspower-import] Batch ${batch.batchId} done: ${batch.completed} success, ${batch.failed} failed`);
+    }
+  }
+
+  /** Spawn employee-auto-import/index.js, pipe JSON via stdin, collect result from stdout */
+  private spawnImportScript(scriptPath: string, input: Record<string, string>): Promise<any> {
+    const { spawn } = require("child_process") as typeof import("child_process");
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [scriptPath], {
+        cwd: path.dirname(scriptPath),
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, NODE_PATH: path.resolve(__dirname, "..", "..", "..", "..", "node_modules") },
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+      let result: any = null;
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+        // Parse JSON lines as they arrive
+        const lines = stdout.split("\n");
+        stdout = lines.pop() || ""; // keep incomplete line
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === "result") {
+              result = parsed;
+            } else if (parsed.type === "progress") {
+              this.logger.debug(`[import-worker] ${parsed.message}`);
+            }
+          } catch { /* not JSON */ }
+        }
+      });
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      // 6 minute timeout (script has its own 5 minute timeout)
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error("import script timed out (6min)"));
+      }, 6 * 60 * 1000);
+
+      child.on("close", (code: number | null) => {
+        clearTimeout(timer);
+        // Try to parse any remaining stdout
+        if (stdout.trim()) {
+          try {
+            const parsed = JSON.parse(stdout.trim());
+            if (parsed.type === "result") result = parsed;
+          } catch { /* ignore */ }
+        }
+        if (result) {
+          resolve(result);
+        } else {
+          reject(new Error(`script exited with code ${code}: ${stderr.substring(0, 300)}`));
+        }
+      });
+
+      child.on("error", (err: Error) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+
+      // Write input JSON to stdin and close
+      child.stdin.write(JSON.stringify(input));
+      child.stdin.end();
+    });
+  }
+
+  /** Try to add a successfully imported account to accounts.json (Rosetta proxy) */
+  private tryAddAccount(email: string, refreshToken: string, projectId?: string) {
+    try {
+      const accountsPath = path.join(this.dataDir, "accounts.json");
+      const data = readJson(accountsPath, { accounts: [] });
+      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+
+      // Check if already exists
+      if (accounts.some((a: any) => a.email === email)) {
+        this.logger.log(`[adspower-import] Account ${email} already exists in accounts.json, skipping`);
+        return;
+      }
+
+      // Generate next ID
+      const maxId = accounts.reduce((max: number, a: any) => Math.max(max, Number(a.id) || 0), 0);
+      accounts.push({
+        id: maxId + 1,
+        email,
+        refreshToken,
+        enabled: true,
+        ...(projectId ? { projectId } : {}),
+      });
+      data.accounts = accounts;
+      writeJson(accountsPath, data);
+      this.logger.log(`[adspower-import] Added ${email} to accounts.json (id=${maxId + 1})`);
+    } catch (err: any) {
+      this.logger.warn(`[adspower-import] Failed to add ${email} to accounts.json: ${err.message}`);
+    }
   }
 
   adspowerImportStatus(batchId: string) {
     const data = readJson(this.adspowerFile, null);
     if (!data || data.batchId !== batchId) return { ok: false, error: "batch not found" };
-    return { ok: true, ...data };
+    // Normalize: old files on disk use "accounts", new ones use "items"
+    const items = (data.items || data.accounts || []).map((it: any) => ({
+      email: it.email,
+      status: it.status,
+      message: it.message || "",
+      error: it.error || "",
+    }));
+    const { accounts: _drop, items: _drop2, ...rest } = data;
+    return { ok: true, ...rest, items };
   }
 
   adspowerImportHistory() {
     const data = readJson(this.adspowerFile, null);
     if (!data) return { ok: true, batchId: null };
-    return { ok: true, batchId: data.batchId, status: data.status };
+    // Return full data so the frontend can restore progress on page load
+    const items = (data.items || data.accounts || []).map((it: any) => ({
+      email: it.email,
+      status: it.status,
+      message: it.message || "",
+      error: it.error || "",
+    }));
+    return {
+      ok: true,
+      batchId: data.batchId,
+      status: data.status,
+      total: data.total ?? items.length,
+      completed: data.completed ?? 0,
+      failed: data.failed ?? 0,
+      done: data.done ?? false,
+      items,
+    };
   }
 }

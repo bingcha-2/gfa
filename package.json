@@ -34,7 +34,8 @@
     "test:go": "cd apps/bcai-wails && go test ./..."
   },
   "dependencies": {
-    "@prisma/client": "^6.19.2"
+    "@prisma/client": "^6.19.2",
+    "puppeteer-core": "^25.1.0"
   },
   "devDependencies": {
     "prisma": "^6.7.0",

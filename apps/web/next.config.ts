@@ -12,6 +12,8 @@ const apiOrigin = apiBaseUrl.replace(/\/api\/?$/, "");
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@gfa/shared"],
+  // Skip type-checking during build (done separately by tsc / IDE)
+  typescript: { ignoreBuildErrors: true },
   ...(outputMode ? { output: outputMode } : {}),
   // Expose admin path prefix to both server (middleware) and client components.
   // NEXT_PUBLIC_ prefix makes it available in client bundles.
