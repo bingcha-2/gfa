@@ -10,14 +10,16 @@ import { PromoSection } from '@/components/PromoSection'
 import { Settings as SettingsIcon, Globe, FolderOpen, Info } from 'lucide-react'
 
 export function SettingsPage() {
-  const { config, appVersion, fetchConfig } = useAppStore()
+  const { config, appVersion } = useAppStore()
   const { modalProps, showAlert } = useModal()
 
   const [proxy, setProxy] = useState('')
   const [idePath, setIdePath] = useState('')
   const [hubPath, setHubPath] = useState('')
+  const [codexAppPath, setCodexAppPath] = useState('')
   const [detectedIde, setDetectedIde] = useState('')
   const [detectedHub, setDetectedHub] = useState('')
+  const [detectedCodex, setDetectedCodex] = useState('')
 
   useEffect(() => {
     loadSettings()
@@ -29,8 +31,10 @@ export function SettingsPage() {
     const paths = await api.getDetectedPaths()
     setIdePath(config.idePath || paths.idePath || '')
     setHubPath(config.hubPath || paths.hubPath || '')
+    setCodexAppPath(config.codexAppPath || paths.codexAppPath || '')
     setDetectedIde(config.idePath ? '自定义' : paths.idePath ? '已检测' : '未检测到')
     setDetectedHub(config.hubPath ? '自定义' : paths.hubPath ? '已检测' : '未检测到')
+    setDetectedCodex(config.codexAppPath ? '自定义' : paths.codexAppPath ? '已检测' : '未检测到')
   }
 
   const handleSaveProxy = async () => {
@@ -53,10 +57,20 @@ export function SettingsPage() {
     if (path) setHubPath(path)
   }
 
+  const handleBrowseCodex = async () => {
+    const path = await api.browseForPath('选择 Codex App 路径')
+    if (path) setCodexAppPath(path)
+  }
+
   const handleSavePaths = async () => {
     if (!config) return
     try {
-      await useAppStore.getState().saveConfig({ ...config, idePath: idePath.trim(), hubPath: hubPath.trim() })
+      await useAppStore.getState().saveConfig({
+        ...config,
+        idePath: idePath.trim(),
+        hubPath: hubPath.trim(),
+        codexAppPath: codexAppPath.trim(),
+      })
       await useAppStore.getState().fetchIDEStatus()
       await showAlert('保存成功', '安装路径已保存。')
     } catch (err) {
@@ -114,6 +128,18 @@ export function SettingsPage() {
             <div className="flex gap-2">
               <Input value={hubPath} readOnly placeholder="未检测到" className="flex-1 text-[12px] font-mono" />
               <Button variant="secondary" onClick={handleBrowseHub}>浏览</Button>
+            </div>
+          </div>
+
+          {/* Codex app path */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[12px] text-[var(--text-secondary)] font-medium">Codex App</span>
+              <span className={cn('text-[10px] font-semibold', detectedCodex === '已检测' ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{detectedCodex}</span>
+            </div>
+            <div className="flex gap-2">
+              <Input value={codexAppPath} readOnly placeholder="未检测到" className="flex-1 text-[12px] font-mono" />
+              <Button variant="secondary" onClick={handleBrowseCodex}>浏览</Button>
             </div>
           </div>
 

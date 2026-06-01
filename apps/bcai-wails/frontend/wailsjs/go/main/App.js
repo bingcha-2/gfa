@@ -38,6 +38,10 @@ export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
 
+export function GetCodexRelayConfig() {
+  return window['go']['main']['App']['GetCodexRelayConfig']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -94,6 +98,10 @@ export function OAuthLogin(arg1) {
   return window['go']['main']['App']['OAuthLogin'](arg1);
 }
 
+export function OpenSystemPermissionSettings() {
+  return window['go']['main']['App']['OpenSystemPermissionSettings']();
+}
+
 export function RefreshPoolQuota() {
   return window['go']['main']['App']['RefreshPoolQuota']();
 }
@@ -112,6 +120,10 @@ export function RestartToUpdate() {
 
 export function RestoreSelected(arg1) {
   return window['go']['main']['App']['RestoreSelected'](arg1);
+}
+
+export function SaveCodexRelayConfig(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveCodexRelayConfig'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SaveConfig(arg1) {

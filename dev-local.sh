@@ -149,6 +149,19 @@ CONFIGEOF
     echo -e "  ${GREEN}✓${NC} accounts.json ($count 个账号)"
   fi
 
+  if [ ! -f "$DATA_DIR/codex-accounts.json" ]; then
+    cat > "$DATA_DIR/codex-accounts.json" << 'CODEXEOF'
+{
+  "accounts": []
+}
+CODEXEOF
+    echo -e "  ${YELLOW}⚠${NC} 创建空 codex-accounts.json — ${YELLOW}需要添加 Codex OAuth 账号才能代理 Codex${NC}"
+  else
+    local codex_count
+    codex_count=$(node -e "try{const d=require('$DATA_DIR/codex-accounts.json');console.log(Array.isArray(d)?d.length:(d.accounts||[]).length)}catch{console.log(0)}" 2>/dev/null || echo "?")
+    echo -e "  ${GREEN}✓${NC} codex-accounts.json ($codex_count 个账号)"
+  fi
+
   if [ ! -f "$DATA_DIR/access-keys.json" ]; then
     cat > "$DATA_DIR/access-keys.json" << 'KEYSEOF'
 {
@@ -188,9 +201,11 @@ setup_client_env() {
   echo -e "${BOLD}${CYAN}═══ 客户端环境变量 → 本地服务端 ═══${NC}"
 
   export BCAI_API_BASE="http://127.0.0.1:3001/api/remote-token"
+  export BCAI_CODEX_API_BASE="http://127.0.0.1:3001/api/remote-codex"
   export BCAI_UPDATE_URL="http://127.0.0.1:3000/updates/latest-wails.json"
 
   echo -e "  ${GREEN}✓${NC} BCAI_API_BASE  → ${CYAN}$BCAI_API_BASE${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_CODEX_API_BASE → ${CYAN}$BCAI_CODEX_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_UPDATE_URL → ${CYAN}$BCAI_UPDATE_URL${NC}"
   echo -e "  ${DIM}无需修改源码，环境变量仅在本次运行生效${NC}"
   echo ""
@@ -298,6 +313,7 @@ print_banner() {
     echo -e "${GREEN}│${NC}  ${DIM}Web Console${NC}          ${CYAN}http://localhost:3000/console${NC}"
     echo -e "${GREEN}│${NC}  ${DIM}API Health${NC}           ${CYAN}http://localhost:3001/api/health${NC}"
     echo -e "${GREEN}│${NC}  ${DIM}Remote Token${NC}         ${CYAN}http://localhost:3001/api/remote-token${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}Remote Codex${NC}         ${CYAN}http://localhost:3001/api/remote-codex${NC}"
   fi
 
   if [ -n "$CLIENT_PID" ]; then
@@ -402,4 +418,3 @@ main() {
 }
 
 main "$@"
-

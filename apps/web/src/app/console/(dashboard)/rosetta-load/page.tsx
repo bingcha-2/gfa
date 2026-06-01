@@ -393,7 +393,7 @@ export default function RosettaLoadPage() {
       <div className="flex flex-col gap-4">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-semibold">账号负载</h1>
+          <h1 className="text-2xl font-semibold">Antigravity 负载看板</h1>
           <p className="text-sm text-muted-foreground">
             来自 Remote Token Server 调度器的 lease 与账号统计。
           </p>

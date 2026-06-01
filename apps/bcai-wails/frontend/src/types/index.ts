@@ -14,8 +14,14 @@ export interface Config {
   upstreamProxy: string
   idePath: string
   hubPath: string
+  codexAppPath: string
   cardExpiry: string
   poolMode: string
+  codexMode: string
+  codexRelayBase: string
+  codexRelayKey: string
+  codexRelayProtocol: string
+  codexModelMap: Record<string, string>
 }
 
 // ===== IDE =====

@@ -11,6 +11,25 @@ import (
 	"time"
 )
 
+// hopByHopHeaders are per-connection headers that must not be forwarded between
+// connections (RFC 7230 §6.1). Go's http server manages response framing itself,
+// so copying an upstream Connection / Transfer-Encoding / Keep-Alive onto the
+// downstream response can corrupt framing. Strip them when relaying responses.
+var hopByHopHeaders = map[string]bool{
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailer":             true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+}
+
+func isHopByHopHeader(key string) bool {
+	return hopByHopHeaders[strings.ToLower(key)]
+}
+
 func isDirectProxyMode(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "direct", "none", "off":
@@ -291,13 +310,5 @@ func createBcaiClient() *http.Client {
 // postBcaiWithFallback 优先直连 bcai.site，失败后回退到 upstream 代理
 // 用于替代 leaser.go 中所有发往 bcai.site 的 postJsonWithSecret 调用
 func postBcaiWithFallback(path string, payload interface{}, card string, upstreamProxy string) ([]byte, int, error) {
-	// 优先直连
-	body, status, err := postJsonWithSecret(createBcaiClient(), path, payload, card)
-	if err == nil {
-		return body, status, nil
-	}
-
-	// 直连失败 → 回退到代理
-	Log("[bcai] Direct connection failed (%v), retrying via proxy", err)
-	return postJsonWithSecret(createHttpClient(upstreamProxy), path, payload, card)
+	return postBcaiBaseWithFallback(API_BASE, path, payload, card, upstreamProxy)
 }

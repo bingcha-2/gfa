@@ -151,6 +151,12 @@ func (p *LocalHTTPProxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 		return
 	}
+
+	if isCodexAPIRequest(path) {
+		GetCodexProxy().ServeHTTP(w, r, card, deviceId, upstream)
+		return
+	}
+
 	// 路由逻辑：所有请求都注入我们的 token（与 timo 行为一致）
 	// auth/loadCodeAssist/onboardUser 等也需要有效 token
 	isGen := isGenerationRequest(path)

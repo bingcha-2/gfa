@@ -5,8 +5,9 @@ import * as path from "path";
 
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
+import { AgentAccountService } from "../automation/agent-account.service";
 
-import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit } from "../token-server/token-billing";
+import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS } from "../token-server/token-billing";
 import {
   type CachedToken,
   getAccessToken,
@@ -86,7 +87,7 @@ function accessKeyExpiresAt(key: any) {
 }
 
 function recentTokenUsage(key: any, now = Date.now()) {
-  const windowMs = Number(key.tokenWindowMs || key.windowMs || 5 * 60 * 60 * 1000);
+  const windowMs = Number(key.tokenWindowMs || key.windowMs || DEFAULT_KEY_WINDOW_MS);
   const cutoff = now - windowMs;
   return (Array.isArray(key.tokenUsageEvents) ? key.tokenUsageEvents : [])
     .filter((item: any) => Number(item?.at || 0) >= cutoff)
@@ -107,6 +108,102 @@ function newAccessKeyValue() {
   return `BCAI-${crypto.randomBytes(6).toString("hex").toUpperCase()}-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
+function getStringAt(source: any, pathParts: string[]) {
+  let current = source;
+  for (const part of pathParts) {
+    if (!current || typeof current !== "object") return "";
+    current = current[part];
+  }
+  return typeof current === "string" ? current.trim() : "";
+}
+
+function firstString(source: any, paths: string[][]) {
+  for (const pathParts of paths) {
+    const value = getStringAt(source, pathParts);
+    if (value) return value;
+  }
+  return "";
+}
+
+function getNumberAt(source: any, pathParts: string[]): number {
+  let current = source;
+  for (const part of pathParts) {
+    if (!current || typeof current !== "object") return 0;
+    current = current[part];
+  }
+  if (typeof current === "number" && Number.isFinite(current)) return current;
+  if (typeof current === "string" && current.trim() !== "" && Number.isFinite(Number(current))) {
+    return Number(current);
+  }
+  return 0;
+}
+
+function firstNumber(source: any, paths: string[][]): number {
+  for (const pathParts of paths) {
+    const value = getNumberAt(source, pathParts);
+    if (value > 0) return value;
+  }
+  return 0;
+}
+
+function firstCodexImportCandidate(parsed: any): any {
+  if (Array.isArray(parsed)) return parsed[0] || {};
+  if (Array.isArray(parsed?.accounts) && parsed.accounts.length > 0) {
+    const account = parsed.accounts[0];
+    if (account?.credentials && typeof account.credentials === "object") {
+      return { ...account, ...account.credentials };
+    }
+    return account || {};
+  }
+  if (parsed?.credentials && typeof parsed.credentials === "object") {
+    return { ...parsed, ...parsed.credentials };
+  }
+  return parsed || {};
+}
+
+function parseJsonFromText(text: string): any | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Continue with embedded-object extraction below.
+  }
+
+  const start = trimmed.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = inString;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth++;
+    if (char === "}") depth--;
+    if (depth === 0) {
+      try {
+        return JSON.parse(trimmed.slice(start, i + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 @Injectable()
 export class RosettaService {
   private readonly dataDir: string;
@@ -120,6 +217,7 @@ export class RosettaService {
   constructor(
     @Optional() options: RosettaServiceOptions = {},
     @Optional() private readonly automation?: AutomationService,
+    @Optional() private readonly agentAccounts?: AgentAccountService,
   ) {
     this.dataDir = options.dataDir || defaultDataDir();
     this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
@@ -145,6 +243,7 @@ export class RosettaService {
         totalTokensUsed: Number(key.totalTokensUsed || 0),
         recentWindowTokens: recentTokenUsage(key),
         tokenWindowLimit: tokenWindowLimit(key),
+        windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
         durationMs: Number(key.durationMs || 0),
         createdAt: String(key.createdAt || ""),
         lastUsedAt: String(key.lastUsedAt || ""),
@@ -257,23 +356,169 @@ export class RosettaService {
     return { ok: true, totalAccounts: filtered.length };
   }
 
+  // ── Codex account pool (codex-accounts.json) ────────────────────────────
+  // Mirrors the antigravity account methods above but targets the codex pool
+  // and omits projectId/oauthProfile (codex accounts don't have them).
+
+  listCodexAccounts() {
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
+      id: Number(account.id || 0),
+      email: String(account.email || ""),
+      enabled: account.enabled !== false,
+      alias: String(account.alias || ""),
+      planType: String(account.planType || ""),
+      hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
+      codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
+      codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
+      modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+    }));
+    return { ok: true, accounts, dataDir: this.dataDir };
+  }
+
+  addCodexAccount(payload: any) {
+    const email = String(payload?.email || "").trim();
+    const refreshToken = String(payload?.refreshToken || "").trim();
+    if (!email) return { ok: false, error: "email 不能为空" };
+    if (!refreshToken) return { ok: false, error: "refreshToken 不能为空" };
+
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    if (existing) {
+      existing.refreshToken = refreshToken;
+      existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
+      existing.alias = String(payload.alias ?? existing.alias ?? "");
+      if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+    } else {
+      const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accounts.push({
+        id: maxId + 1,
+        email,
+        refreshToken,
+        enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
+        alias: String(payload.alias || ""),
+        planType: String(payload.planType || ""),
+      });
+    }
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  importCodexAccountFromText(payload: any) {
+    const parsed = parseJsonFromText(String(payload?.text || payload?.json || ""));
+    if (!parsed || typeof parsed !== "object") return { ok: false, error: "未找到有效 JSON" };
+    const source = firstCodexImportCandidate(parsed);
+
+    const email = firstString(source, [["user", "email"], ["profile", "email"], ["email"], ["name"]]);
+    const alias = firstString(source, [["user", "name"], ["alias"], ["name"]]);
+    const planType = firstString(source, [["account", "planType"], ["planType"], ["plan_type"]]);
+    const refreshToken = firstString(source, [["refreshToken"], ["refresh_token"]]);
+    const accessToken = firstString(source, [["accessToken"], ["access_token"]]);
+    const sessionToken = firstString(source, [["sessionToken"], ["session_token"]]);
+    const expires = firstString(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["expired"]]);
+    let accessTokenExpiresAt = expires ? Date.parse(expires) : 0;
+    // Some token JSONs express expiry as a numeric epoch instead of a date string;
+    // firstString() drops non-strings, so fall back to a numeric read and normalize
+    // seconds → milliseconds (heuristic: values below ~1e12 are second-granularity).
+    if (!Number.isFinite(accessTokenExpiresAt) || accessTokenExpiresAt <= 0) {
+      const numericExpires = firstNumber(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["exp"]]);
+      if (numericExpires > 0) {
+        accessTokenExpiresAt = numericExpires < 1e12 ? Math.round(numericExpires * 1000) : numericExpires;
+      }
+    }
+
+    if (!email) return { ok: false, error: "email 不能为空" };
+    if (!refreshToken && !accessToken && !sessionToken) return { ok: false, error: "缺少可用 token" };
+
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    const updates: Record<string, unknown> = {
+      enabled: payload?.enabled !== undefined ? payload.enabled !== false : true,
+    };
+    if (alias) updates.alias = alias;
+    if (planType) updates.planType = planType;
+    if (refreshToken) updates.refreshToken = refreshToken;
+    if (accessToken) updates.accessToken = accessToken;
+    if (Number.isFinite(accessTokenExpiresAt) && accessTokenExpiresAt > 0) {
+      updates.accessTokenExpiresAt = accessTokenExpiresAt;
+    }
+    if (sessionToken) updates.sessionToken = sessionToken;
+
+    if (existing) {
+      Object.assign(existing, updates);
+    } else {
+      const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accounts.push({
+        id: maxId + 1,
+        email,
+        alias: "",
+        planType: "",
+        refreshToken: "",
+        ...updates,
+      });
+    }
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  toggleCodexAccount(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.enabled = !account.enabled;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, enabled: account.enabled };
+  }
+
+  deleteCodexAccount(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const filtered = accounts.filter((account: any) => Number(account.id) !== accountId);
+    if (filtered.length === accounts.length) return { ok: false, error: "账号不存在" };
+    writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
+    return { ok: true, totalAccounts: filtered.length };
+  }
+
   createAccessKey(payload: any) {
     const filePath = path.join(this.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
-    const record = {
-      id: String(payload?.id || `card_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`),
-      key: String(payload?.key || newAccessKeyValue()),
-      name: String(payload?.name || ""),
-      status: String(payload?.status || "active"),
-      durationMs: Number(payload?.durationMs || 60 * 60 * 1000),
-      windowLimit: Number(payload?.windowLimit || 0),
-      tokenWindowLimit: Number(payload?.tokenWindowLimit || 0),
-      createdAt: nowIso(),
-    };
-    keys.push(record);
+
+    // Batch minting: count > 1 creates N independent cards sharing the same
+    // limits. An explicit id/key only applies to a single card (count 1).
+    const count = Math.max(1, Math.min(200, Number(payload?.count) || 1));
+    const created: any[] = [];
+    for (let i = 0; i < count; i++) {
+      const single = count === 1;
+      const record = {
+        id: String((single && payload?.id) || `card_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`),
+        key: String((single && payload?.key) || newAccessKeyValue()),
+        name: String(payload?.name || ""),
+        status: String(payload?.status || "active"),
+        durationMs: Number(payload?.durationMs || 60 * 60 * 1000),
+        windowLimit: Number(payload?.windowLimit || 0),
+        tokenWindowLimit: Number(payload?.tokenWindowLimit || 0),
+        // Per-card rate-limit window duration (configurable hours/days, set at
+        // creation). Drives the fixed-period reset in resetWindowIfExpired().
+        windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
+        createdAt: nowIso(),
+      };
+      keys.push(record);
+      created.push(record);
+    }
     writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
-    return { ok: true, key: this.publicAccessKey(record), totalKeys: keys.length };
+    const publicKeys = created.map((record) => this.publicAccessKey(record));
+    return { ok: true, key: publicKeys[0], keys: publicKeys, totalKeys: keys.length };
   }
 
   updateAccessKey(payload: any) {
@@ -283,7 +528,7 @@ export class RosettaService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
-    for (const field of ["name", "status", "durationMs", "windowLimit", "tokenWindowLimit"]) {
+    for (const field of ["name", "status", "durationMs", "windowLimit", "tokenWindowLimit", "windowMs"]) {
       if (payload[field] !== undefined) record[field] = field.endsWith("Ms") || field.endsWith("Limit")
         ? Number(payload[field])
         : String(payload[field]);
@@ -832,37 +1077,164 @@ export class RosettaService {
     return path.join(this.dataDir, "adspower-import.json");
   }
 
-  adspowerImport(payload: any) {
+  /** Terminal item states — no further polling needed. */
+  private readonly ADSPOWER_TERMINAL = new Set(["success", "failed"]);
+
+  /** Map an automation Task status to the frontend's item status vocabulary. */
+  private mapAdspowerTaskStatus(taskData: any): { status: string; message?: string; error?: string } {
+    const backend = String(taskData?.status || "");
+    switch (backend) {
+      case "SUCCESS":
+        return { status: "success" };
+      case "RUNNING":
+        return { status: "running", message: "登录授权中" };
+      case "PENDING":
+        return { status: "running", message: "排队中" };
+      case "MANUAL_REVIEW":
+        return {
+          status: "failed",
+          error: `需人工验证: ${taskData?.lastErrorCode || taskData?.lastErrorMessage || "MANUAL_REVIEW"}`,
+        };
+      case "FAILED_FINAL":
+      case "FAILED_RETRYABLE":
+        return {
+          status: "failed",
+          error: taskData?.lastErrorMessage || taskData?.lastErrorCode || "自动化失败",
+        };
+      default:
+        return { status: "running" };
+    }
+  }
+
+  /**
+   * Submit a batch of Google credentials for AdsPower-driven OAuth onboarding.
+   * Each credential is ensured to exist as an AgentAccount, then enqueued as an
+   * "oauth" automation task (the worker drives an AdsPower profile, logs in, and
+   * captures the refresh token). Status is polled via adspowerImportStatus(),
+   * which pushes succeeded accounts into the Rosetta pool.
+   */
+  async adspowerImport(payload: any) {
     const credentials = payload?.credentials;
     if (!Array.isArray(credentials) || !credentials.length) return { ok: false, error: "credentials array required" };
+    if (!this.automation || !this.agentAccounts) return { ok: false, error: "automation service unavailable" };
 
     const batchId = `batch_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+    const items: any[] = [];
+
+    for (const c of credentials) {
+      const email = String(c?.email || "").trim();
+      const password = String(c?.password || "");
+      if (!email || !password) {
+        items.push({ email, status: "failed", error: "缺少邮箱或密码" });
+        continue;
+      }
+
+      const recoveryEmail = c?.recoveryEmail ? String(c.recoveryEmail) : undefined;
+      const totpSecret = c?.totpSecret ? String(c.totpSecret) : undefined;
+      const phones = Array.isArray(c?.phones)
+        ? c.phones
+            .map((p: any) => ({
+              phoneNumber: String(p?.phoneNumber || "").trim(),
+              countryCode: String(p?.countryCode || "+1").trim() || "+1",
+              smsUrl: String(p?.smsUrl || "").trim(),
+            }))
+            .filter((p: any) => p.phoneNumber)
+        : undefined;
+
+      try {
+        const agentAccountId = await this.agentAccounts.ensureAgentAccount({
+          loginEmail: email,
+          loginPassword: password,
+          totpSecret,
+          recoveryEmail,
+        });
+        const result = await this.automation.startAutomation(
+          "oauth",
+          { email, password, recoveryEmail, totpSecret },
+          phones?.length ? phones : undefined,
+          undefined,
+          { source: "rosetta-account-auto-import" },
+        );
+        items.push({
+          email,
+          agentAccountId,
+          taskId: result?.taskId,
+          status: "running",
+          message: "已入队",
+        });
+      } catch (err: any) {
+        items.push({ email, status: "failed", error: err?.message || String(err) });
+      }
+    }
+
     const batch = {
       batchId,
-      status: "pending",
-      total: credentials.length,
-      completed: 0,
-      failed: 0,
+      status: items.every((i) => this.ADSPOWER_TERMINAL.has(i.status)) ? "completed" : "running",
+      total: items.length,
+      completed: items.filter((i) => this.ADSPOWER_TERMINAL.has(i.status)).length,
+      failed: items.filter((i) => i.status === "failed").length,
+      done: items.every((i) => this.ADSPOWER_TERMINAL.has(i.status)),
       createdAt: nowIso(),
-      accounts: credentials.map((c: any) => ({
-        email: String(c.email || ""),
-        status: "pending",
-        error: "",
-      })),
+      updatedAt: nowIso(),
+      items,
     };
     writeJson(this.adspowerFile, batch);
     return { ok: true, batchId };
   }
 
-  adspowerImportStatus(batchId: string) {
+  /** Poll automation task status for each pending item; upload successes to the pool. */
+  async adspowerImportStatus(batchId: string) {
     const data = readJson(this.adspowerFile, null);
     if (!data || data.batchId !== batchId) return { ok: false, error: "batch not found" };
+
+    if (this.automation) {
+      for (const item of data.items || []) {
+        if (!item.taskId || this.ADSPOWER_TERMINAL.has(item.status)) continue;
+        try {
+          const taskData = await this.automation.getTaskStatus(item.taskId);
+          const mapped = this.mapAdspowerTaskStatus(taskData);
+
+          if (mapped.status === "success") {
+            // OAuth done → token is on the AgentAccount; push it into the pool.
+            if (!item.uploaded && item.agentAccountId && this.agentAccounts) {
+              try {
+                await this.agentAccounts.uploadToRosetta([item.agentAccountId]);
+                item.uploaded = true;
+                item.status = "success";
+                item.message = "已录入账号池";
+                item.error = "";
+              } catch (err: any) {
+                item.status = "failed";
+                item.error = `OAuth成功但入池失败: ${err?.message || String(err)}`;
+              }
+            } else {
+              item.status = "success";
+              item.message = "已录入账号池";
+            }
+          } else {
+            item.status = mapped.status;
+            if (mapped.message !== undefined) item.message = mapped.message;
+            if (mapped.error !== undefined) item.error = mapped.error;
+          }
+        } catch {
+          // task not found yet / transient — leave item unchanged for next poll
+        }
+      }
+
+      data.completed = (data.items || []).filter((i: any) => this.ADSPOWER_TERMINAL.has(i.status)).length;
+      data.failed = (data.items || []).filter((i: any) => i.status === "failed").length;
+      data.done = (data.items || []).every((i: any) => this.ADSPOWER_TERMINAL.has(i.status));
+      data.status = data.done ? "completed" : "running";
+      data.updatedAt = nowIso();
+      writeJson(this.adspowerFile, data);
+    }
+
     return { ok: true, ...data };
   }
 
   adspowerImportHistory() {
     const data = readJson(this.adspowerFile, null);
     if (!data) return { ok: true, batchId: null };
-    return { ok: true, batchId: data.batchId, status: data.status };
+    return { ok: true, ...data };
   }
 }

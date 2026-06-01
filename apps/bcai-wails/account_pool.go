@@ -254,16 +254,10 @@ func (p *AccountPool) SaveAccounts() {
 		return
 	}
 
-	dir := filepath.Dir(p.filePath)
-	_ = os.MkdirAll(dir, 0700)
-
-	tmpPath := p.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(data, '\n'), 0600); err != nil {
+	// Atomic + durable (temp file + fsync + rename) so a crash/power-loss can't
+	// leave a half-written or truncated accounts file.
+	if err := writeFileAtomic(p.filePath, append(data, '\n'), 0600); err != nil {
 		Log("[account-pool] Error writing accounts: %v", err)
-		return
-	}
-	if err := os.Rename(tmpPath, p.filePath); err != nil {
-		Log("[account-pool] Error renaming accounts file: %v", err)
 	}
 }
 

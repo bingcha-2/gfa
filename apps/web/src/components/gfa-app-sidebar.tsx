@@ -43,29 +43,6 @@ import {
   CoinsIcon,
 } from "lucide-react";
 
-const SECTION_PERM_MAP: Record<string, string> = {
-  overview: "overview",
-  "daily-stats": "daily_stats",
-  accounts: "accounts",
-  groups: "groups",
-  orders: "orders",
-  tasks: "tasks",
-  codes: "codes",
-  expire: "expire",
-  scheduler: "scheduler",
-  lookup: "lookup",
-  "agent-service": "agent_service",
-  "rosetta-employees": "agent_service",
-  "rosetta-keys": "codes",
-  "rosetta-accounts": "agent_service",
-  "rosetta-load": "agent_service",
-  "rosetta-captcha": "agent_service",
-  "rosetta-adspower": "agent_service",
-  "rosetta-credits": "agent_service",
-  announcement: "announcement",
-  faq: "faq",
-};
-
 type NavItem = {
   id: string;
   title: string;
@@ -226,20 +203,38 @@ export function GfaAppSidebar({
     },
   ];
 
-  const rosettaNav: NavItem[] = [
+  // Antigravity (Gemini + Claude/Opus) — 看板 + 账号管理
+  const antigravityNav: NavItem[] = [
+    {
+      id: "rosetta-load",
+      title: "负载看板",
+      url: `/${prefix}/rosetta-load`,
+      icon: <ActivityIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "rosetta-accounts",
+      title: "账号池",
+      url: `/${prefix}/rosetta-accounts`,
+      icon: <DatabaseIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    // Antigravity-only services (Codex has no AI credits / captcha / AdsPower / employees).
+    {
+      id: "rosetta-credits",
+      title: "积分消耗",
+      url: `/${prefix}/rosetta-credits`,
+      icon: <CoinsIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
     {
       id: "rosetta-captcha",
       title: "人机解封",
       url: `/${prefix}/rosetta-captcha`,
       icon: <ShieldAlertIcon />,
-      permKey: "agent_service",
-      roleGuard: () => isAdminOrOps,
-    },
-    {
-      id: "rosetta-load",
-      title: "账号负载",
-      url: `/${prefix}/rosetta-load`,
-      icon: <ActivityIcon />,
       permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
@@ -252,18 +247,42 @@ export function GfaAppSidebar({
       roleGuard: () => isAdminOrOps,
     },
     {
-      id: "rosetta-accounts",
-      title: "账号池",
-      url: `/${prefix}/rosetta-accounts`,
-      icon: <DatabaseIcon />,
-      permKey: "agent_service",
-      roleGuard: () => isAdminOrOps,
-    },
-    {
       id: "rosetta-employees",
       title: "员工管理",
       url: `/${prefix}/rosetta-employees`,
       icon: <UsersIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+  ];
+
+  // Codex (OpenAI) — 看板 + 账号管理
+  const codexNav: NavItem[] = [
+    {
+      id: "codex-proxy",
+      title: "负载看板",
+      url: `/${prefix}/codex-proxy`,
+      icon: <BotIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+    {
+      id: "codex-accounts",
+      title: "账号池",
+      url: `/${prefix}/codex-accounts`,
+      icon: <DatabaseIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+  ];
+
+  // 跨 provider 的共享服务（只保留真正跨 provider 的）
+  const sharedServiceNav: NavItem[] = [
+    {
+      id: "usage-stats",
+      title: "用量与剩余",
+      url: `/${prefix}/usage-stats`,
+      icon: <ActivityIcon />,
       permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
@@ -273,14 +292,6 @@ export function GfaAppSidebar({
       url: `/${prefix}/rosetta-keys`,
       icon: <KeyIcon />,
       permKey: "codes",
-      roleGuard: () => isAdminOrOps,
-    },
-    {
-      id: "rosetta-credits",
-      title: "积分消耗",
-      url: `/${prefix}/rosetta-credits`,
-      icon: <CoinsIcon />,
-      permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
   ];
@@ -361,9 +372,11 @@ export function GfaAppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
+        {renderNavGroup("Antigravity", antigravityNav)}
+        {renderNavGroup("Codex", codexNav)}
+        {renderNavGroup("共享服务", sharedServiceNav)}
         {renderNavGroup("运营", mainNav)}
         {renderNavGroup("管理", managementNav)}
-        {renderNavGroup("Rosetta", rosettaNav)}
         {renderNavGroup("设置", settingsNav)}
       </SidebarContent>
 

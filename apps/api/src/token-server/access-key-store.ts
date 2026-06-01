@@ -14,11 +14,13 @@ import {
   tokenWindowMs,
   tokenWindowLimit,
   recentTokenUsage,
+  recentBucketUsage,
   tokenWindowResetMs,
+  UNIVERSAL_BILLING,
+  ProviderBilling,
   keyExpiresAt,
   accessKeySessionTtlMs,
   isAccessKeySessionExpired,
-  isGeminiModel,
   ACCESS_KEY_BINDING_GRACE_MS,
 } from './token-billing';
 
@@ -37,6 +39,8 @@ export interface AccessKeyRecord {
   windowStartedAt?: number;
   usageEvents?: any[];
   tokenUsageEvents?: any[];
+  /** Provider this card is bound to ("antigravity" | "codex"). */
+  provider?: string;
   totalRequests?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
@@ -95,7 +99,10 @@ export class AccessKeyStore {
   // report counted before it — negligible (leases are in-memory and also reset).
   private reportDedup = new Map<string, Map<string, number>>();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly billing: ProviderBilling = UNIVERSAL_BILLING,
+  ) {}
 
   // ── Read / Write ─────────────────────────────────────────────────────────
 
@@ -221,38 +228,40 @@ export class AccessKeyStore {
 
     resetWindowIfExpired(record, now);
     const baseLimit = tokenWindowLimit(record);
-    const recentTokens = recentTokenUsage(record, now);
 
     if (options.enforceLimit && baseLimit > 0) {
       const modelKeyStr = String(options.modelKey || '').trim();
-      const isGemini = isGeminiModel(modelKeyStr);
-      const geminiLimit = baseLimit * 5;
-      const opusLimit = baseLimit;
+      const bucketUsage = recentBucketUsage(record, this.billing.bucketOf, now);
 
       if (modelKeyStr) {
-        if (isGemini && recentTokens.geminiEffectiveTokens >= geminiLimit) {
+        const bucket = this.billing.bucketOf(modelKeyStr);
+        const used = bucketUsage.get(bucket) || 0;
+        const limit = this.billing.bucketLimit(baseLimit, bucket);
+        if (limit > 0 && used >= limit) {
           this.writeCache();
           return {
             key: keyValue, record: null,
-            error: `Access key Gemini token limit exceeded (${recentTokens.geminiEffectiveTokens}/${geminiLimit} tokens/5h)`,
+            error: `Access key ${this.billing.bucketLabel(bucket)} token limit exceeded (${used}/${limit} tokens/5h)`,
           };
         }
-        if (!isGemini && recentTokens.opusEffectiveTokens >= opusLimit) {
+      } else {
+        // No modelKey → reject when every bucket the card has ACTUALLY used is
+        // exhausted. Buckets with zero usage are excluded: otherwise a bucket the
+        // card never serves (e.g. codex on an antigravity-only card) has usage 0 <
+        // limit forever, so `every` is never true and an exhausted card is never
+        // rejected. Filtering to used buckets restores the original intent
+        // (reject when out of budget across the buckets in play).
+        const usedBuckets = this.billing.buckets.filter((b) => (bucketUsage.get(b) || 0) > 0);
+        const allExhausted =
+          usedBuckets.length > 0 &&
+          usedBuckets.every((b) => (bucketUsage.get(b) || 0) >= this.billing.bucketLimit(baseLimit, b));
+        if (allExhausted) {
           this.writeCache();
           return {
             key: keyValue, record: null,
-            error: `Access key Opus token limit exceeded (${recentTokens.opusEffectiveTokens}/${opusLimit} tokens/5h)`,
+            error: `Access key token limit exceeded`,
           };
         }
-      } else if (
-        recentTokens.opusEffectiveTokens >= opusLimit &&
-        recentTokens.geminiEffectiveTokens >= geminiLimit
-      ) {
-        this.writeCache();
-        return {
-          key: keyValue, record: null,
-          error: `Access key token limit exceeded`,
-        };
       }
     }
 
@@ -261,6 +270,30 @@ export class AccessKeyStore {
   }
 
   // ── Usage recording ────────────────────────────────────────────────────
+
+  /**
+   * Normalize a raw usage payload into the canonical token counts (and billing
+   * bucket) that recordUsage() persists. Exposed so callers (e.g. the per-call
+   * token-usage tracker) record EXACTLY the same numbers as the card counters.
+   */
+  computeUsageDetail(usage: any = {}, modelKey = '') {
+    const inputTokens = readTokenCount(usage.inputTokens);
+    const outputTokens = readTokenCount(usage.outputTokens);
+    const cachedInputTokens = readTokenCount(usage.cachedInputTokens);
+    const rawTotalTokens = readTokenCount(usage.rawTotalTokens) || inputTokens + outputTokens;
+    const totalTokens = billableTokenUsageTotal(
+      { ...usage, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
+      modelKey,
+    );
+    return {
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      rawTotalTokens,
+      totalTokens,
+      bucket: this.billing.bucketOf(modelKey || ''),
+    };
+  }
 
   /**
    * Record a usage report against a card. Idempotent by reportId: a reportId
@@ -294,14 +327,8 @@ export class AccessKeyStore {
       }
     }
 
-    const inputTokens = readTokenCount(usage.inputTokens);
-    const outputTokens = readTokenCount(usage.outputTokens);
-    const cachedInputTokens = readTokenCount(usage.cachedInputTokens);
-    const rawTotalTokens = readTokenCount(usage.rawTotalTokens) || inputTokens + outputTokens;
-    const totalTokens = billableTokenUsageTotal(
-      { ...usage, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
-      modelKey,
-    );
+    const { inputTokens, outputTokens, cachedInputTokens, rawTotalTokens, totalTokens } =
+      this.computeUsageDetail(usage, modelKey);
 
     record.totalRequests = Number(record.totalRequests || 0) + 1;
     record.totalInputTokens = Number(record.totalInputTokens || 0) + inputTokens;
@@ -427,6 +454,7 @@ export class AccessKeyStore {
     const now = Date.now();
     resetWindowIfExpired(record, now);
     const recentTokens = recentTokenUsage(record, now);
+    const bucketUsage = recentBucketUsage(record, this.billing.bucketOf, now);
     const tLimit = tokenWindowLimit(record);
     const resetMs = tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
@@ -447,10 +475,22 @@ export class AccessKeyStore {
       totalRawTokensUsed: Number(record.totalRawTokensUsed || 0),
       totalTokensUsed: Number(record.totalTokensUsed || 0),
       recentWindowTokens: recentTokens.totalTokens,
-      opusTokensUsed: recentTokens.opusEffectiveTokens,
+      // Legacy gemini/opus fields (antigravity client contract). Derived from the
+      // bucket map so a non-gemini/opus provider (codex) reports 0 here and its
+      // usage shows under its own bucket in `buckets` below.
+      opusTokensUsed: bucketUsage.get('opus') || 0,
       opusTokenLimit: tLimit > 0 ? tLimit : (windowLimit > 0 ? windowLimit * 100_000 : 0),
-      geminiTokensUsed: recentTokens.geminiEffectiveTokens,
+      geminiTokensUsed: bucketUsage.get('gemini') || 0,
       geminiTokenLimit: tLimit > 0 ? tLimit * 5 : (windowLimit > 0 ? windowLimit * 500_000 : 0),
+      // Codex flat fields (mirror opus/gemini) so the client can show a codex bar.
+      codexTokensUsed: bucketUsage.get('codex') || 0,
+      codexTokenLimit: this.billing.bucketLimit(tLimit, 'codex'),
+      // Provider-correct per-bucket view (gemini/opus for antigravity, codex for codex).
+      buckets: this.billing.buckets.map((bucket) => ({
+        bucket,
+        used: bucketUsage.get(bucket) || 0,
+        limit: this.billing.bucketLimit(tLimit, bucket),
+      })),
       tokenWindowLimit: tLimit,
       tokenWindowMs: tokenWindowMs(record),
       tokenWindowRemaining: tLimit > 0 ? Math.max(0, tLimit - recentTokens.totalTokens) : 0,

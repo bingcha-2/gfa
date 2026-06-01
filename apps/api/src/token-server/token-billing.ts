@@ -9,7 +9,7 @@ import { compareVersions } from './data-store';
 
 // ── Default constants ────────────────────────────────────────────────────────
 
-export const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1000;
+export const DEFAULT_LEASE_TTL_MS = 10 * 60 * 1000;
 export const DEFAULT_AFFINITY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
 export const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
@@ -25,7 +25,7 @@ export const ACCESS_KEY_BINDING_GRACE_MS = Math.max(
 );
 export const MAX_REMOTE_LEASE_TTL_MS = Math.max(
   60 * 1000,
-  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 5 * 60 * 1000),
+  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 10 * 60 * 1000),
 );
 export const PHONE_VERIFICATION_COOLDOWN_MS = Math.max(
   60 * 60 * 1000,
@@ -96,6 +96,65 @@ export function readTokenCount(value: unknown): number {
 export function isGeminiModel(modelKey: unknown): boolean {
   const key = String(modelKey || '').toLowerCase();
   return key.includes('gemini') || key.startsWith('gem');
+}
+
+// ── Provider-driven billing buckets ──────────────────────────────────────────
+// A card's token-window usage is split into named buckets. Each (window, bucket)
+// has its own limit. Antigravity: gemini(×5)/opus(×1) within one 5h window.
+// Codex: a single "codex" bucket (×1). The scheme is supplied per-provider so the
+// access-key store no longer hardcodes gemini/opus.
+export interface ProviderBilling {
+  /** Buckets this provider exposes (for status enumeration). */
+  buckets: string[];
+  /** Which bucket a model counts toward. */
+  bucketOf(modelKey: string): string;
+  /** Per-bucket limit derived from the card's base token-window limit. */
+  bucketLimit(baseLimit: number, bucket: string): number;
+  /** Human label used in limit-exceeded error messages. */
+  bucketLabel(bucket: string): string;
+}
+
+/** Detect an OpenAI/Codex model (gpt-* or *-codex). Used for billing buckets. */
+export function isCodexModel(modelKey: unknown): boolean {
+  const key = String(modelKey || '').toLowerCase();
+  return key.startsWith('gpt') || key.includes('codex');
+}
+
+/**
+ * Universal billing scheme — a single card is usable across ALL providers
+ * (the bcai client routes one accountCard through both the Gemini and Codex
+ * proxies). Usage is split into three buckets so providers never cross-pollute:
+ *   gemini  — limit ×5  (cheap)
+ *   codex   — limit ×1
+ *   opus    — limit ×1  (everything else, e.g. Claude/Opus)
+ * The bucket is resolved from the modelKey at read time, so it's correct no
+ * matter which provider/endpoint records or reads the usage.
+ */
+export const UNIVERSAL_BILLING: ProviderBilling = {
+  buckets: ['gemini', 'codex', 'opus'],
+  bucketOf: (modelKey: string) =>
+    isGeminiModel(modelKey) ? 'gemini' : isCodexModel(modelKey) ? 'codex' : 'opus',
+  bucketLimit: (baseLimit: number, bucket: string) => (bucket === 'gemini' ? baseLimit * 5 : baseLimit),
+  bucketLabel: (bucket: string) => (bucket === 'gemini' ? 'Gemini' : bucket === 'codex' ? 'Codex' : 'Opus'),
+};
+
+/** @deprecated cards are universal; kept as an alias of UNIVERSAL_BILLING. */
+export const ANTIGRAVITY_BILLING = UNIVERSAL_BILLING;
+
+/** Aggregate current-window billable tokens grouped by billing bucket. */
+export function recentBucketUsage(
+  record: any,
+  bucketOf: (modelKey: string) => string,
+  now = Date.now(),
+): Map<string, number> {
+  resetWindowIfExpired(record, now);
+  const out = new Map<string, number>();
+  for (const item of record.tokenUsageEvents || []) {
+    const billable = billableTokenUsageTotal(item, item?.modelKey);
+    const bucket = bucketOf(String(item?.modelKey || ''));
+    out.set(bucket, (out.get(bucket) || 0) + billable);
+  }
+  return out;
 }
 
 /** Check if an account has available credits or unknown status. */
