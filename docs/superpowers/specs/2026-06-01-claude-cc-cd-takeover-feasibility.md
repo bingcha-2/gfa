@@ -127,14 +127,18 @@ Claude Desktop 是打包的 Electron 应用,只连 `claude.ai` / `api.anthropic.
 
 ## 7. 目标架构与分阶段(基于已锁定决策)
 
-整体链路:
+整体链路(**服务端转发**模型,对标 ReClaude 网关):
 
 ```
-Claude Code (env 注入) ─┐
-                        ├─→ bcai-wails 本地代理 ─→ GFA 服务端 Anthropic Provider ─→ api.anthropic.com / claude.ai
-Claude Desktop ─────────┘        (cc: 普通HTTP代理)         (Claude 订阅号 OAuth 池)
-   (透明 MITM + 自签CA 拦截)
+Claude Code (env 注入) ─┐                                  ┌─ 出口层 ─┐
+                        ├─→ bcai-wails 本地代理 ─→ GFA 服务端 ─→ [每账号粘性住宅代理] ─→ api.anthropic.com
+Claude Desktop ─────────┘   (本地只做拦截+上送)   (账号池/OAuth/    (utls 对齐TLS指纹)
+   (透明 MITM + 自签CA 拦截)                       用量/调度)
 ```
+
+> **关键架构事实(已对齐)**:最终连 Anthropic 的那一跳由 **GFA 服务端**完成(本地代理只做拦截 + 上送),
+> 这与 ReClaude **完全一致**——ReClaude 也是本地 MITM → 服务端网关 → Anthropic,真正打 Anthropic 的是网关。
+> 因此出口 IP = GFA 服务器 IP(用户 IP 不暴露),且 ReClaude 已在生产证明此模型可行。
 
 ### 待建组件清单
 
@@ -149,6 +153,31 @@ Claude Desktop ─────────┘        (cc: 普通HTTP代理)     
 | 服务端 | `AnthropicProvider implements Provider<TAccount>` | 新建,抽象已留口 | `lease-core/provider.ts` |
 | 服务端 | Claude 订阅号账号池 + OAuth refresh + 设备绑定 | 新建 | codex provider 参照 |
 | 服务端 | Claude 5h 用量计量 / `statusAccountExtras` 暴露 | 复用+扩展 | `lease-scheduler.ts` |
+| **出口层** | **utls TLS 指纹伪装** + HTTP 原样透传 | 新建 | `refraction-networking/utls` |
+| **出口层** | **每账号粘性住宅代理**(地域匹配 + IP/账号配比) | 新建 | 第三方住宅代理商 |
+
+### 出口层设计(抗风控的核心)
+
+服务端转发把出口 IP 收敛到 GFA,解决了"一号多 IP",但需避免新生的两个信号:
+
+1. **TLS/HTTP 指纹不匹配** —— 服务端用任意 HTTP 库(Node/Go)转发,其 TLS ClientHello(JA3/JA4)
+   与 header 里**声称**的客户端(cc=Node / cd=Electron)对不上。
+   - 对策 A:**HTTP 层原样透传**。因本地是 MITM 拦下真客户端请求,转发时保留其 header 顺序/大小写/
+     HTTP2 frame settings,不重构 → HTTP 指纹天然为真。
+   - 对策 B:**TLS 层用 utls** 把出口 ClientHello 伪装成所声称客户端的指纹。
+   - 定位:**廉价保险**。ReClaude 网关未死说明当前未硬卡 pinning,但加上等于焊死该向量。
+
+2. **机房 IP 上的账号密度** —— "一个机房 IP 挂 N 个 Claude 账号"是典型中转农场特征。
+   - 对策:服务端转发的**最后一跳走每账号绑定的粘性(sticky)住宅/移动代理**:
+     - 每账号一个长期不变的住宅 IP(看起来=一个固定家庭重度用户)
+     - 住宅 IP **地域匹配**账号注册/账单国家(避免地理矛盾)
+     - **IP/账号配比**:一个 IP/子网只挂 1~少数账号
+     - 住宅/移动 ASN 优先于机房 ASN(信誉更高)
+   - 代价:住宅代理按 GB 计费(LLM 为 token 密集/字节中等,可控但需进单账号成本模型);
+     sticky 会话有时长上限,需做 IP 续租/重绑逻辑。
+
+叠加已有的「**一号 ≤ 4 用户 + 单设备绑定 + 池内请求串行化/日量上限**」,每个账号在 Anthropic 视角 ≈
+**固定家庭 IP、固定设备、合理地域、人类级总量的一个重度用户**——同类服务存活的标准打法。
 
 ### 分阶段
 
@@ -174,7 +203,14 @@ Claude Desktop ─────────┘        (cc: 普通HTTP代理)     
 仍需关注/后续拍板:
 
 3. **证书/合规**:装根 CA 的合规与杀软误报风险已接受,但需在 UI 上对用户**明确告知**(信任让渡)。
-4. **Anthropic 反制(最大不确定性)**:订阅号 OAuth 的设备绑定 / 会话指纹 / 证书锁定(claude.ai 是否对自家流量做 pinning,需实测)/ 异常流量风控,均可能导致**账号被封或拦截失败**。建议阶段一/二各做一次真机验证。
+4. **Anthropic 反制(最大不确定性,但多数信号已有对策)**:
+   - 多 IP / impossible travel → **服务端转发**消除(出口收敛到 GFA)
+   - 机房 IP 农场特征 → **每账号粘性住宅代理 + 地域匹配 + IP/账号配比**(见出口层设计)
+   - TLS/HTTP 指纹 → **utls + 原样透传**(廉价保险)
+   - 设备 churn → **单设备绑定**
+   - 大规模共享 → **一号 ≤ 4 用户 + 池内串行化/日量上限**
+   - **不可消除的残余**:Anthropic 的判定规则是**服务端黑盒**(无客户端产物可逆向),且随时可改。
+     只能靠**灰度 + 监控封号率**观察,无任何架构能给 100% 保证。
 5. **设备签名防盗刷**(ReClaude 的 Ed25519 逐请求签名):是否借此机会引入,提升卡密抗盗刷能力?(与本议题正交,可单列评估。)
 6. **维护成本**:cc/cd 跟随官方升级的破坏性变更(尤其 cd 的 Electron 结构、claude.ai 接口),需持续跟进。
 
@@ -188,6 +224,9 @@ Claude Desktop ─────────┘        (cc: 普通HTTP代理)     
 
 ## 9. 一句话结论
 
-**可行,服务端贴合度很高(`Provider` 抽象就是为加新上游留的),且 ReClaude 的 ca/mitm 因同为 Go 可结构化移植。**
-真正的成本与风险集中在两点:**Claude 订阅号 OAuth 鉴权**(最实质工作量)与 **claude.ai 透明 MITM 能否成立**(最大不确定性,建议先做最小验证)。
-建议**阶段一先打通 cc + OAuth 账号链路**,再在阶段二处理 cd 的 MITM。
+**可行,服务端贴合度很高(`Provider` 抽象就是为加新上游留的),且架构完全对标 ReClaude(本地 MITM → 服务端转发 → Anthropic),ReClaude 已在生产验证此模型。**
+最实质的工作量是 **Claude 订阅号 OAuth 鉴权 + 账号采集入池**;抗风控的多数信号已有对策(服务端转发 + 粘性住宅代理 + utls + 单设备 + 限流),
+**唯一不可消除的残余是 Anthropic 的黑盒封号规则**,只能灰度观察。
+
+把出口层设计纳入后,工程实现把握 ~80–85%,"上线稳定存活"把握 ~80%(其余取决于黑盒风控)。
+建议**阶段一先打通 cc + OAuth 账号链路 + 出口层**,把最不确定的"账号鉴权 + 是否被封"用最小成本先暴露,再推进 cd 的 MITM。
