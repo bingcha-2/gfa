@@ -49,6 +49,8 @@ const nextConfig: NextConfig = {
       "faq",
       "phone-pool",
       "remote-token",
+      "remote-codex",
+      "remote-stats",
       "rosetta",
     ];
 
@@ -56,6 +58,10 @@ const nextConfig: NextConfig = {
       {
         source: "/remote-token/:path*",
         destination: `${apiOrigin}/api/remote-token/:path*`,
+      },
+      {
+        source: "/remote-codex/:path*",
+        destination: `${apiOrigin}/api/remote-codex/:path*`,
       },
       {
         source: "/api/faq-images/:path*",

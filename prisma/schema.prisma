@@ -482,3 +482,25 @@ model CreditConsumption {
   @@index([accountId, timestamp])
   @@index([accessKeyId, timestamp])
 }
+
+/// Per-event token usage: recorded in reportResult() for each billed usage report.
+/// One row per successful (deduped, exactly-once) report from a card (access key).
+model CardTokenUsage {
+  id                String   @id @default(cuid())
+  accessKeyId       String                     // Card (access key) ID that consumed the tokens
+  accessKeyName     String?                    // Card display name (snapshot at record time)
+  accountId         Int?                       // Rosetta account that served the request
+  modelKey          String                     // Model identifier (e.g. gemini-..., gpt-..., claude-...)
+  bucket            String                     // Billing bucket: gemini / codex / opus
+  status            Int      @default(0)        // Reported HTTP status
+  inputTokens       Int      @default(0)
+  outputTokens      Int      @default(0)
+  cachedInputTokens Int      @default(0)
+  rawTotalTokens    Int      @default(0)        // Raw total before cache discount
+  totalTokens       Int      @default(0)        // Billable total (after cache discount)
+  timestamp         DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([accessKeyId, timestamp])
+  @@index([accessKeyId, modelKey])
+}

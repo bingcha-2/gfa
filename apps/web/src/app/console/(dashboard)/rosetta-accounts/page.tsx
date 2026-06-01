@@ -415,7 +415,7 @@ export default function RosettaAccountsPage() {
     <div className="flex flex-col gap-4">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold">Rosetta 账号池</h1>
+        <h1 className="text-2xl font-semibold">Antigravity 账号池</h1>
         <p className="text-sm text-muted-foreground">
           管理 Rosetta 代理池中的 Google 账号。
           {dataDir && (

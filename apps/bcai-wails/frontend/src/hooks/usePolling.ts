@@ -11,7 +11,7 @@ import { useEffect, useRef, useCallback } from 'react'
  * @param intervalMs 两次调用之间的间隔毫秒（在上一次完成后开始计时）
  * @param enabled 是否启用
  */
-export function usePolling(fn: () => Promise<void> | void, intervalMs: number, enabled = true) {
+export function usePolling(fn: () => Promise<unknown> | unknown, intervalMs: number, enabled = true) {
   const savedFn = useRef(fn)
   savedFn.current = fn
 

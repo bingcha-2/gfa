@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os/exec"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +57,9 @@ func (a *App) startup(ctx context.Context) {
 		Log("[app] No account card configured. Waiting for user configuration.")
 	}
 
+	// 应用 Codex 中转(API 卡密)模式配置(若未配置 relay 则为 no-op,走号池/租号)。
+	GetCodexProxy().ApplyConfig(cfg)
+
 	// Always start the HTTP proxy server
 	err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 	if err != nil {
@@ -97,6 +102,9 @@ func (a *App) SaveConfig(cfg Config) error {
 	}
 	Log("[app] Config saved successfully")
 
+	// 应用 Codex 中转(API 卡密)模式配置:只改请求处理、不动监听,无需重启代理。
+	GetCodexProxy().ApplyConfig(cfg)
+
 	// If crucial settings changed, restart services
 	if oldCfg.AccountCard != cfg.AccountCard ||
 		oldCfg.UpstreamProxy != cfg.UpstreamProxy ||
@@ -128,23 +136,31 @@ func (a *App) SaveConfig(cfg Config) error {
 	return nil
 }
 
-// ActivateCard saves the account card/access key and tests a token lease
+// ActivateCard saves the account card/access key and validates it server-side.
 func (a *App) ActivateCard(card string) (string, error) {
 	cfg := LoadConfig()
 	cfg.AccountCard = card
 	_ = SaveConfig(cfg)
 
-	// Test lease to verify the card is valid
-	lease, err := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, cfg.UpstreamProxy)
+	// Activation = card validation only (/api/activate). Whether a token can be
+	// leased right now (account-pool availability) is a runtime concern, not an
+	// activation failure — a momentarily dry pool must not block activation.
+	expiresAt, err := GetLeaser().Activate(card, cfg.DeviceId, cfg.UpstreamProxy)
 	if err != nil {
 		return "", err
 	}
 
-	// Start auto-lease if not already running
+	// Start auto-lease / proxy so the client is ready to serve requests.
 	GetLeaser().StartAutoLease(card, cfg.DeviceId, cfg.UpstreamProxy)
 	GetHTTPProxy().UpdateConfig(card, cfg.DeviceId, cfg.UpstreamProxy)
 
-	return fmt.Sprintf("Token obtained for account #%d", lease.AccountId), nil
+	// Best-effort warm probe — never fatal. If the pool is momentarily dry the
+	// card is still activated; the user just sees a "busy" hint at request time.
+	if _, leaseErr := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, cfg.UpstreamProxy); leaseErr != nil {
+		Log("[activate] card activated but warm lease failed (non-fatal): %v", leaseErr)
+	}
+
+	return expiresAt, nil
 }
 
 // GetStats returns combined proxy and leaser metrics
@@ -193,7 +209,52 @@ func (a *App) RestartProxy() error {
 		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 	}
 
+	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
+}
+
+// ======================== Codex 中转(API 卡密)模式 ========================
+
+// GetCodexRelayConfig 返回当前 Codex 中转配置(供前端设置面板回显)。
+func (a *App) GetCodexRelayConfig() map[string]interface{} {
+	cfg := LoadConfig()
+	mode := cfg.CodexMode
+	if mode == "" {
+		mode = "rental"
+	}
+	protocol := cfg.CodexRelayProtocol
+	if protocol == "" {
+		protocol = "responses"
+	}
+	return map[string]interface{}{
+		"mode":     mode,
+		"baseURL":  cfg.CodexRelayBase,
+		"apiKey":   cfg.CodexRelayKey,
+		"protocol": protocol,
+		"modelMap": cfg.CodexModelMap,
+	}
+}
+
+// SaveCodexRelayConfig 持久化 Codex 中转(API 卡密)模式配置并立即生效(无需重启代理,
+// 中转只改请求处理、不动监听)。mode=="relay" 启用中转;其它(含 "" / "rental")回到
+// 号池/租号模式。modelMap 可为 nil。前端设置面板调用此方法。
+func (a *App) SaveCodexRelayConfig(mode, baseURL, apiKey, protocol string, modelMap map[string]string) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	cfg := LoadConfig()
+	cfg.CodexMode = mode
+	cfg.CodexRelayBase = baseURL
+	cfg.CodexRelayKey = apiKey
+	cfg.CodexRelayProtocol = protocol
+	cfg.CodexModelMap = modelMap
+	if err := SaveConfig(cfg); err != nil {
+		Log("[app] 保存 Codex 中转配置失败: %v", err)
+		return err
+	}
+	GetCodexProxy().ApplyConfig(cfg)
+	Log("[app] Codex 中转配置已更新: mode=%s proto=%s base=%s", mode, protocol, baseURL)
+	return nil
 }
 
 // ======================== IDE 注入相关方法 ========================
@@ -206,15 +267,17 @@ func (a *App) GetIDEStatus() IDEStatus {
 
 // DetectedPaths 返回自动检测到的路径
 type DetectedPaths struct {
-	IDEPath string `json:"idePath"`
-	HubPath string `json:"hubPath"`
+	IDEPath      string `json:"idePath"`
+	HubPath      string `json:"hubPath"`
+	CodexAppPath string `json:"codexAppPath"`
 }
 
 // GetDetectedPaths 获取自动检测到的 IDE/Hub 安装路径
 func (a *App) GetDetectedPaths() DetectedPaths {
 	return DetectedPaths{
-		IDEPath: detectAntigravityIDEPath(),
-		HubPath: detectAntigravityHubPath(),
+		IDEPath:      detectAntigravityIDEPath(),
+		HubPath:      detectAntigravityHubPath(),
+		CodexAppPath: detectCodexAppPath(),
 	}
 }
 
@@ -234,139 +297,61 @@ func (a *App) BrowseForPath(title string) string {
 	return result
 }
 
-// targets: ["ide", "hub"]
+// InjectSelected 接管指定产品(每个产品独立,可单独调用)。
+// targets: 任意 ["ide" | "hub" | "codex"] 子集(也接受产品 id)。
 func (a *App) InjectSelected(targets []string) (string, error) {
 	cfg := LoadConfig()
-
-	// 校验：remote 模式必须有卡密，local 模式必须有号池账号
-	poolMode := cfg.PoolMode
-	if poolMode == "" {
-		poolMode = "remote"
-	}
-	if poolMode == "remote" && cfg.AccountCard == "" {
-		return "", fmt.Errorf("请先激活账号卡再开启接管")
-	}
-	if poolMode == "local" {
-		poolStatus := GetAccountPool().GetPoolStatus()
-		total, _ := poolStatus["total"].(int)
-		if total <= 0 {
-			return "", fmt.Errorf("本地号池为空，请先添加账号再开启接管")
-		}
+	if err := validateTakeoverPrereqs(cfg); err != nil {
+		return "", err
 	}
 
 	var results []string
-	restartIDE := false
-
-	for _, t := range targets {
-		switch strings.ToLower(strings.TrimSpace(t)) {
-		case "ide":
-			if err := InjectIDESettings(cfg.ProxyPort); err != nil {
-				results = append(results, "Antigravity IDE: 接管失败")
-			} else {
-				restartIDE = true
-			}
-		case "hub":
-			hubPath := detectAntigravityHubPath()
-			if hubPath == "" {
-				results = append(results, "Antigravity Hub: 未检测到应用")
-				continue
-			}
-			// Hub 正在运行时 app.asar 会被 Electron 锁定，必须先关闭再 patch
-			hubWasRunning := IsHubRunning()
-			if hubWasRunning {
-				Log("[ide-inject] Hub 正在运行，先关闭以解锁 app.asar...")
-				killHubForPatch()
-			}
-			if err := PatchAsar(cfg.ProxyPort); err != nil {
-				Log("[ide-inject] PatchAsar 失败: %v", err)
-				results = append(results, fmt.Sprintf("Antigravity Hub: 接管失败 (%v)", err))
-				// 如果之前关了 Hub，尝试重新启动（即使 patch 失败也要恢复原状）
-				if hubWasRunning {
-					_ = LaunchHub()
-				}
-			} else {
-				Log("[ide-inject] PatchAsar 成功")
-				// patch 成功后启动 Hub
-				if err := LaunchHub(); err != nil {
-					Log("[ide-inject] Hub 启动失败: %v", err)
-					results = append(results, "Antigravity Hub: ✓ 已接管，但启动失败")
-				} else {
-					results = append(results, "Antigravity Hub: ✓ 已接管并启动")
-				}
-			}
+	for _, raw := range targets {
+		t := findTakeoverTarget(strings.ToLower(strings.TrimSpace(raw)))
+		if t == nil {
+			continue
+		}
+		msg, err := t.Inject(cfg.ProxyPort)
+		if err != nil {
+			results = append(results, fmt.Sprintf("%s: 接管失败 (%v)", t.Name(), err))
+		} else if msg != "" {
+			results = append(results, msg)
 		}
 	}
-
-	// IDE: 写入 settings.json 后直接完整重启 IDE（与 Timo 策略一致）
-	// 只杀 LS 行不通：extension host 会缓存旧端口导致 ECONNREFUSED
-	if restartIDE {
-		results = append(results, "Antigravity IDE: ✓ 已接管，正在重启 IDE...")
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					Log("[ide-inject] IDE 重启 goroutine panic: %v", r)
-				}
-			}()
-			if err := ForceRestartIDE(); err != nil {
-				Log("[ide-inject] 完整重启 IDE 失败: %v", err)
-			} else {
-				Log("[ide-inject] ✓ IDE 已完整重启")
-			}
-		}()
-	}
-
-	msg := strings.Join(results, "\n")
-	return msg, nil
+	return strings.Join(results, "\n"), nil
 }
 
-// RestoreSelected 根据用户选择恢复指定产品，并自动重启
-// targets: ["ide", "hub"]
+// RestoreSelected 还原指定产品(每个产品独立,可单独调用)。
+// targets: 任意 ["ide" | "hub" | "codex"] 子集(也接受产品 id)。
 func (a *App) RestoreSelected(targets []string) (string, error) {
 	var results []string
-	restartIDE := false
-	restartHub := false
-
-	for _, t := range targets {
-		switch strings.ToLower(strings.TrimSpace(t)) {
-		case "ide":
-			if err := RestoreIDESettings(); err != nil {
-				results = append(results, "Antigravity IDE: 恢复失败")
-			} else {
-				restartIDE = true
-			}
-		case "hub":
-			if err := RestoreAsar(); err != nil {
-				results = append(results, "Antigravity Hub: 恢复失败")
-			} else {
-				restartHub = true
-			}
+	for _, raw := range targets {
+		t := findTakeoverTarget(strings.ToLower(strings.TrimSpace(raw)))
+		if t == nil {
+			continue
+		}
+		msg, err := t.Restore()
+		if err != nil {
+			results = append(results, fmt.Sprintf("%s: 恢复失败 (%v)", t.Name(), err))
+		} else if msg != "" {
+			results = append(results, msg)
 		}
 	}
+	return strings.Join(results, "\n"), nil
+}
 
-	// IDE: 恢复后重启 language_server 让它重新读取原始配置
-	if restartIDE {
-		if IsIDERunning() {
-			RestartLanguageServerIfNeeded(0) // port=0 确保不匹配，强制杀 LS
-			results = append(results, "Antigravity IDE: ✓ 已恢复（language_server 将自动重启）")
-		} else {
-			results = append(results, "Antigravity IDE: ✓ 已恢复")
-		}
+// OpenSystemPermissionSettings 打开系统权限设置页,引导用户授权接管所需权限
+// (macOS: App 管理;Windows: 应用设置)。前端在 macOS 提示或接管失败时调用。
+func (a *App) OpenSystemPermissionSettings() error {
+	switch goruntime.GOOS {
+	case "darwin":
+		// 隐私与安全性 → App 管理
+		return exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles").Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", "ms-settings:appsfeatures").Start()
+	default:
+		return nil
 	}
-
-	if restartHub {
-		if IsHubRunning() {
-			if err := KillAndRestartHub(); err != nil {
-				results = append(results, "Antigravity Hub: 重启失败")
-			} else {
-				results = append(results, "Antigravity Hub: ✓ 已恢复并重启")
-			}
-		} else {
-			results = append(results, "Antigravity Hub: ✓ 已恢复")
-		}
-	}
-
-	msg := strings.Join(results, "\n")
-	return msg, nil
 }
 
 // IsIDERunningCheck 检测 IDE 是否正在运行（前端用于提示重启）

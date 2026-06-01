@@ -7,6 +7,9 @@ import { create } from 'zustand'
 import * as api from '@/services/wails'
 import type { Config, IDEProduct, UpdateStatus, ActiveAccountSummary } from '@/types'
 
+/** Fallback rate-limit window when the server hasn't reported one yet (5h). */
+const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
+
 interface AppState {
   // ===== Data =====
   config: Config | null
@@ -31,7 +34,10 @@ interface AppState {
   opusLimit: number | null
   geminiUsed: number | null
   geminiLimit: number | null
+  codexUsed: number | null
+  codexLimit: number | null
   recoveryRemainingMs: number
+  recoveryWindowMs: number
 
   // IDE
   ideProducts: IDEProduct[]
@@ -52,7 +58,7 @@ interface AppState {
   // ===== Actions =====
   fetchStats: () => Promise<void>
   fetchConfig: () => Promise<void>
-  fetchIDEStatus: () => Promise<void>
+  fetchIDEStatus: () => Promise<IDEProduct[]>
   fetchAnnouncement: () => Promise<void>
   saveConfig: (cfg: Config) => Promise<void>
   activateCard: (card: string) => Promise<string>
@@ -77,7 +83,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   opusLimit: null,
   geminiUsed: null,
   geminiLimit: null,
+  codexUsed: null,
+  codexLimit: null,
   recoveryRemainingMs: -1,
+  recoveryWindowMs: DEFAULT_WINDOW_MS,
   ideProducts: [],
   updateStatus: null,
   announcement: '',
@@ -110,7 +119,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         opusLimit: lq?.opusTokenLimit ?? null,
         geminiUsed: lq?.geminiTokensUsed ?? null,
         geminiLimit: lq?.geminiTokenLimit ?? null,
+        codexUsed: lq?.codexTokensUsed ?? null,
+        codexLimit: lq?.codexTokenLimit ?? null,
         recoveryRemainingMs: lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1,
+        recoveryWindowMs: lq?.windowMs && lq.windowMs > 0 ? lq.windowMs : DEFAULT_WINDOW_MS,
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,
         activeAccount: data.activeAccount || null,
@@ -132,9 +144,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchIDEStatus: async () => {
     try {
       const status = await api.getIDEStatus()
-      set({ ideProducts: status.products || [] })
+      const products = status.products || []
+      set({ ideProducts: products })
+      return products
     } catch (err) {
       console.error('fetchIDEStatus failed:', err)
+      return get().ideProducts
     }
   },
 

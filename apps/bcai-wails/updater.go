@@ -17,7 +17,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "5.2.1"
+var AppVersion = "6.0.1"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
@@ -389,7 +389,7 @@ func (u *Updater) DownloadAndApply() error {
 			errMsg := fmt.Sprintf("SHA256 校验失败: 期望 %s, 实际 %s", expectedUpper[:16]+"...", actualHash[:16]+"...")
 			Log("[updater] %s", errMsg)
 			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 		Log("[updater] SHA256 verified OK")
 	}
@@ -410,7 +410,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 	if appBundlePath == "" {
 		errMsg := "无法定位当前 .app 路径"
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 	Log("[updater] Current app bundle: %s", appBundlePath)
 
@@ -426,7 +426,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 		errMsg := fmt.Sprintf("挂载 DMG 失败: %v\n%s", err, string(mountOut))
 		Log("[updater] %s", errMsg)
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: "挂载 DMG 失败"})
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 	defer func() {
 		_ = exec.Command("hdiutil", "detach", mountPoint, "-force").Run()
@@ -439,7 +439,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 	if err != nil {
 		errMsg := fmt.Sprintf("读取 DMG 内容失败: %v", err)
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	var sourceApp string
@@ -452,7 +452,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 	if sourceApp == "" {
 		errMsg := "DMG 中未找到 .app 文件"
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 	Log("[updater] Found app in DMG: %s", sourceApp)
 
@@ -469,7 +469,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 		if adminOut, adminErr := adminCmd.CombinedOutput(); adminErr != nil {
 			errMsg := fmt.Sprintf("替换应用失败（需要管理员权限）: %v\n%s", adminErr, string(adminOut))
 			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: "替换应用失败，权限不足"})
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 	} else {
 		// rename 成功，用 cp -R 复制新 .app
@@ -480,7 +480,7 @@ func (u *Updater) applyMacOSUpdate(dmgPath string, info *UpdateInfo) error {
 			_ = os.Rename(backupPath, appBundlePath)
 			errMsg := fmt.Sprintf("复制新版本失败: %v", cpErr)
 			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: errMsg})
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 		// 清理备份
 		_ = os.RemoveAll(backupPath)

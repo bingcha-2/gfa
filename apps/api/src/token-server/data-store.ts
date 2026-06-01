@@ -87,10 +87,14 @@ export function readJsonFile(filePath: string): Record<string, any> {
  * Auto-creates parent directories. Backs up access-keys.json if no recent
  * backup exists.
  *
- * Atomic: serializes to a temp file in the same directory, then renames over
- * the target (rename is atomic on a single filesystem). A crash mid-write can
- * only leave an orphan .tmp file — the live file is never truncated/corrupted,
- * which matters for the billing-critical access-keys.json.
+ * Atomic + durable: serializes to a temp file in the same directory, fsyncs the
+ * temp file's data to disk, then renames over the target (rename is atomic on a
+ * single filesystem) and fsyncs the parent directory so the rename itself survives
+ * power loss. Without the fsyncs a kernel panic / power loss can land the rename
+ * metadata while the temp file's data blocks are still in cache, leaving a
+ * zero-length or truncated billing file on reboot. A crash mid-write can only
+ * leave an orphan .tmp file — the live file is never truncated/corrupted, which
+ * matters for the billing-critical access-keys.json.
  */
 export function writeJsonFile(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -105,8 +109,20 @@ export function writeJsonFile(filePath: string, value: unknown): void {
   }
   const tmpPath = `${filePath}.tmp-${process.pid}-${now}`;
   try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      fs.writeSync(fd, `${JSON.stringify(value, null, 2)}\n`, null, 'utf8');
+      fs.fsyncSync(fd); // flush data blocks before the rename
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmpPath, filePath);
+    // Persist the directory entry so the rename survives power loss. Best-effort:
+    // not all platforms (e.g. Windows) allow fsync on a directory handle.
+    try {
+      const dirFd = fs.openSync(path.dirname(filePath), 'r');
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    } catch { /* directory fsync unsupported here — rename is still atomic */ }
   } catch (err) {
     try { fs.unlinkSync(tmpPath); } catch { /* nothing to clean up */ }
     throw err;

@@ -83,39 +83,19 @@ func DetectIDEProducts(proxyPort int) IDEStatus {
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	products := []IDEProduct{}
 
-	// 1. Antigravity IDE (settings.json 注入)
-	idePath := detectAntigravityIDEPathCached()
-	ideSettingsPath := getIDESettingsPath()
-	ideInjected := false
-	if ideSettingsPath != "" {
-		ideInjected = checkSettingsInjected(ideSettingsPath, proxyURL)
+	// 注册表驱动:每个 TakeoverTarget 产出一个产品状态(见 takeover.go)。
+	for _, t := range takeoverTargets {
+		path := t.DetectPath()
+		products = append(products, IDEProduct{
+			ID:                t.ProductID(),
+			Name:              t.Name(),
+			Detected:          path != "",
+			DetectedPath:      path,
+			Injected:          path != "" && t.IsInjected(proxyPort),
+			SupportsInjection: true,
+			InjectionType:     t.InjectionType(),
+		})
 	}
-	products = append(products, IDEProduct{
-		ID:                "antigravity_ide",
-		Name:              "Antigravity IDE",
-		Detected:          idePath != "",
-		DetectedPath:      idePath,
-		Injected:          ideInjected,
-		SupportsInjection: true,
-		InjectionType:     "settings",
-	})
-
-	// 2. Antigravity Hub / Antigravity.app (asar 补丁)
-	hubPath := detectAntigravityHubPathCached()
-	hubInjected := false
-	if hubPath != "" {
-		asarPath := getAsarPath(hubPath)
-		hubInjected = checkAsarPatchedCached(asarPath, proxyURL)
-	}
-	products = append(products, IDEProduct{
-		ID:                "antigravity_hub",
-		Name:              "Antigravity Hub",
-		Detected:          hubPath != "",
-		DetectedPath:      hubPath,
-		Injected:          hubInjected,
-		SupportsInjection: true,
-		InjectionType:     "asar",
-	})
 
 	result := IDEStatus{
 		Products:         products,
@@ -1427,7 +1407,6 @@ func killProcessesByPattern(pattern string, signal string) int {
 	}
 
 	pids := strings.Fields(strings.TrimSpace(string(out)))
-	Log("[ide-inject] 找到 %d 个匹配进程 (pattern='%s'): PIDs=%v", len(pids), pattern, pids)
 
 	killedCount := 0
 	for _, pid := range pids {
@@ -1435,14 +1414,14 @@ func killProcessesByPattern(pattern string, signal string) int {
 		if pid == "" {
 			continue
 		}
-		err := hideCmd("kill", signal, pid).Run()
-		if err != nil {
-			Log("[ide-inject] kill %s %s 失败: %v", signal, pid, err)
-		} else {
-			Log("[ide-inject] kill %s %s 成功", signal, pid)
+		// kill 失败多为进程已退出(exit status 1),归入汇总,不逐条刷屏
+		if err := hideCmd("kill", signal, pid).Run(); err == nil {
 			killedCount++
 		}
 	}
+	// 汇总成一行:killed N/M (X already gone)
+	Log("[ide-inject] kill %s pattern='%s': killed %d/%d (%d already gone)",
+		signal, pattern, killedCount, len(pids), len(pids)-killedCount)
 	return killedCount
 }
 

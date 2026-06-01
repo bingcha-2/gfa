@@ -33,10 +33,11 @@ func TestDetectCacheTTL(t *testing.T) {
 	// 等待缓存过期
 	time.Sleep(150 * time.Millisecond)
 
-	// 过期后调用（应重新计算）
+	// 过期后调用（应重新计算）。产品数应等于已注册的接管目标数量
+	// (takeoverTargets: ide / hub / codex...),不要写死,否则新增产品时测试会假性失败。
 	result3 := DetectIDEProducts(60670)
-	if len(result3.Products) != 2 {
-		t.Errorf("期望 2 个产品，实际 %d", len(result3.Products))
+	if len(result3.Products) != len(takeoverTargets) {
+		t.Errorf("期望 %d 个产品(=已注册接管目标数), 实际 %d", len(takeoverTargets), len(result3.Products))
 	}
 }
 

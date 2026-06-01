@@ -44,6 +44,50 @@ export class AgentAccountService {
     private readonly automationQueue: Queue,
   ) {}
 
+  /**
+   * Ensure an AgentAccount row exists for the given login email, creating it
+   * (status REGISTERED) if absent and back-filling missing credentials if present.
+   * Returns the row id — needed so the OAuth worker can persist the captured
+   * refresh token (handleOAuth looks the account up by loginEmail) and so the
+   * caller can later push it into the Rosetta pool via uploadToRosetta().
+   */
+  async ensureAgentAccount(cred: {
+    loginEmail: string;
+    loginPassword: string;
+    totpSecret?: string;
+    recoveryEmail?: string;
+  }): Promise<string> {
+    const loginEmail = cred.loginEmail.trim();
+    const existing = await this.prisma.agentAccount.findFirst({
+      where: { loginEmail },
+      select: { id: true, loginPassword: true, totpSecret: true, recoveryEmail: true },
+    });
+
+    if (existing) {
+      // Back-fill any credentials that were missing before.
+      const patch: Record<string, string> = {};
+      if (!existing.loginPassword && cred.loginPassword) patch.loginPassword = cred.loginPassword;
+      if (!existing.totpSecret && cred.totpSecret) patch.totpSecret = cred.totpSecret;
+      if (!existing.recoveryEmail && cred.recoveryEmail) patch.recoveryEmail = cred.recoveryEmail;
+      if (Object.keys(patch).length > 0) {
+        await this.prisma.agentAccount.update({ where: { id: existing.id }, data: patch });
+      }
+      return existing.id;
+    }
+
+    const created = await this.prisma.agentAccount.create({
+      data: {
+        loginEmail,
+        loginPassword: cred.loginPassword,
+        totpSecret: cred.totpSecret,
+        recoveryEmail: cred.recoveryEmail,
+        status: "REGISTERED",
+      },
+      select: { id: true },
+    });
+    return created.id;
+  }
+
   // ── List / Stats ──
 
   async findAll(filters?: {

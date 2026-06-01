@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 import {
   Plus, Trash2, ToggleLeft, ToggleRight, Globe, Key, Users, RefreshCw,
   Lock, Unlock, ChevronDown, ChevronRight, Zap, Edit2, Check, X,
-  UserPlus, Shield, AlertTriangle, Activity,
+  UserPlus, Shield, AlertTriangle, Activity, Bot,
 } from 'lucide-react'
 import type { AccountInfo, QuotaGroup } from '@/types'
 
@@ -467,6 +467,8 @@ export function PoolPage() {
   } = usePoolStore()
   const { modalProps } = useModal()
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  // 号池平台切换：antigravity（现有本地号池）/ codex（后续接入）
+  const [platformTab, setPlatformTab] = useState<'antigravity' | 'codex'>('antigravity')
 
   // 自动轮询（每 3s 刷新账号列表）
   useEffect(() => {
@@ -500,23 +502,54 @@ export function PoolPage() {
             </Badge>
           )}
         </h2>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 text-[12px]"
-            onClick={refreshQuota}
-            disabled={refreshing}
-          >
-            <RefreshCw size={13} className={cn(refreshing && 'animate-spin')} />
-            {refreshing ? '刷新中...' : '刷新额度'}
-          </Button>
-          <Button size="sm" className="h-8 text-[12px]" onClick={() => setAddDialogOpen(true)}>
-            <Plus size={13} /> 添加账号
-          </Button>
-        </div>
+        {platformTab === 'antigravity' && (
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[12px]"
+              onClick={refreshQuota}
+              disabled={refreshing}
+            >
+              <RefreshCw size={13} className={cn(refreshing && 'animate-spin')} />
+              {refreshing ? '刷新中...' : '刷新额度'}
+            </Button>
+            <Button size="sm" className="h-8 text-[12px]" onClick={() => setAddDialogOpen(true)}>
+              <Plus size={13} /> 添加账号
+            </Button>
+          </div>
+        )}
       </div>
 
+      {/* ── Platform switch (antigravity / codex) ── */}
+      <div className="flex w-fit rounded-[8px] bg-[var(--bg-tertiary)] p-1">
+        {([
+          ['antigravity', 'Antigravity', Zap],
+          ['codex', 'Codex', Bot],
+        ] as const).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            onClick={() => setPlatformTab(key)}
+            className={cn(
+              'flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all cursor-pointer',
+              platformTab === key
+                ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+            )}
+          >
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {platformTab === 'codex' ? (
+        <Card className="flex flex-col items-center justify-center py-12 gap-2">
+          <Bot size={32} className="text-[var(--text-muted)]" />
+          <span className="text-[13px] text-[var(--text-primary)] font-semibold">Codex 本地号池即将支持</span>
+          <span className="text-[12px] text-[var(--text-muted)]">当前 Codex 走远程租号 / 中转模式，本地账号管理后续开放</span>
+        </Card>
+      ) : (
+      <>
       {/* ── Stats overview ── */}
       <div className="grid grid-cols-4 gap-3">
         <StatCard icon={Users} value={total} label="总数" color="text-[var(--text-primary)]" />
@@ -571,6 +604,8 @@ export function PoolPage() {
             />
           ))}
         </div>
+      )}
+      </>
       )}
 
       {/* ── Add account dialog ── */}

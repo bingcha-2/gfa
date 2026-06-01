@@ -1,0 +1,98 @@
+import { describe, expect, it } from "vitest";
+
+import { CodexProvider } from "../codex.provider";
+import { getModelQuotaFraction } from "../../token-server/lease-scheduler";
+
+describe("CodexProvider.applyQuotaSnapshot", () => {
+  function snap(quota: any) {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    return provider.applyQuotaSnapshot(account, quota);
+  }
+
+  it("stores hourly/weekly percentages and a binding codex quota fraction", () => {
+    const { account, creditDelta } = snap({
+      planType: "pro",
+      codexQuota: {
+        hourlyPercent: 80,
+        weeklyPercent: 30,
+        hourlyResetTime: "2026-06-01T10:00:00Z",
+        weeklyResetTime: "2026-06-05T00:00:00Z",
+      },
+    });
+
+    expect(creditDelta).toBeNull(); // codex has no credits concept
+    expect(account.planType).toBe("pro");
+    // Binding fraction = the more restrictive window = min(80, 30)/100 = 0.3
+    expect((account as any).modelQuotaFractions.codex).toBeCloseTo(0.3, 5);
+    // Reset time of the binding (weekly) window.
+    expect((account as any).modelQuotaResetTimes.codex).toBe("2026-06-05T00:00:00Z");
+    // Raw percentages kept for display.
+    expect((account as any).codexHourlyPercent).toBe(80);
+    expect((account as any).codexWeeklyPercent).toBe(30);
+    expect((account as any).modelQuotaRefreshedAt).toBeGreaterThan(0);
+  });
+
+  it("makes codex models quota-aware via fuzzy match on the 'codex' key", () => {
+    const { account } = snap({ codexQuota: { hourlyPercent: 50, weeklyPercent: 90 } });
+    // Any codex model resolves to the 'codex' fraction (0.5 = min(50,90)/100).
+    expect(getModelQuotaFraction(account, "gpt-5-codex")).toBeCloseTo(0.5, 5);
+    expect(getModelQuotaFraction(account, "gpt-5.2-codex")).toBeCloseTo(0.5, 5);
+  });
+
+  it("quotaFractionFor applies the account-level codex quota to ALL codex models", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, { codexQuota: { hourlyPercent: 50, weeklyPercent: 90 } });
+
+    // *-codex names already worked via fuzzy match...
+    expect(provider.quotaFractionFor(account, "gpt-5-codex")).toBeCloseTo(0.5, 5);
+    // ...but plain gpt-5.x names did NOT (P1 regression) — now they do.
+    expect(provider.quotaFractionFor(account, "gpt-5.2")).toBeCloseTo(0.5, 5);
+    expect(provider.quotaFractionFor(account, "gpt-5.4")).toBeCloseTo(0.5, 5);
+  });
+
+  it("quotaFractionFor returns null when the account has no codex quota yet", () => {
+    const provider = new CodexProvider();
+    expect(provider.quotaFractionFor({ id: 1, email: "a@b.c", refreshToken: "r" } as any, "gpt-5.2")).toBeNull();
+  });
+
+  it("is a safe no-op when no codexQuota is present", () => {
+    const { account, creditDelta } = snap({ planType: "plus" });
+    expect(creditDelta).toBeNull();
+    expect(account.planType).toBe("plus");
+    expect((account as any).modelQuotaFractions).toBeUndefined();
+  });
+});
+
+describe("CodexProvider.statusAccountExtras", () => {
+  it("surfaces both 5h/weekly remaining percentages and reset times for the console", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: {
+        hourlyPercent: 80,
+        weeklyPercent: 30,
+        hourlyResetTime: "2026-06-01T10:00:00Z",
+        weeklyResetTime: "2026-06-05T00:00:00Z",
+      },
+    });
+
+    expect(provider.statusAccountExtras(account)).toEqual({
+      codexHourlyPercent: 80,
+      codexWeeklyPercent: 30,
+      codexHourlyResetTime: "2026-06-01T10:00:00Z",
+      codexWeeklyResetTime: "2026-06-05T00:00:00Z",
+    });
+  });
+
+  it("returns null percentages (not 0) before any quota snapshot exists", () => {
+    const provider = new CodexProvider();
+    expect(provider.statusAccountExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any)).toEqual({
+      codexHourlyPercent: null,
+      codexWeeklyPercent: null,
+      codexHourlyResetTime: "",
+      codexWeeklyResetTime: "",
+    });
+  });
+});

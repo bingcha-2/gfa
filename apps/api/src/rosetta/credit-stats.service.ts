@@ -3,6 +3,7 @@ import { Cron } from "@nestjs/schedule";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { TokenServerService } from "../token-server/token-server.service";
+import { beijingDayKey, beijingDayKeysSince, beijingDayStart } from "../common/beijing-time";
 
 @Injectable()
 export class CreditStatsService {
@@ -67,10 +68,8 @@ export class CreditStatsService {
       0,
     );
 
-    // Daily consumption from CreditConsumption table
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-    since.setHours(0, 0, 0, 0);
+    // Daily consumption from CreditConsumption table (Beijing day buckets)
+    const since = beijingDayStart(days);
 
     const consumptions = await this.prisma.creditConsumption.findMany({
       where: { timestamp: { gte: since } },
@@ -78,28 +77,21 @@ export class CreditStatsService {
       orderBy: { timestamp: "asc" },
     });
 
-    // Group by date
+    // Group by Beijing date
     const dailyMap = new Map<string, number>();
     for (const c of consumptions) {
-      const dateKey = c.timestamp.toISOString().slice(0, 10);
+      const dateKey = beijingDayKey(c.timestamp);
       dailyMap.set(dateKey, (dailyMap.get(dateKey) || 0) + c.consumed);
     }
 
     // Fill all days (including zeros)
-    const dailyConsumption: { date: string; consumed: number }[] = [];
-    const cursor = new Date(since);
-    const today = new Date();
-    while (cursor <= today) {
-      const dateKey = cursor.toISOString().slice(0, 10);
-      dailyConsumption.push({
-        date: dateKey,
-        consumed: Math.round((dailyMap.get(dateKey) || 0) * 100) / 100,
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
+    const dailyConsumption = beijingDayKeysSince(days).map((dateKey) => ({
+      date: dateKey,
+      consumed: Math.round((dailyMap.get(dateKey) || 0) * 100) / 100,
+    }));
 
-    // Today's total
-    const todayKey = new Date().toISOString().slice(0, 10);
+    // Today's total (Beijing day)
+    const todayKey = beijingDayKey(new Date());
     const todayConsumed = Math.round((dailyMap.get(todayKey) || 0) * 100) / 100;
 
     return {
@@ -110,9 +102,7 @@ export class CreditStatsService {
       },
       today: {
         consumed: todayConsumed,
-        events: consumptions.filter(
-          (c) => c.timestamp.toISOString().slice(0, 10) === todayKey,
-        ).length,
+        events: consumptions.filter((c) => beijingDayKey(c.timestamp) === todayKey).length,
       },
       dailyConsumption,
     };
@@ -131,9 +121,7 @@ export class CreditStatsService {
     const days = opts.days || 7;
     const search = (opts.search || "").trim();
 
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-    since.setHours(0, 0, 0, 0);
+    const since = beijingDayStart(days);
 
     const where: any = { timestamp: { gte: since } };
     if (search) {

@@ -12,10 +12,19 @@ type Config struct {
 	DeviceId      string `json:"deviceId"`
 	ProxyPort     int    `json:"proxyPort"`
 	UpstreamProxy string `json:"upstreamProxy"`
-	IDEPath       string `json:"idePath"`       // 用户自定义 IDE 安装路径（留空则自动检测）
-	HubPath       string `json:"hubPath"`       // 用户自定义 Hub 安装路径（留空则自动检测）
-	CardExpiry    string `json:"cardExpiry"`    // 账号卡到期时间
-	PoolMode      string `json:"poolMode"`      // "remote" (默认, 使用卡密) 或 "local" (本地号池)
+	IDEPath       string `json:"idePath"` // 用户自定义 IDE 安装路径（留空则自动检测）
+	HubPath       string `json:"hubPath"` // 用户自定义 Hub 安装路径（留空则自动检测）
+	CodexAppPath  string `json:"codexAppPath"`
+	CardExpiry    string `json:"cardExpiry"` // 账号卡到期时间
+	PoolMode      string `json:"poolMode"`   // "remote" (默认, 使用卡密) 或 "local" (本地号池)
+
+	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
+	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。
+	CodexMode          string            `json:"codexMode"`          // "" / "rental" (默认) 或 "relay"
+	CodexRelayBase     string            `json:"codexRelayBase"`     // 中转站基址,请求落在 {base}/responses 或 /chat/completions
+	CodexRelayKey      string            `json:"codexRelayKey"`      // 中转卡密(Authorization: Bearer)
+	CodexRelayProtocol string            `json:"codexRelayProtocol"` // "" / "responses" (默认) 或 "chat"(通用 OpenAI 中转)
+	CodexModelMap      map[string]string `json:"codexModelMap"`      // 可选:客户端模型名 → 中转模型名
 }
 
 var (
@@ -91,7 +100,9 @@ func SaveConfig(cfg Config) error {
 	}
 
 	file := configFilePath()
-	if err := os.WriteFile(file, data, 0600); err != nil {
+	// Atomic + durable (temp file + fsync + rename) so a crash/power-loss can't
+	// leave a half-written or truncated config.json.
+	if err := writeFileAtomic(file, data, 0600); err != nil {
 		return err
 	}
 

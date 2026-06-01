@@ -5,6 +5,8 @@ import {
   accountWeight,
   scoreAccount,
   buildRetryPolicy,
+  getModelQuotaFraction,
+  hasModelQuotaRemaining,
 } from '../lease-scheduler';
 
 // ── ErrorRateTracker ─────────────────────────────────────────────────────────
@@ -159,6 +161,79 @@ describe('scoreAccount', () => {
       accountWeight: 1,
     });
     expect(scoreFree).toBeLessThan(scoreBusy);
+  });
+});
+
+// ── getModelQuotaFraction — stale-after-reset guard ──────────────────────────
+
+describe('getModelQuotaFraction — stale-after-reset guard', () => {
+  const NOW = 1_700_000_000_000;
+  const future = new Date(NOW + 3600_000).toISOString(); // +1h
+  const past = new Date(NOW - 60_000).toISOString();      // -1m
+
+  it('returns the stored fraction while the reset time is still in the future', () => {
+    const acc = {
+      modelQuotaFractions: { 'gemini-2.5-pro': 0 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': future },
+    };
+    // Confirmed exhausted, window not yet reset → trust the 0.
+    expect(getModelQuotaFraction(acc, 'gemini-2.5-pro', NOW)).toBe(0);
+  });
+
+  it('treats a window whose reset time has passed as refilled (1), not the stale value', () => {
+    const acc = {
+      modelQuotaFractions: { 'gemini-2.5-pro': 0 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': past },
+    };
+    // Window rolled over but no fresh snapshot yet → treat as refilled, not stale 0.
+    expect(getModelQuotaFraction(acc, 'gemini-2.5-pro', NOW)).toBe(1);
+  });
+
+  it('applies the guard to codex (account-level "codex" key) too', () => {
+    const acc = {
+      modelQuotaFractions: { codex: 0 },
+      modelQuotaResetTimes: { codex: past },
+    };
+    expect(getModelQuotaFraction(acc, 'codex', NOW)).toBe(1);
+    // Fuzzy-matched codex model names share the account-level window.
+    expect(getModelQuotaFraction(acc, 'gpt-5.2-codex', NOW)).toBe(1);
+  });
+
+  it('keeps trusting the fraction when there is no reset time at all', () => {
+    const acc = { modelQuotaFractions: { codex: 0.4 } };
+    expect(getModelQuotaFraction(acc, 'codex', NOW)).toBeCloseTo(0.4, 5);
+  });
+
+  it('a reset-expired exhausted account counts as having quota again', () => {
+    const acc = {
+      modelQuotaFractions: { codex: 0 },
+      modelQuotaResetTimes: { codex: past },
+    };
+    expect(hasModelQuotaRemaining(acc, 'codex')).toBe(true);
+  });
+
+  it('lifts a reset-expired exhausted account out of Tier 3 (last resort)', () => {
+    const exhaustedNotReset = {
+      id: 1,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': future },
+    };
+    const exhaustedButReset = {
+      id: 2,
+      modelQuotaFractions: { 'gemini-2.5-pro': 0 },
+      modelQuotaResetTimes: { 'gemini-2.5-pro': past },
+    };
+    const opts = {
+      now: NOW,
+      preferredAccountId: 0,
+      modelKey: 'gemini-2.5-pro',
+      activeLeaseCount: () => 0,
+      accountStats: { lastUsedAt: 0 },
+      accountWeight: 1,
+    };
+    // Stale-0 + not-yet-reset → Tier 3 (200k, last resort).
+    // Stale-0 + reset passed → treated as refilled → Tier 1 → must score much better.
+    expect(scoreAccount(exhaustedButReset, opts)).toBeLessThan(scoreAccount(exhaustedNotReset, opts));
   });
 });
 

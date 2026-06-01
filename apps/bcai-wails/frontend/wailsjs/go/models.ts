@@ -183,8 +183,14 @@ export namespace main {
 	    upstreamProxy: string;
 	    idePath: string;
 	    hubPath: string;
+	    codexAppPath: string;
 	    cardExpiry: string;
 	    poolMode: string;
+	    codexMode: string;
+	    codexRelayBase: string;
+	    codexRelayKey: string;
+	    codexRelayProtocol: string;
+	    codexModelMap: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -198,14 +204,21 @@ export namespace main {
 	        this.upstreamProxy = source["upstreamProxy"];
 	        this.idePath = source["idePath"];
 	        this.hubPath = source["hubPath"];
+	        this.codexAppPath = source["codexAppPath"];
 	        this.cardExpiry = source["cardExpiry"];
 	        this.poolMode = source["poolMode"];
+	        this.codexMode = source["codexMode"];
+	        this.codexRelayBase = source["codexRelayBase"];
+	        this.codexRelayKey = source["codexRelayKey"];
+	        this.codexRelayProtocol = source["codexRelayProtocol"];
+	        this.codexModelMap = source["codexModelMap"];
 	    }
 	}
 	
 	export class DetectedPaths {
 	    idePath: string;
 	    hubPath: string;
+	    codexAppPath: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DetectedPaths(source);
@@ -215,6 +228,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.idePath = source["idePath"];
 	        this.hubPath = source["hubPath"];
+	        this.codexAppPath = source["codexAppPath"];
 	    }
 	}
 	export class IDEProduct {

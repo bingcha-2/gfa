@@ -12,6 +12,6 @@ import { AgentAccountService } from "./agent-account.service";
   ],
   controllers: [AutomationController, AgentAccountController],
   providers: [AutomationService, AgentAccountService],
-  exports: [AutomationService],
+  exports: [AutomationService, AgentAccountService],
 })
 export class AutomationModule {}

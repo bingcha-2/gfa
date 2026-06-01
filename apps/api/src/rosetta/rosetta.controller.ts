@@ -1,16 +1,22 @@
 import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 
-import { Public } from "../auth/public.decorator";
 import { RosettaService } from "./rosetta.service";
 import { CreditStatsService } from "./credit-stats.service";
+import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 
-@Public()
+// NOTE: intentionally NOT @Public() — these are admin-console operations
+// (account pool, access keys, Codex OAuth token import) that must be gated by the
+// global JwtAuthGuard. The web console reaches them same-origin carrying the
+// `gfa.console.token` cookie. The desktop client never calls /rosetta/* — it uses
+// the @Public() remote-token / remote-codex controllers authenticated by the
+// x-token-server-secret access key, which are unaffected by this guard.
 @Controller("rosetta")
 export class RosettaController {
   constructor(
     private readonly rosetta: RosettaService,
     private readonly creditStats: CreditStatsService,
+    private readonly tokenUsageStats: TokenUsageStatsService,
     private readonly tokenServer: TokenServerService,
   ) {}
 
@@ -44,6 +50,32 @@ export class RosettaController {
     return this.rosetta.deleteAccount(body);
   }
 
+  // ── Codex account pool ──────────────────────────────────────────────
+  @Get("codex-accounts")
+  listCodexAccounts() {
+    return this.rosetta.listCodexAccounts();
+  }
+
+  @Post("codex-add-account")
+  addCodexAccount(@Body() body: any) {
+    return this.rosetta.addCodexAccount(body);
+  }
+
+  @Post("codex-import-account")
+  importCodexAccount(@Body() body: any) {
+    return this.rosetta.importCodexAccountFromText(body);
+  }
+
+  @Post("codex-toggle-account")
+  toggleCodexAccount(@Body() body: any) {
+    return this.rosetta.toggleCodexAccount(body);
+  }
+
+  @Post("codex-delete-account")
+  deleteCodexAccount(@Body() body: any) {
+    return this.rosetta.deleteCodexAccount(body);
+  }
+
   @Post("access-key")
   createAccessKey(@Body() body: any) {
     const result = this.rosetta.createAccessKey(body);
@@ -59,9 +91,12 @@ export class RosettaController {
   }
 
   @Post("access-key-delete")
-  deleteAccessKey(@Body() body: any) {
+  async deleteAccessKey(@Body() body: any) {
     const result = this.rosetta.deleteAccessKey(body);
     this.tokenServer.reloadAccessKeys();
+    // Drop the card's persisted token usage log alongside the card itself.
+    const id = String(body?.id || "");
+    if (id) await this.tokenUsageStats.deleteCardUsage(id);
     return result;
   }
 
@@ -157,5 +192,44 @@ export class RosettaController {
       search,
       days: Number(days) || 7,
     });
+  }
+
+  // ── Per-card token usage log ────────────────────────────────────────────
+
+  @Get("card-token-usage")
+  getCardTokenUsage(
+    @Query("cardId") cardId: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+    @Query("days") days?: string,
+  ) {
+    return this.tokenUsageStats.getCardUsageRecords({
+      accessKeyId: cardId,
+      page: Number(page) || 1,
+      pageSize: Number(pageSize) || 30,
+      days: Number(days) || 30,
+    });
+  }
+
+  @Get("card-token-usage-summary")
+  getCardTokenUsageSummary(@Query("cardId") cardId: string, @Query("days") days?: string) {
+    return this.tokenUsageStats.getCardUsageSummary({
+      accessKeyId: cardId,
+      days: Number(days) || 30,
+    });
+  }
+
+  /** Persisted "today" token consumption (Beijing day) — restart-safe, replaces
+   * the in-memory daily counter on the usage dashboard. */
+  @Get("token-usage-today")
+  getTokenUsageToday() {
+    return this.tokenUsageStats.getTodayUsage();
+  }
+
+  /** Global daily token usage trend (all cards, last N Beijing days) for the
+   * 用量剩余 dashboard chart. */
+  @Get("token-usage-trend")
+  getTokenUsageTrend(@Query("days") days?: string) {
+    return this.tokenUsageStats.getUsageTrend({ days: Number(days) || 7 });
   }
 }

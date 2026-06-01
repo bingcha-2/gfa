@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -50,6 +48,8 @@ type LocalQuota struct {
 	OpusTokenLimit   int64
 	GeminiTokensUsed int64
 	GeminiTokenLimit int64
+	CodexTokensUsed  int64
+	CodexTokenLimit  int64
 }
 
 type pendingReport struct {
@@ -86,7 +86,7 @@ type Leaser struct {
 	pendingReports []pendingReport
 	// 远程租号的 quota 采集（quota_sync.go）
 	cachedQuotaSnapshot *AccountQuotaSnapshot
-	quotaFetching       int32 // atomic CAS flag，防并发
+	quotaFetching       int32  // atomic CAS flag，防并发
 	lastModelKey        string // 上次 generation 使用的 modelKey，用于预热选号
 }
 
@@ -268,36 +268,6 @@ func parseAccountId(raw json.RawMessage) int {
 	return 0
 }
 
-func postJson(client *http.Client, path string, payload interface{}) ([]byte, int, error) {
-	return postJsonWithSecret(client, path, payload, "")
-}
-
-func postJsonWithSecret(client *http.Client, path string, payload interface{}, secret string) ([]byte, int, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	urlStr := API_BASE + path
-	req, err := http.NewRequest("POST", urlStr, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if secret != "" {
-		req.Header.Set("x-token-server-secret", secret)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	return respBody, resp.StatusCode, err
-}
-
 func (l *Leaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
 	payload := map[string]string{
 		"accountCard": card,
@@ -381,9 +351,8 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	var body []byte
 	var lastLeaseErr error
 	for leaseAttempt := 1; leaseAttempt <= maxLeaseRetries; leaseAttempt++ {
-		if leaseAttempt == 1 {
-			Log("[token-leaser] Requesting token lease...")
-		} else {
+		if leaseAttempt > 1 {
+			// 稳态首次请求不打印,只在重试(异常)时记录
 			Log("[token-leaser] Retrying token lease (%d/%d)...", leaseAttempt, maxLeaseRetries)
 		}
 		var err error
@@ -493,6 +462,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	}
 
 	// P1④: Parse retryPolicy from lease response (server-controlled retry)
+	var healthyForModel float64 // 候选池健康数,稳态下并入 "Token obtained" 一行
 	var rawResp2 map[string]json.RawMessage
 	if json.Unmarshal(body, &rawResp2) == nil {
 		if rpRaw, ok := rawResp2["retryPolicy"]; ok {
@@ -515,8 +485,13 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 					}
 					return 0
 				}
-				Log("[token-leaser] CandidateStats: healthyForModel=%.0f total=%.0f cooling=%.0f probation=%.0f excluded=%.0f",
-					getF("healthyForModel"), getF("total"), getF("coolingForModel"), getF("probationForModel"), getF("excluded"))
+				healthyForModel = getF("healthyForModel")
+				cooling, probation, excluded := getF("coolingForModel"), getF("probationForModel"), getF("excluded")
+				// 仅在候选池出现异常(冷却/观察/排除)时单独打印,稳态合并进 "Token obtained"
+				if cooling > 0 || probation > 0 || excluded > 0 {
+					Log("[token-leaser] CandidateStats: healthyForModel=%.0f total=%.0f cooling=%.0f probation=%.0f excluded=%.0f",
+						healthyForModel, getF("total"), cooling, probation, excluded)
+				}
 			}
 		}
 	}
@@ -540,8 +515,8 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		}
 	}
 
-	Log("[token-leaser] Token obtained! accountId=%d, project=%s, expires in %ds",
-		lease.AccountId, lease.ProjectId, (expiresAt-time.Now().UnixNano()/int64(time.Millisecond))/1000)
+	Log("[token-leaser] Token obtained! accountId=%d project=%s healthy=%.0f expires=%ds",
+		lease.AccountId, lease.ProjectId, healthyForModel, (expiresAt-time.Now().UnixNano()/int64(time.Millisecond))/1000)
 
 	return lease, nil
 }
@@ -930,6 +905,7 @@ func (l *Leaser) RecordLocalUsage(modelKey string, billableTokens int64) {
 	if l.localQuota.WindowStartedAt > 0 && now > l.localQuota.WindowStartedAt+wMs {
 		l.localQuota.OpusTokensUsed = 0
 		l.localQuota.GeminiTokensUsed = 0
+		l.localQuota.CodexTokensUsed = 0
 		l.localQuota.WindowStartedAt = now
 	}
 	// 首次使用 → 初始化窗口
@@ -937,11 +913,20 @@ func (l *Leaser) RecordLocalUsage(modelKey string, billableTokens int64) {
 		l.localQuota.WindowStartedAt = now
 	}
 
+	// 分桶与服务端 UNIVERSAL_BILLING 一致:gemini / codex / opus(其它)。
 	if isGeminiModel(modelKey) {
 		l.localQuota.GeminiTokensUsed += billableTokens
+	} else if isCodexModel(modelKey) {
+		l.localQuota.CodexTokensUsed += billableTokens
 	} else {
 		l.localQuota.OpusTokensUsed += billableTokens
 	}
+}
+
+// isCodexModel 与服务端一致:gpt-* 或 *-codex。
+func isCodexModel(modelKey string) bool {
+	k := strings.ToLower(modelKey)
+	return strings.HasPrefix(k, "gpt") || strings.Contains(k, "codex")
 }
 
 // CheckLocalQuota 在 lease 之前调用，检查本地额度是否充足
@@ -1006,6 +991,9 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	if v, ok := aks["geminiTokenLimit"].(float64); ok && v > 0 {
 		l.localQuota.GeminiTokenLimit = int64(v)
 	}
+	if v, ok := aks["codexTokenLimit"].(float64); ok && v > 0 {
+		l.localQuota.CodexTokenLimit = int64(v)
+	}
 	if v, ok := aks["tokenWindowLimit"].(float64); ok && v > 0 {
 		baseLimit := int64(v)
 		if l.localQuota.OpusTokenLimit <= 0 {
@@ -1013,6 +1001,9 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 		}
 		if l.localQuota.GeminiTokenLimit <= 0 {
 			l.localQuota.GeminiTokenLimit = baseLimit * 5
+		}
+		if l.localQuota.CodexTokenLimit <= 0 {
+			l.localQuota.CodexTokenLimit = baseLimit
 		}
 	}
 	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
@@ -1024,6 +1015,9 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	}
 	if v, ok := aks["geminiTokensUsed"].(float64); ok && int64(v) > l.localQuota.GeminiTokensUsed {
 		l.localQuota.GeminiTokensUsed = int64(v)
+	}
+	if v, ok := aks["codexTokensUsed"].(float64); ok && int64(v) > l.localQuota.CodexTokensUsed {
+		l.localQuota.CodexTokensUsed = int64(v)
 	}
 	// 反推窗口起始时间
 	if v, ok := aks["tokenWindowResetMs"].(float64); ok && v > 0 {
@@ -1108,7 +1102,10 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 			"opusTokenLimit":   l.localQuota.OpusTokenLimit,
 			"geminiTokensUsed": l.localQuota.GeminiTokensUsed,
 			"geminiTokenLimit": l.localQuota.GeminiTokenLimit,
+			"codexTokensUsed":  l.localQuota.CodexTokensUsed,
+			"codexTokenLimit":  l.localQuota.CodexTokenLimit,
 			"windowResetMs":    localResetMs,
+			"windowMs":         wMs,
 			"pendingReports":   len(l.pendingReports),
 		},
 	}

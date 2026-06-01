@@ -12,6 +12,7 @@ import {
   GetLogs,
   ClearLogs as _ClearLogs,
   GetIDEStatus,
+  OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   GetDetectedPaths,
@@ -34,6 +35,8 @@ import {
   SetAccountAlias as _SetAccountAlias,
   LockPoolAccount as _LockPoolAccount,
   UnlockPoolAccount as _UnlockPoolAccount,
+  GetCodexRelayConfig as _GetCodexRelayConfig,
+  SaveCodexRelayConfig as _SaveCodexRelayConfig,
 } from '../../wailsjs/go/main/App'
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
@@ -79,7 +82,10 @@ export interface StatsResponse {
       opusTokenLimit?: number
       geminiTokensUsed?: number
       geminiTokenLimit?: number
+      codexTokensUsed?: number
+      codexTokenLimit?: number
       windowResetMs?: number
+      windowMs?: number
     }
   }
   today: {
@@ -128,6 +134,10 @@ export async function getIDEStatus(): Promise<IDEStatus> {
   return GetIDEStatus()
 }
 
+export async function openSystemPermissionSettings(): Promise<void> {
+  return _OpenSystemPermissionSettings()
+}
+
 export async function injectSelected(targets: string[]): Promise<string> {
   return _InjectSelected(targets)
 }
@@ -136,7 +146,7 @@ export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
 }
 
-export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string }> {
+export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string }> {
   return GetDetectedPaths()
 }
 
@@ -227,6 +237,29 @@ export async function lockPoolAccount(id: number): Promise<{ success: boolean; e
 
 export async function unlockPoolAccount(): Promise<{ success: boolean }> {
   return _UnlockPoolAccount() as any
+}
+
+// ===== Codex 中转(API 卡密)模式 =====
+export interface CodexRelayConfig {
+  mode: string // "rental" | "relay"
+  baseURL: string
+  apiKey: string
+  protocol: string // "responses" | "chat"
+  modelMap: Record<string, string> | null
+}
+
+export async function getCodexRelayConfig(): Promise<CodexRelayConfig> {
+  return _GetCodexRelayConfig() as Promise<CodexRelayConfig>
+}
+
+export async function saveCodexRelayConfig(
+  mode: string,
+  baseURL: string,
+  apiKey: string,
+  protocol: string,
+  modelMap: Record<string, string>,
+): Promise<void> {
+  await _SaveCodexRelayConfig(mode, baseURL, apiKey, protocol, modelMap)
 }
 
 // ===== Browser =====

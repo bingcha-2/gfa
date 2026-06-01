@@ -5,6 +5,7 @@ import { StatusPill } from '@/components/StatusPill'
 import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
+import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -13,10 +14,9 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { formatTokens, maskCard, formatDate, cn } from '@/lib/utils'
 import { useCountdown } from '@/hooks/useCountdown'
-import * as api from '@/services/wails'
 import {
   Activity, AlertCircle, ArrowUpRight, ArrowDownRight, DollarSign,
-  Power, Check, Key, Zap, Cloud, HardDrive, Timer, CalendarClock,
+  Key, Timer, HardDrive,
 } from 'lucide-react'
 import type { ActiveAccountSummary } from '@/types'
 
@@ -94,47 +94,21 @@ function LocalPoolQuotaDisplay() {
 
 export function DashboardPage() {
   const {
-    config, ideProducts, leaserError, hasToken, autoLeaseRunning, accountId,
+    config, leaserError, hasToken, autoLeaseRunning, accountId,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens, cumulativeSaving,
-    opusUsed, opusLimit, geminiUsed, geminiLimit, recoveryRemainingMs,
-    fetchIDEStatus,
+    opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit, recoveryRemainingMs, recoveryWindowMs,
   } = useAppStore()
 
+  // 限流窗口时长由服务端按卡密下发(可配置小时/天),文案据此动态显示。
+  const windowLabel = (() => {
+    const hours = recoveryWindowMs / 3600000
+    return hours >= 24 ? `${Math.round(hours / 24)}天` : `${Math.round(hours)}h`
+  })()
+
   const poolMode = usePoolStore((s) => s.mode)
-  const setPoolMode = usePoolStore((s) => s.setMode)
 
   const { modalProps, showAlert } = useModal()
-  const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs)
-
-  const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
-  const [injecting, setInjecting] = useState(false)
-  const isAnyInjected = ideProducts.some((p) => p.injected)
-
-  const toggleTarget = (target: string) => {
-    const next = new Set(selectedTargets)
-    if (next.has(target)) next.delete(target)
-    else next.add(target)
-    setSelectedTargets(next)
-  }
-
-  const handleInjectToggle = async () => {
-    setInjecting(true)
-    try {
-      if (isAnyInjected) {
-        const targets = ideProducts.filter((p) => p.injected).map((p) => p.id === 'antigravity_ide' ? 'ide' : 'hub')
-        await api.restoreSelected(targets)
-      } else {
-        const targets = Array.from(selectedTargets)
-        if (targets.length === 0) { await showAlert('请选择产品', '请先勾选要接管的产品。'); return }
-        if (poolMode === 'remote' && (!config?.accountCard || config.accountCard.trim() === '')) {
-          await showAlert('请先激活账号卡', '当前为远程续杯模式，请先激活账号卡。'); return
-        }
-        await api.injectSelected(targets)
-      }
-      await fetchIDEStatus()
-    } catch (err) { await showAlert('操作失败', String(err)) }
-    finally { setInjecting(false) }
-  }
+  const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs, recoveryWindowMs)
 
   const [cardInput, setCardInput] = useState('')
   const [activating, setActivating] = useState(false)
@@ -164,142 +138,27 @@ export function DashboardPage() {
       {/* ── Row 2: Ads — full-width, 3 columns, prominent ── */}
       <PromoCard />
 
-      {/* ── Row 3: Savings + Recovery ── */}
-      <div className={cn('grid gap-3', recoveryRemainingMs > 0 ? 'grid-cols-2' : 'grid-cols-1')}>
-        <Card className="flex items-center gap-3 px-4 py-3">
-          <div className="w-9 h-9 rounded-[10px] bg-green-50 flex items-center justify-center shrink-0">
-            <DollarSign size={18} className="text-[var(--success)]" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-lg font-bold font-mono-data text-[var(--success)]">${cumulativeSaving.toFixed(2)}</div>
-            <div className="text-[10px] text-[var(--text-muted)]">累计已节省</div>
-          </div>
-        </Card>
+      {/* ── Row 3: Savings (full width) ── */}
+      <Card className="flex items-center gap-3 px-4 py-3">
+        <div className="w-9 h-9 rounded-[10px] bg-green-50 flex items-center justify-center shrink-0">
+          <DollarSign size={18} className="text-[var(--success)]" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-lg font-bold font-mono-data text-[var(--success)]">${cumulativeSaving.toFixed(2)}</div>
+          <div className="text-[10px] text-[var(--text-muted)]">累计已节省</div>
+        </div>
+      </Card>
 
-        {recoveryRemainingMs > 0 && (
-          <Card className="flex flex-col justify-center gap-1.5 px-4 py-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
-                <Timer size={12} /> 额度恢复
-              </span>
-              <Badge variant={recoveryDone ? 'success' : 'warning'}>{recoveryDisplay}</Badge>
-            </div>
-            <Progress value={recoveryPercent} indicatorClassName={cn(recoveryDone ? 'bg-[var(--success)]' : 'bg-[var(--warning)]')} />
-          </Card>
-        )}
-      </div>
-
-      {/* ── Row 4: Top pair ── */}
-      <div className="grid grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle><Zap size={15} /> Token 来源</CardTitle></CardHeader>
-          <CardContent>
-            <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
-              {[
-                { mode: 'remote' as const, icon: Cloud, label: '远程续杯' },
-                { mode: 'local' as const, icon: HardDrive, label: '本地号池' },
-              ].map(({ mode, icon: Icon, label }) => (
-                <button
-                  key={mode}
-                  onClick={() => setPoolMode(mode)}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-all',
-                    poolMode === mode
-                      ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                  )}
-                >
-                  <Icon size={13} /> {label}
-                </button>
-              ))}
-            </div>
-            <div className="text-[11px] text-[var(--text-muted)] mt-2">
-              {poolMode === 'remote' ? '从远程服务器自动获取 Token，无需额外配置' : '使用本地配置的账号池轮询 Token'}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
-          <CardContent>
-            {poolMode === 'local' ? (
-              <LocalPoolQuotaDisplay />
-            ) : (
-              <div className="flex flex-col gap-2.5">
-                <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-                <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Row 5: Bottom pair (row-aligned) ── */}
+      {/* ── Row 4: Source+Takeover (left, tall) / Account card + Usage (right stack) ── */}
       <div className="grid grid-cols-2 gap-4 items-stretch">
-        {/* IDE 接管控制 */}
-        <Card className="flex flex-col">
-          <CardHeader><CardTitle><Power size={15} /> IDE 接管控制</CardTitle></CardHeader>
-          <CardContent className="flex-1 flex flex-col">
-            <div className="flex flex-col gap-1.5">
-              {ideProducts.map((product) => {
-                const target = product.id === 'antigravity_ide' ? 'ide' : 'hub'
-                const isSelected = selectedTargets.has(target)
-                return (
-                  <button
-                    key={product.id}
-                    onClick={() => product.detected && toggleTarget(target)}
-                    disabled={!product.detected}
-                    className={cn(
-                      'flex items-center justify-between px-3 rounded-[8px] transition-all text-left border h-[52px]',
-                      product.detected ? 'hover:bg-[var(--bg-hover)] cursor-pointer border-[var(--border-light)]' : 'opacity-40 cursor-not-allowed border-transparent',
-                    )}
-                  >
-                    <div>
-                      <div className="text-[13px] text-[var(--text-primary)] font-medium">{product.name}</div>
-                      <div className={cn('text-[11px] mt-0.5', product.injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                        {!product.detected ? '未安装' : product.injected ? '✓ 已接管' : '未接管'}
-                      </div>
-                    </div>
-                    <div className={cn(
-                      'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
-                      isSelected || product.injected ? 'border-[var(--primary)] bg-[var(--primary-light)]' : 'border-[var(--border)]'
-                    )}>
-                      {(isSelected || product.injected) && <Check size={11} className="text-[var(--primary)]" />}
-                    </div>
-                  </button>
-                )
-              })}
-              {/* macOS 权限引导提示 */}
-              {/mac/i.test(navigator.platform) && ideProducts.some((p) => p.id === 'antigravity_hub' && p.detected && !p.injected) && (
-                <div className="text-[11px] text-[var(--text-muted)] leading-relaxed px-1 pt-1">
-                  💡 接管 Hub 需要修改应用文件。若提示权限不足，请前往
-                  <span className="text-[var(--text-secondary)] font-medium"> 系统设置 → 隐私与安全性 → App 管理</span>，开启冰茶AI 的权限。
-                </div>
-              )}
-            </div>
+        <TokenSourceControl />
 
-            <div className="mt-auto pt-3">
-              <Button onClick={handleInjectToggle} disabled={injecting} variant={isAnyInjected ? 'danger' : 'default'} className="w-full">
-                {injecting ? '处理中...' : isAnyInjected ? '停止接管' : '开启接管'}
-              </Button>
-              {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) && (
-                <div className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-[6px] border border-[var(--border-light)] bg-[var(--bg-card)] text-[10px] text-[var(--text-muted)]">
-                  <CalendarClock size={10} className="flex-shrink-0" />
-                  <span>到期: <span className="text-[var(--text-secondary)] font-medium">{formatDate(activationExpiresAt)}</span></span>
-                  <span className="text-[var(--border)]">|</span>
-                  <span>5h: <span className="text-[var(--text-secondary)] font-medium">{recoveryDisplay}</span></span>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 账号卡配置 */}
-        <Card className="flex flex-col">
-          <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
-          <CardContent className="flex-1 flex flex-col">
-            <div className="flex flex-col gap-1.5">
-              {/* Row 1 — aligns with Antigravity IDE */}
+        {/* 右列竖向堆叠:账号卡配置 + 模型用量,自然填满左侧高度 */}
+        <div className="flex flex-col gap-4">
+          {/* 账号卡配置 */}
+          <Card>
+            <CardHeader><CardTitle><Key size={15} /> 账号卡配置</CardTitle></CardHeader>
+            <CardContent>
               <div className="flex items-center justify-between px-3 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] h-[52px]">
                 <div>
                   <div className="text-[10px] text-[var(--text-muted)]">当前生效</div>
@@ -309,18 +168,59 @@ export function DashboardPage() {
                   <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config.accountCard)}>复制</Button>
                 )}
               </div>
-              {/* Row 2 — aligns with Antigravity Hub */}
               <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="h-[52px]" />
-            </div>
+                placeholder={config?.accountCard ? '输入新账号卡以更换' : '输入账号卡 (AI...)'} className="h-[52px] mt-1.5" />
 
-            <div className="mt-auto pt-3">
-              <Button onClick={handleActivateCard} disabled={activating} className="w-full">
+              {/* 卡密状态 */}
+              <div className="mt-3 rounded-[8px] border border-[var(--border-light)] bg-[var(--bg-card)] p-3 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-[var(--text-muted)]">激活状态</span>
+                  <Badge variant={config?.accountCard ? (hasToken ? 'success' : 'default') : 'muted'}>
+                    {config?.accountCard ? (autoLeaseRunning ? (hasToken ? '已激活 · 令牌正常' : '已激活 · 获取中') : '已激活 · 闲置') : '未激活'}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-[var(--text-muted)]">到期时间</span>
+                  <span className="text-[var(--text-secondary)] font-mono-data">
+                    {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) ? formatDate(activationExpiresAt) : '—'}
+                  </span>
+                </div>
+              </div>
+
+              <Button onClick={handleActivateCard} disabled={activating} className="w-full mt-3">
                 {activating ? '激活中...' : config?.accountCard ? '保存新账号卡' : '验证激活'}
               </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {/* 模型用量 */}
+          <Card>
+            <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
+            <CardContent>
+              {/* 额度恢复倒计时(统一收口于此,租号/中转限流后显示) */}
+              {recoveryRemainingMs > 0 && (
+                <div className="mb-3 pb-3 border-b border-[var(--border-light)]">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[12px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
+                      <Timer size={12} /> {windowLabel} 额度恢复
+                    </span>
+                    <Badge variant={recoveryDone ? 'success' : 'warning'}>{recoveryDisplay}</Badge>
+                  </div>
+                  <Progress value={recoveryPercent} indicatorClassName={cn(recoveryDone ? 'bg-[var(--success)]' : 'bg-[var(--warning)]')} />
+                </div>
+              )}
+              {poolMode === 'local' ? (
+                <LocalPoolQuotaDisplay />
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
+                  <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
+                  <UsageBar label="Codex" used={codexUsed} limit={codexLimit} color="bg-emerald-500" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* ── Footer: device info ── */}

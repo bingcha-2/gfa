@@ -27,6 +27,8 @@ import { HealthController } from "./health.controller";
 import { StatsController } from "./stats.controller";
 import { TokenServerModule } from "./token-server/token-server.module";
 import { RosettaModule } from "./rosetta/rosetta.module";
+import { RemoteCodexModule } from "./remote-codex/remote-codex.module";
+import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
 
 @Module({
   imports: [
@@ -70,6 +72,8 @@ import { RosettaModule } from "./rosetta/rosetta.module";
     PhonePoolModule,
     FaqModule,
     TokenServerModule,
+    RemoteCodexModule,
+    RemoteStatsModule,
     RosettaModule,
   ],
   controllers: [HealthController, StatsController],

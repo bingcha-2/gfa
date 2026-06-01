@@ -265,12 +265,30 @@ describe('AccessKeyStore', () => {
       expect(result.record?.id).toBe('k1');
     });
 
-    it('should reject only when BOTH Opus AND Gemini exceed limit (no modelKey)', () => {
+    it('should reject only when ALL buckets (gemini/opus/codex) exceed limit (no modelKey)', () => {
+      const store = makeKeyWithUsage([
+        { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-opus' },
+        { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro' },
+        { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'gpt-5-codex' },
+      ]);
+      // No modelKey → requires every bucket to be exceeded
+      const result = store.resolveFromRequest(
+        { headers: { 'x-access-key': 'secret1' } } as any,
+        {},
+        { enforceLimit: true },
+      );
+      expect(result.record).toBeNull();
+      expect(result.error).toContain('token limit exceeded');
+    });
+
+    it('should reject when all USED buckets exhausted even if an unused bucket has headroom (no modelKey)', () => {
+      // Regression: opus + gemini fully used and exhausted, codex never used.
+      // The codex bucket's 0 usage must NOT keep the card alive — an exhausted
+      // card with no modelKey has to be rejected.
       const store = makeKeyWithUsage([
         { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-opus' },
         { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro' },
       ]);
-      // No modelKey → requires both to be exceeded
       const result = store.resolveFromRequest(
         { headers: { 'x-access-key': 'secret1' } } as any,
         {},

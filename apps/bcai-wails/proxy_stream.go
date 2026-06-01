@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +27,22 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	var totalStreamBytes atomic.Int64
 
 	flusher, ok := w.(http.Flusher)
+
+	// All writes to w happen from BOTH this function and the keepalive/idle timer
+	// goroutine below. http.ResponseWriter is not safe for concurrent use, so every
+	// write+flush must hold writeMu — otherwise the keepalive write races the body
+	// copy (caught by `go test -race`). The lock is only ever held for a short write,
+	// never across body.Read, so it cannot deadlock or stall the stream.
+	var writeMu sync.Mutex
+	writeAndFlush := func(b []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_, err := w.Write(b)
+		if ok {
+			flusher.Flush()
+		}
+		return err
+	}
 
 	// P1⑦: Stream inactivity timer with keepalive
 	const streamFirstByteTimeout = 180 * time.Second // 3 min for initial thinking
@@ -88,8 +105,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 						reqId, int(idleDuration.Seconds()), int(dynamicIdle.Seconds()), receivedBytes/1024)
 					// 通知 IDE 流已结束，避免一直 working
 					if ok {
-						_, _ = w.Write([]byte("\ndata: [DONE]\n\n"))
-						flusher.Flush()
+						_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
 					}
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
@@ -99,7 +115,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 
 				// Send SSE keepalive comment — 同时检测下游是否断开
 				if ok && !streamTimedOut.Load() {
-					_, writeErr := w.Write([]byte(fmt.Sprintf(": bcai-keepalive %d\n\n", time.Now().UnixMilli())))
+					writeErr := writeAndFlush([]byte(fmt.Sprintf(": bcai-keepalive %d\n\n", time.Now().UnixMilli())))
 					if writeErr != nil {
 						// 下游（IDE）已断开，立即关闭上游连接
 						streamTimedOut.Store(true)
@@ -109,7 +125,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 						}
 						return
 					}
-					flusher.Flush()
 				}
 				Log("[proxy] #%d [STREAM] idle %ds, socket alive, grace +%ds",
 					reqId, int(idleDuration.Seconds()), int(streamGracePeriod.Seconds()))
@@ -154,8 +169,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					}
 					// 2. 向 IDE 发送 SSE 结束标记，避免 IDE 侧无限等待
 					if ok {
-						_, _ = w.Write([]byte("\ndata: [DONE]\n\n"))
-						flusher.Flush()
+						_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
 					}
 					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended with [DONE]", reqId)
 					break // 退出读取循环
@@ -163,10 +177,7 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			}
 
 			// 只有在非 quota 中断的情况下才转发数据给 IDE
-			_, writeErr := w.Write(buffer[:n])
-			if ok {
-				flusher.Flush()
-			}
+			writeErr := writeAndFlush(buffer[:n])
 			// 下游断开（broken pipe）→ 停止从上游读取，节省 API 配额
 			if writeErr != nil {
 				Log("[proxy] #%d [STREAM] downstream write error, aborting: %v", reqId, writeErr)

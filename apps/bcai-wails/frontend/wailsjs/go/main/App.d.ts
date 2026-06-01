@@ -20,6 +20,8 @@ export function GetAnnouncement():Promise<string>;
 
 export function GetAppVersion():Promise<string>;
 
+export function GetCodexRelayConfig():Promise<Record<string, any>>;
+
 export function GetConfig():Promise<main.Config>;
 
 export function GetDetectedPaths():Promise<main.DetectedPaths>;
@@ -48,6 +50,8 @@ export function LockPoolAccount(arg1:number):Promise<Record<string, any>>;
 
 export function OAuthLogin(arg1:string):Promise<Record<string, any>>;
 
+export function OpenSystemPermissionSettings():Promise<void>;
+
 export function RefreshPoolQuota():Promise<Record<string, any>>;
 
 export function RemovePoolAccount(arg1:number):Promise<Record<string, any>>;
@@ -57,6 +61,8 @@ export function RestartProxy():Promise<void>;
 export function RestartToUpdate():Promise<void>;
 
 export function RestoreSelected(arg1:Array<string>):Promise<string>;
+
+export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Record<string, string>):Promise<void>;
 
 export function SaveConfig(arg1:main.Config):Promise<void>;
 

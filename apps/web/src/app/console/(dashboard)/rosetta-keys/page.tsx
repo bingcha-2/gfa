@@ -68,7 +68,9 @@ import {
   AlertTriangleIcon,
   Loader2Icon,
   UnplugIcon,
+  BarChart3Icon,
 } from "lucide-react";
+import { CardUsageDialog } from "./card-usage-dialog";
 
 type AccessKey = {
   id: string;
@@ -80,6 +82,8 @@ type AccessKey = {
   totalTokensUsed: number;
   recentWindowTokens: number;
   tokenWindowLimit: number;
+  windowMs?: number;
+  provider?: string;
   durationMs?: number;
   createdAt: string;
   lastUsedAt: string;
@@ -109,6 +113,7 @@ function formatDuration(ms: number | undefined | null): string {
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "-";
   return new Date(iso).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -133,6 +138,8 @@ export default function RosettaKeysPage() {
   const [createDurationUnit, setCreateDurationUnit] = useState("d");
   const [createLimit, setCreateLimit] = useState("");
   const [createTokenLimit, setCreateTokenLimit] = useState("");
+  const [createWindowValue, setCreateWindowValue] = useState("5");
+  const [createWindowUnit, setCreateWindowUnit] = useState("h");
   const [createCount, setCreateCount] = useState("1");
   const [creating, setCreating] = useState(false);
 
@@ -144,6 +151,10 @@ export default function RosettaKeysPage() {
   const [deleteTarget, setDeleteTarget] = useState<AccessKey | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Token usage detail dialog
+  const [usageTarget, setUsageTarget] = useState<AccessKey | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
 
   // Cleanup states
   const [cleaningExpired, setCleaningExpired] = useState(false);
@@ -261,11 +272,15 @@ export default function RosettaKeysPage() {
       const durationMs =
         durationValue *
         (createDurationUnit === "d" ? 86400000 : 3600000);
+      const windowValue = Math.max(1, Math.floor(Number(createWindowValue) || 1));
+      const windowMs =
+        windowValue * (createWindowUnit === "d" ? 86400000 : 3600000);
       const count = Math.max(1, Math.min(200, Number(createCount) || 1));
 
       const payload: Record<string, unknown> = {
         name: createName.trim() || undefined,
         durationMs,
+        windowMs,
         count,
       };
       if (createLimit.trim()) {
@@ -479,6 +494,30 @@ export default function RosettaKeysPage() {
                 onChange={(e) => setCreateTokenLimit(e.target.value)}
               />
             </Field>
+            <Field className="min-w-[160px]">
+              <FieldLabel>限流窗口</FieldLabel>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  min={1}
+                  className="w-20"
+                  value={createWindowValue}
+                  onChange={(e) => setCreateWindowValue(e.target.value)}
+                />
+                <Select
+                  value={createWindowUnit}
+                  onValueChange={setCreateWindowUnit}
+                >
+                  <SelectTrigger className="w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="h">小时</SelectItem>
+                    <SelectItem value="d">天</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </Field>
             <Field className="min-w-[100px] w-24">
               <FieldLabel>生成数量</FieldLabel>
               <Input
@@ -580,7 +619,7 @@ export default function RosettaKeysPage() {
             <span className="text-xs text-muted-foreground">排序:</span>
             {(
               [
-                ["recentWindowTokens", "5h Token"],
+                ["recentWindowTokens", "窗口Token"],
                 ["totalTokensUsed", "总Token"],
                 ["totalRequests", "请求数"],
                 ["anomalyCount", "异常"],
@@ -633,7 +672,7 @@ export default function RosettaKeysPage() {
                         onClick={() => toggleSort("recentWindowTokens")}
                       >
                         <div className="flex items-center gap-1">
-                          5h Token窗口
+                          Token窗口
                           <SortIcon field="recentWindowTokens" />
                         </div>
                       </TableHead>
@@ -724,10 +763,15 @@ export default function RosettaKeysPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          {item.recentWindowTokens.toLocaleString()} /{" "}
-                          {item.tokenWindowLimit > 0
-                            ? item.tokenWindowLimit.toLocaleString()
-                            : "∞"}
+                          <div>
+                            {item.recentWindowTokens.toLocaleString()} /{" "}
+                            {item.tokenWindowLimit > 0
+                              ? item.tokenWindowLimit.toLocaleString()
+                              : "∞"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            每 {formatDuration(item.windowMs)}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm">
                           {item.totalTokensUsed.toLocaleString()}
@@ -760,6 +804,26 @@ export default function RosettaKeysPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7"
+                                      onClick={() => {
+                                        setUsageTarget(item);
+                                        setUsageOpen(true);
+                                      }}
+                                    />
+                                  }
+                                >
+                                  <BarChart3Icon data-icon className="size-3.5" />
+                                </TooltipTrigger>
+                                <TooltipContent>Token 使用记录</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger
@@ -884,6 +948,13 @@ export default function RosettaKeysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Token Usage Detail */}
+      <CardUsageDialog
+        card={usageTarget}
+        open={usageOpen}
+        onOpenChange={setUsageOpen}
+      />
 
       {/* Delete Confirmation */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>

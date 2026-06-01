@@ -227,13 +227,29 @@ export function resolveModelQuotaKey(
   return null;
 }
 
-export function getModelQuotaFraction(account: any, modelKey: string): number | null {
+export function getModelQuotaFraction(account: any, modelKey: string, now: number = Date.now()): number | null {
   const fractions = account?.modelQuotaFractions;
   if (!fractions || typeof fractions !== 'object') return null;
   if (!normalizeModelKey(modelKey)) return null;
 
   const key = resolveModelQuotaKey(fractions, modelKey);
-  if (key) return Math.max(0, Math.min(1, Number(fractions[key]) || 0));
+  if (key) {
+    // Stale-after-reset guard: once this window's reset time has passed, the
+    // stored fraction reflects the PRE-reset window — the upstream window has
+    // since rolled over and refilled, but no fresh client snapshot has arrived
+    // yet (idle accounts may never get one until they're leased). Trusting the
+    // pre-reset value would pin a reset-but-stale-0 account to Tier 3 (last
+    // resort) indefinitely. Treat the window as refilled (full) instead — which
+    // is what a passed reset means — so the account returns to normal priority
+    // and self-corrects on the next usage report (a 429 re-parks it). This is
+    // consistent with getModelResetBonus, which already treats a passed reset
+    // as the most-preferred case. Applies to BOTH providers: codex
+    // (account-level "codex" key) and antigravity (per-model keys) store reset
+    // times identically.
+    const resetAt = getModelQuotaResetAt(account, modelKey);
+    if (resetAt > 0 && resetAt <= now) return 1;
+    return Math.max(0, Math.min(1, Number(fractions[key]) || 0));
+  }
 
   // Has fractions for other models but not this one → 暂无
   if (Object.keys(fractions).length > 0) return -1;
@@ -266,6 +282,9 @@ export function scoreAccount(
     activeLeaseCount: (accountId: number, modelKey: string) => number;
     accountStats: { lastUsedAt: number };
     accountWeight: number;
+    /** Precomputed 5h quota fraction (provider override). When undefined,
+     * falls back to per-model getModelQuotaFraction(account, modelKey). */
+    modelQuotaFraction?: number | null;
   },
 ): number {
   const totalActive = options.activeLeaseCount(account.id, '');
@@ -287,7 +306,9 @@ export function scoreAccount(
   // Previously Tier 2 was 20000, which affinity (-20000) could cancel out,
   // causing accounts WITHOUT 5h quota to be selected over accounts WITH quota.
   // This led to unnecessary credit consumption on accounts that lack free 5h quota.
-  const fraction = getModelQuotaFraction(account, options.modelKey);
+  const fraction = options.modelQuotaFraction !== undefined
+    ? options.modelQuotaFraction
+    : getModelQuotaFraction(account, options.modelKey, options.now);
   let quotaPenalty: number;
   if (fraction !== null && fraction >= 0) {
     // Confirmed data: gradient within 0-5000 (small spread, keeps confirmed accounts together)

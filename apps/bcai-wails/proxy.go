@@ -219,6 +219,9 @@ func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.
 		Log("[proxy] #%d [MODELS] <- 200 OK, cached (%d bytes)", reqId, len(respBody))
 
 		for k, v := range resp.Header {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, val := range v {
 				w.Header().Add(k, val)
 			}
@@ -339,6 +342,9 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
 		for k, v := range resp.Header {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, val := range v {
 				w.Header().Add(k, val)
 			}
@@ -347,6 +353,9 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 		_, _ = w.Write(respBody)
 	} else {
 		for k, v := range resp.Header {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, val := range v {
 				w.Header().Add(k, val)
 			}
@@ -414,6 +423,9 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 		respBody, _ := io.ReadAll(resp.Body)
 		// Copy headers
 		for k, v := range resp.Header {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, val := range v {
 				w.Header().Add(k, val)
 			}
@@ -423,6 +435,9 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 	} else {
 		// Copy headers
 		for k, v := range resp.Header {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, val := range v {
 				w.Header().Add(k, val)
 			}
