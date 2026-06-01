@@ -29,6 +29,7 @@ func TestConvertResponsesToChatRequest(t *testing.T) {
 		"max_output_tokens": 256,
 		"temperature": 0.5,
 		"top_p": 0.9,
+		"parallel_tool_calls": true,
 		"reasoning": {"effort":"high"},
 		"stream": true
 	}`)
@@ -46,18 +47,28 @@ func TestConvertResponsesToChatRequest(t *testing.T) {
 	if got["stream"] != true {
 		t.Fatalf("stream = %v, want true", got["stream"])
 	}
+	// max_output_tokens → max_tokens,转 int(对齐 cockpit)。
 	if got["max_tokens"] != float64(256) {
 		t.Fatalf("max_tokens = %v, want 256", got["max_tokens"])
 	}
-	if got["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %v, want high", got["reasoning_effort"])
+	// 非推理模型不发 reasoning_effort。
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Fatalf("非推理模型不应转发 reasoning_effort, got %v", got["reasoning_effort"])
 	}
-	if got["temperature"] != 0.5 || got["top_p"] != 0.9 {
-		t.Fatalf("temperature/top_p 未透传: %v %v", got["temperature"], got["top_p"])
+	// temperature / top_p 一律不转发(对齐 cockpit)。
+	if _, ok := got["temperature"]; ok {
+		t.Fatalf("temperature 不应转发, got %v", got["temperature"])
 	}
-	so, _ := got["stream_options"].(map[string]interface{})
-	if so == nil || so["include_usage"] != true {
-		t.Fatalf("stream_options.include_usage 未置 true: %v", got["stream_options"])
+	if _, ok := got["top_p"]; ok {
+		t.Fatalf("top_p 不应转发, got %v", got["top_p"])
+	}
+	// 不注入 stream_options(对齐 cockpit)。
+	if _, ok := got["stream_options"]; ok {
+		t.Fatalf("不应注入 stream_options, got %v", got["stream_options"])
+	}
+	// parallel_tool_calls 透传(对齐 cockpit)。
+	if got["parallel_tool_calls"] != true {
+		t.Fatalf("parallel_tool_calls 应透传, got %v", got["parallel_tool_calls"])
 	}
 
 	msgs, ok := got["messages"].([]interface{})
@@ -68,9 +79,18 @@ func TestConvertResponsesToChatRequest(t *testing.T) {
 	if sys["role"] != "system" || sys["content"] != "You are helpful." {
 		t.Fatalf("instructions→system 映射错误, got %v", sys)
 	}
+	// content 应构造为 parts 数组(对齐 cockpit),两段 input_text → 两个 text part。
 	user := msgs[1].(map[string]interface{})
-	if user["role"] != "user" || user["content"] != "hi there" {
-		t.Fatalf("user 文本应拼接, got %v", user)
+	if user["role"] != "user" {
+		t.Fatalf("user role 错误, got %v", user)
+	}
+	parts, ok := user["content"].([]interface{})
+	if !ok || len(parts) != 2 {
+		t.Fatalf("content 应为 2 段 parts 数组, got %v", user["content"])
+	}
+	p0 := parts[0].(map[string]interface{})
+	if p0["type"] != "text" || p0["text"] != "hi " {
+		t.Fatalf("part0 映射错误, got %v", p0)
 	}
 	asst := msgs[2].(map[string]interface{})
 	tcs, _ := asst["tool_calls"].([]interface{})
@@ -110,6 +130,92 @@ func TestConvertResponsesToChatRequestNonStream(t *testing.T) {
 	}
 	if _, ok := got["stream_options"]; ok {
 		t.Fatalf("非流式不应有 stream_options, got %v", got["stream_options"])
+	}
+}
+
+// input[] 里的 developer role → user(对齐 cockpit;注意 instructions 才走 system)。
+func TestConvertResponsesToChatRequestRoleMapping(t *testing.T) {
+	body := []byte(`{
+		"input": [
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"sys"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}
+		]
+	}`)
+	out := convertResponsesToChatRequest(body, "m", false)
+	var got map[string]interface{}
+	_ = json.Unmarshal(out, &got)
+	msgs := got["messages"].([]interface{})
+	if len(msgs) != 2 {
+		t.Fatalf("messages 应有 2 条, got %v", msgs)
+	}
+	if msgs[0].(map[string]interface{})["role"] != "user" {
+		t.Fatalf("developer 应映射为 user(对齐 cockpit), got %v", msgs[0])
+	}
+	if msgs[1].(map[string]interface{})["role"] != "user" {
+		t.Fatalf("user 应保持, got %v", msgs[1])
+	}
+}
+
+// 连续的 function_call 应合并进同一条 assistant.tool_calls[](对齐 cockpit),
+// 而不是各发一条 assistant 消息。
+func TestConvertResponsesToChatRequestBatchesToolCalls(t *testing.T) {
+	body := []byte(`{
+		"input": [
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"type":"function_call","call_id":"c1","name":"a","arguments":"{}"},
+			{"type":"function_call","call_id":"c2","name":"b","arguments":"{}"},
+			{"type":"function_call_output","call_id":"c1","output":"ra"},
+			{"type":"function_call_output","call_id":"c2","output":"rb"}
+		]
+	}`)
+	out := convertResponsesToChatRequest(body, "m", false)
+	var got map[string]interface{}
+	_ = json.Unmarshal(out, &got)
+	msgs := got["messages"].([]interface{})
+	// user + 一条合并的 assistant(2 tool_calls) + 2 条 tool = 4 条。
+	if len(msgs) != 4 {
+		t.Fatalf("messages 应为 4 条(含 1 条合并 assistant), got %d: %v", len(msgs), msgs)
+	}
+	asst := msgs[1].(map[string]interface{})
+	tcs, _ := asst["tool_calls"].([]interface{})
+	if asst["role"] != "assistant" || len(tcs) != 2 {
+		t.Fatalf("两个 function_call 应合并进一条 assistant 的 tool_calls, got %v", asst)
+	}
+	if msgs[2].(map[string]interface{})["role"] != "tool" || msgs[3].(map[string]interface{})["role"] != "tool" {
+		t.Fatalf("两条 tool 结果应紧随, got %v / %v", msgs[2], msgs[3])
+	}
+}
+
+// reasoning_effort 仅对支持推理的目标模型转发(对齐 cockpit 的模型感知 strip)。
+func TestConvertResponsesToChatRequestReasoningByModel(t *testing.T) {
+	body := []byte(`{"reasoning":{"effort":"high"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
+
+	// 推理系列(gpt-5/o3 等,含 provider/ 前缀)→ 应发 reasoning_effort。
+	for _, model := range []string{"gpt-5-codex", "o3-mini", "openai/o1", "gpt-5"} {
+		var got map[string]interface{}
+		_ = json.Unmarshal(convertResponsesToChatRequest(body, model, false), &got)
+		if got["reasoning_effort"] != "high" {
+			t.Fatalf("model=%s 应发 reasoning_effort=high, got %v", model, got["reasoning_effort"])
+		}
+	}
+
+	// 非推理模型(豆包/claude/通用)→ 不应发,避免 litellm 400。
+	for _, model := range []string{"volcengine/doubao-seed-1-6-251015", "claude-sonnet-4", "gpt-4o", "deepseek-chat"} {
+		var got map[string]interface{}
+		_ = json.Unmarshal(convertResponsesToChatRequest(body, model, false), &got)
+		if _, ok := got["reasoning_effort"]; ok {
+			t.Fatalf("model=%s 不应发 reasoning_effort, got %v", model, got["reasoning_effort"])
+		}
+	}
+}
+
+func TestConvertResponsesToChatRequestStringInput(t *testing.T) {
+	out := convertResponsesToChatRequest([]byte(`{"input":"hello there"}`), "m", false)
+	var got map[string]interface{}
+	_ = json.Unmarshal(out, &got)
+	msgs, _ := got["messages"].([]interface{})
+	if len(msgs) != 1 || msgs[0].(map[string]interface{})["role"] != "user" || msgs[0].(map[string]interface{})["content"] != "hello there" {
+		t.Fatalf("字符串 input 应转成单条 user 消息, got %v", got["messages"])
 	}
 }
 

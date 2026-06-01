@@ -8,7 +8,7 @@ import { Modal, useModal } from '@/components/Modal'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
-import { Zap, Cloud, HardDrive, KeyRound } from 'lucide-react'
+import { Zap, Cloud, HardDrive, KeyRound, Plus, X } from 'lucide-react'
 
 /**
  * 「Token 来源与接管」统一控制。把"用什么 token"(来源)和"是否接管"(注入)合成
@@ -55,7 +55,8 @@ export function TokenSourceControl() {
   const [relayBase, setRelayBase] = useState('')
   const [relayKey, setRelayKey] = useState('')
   const [relayProtocol, setRelayProtocol] = useState('responses')
-  const [modelMapText, setModelMapText] = useState('')
+  // 模型映射:行式编辑(本地模型 → 中转模型),可增删改。
+  const [modelMaps, setModelMaps] = useState<{ from: string; to: string }[]>([])
   const [forceRelayOpen, setForceRelayOpen] = useState(false)
   const [savingRelay, setSavingRelay] = useState(false)
 
@@ -68,11 +69,7 @@ export function TokenSourceControl() {
         setRelayBase(r.baseURL || '')
         setRelayKey(r.apiKey || '')
         setRelayProtocol(r.protocol || 'responses')
-        setModelMapText(
-          Object.entries(r.modelMap || {})
-            .map(([k, v]) => `${k}=${v}`)
-            .join('\n'),
-        )
+        setModelMaps(Object.entries(r.modelMap || {}).map(([from, to]) => ({ from, to })))
       })
       .catch(() => {})
     return () => {
@@ -80,18 +77,24 @@ export function TokenSourceControl() {
     }
   }, [])
 
-  const parseModelMap = (text: string): Record<string, string> => {
+  // 行数组 → 后端期望的对象;忽略 from/to 任一为空的行。
+  const buildModelMap = (): Record<string, string> => {
     const map: Record<string, string> = {}
-    for (const line of text.split('\n')) {
-      const t = line.trim()
-      const eq = t.indexOf('=')
-      if (eq <= 0) continue
-      const k = t.slice(0, eq).trim()
-      const v = t.slice(eq + 1).trim()
+    for (const { from, to } of modelMaps) {
+      const k = from.trim()
+      const v = to.trim()
       if (k && v) map[k] = v
     }
     return map
   }
+
+  const updateMapRow = (idx: number, patch: Partial<{ from: string; to: string }>) =>
+    setModelMaps((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  const addMapRow = () => setModelMaps((rows) => [...rows, { from: '', to: '' }])
+  const removeMapRow = (idx: number) => setModelMaps((rows) => rows.filter((_, i) => i !== idx))
+
+  // 常见 Codex 本地模型名,供下拉快选(也允许自定义输入)。
+  const KNOWN_MODELS = ['gpt-5-codex', 'gpt-5', 'gpt-5.5', 'codex-mini-latest']
 
   // target → 展示名(loading 文案用)。
   const targetName = (target: string) =>
@@ -177,7 +180,7 @@ export function TokenSourceControl() {
       await showAlert('保存失败', '启用中转需要填写中转地址和卡密。')
       return false
     }
-    await api.saveCodexRelayConfig('relay', relayBase.trim(), relayKey.trim(), relayProtocol, parseModelMap(modelMapText))
+    await api.saveCodexRelayConfig('relay', relayBase.trim(), relayKey.trim(), relayProtocol, buildModelMap())
     await fetchConfig()
     return true
   }
@@ -202,7 +205,7 @@ export function TokenSourceControl() {
         return
       }
       if (codexRelay) {
-        await api.saveCodexRelayConfig('rental', relayBase.trim(), relayKey.trim(), relayProtocol, parseModelMap(modelMapText))
+        await api.saveCodexRelayConfig('rental', relayBase.trim(), relayKey.trim(), relayProtocol, buildModelMap())
         await fetchConfig()
       }
       if (!codexInjected) await runTakeover('codex', true)
@@ -361,14 +364,51 @@ export function TokenSourceControl() {
               </div>
 
               <div>
-                <div className="text-[11px] text-[var(--text-muted)] mb-1">模型映射(可选,每行 本地模型=中转模型)</div>
-                <textarea
-                  value={modelMapText}
-                  onChange={(e) => setModelMapText(e.target.value)}
-                  placeholder={'gpt-5-codex=claude-sonnet-4\ngpt-5=gpt-4o'}
-                  rows={2}
-                  className="w-full rounded-md border border-[var(--border-light)] bg-transparent px-3 py-2 text-[12px] font-mono"
-                />
+                <div className="text-[11px] text-[var(--text-muted)] mb-1">模型映射(可选:把本地模型名映射到中转站的模型)</div>
+                {modelMaps.length === 0 && (
+                  <div className="text-[10px] text-[var(--text-muted)] mb-1.5 leading-relaxed">
+                    不配置则按原模型名透传。中转站若无 gpt-5.5 等模型,需在此映射到它支持的模型。
+                  </div>
+                )}
+                <div className="flex flex-col gap-1.5">
+                  {modelMaps.map((row, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5">
+                      {/* 本地模型:可选常用项或自定义输入 */}
+                      <input
+                        list={`codex-local-models-${idx}`}
+                        value={row.from}
+                        onChange={(e) => updateMapRow(idx, { from: e.target.value })}
+                        placeholder="本地模型"
+                        className="flex-1 min-w-0 h-8 rounded-md border border-[var(--border-light)] bg-transparent px-2 text-[12px] font-mono"
+                      />
+                      <datalist id={`codex-local-models-${idx}`}>
+                        {KNOWN_MODELS.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                      <span className="text-[var(--text-muted)] text-[12px] shrink-0">→</span>
+                      <Input
+                        value={row.to}
+                        onChange={(e) => updateMapRow(idx, { to: e.target.value })}
+                        placeholder="中转模型名"
+                        className="flex-1 min-w-0 h-8 text-[12px] font-mono"
+                      />
+                      <button
+                        onClick={() => removeMapRow(idx)}
+                        className="shrink-0 w-8 h-8 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-tertiary)] transition-colors duration-200 cursor-pointer"
+                        title="删除此映射"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={addMapRow}
+                  className="mt-1.5 flex items-center gap-1 text-[12px] text-[var(--primary)] hover:opacity-80 transition-opacity cursor-pointer"
+                >
+                  <Plus size={13} /> 添加映射
+                </button>
               </div>
 
               <Button onClick={handleSaveRelay} disabled={savingRelay} className="w-full cursor-pointer">

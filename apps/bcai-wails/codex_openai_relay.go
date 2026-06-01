@@ -38,12 +38,34 @@ func convertResponsesToChatRequest(body []byte, model string, stream bool) []byt
 	}
 	messages := make([]interface{}, 0, 8)
 
-	// instructions → 首条 system 消息。
+	// instructions → 首条 system 消息(对齐 cockpit:role 固定 system,置于最前)。
 	if instr, ok := root["instructions"].(string); ok && instr != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": instr})
 	}
 
-	// input[] → messages[]
+	// 连续的 function_call 合并进同一条 assistant 消息的 tool_calls[](对齐 cockpit),
+	// 遇到任何非 function_call 项前先 flush,保证 assistant(tool_calls) 紧跟其 tool 结果。
+	var pendingToolCalls []interface{}
+	flushTools := func() {
+		if len(pendingToolCalls) == 0 {
+			return
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":       "assistant",
+			"tool_calls": pendingToolCalls,
+		})
+		pendingToolCalls = nil
+	}
+	appendMessage := func(m map[string]interface{}) {
+		flushTools()
+		messages = append(messages, m)
+	}
+
+	// input 可能是字符串(简单单轮)或数组(多轮/带工具)。
+	if s, ok := root["input"].(string); ok && s != "" {
+		messages = append(messages, map[string]interface{}{"role": "user", "content": s})
+	}
+
 	if input, ok := root["input"].([]interface{}); ok {
 		for _, raw := range input {
 			item, _ := raw.(map[string]interface{})
@@ -52,45 +74,58 @@ func convertResponsesToChatRequest(body []byte, model string, stream bool) []byt
 			}
 			switch toStr(item["type"]) {
 			case "message":
-				role := toStr(item["role"])
-				var text strings.Builder
+				role := chatRoleFromResponses(toStr(item["role"]))
+				msg := map[string]interface{}{"role": role}
+				// content:数组→构造 parts 数组(text/image_url,对齐 cockpit);
+				// 字符串→原样;其它→空串。
 				if parts, ok := item["content"].([]interface{}); ok {
+					contentArr := make([]interface{}, 0, len(parts))
 					for _, p := range parts {
 						part, _ := p.(map[string]interface{})
 						if part == nil {
 							continue
 						}
 						switch toStr(part["type"]) {
-						case "input_text", "output_text", "text":
-							text.WriteString(toStr(part["text"]))
+						case "input_text", "output_text", "text", "":
+							contentArr = append(contentArr, map[string]interface{}{
+								"type": "text", "text": toStr(part["text"]),
+							})
+						case "input_image":
+							contentArr = append(contentArr, map[string]interface{}{
+								"type":      "image_url",
+								"image_url": map[string]interface{}{"url": toStr(part["image_url"])},
+							})
 						}
 					}
+					msg["content"] = contentArr
+				} else if s, ok := item["content"].(string); ok {
+					msg["content"] = s
+				} else {
+					msg["content"] = ""
 				}
-				messages = append(messages, map[string]interface{}{"role": role, "content": text.String()})
+				appendMessage(msg)
 			case "function_call":
-				messages = append(messages, map[string]interface{}{
-					"role":    "assistant",
-					"content": nil,
-					"tool_calls": []interface{}{map[string]interface{}{
-						"id":   toStr(item["call_id"]),
-						"type": "function",
-						"function": map[string]interface{}{
-							"name":      toStr(item["name"]),
-							"arguments": toStr(item["arguments"]),
-						},
-					}},
+				// 累积,不立即发;由后续非 function_call 项或收尾 flush 成一条 assistant。
+				pendingToolCalls = append(pendingToolCalls, map[string]interface{}{
+					"id":   toStr(item["call_id"]),
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      toStr(item["name"]),
+						"arguments": toStr(item["arguments"]),
+					},
 				})
 			case "function_call_output":
-				messages = append(messages, map[string]interface{}{
+				appendMessage(map[string]interface{}{
 					"role":         "tool",
 					"tool_call_id": toStr(item["call_id"]),
 					"content":      toStr(item["output"]),
 				})
 			case "reasoning":
-				// chat/completions 无对应,丢弃。
+				// chat/completions 无对应,丢弃(对齐 cockpit)。
 			}
 		}
 	}
+	flushTools() // 收尾:末尾若还有未 flush 的 tool_calls。
 	out["messages"] = messages
 
 	// tools:扁平(responses)→ 嵌套(chat)。
@@ -118,28 +153,66 @@ func convertResponsesToChatRequest(body []byte, model string, stream bool) []byt
 		out["tool_choice"] = tc
 	}
 
-	// max_output_tokens → max_tokens
+	// max_output_tokens → max_tokens(对齐 cockpit:转 int)。
 	if mt, ok := root["max_output_tokens"]; ok {
-		out["max_tokens"] = mt
+		out["max_tokens"] = toInt64(mt)
 	}
-	if t, ok := root["temperature"]; ok {
-		out["temperature"] = t
+	// parallel_tool_calls 透传(对齐 cockpit:存在才发,不注入默认值)。
+	if pt, ok := root["parallel_tool_calls"]; ok {
+		out["parallel_tool_calls"] = pt
 	}
-	if tp, ok := root["top_p"]; ok {
-		out["top_p"] = tp
-	}
-	// reasoning.effort → reasoning_effort
-	if r, ok := root["reasoning"].(map[string]interface{}); ok {
-		if eff := toStr(r["effort"]); eff != "" {
-			out["reasoning_effort"] = eff
+	// temperature / top_p / text.* / response_format / metadata / store 等不转发
+	//(对齐 cockpit:它只 touch 上述字段)。
+	//
+	// reasoning.effort → reasoning_effort:cockpit 在 translator 里总是发,但管线
+	// 上游用 StripThinkingConfig 按模型注册表把不支持推理的模型的 reasoning_effort
+	// 砍掉。我们没有完整注册表,用模型名前缀近似(o1/o3/o4/gpt-5/codex 才发),
+	// 端到端行为等价。
+	if modelSupportsReasoning(model) {
+		if r, ok := root["reasoning"].(map[string]interface{}); ok {
+			if eff := strings.ToLower(strings.TrimSpace(toStr(r["effort"]))); eff != "" {
+				out["reasoning_effort"] = eff
+			}
 		}
 	}
-	if stream {
-		out["stream_options"] = map[string]interface{}{"include_usage": true}
-	}
+	// stream 直接置;不注入 stream_options(对齐 cockpit:它不设)。中转模式不计额度,
+	// 流式 usage 缺失也无妨(streamChatToResponses 拿不到就回 0)。
+	out["stream"] = stream
 
 	b, _ := json.Marshal(out)
 	return b
+}
+
+// modelSupportsReasoning 近似 cockpit 的"模型是否支持推理"注册表查询:仅这些
+// 系列接受 reasoning_effort。映射后的目标模型名命中前缀(忽略 provider/ 前缀与
+// 大小写)才返回 true;其余(豆包、claude、通用 chat 模型等)一律不发,避免 400。
+func modelSupportsReasoning(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	// 去掉 "provider/" 前缀(如 volcengine/xxx、openai/o3-mini)。
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	for _, p := range []string{"o1", "o3", "o4", "gpt-5", "codex"} {
+		if strings.HasPrefix(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// chatRoleFromResponses 把 input[] 消息项的 role 映射到 chat/completions 合法 role。
+// 对齐 cockpit:developer→user(注意不是 system —— instructions 才走 system),
+// system/user/assistant/tool 原样;其余未知 role 兜底 user(cockpit 原样透传,我们
+// 更保守以防非法 role 触发上游 400)。
+func chatRoleFromResponses(role string) string {
+	switch role {
+	case "developer":
+		return "user"
+	case "system", "user", "assistant", "tool":
+		return role
+	default:
+		return "user"
+	}
 }
 
 // convertChatToResponsesJSON 把非流式 chat/completions 响应转成 responses 对象。

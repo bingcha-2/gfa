@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -59,15 +60,27 @@ type CodexProxy struct {
 	totalErrors    int64
 	swallowedCount int64
 	upstreamBase   string
-	relay          *CodexRelayConfig // 非空且 BaseURL/APIKey 齐全时启用中转模式
-	leaseToken     func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error)
-	reportResult   func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
-	reportProblem  func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
+	// relay 由 ApplyConfig(UI 协程)热更新、ServeHTTP(请求协程)读取,必须用
+	// relayMu 保护。每条请求开头用 currentRelay() 取一次快照,后续全程用快照,
+	// 避免 UI 中途换配置导致读到撕裂指针或前后不一致(go test -race 也会报)。
+	relayMu       sync.RWMutex
+	relay         *CodexRelayConfig // 非空且 BaseURL/APIKey 齐全时启用中转模式
+	leaseToken    func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error)
+	reportResult  func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
+	reportProblem func(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease)
+}
+
+// currentRelay 返回当前中转配置的快照(可能为 nil)。加读锁,供请求协程安全读取。
+func (p *CodexProxy) currentRelay() *CodexRelayConfig {
+	p.relayMu.RLock()
+	defer p.relayMu.RUnlock()
+	return p.relay
 }
 
 // relayActive 判断当前是否走中转模式(配置齐全)。
 func (p *CodexProxy) relayActive() bool {
-	return p.relay != nil && strings.TrimSpace(p.relay.BaseURL) != "" && strings.TrimSpace(p.relay.APIKey) != ""
+	r := p.currentRelay()
+	return r != nil && strings.TrimSpace(r.BaseURL) != "" && strings.TrimSpace(r.APIKey) != ""
 }
 
 // relayConfigFromConfig 从用户配置构建中转配置:仅当 CodexMode=="relay"(大小写不敏感)
@@ -84,9 +97,13 @@ func relayConfigFromConfig(cfg Config) *CodexRelayConfig {
 	return &CodexRelayConfig{BaseURL: base, APIKey: key, ModelMap: cfg.CodexModelMap, Protocol: cfg.CodexRelayProtocol}
 }
 
-// ApplyConfig 把用户配置应用到全局 Codex 代理(目前只切换中转模式)。
+// ApplyConfig 把用户配置应用到全局 Codex 代理(目前只切换中转模式)。热生效,
+// 无需重启代理:换掉 relay 指针,下一条请求即用新配置(加写锁与读侧互斥)。
 func (p *CodexProxy) ApplyConfig(cfg Config) {
-	p.relay = relayConfigFromConfig(cfg)
+	next := relayConfigFromConfig(cfg)
+	p.relayMu.Lock()
+	p.relay = next
+	p.relayMu.Unlock()
 }
 
 var globalCodexProxy = &CodexProxy{}
@@ -154,8 +171,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 	// 中转(API 卡密)模式:不租号、不要 card,直接用本地配置的 key 转发到中转站。
-	if p.relayActive() {
-		p.serveRelayGeneration(w, r, reqID, upstreamProxy)
+	// 取一次快照贯穿整条请求,避免中途 UI 改配置导致前后不一致。
+	if relay := p.currentRelay(); relay != nil && strings.TrimSpace(relay.BaseURL) != "" && strings.TrimSpace(relay.APIKey) != "" {
+		p.serveRelayGeneration(w, r, reqID, upstreamProxy, relay)
 		return
 	}
 	if card == "" {
@@ -309,7 +327,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 //   - Authorization 用配置的中转 key,而非租来的 token;
 //   - 目标是 {BaseURL}/responses,而非 chatgpt.com/backend-api/codex;
 //   - 不发 Originator / ChatGPT-Account-Id 这些 ChatGPT 专属客户端头。
-func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request, reqID int64, upstreamProxy string) {
+func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request, reqID int64, upstreamProxy string, relay *CodexRelayConfig) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
@@ -320,8 +338,8 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	if modelKey == "" {
 		modelKey = "gpt-5-codex"
 	}
-	mappedModel := p.mapRelayModel(modelKey)
-	chatMode := strings.EqualFold(strings.TrimSpace(p.relay.Protocol), "chat")
+	mappedModel := mapRelayModel(relay, modelKey)
+	chatMode := strings.EqualFold(strings.TrimSpace(relay.Protocol), "chat")
 	stream := requestWantsStream(body)
 
 	// 请求体 + 上游路径:chat 模式把 responses 请求转码成 chat/completions,否则
@@ -329,12 +347,12 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	var targetURL string
 	if chatMode {
 		body = convertResponsesToChatRequest(body, mappedModel, stream)
-		targetURL = p.relayChatTargetURL(r)
+		targetURL = relayChatTargetURL(relay, r)
 	} else {
 		if mappedModel != modelKey {
 			body = rewriteCodexModel(body, mappedModel)
 		}
-		targetURL = p.relayTargetURL(r)
+		targetURL = relayTargetURL(relay, r)
 	}
 	modelKey = mappedModel
 
@@ -344,7 +362,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		return
 	}
 	copyCodexHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.relay.APIKey))
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(relay.APIKey))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", mustParseURL(targetURL).Host)
 	applyCodexRelayHeaders(req.Header, r.Header)
@@ -393,8 +411,8 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 }
 
 // relayTargetURL 拼出中转目标地址:{BaseURL}/responses[/compact],保留查询串。
-func (p *CodexProxy) relayTargetURL(r *http.Request) string {
-	base := strings.TrimSuffix(strings.TrimSpace(p.relay.BaseURL), "/")
+func relayTargetURL(relay *CodexRelayConfig, r *http.Request) string {
+	base := strings.TrimSuffix(strings.TrimSpace(relay.BaseURL), "/")
 	suffix := "/responses"
 	if strings.HasSuffix(r.URL.Path, "/compact") {
 		suffix = "/responses/compact"
@@ -407,8 +425,8 @@ func (p *CodexProxy) relayTargetURL(r *http.Request) string {
 }
 
 // relayChatTargetURL 拼出通用 OpenAI 中转的 chat 端点:{BaseURL}/chat/completions。
-func (p *CodexProxy) relayChatTargetURL(r *http.Request) string {
-	base := strings.TrimSuffix(strings.TrimSpace(p.relay.BaseURL), "/")
+func relayChatTargetURL(relay *CodexRelayConfig, r *http.Request) string {
+	base := strings.TrimSuffix(strings.TrimSpace(relay.BaseURL), "/")
 	target := base + "/chat/completions"
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -440,9 +458,13 @@ func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Re
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// 上游报错:原样透传错误体(不强行转码),便于排查。
+		// 上游报错:打出错误体(截断)便于排查,并原样透传(不强行转码)。
 		atomic.AddInt64(&p.totalErrors, 1)
-		Log("[codex-proxy] #%d [中转/chat] ✗ 上游码=%d", reqID, resp.StatusCode)
+		snippet := string(chatBody)
+		if len(snippet) > 600 {
+			snippet = snippet[:600]
+		}
+		Log("[codex-proxy] #%d [中转/chat] ✗ 上游码=%d body=%q", reqID, resp.StatusCode, strings.TrimSpace(snippet))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(chatBody)
@@ -472,11 +494,11 @@ func requestWantsStream(body []byte) bool {
 }
 
 // mapRelayModel 按配置把客户端模型名映射到中转模型名;无映射则原样返回。
-func (p *CodexProxy) mapRelayModel(model string) string {
-	if p.relay == nil || len(p.relay.ModelMap) == 0 {
+func mapRelayModel(relay *CodexRelayConfig, model string) string {
+	if relay == nil || len(relay.ModelMap) == 0 {
 		return model
 	}
-	if mapped, ok := p.relay.ModelMap[model]; ok && strings.TrimSpace(mapped) != "" {
+	if mapped, ok := relay.ModelMap[model]; ok && strings.TrimSpace(mapped) != "" {
 		return mapped
 	}
 	return model
