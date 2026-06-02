@@ -347,6 +347,10 @@ func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string) {
 	}
 	for modelKey, q := range snap.ModelQuota {
 		recordBoundFractionForModel(modelKey, q.RemainingFraction, isoToEpochMs(q.ResetTime))
+		// [诊断] 打印各模型(尤其 Claude)的真实 fraction + reset,确认血条数据来源。
+		if !isGeminiModel(modelKey) {
+			Log("[quota-sync] 绑定号模型额度 %s: remaining=%.1f%% reset=%q", modelKey, q.RemainingFraction*100, q.ResetTime)
+		}
 	}
 	l.reportQuotaOnly(card, upstreamProxy, snap)
 }

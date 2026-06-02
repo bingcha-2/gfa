@@ -952,7 +952,9 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 //
 // 纯展示刷新,不上报用量;绑定号唯一,force 重租不会轮换账号。池子卡直接跳过
 // (池子模式血条走本地号池额度,不在此机制内)。错误吞掉 —— 刷新失败不影响接管。
-func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string) {
+// force=true(激活/换卡那一下)绕过额度拉取的 5min 节流,立刻拉一次最新的 gemini/claude/codex;
+// force=false(每 90s 定时)走节流,避免高频打上游。
+func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force bool) {
 	l.mu.RLock()
 	bound := l.cachedToken != nil && l.cachedToken.Bound
 	model := l.lastModelKey
@@ -968,12 +970,12 @@ func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string) {
 	_, _ = l.LeaseToken(card, deviceId, true, opts, upstreamProxy)
 	// 走到这里说明 antigravity 绑定有效(bound),主动拉一次上游 per-model 额度并上报,
 	// 让血条/后台在"还没发请求"时也有真实数据(antigravity 否则只在生成上报后才拉)。
-	l.refreshBoundAntigravityQuota(card, upstreamProxy)
+	l.refreshBoundAntigravityQuota(card, upstreamProxy, force)
 
 	// 该卡若开通 codex,顺带刷新 codex 窗口(空 products = 池子卡,这里已被 bound 挡掉)。
 	if cardCoversProduct(l.CardProducts(), "codex") {
 		if lease, err := GetCodexLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy); err == nil {
-			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease)
+			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease, force)
 		}
 	}
 }
