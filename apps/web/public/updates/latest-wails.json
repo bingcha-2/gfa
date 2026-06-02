@@ -1,27 +1,27 @@
 {
-  "version": "6.0.1",
-  "url": "https://bcai.site/updates/BingchaAI-6.0.1.exe",
-  "sha256": "EE4C0911A3F69A495DACBF1E7B64BDBCF32C74760975A744683004110142DFB2",
-  "size": 18227200,
-  "changelog": "新增 Codex API 卡密(中转)模式(支持 responses 透传 / 通用 chat 协议转码);Token 来源与接管 UI 重构;接管 loading 反馈",
+  "version": "7.0.0",
+  "url": "https://bcai.site/updates/BingchaAI-7.0.0.exe",
+  "sha256": "2955B6079CF18A5B7C3EF06D0BD0C207EBCFD59113D6ACBBA7321CF2C92E5EA3",
+  "size": 18266112,
+  "changelog": "静态绑定卡密(拼车)+ 血条用量展示;Claude via Antigravity 路由修复(daily 端点)+ 风控/验证处理优化;激活即拉真实额度。",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-6.0.1-arm64.dmg",
-      "sha256": "877DC645B196060445B7EDBA4B94A80B61A763C098F636B4BF2C7155839C4B03",
-      "size": 9186005
+      "url": "https://bcai.site/updates/BingchaAI-7.0.0-arm64.dmg",
+      "sha256": "7F6CB670CB0792E7B068FCC97D8E5997EE91806D3BE5E5BDF8D2C51BE1BDD200",
+      "size": 9202958
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-6.0.1-amd64.dmg",
-      "sha256": "88310089A2E2BF80366F8C1A709AD73C44A818C3A7D7D80D015589EBC6B42DF8",
-      "size": 9809885
+      "url": "https://bcai.site/updates/BingchaAI-7.0.0-amd64.dmg",
+      "sha256": "8646F933B5B05317C130EA40F996F16BFEA12E10BABFF06C110FC630950F0961",
+      "size": 9820533
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-6.0.1-linux-amd64.tar.gz",
-      "sha256": "593A1596147A175CC211C7AF3BC4EAC546EA391BDE6CE444BB260E437BA14824",
-      "size": 7672104
+      "url": "https://bcai.site/updates/BingchaAI-7.0.0-linux-amd64.tar.gz",
+      "sha256": "BE74085953D9A2978BCA92D80F301EA35AD5B4C558B7E7D45024965FA3CAE297",
+      "size": 7690540
     }
   }
 }
