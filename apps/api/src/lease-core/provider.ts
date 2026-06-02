@@ -76,4 +76,13 @@ export interface Provider<TAccount> {
    * model regardless of the exact model key. Returns 0..1, -1 (暂无), or null.
    */
   quotaFractionFor?(account: TAccount, modelKey: string): number | null;
+
+  /**
+   * Remaining upstream quota for the end-user "blood bar" — a 0..1 fraction plus
+   * the epoch-ms timestamp the window next refills (0 if unknown). Codex reports
+   * its account-level 5h/weekly binding window; antigravity reports the per-model
+   * remaining fraction. "Unknown" / "暂无" is treated as full (1) so a fresh
+   * account shows a full bar. Providers that omit it surface no blood bar.
+   */
+  bloodBarFraction?(account: TAccount, modelKey: string): { fraction: number; resetAt: number };
 }

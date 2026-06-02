@@ -94,10 +94,32 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 		lease.AccountId, snap.CodexQuota.HourlyPercent, snap.CodexQuota.WeeklyPercent)
 }
 
+// 上游额度拉取的最小间隔。5h/周窗口变化很慢,没必要每个请求都拉。被节流跳过时
+// cachedQuota 保持为空 → reportQuotaOnly 自然也不发,于是「额度拉取 + 额度上报」
+// 整体降到至多每 codexQuotaMinIntervalMs 一次(用量上报仍每请求,计费不受影响)。
+const codexQuotaMinIntervalMs int64 = 5 * 60 * 1000
+
+// claimQuotaFetch 至多每 codexQuotaMinIntervalMs 返回一次 true,并打上时间戳。
+// 首次(从未拉取,lastQuotaFetchAt=0)放行。
+func (l *CodexLeaser) claimQuotaFetch(nowMs int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastQuotaFetchAt != 0 && nowMs-l.lastQuotaFetchAt < codexQuotaMinIntervalMs {
+		return false
+	}
+	l.lastQuotaFetchAt = nowMs
+	return true
+}
+
 // fetchCodexQuotaAsync queries wham/usage with the leased token and caches a
-// snapshot for the next report. CAS-guarded so only one runs at a time.
+// snapshot for the next report. Time-throttled (claimQuotaFetch) so a busy
+// session doesn't hammer the usage endpoint, then CAS-guarded so only one runs
+// at a time.
 func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy string) {
 	if lease == nil || lease.AccessToken == "" {
+		return
+	}
+	if !l.claimQuotaFetch(time.Now().UnixMilli()) {
 		return
 	}
 	if !atomic.CompareAndSwapInt32(&l.quotaFetching, 0, 1) {
@@ -143,7 +165,8 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 		FetchedAt:  time.Now().UnixMilli(),
 	}
 	l.mu.Lock()
-	l.cachedQuota = snap
+	l.cachedQuota = snap // 一次性(给下次 report 带上)
+	l.lastQuota = snap   // 持久(给前端血条显示)
 	l.mu.Unlock()
 	Log("[codex-quota] account #%d hourly=%.0f%% weekly=%.0f%% plan=%s",
 		lease.AccountId, window.HourlyPercent, window.WeeklyPercent, usage.PlanType)

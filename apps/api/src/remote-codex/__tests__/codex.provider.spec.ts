@@ -65,6 +65,60 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
   });
 });
 
+describe("CodexProvider.bloodBarFraction", () => {
+  it("returns the binding (more restrictive) fraction and its reset time", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: {
+        hourlyPercent: 80,
+        weeklyPercent: 30,
+        weeklyResetTime: "2026-06-05T00:00:00Z",
+      },
+    });
+
+    const bar = provider.bloodBarFraction(account, "gpt-5-codex");
+    expect(bar.fraction).toBeCloseTo(0.3, 5);
+    expect(bar.resetAt).toBe(Date.parse("2026-06-05T00:00:00Z"));
+  });
+
+  it("reports unknown (fraction -1) when there is no quota snapshot yet", () => {
+    const provider = new CodexProvider();
+    const bar = provider.bloodBarFraction({ id: 1, email: "a@b.c", refreshToken: "r" } as any, "gpt-5-codex");
+    expect(bar.fraction).toBe(-1);
+    expect(bar.resetAt).toBe(0);
+  });
+});
+
+describe("CodexProvider.leaseResponseExtras", () => {
+  it("surfaces the leased account's 5h/weekly windows so the client renders both codex bars without an upstream fetch", () => {
+    const provider = new CodexProvider();
+    const account: any = { id: 1, email: "a@b.c", refreshToken: "r", enabled: true };
+    provider.applyQuotaSnapshot(account, {
+      codexQuota: {
+        hourlyPercent: 80,
+        weeklyPercent: 30,
+        hourlyResetTime: "2026-06-01T10:00:00Z",
+        weeklyResetTime: "2026-06-05T00:00:00Z",
+      },
+    });
+
+    expect(provider.leaseResponseExtras(account)).toEqual({
+      codexWindows: {
+        hourlyPercent: 80,
+        weeklyPercent: 30,
+        hourlyResetTime: "2026-06-01T10:00:00Z",
+        weeklyResetTime: "2026-06-05T00:00:00Z",
+      },
+    });
+  });
+
+  it("omits codexWindows entirely before any quota snapshot exists (client keeps showing 未知, not fake 100%)", () => {
+    const provider = new CodexProvider();
+    expect(provider.leaseResponseExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any)).toEqual({});
+  });
+});
+
 describe("CodexProvider.statusAccountExtras", () => {
   it("surfaces both 5h/weekly remaining percentages and reset times for the console", () => {
     const provider = new CodexProvider();

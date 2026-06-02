@@ -17,11 +17,12 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "6.0.1"
+var AppVersion = "6.1.0"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
-	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.site/updates/latest-wails.json")
+	// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.space/updates/latest-wails.json")
 	UpdateCheckFreq = 30 * time.Minute
 )
 
@@ -114,25 +115,41 @@ func GetUpdater() *Updater {
 	return updaterInstance
 }
 
-// updaterHttpDo 执行 HTTP 请求，优先直连 bcai.site，失败回退到代理
+// updaterHttpDo 执行 HTTP 请求：依次尝试主域名 → 备域名（bcai_hosts.go），
+// 每个域名内部再做 直连 → 代理 回退。仅 GET（无 body），每次重建 request。
 func updaterHttpDo(req *http.Request) (*http.Response, error) {
-	// 优先直连（和 leaser 等对 bcai.site 的请求保持一致）
-	resp, err := createBcaiClient().Do(req)
-	if err == nil {
-		return resp, nil
-	}
-	Log("[updater] Direct request failed (%v), retrying via proxy...", err)
-
-	// 直连失败，回退到系统代理 / 用户配置的上游代理
 	cfg := LoadConfig()
-	proxyClient := createHttpClient(cfg.UpstreamProxy)
-	// 需要重建 request，因为 body 可能已被消费（GET 没有 body，但保险起见）
-	retryReq, reqErr := http.NewRequest(req.Method, req.URL.String(), nil)
-	if reqErr != nil {
-		return nil, err // 返回原始错误
+	var lastErr error
+	for _, rawURL := range bcaiURLCandidates(req.URL.String()) {
+		// 直连（和 leaser 等对 bcai 的请求保持一致）
+		directReq, err := http.NewRequest(req.Method, rawURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		directReq.Header = req.Header
+		if resp, derr := createBcaiClient().Do(directReq); derr == nil {
+			return resp, nil
+		} else {
+			Log("[updater] Direct request to %s failed (%v), retrying via proxy...", rawURL, derr)
+			lastErr = derr
+		}
+
+		// 回退到系统代理 / 用户配置的上游代理
+		proxyReq, err := http.NewRequest(req.Method, rawURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		proxyReq.Header = req.Header
+		if resp, perr := createHttpClient(cfg.UpstreamProxy).Do(proxyReq); perr == nil {
+			return resp, nil
+		} else {
+			Log("[updater] Proxy request to %s failed (%v)", rawURL, perr)
+			lastErr = perr
+		}
 	}
-	retryReq.Header = req.Header
-	return proxyClient.Do(retryReq)
+	return nil, lastErr
 }
 
 // Start 启动自动检查更新（后台循环）

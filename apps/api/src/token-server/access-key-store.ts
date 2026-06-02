@@ -39,8 +39,13 @@ export interface AccessKeyRecord {
   windowStartedAt?: number;
   usageEvents?: any[];
   tokenUsageEvents?: any[];
-  /** Provider this card is bound to ("antigravity" | "codex"). */
+  /** Per-product static binding: { codex?: accountId, antigravity?: accountId }.
+   * A card may be sold for one or both pools; each entry pins it to one account
+   * in that pool. */
+  bindings?: Record<string, number>;
+  /** Legacy single-binding fields, still read by boundAccountIdFor as a fallback. */
   provider?: string;
+  boundAccountId?: number;
   totalRequests?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
@@ -179,6 +184,37 @@ export class AccessKeyStore {
   findByKey(keyValue: string): AccessKeyRecord | null {
     if (!keyValue) return null;
     return this.readAll().keys.find((k) => constantTimeEqual(k.key, keyValue)) || null;
+  }
+
+  /**
+   * The upstream account id this card is statically bound to within the given
+   * pool, or 0 if it isn't bound here. Binding is provider-scoped because the
+   * antigravity and codex account pools allocate ids independently (both start
+   * at 1), so the same numeric id means different accounts in each pool. An
+   * untagged card (no `provider`) matches any pool for backward compatibility.
+   */
+  boundAccountIdFor(record: AccessKeyRecord, providerId: string): number {
+    const map = record?.bindings;
+    if (map && typeof map === "object") {
+      const fromMap = Number(map[providerId] || 0);
+      if (Number.isFinite(fromMap) && fromMap > 0) return fromMap;
+    }
+    // Legacy single-binding fallback.
+    const bound = Number(record?.boundAccountId || 0);
+    if (!Number.isFinite(bound) || bound <= 0) return 0;
+    if (record.provider && record.provider !== providerId) return 0;
+    return bound;
+  }
+
+  /**
+   * Whether the card has ANY static binding (in any pool). Distinguishes the two
+   * card modes: a card with no binding at all is a "pool" card (dynamic pool,
+   * legacy); a card bound for a different pool is "not sold for" this pool.
+   */
+  hasAnyBinding(record: AccessKeyRecord): boolean {
+    const map = record?.bindings;
+    if (map && typeof map === "object" && Object.values(map).some((v) => Number(v) > 0)) return true;
+    return Number(record?.boundAccountId || 0) > 0;
   }
 
   // ── Request resolution ─────────────────────────────────────────────────
@@ -461,10 +497,17 @@ export class AccessKeyStore {
 
     const windowLimit = Number(record.windowLimit || 0);
 
+    // Products the card is sold for (bindings keys with a real account id).
+    // Empty = pool card. Lets the client show only the relevant usage bars.
+    const products = record.bindings && typeof record.bindings === 'object'
+      ? Object.keys(record.bindings).filter((p) => Number((record.bindings as Record<string, number>)[p]) > 0)
+      : [];
+
     return {
       id: record.id,
       name: record.name || '',
       status: record.status || 'active',
+      products,
       firstUsedAt: record.firstUsedAt || '',
       expiresAt,
       remainingMs: expiresAt ? Math.max(0, Date.parse(expiresAt) - now) : 0,

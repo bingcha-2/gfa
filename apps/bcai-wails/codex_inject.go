@@ -124,6 +124,9 @@ func InjectCodexSettings(proxyPort int) error {
 		}
 	}
 
+	// 清掉旧版接管残留的本地 chatgpt_base_url(新版用自定义 provider,不再用它);
+	// 否则它和新 provider 并存,Codex 仍会把杂活请求发到本地代理。
+	content = stripLegacyLocalCodexBaseURL(content)
 	content = setTopLevelString(content, codexModelProvider, codexProviderID)
 	content = upsertProviderTable(content, codexProviderID, [][2]string{
 		{"name", tomlQuote(codexProviderName)},
@@ -147,6 +150,7 @@ func RestoreCodexSettings() error {
 	}
 
 	content = removeProviderTable(content, codexProviderID)
+	content = stripLegacyLocalCodexBaseURL(content)
 	prev := prevProviderFromBackup()
 	if prev != "" && prev != codexProviderID {
 		// 用户原本有自定义 provider:恢复它。
@@ -159,6 +163,25 @@ func RestoreCodexSettings() error {
 		return err
 	}
 	_ = os.Remove(codexBackupPath())
+	return nil
+}
+
+// CleanupLegacyCodexTakeover 启动时清理旧版接管残留的本地 chatgpt_base_url。
+// 新版用自定义 provider 接管,旧 chatgpt_base_url=127.0.0.1 是孤儿,留着会让 Codex
+// 把插件/遥测等杂活继续发到本地代理(被静默吞掉)。仅在确有残留时才写盘。
+func CleanupLegacyCodexTakeover() error {
+	content, had, err := readCodexConfigRaw()
+	if err != nil || !had {
+		return err
+	}
+	cleaned := stripLegacyLocalCodexBaseURL(content)
+	if cleaned == content {
+		return nil
+	}
+	if err := writeFileAtomic(codexConfigPath(), []byte(cleaned), 0o644); err != nil {
+		return err
+	}
+	Log("[codex] 已清理旧版接管残留的本地 chatgpt_base_url(Codex 将直连 chatgpt.com)")
 	return nil
 }
 

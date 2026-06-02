@@ -440,6 +440,271 @@ describe("RosettaService", () => {
     expect(result).toMatchObject({ ok: true, deleted: 0 });
   });
 
+  describe("static account binding (per-product map)", () => {
+    it("binds a card to an account under a provider key and surfaces it in listAccessKeys", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1", name: "x" });
+      expect(svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 })).toMatchObject({ ok: true });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toMatchObject({ codex: 7 });
+    });
+
+    it("lets one card bind an account in EACH pool (universal card)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 });
+      svc.bindAccessKey({ id: "c1", provider: "antigravity", accountId: 3 });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({ codex: 7, antigravity: 3 });
+    });
+
+    it("rejects binding a 5th card to the same account (max 4)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      for (let i = 1; i <= 4; i++) {
+        svc.createAccessKey({ id: `c${i}` });
+        expect(svc.bindAccessKey({ id: `c${i}`, provider: "codex", accountId: 7 }).ok).toBe(true);
+      }
+      svc.createAccessKey({ id: "c5" });
+      const r = svc.bindAccessKey({ id: "c5", provider: "codex", accountId: 7 });
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("4");
+    });
+
+    it("scopes the 4-card limit by provider", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      for (let i = 1; i <= 4; i++) {
+        svc.createAccessKey({ id: `cx${i}` });
+        svc.bindAccessKey({ id: `cx${i}`, provider: "codex", accountId: 1 });
+      }
+      svc.createAccessKey({ id: "ag1" });
+      expect(svc.bindAccessKey({ id: "ag1", provider: "antigravity", accountId: 1 }).ok).toBe(true);
+    });
+
+    it("re-binding the same card to the same account does not count it twice", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      expect(svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 }).ok).toBe(true);
+      expect(svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 }).ok).toBe(true);
+    });
+
+    it("unbinds a single provider, leaving the other binding intact", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 });
+      svc.bindAccessKey({ id: "c1", provider: "antigravity", accountId: 3 });
+      expect(svc.unbindAccessKey({ id: "c1", provider: "codex" }).ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({ antigravity: 3 });
+    });
+
+    it("surfaces boundCardCount on codex accounts", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "c1" });
+      svc.createAccessKey({ id: "c2" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: id });
+      svc.bindAccessKey({ id: "c2", provider: "codex", accountId: id });
+      expect((svc.listCodexAccounts().accounts[0] as any).boundCardCount).toBe(2);
+    });
+
+    it("clears orphan bindings when a codex account is deleted", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: id });
+      svc.deleteCodexAccount({ accountId: id });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings?.codex).toBeFalsy();
+    });
+  });
+
+  describe("per-card weight (份额 / 独享)", () => {
+    it("an exclusive card (weight 4) fills the whole account — no other card fits", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "x", weight: 4 });
+      expect(svc.bindAccessKey({ id: "x", provider: "codex", accountId: id }).ok).toBe(true);
+      svc.createAccessKey({ id: "y", weight: 1 });
+      expect(svc.bindAccessKey({ id: "y", provider: "codex", accountId: id }).ok).toBe(false);
+    });
+
+    it("four 1-share cards fit one account; the fifth does not", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      for (let i = 1; i <= 4; i++) {
+        svc.createAccessKey({ id: `c${i}` }); // default weight 1
+        expect(svc.bindAccessKey({ id: `c${i}`, provider: "codex", accountId: id }).ok).toBe(true);
+      }
+      svc.createAccessKey({ id: "c5" });
+      expect(svc.bindAccessKey({ id: "c5", provider: "codex", accountId: id }).ok).toBe(false);
+    });
+
+    it("a 2-share + two 1-share cards fill the account (2+1+1=4)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "a", weight: 2 });
+      svc.createAccessKey({ id: "b", weight: 1 });
+      svc.createAccessKey({ id: "c", weight: 1 });
+      svc.createAccessKey({ id: "d", weight: 1 });
+      expect(svc.bindAccessKey({ id: "a", provider: "codex", accountId: id }).ok).toBe(true);
+      expect(svc.bindAccessKey({ id: "b", provider: "codex", accountId: id }).ok).toBe(true);
+      expect(svc.bindAccessKey({ id: "c", provider: "codex", accountId: id }).ok).toBe(true);
+      // 2+1+1 = 4 (full) → the 4th 1-share card no longer fits.
+      expect(svc.bindAccessKey({ id: "d", provider: "codex", accountId: id }).ok).toBe(false);
+    });
+
+    it("defaults card weight to 1 and surfaces it; usedShares reflects the sum", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "c1" });
+      expect((svc.listAccessKeys({}).keys[0] as any).weight).toBe(1);
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: id });
+      expect((svc.listCodexAccounts().accounts[0] as any).usedShares).toBe(1);
+    });
+
+    it("auto-binds an exclusive card to a whole account (usedShares = 4)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      expect(svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" }, weight: 4 }).ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.weight).toBe(4);
+      expect(key.bindings).toMatchObject({ codex: id });
+      expect((svc.listCodexAccounts().accounts[0] as any).usedShares).toBe(4);
+    });
+
+    it("auto-binds to the best-fit (tightest) account, keeping whole accounts free for 独享", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" }); // id 1
+      svc.addCodexAccount({ email: "b@x.com", refreshToken: "rt", planType: "pro" }); // id 2
+      const ids = svc.listCodexAccounts().accounts.map((a) => a.id);
+      // Pre-fill account ids[0] to 3/4 with a 3-share card; ids[1] stays empty (4 free).
+      svc.createAccessKey({ id: "big", weight: 3 });
+      svc.bindAccessKey({ id: "big", provider: "codex", accountId: ids[0] });
+
+      // A new 1-share card must go to ids[0] (free 1, tight fit) — NOT the empty ids[1].
+      svc.createAccessKey({ id: "small", products: ["codex"], levels: { codex: "pro" }, weight: 1 });
+      const small = svc.listAccessKeys({}).keys.find((k) => k.id === "small") as any;
+      expect(small.bindings.codex).toBe(ids[0]);
+
+      // The empty account is preserved → an exclusive (4-share) card still fits ids[1].
+      svc.createAccessKey({ id: "excl", products: ["codex"], levels: { codex: "pro" }, weight: 4 });
+      const excl = svc.listAccessKeys({}).keys.find((k) => k.id === "excl") as any;
+      expect(excl.bindings.codex).toBe(ids[1]);
+    });
+
+    it("auto-bind fails when no account has room for the card's weight", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      // fill 3 shares with three 1-share cards…
+      svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" }, count: 3 });
+      // …an exclusive (4-share) card no longer fits (only 1 share free).
+      const res: any = svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" }, weight: 4 });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("不足");
+    });
+  });
+
+  describe("auto-bind on card creation", () => {
+    it("auto-binds a new codex card to an account with an open seat", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      const res: any = svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" } });
+      expect(res.ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toMatchObject({ codex: id });
+    });
+
+    it("auto-binds across both pools for a universal card", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "c@x.com", refreshToken: "rt", planType: "pro" });
+      svc.addAccount({ email: "a@x.com", refreshToken: "rt", projectId: "p", planType: "ultra" });
+      const cid = svc.listCodexAccounts().accounts[0].id;
+      const aid = svc.listAccounts().accounts[0].id;
+      svc.createAccessKey({ products: ["codex", "antigravity"], levels: { codex: "pro", antigravity: "ultra" } });
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toEqual({ codex: cid, antigravity: aid });
+    });
+
+    it("spreads a batch across seats and fails when seats run out", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" }); // 1 account = 4 seats
+      // 4 cards fit…
+      expect(svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" }, count: 4 }).ok).toBe(true);
+      const id = svc.listCodexAccounts().accounts[0].id;
+      expect((svc.listCodexAccounts().accounts[0] as any).boundCardCount).toBe(4);
+      // …a 5th has no seat → rejected, nothing minted.
+      const res: any = svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" } });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("不足");
+      expect(svc.listAccessKeys({}).keys).toHaveLength(4);
+      void id;
+    });
+
+    it("mints an unbound card when no products are selected (back-compat)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      const res: any = svc.createAccessKey({ name: "x" });
+      expect(res.ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings || {}).toEqual({});
+    });
+
+    it("rejects a product without a chosen level (level is required)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      const res: any = svc.createAccessKey({ products: ["codex"] });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("会员等级");
+      expect(svc.listAccessKeys({}).keys).toHaveLength(0);
+    });
+
+    it("only binds accounts of the requested level", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addAccount({ email: "prem@x.com", refreshToken: "rt", projectId: "p", planType: "premium" });
+      svc.addAccount({ email: "ultra@x.com", refreshToken: "rt", projectId: "p", planType: "ultra" });
+      const ultraId = svc.listAccounts().accounts.find((a) => a.planType === "ultra")!.id;
+      svc.createAccessKey({ products: ["antigravity"], levels: { antigravity: "ultra" } });
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toEqual({ antigravity: ultraId });
+    });
+
+    it("fails when no account matches the requested level", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      const res: any = svc.createAccessKey({ products: ["codex"], levels: { codex: "plus" } });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("plus");
+      expect(svc.listAccessKeys({}).keys).toHaveLength(0);
+    });
+
+    it("skips an account whose quota is fully exhausted", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      // Two pro accounts; the first is drained (codex fraction 0), the second has quota.
+      svc.addCodexAccount({ email: "drained@x.com", refreshToken: "rt", planType: "pro" });
+      svc.addCodexAccount({ email: "fresh@x.com", refreshToken: "rt", planType: "pro" });
+      const accounts = svc.listCodexAccounts().accounts;
+      const drainedId = accounts.find((a) => a.email === "drained@x.com")!.id;
+      const freshId = accounts.find((a) => a.email === "fresh@x.com")!.id;
+      // Drain the first account's codex window (no reset → stays exhausted).
+      const file = path.join(tempDir, "codex-accounts.json");
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      const drained = data.accounts.find((a: any) => a.id === drainedId);
+      drained.modelQuotaFractions = { codex: 0 };
+      fs.writeFileSync(file, JSON.stringify(data, null, 2));
+
+      svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" } });
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toEqual({ codex: freshId });
+    });
+  });
+
   describe("adspowerImport", () => {
     function makeMocks(opts: { taskId?: string } = {}) {
       const automation = {

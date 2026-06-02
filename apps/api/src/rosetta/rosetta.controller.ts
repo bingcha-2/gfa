@@ -4,6 +4,7 @@ import { RosettaService } from "./rosetta.service";
 import { CreditStatsService } from "./credit-stats.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
+import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 
 // NOTE: intentionally NOT @Public() — these are admin-console operations
 // (account pool, access keys, Codex OAuth token import) that must be gated by the
@@ -18,7 +19,20 @@ export class RosettaController {
     private readonly creditStats: CreditStatsService,
     private readonly tokenUsageStats: TokenUsageStatsService,
     private readonly tokenServer: TokenServerService,
+    private readonly remoteCodex: RemoteCodexService,
   ) {}
+
+  /**
+   * Reload the access-key cache in BOTH lease pools. The antigravity
+   * (tokenServer) and codex (remoteCodex) services each hold their own
+   * AccessKeyStore over the same access-keys.json, so a binding write is only
+   * visible to a pool after it reloads — reloading just one leaves the other
+   * serving stale bindings.
+   */
+  private reloadKeyStores() {
+    this.tokenServer.reloadAccessKeys();
+    this.remoteCodex.reloadAccessKeys();
+  }
 
   @Get("access-keys")
   listAccessKeys(@Query("search") search?: string) {
@@ -79,21 +93,35 @@ export class RosettaController {
   @Post("access-key")
   createAccessKey(@Body() body: any) {
     const result = this.rosetta.createAccessKey(body);
-    this.tokenServer.reloadAccessKeys();
+    this.reloadKeyStores();
     return result;
   }
 
   @Post("access-key-update")
   updateAccessKey(@Body() body: any) {
     const result = this.rosetta.updateAccessKey(body);
-    this.tokenServer.reloadAccessKeys();
+    this.reloadKeyStores();
+    return result;
+  }
+
+  @Post("access-key-bind")
+  bindAccessKey(@Body() body: any) {
+    const result = this.rosetta.bindAccessKey(body);
+    this.reloadKeyStores();
+    return result;
+  }
+
+  @Post("access-key-unbind")
+  unbindAccessKey(@Body() body: any) {
+    const result = this.rosetta.unbindAccessKey(body);
+    this.reloadKeyStores();
     return result;
   }
 
   @Post("access-key-delete")
   async deleteAccessKey(@Body() body: any) {
     const result = this.rosetta.deleteAccessKey(body);
-    this.tokenServer.reloadAccessKeys();
+    this.reloadKeyStores();
     // Drop the card's persisted token usage log alongside the card itself.
     const id = String(body?.id || "");
     if (id) await this.tokenUsageStats.deleteCardUsage(id);
@@ -103,14 +131,14 @@ export class RosettaController {
   @Post("cleanup-expired-keys")
   cleanupExpiredKeys() {
     const result = this.rosetta.cleanupExpiredKeys();
-    this.tokenServer.reloadAccessKeys();
+    this.reloadKeyStores();
     return result;
   }
 
   @Post("cleanup-unbound-keys")
   cleanupUnboundKeys() {
     const result = this.rosetta.cleanupUnboundKeys();
-    this.tokenServer.reloadAccessKeys();
+    this.reloadKeyStores();
     return result;
   }
 

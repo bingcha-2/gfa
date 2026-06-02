@@ -27,6 +27,9 @@ type CodexAccount = {
   alias: string;
   planType: string;
   hasToken: boolean;
+  boundCardCount: number;
+  usedShares: number;
+  shareCapacity: number;
   codexHourlyPercent: number;
   codexWeeklyPercent: number;
   modelQuotaRefreshedAt: number;
@@ -248,6 +251,7 @@ export default function CodexAccountsPage() {
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
+                  <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -265,6 +269,11 @@ export default function CodexAccountsPage() {
                     <TableCell className="text-sm">{pct(a.codexWeeklyPercent)}</TableCell>
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
+                        {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />

@@ -453,6 +453,15 @@ func (p *ProxyServer) sendJson(w http.ResponseWriter, code int, payload interfac
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+// passthroughUpstreamError 把上游(Google)的错误原文按原状态码回给客户端,让 IDE 用它
+// 自己的逻辑处理 —— 验证挑战(VALIDATION_REQUIRED / "Verify your account")这样就能触发
+// Antigravity 自带的"验证账号"流程(带 validation_url 链接),而不是被代理吞成"繁忙"。
+func (p *ProxyServer) passthroughUpstreamError(w http.ResponseWriter, code int, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(body))
+}
+
 func (p *ProxyServer) sendJsonError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

@@ -31,15 +31,20 @@ func cloudCodeAccountProblemReason(statusCode int, body string) string {
 	case http.StatusTooManyRequests:
 		return buildAccountProblemReason(statusCode, firstNonEmpty(googleStatus, googleDetailReason, "too_many_requests"))
 	case http.StatusForbidden:
+		// 验证挑战(VALIDATION_REQUIRED / "Verify your account")必须先判 —— 它的报文里带
+		// "domain": "cloudcode-pa.googleapis.com",会被下面的 service_disabled 规则误吞。
+		// 这是账号被 Google 风控、需人工验证,不是"服务禁用"。
+		if strings.Contains(lowerBody, "verify") ||
+			strings.Contains(lowerBody, "validation") ||
+			strings.Contains(lowerBody, "al_alert") {
+			return buildAccountProblemReason(statusCode, "account_verification_required")
+		}
 		if strings.Contains(lowerBody, "service_disabled") ||
 			strings.Contains(lowerBody, "cloud code private api") ||
 			strings.Contains(lowerBody, "cloudcode-pa.googleapis.com") ||
 			strings.Contains(lowerBody, "api has not been used in project") ||
 			strings.Contains(lowerBody, "enable it by visiting") {
 			return buildAccountProblemReason(statusCode, "service_disabled")
-		}
-		if strings.Contains(lowerBody, "verify") || strings.Contains(lowerBody, "validation") {
-			return buildAccountProblemReason(statusCode, "account_verification_required")
 		}
 		if strings.Contains(lowerBody, "permission_denied") && strings.Contains(lowerBody, "cloudcode-pa.googleapis.com") {
 			return buildAccountProblemReason(statusCode, "service_disabled")

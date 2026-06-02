@@ -216,9 +216,24 @@ func fetchModelsViaTokenWithEndpoint(endpoint, accessToken, projectId string) ma
 
 // ─── Leaser 集成 ────────────────────────────────────────────────────────
 
+// claimQuotaFetch 至多每 codexQuotaMinIntervalMs 返回一次 true 并打时间戳。
+// 首次(从未拉取)放行。对齐 codex 节流,避免每次上报都打 Google fetchAvailableModels。
+func (l *Leaser) claimQuotaFetch(nowMs int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastQuotaFetchAt != 0 && nowMs-l.lastQuotaFetchAt < codexQuotaMinIntervalMs {
+		return false
+	}
+	l.lastQuotaFetchAt = nowMs
+	return true
+}
+
 // fetchAccountQuotaAsync 异步查询当前 lease 账号的额度信息
-// CAS 保护：同一时间只允许一个查询
+// 时间节流(claimQuotaFetch)+ CAS 保护：同一时间只允许一个查询，且不超频。
 func (l *Leaser) fetchAccountQuotaAsync() {
+	if !l.claimQuotaFetch(time.Now().UnixMilli()) {
+		return
+	}
 	// CAS 防并发
 	if !atomic.CompareAndSwapInt32(&l.quotaFetching, 0, 1) {
 		return
@@ -284,6 +299,56 @@ func (l *Leaser) ConsumeQuotaSnapshot() *AccountQuotaSnapshot {
 	s := l.cachedQuotaSnapshot
 	l.cachedQuotaSnapshot = nil
 	return s
+}
+
+// isoToEpochMs 把 RFC3339 时间串转 epoch ms;空/解析失败返回 0(未知)。
+func isoToEpochMs(iso string) int64 {
+	if iso == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+// reportQuotaOnly 发一条只带 accountQuota 的 report,让服务端即时更新该号的 per-model
+// 额度(用当前 lease 的 leaseId,服务端据此解出 accountId;status=0 不计费)。
+func (l *Leaser) reportQuotaOnly(card, upstreamProxy string, snap *AccountQuotaSnapshot) {
+	l.mu.RLock()
+	lease := l.cachedToken
+	l.mu.RUnlock()
+	if lease == nil || lease.LeaseId == "" || snap == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"leaseId":      lease.LeaseId,
+		"reportId":     newReportID(lease.LeaseId) + "-quota",
+		"accountId":    lease.AccountId,
+		"status":       0,
+		"accountQuota": snap,
+	}
+	if _, _, err := postBcaiWithFallback("/report-result", payload, card, upstreamProxy); err != nil {
+		Log("[quota-sync] 即时额度上报失败(不致命): %v", err)
+		return
+	}
+	Log("[quota-sync] ✓ 即时额度上报成功 account#%d models=%d → 后台应已更新", lease.AccountId, len(snap.ModelQuota))
+}
+
+// refreshBoundAntigravityQuota 主动拉一次上游 per-model 额度 → 记录血条 + 上报服务端。
+// 绑定模式激活/定时刷新调用 —— 否则 antigravity 只在"真实生成上报"之后才拉额度,
+// 纯激活(还没发请求)时血条没数据。fetchAccountQuotaAsync 自带 5min 节流。
+func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string) {
+	l.fetchAccountQuotaAsync()
+	snap := l.ConsumeQuotaSnapshot()
+	if snap == nil {
+		return // 被节流跳过 / 拉取失败 —— 血条仍由租号响应的 accountBuckets 兜底
+	}
+	for modelKey, q := range snap.ModelQuota {
+		recordBoundFractionForModel(modelKey, q.RemainingFraction, isoToEpochMs(q.ResetTime))
+	}
+	l.reportQuotaOnly(card, upstreamProxy, snap)
 }
 
 // formatQuotaSyncLog 格式化日志（避免在 fetchAccountQuotaAsync 中过长）

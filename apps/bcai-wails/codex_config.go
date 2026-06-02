@@ -76,6 +76,21 @@ func setTopLevelString(content, key, value string) string {
 	return strings.Join(out, "")
 }
 
+// stripLegacyLocalCodexBaseURL 删除旧版接管残留的顶层 chatgpt_base_url(指向本地代理
+// 127.0.0.1 的那种)。新版接管改用自定义 provider,不再写 chatgpt_base_url;旧值若留着,
+// Codex 仍会把插件/遥测等杂活请求发到本地代理(被静默吞掉),看起来像"没开代理却还在拦"。
+// 只清理指向 127.0.0.1 的本地残留,用户自定义的远程值原样保留。
+func stripLegacyLocalCodexBaseURL(content string) string {
+	lines := splitKeepEOL(content)
+	end := findTopRegionEnd(lines)
+	for i := 0; i < end; i++ {
+		if topLevelKeyName(lines[i]) == "chatgpt_base_url" && strings.Contains(lines[i], "127.0.0.1") {
+			return removeTopLevelKey(content, "chatgpt_base_url")
+		}
+	}
+	return content
+}
+
 // removeTopLevelKey 删除顶层区指定 key 所在的行。
 func removeTopLevelKey(content, key string) string {
 	lines := splitKeepEOL(content)
