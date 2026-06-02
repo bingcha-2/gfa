@@ -313,6 +313,74 @@ describe('AccessKeyStore', () => {
     });
   });
 
+  // ── Static account binding ───────────────────────────────────────────────
+
+  describe('boundAccountIdFor', () => {
+    it('returns the bound account id when the card provider matches the pool', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', provider: 'codex', boundAccountId: 7 },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(7);
+    });
+
+    it('returns 0 when the card is bound to a different pool', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', provider: 'codex', boundAccountId: 7 },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'antigravity')).toBe(0);
+    });
+
+    it('treats an untagged (no provider) bound card as belonging to any pool', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', boundAccountId: 3 },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(3);
+      expect(store.boundAccountIdFor(record, 'antigravity')).toBe(3);
+    });
+
+    it('returns 0 for an unbound card', () => {
+      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(0);
+    });
+
+    it('reads a per-provider binding from the bindings map', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', bindings: { codex: 12, antigravity: 5 } },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(12);
+      expect(store.boundAccountIdFor(record, 'antigravity')).toBe(5);
+    });
+
+    it('returns 0 for a provider the card is not sold for', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', bindings: { codex: 12 } },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'antigravity')).toBe(0);
+    });
+
+    it('prefers the bindings map over the legacy single field', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', provider: 'codex', boundAccountId: 3, bindings: { codex: 12 } },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(12);
+    });
+
+    it('returns 0 when boundAccountId is not a positive number', () => {
+      const store = makeStore([
+        { id: 'k1', key: 'secret1', status: 'active', provider: 'codex', boundAccountId: 0 },
+      ]);
+      const record = store.findById('k1')!;
+      expect(store.boundAccountIdFor(record, 'codex')).toBe(0);
+    });
+  });
+
   // ── Key extraction from various sources ──────────────────────────────────
 
   describe('resolveFromRequest — key extraction', () => {
@@ -515,6 +583,17 @@ describe('AccessKeyStore', () => {
   // ── publicStatus ──────────────────────────────────────────────────────
 
   describe('publicStatus', () => {
+    it('surfaces the card products from bindings (empty = pool card)', () => {
+      const store = makeStore([
+        { id: 'k1', key: 's1', status: 'active', bindings: { codex: 7 } },
+        { id: 'k2', key: 's2', status: 'active', bindings: { codex: 7, antigravity: 3 } },
+        { id: 'k3', key: 's3', status: 'active' },
+      ]);
+      expect(store.publicStatus(store.findById('k1')!).products).toEqual(['codex']);
+      expect(store.publicStatus(store.findById('k2')!).products.sort()).toEqual(['antigravity', 'codex']);
+      expect(store.publicStatus(store.findById('k3')!).products).toEqual([]);
+    });
+
     it('should return correct structure with computed fields', () => {
       const now = Date.now();
       const store = makeStore([{

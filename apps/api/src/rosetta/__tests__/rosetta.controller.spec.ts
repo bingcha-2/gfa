@@ -1,0 +1,46 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { RosettaController } from "../rosetta.controller";
+
+function makeController() {
+  const rosetta = {
+    bindAccessKey: vi.fn(() => ({ ok: true, key: { id: "c1" } })),
+    unbindAccessKey: vi.fn(() => ({ ok: true, key: { id: "c1" } })),
+    createAccessKey: vi.fn(() => ({ ok: true })),
+  };
+  const tokenServer = { reloadAccessKeys: vi.fn() };
+  const remoteCodex = { reloadAccessKeys: vi.fn() };
+  const controller = new RosettaController(
+    rosetta as any,
+    {} as any,
+    {} as any,
+    tokenServer as any,
+    remoteCodex as any,
+  );
+  return { controller, rosetta, tokenServer, remoteCodex };
+}
+
+describe("RosettaController — static binding", () => {
+  it("bindAccessKey delegates to the service and reloads BOTH pools", () => {
+    const { controller, rosetta, tokenServer, remoteCodex } = makeController();
+    const result = controller.bindAccessKey({ id: "c1", provider: "codex", accountId: 1 });
+    expect(rosetta.bindAccessKey).toHaveBeenCalledWith({ id: "c1", provider: "codex", accountId: 1 });
+    expect(tokenServer.reloadAccessKeys).toHaveBeenCalledTimes(1);
+    expect(remoteCodex.reloadAccessKeys).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("unbindAccessKey reloads both pools", () => {
+    const { controller, rosetta, tokenServer, remoteCodex } = makeController();
+    controller.unbindAccessKey({ id: "c1" });
+    expect(rosetta.unbindAccessKey).toHaveBeenCalledWith({ id: "c1" });
+    expect(tokenServer.reloadAccessKeys).toHaveBeenCalledTimes(1);
+    expect(remoteCodex.reloadAccessKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("createAccessKey reloads the codex pool too (not just antigravity)", () => {
+    const { controller, remoteCodex } = makeController();
+    controller.createAccessKey({ name: "x" });
+    expect(remoteCodex.reloadAccessKeys).toHaveBeenCalledTimes(1);
+  });
+});

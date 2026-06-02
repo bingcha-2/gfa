@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://bcai.site/remote-codex")
+// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://bcai.space/remote-codex")
 
 type CodexTokenLease struct {
 	AccessToken string `json:"accessToken"`
@@ -30,15 +31,35 @@ type codexLeaseTokenResp struct {
 	LeaseId     string          `json:"leaseId"`
 	EmailHint   string          `json:"emailHint"`
 	ExpiresAt   string          `json:"expiresAt"`
+	BoundAccount *struct {
+		Id       int     `json:"id"`
+		Fraction float64 `json:"fraction"`
+		ResetAt  int64   `json:"resetAt"`
+	} `json:"boundAccount"`
+	// 服务端把绑定/被租 codex 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
+	// 客户端据此渲染两条 codex 血条,无需自己抓上游。
+	CodexWindows *CodexQuotaWindow `json:"codexWindows"`
 }
 
 type CodexLeaser struct {
 	lastError string
 
-	mu             sync.Mutex
-	cachedQuota    *CodexAccountQuotaSnapshot // one-shot snapshot for the next report
-	quotaFetching  int32                      // CAS guard for fetchCodexQuotaAsync
-	pendingReports []pendingReport            // 失败上报队列(对齐 Gemini,防丢用量)
+	mu               sync.Mutex
+	cachedQuota      *CodexAccountQuotaSnapshot // one-shot snapshot for the next report
+	lastQuota        *CodexAccountQuotaSnapshot // 持久副本(供前端显示 5h/周 两条,不被 Consume 清掉)
+	quotaFetching    int32                      // CAS guard for fetchCodexQuotaAsync
+	lastQuotaFetchAt int64                      // 上次上游额度拉取时间(epoch ms),用于频率节流
+	pendingReports   []pendingReport            // 失败上报队列(对齐 Gemini,防丢用量)
+}
+
+// LatestCodexQuota 返回最近一次抓到的 codex 5h/周限额(供血条显示),无则 nil。
+func (l *CodexLeaser) LatestCodexQuota() *CodexQuotaWindow {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastQuota == nil {
+		return nil
+	}
+	return l.lastQuota.CodexQuota
 }
 
 var globalCodexLeaser = &CodexLeaser{}
@@ -154,8 +175,52 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
 	}
+	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
+	if leaseResp.BoundAccount != nil {
+		mk, _ := options["modelKey"].(string)
+		if mk == "" {
+			mk = "gpt-5-codex"
+		}
+		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+	}
+	recordAccountBuckets(body)
+	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
+	l.applyCodexWindows(leaseResp.CodexWindows)
 	l.setLastError("")
 	return lease, nil
+}
+
+// applyCodexWindows 用服务端下发的 5h/周窗口更新本地持久快照(供 DashboardPage 显示
+// 两条 codex 血条)。nil 表示服务端暂无该号窗口数据 → 保留现有快照,不清空。
+func (l *CodexLeaser) applyCodexWindows(w *CodexQuotaWindow) {
+	if w == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.lastQuota == nil {
+		l.lastQuota = &CodexAccountQuotaSnapshot{}
+	}
+	cp := *w
+	l.lastQuota.CodexQuota = &cp
+	l.mu.Unlock()
+}
+
+// RefreshQuotaUpstream 主动拉一次 codex 上游 5h/周额度 → 更新血条 + 上报服务端。
+// 供绑定模式激活/定时刷新调用;fetchCodexQuotaAsync 自带 5min 节流,被跳过则不报。
+func (l *CodexLeaser) RefreshQuotaUpstream(card, upstreamProxy string, lease *CodexTokenLease, force bool) {
+	if lease == nil {
+		return
+	}
+	if force {
+		// 激活/换卡:清掉节流时间戳,保证这次一定真去拉 codex 5h/周。
+		l.mu.Lock()
+		l.lastQuotaFetchAt = 0
+		l.mu.Unlock()
+	}
+	l.fetchCodexQuotaAsync(lease, upstreamProxy)
+	if snap := l.peekCodexQuotaSnapshot(); snap != nil {
+		l.reportQuotaOnly(card, upstreamProxy, lease, snap)
+	}
 }
 
 func (l *CodexLeaser) ReportUsage(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {

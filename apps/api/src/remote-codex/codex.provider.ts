@@ -3,7 +3,7 @@ import * as path from "path";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import type { CreditDelta, Provider } from "../lease-core/provider";
 import { UNIVERSAL_BILLING } from "../token-server/token-billing";
-import { getModelQuotaFraction } from "../token-server/lease-scheduler";
+import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provider";
 import { CodexModelCatalog } from "./codex-model-catalog";
 
@@ -69,8 +69,34 @@ export class CodexProvider implements Provider<CodexAccount> {
     return getModelQuotaFraction(account, "codex");
   }
 
-  leaseResponseExtras(): Record<string, unknown> {
-    return {};
+  /**
+   * Surface the leased account's 5h + weekly remaining windows on every lease
+   * response. The client renders the two codex blood bars (5h / 周) straight
+   * from this — no separate upstream quota fetch needed — so a freshly-activated
+   * or idle bound card shows real percentages (sourced from whoever last used
+   * the shared account). Omitted entirely until a quota snapshot exists, so the
+   * client shows "未知" rather than a fabricated 100%.
+   */
+  leaseResponseExtras(account: CodexAccount): Record<string, unknown> {
+    const a = account as Record<string, unknown>;
+    const hourly = typeof a.codexHourlyPercent === "number" ? a.codexHourlyPercent : null;
+    const weekly = typeof a.codexWeeklyPercent === "number" ? a.codexWeeklyPercent : null;
+    if (hourly === null && weekly === null) return {};
+    return {
+      codexWindows: {
+        hourlyPercent: hourly,
+        weeklyPercent: weekly,
+        hourlyResetTime: a.codexHourlyResetTime ? String(a.codexHourlyResetTime) : "",
+        weeklyResetTime: a.codexWeeklyResetTime ? String(a.codexWeeklyResetTime) : "",
+      },
+    };
+  }
+
+  /** Blood bar = the account-level codex binding (min hourly/weekly) fraction.
+   * Unknown (no quota snapshot yet) → -1 so the client shows "未知", not a fake 100%. */
+  bloodBarFraction(account: CodexAccount, _modelKey: string): { fraction: number; resetAt: number } {
+    const f = getModelQuotaFraction(account, "codex");
+    return { fraction: f === null || f < 0 ? -1 : f, resetAt: getModelQuotaResetAt(account, "codex") };
   }
 
   /**

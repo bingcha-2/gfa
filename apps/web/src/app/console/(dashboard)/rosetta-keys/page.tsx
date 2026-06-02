@@ -71,6 +71,8 @@ import {
   BarChart3Icon,
 } from "lucide-react";
 import { CardUsageDialog } from "./card-usage-dialog";
+import { BindAccountControl, type BindableAccount } from "@/components/BindAccountControl";
+import { toBindableAccounts } from "@/lib/bindable-accounts";
 
 type AccessKey = {
   id: string;
@@ -83,7 +85,8 @@ type AccessKey = {
   recentWindowTokens: number;
   tokenWindowLimit: number;
   windowMs?: number;
-  provider?: string;
+  bindings?: Record<string, number>;
+  weight?: number;
   durationMs?: number;
   createdAt: string;
   lastUsedAt: string;
@@ -141,6 +144,18 @@ export default function RosettaKeysPage() {
   const [createWindowValue, setCreateWindowValue] = useState("5");
   const [createWindowUnit, setCreateWindowUnit] = useState("h");
   const [createCount, setCreateCount] = useState("1");
+  // Products the new card is sold for. None selected = pool-mode card (no
+  // binding); selecting one/both auto-binds an open-seat account per product.
+  const [createCodex, setCreateCodex] = useState(false);
+  const [createAnti, setCreateAnti] = useState(false);
+  // 会员等级(planType):每个开通的产品必选一个等级,只绑定该等级且可用的账号。
+  const [createCodexLevel, setCreateCodexLevel] = useState("");
+  const [createAntiLevel, setCreateAntiLevel] = useState("");
+  // 各号池里存在的等级选项(去重),用于上面的下拉。
+  const [codexLevels, setCodexLevels] = useState<string[]>([]);
+  const [antiLevels, setAntiLevels] = useState<string[]>([]);
+  // 份额(weight):1 拼车(4人共享一个号)… 4 独享(一张卡占满一个号)。
+  const [createWeight, setCreateWeight] = useState("1");
   const [creating, setCreating] = useState(false);
 
   // Key reveal dialog
@@ -197,6 +212,81 @@ export default function RosettaKeysPage() {
     fetchKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Bindable accounts across both pools (for the static card→account binding UI).
+  const [bindableAccounts, setBindableAccounts] = useState<BindableAccount[]>([]);
+
+  const fetchBindableAccounts = useCallback(async () => {
+    try {
+      const [codexRes, antiRes] = await Promise.all([
+        fetch("/api/rosetta/codex-accounts"),
+        fetch("/api/rosetta/accounts"),
+      ]);
+      const codex = await codexRes.json();
+      const anti = await antiRes.json();
+      setBindableAccounts(toBindableAccounts(codex.accounts, anti.accounts));
+      // Distinct, non-empty membership levels present in each pool (for the
+      // create form's per-product level picker).
+      const levelsOf = (list: Array<{ planType?: string }> | undefined) =>
+        [...new Set((list || []).map((a) => String(a.planType || "").trim()).filter(Boolean))].sort();
+      setCodexLevels(levelsOf(codex.accounts));
+      setAntiLevels(levelsOf(anti.accounts));
+    } catch {
+      // Non-fatal: the binding picker just shows no accounts.
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBindableAccounts();
+  }, [fetchBindableAccounts]);
+
+  // Level is required per checked product: default to the first available level
+  // when a product is enabled (or its current pick is no longer valid), and
+  // clear it when the product is unchecked.
+  useEffect(() => {
+    if (!createCodex) return setCreateCodexLevel("");
+    if (codexLevels.length && !codexLevels.includes(createCodexLevel)) {
+      setCreateCodexLevel(codexLevels[0]);
+    }
+  }, [createCodex, codexLevels, createCodexLevel]);
+  useEffect(() => {
+    if (!createAnti) return setCreateAntiLevel("");
+    if (antiLevels.length && !antiLevels.includes(createAntiLevel)) {
+      setCreateAntiLevel(antiLevels[0]);
+    }
+  }, [createAnti, antiLevels, createAntiLevel]);
+
+  const handleBind = async (cardId: string, provider: string, accountId: number) => {
+    try {
+      const res = await fetch("/api/rosetta/access-key-bind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: cardId, provider, accountId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "绑定失败");
+      toast.success("已绑定账号");
+      await Promise.all([fetchKeys(), fetchBindableAccounts()]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "绑定失败");
+    }
+  };
+
+  const handleUnbind = async (cardId: string, provider: string) => {
+    try {
+      const res = await fetch("/api/rosetta/access-key-unbind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: cardId, provider }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "解绑失败");
+      toast.success("已解绑");
+      await Promise.all([fetchKeys(), fetchBindableAccounts()]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "解绑失败");
+    }
+  };
 
   const handleSearchInput = (value: string) => {
     setSearch(value);
@@ -288,6 +378,21 @@ export default function RosettaKeysPage() {
       }
       if (createTokenLimit.trim()) {
         payload.tokenWindowLimit = Number(createTokenLimit);
+      }
+      const products = [
+        ...(createCodex ? ["codex"] : []),
+        ...(createAnti ? ["antigravity"] : []),
+      ];
+      if (products.length) {
+        // Level is required for every selected product.
+        if (createCodex && !createCodexLevel) throw new Error("请选择 Codex 会员等级");
+        if (createAnti && !createAntiLevel) throw new Error("请选择 Antigravity 会员等级");
+        payload.products = products;
+        payload.levels = {
+          ...(createCodex ? { codex: createCodexLevel } : {}),
+          ...(createAnti ? { antigravity: createAntiLevel } : {}),
+        };
+        payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
       }
 
       const res = await fetch("/api/rosetta/access-key", {
@@ -448,6 +553,86 @@ export default function RosettaKeysPage() {
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
               />
+            </Field>
+            <Field className="min-w-[180px]">
+              <FieldLabel>开通产品（不选=池子模式）</FieldLabel>
+              <div className="flex items-center gap-3 h-9">
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createCodex}
+                    onChange={(e) => setCreateCodex(e.target.checked)}
+                  />
+                  Codex
+                </label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createAnti}
+                    onChange={(e) => setCreateAnti(e.target.checked)}
+                  />
+                  Antigravity
+                </label>
+              </div>
+            </Field>
+            {createCodex && (
+              <Field className="min-w-[140px]">
+                <FieldLabel>Codex 会员等级</FieldLabel>
+                <Select value={createCodexLevel} onValueChange={setCreateCodexLevel}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择等级" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {codexLevels.length ? (
+                      codexLevels.map((lv) => (
+                        <SelectItem key={lv} value={lv}>
+                          {lv}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__none" disabled>
+                        无可用等级
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {createAnti && (
+              <Field className="min-w-[140px]">
+                <FieldLabel>Antigravity 会员等级</FieldLabel>
+                <Select value={createAntiLevel} onValueChange={setCreateAntiLevel}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择等级" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {antiLevels.length ? (
+                      antiLevels.map((lv) => (
+                        <SelectItem key={lv} value={lv}>
+                          {lv}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__none" disabled>
+                        无可用等级
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            <Field className="min-w-[130px]">
+              <FieldLabel>份额(几人享用)</FieldLabel>
+              <Select value={createWeight} onValueChange={setCreateWeight}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">拼车 · 1份(4人/号)</SelectItem>
+                  <SelectItem value="2">2份(2人/号)</SelectItem>
+                  <SelectItem value="4">独享 · 4份(独占一个号)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field className="min-w-[180px]">
               <FieldLabel>有效期</FieldLabel>
@@ -666,6 +851,7 @@ export default function RosettaKeysPage() {
                       <TableHead>卡密</TableHead>
                       <TableHead>备注</TableHead>
                       <TableHead>状态</TableHead>
+                      <TableHead>绑定账号</TableHead>
                       <TableHead>有效期</TableHead>
                       <TableHead
                         className="cursor-pointer select-none"
@@ -747,6 +933,14 @@ export default function RosettaKeysPage() {
                           <Badge variant={statusVariant(item.status)}>
                             {item.status}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <BindAccountControl
+                            card={{ id: item.id, bindings: item.bindings, weight: item.weight }}
+                            accounts={bindableAccounts}
+                            onBind={(provider, accountId) => handleBind(item.id, provider, accountId)}
+                            onUnbind={(provider) => handleUnbind(item.id, provider)}
+                          />
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           <div className="flex flex-col">

@@ -20,6 +20,11 @@ interface AppState {
   accountId: number
   hasToken: boolean
   autoLeaseRunning: boolean
+  cardUnusable: boolean
+  cardProducts: string[]
+  bucketFractions: Record<string, number>
+  bucketResetMs: Record<string, number>
+  codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   activationExpiresAt: string
 
   // Today stats
@@ -73,6 +78,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   accountId: 0,
   hasToken: false,
   autoLeaseRunning: false,
+  cardUnusable: false,
+  cardProducts: [],
+  bucketFractions: {},
+  bucketResetMs: {},
+  codexQuota: null,
   activationExpiresAt: '',
   todayRequests: 0,
   todayErrors: 0,
@@ -108,6 +118,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         accountId: data.leaser?.accountId || 0,
         hasToken: data.leaser?.hasToken || false,
         autoLeaseRunning: data.leaser?.autoLeaseRunning || false,
+        cardUnusable: data.leaser?.cardUnusable || false,
+        cardProducts: data.leaser?.accessKeyStatus?.products || [],
+        bucketFractions: data.leaser?.bucketFractions || {},
+        bucketResetMs: data.leaser?.bucketResetMs || {},
+        codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
         activationExpiresAt: data.leaser?.activationExpiresAt || '',
         todayRequests: today.requests || 0,
         todayErrors: today.errors || 0,
@@ -121,7 +136,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         geminiLimit: lq?.geminiTokenLimit ?? null,
         codexUsed: lq?.codexTokensUsed ?? null,
         codexLimit: lq?.codexTokenLimit ?? null,
-        recoveryRemainingMs: lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1,
+        // 额度恢复倒计时优先用"绑定号上游重置时间";没有(池子卡/未租到)再退回本地窗口。
+        recoveryRemainingMs: (data.leaser?.boundResetMs && data.leaser.boundResetMs > 0)
+          ? data.leaser.boundResetMs
+          : (lq?.windowResetMs && lq.windowResetMs > 0 ? lq.windowResetMs : -1),
         recoveryWindowMs: lq?.windowMs && lq.windowMs > 0 ? lq.windowMs : DEFAULT_WINDOW_MS,
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,

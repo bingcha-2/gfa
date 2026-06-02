@@ -6,6 +6,7 @@ import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
+import { usageBarsForProducts } from '@/lib/usageBars'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -94,7 +95,7 @@ function LocalPoolQuotaDisplay() {
 
 export function DashboardPage() {
   const {
-    config, leaserError, hasToken, autoLeaseRunning, accountId,
+    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, bucketFractions, bucketResetMs, codexQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens, cumulativeSaving,
     opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit, recoveryRemainingMs, recoveryWindowMs,
   } = useAppStore()
@@ -106,6 +107,11 @@ export function DashboardPage() {
   })()
 
   const poolMode = usePoolStore((s) => s.mode)
+  // 绑定卡只显示它绑了的产品的用量条;池子卡(无 products)三条都显示。
+  const visibleBars = usageBarsForProducts(cardProducts)
+  // 绑定账号当前不可用(租号报错且非致命):额度数据不可信 → 血条显示「未知」+ 顶部提示,
+  // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
+  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable
 
   const { modalProps, showAlert } = useModal()
   const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs, recoveryWindowMs)
@@ -126,6 +132,16 @@ export function DashboardPage() {
     <div className="max-w-[920px] flex flex-col gap-4">
       {/* ── Row 0: Status ── */}
       <StatusPill />
+
+      {/* 无可用卡密:停止租号、功能不可用,只能重新激活或退出接管 */}
+      {cardUnusable && (
+        <div className="rounded-[10px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
+          <div className="text-sm font-medium text-[var(--danger)]">卡密不可用,功能已停用</div>
+          <div className="text-[12px] text-[var(--text-secondary)] mt-1">
+            当前账号卡已失效(无效/过期/禁用)。请在下方<strong>重新激活有效卡密</strong>;或前往左侧「接管」面板<strong>退出接管</strong>,恢复 IDE / Codex 正常使用。
+          </div>
+        </div>
+      )}
 
       {/* ── Row 1: Stats ── */}
       <div className="grid grid-cols-4 gap-3">
@@ -197,8 +213,8 @@ export function DashboardPage() {
           <Card>
             <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
             <CardContent>
-              {/* 额度恢复倒计时(统一收口于此,租号/中转限流后显示) */}
-              {recoveryRemainingMs > 0 && (
+              {/* 本地号池模式:单条额度恢复倒计时(远程模式每条血条各自显示恢复时间)。 */}
+              {poolMode === 'local' && recoveryRemainingMs > 0 && (
                 <div className="mb-3 pb-3 border-b border-[var(--border-light)]">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[12px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
@@ -213,9 +229,24 @@ export function DashboardPage() {
                 <LocalPoolQuotaDisplay />
               ) : (
                 <div className="flex flex-col gap-2.5">
-                  <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} color="bg-purple-500" />
-                  <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} color="bg-[var(--accent)]" />
-                  <UsageBar label="Codex" used={codexUsed} limit={codexLimit} color="bg-emerald-500" />
+                  {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
+                  {accountProblem && (
+                    <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
+                      ⚠ 绑定账号暂时不可用,额度数据无法确认:{leaserError}
+                    </div>
+                  )}
+                  {/* 远程/绑定模式:无 bucket 数据 / 账号异常 → 显示「未知」(fraction=-1),
+                      不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。 */}
+                  {visibleBars.opus && <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} fraction={accountProblem ? -1 : (bucketFractions?.opus ?? -1)} resetMs={bucketResetMs?.opus} color="bg-purple-500" />}
+                  {visibleBars.gemini && <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} fraction={accountProblem ? -1 : (bucketFractions?.gemini ?? -1)} resetMs={bucketResetMs?.gemini} color="bg-[var(--accent)]" />}
+                  {visibleBars.codex && (codexQuota && !accountProblem ? (
+                    <>
+                      <UsageBar label="Codex · 5h" used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />
+                      <UsageBar label="Codex · 周" used={null} limit={null} fraction={codexQuota.weeklyFraction} resetMs={codexQuota.weeklyResetMs} color="bg-emerald-600" />
+                    </>
+                  ) : (
+                    <UsageBar label="Codex" used={codexUsed} limit={codexLimit} fraction={accountProblem ? -1 : (bucketFractions?.codex ?? -1)} resetMs={bucketResetMs?.codex} color="bg-emerald-500" />
+                  ))}
                 </div>
               )}
             </CardContent>

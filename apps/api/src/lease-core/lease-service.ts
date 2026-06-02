@@ -4,12 +4,14 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
-import { accountWeight, EnterpriseProbeManager, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
+import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
   DEFAULT_LEASE_TTL_MS,
   CAPACITY_COOLDOWN_MS,
+  BOUND_LEASE_TTL_MS,
+  decodeJwtExpMs,
   MAX_REMOTE_LEASE_TTL_MS,
   REMOTE_ACCOUNT_ERROR_THRESHOLD,
   REMOTE_TRANSIENT_ERROR_COOLDOWN_MS,
@@ -18,6 +20,7 @@ import {
   affinityKey,
   normalizeModelKey,
   validateClientVersion,
+  UNIVERSAL_BILLING,
 } from "../token-server/token-billing";
 import type { CreditDelta, Provider } from "./provider";
 
@@ -65,6 +68,8 @@ export type LeaseServiceOptions = {
   mode?: string;
   /** 503 message when no eligible account is available. */
   noAccountMessage?: string;
+  /** 503 message when a card's statically-bound account is unavailable. */
+  busyMessage?: string;
 };
 
 type LeaseRecord = {
@@ -106,7 +111,9 @@ type ActiveLeaseIndex = Map<number, { total: number; perModel: Map<string, numbe
 const MAX_TOKEN_REFRESH_CANDIDATES = 5;
 const MAX_TOKEN_CANDIDATE_SCAN_CAP = 30;
 const QUOTA_EXHAUSTION_COOLDOWN_CAP_MS = 60 * 60 * 1000;
-const FORBIDDEN_COOLDOWN_MS = 60 * 60 * 1000;
+// 403 冷却的封顶(也是无 retry-after 时的默认)。短 —— 403 多为瞬时验证挑战/反滥用,
+// 绑定卡无备号,长冷却=该模型几小时不可用。瞬时挑战 ~60s 内自愈。
+const FORBIDDEN_COOLDOWN_MS = 60 * 1000;
 const REPORT_GRACE_MS = 60 * 1000;
 const ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
 
@@ -143,6 +150,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly errorClass: LeaseHttpErrorClass;
   private readonly mode: string;
   private readonly noAccountMessage: string;
+  private readonly busyMessage: string;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
@@ -177,7 +185,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? process.env.BCAI_MIN_CLIENT_VERSION ?? "6.0.1";
+    this.minClientVersion = options.minClientVersion ?? "7.0.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.creditTracker = options.creditTracker || null;
@@ -185,6 +193,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.errorClass = options.errorClass || LeaseServiceHttpError;
     this.mode = options.mode || "remote-token-server";
     this.noAccountMessage = options.noAccountMessage || "No account with projectId is available.";
+    this.busyMessage = options.busyMessage || "当前账号繁忙，额度恢复中，请稍后重试";
   }
 
   private ensureDaily() {
@@ -318,12 +327,26 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   async leaseToken(req: any, payload: any) {
     const modelKey = String(payload?.modelKey || payload?.model || "").trim();
+    // Static-binding model: each card shares one upstream account (≤4 cards/acct)
+    // and relies purely on the account's native 5h rolling quota. The GFA-side
+    // per-card token cap is intentionally NOT enforced — usage is still recorded
+    // (for stats) but never blocks a lease.
     const auth = this.accessKeyStore.resolveFromRequest(req, payload, {
       activate: true,
-      enforceLimit: true,
+      enforceLimit: false,
       modelKey,
     });
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
+
+    // Two card modes:
+    //  • Bound  (boundAccountId > 0): pinned to one account in this pool — lease
+    //    only from it, no dynamic-pool fallback.
+    //  • Pool   (no binding at all): legacy dynamic pool with failover.
+    // A card bound for a DIFFERENT pool only is not sold for this one → rejected.
+    const boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
+    if (boundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
+      throw this.fail(409, "此卡未开通该服务，请联系客服");
+    }
 
     const versionCheck = validateClientVersion(payload, this.minClientVersion);
     if (!versionCheck.ok) {
@@ -360,18 +383,22 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.cleanupExpiredLeases();
     const leaseIndex = this.buildActiveLeaseIndex();
 
-    const candidatePool = this.availableAccounts(payload, modelKey);
-    const maxAttempts = Math.min(
-      MAX_TOKEN_CANDIDATE_SCAN_CAP,
-      Math.max(MAX_TOKEN_REFRESH_CANDIDATES, candidatePool.length),
-    );
+    const candidatePool = this.availableAccounts(payload, modelKey, boundAccountId);
+    // A bound card has at most one candidate (its account), so there is nothing to
+    // scan past — one attempt, then the busy error. No fallback to other accounts.
+    const maxAttempts = boundAccountId
+      ? 1
+      : Math.min(
+          MAX_TOKEN_CANDIDATE_SCAN_CAP,
+          Math.max(MAX_TOKEN_REFRESH_CANDIDATES, candidatePool.length),
+        );
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const extendedPayload = { ...payload };
       if (tokenFailedIds.length > 0) {
         const existing = Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [];
         extendedPayload.excludeAccountIds = [...existing, ...tokenFailedIds];
       }
-      account = this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex);
+      account = this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, boundAccountId);
       if (!account) break;
 
       try {
@@ -380,18 +407,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         runtime.consecutiveErrors = 0;
         lastError = null;
         // [诊断] 打印下发 token 的 JWT claims,排查 /responses 401(scope/aud/account_id)。
-        try {
-          const seg = accessToken.split(".")[1];
-          if (seg) {
-            const json = Buffer.from(seg.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+        // 仅对 JWT 形式的 token(codex/OpenAI 是 3 段 JWT);antigravity 的 Google access
+        // token 是不透明字符串,跳过 —— 否则会刷"token claims decode failed"噪音。
+        const _segs = accessToken.split(".");
+        if (_segs.length === 3 && _segs[1]) {
+          try {
+            const json = Buffer.from(_segs[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
             const c = JSON.parse(json);
             const auth = c["https://api.openai.com/auth"] || {};
             console.log(
               `[lease-diag] account#${account.id} token claims: aud=${JSON.stringify(c.aud)} scope=${JSON.stringify(c.scope || c.scp)} chatgpt_account_id=${auth.chatgpt_account_id} plan=${auth.chatgpt_plan_type} exp=${c.exp}`,
             );
+          } catch {
+            /* 不是规范 JWT(base64 段非 JSON)→ 忽略,不刷噪音 */
           }
-        } catch (e) {
-          console.log(`[lease-diag] account#${account.id} token claims decode failed: ${e}`);
         }
         break;
       } catch (error) {
@@ -403,11 +432,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     if (!account || !accessToken) {
+      // Bound cards never borrow another account. Distinguish WHY the bound
+      // account is unavailable so the user isn't told "额度恢复中" forever when
+      // the account is actually gone / disabled / auth-broken.
+      if (boundAccountId) throw this.fail(503, this.boundUnavailableMessage(boundAccountId));
       throw this.fail(503, lastError?.message || this.noAccountMessage);
     }
 
     this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
-    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload);
+    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, boundAccountId, accessToken);
     this.leases.set(lease.leaseId, lease);
     this.rememberAffinity(clientId, modelKey, account.id);
     this.totalLeases++;
@@ -426,13 +459,64 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accountId: account.id,
       emailHint: maskEmail(account.email),
       accessToken,
+      ...(this.provider.bloodBarFraction
+        ? { boundAccount: { id: account.id, ...this.provider.bloodBarFraction(account, modelKey) } }
+        : {}),
+      // All known per-bucket quotas for the leased account, so the client can show
+      // real blood bars for every model right after activation (not just the one
+      // leased). Empty {} when the account has no quota snapshots yet.
+      accountBuckets: this.accountBucketQuotas(account),
       ...this.provider.leaseResponseExtras(account),
       expiresAt: lease.expiresAt,
       accessTokenExpiresAt: lease.expiresAt,
       probation: false,
       candidateStats: { healthyForModel: candidatePool.length },
       retryPolicy: null,
+      // Bound cards have no OTHER account to rotate to. The client proxy uses this
+      // to skip the futile "exclude account + re-lease" rotation on 429/503, while
+      // STILL allowing wait-and-retry on the SAME account for transient capacity.
+      bound: boundAccountId > 0,
     };
+  }
+
+  /**
+   * Why a bound card's account is unavailable — a clear, user-facing reason.
+   * "繁忙/额度恢复中" is reserved for a real, recoverable quota/capacity cooldown;
+   * a missing/disabled/auth-broken account gets a distinct message so the user
+   * doesn't wait forever for a recovery that will never come.
+   */
+  private boundUnavailableMessage(boundAccountId: number): string {
+    const acct = this.readAccounts().find((a) => a.id === boundAccountId);
+    if (!acct || (acct as any).enabled === false) {
+      return "此卡绑定的账号不可用（不存在或已禁用），请联系客服";
+    }
+    const runtime = this.accountRuntime.get(boundAccountId);
+    if (runtime?.quotaStatus === "error") {
+      return "此卡绑定的账号鉴权失效，请联系客服重新绑定/换号";
+    }
+    return this.busyMessage;
+  }
+
+  /**
+   * The leased account's KNOWN remaining quota per display bucket (gemini/codex/
+   * opus), computed from its per-model snapshots. Lets the client show real
+   * quota for EVERY bar right after activation (it's a shared account — other
+   * users' usage already populated the server's view), not just the leased model.
+   * Min fraction per bucket (most restrictive). Unknown models are skipped.
+   */
+  private accountBucketQuotas(account: TAccount): Record<string, { fraction: number; resetAt: number }> {
+    const fractions = (account as any).modelQuotaFractions;
+    if (!fractions || typeof fractions !== "object") return {};
+    const out: Record<string, { fraction: number; resetAt: number }> = {};
+    for (const model of Object.keys(fractions)) {
+      const f = getModelQuotaFraction(account, model);
+      if (f === null || f < 0) continue;
+      const bucket = UNIVERSAL_BILLING.bucketOf(model);
+      if (!(bucket in out) || f < out[bucket].fraction) {
+        out[bucket] = { fraction: f, resetAt: getModelQuotaResetAt(account, model) };
+      }
+    }
+    return out;
   }
 
   async reportResult(req: any, payload: any) {
@@ -549,10 +633,28 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
         } else if (status === 403) {
           const reason = String(payload?.reason || "http_403");
-          const cooldownMs = retryAfterMs > 0 ? retryAfterMs : FORBIDDEN_COOLDOWN_MS;
+          // 403(验证挑战 / service_disabled / forbidden)是瞬时反滥用或配置类错误,不是
+          // 配额窗口。上游对 403 给的 retry-after 不可信(实测常是离谱的 ~2h)——绑定卡没有
+          // 备号,长冷却会把整张卡的该模型打死几小时。封顶到短冷却:小的提示照用,大的截断,
+          // 瞬时挑战快速自愈;真·坏号则每 ~60s 被重试一次(而非沉默几小时)。
+          const hinted = retryAfterMs > 0 ? retryAfterMs : FORBIDDEN_COOLDOWN_MS;
+          const cooldownMs = Math.min(hinted, FORBIDDEN_COOLDOWN_MS);
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
         } else {
           const reason = String(payload?.reason || `http_${status}`);
+          // 401: upstream invalidated the access token (e.g. code "token_invalidated")
+          // even though it isn't expired by our clock. Clear the cached token so the
+          // NEXT lease refreshes a fresh one via the refresh token (instead of looping
+          // on the dead token). If the refresh token is also dead, the next lease's
+          // refresh fails → account marked "error" → clean "鉴权失效" message.
+          if (status === 401) {
+            this.mutateAccount(accountId, (account) => {
+              const a = account as any;
+              a.accessToken = "";
+              a.accessTokenExpiresAt = 0;
+              return account;
+            });
+          }
           this.markAccountTransientError(accountId, modelKey, reason);
         }
       }
@@ -735,7 +837,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.accessKeyStore.flush();
   }
 
-  private availableAccounts(payload: any, modelKey?: string) {
+  private availableAccounts(payload: any, modelKey?: string, boundAccountId = 0) {
     const excluded = new Set(
       (Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [])
         .map((value: unknown) => Number(value))
@@ -744,6 +846,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const now = this.now();
     this.modelGates.cleanupExpiredGates(now);
     return this.readAccounts().filter((account) =>
+      (boundAccountId ? account.id === boundAccountId : true) &&
       (account as any).enabled !== false &&
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&
@@ -757,8 +860,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     clientId: string,
     payload: any,
     leaseIndex?: ActiveLeaseIndex,
+    boundAccountId = 0,
   ): TAccount | null {
-    const candidates = this.availableAccounts(payload, modelKey);
+    const candidates = this.availableAccounts(payload, modelKey, boundAccountId);
     if (!candidates.length) return null;
     const preferredAccountId = this.preferredAccountId(clientId, modelKey);
     const now = this.now();
@@ -789,8 +893,19 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     clientId: string,
     modelKey: string,
     payload: any,
+    boundAccountId = 0,
+    accessToken = "",
   ): LeaseRecord {
-    const ttlMs = Math.max(60_000, Math.min(this.leaseTtlMs, MAX_REMOTE_LEASE_TTL_MS));
+    let ttlMs = Math.max(60_000, Math.min(this.leaseTtlMs, MAX_REMOTE_LEASE_TTL_MS));
+    // Bound card: the account is fixed, so there is no rebalancing reason to
+    // re-lease every 10 min. Extend the lease toward the upstream token's real
+    // expiry (60s buffer); fall back to BOUND_LEASE_TTL_MS when undecodable.
+    if (boundAccountId) {
+      const realExp = decodeJwtExpMs(accessToken);
+      const byToken = realExp > 0 ? realExp - this.now() - 60_000 : 0;
+      const longTtl = byToken > 0 ? Math.min(BOUND_LEASE_TTL_MS, byToken) : BOUND_LEASE_TTL_MS;
+      ttlMs = Math.max(ttlMs, longTtl);
+    }
     return {
       leaseId: this.randomId(),
       accountId: account.id,

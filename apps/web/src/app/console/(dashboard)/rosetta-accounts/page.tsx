@@ -47,6 +47,9 @@ type RosettaAccount = {
   planType?: string;
   oauthProfile?: string;
   hasToken?: boolean;
+  boundCardCount?: number;
+  usedShares?: number;
+  shareCapacity?: number;
   familyRole?: string;
   familyStatus?: string;
   motherId?: string;
@@ -63,13 +66,14 @@ const ALL_COLUMNS = [
   { key: "familyRole", label: "Family 角色" },
   { key: "familyStatus", label: "Family 状态" },
   { key: "token", label: "Token" },
+  { key: "boundCard", label: "份额用量" },
   { key: "status", label: "状态" },
   { key: "motherId", label: "Mother ID" },
   { key: "seatId", label: "Seat ID" },
 ] as const;
 
 const DEFAULT_VISIBLE = new Set([
-  "email", "alias", "projectId", "planType", "token", "status",
+  "email", "alias", "projectId", "planType", "token", "boundCard", "status",
 ]);
 
 const PAGE_SIZE = 20;
@@ -332,6 +336,15 @@ export default function RosettaAccountsPage() {
             {account.hasToken ? "有" : "无"}
           </Badge>
         );
+      case "boundCard": {
+        const cap = Number(account.shareCapacity || 4);
+        const used = Number(account.usedShares || 0);
+        return (
+          <Badge variant={used >= cap ? "destructive" : "secondary"}>
+            {used}/{cap} 份
+          </Badge>
+        );
+      }
       case "status":
         return (
           <Badge variant={account.enabled ? "default" : "secondary"}>

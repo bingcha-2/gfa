@@ -366,6 +366,17 @@ func TestCloudCodeAccountProblemReason_403_ServiceDisabled(t *testing.T) {
 	}
 }
 
+// A Google "Verify your account" (VALIDATION_REQUIRED) 403 must classify as a
+// verification requirement — NOT service_disabled — even though its body carries
+// the cloudcode-pa.googleapis.com domain string (which used to win first).
+func TestCloudCodeAccountProblemReason_403_VerificationOverServiceDisabled(t *testing.T) {
+	body := `{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED","details":[{"reason":"VALIDATION_REQUIRED","domain":"cloudcode-pa.googleapis.com","metadata":{"validation_error_message":"Verify your account to continue.","validation_url":"https://accounts.google.com/signin/continue"}}]}}`
+	reason := cloudCodeAccountProblemReason(403, body)
+	if reason != "http_403_account_verification_required" {
+		t.Fatalf("verification challenge misclassified as %q, want http_403_account_verification_required", reason)
+	}
+}
+
 func TestCloudCodeAccountProblemReason_200(t *testing.T) {
 	reason := cloudCodeAccountProblemReason(200, `{"result":"ok"}`)
 	if reason != "" {

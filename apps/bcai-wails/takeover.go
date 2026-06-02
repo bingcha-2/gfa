@@ -46,6 +46,44 @@ func findTakeoverTarget(idOrKey string) TakeoverTarget {
 	return nil
 }
 
+// targetRequiredProduct 把接管目标的 ProductID 映射到所需的 GFA 产品(池)。
+// antigravity IDE/Hub 都走 antigravity 池;codex 走 codex 池;未知目标返回空(不限制)。
+func targetRequiredProduct(productID string) string {
+	switch productID {
+	case "codex":
+		return "codex"
+	case "antigravity_ide", "antigravity_hub":
+		return "antigravity"
+	default:
+		return ""
+	}
+}
+
+// cardCoversProduct 判断卡是否开通了某产品。池子卡(products 为空)覆盖一切;
+// 绑定卡只覆盖自己绑定的产品。required 为空时不限制(放行)。
+func cardCoversProduct(cardProducts []string, required string) bool {
+	if required == "" || len(cardProducts) == 0 {
+		return true
+	}
+	for _, p := range cardProducts {
+		if p == required {
+			return true
+		}
+	}
+	return false
+}
+
+func productLabel(product string) string {
+	switch product {
+	case "codex":
+		return "Codex"
+	case "antigravity":
+		return "Antigravity"
+	default:
+		return product
+	}
+}
+
 // validateTakeoverPrereqs 接管前置校验:remote 模式需卡密,local 模式需号池账号。
 func validateTakeoverPrereqs(cfg Config) error {
 	poolMode := cfg.PoolMode

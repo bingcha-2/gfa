@@ -14,6 +14,7 @@ import {
   accessKeySessionTtlMs,
   isAccessKeySessionExpired,
   validateClientVersion,
+  decodeJwtExpMs,
 } from '../token-billing';
 
 // ── Constants used in tests ──────────────────────────────────────────────────
@@ -312,5 +313,20 @@ describe('validateClientVersion', () => {
   it('should pass when no minimum version configured', () => {
     const result = validateClientVersion({}, '');
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('decodeJwtExpMs', () => {
+  function makeJwt(expSec: number): string {
+    const payload = Buffer.from(JSON.stringify({ exp: expSec })).toString('base64url');
+    return `header.${payload}.sig`;
+  }
+  it('returns the exp claim in epoch ms', () => {
+    expect(decodeJwtExpMs(makeJwt(1_800_000_000))).toBe(1_800_000_000 * 1000);
+  });
+  it('returns 0 for a non-JWT / empty / missing exp', () => {
+    expect(decodeJwtExpMs('not-a-jwt')).toBe(0);
+    expect(decodeJwtExpMs('')).toBe(0);
+    expect(decodeJwtExpMs('a.b.c')).toBe(0);
   });
 });

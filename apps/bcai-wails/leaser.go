@@ -15,7 +15,8 @@ import (
 )
 
 // API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
-var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.site/remote-token")
+// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.space/remote-token")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 
@@ -30,6 +31,9 @@ type TokenLease struct {
 	RetryPolicy    *RemoteRetryPolicy     `json:"-"` // P1④: server-controlled retry policy
 	CandidateStats map[string]interface{} `json:"-"` // server-reported candidate stats
 	Probation      bool                   `json:"-"`
+	// Bound: 绑定卡(无其它号可换)。代理据此跳过"换到别的号"的轮转,
+	// 但仍允许对同一个号做瞬时错误(503 容量/短 429)的等待重试。
+	Bound bool `json:"-"`
 }
 
 // RemoteRetryPolicy mirrors the extension's normalizeRemoteRetryPolicy
@@ -87,7 +91,38 @@ type Leaser struct {
 	// 远程租号的 quota 采集（quota_sync.go）
 	cachedQuotaSnapshot *AccountQuotaSnapshot
 	quotaFetching       int32  // atomic CAS flag，防并发
+	lastQuotaFetchAt    int64  // 上次上游额度拉取时间(epoch ms)，用于频率节流
 	lastModelKey        string // 上次 generation 使用的 modelKey，用于预热选号
+	// 绑定号(本次租到的号)上游额度的下次刷新时间(epoch ms)。前端"额度恢复"倒计时
+	// 优先用它 —— 反映的是绑定账号的真实 5h 上游重置,而非 GFA 本地窗口。
+	boundResetAt int64
+	// 卡密不可用(被服务端判为 Invalid/过期/禁用/未激活)。一旦置位,自动租号停止、
+	// 功能禁用,只允许用户手动退出接管。重新激活有效卡(StartAutoLease)时复位。
+	cardUnusable bool
+}
+
+// isCardFatalError 判断租号/激活错误是否代表"卡密本身不可用"(无可用卡密)。
+// 致命:卡无效/缺失/过期/禁用/未激活 → 停掉自动租号、禁用功能。
+// 非致命:繁忙、无号、网络错误、以及"未开通该服务"(卡有效只是没开这个池) → 继续重试。
+func isCardFatalError(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, s := range []string{
+		"invalid access key",
+		"missing access key",
+		"access key expired",
+		"access key disabled",
+		"account card not found",
+		"account card expired",
+		"account card inactive",
+		"账号卡未激活",
+		"账号卡已过期",
+		"账号卡已禁用",
+	} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
 }
 
 type inflightLeaseResult struct {
@@ -250,6 +285,11 @@ type LeaseTokenResp struct {
 	AccessTokenExpiresIn int64           `json:"accessTokenExpiresIn"`
 	ActivationExpiresAt  string          `json:"activationExpiresAt"`
 	Probation            bool            `json:"probation"`
+	BoundAccount         *struct {
+		Id       int     `json:"id"`
+		Fraction float64 `json:"fraction"`
+		ResetAt  int64   `json:"resetAt"` // epoch ms,绑定号上游额度下次刷新
+	} `json:"boundAccount"`
 }
 
 func parseAccountId(raw json.RawMessage) int {
@@ -435,6 +475,21 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 
 	accountId := parseAccountId(leaseResp.AccountId)
 
+	// 记录绑定号上游额度的下次刷新时间(供"额度恢复"倒计时显示真实账号重置)。
+	if leaseResp.BoundAccount != nil && leaseResp.BoundAccount.ResetAt > 0 {
+		l.mu.Lock()
+		l.boundResetAt = leaseResp.BoundAccount.ResetAt
+		l.mu.Unlock()
+	}
+	// 记录绑定号在该模型上的真实上游剩余 + 恢复时间(供血条显示真实余量/倒计时)。
+	if leaseResp.BoundAccount != nil {
+		mk, _ := options["modelKey"].(string)
+		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+	}
+	// 服务端把"绑定号已知的各 bucket 额度"一并带回 → 激活/首次预热那一下就能把每条血条
+	// 都填上真实值(共享号,别人用过就有数据),而非只填被租的那个模型。
+	recordAccountBuckets(body)
+
 	// Calculate expiry time in millisecond unix timestamp
 	var expiresAt int64
 	if leaseResp.AccessTokenExpiresAt != "" {
@@ -465,6 +520,12 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	var healthyForModel float64 // 候选池健康数,稳态下并入 "Token obtained" 一行
 	var rawResp2 map[string]json.RawMessage
 	if json.Unmarshal(body, &rawResp2) == nil {
+		if bRaw, ok := rawResp2["bound"]; ok {
+			var b bool
+			if json.Unmarshal(bRaw, &b) == nil {
+				lease.Bound = b
+			}
+		}
 		if rpRaw, ok := rawResp2["retryPolicy"]; ok {
 			var rp RemoteRetryPolicy
 			if json.Unmarshal(rpRaw, &rp) == nil && rp.MaxAttempts > 0 {
@@ -585,6 +646,13 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 
 	Log("[token-leaser] Report account=%d status=%d model=%s reason=%s retryAfter=%dms",
 		lease.AccountId, details.StatusCode, details.ModelKey, details.Reason, details.RetryAfterMs)
+
+	// 额度超限(429)→ 把该模型的血条标记为"已用尽"(0%),并按 retryAfter 记录恢复时间。
+	// 这样血条立刻反映真实情况,不再因"没采到额度"而乐观显示满。短 429(<5s 速率限制)
+	// 会很快恢复,不当作用尽。
+	if details.StatusCode == 429 && details.ModelKey != "" && details.RetryAfterMs >= 5000 {
+		recordBoundFractionForModel(details.ModelKey, 0, time.Now().UnixMilli()+details.RetryAfterMs)
+	}
 
 	payload := map[string]interface{}{
 		"leaseId":           lease.LeaseId,
@@ -808,6 +876,7 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.cancelLease = cancel
 	l.leaseRunning = true
+	l.cardUnusable = false // 新一轮(可能换了有效卡)→ 复位不可用状态
 	l.mu.Unlock()
 
 	go func() {
@@ -822,7 +891,17 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		if warmupModel != "" {
 			warmupOpts = map[string]interface{}{"modelKey": warmupModel}
 		}
-		_, _ = l.LeaseToken(card, deviceId, false, warmupOpts, upstreamProxy)
+		if _, err := l.LeaseToken(card, deviceId, false, warmupOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
+			l.markCardUnusable(err)
+			return
+		}
+		// 激活后立即刷新一次绑定号额度(血条上来就显示真实值,而非空白/100%)。
+		// force=true:激活是用户主动操作,绕过 5min 节流,立刻拉 gemini/claude/codex。
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
+
+		// 绑定模式额度刷新节流:每 boundRefreshEveryTicks 个 tick(15s)刷一次。
+		const boundRefreshEveryTicks = 20 // 20×15s = 5min
+		ticks := 0
 
 		for {
 			select {
@@ -830,11 +909,14 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 				Log("[token-leaser] Auto-lease worker stopped")
 				return
 			case <-ticker.C:
+				ticks++
 				l.mu.RLock()
 				needLease := false
+				bound := false
 				if l.cachedToken == nil {
 					needLease = true
 				} else {
+					bound = l.cachedToken.Bound
 					nowMs := time.Now().UnixNano() / int64(time.Millisecond)
 					// Near expiry (60s early)
 					if nowMs > (l.cachedToken.ExpiresAt - 60*1000) {
@@ -851,11 +933,81 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 					if renewalModel != "" {
 						renewOpts = map[string]interface{}{"modelKey": renewalModel}
 					}
-					_, _ = l.LeaseToken(card, deviceId, false, renewOpts, upstreamProxy)
+					if _, err := l.LeaseToken(card, deviceId, false, renewOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
+						l.markCardUnusable(err)
+						return
+					}
+				} else if bound && ticks%boundRefreshEveryTicks == 0 {
+					// 绑定模式定时查卡密状态:重新租号(=查状态,返回模式+账号额度),
+					// 刷新血条到绑定号最新余量。不上报用量,不轮换账号(绑定号唯一)。
+					// force=false:定时刷新走 5min 节流,避免高频打上游。
+					l.refreshBoundQuota(card, deviceId, upstreamProxy, false)
 				}
 			}
 		}
 	}()
+}
+
+// refreshBoundQuota 在绑定模式下重新租号,把血条刷新到绑定号的最新余量:
+//   - antigravity:刷新 opus/gemini bucket + accessKeyStatus(返回模式/账号信息)
+//   - codex(若该卡开通):刷新 5h/周窗口 + bucket(独立 leaser / 独立端点)
+//
+// 纯展示刷新,不上报用量;绑定号唯一,force 重租不会轮换账号。池子卡直接跳过
+// (池子模式血条走本地号池额度,不在此机制内)。错误吞掉 —— 刷新失败不影响接管。
+// force=true(激活/换卡那一下)绕过额度拉取的 5min 节流,立刻拉一次最新的 gemini/claude/codex;
+// force=false(每 90s 定时)走节流,避免高频打上游。
+func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force bool) {
+	l.mu.RLock()
+	bound := l.cachedToken != nil && l.cachedToken.Bound
+	model := l.lastModelKey
+	l.mu.RUnlock()
+	if !bound {
+		return
+	}
+	var opts map[string]interface{}
+	if model != "" {
+		opts = map[string]interface{}{"modelKey": model}
+	}
+	// force=true 绕过本地缓存,真正打到服务端取最新额度(返回模式 + accountBuckets)。
+	_, _ = l.LeaseToken(card, deviceId, true, opts, upstreamProxy)
+	// 走到这里说明 antigravity 绑定有效(bound),主动拉一次上游 per-model 额度并上报,
+	// 让血条/后台在"还没发请求"时也有真实数据(antigravity 否则只在生成上报后才拉)。
+	l.refreshBoundAntigravityQuota(card, upstreamProxy, force)
+
+	// 该卡若开通 codex,顺带刷新 codex 窗口(空 products = 池子卡,这里已被 bound 挡掉)。
+	if cardCoversProduct(l.CardProducts(), "codex") {
+		if lease, err := GetCodexLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy); err == nil {
+			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease, force)
+		}
+	}
+}
+
+// markCardUnusable 标记卡密不可用并停掉自动租号(不再每 15s 刷 Invalid)。
+// 保持接管不还原 —— 用户只能手动「退出接管」。重新激活有效卡会复位。
+func (l *Leaser) markCardUnusable(err error) {
+	l.mu.Lock()
+	l.cardUnusable = true
+	l.mu.Unlock()
+	Log("[token-leaser] 卡密不可用(%v),已停止自动租号;请重新激活有效卡密或退出接管", err)
+	l.StopAutoLease()
+}
+
+// CardProducts 返回当前卡密开通的产品列表(来自服务端 accessKeyStatus.products)。
+// 空 = 池子卡(不限产品)。供接管前校验"卡是否开通该产品"。
+func (l *Leaser) CardProducts() []string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	raw, ok := l.accessKeyStatus["products"].([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (l *Leaser) StopAutoLease() {
@@ -1029,6 +1181,35 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	}
 }
 
+// recordAccountBuckets 解析 lease 响应里的 accountBuckets(绑定号已知的各 bucket 额度),
+// 一次性记录所有 bucket,让激活/预热那一下每条血条都有真实值。
+func recordAccountBuckets(body []byte) {
+	var resp struct {
+		AccountBuckets map[string]struct {
+			Fraction float64 `json:"fraction"`
+			ResetAt  int64   `json:"resetAt"`
+		} `json:"accountBuckets"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return
+	}
+	for bucket, q := range resp.AccountBuckets {
+		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
+	}
+}
+
+// boundResetMs 把绑定号上游重置的绝对时间(epoch ms)换算成剩余毫秒;0 表示未知。
+func boundResetMs(resetAt int64) int64 {
+	if resetAt <= 0 {
+		return 0
+	}
+	rem := resetAt - time.Now().UnixMilli()
+	if rem < 0 {
+		return 0
+	}
+	return rem
+}
+
 func (l *Leaser) GetStatus() map[string]interface{} {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -1096,6 +1277,8 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		"lastError":           l.lastError,
 		"activationExpiresAt": l.cardExpires,
 		"autoLeaseRunning":    l.leaseRunning,
+		"cardUnusable":        l.cardUnusable,
+		"boundResetMs":        boundResetMs(l.boundResetAt),
 		"accessKeyStatus":     aks,
 		"localQuota": map[string]interface{}{
 			"opusTokensUsed":   l.localQuota.OpusTokensUsed,

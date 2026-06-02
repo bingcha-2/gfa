@@ -66,10 +66,16 @@ export interface StatsResponse {
     serviceState: string
     accountId: number
     autoLeaseRunning: boolean
+    cardUnusable?: boolean
+    boundResetMs?: number
+    bucketFractions?: Record<string, number>
+    bucketResetMs?: Record<string, number>
+    codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     hasToken: boolean
     lastError: string
     activationExpiresAt: string
     accessKeyStatus: {
+      products?: string[]
       opusTokensUsed?: number
       opusTokenLimit?: number
       geminiTokensUsed?: number

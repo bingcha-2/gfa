@@ -36,6 +36,21 @@ func upstreamEndpointForPath(path string) string {
 	return DefaultGeminiEndpoint
 }
 
+// cloudCodeEndpointForModel 按模型选 /v1internal 生成请求的上游 host:
+//   - Gemini            → cloudcode-pa.googleapis.com
+//   - Claude/GPT 等第三方 → daily-cloudcode-pa.googleapis.com(只在 daily 提供)
+//
+// 必要性:IDE 注入时把 cloudcode-pa 和 daily-cloudcode-pa 两个 host 都改写成了本地代理,
+// 原始 host 丢失。若不按模型重路由,Claude/GPT 会被统一发到 cloudcode-pa → 403
+// service_disabled / permission_denied(还会被误判成"验证挑战",绑定卡随即"繁忙")。
+// modelKey 为空时回退到 cloudcode-pa(安全默认,等同旧行为)。
+func cloudCodeEndpointForModel(modelKey string) string {
+	if modelKey != "" && !isGeminiModel(modelKey) {
+		return DailyCloudEndpoint
+	}
+	return DefaultCloudEndpoint
+}
+
 func isModelsRequest(path string) bool {
 	lower := strings.ToLower(path)
 	return strings.Contains(lower, ":fetchavailablemodels") || strings.Contains(lower, "fetchavailablemodels")

@@ -50,8 +50,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		Log("[proxy] #%d [MODEL] %s", reqId, requestModelKey)
 	}
 
-	targetUrl, _ := url.Parse(DefaultCloudEndpoint + r.URL.Path + "?" + r.URL.RawQuery)
-	Log("[proxy] #%d [UPSTREAM] generation host=%s path=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, cfg.PoolMode)
+	// 按模型选上游:Claude/GPT 第三方模型走 daily-cloudcode-pa,Gemini 走 cloudcode-pa。
+	targetUrl, _ := url.Parse(cloudCodeEndpointForModel(requestModelKey) + r.URL.Path + "?" + r.URL.RawQuery)
+	Log("[proxy] #%d [UPSTREAM] generation host=%s path=%s model=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, requestModelKey, cfg.PoolMode)
 	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
 	client := createStreamingHttpClient(upstream)
 
@@ -329,22 +330,31 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			// P2⑪: Verification challenge → report + rotate to another account
 			// (mirrors token-proxy.js L1812-L1822: shouldRetryRemoteError → continue)
 			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-				Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d, rotating (%d/%d)",
-					reqId, lease.AccountId, attempt, remoteMaxAttempts)
+				Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d (%d/%d) body=%s",
+					reqId, lease.AccountId, attempt, remoteMaxAttempts, getErrorSnippet(errorBody))
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
+				// 绑定卡:没有别的号可换 —— 验证挑战只能由账号所有者去 Google 完成验证。
+				// 把上游 403 原文(含 "Verify your account" + validation_url)原样回给 IDE,
+				// 触发 Antigravity 自带的验证流程,而不是吞成"繁忙"误导用户。
+				if lease.Bound {
+					Log("[proxy] #%d [VERIFY] bound card → 透传 Google 验证详情给客户端(账号需人工验证)", reqId)
+					p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
+					atomic.AddInt64(&p.stats.TotalErrors, 1)
+					return
+				}
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				if attempt < remoteMaxAttempts {
 					atomic.AddInt64(&p.stats.TotalRetries, 1)
 					GetUsageStats().AddRetry()
 					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
 					continue
 				}
-				// All attempts exhausted — return friendly 503
-				Log("[proxy] #%d [VERIFY] Verification challenge exhausted after %d attempts", reqId, attempt)
-				p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
+				// 池子模式所有号都撞验证 → 也把真实详情透传,而不是含糊的 503。
+				Log("[proxy] #%d [VERIFY] all accounts challenged after %d attempts → 透传验证详情", reqId, attempt)
+				p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
 			}
@@ -360,7 +370,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 					}
 				}
 			}
-			canRetry := attempt < effectiveMaxAttempts
+			// 绑定卡没有别的号可换 → 禁掉"换到别的号"的轮转。同一个号的瞬时错误等待重试
+			// (上面的 503 容量 / 短 429 路径)不受影响,绑定卡仍会适当重试。
+			canRetry := attempt < effectiveMaxAttempts && !lease.Bound
 			if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
 				statusRetryable := false
 				for _, s := range lease.RetryPolicy.RetryableStatuses {
@@ -826,21 +838,28 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 			// Verification challenge → report + rotate to another account
 			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d, rotating (%d/%d)",
-					reqId, lease.AccountId, attempt, remoteMaxAttempts)
+				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d (%d/%d) body=%s",
+					reqId, lease.AccountId, attempt, remoteMaxAttempts, getErrorSnippet(errorBody))
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
-				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
+				// 绑定卡:无备号 → 透传 Google 验证详情(含 validation_url)给 IDE,触发其验证流程。
+				if lease.Bound {
+					Log("[proxy] #%d [VERIFY-GEMINI] bound card → 透传 Google 验证详情给客户端(账号需人工验证)", reqId)
+					p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
+					atomic.AddInt64(&p.stats.TotalErrors, 1)
+					return
+				}
+				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				if attempt < remoteMaxAttempts {
 					atomic.AddInt64(&p.stats.TotalRetries, 1)
 					GetUsageStats().AddRetry()
 					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
 					continue
 				}
-				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge exhausted after %d attempts", reqId, attempt)
-				p.sendJsonError(w, 503, "Remote account temporarily unavailable (verification required). Please retry.")
+				Log("[proxy] #%d [VERIFY-GEMINI] all accounts challenged after %d attempts → 透传验证详情", reqId, attempt)
+				p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
 			}
@@ -856,7 +875,9 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 					}
 				}
 			}
-			canRetry := attempt < effectiveMaxAttempts
+			// 绑定卡没有别的号可换 → 禁掉"换到别的号"的轮转。同一个号的瞬时错误等待重试
+			// (上面的 503 容量 / 短 429 路径)不受影响,绑定卡仍会适当重试。
+			canRetry := attempt < effectiveMaxAttempts && !lease.Bound
 			if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
 				statusRetryable := false
 				for _, s := range lease.RetryPolicy.RetryableStatuses {

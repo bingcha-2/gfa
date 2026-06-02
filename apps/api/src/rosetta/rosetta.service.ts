@@ -8,6 +8,7 @@ import { AutomationService } from "../automation/automation.service";
 import { AgentAccountService } from "../automation/agent-account.service";
 
 import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS } from "../token-server/token-billing";
+import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   type CachedToken,
   getAccessToken,
@@ -21,6 +22,17 @@ import {
 type RosettaServiceOptions = {
   dataDir?: string;
 };
+
+/** Total shares (份) per upstream account. A card consumes `weight` shares:
+ * 1 = 拼车 (4 such cards share one account), 4 = 独享 (one card takes the account). */
+const ACCOUNT_SHARE_CAPACITY = 4;
+
+/** A card's share weight (份额): 1..4, default 1 (拼车). */
+function cardWeight(key: any): number {
+  const w = Math.floor(Number(key?.weight || 0));
+  if (!Number.isFinite(w) || w < 1) return 1;
+  return Math.min(ACCOUNT_SHARE_CAPACITY, w);
+}
 
 function defaultDataDir() {
   if (process.env.ROSETTA_DATA_DIR) return process.env.ROSETTA_DATA_DIR;
@@ -245,6 +257,10 @@ export class RosettaService {
         tokenWindowLimit: tokenWindowLimit(key),
         windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
         durationMs: Number(key.durationMs || 0),
+        provider: String(key.provider || ""),
+        boundAccountId: Number(key.boundAccountId || 0),
+        bindings: (key.bindings && typeof key.bindings === "object" ? key.bindings : {}) as Record<string, number>,
+        weight: cardWeight(key),
         createdAt: String(key.createdAt || ""),
         lastUsedAt: String(key.lastUsedAt || ""),
         expiresAt: accessKeyExpiresAt(key),
@@ -285,6 +301,8 @@ export class RosettaService {
 
   listAccounts() {
     const data = this.accountsFile.read();
+    const boundCounts = this.boundCardCounts("antigravity");
+    const shares = this.boundSharesByAccount("antigravity");
     const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
       id: Number(account.id || 0),
       email: String(account.email || ""),
@@ -294,6 +312,9 @@ export class RosettaService {
       planType: String(account.planType || ""),
       oauthProfile: String(account.oauthProfile || ""),
       hasToken: Boolean(account.refreshToken),
+      boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
+      usedShares: shares.get(Number(account.id || 0)) || 0,
+      shareCapacity: ACCOUNT_SHARE_CAPACITY,
       familyRole: String(account.familyRole || ""),
       familyStatus: String(account.familyStatus || ""),
       motherId: String(account.motherId || ""),
@@ -317,6 +338,7 @@ export class RosettaService {
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.projectId !== undefined) existing.projectId = String(payload.projectId || "");
+      if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
       accounts.push({
@@ -327,6 +349,7 @@ export class RosettaService {
         alias: String(payload.alias || ""),
         oauthProfile: String(payload.oauthProfile || "antigravity"),
         projectId: String(payload.projectId || ""),
+        planType: String(payload.planType || ""),
       });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
@@ -353,6 +376,7 @@ export class RosettaService {
     const filtered = accounts.filter((account: any) => Number(account.id) !== accountId);
     if (filtered.length === accounts.length) return { ok: false, error: "账号不存在" };
     writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
+    this.clearBindingsForAccount("antigravity", accountId);
     return { ok: true, totalAccounts: filtered.length };
   }
 
@@ -363,6 +387,8 @@ export class RosettaService {
   listCodexAccounts() {
     const filePath = path.join(this.dataDir, "codex-accounts.json");
     const data = readJson(filePath, { accounts: [] });
+    const boundCounts = this.boundCardCounts("codex");
+    const shares = this.boundSharesByAccount("codex");
     const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
       id: Number(account.id || 0),
       email: String(account.email || ""),
@@ -370,6 +396,9 @@ export class RosettaService {
       alias: String(account.alias || ""),
       planType: String(account.planType || ""),
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
+      boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
+      usedShares: shares.get(Number(account.id || 0)) || 0,
+      shareCapacity: ACCOUNT_SHARE_CAPACITY,
       codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
       codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
@@ -486,6 +515,7 @@ export class RosettaService {
     const filtered = accounts.filter((account: any) => Number(account.id) !== accountId);
     if (filtered.length === accounts.length) return { ok: false, error: "账号不存在" };
     writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
+    this.clearBindingsForAccount("codex", accountId);
     return { ok: true, totalAccounts: filtered.length };
   }
 
@@ -497,9 +527,39 @@ export class RosettaService {
     // Batch minting: count > 1 creates N independent cards sharing the same
     // limits. An explicit id/key only applies to a single card (count 1).
     const count = Math.max(1, Math.min(200, Number(payload?.count) || 1));
+
+    // Products the card is sold for; each auto-binds one open-seat account at
+    // mint time. Pre-assign all seats so the batch is atomic (no half-mint when
+    // a pool runs out).
+    const products: string[] = Array.isArray(payload?.products)
+      ? payload.products.map((p: unknown) => String(p)).filter((p: string) => p === "codex" || p === "antigravity")
+      : [];
+    // Membership level (planType) chosen per product — REQUIRED for every
+    // selected product. Auto-bind only considers accounts of the exact level.
+    const levels: Record<string, string> =
+      payload?.levels && typeof payload.levels === "object" ? payload.levels : {};
+    // Share weight (份额): 1 = 拼车 (default), 4 = 独享.
+    const weight = cardWeight({ weight: payload?.weight });
+    const seatPlan: Record<string, number[]> = {};
+    for (const product of products) {
+      const label = product === "codex" ? "Codex" : "Antigravity";
+      const level = String(levels[product] || "").trim();
+      if (!level) return { ok: false, error: `请为 ${label} 选择会员等级` };
+      const seats = this.autoAssignSeats(product, count, weight, level);
+      if (!seats) {
+        return {
+          ok: false,
+          error: `${label} ${level} 等级可用账号不足（无配额充足且份额足够的号），请增加该等级账号`,
+        };
+      }
+      seatPlan[product] = seats;
+    }
+
     const created: any[] = [];
     for (let i = 0; i < count; i++) {
       const single = count === 1;
+      const bindings: Record<string, number> = {};
+      for (const product of products) bindings[product] = seatPlan[product][i];
       const record = {
         id: String((single && payload?.id) || `card_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`),
         key: String((single && payload?.key) || newAccessKeyValue()),
@@ -511,6 +571,8 @@ export class RosettaService {
         // Per-card rate-limit window duration (configurable hours/days, set at
         // creation). Drives the fixed-period reset in resetWindowIfExpired().
         windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
+        weight,
+        ...(products.length ? { bindings } : {}),
         createdAt: nowIso(),
       };
       keys.push(record);
@@ -546,6 +608,203 @@ export class RosettaService {
     if (filtered.length === keys.length) return { ok: false, error: "卡密不存在" };
     writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
     return { ok: true, totalKeys: filtered.length };
+  }
+
+  // ── Static card → account binding ───────────────────────────────────────
+  // A card may be bound to exactly one upstream account; an account holds at
+  // most MAX_CARDS_PER_ACCOUNT cards (= users). Binding is provider-scoped: the
+  // antigravity and codex pools allocate ids independently, so (provider, id) is
+  // the real key. See AccessKeyStore.boundAccountIdFor / LeaseService.leaseToken.
+
+  /** Shares already consumed on an account (sum of bound cards' weights), excluding `excludeId`. */
+  private usedShares(provider: string, accountId: number, excludeId = ""): number {
+    const data = readJson(path.join(this.dataDir, "access-keys.json"), { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    let used = 0;
+    for (const key of keys) {
+      if (String(key.id) !== excludeId && this.keyBoundAccount(key, provider) === accountId) {
+        used += cardWeight(key);
+      }
+    }
+    return used;
+  }
+
+  /** Resolve a card's bound account in a pool: bindings map first, legacy fallback. */
+  private keyBoundAccount(key: any, provider: string): number {
+    const fromMap = Number(key?.bindings?.[provider] || 0);
+    if (fromMap > 0) return fromMap;
+    return String(key?.provider || "") === provider ? Number(key?.boundAccountId || 0) : 0;
+  }
+
+  /** Count cards bound to each account id within a pool. */
+  private boundCardCounts(provider: string): Map<number, number> {
+    const data = readJson(path.join(this.dataDir, "access-keys.json"), { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const counts = new Map<number, number>();
+    for (const key of keys) {
+      const accountId = this.keyBoundAccount(key, provider);
+      if (accountId > 0) counts.set(accountId, (counts.get(accountId) || 0) + 1);
+    }
+    return counts;
+  }
+
+  bindAccessKey(payload: any) {
+    const id = String(payload?.id || "");
+    const provider = String(payload?.provider || "").trim();
+    const accountId = Number(payload?.accountId || 0);
+    if (!provider) return { ok: false, error: "provider 不能为空" };
+    if (!(accountId > 0)) return { ok: false, error: "accountId 无效" };
+
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const record = keys.find((key: any) => String(key.id) === id);
+    if (!record) return { ok: false, error: "卡密不存在" };
+
+    // Count peers already bound to this (provider, account), excluding this card
+    // so a re-bind / no-op is idempotent and never trips the limit.
+    // Capacity is by SHARES (份): used (excluding this card) + this card's weight ≤ 4.
+    const need = cardWeight(record);
+    const used = this.usedShares(provider, accountId, id);
+    if (used + need > ACCOUNT_SHARE_CAPACITY) {
+      return {
+        ok: false,
+        error: `该账号份额不足（已用 ${used}/${ACCOUNT_SHARE_CAPACITY} 份，本卡需 ${need} 份），无法绑定`,
+      };
+    }
+
+    record.bindings = { ...(record.bindings || {}), [provider]: accountId };
+    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    return { ok: true, key: this.publicAccessKey(record) };
+  }
+
+  unbindAccessKey(payload: any) {
+    const id = String(payload?.id || "");
+    const provider = String(payload?.provider || "").trim();
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const record = keys.find((key: any) => String(key.id) === id);
+    if (!record) return { ok: false, error: "卡密不存在" };
+    if (provider) {
+      if (record.bindings) delete record.bindings[provider];
+      if (String(record.provider || "") === provider) {
+        record.provider = "";
+        record.boundAccountId = 0;
+      }
+    } else {
+      record.bindings = {};
+      record.provider = "";
+      record.boundAccountId = 0;
+    }
+    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    return { ok: true, key: this.publicAccessKey(record) };
+  }
+
+  /** Clear bindings that point at a deleted account, so no card is orphaned. */
+  private clearBindingsForAccount(provider: string, accountId: number) {
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    let changed = false;
+    for (const key of keys) {
+      if (this.keyBoundAccount(key, provider) === accountId) {
+        if (key.bindings) delete key.bindings[provider];
+        if (String(key.provider || "") === provider) {
+          key.provider = "";
+          key.boundAccountId = 0;
+        }
+        changed = true;
+      }
+    }
+    if (changed) writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+  }
+
+  /** Account-pool file for a provider. */
+  private poolFileFor(provider: string): string {
+    return path.join(this.dataDir, provider === "codex" ? "codex-accounts.json" : "accounts.json");
+  }
+
+  /** Shares consumed per account in a pool (sum of bound cards' weights). */
+  private boundSharesByAccount(provider: string): Map<number, number> {
+    const data = readJson(path.join(this.dataDir, "access-keys.json"), { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const m = new Map<number, number>();
+    for (const key of keys) {
+      const acc = this.keyBoundAccount(key, provider);
+      if (acc > 0) m.set(acc, (m.get(acc) || 0) + cardWeight(key));
+    }
+    return m;
+  }
+
+  /**
+   * "配额未耗尽" — does the account still have upstream quota to lease?
+   * Unknown (no snapshot yet, e.g. a freshly imported account) counts as
+   * available so new accounts are bindable; only a KNOWN, fully-drained window
+   * excludes it. Codex quota is account-level (the "codex" key); antigravity is
+   * per-model, so it's exhausted only when EVERY known model window is drained.
+   * getModelQuotaFraction already treats a passed reset time as refilled.
+   */
+  private accountHasQuota(provider: string, account: any): boolean {
+    if (provider === "codex") {
+      const f = getModelQuotaFraction(account, "codex");
+      return f === null || f > 0;
+    }
+    const fractions = account?.modelQuotaFractions;
+    if (!fractions || typeof fractions !== "object") return true; // unknown → assume ok
+    const models = Object.keys(fractions);
+    if (!models.length) return true;
+    return models.some((model) => {
+      const f = getModelQuotaFraction(account, model);
+      return f === null || f > 0;
+    });
+  }
+
+  /**
+   * Can a card be auto-bound to this account? Mirrors the lease-time eligibility
+   * (enabled + token + provider-specific eligibility) AND the mint-time policy:
+   * exact membership-level (planType) match + quota not exhausted.
+   */
+  private isAccountBindable(provider: string, account: any, level: string): boolean {
+    if (account?.enabled === false) return false;
+    if (!(account?.refreshToken || account?.accessToken)) return false;
+    if (provider === "antigravity" && !String(account?.projectId || "").trim()) return false;
+    if (String(account?.planType || "") !== level) return false;
+    return this.accountHasQuota(provider, account);
+  }
+
+  /**
+   * Auto-assign accounts for `count` cards each consuming `weight` shares,
+   * spreading across accounts (most free shares first). Only accounts of the
+   * requested membership `level` that are currently bindable (enabled, has a
+   * token, eligible, quota not exhausted) are candidates. Returns one accountId
+   * per card, or null if no such account has room — callers treat null as "该
+   * 等级可用号不足, add more first" and do NOT mint.
+   */
+  private autoAssignSeats(provider: string, count: number, weight: number, level: string): number[] | null {
+    const pool = readJson(this.poolFileFor(provider), { accounts: [] });
+    const accounts = (Array.isArray(pool.accounts) ? pool.accounts : []).filter(
+      (a: any) => this.isAccountBindable(provider, a, level),
+    );
+    const shares = this.boundSharesByAccount(provider);
+    const remaining: { id: number; free: number }[] = accounts.map((a: any) => ({
+      id: Number(a.id),
+      free: ACCOUNT_SHARE_CAPACITY - (shares.get(Number(a.id)) || 0),
+    }));
+    const assigned: number[] = [];
+    for (let i = 0; i < count; i++) {
+      // Best-fit: among accounts that still have room (free >= weight), pick the
+      // one with the SMALLEST free (tightest fit, tie-break by id). This packs
+      // 拼车 cards tightly and keeps whole accounts free for 独享 (4-share) cards,
+      // instead of scattering across the emptiest accounts.
+      const fit = remaining
+        .filter((r) => r.free >= weight)
+        .sort((a, b) => a.free - b.free || a.id - b.id)[0];
+      if (!fit) return null; // 没有号还剩 `weight` 份
+      fit.free -= weight;
+      assigned.push(fit.id);
+    }
+    return assigned;
   }
 
   cleanupExpiredKeys() {

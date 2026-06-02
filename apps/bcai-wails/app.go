@@ -57,6 +57,12 @@ func (a *App) startup(ctx context.Context) {
 		Log("[app] No account card configured. Waiting for user configuration.")
 	}
 
+	// 清理旧版接管残留的本地 chatgpt_base_url(新版用自定义 provider;旧残留会让
+	// Codex 把杂活继续发到本地代理被吞)。只清本地 127.0.0.1 残留,无残留则 no-op。
+	if err := CleanupLegacyCodexTakeover(); err != nil {
+		Log("[codex] 清理旧版接管残留失败(不致命): %v", err)
+	}
+
 	// 应用 Codex 中转(API 卡密)模式配置(若未配置 relay 则为 no-op,走号池/租号)。
 	GetCodexProxy().ApplyConfig(cfg)
 
@@ -167,6 +173,13 @@ func (a *App) ActivateCard(card string) (string, error) {
 func (a *App) GetStats() map[string]interface{} {
 	proxyStats := GetProxy().GetStats()
 	leaserStatus := GetLeaser().GetStatus()
+	// 绑定号各 bucket 的真实上游剩余分数 + 各自恢复倒计时(跨两个 leaser 汇总)。
+	leaserStatus["bucketFractions"] = snapshotBoundFractions()
+	leaserStatus["bucketResetMs"] = snapshotBoundResets(time.Now().UnixMilli())
+	// Codex 是账号级双窗口(5h + 周),像后台一样分两条显示。
+	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
+		leaserStatus["codexQuota"] = cq
+	}
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()
 
@@ -305,11 +318,18 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		return "", err
 	}
 
+	// 绑定卡:只能接管它开通的产品。codex 卡开 antigravity 接管 → 直接拒绝。
+	// 池子卡(products 为空)不限制。
+	products := GetLeaser().CardProducts()
+
 	var results []string
 	for _, raw := range targets {
 		t := findTakeoverTarget(strings.ToLower(strings.TrimSpace(raw)))
 		if t == nil {
 			continue
+		}
+		if required := targetRequiredProduct(t.ProductID()); !cardCoversProduct(products, required) {
+			return "", fmt.Errorf("此卡未开通 %s,无法接管 %s(请使用对应产品的卡密,或改用池子卡)", productLabel(required), t.Name())
 		}
 		msg, err := t.Inject(cfg.ProxyPort)
 		if err != nil {
@@ -578,18 +598,20 @@ func (a *App) GetAnnouncement() string {
 	client := createHttpClient("")
 	client.Timeout = 5 * time.Second
 
-	resp, err := client.Get(API_BASE + "/announcement")
-	if err != nil {
-		return ""
+	// 依次尝试主域名 → 备域名（bcai_hosts.go）
+	for _, rawURL := range bcaiURLCandidates(API_BASE + "/announcement") {
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			continue // 该域名不可达，尝试下一个
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			continue
+		}
+		body := make([]byte, 1024) // 公告最多 1KB
+		n, _ := resp.Body.Read(body)
+		resp.Body.Close()
+		return strings.TrimSpace(string(body[:n]))
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return ""
-	}
-
-	body := make([]byte, 1024) // 公告最多 1KB
-	n, _ := resp.Body.Read(body)
-	text := strings.TrimSpace(string(body[:n]))
-	return text
+	return ""
 }

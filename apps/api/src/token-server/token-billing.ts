@@ -9,7 +9,7 @@ import { compareVersions } from './data-store';
 
 // ── Default constants ────────────────────────────────────────────────────────
 
-export const DEFAULT_LEASE_TTL_MS = 10 * 60 * 1000;
+export const DEFAULT_LEASE_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_AFFINITY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
 export const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
@@ -25,8 +25,28 @@ export const ACCESS_KEY_BINDING_GRACE_MS = Math.max(
 );
 export const MAX_REMOTE_LEASE_TTL_MS = Math.max(
   60 * 1000,
-  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 10 * 60 * 1000),
+  Number(process.env.BCAI_MAX_REMOTE_LEASE_TTL_MS || 15 * 60 * 1000),
 );
+// Bound cards pin to one account (no scheduler rebalancing), so their lease can
+// run much longer than the pool default — up to the upstream token's real life.
+// Capped here as a safety ceiling when the token expiry can't be decoded.
+export const BOUND_LEASE_TTL_MS = Math.max(
+  MAX_REMOTE_LEASE_TTL_MS,
+  Number(process.env.BCAI_BOUND_LEASE_TTL_MS || 40 * 60 * 1000),
+);
+
+/** Decode a JWT access token's `exp` claim (seconds) → epoch ms, or 0 if undecodable. */
+export function decodeJwtExpMs(token: string): number {
+  try {
+    const seg = String(token || "").split(".")[1];
+    if (!seg) return 0;
+    const json = Buffer.from(seg.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const exp = Number(JSON.parse(json)?.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
 export const PHONE_VERIFICATION_COOLDOWN_MS = Math.max(
   60 * 60 * 1000,
   Number(process.env.BCAI_PHONE_VERIFICATION_COOLDOWN_MS || 24 * 60 * 60 * 1000),

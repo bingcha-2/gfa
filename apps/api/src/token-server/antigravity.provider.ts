@@ -4,6 +4,7 @@ import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import type { CreditDelta, Provider } from "../lease-core/provider";
 import { refreshGoogleAccessToken, TokenAccount } from "./account-token-provider";
 import { AntigravityModelCatalog } from "./antigravity-model-catalog";
+import { getModelQuotaFraction, getModelQuotaResetAt } from "./lease-scheduler";
 // Billing is universal (one card spans all providers) — see UNIVERSAL_BILLING.
 // Providers no longer override it; the AccessKeyStore default applies.
 
@@ -49,6 +50,13 @@ export class AntigravityProvider implements Provider<TokenAccount> {
 
   leaseResponseExtras(account: TokenAccount): Record<string, unknown> {
     return { projectId: account.projectId };
+  }
+
+  /** Blood bar = the leased model's remaining upstream quota fraction.
+   * Unknown (no per-model snapshot) → -1 so the client shows "未知", not a fake 100%. */
+  bloodBarFraction(account: TokenAccount, modelKey: string): { fraction: number; resetAt: number } {
+    const f = getModelQuotaFraction(account, modelKey);
+    return { fraction: f === null || f < 0 ? -1 : f, resetAt: getModelQuotaResetAt(account, modelKey) };
   }
 
   /**

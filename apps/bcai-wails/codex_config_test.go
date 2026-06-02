@@ -171,3 +171,29 @@ func TestInjectRestoreRoundTripWithPriorProvider(t *testing.T) {
 		t.Fatalf("还原后仍残留 bingchaai:\n%s", restored)
 	}
 }
+
+func TestStripLegacyLocalCodexBaseURL(t *testing.T) {
+	// 旧版接管残留:顶层 chatgpt_base_url 指向本地代理 → 应被清掉,其余配置保留。
+	withLocal := "model = 'gpt-5.5'\n" +
+		"chatgpt_base_url = \"http://127.0.0.1:60670/backend-api/codex\"\n\n" +
+		"[desktop]\nappearanceTheme = 'light'\n"
+	out := stripLegacyLocalCodexBaseURL(withLocal)
+	if strings.Contains(out, "chatgpt_base_url") {
+		t.Fatalf("本地 chatgpt_base_url 应被删除:\n%s", out)
+	}
+	if !strings.Contains(out, "model = 'gpt-5.5'") || !strings.Contains(out, "[desktop]") {
+		t.Fatalf("其余配置必须保留:\n%s", out)
+	}
+
+	// 用户自定义的远程 chatgpt_base_url 不能动。
+	withRemote := "chatgpt_base_url = \"https://api.example.com/v1\"\n"
+	if got := stripLegacyLocalCodexBaseURL(withRemote); got != withRemote {
+		t.Fatalf("非本地 chatgpt_base_url 必须保留,得到:\n%s", got)
+	}
+
+	// 不存在该键时无操作。
+	none := "model = 'gpt-5.5'\n"
+	if got := stripLegacyLocalCodexBaseURL(none); got != none {
+		t.Fatalf("缺该键应无操作")
+	}
+}

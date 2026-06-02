@@ -774,8 +774,8 @@ describe("TokenServerService — account cooling and retry", () => {
     const r1 = await service.leaseToken(REQ, leasePayload());
     expect(service.getStatus().activeLeases).toBe(1);
 
-    // Advance well past the lease TTL (capped at MAX_REMOTE_LEASE_TTL_MS = 5min).
-    currentTime += 10 * 60 * 1000;
+    // Advance well past the lease TTL (capped at MAX_REMOTE_LEASE_TTL_MS = 15min) + grace.
+    currentTime += 20 * 60 * 1000;
 
     // getStatus() runs cleanupExpiredLeases() which DELETES leases past TTL+grace.
     const status = service.getStatus();
@@ -811,7 +811,7 @@ describe("TokenServerService — account cooling and retry", () => {
     expect((report as any).status).toBeUndefined(); // big O(N+L) blob no longer sent
   });
 
-  // ── cooldown policy: 503→10s, 429→until 5h reset (cap 1h), 403→retryAfter/1h ──
+  // ── cooldown policy: 503→10s, 429→until 5h reset (cap 1h), 403→short (cap 60s) ──
 
   it("503 unavailable without retryAfter cools ~10s, not the long quota cooldown", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
@@ -881,7 +881,7 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
   });
 
-  it("403 benches the account for the reported retryAfter, skipped next lease", async () => {
+  it("403 caps the cooldown to a short bench — a transient verification challenge must NOT brick the model for the upstream's bogus 2h (fatal for bound cards)", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();
     const r = await service.leaseToken(REQ, leasePayload());
@@ -892,15 +892,30 @@ describe("TokenServerService — account cooling and retry", () => {
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
     expect(acct.quotaStatus).toBe("exhausted");
-    expect(acct.blockedUntil - currentTime).toBe(72 * 60 * 1000);
+    // 上游的 72min 被截断到 60s —— 瞬时挑战快速自愈,绑定卡不会被打死。
+    expect(acct.blockedUntil - currentTime).toBe(60 * 1000);
 
+    // It IS benched right now (no time advanced), so a pool lease rotates away.
     tokenProvider.mockClear();
     tokenProvider.mockResolvedValue("access-token-ok");
     const r2 = await service.leaseToken(REQ, leasePayload());
     expect(r2.accountId).not.toBe(id);
   });
 
-  it("403 without a retry hint benches the account for 1h", async () => {
+  it("403 honors a SMALL upstream retry hint as-is (only large/bogus ones are capped)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_account_verification_required", retryAfterMs: 15 * 1000,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.blockedUntil - currentTime).toBe(15 * 1000);
+  });
+
+  it("403 without a retry hint benches the account only ~60s (not 1h)", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();
     const r = await service.leaseToken(REQ, leasePayload());
@@ -910,7 +925,7 @@ describe("TokenServerService — account cooling and retry", () => {
       reason: "http_403_service_disabled", retryAfterMs: 0,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
-    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+    expect(acct.blockedUntil - currentTime).toBe(60 * 1000);
   });
 
   it("duplicate error report (same reportId) does not re-extend the cooldown", async () => {
