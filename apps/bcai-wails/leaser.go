@@ -896,10 +896,11 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 			return
 		}
 		// 激活后立即刷新一次绑定号额度(血条上来就显示真实值,而非空白/100%)。
-		l.refreshBoundQuota(card, deviceId, upstreamProxy)
+		// force=true:激活是用户主动操作,绕过 5min 节流,立刻拉 gemini/claude/codex。
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
 
 		// 绑定模式额度刷新节流:每 boundRefreshEveryTicks 个 tick(15s)刷一次。
-		const boundRefreshEveryTicks = 6 // 6×15s ≈ 90s
+		const boundRefreshEveryTicks = 20 // 20×15s = 5min
 		ticks := 0
 
 		for {
@@ -939,7 +940,8 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 				} else if bound && ticks%boundRefreshEveryTicks == 0 {
 					// 绑定模式定时查卡密状态:重新租号(=查状态,返回模式+账号额度),
 					// 刷新血条到绑定号最新余量。不上报用量,不轮换账号(绑定号唯一)。
-					l.refreshBoundQuota(card, deviceId, upstreamProxy)
+					// force=false:定时刷新走 5min 节流,避免高频打上游。
+					l.refreshBoundQuota(card, deviceId, upstreamProxy, false)
 				}
 			}
 		}

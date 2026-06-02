@@ -339,7 +339,13 @@ func (l *Leaser) reportQuotaOnly(card, upstreamProxy string, snap *AccountQuotaS
 // refreshBoundAntigravityQuota 主动拉一次上游 per-model 额度 → 记录血条 + 上报服务端。
 // 绑定模式激活/定时刷新调用 —— 否则 antigravity 只在"真实生成上报"之后才拉额度,
 // 纯激活(还没发请求)时血条没数据。fetchAccountQuotaAsync 自带 5min 节流。
-func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string) {
+func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string, force bool) {
+	if force {
+		// 激活/换卡:清掉节流时间戳,保证这次一定真去拉(否则 5min 内会被跳过)。
+		l.mu.Lock()
+		l.lastQuotaFetchAt = 0
+		l.mu.Unlock()
+	}
 	l.fetchAccountQuotaAsync()
 	snap := l.ConsumeQuotaSnapshot()
 	if snap == nil {

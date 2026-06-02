@@ -207,9 +207,15 @@ func (l *CodexLeaser) applyCodexWindows(w *CodexQuotaWindow) {
 
 // RefreshQuotaUpstream 主动拉一次 codex 上游 5h/周额度 → 更新血条 + 上报服务端。
 // 供绑定模式激活/定时刷新调用;fetchCodexQuotaAsync 自带 5min 节流,被跳过则不报。
-func (l *CodexLeaser) RefreshQuotaUpstream(card, upstreamProxy string, lease *CodexTokenLease) {
+func (l *CodexLeaser) RefreshQuotaUpstream(card, upstreamProxy string, lease *CodexTokenLease, force bool) {
 	if lease == nil {
 		return
+	}
+	if force {
+		// 激活/换卡:清掉节流时间戳,保证这次一定真去拉 codex 5h/周。
+		l.mu.Lock()
+		l.lastQuotaFetchAt = 0
+		l.mu.Unlock()
 	}
 	l.fetchCodexQuotaAsync(lease, upstreamProxy)
 	if snap := l.peekCodexQuotaSnapshot(); snap != nil {
