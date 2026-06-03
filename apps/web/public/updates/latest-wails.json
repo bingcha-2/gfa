@@ -1,27 +1,27 @@
 {
-  "version": "7.0.1",
-  "url": "https://bcai.site/updates/BingchaAI-7.0.1.exe",
-  "sha256": "28A36ECC2DA44F8533934C0CCD066703077FE78BAB059D5900DED761A1DB5A57",
-  "size": 18268160,
-  "changelog": "按卡产品门控(codex-only/antigravity 卡不再误租报错);后台加号入库探活;账号「刷新」一键刷新 token+额度;codex 上游额度抓取",
+  "version": "7.1.0",
+  "url": "https://bcai.site/updates/BingchaAI-7.1.0.exe",
+  "sha256": "E1858D1DF82F648DD11126D27F661F526CEB62C239811AEE47C1199BD998A038",
+  "size": 18266624,
+  "changelog": "修复 codex 用量计量(此前流式 token 显示为0);仪表盘纳入 codex 请求/输入输出 token/已节省统计;codex 恢复流式输出;日志优化",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.1-arm64.dmg",
-      "sha256": "307D91BDF2AD27824E21E2EA32710FA07F9E26359A73D3FF03379CF05A7F8D7B",
-      "size": 9203922
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-arm64.dmg",
+      "sha256": "98417EFE683034B7D2EF1229F54500E16E74BDF79F6BAECC7FBD78D0ABDF82EC",
+      "size": 9203181
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.1-amd64.dmg",
-      "sha256": "4305669D3AA9CF2E21BDF7DA3793AB0AAF0AE90ABD242144171B129C72221227",
-      "size": 9821774
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-amd64.dmg",
+      "sha256": "A63C285C70EF474F545D315E61DCA86FD3703EFCACA39811644780E25E1AFC6A",
+      "size": 9821614
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.1-linux-amd64.tar.gz",
-      "sha256": "32790FE9DAAF8CA83650BB24044069FA14140147F399926631547FC0A9E4C71C",
-      "size": 7690568
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-linux-amd64.tar.gz",
+      "sha256": "35D9EF43A42D8E99BB76027F89B3282EDB75801192047960844A36585F120A89",
+      "size": 7690721
     }
   }
 }
