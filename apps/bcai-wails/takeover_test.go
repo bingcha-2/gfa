@@ -7,12 +7,47 @@ func TestTargetRequiredProduct(t *testing.T) {
 		"codex":           "codex",
 		"antigravity_ide": "antigravity",
 		"antigravity_hub": "antigravity",
+		"claude_code":     "claude",
 		"unknown":         "",
 	}
 	for in, want := range cases {
 		if got := targetRequiredProduct(in); got != want {
 			t.Fatalf("targetRequiredProduct(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestClaudeCodeTargetIsRegistered(t *testing.T) {
+	// Lookup by dispatch key and by product id both resolve the same target.
+	byKey := findTakeoverTarget("claude")
+	byProduct := findTakeoverTarget("claude_code")
+	if byKey == nil || byProduct == nil {
+		t.Fatal("claudeCodeTarget must be registered (lookup by key and product id)")
+	}
+	if byKey.ProductID() != "claude_code" || byProduct.Key() != "claude" {
+		t.Fatalf("unexpected target identity: key=%q product=%q", byProduct.Key(), byKey.ProductID())
+	}
+	if byKey.InjectionType() != "settings" {
+		t.Fatalf("claude target should inject via settings, got %q", byKey.InjectionType())
+	}
+}
+
+func TestProductLabelClaude(t *testing.T) {
+	if productLabel("claude") != "Claude" {
+		t.Fatalf("productLabel(claude)=%q want Claude", productLabel("claude"))
+	}
+}
+
+func TestClaudeCardGating(t *testing.T) {
+	// A claude-only card may take over Claude Code but not codex/antigravity.
+	if !cardCoversProduct([]string{"claude"}, "claude") {
+		t.Fatal("claude card should cover claude")
+	}
+	if cardCoversProduct([]string{"claude"}, "codex") {
+		t.Fatal("claude-only card must NOT cover codex")
+	}
+	if cardCoversProduct([]string{"codex"}, "claude") {
+		t.Fatal("codex-only card must NOT cover claude")
 	}
 }
 

@@ -28,6 +28,7 @@ import { StatsController } from "./stats.controller";
 import { TokenServerModule } from "./token-server/token-server.module";
 import { RosettaModule } from "./rosetta/rosetta.module";
 import { RemoteCodexModule } from "./remote-codex/remote-codex.module";
+import { RemoteClaudeModule } from "./remote-claude/remote-claude.module";
 import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
 
 @Module({
@@ -73,6 +74,7 @@ import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
     FaqModule,
     TokenServerModule,
     RemoteCodexModule,
+    RemoteClaudeModule,
     RemoteStatsModule,
     RosettaModule,
   ],

@@ -34,6 +34,7 @@ var takeoverTargets = []TakeoverTarget{
 	antigravityIDETarget{},
 	antigravityHubTarget{},
 	codexTarget{},
+	claudeCodeTarget{},
 }
 
 // findTakeoverTarget 按调度键或产品 id 查找。
@@ -54,6 +55,8 @@ func targetRequiredProduct(productID string) string {
 		return "codex"
 	case "antigravity_ide", "antigravity_hub":
 		return "antigravity"
+	case "claude_code":
+		return "claude"
 	default:
 		return ""
 	}
@@ -79,6 +82,8 @@ func productLabel(product string) string {
 		return "Codex"
 	case "antigravity":
 		return "Antigravity"
+	case "claude":
+		return "Claude"
 	default:
 		return product
 	}
@@ -235,4 +240,32 @@ func (codexTarget) Restore() (string, error) {
 	// 还原后回到官方 openai provider → 把历史 retag 回 openai。
 	go RestartCodexAfterTakeover(codexDefaultProvider)
 	return "Codex: ✓ 已恢复,正在重启 Codex...", nil
+}
+
+// ── Claude Code(~/.claude/settings.json env 注入,CLI + VSCode 扩展共用)──────
+
+type claudeCodeTarget struct{}
+
+func (claudeCodeTarget) Key() string           { return "claude" }
+func (claudeCodeTarget) ProductID() string     { return "claude_code" }
+func (claudeCodeTarget) Name() string          { return "Claude Code" }
+func (claudeCodeTarget) InjectionType() string { return "settings" }
+func (claudeCodeTarget) DetectPath() string    { return detectClaudeCodePath() }
+
+func (claudeCodeTarget) IsInjected(proxyPort int) bool { return IsClaudeInjected(proxyPort) }
+
+func (claudeCodeTarget) Inject(proxyPort int) (string, error) {
+	if err := InjectClaudeSettings(proxyPort); err != nil {
+		return "", err
+	}
+	// Claude Code CLI 无常驻进程:注入后下次 `claude` 启动即生效,无需杀进程。
+	// VSCode 的 Claude Code 扩展需 Reload Window 才会重读 settings.json。
+	return "Claude Code: ✓ 已接管(CLI 下次启动生效;VSCode 扩展请 Reload Window)", nil
+}
+
+func (claudeCodeTarget) Restore() (string, error) {
+	if err := RestoreClaudeSettings(); err != nil {
+		return "", err
+	}
+	return "Claude Code: ✓ 已恢复(CLI 下次启动生效;VSCode 扩展请 Reload Window)", nil
 }

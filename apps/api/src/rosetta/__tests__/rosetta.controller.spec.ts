@@ -10,14 +10,16 @@ function makeController() {
   };
   const tokenServer = { reloadAccessKeys: vi.fn() };
   const remoteCodex = { reloadAccessKeys: vi.fn() };
+  const remoteClaude = { reloadAccessKeys: vi.fn() };
   const controller = new RosettaController(
     rosetta as any,
     {} as any,
     {} as any,
     tokenServer as any,
     remoteCodex as any,
+    remoteClaude as any,
   );
-  return { controller, rosetta, tokenServer, remoteCodex };
+  return { controller, rosetta, tokenServer, remoteCodex, remoteClaude };
 }
 
 describe("RosettaController — static binding", () => {
@@ -42,5 +44,17 @@ describe("RosettaController — static binding", () => {
     const { controller, remoteCodex } = makeController();
     controller.createAccessKey({ name: "x" });
     expect(remoteCodex.reloadAccessKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("createAccessKey reloads the claude pool too (so new claude bindings are visible)", () => {
+    const { controller, remoteClaude } = makeController();
+    controller.createAccessKey({ name: "x" });
+    expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("bindAccessKey reloads the claude pool too", () => {
+    const { controller, remoteClaude } = makeController();
+    controller.bindAccessKey({ id: "c1", provider: "claude", accountId: 1 });
+    expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,6 +5,7 @@ import { CreditStatsService } from "./credit-stats.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
+import { RemoteClaudeService } from "../remote-claude/service/remote-claude.service";
 
 // NOTE: intentionally NOT @Public() — these are admin-console operations
 // (account pool, access keys, Codex OAuth token import) that must be gated by the
@@ -20,6 +21,7 @@ export class RosettaController {
     private readonly tokenUsageStats: TokenUsageStatsService,
     private readonly tokenServer: TokenServerService,
     private readonly remoteCodex: RemoteCodexService,
+    private readonly remoteClaude: RemoteClaudeService,
   ) {}
 
   /**
@@ -32,6 +34,7 @@ export class RosettaController {
   private reloadKeyStores() {
     this.tokenServer.reloadAccessKeys();
     this.remoteCodex.reloadAccessKeys();
+    this.remoteClaude.reloadAccessKeys();
   }
 
   @Get("access-keys")
@@ -115,6 +118,27 @@ export class RosettaController {
   @Post("codex-refresh-quota")
   refreshCodexAccountQuota(@Body() body: any) {
     return this.rosetta.refreshCodexAccountQuota(body);
+  }
+
+  // ── Claude account pool ─────────────────────────────────────────────
+  @Get("claude-accounts")
+  listClaudeAccounts() {
+    return this.rosetta.listClaudeAccounts();
+  }
+
+  @Post("claude-add-account")
+  addClaudeAccount(@Body() body: any) {
+    return this.rosetta.addClaudeAccount(body);
+  }
+
+  @Post("claude-toggle-account")
+  toggleClaudeAccount(@Body() body: any) {
+    return this.rosetta.toggleClaudeAccount(body);
+  }
+
+  @Post("claude-delete-account")
+  deleteClaudeAccount(@Body() body: any) {
+    return this.rosetta.deleteClaudeAccount(body);
   }
 
   @Post("access-key")

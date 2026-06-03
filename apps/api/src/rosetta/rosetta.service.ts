@@ -947,6 +947,90 @@ export class RosettaService {
     return { ok: true, totalAccounts: filtered.length };
   }
 
+  // ── Claude account pool (claude-accounts.json) ──────────────────────────
+  // Mirrors the codex account methods above but targets the claude pool. Claude
+  // accounts (Anthropic subscription OAuth) have no projectId/oauthProfile and,
+  // like codex, an account-level single quota window (the "claude" key).
+
+  listClaudeAccounts() {
+    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const boundCounts = this.boundCardCounts("claude");
+    const shares = this.boundSharesByAccount("claude");
+    const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
+      id: Number(account.id || 0),
+      email: String(account.email || ""),
+      enabled: account.enabled !== false,
+      alias: String(account.alias || ""),
+      planType: String(account.planType || ""),
+      hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
+      boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
+      usedShares: shares.get(Number(account.id || 0)) || 0,
+      shareCapacity: ACCOUNT_SHARE_CAPACITY,
+      claudeHourlyPercent: Number(account.claudeHourlyPercent ?? -1),
+      claudeWeeklyPercent: Number(account.claudeWeeklyPercent ?? -1),
+      modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+    }));
+    return { ok: true, accounts, dataDir: this.dataDir };
+  }
+
+  addClaudeAccount(payload: any) {
+    const email = String(payload?.email || "").trim();
+    const refreshToken = String(payload?.refreshToken || "").trim();
+    if (!email) return { ok: false, error: "email 不能为空" };
+    if (!refreshToken) return { ok: false, error: "refreshToken 不能为空" };
+
+    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    let accountId: number;
+    if (existing) {
+      existing.refreshToken = refreshToken;
+      existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
+      existing.alias = String(payload.alias ?? existing.alias ?? "");
+      if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      accountId = Number(existing.id);
+    } else {
+      const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accountId = maxId + 1;
+      accounts.push({
+        id: accountId,
+        email,
+        refreshToken,
+        enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
+        alias: String(payload.alias || ""),
+        planType: String(payload.planType || ""),
+      });
+    }
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  toggleClaudeAccount(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.enabled = !account.enabled;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, enabled: account.enabled };
+  }
+
+  deleteClaudeAccount(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const filtered = accounts.filter((account: any) => Number(account.id) !== accountId);
+    if (filtered.length === accounts.length) return { ok: false, error: "账号不存在" };
+    writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
+    this.clearBindingsForAccount("claude", accountId);
+    return { ok: true, totalAccounts: filtered.length };
+  }
+
   createAccessKey(payload: any) {
     const filePath = path.join(this.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
@@ -960,7 +1044,9 @@ export class RosettaService {
     // mint time. Pre-assign all seats so the batch is atomic (no half-mint when
     // a pool runs out).
     const products: string[] = Array.isArray(payload?.products)
-      ? payload.products.map((p: unknown) => String(p)).filter((p: string) => p === "codex" || p === "antigravity")
+      ? payload.products
+          .map((p: unknown) => String(p))
+          .filter((p: string) => p === "codex" || p === "antigravity" || p === "claude")
       : [];
     // Membership level (planType) chosen per product — REQUIRED for every
     // selected product. Auto-bind only considers accounts of the exact level.
@@ -970,7 +1056,7 @@ export class RosettaService {
     const weight = cardWeight({ weight: payload?.weight });
     const seatPlan: Record<string, number[]> = {};
     for (const product of products) {
-      const label = product === "codex" ? "Codex" : "Antigravity";
+      const label = product === "codex" ? "Codex" : product === "claude" ? "Claude" : "Antigravity";
       const level = String(levels[product] || "").trim();
       if (!level) return { ok: false, error: `请为 ${label} 选择会员等级` };
       const seats = this.autoAssignSeats(product, count, weight, level);
@@ -1150,7 +1236,9 @@ export class RosettaService {
 
   /** Account-pool file for a provider. */
   private poolFileFor(provider: string): string {
-    return path.join(this.dataDir, provider === "codex" ? "codex-accounts.json" : "accounts.json");
+    const fileName =
+      provider === "codex" ? "codex-accounts.json" : provider === "claude" ? "claude-accounts.json" : "accounts.json";
+    return path.join(this.dataDir, fileName);
   }
 
   /** Shares consumed per account in a pool (sum of bound cards' weights). */
@@ -1174,8 +1262,9 @@ export class RosettaService {
    * getModelQuotaFraction already treats a passed reset time as refilled.
    */
   private accountHasQuota(provider: string, account: any): boolean {
-    if (provider === "codex") {
-      const f = getModelQuotaFraction(account, "codex");
+    if (provider === "codex" || provider === "claude") {
+      // Both are account-level single-window quotas (the "codex"/"claude" key).
+      const f = getModelQuotaFraction(account, provider);
       return f === null || f > 0;
     }
     const fractions = account?.modelQuotaFractions;

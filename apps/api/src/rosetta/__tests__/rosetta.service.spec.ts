@@ -118,6 +118,49 @@ describe("RosettaService", () => {
     expect(Array.isArray(stored.accounts)).toBe(true);
   });
 
+  it("manages claude accounts in claude-accounts.json (add/list/toggle/delete)", () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    expect(svc.listClaudeAccounts().accounts).toHaveLength(0);
+
+    svc.addClaudeAccount({ email: "cl@x.com", refreshToken: "rt", planType: "max" });
+    const listed = svc.listClaudeAccounts().accounts;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ email: "cl@x.com", enabled: true, planType: "max", hasToken: true });
+
+    const id = listed[0].id;
+    svc.toggleClaudeAccount({ accountId: id });
+    expect(svc.listClaudeAccounts().accounts[0].enabled).toBe(false);
+
+    svc.deleteClaudeAccount({ accountId: id });
+    expect(svc.listClaudeAccounts().accounts).toHaveLength(0);
+
+    // Written to claude-accounts.json, NOT the codex/antigravity pools.
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    expect(Array.isArray(stored.accounts)).toBe(true);
+  });
+
+  it("surfaces claude 5h/weekly percentages and bound-card counts in listClaudeAccounts", () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    writeJson(path.join(tempDir, "claude-accounts.json"), {
+      accounts: [
+        {
+          id: 7,
+          email: "max@x.com",
+          refreshToken: "rt",
+          enabled: true,
+          planType: "max",
+          claudeHourlyPercent: 80,
+          claudeWeeklyPercent: 30,
+        },
+      ],
+    });
+    const acc = svc.listClaudeAccounts().accounts[0] as any;
+    expect(acc.claudeHourlyPercent).toBe(80);
+    expect(acc.claudeWeeklyPercent).toBe(30);
+    expect(acc.boundCardCount).toBe(0);
+    expect(acc.shareCapacity).toBeGreaterThan(0);
+  });
+
   it("imports a codex account from pasted text and keeps only supported fields", () => {
     const svc = new RosettaService({ dataDir: tempDir });
     const result = svc.importCodexAccountFromText({
@@ -683,6 +726,30 @@ describe("RosettaService", () => {
       expect(res.ok).toBe(true);
       const key = svc.listAccessKeys({}).keys[0] as any;
       expect(key.bindings).toMatchObject({ codex: id });
+    });
+
+    it("mints and auto-binds a Claude card to a claude-accounts.json seat", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      // No admin CRUD for the claude pool yet — seed claude-accounts.json directly
+      // (offline-harvested accounts land here). Auto-bind must read this pool.
+      writeJson(path.join(tempDir, "claude-accounts.json"), {
+        accounts: [{ id: 501, email: "max@x.com", refreshToken: "rt", enabled: true, planType: "max" }],
+      });
+      const res: any = svc.createAccessKey({ products: ["claude"], levels: { claude: "max" } });
+      expect(res.ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toMatchObject({ claude: 501 });
+    });
+
+    it("rejects a Claude card (with a Claude-labelled error) when no max-level claude account has a seat", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      writeJson(path.join(tempDir, "claude-accounts.json"), {
+        accounts: [{ id: 502, email: "pro@x.com", refreshToken: "rt", enabled: true, planType: "pro" }],
+      });
+      const res: any = svc.createAccessKey({ products: ["claude"], levels: { claude: "max" } });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("Claude");
+      expect(svc.listAccessKeys({}).keys).toHaveLength(0);
     });
 
     it("auto-binds across both pools for a universal card", () => {
