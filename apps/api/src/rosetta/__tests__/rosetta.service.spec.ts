@@ -168,6 +168,138 @@ describe("RosettaService", () => {
     });
   });
 
+  it("exports all codex accounts (with tokens) in a re-importable shape", () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addCodexAccount({ email: "a@example.com", refreshToken: "ra", planType: "plus", alias: "A" });
+    svc.addCodexAccount({ email: "b@example.com", refreshToken: "rb" });
+    svc.toggleCodexAccount({ accountId: 2 });
+
+    const result = svc.exportCodexAccounts();
+    expect(result).toMatchObject({ ok: true, type: "codex-accounts-export", count: 2 });
+    expect(result.accounts).toHaveLength(2);
+    expect(result.accounts[0]).toMatchObject({ id: 1, email: "a@example.com", refreshToken: "ra", planType: "plus", alias: "A", enabled: true });
+    expect(result.accounts[1]).toMatchObject({ id: 2, email: "b@example.com", refreshToken: "rb", enabled: false });
+  });
+
+  it("bulk-imports an exported pool, upserting by email and honoring enabled flags", () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addCodexAccount({ email: "keep@example.com", refreshToken: "old-token", planType: "plus", alias: "Keep" });
+
+    const result = svc.importCodexAccountsFromText({
+      text: JSON.stringify({
+        type: "codex-accounts-export",
+        accounts: [
+          { email: "keep@example.com", refreshToken: "new-token", planType: "pro", enabled: true },
+          { email: "fresh@example.com", refreshToken: "fresh-token", enabled: false },
+          { email: "", refreshToken: "no-email" },
+        ],
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: true, bulk: true, added: 1, updated: 1, failed: 1 });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "codex-accounts.json"), "utf8"));
+    expect(stored.accounts).toHaveLength(2);
+    expect(stored.accounts[0]).toMatchObject({ id: 1, email: "keep@example.com", refreshToken: "new-token", planType: "pro", enabled: true });
+    expect(stored.accounts[1]).toMatchObject({ email: "fresh@example.com", refreshToken: "fresh-token", enabled: false });
+  });
+
+  it("round-trips: export then re-import reproduces the same pool", () => {
+    const src = new RosettaService({ dataDir: tempDir });
+    src.addCodexAccount({ email: "x@example.com", refreshToken: "rx", planType: "plus", alias: "X" });
+    src.addCodexAccount({ email: "y@example.com", refreshToken: "ry" });
+    const exported = src.exportCodexAccounts();
+
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-rosetta-dest-"));
+    try {
+      const dest = new RosettaService({ dataDir: destDir });
+      const result = dest.importCodexAccountsFromText({ text: JSON.stringify(exported) });
+      expect(result).toMatchObject({ ok: true, bulk: true, added: 2, updated: 0, failed: 0 });
+      const stored = JSON.parse(fs.readFileSync(path.join(destDir, "codex-accounts.json"), "utf8"));
+      expect(stored.accounts).toHaveLength(2);
+      expect(stored.accounts.map((a: any) => a.email).sort()).toEqual(["x@example.com", "y@example.com"]);
+      expect(stored.accounts.find((a: any) => a.email === "x@example.com")).toMatchObject({ refreshToken: "rx", planType: "plus", alias: "X" });
+    } finally {
+      fs.rmSync(destDir, { recursive: true, force: true });
+    }
+  });
+
+  it("losslessly round-trips quota/reset fields and still drops unknown junk", () => {
+    // Seed a fully-populated account (as if refreshCodexAccountQuota had run).
+    writeJson(path.join(tempDir, "codex-accounts.json"), {
+      accounts: [
+        {
+          id: 1,
+          email: "full@example.com",
+          refreshToken: "rf",
+          accessToken: "at",
+          accessTokenExpiresAt: 1893456000000,
+          sessionToken: "st",
+          enabled: true,
+          alias: "Full",
+          planType: "pro",
+          codexHourlyPercent: 73,
+          codexWeeklyPercent: 41,
+          codexHourlyResetTime: "2026-06-03T18:00:00Z",
+          codexWeeklyResetTime: "2026-06-09T00:00:00Z",
+          modelQuotaFractions: { codex: 0.73 },
+          modelQuotaResetTimes: { codex: "2026-06-03T18:00:00Z" },
+          modelQuotaRefreshedAt: 1717430400000,
+          internalJunk: "should-not-survive",
+        },
+      ],
+    });
+
+    const src = new RosettaService({ dataDir: tempDir });
+    const exported = src.exportCodexAccounts();
+    // Export is verbatim/lossless — it keeps every stored field.
+    expect(exported.accounts[0]).toMatchObject({ codexHourlyPercent: 73, modelQuotaFractions: { codex: 0.73 }, internalJunk: "should-not-survive" });
+
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-rosetta-dest-"));
+    try {
+      const dest = new RosettaService({ dataDir: destDir });
+      dest.importCodexAccountsFromText({ text: JSON.stringify(exported) });
+      const stored = JSON.parse(fs.readFileSync(path.join(destDir, "codex-accounts.json"), "utf8"));
+      expect(stored.accounts).toHaveLength(1);
+      const acc = stored.accounts[0];
+      // Allowlisted quota/reset fields survive the import.
+      expect(acc).toMatchObject({
+        email: "full@example.com",
+        refreshToken: "rf",
+        accessToken: "at",
+        accessTokenExpiresAt: 1893456000000,
+        sessionToken: "st",
+        planType: "pro",
+        alias: "Full",
+        codexHourlyPercent: 73,
+        codexWeeklyPercent: 41,
+        codexHourlyResetTime: "2026-06-03T18:00:00Z",
+        codexWeeklyResetTime: "2026-06-09T00:00:00Z",
+        modelQuotaFractions: { codex: 0.73 },
+        modelQuotaResetTimes: { codex: "2026-06-03T18:00:00Z" },
+        modelQuotaRefreshedAt: 1717430400000,
+      });
+      // Non-allowlisted junk is left behind on import.
+      expect(acc).not.toHaveProperty("internalJunk");
+    } finally {
+      fs.rmSync(destDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still imports the legacy single pasted token JSON, dropping sensitive fields", () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    const result = svc.importCodexAccountsFromText({
+      text: `随便一段文本 {"WARNING_BANNER":"secret","user":{"email":"legacy@example.com","name":"Legacy"},"account":{"planType":"plus"},"accessToken":"a","sessionToken":"s","ignoredField":"x"}`,
+    });
+    expect(result).toMatchObject({ ok: true });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "codex-accounts.json"), "utf8"));
+    expect(stored.accounts).toHaveLength(1);
+    expect(stored.accounts[0]).toMatchObject({ email: "legacy@example.com", alias: "Legacy", planType: "plus", accessToken: "a", sessionToken: "s" });
+    expect(stored.accounts[0]).not.toHaveProperty("WARNING_BANNER");
+    expect(stored.accounts[0]).not.toHaveProperty("ignoredField");
+  });
+
   it("starts Codex OAuth, exchanges the callback code, and saves the account without exposing tokens in status", async () => {
     const port = await getFreePort();
     const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,7 @@ export default function CodexAccountsPage() {
   const [accounts, setAccounts] = useState<CodexAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [email, setEmail] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
@@ -125,7 +126,14 @@ export default function CodexAccountsPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "导入失败");
-      toast.success(data.isUpdate ? "已更新账号" : "已导入账号");
+      if (data.bulk) {
+        const parts = [`新增 ${data.added}`, `更新 ${data.updated}`];
+        if (data.failed) parts.push(`失败 ${data.failed}`);
+        if (data.disabled) parts.push(`停用 ${data.disabled}`);
+        toast.success(`已导入 ${data.added + data.updated} 个账号(${parts.join(" · ")})`);
+      } else {
+        toast.success(data.isUpdate ? "已更新账号" : "已导入账号");
+      }
       setImportText("");
       await refreshQuotaSilently(data.id);
       fetchAccounts();
@@ -133,6 +141,31 @@ export default function CodexAccountsPage() {
       toast.error(error instanceof Error ? error.message : "导入失败");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/rosetta/codex-accounts-export", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "导出失败");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().slice(0, 10);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `codex-accounts-${stamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`已导出 ${data.count} 个账号`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -341,6 +374,10 @@ export default function CodexAccountsPage() {
             {refreshingMissing ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
             刷新无额度账号
           </Button>
+          <Button variant="outline" onClick={handleExport} disabled={exporting || !accounts.length}>
+            {exporting ? <Spinner size={14} /> : <DownloadIcon className="size-4" />}
+            导出全部
+          </Button>
           <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
           {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
           刷新
@@ -413,12 +450,12 @@ export default function CodexAccountsPage() {
       <div className="rounded-lg border bg-card p-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
           <Field className="min-w-0 flex-1">
-            <FieldLabel>JSON 导入</FieldLabel>
+            <FieldLabel>JSON 导入(支持单条 token JSON,或「导出全部」生成的数据)</FieldLabel>
             <Textarea
               rows={2}
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="粘贴整段文本"
+              placeholder="粘贴单条 token JSON,或整段导出的 JSON"
               className="h-14 max-h-20 resize-none overflow-auto font-mono text-xs [field-sizing:fixed]"
             />
           </Field>
