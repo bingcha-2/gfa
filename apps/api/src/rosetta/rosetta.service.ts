@@ -884,7 +884,7 @@ export class RosettaService {
     try {
       const result = await this.completeCodexOAuthLogin(pending, code);
       this.closeCodexOAuthPending(false);
-      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate };
+      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate, accountId: result.accountId };
     } catch (error) {
       pending.status = "failed";
       pending.error = error instanceof Error ? error.message : "OAuth 完成失败";
@@ -928,7 +928,7 @@ export class RosettaService {
     pending.status = "completed";
     pending.email = email;
     pending.isUpdate = Boolean(result.isUpdate);
-    return { email, isUpdate: Boolean(result.isUpdate) };
+    return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
   }
 
   private closeCodexOAuthPending(clearCompleted = true) {

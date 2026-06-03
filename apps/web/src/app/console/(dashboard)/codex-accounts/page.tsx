@@ -100,6 +100,7 @@ export default function CodexAccountsPage() {
       if (!data.ok) throw new Error(data.error || "添加失败");
       toast.success(data.isUpdate ? "已更新账号" : "已添加账号");
       setEmail(""); setRefreshToken(""); setPlanType(""); setAlias("");
+      await refreshQuotaSilently(data.id);
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "添加失败");
@@ -124,6 +125,7 @@ export default function CodexAccountsPage() {
       if (!data.ok) throw new Error(data.error || "导入失败");
       toast.success(data.isUpdate ? "已更新账号" : "已导入账号");
       setImportText("");
+      await refreshQuotaSilently(data.id);
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "导入失败");
@@ -178,6 +180,7 @@ export default function CodexAccountsPage() {
       setOauthAuthUrl("");
       setOauthCallbackInput("");
       setOauthStatusText("");
+      await refreshQuotaSilently(data.accountId);
       fetchAccounts();
     } catch (error) {
       const msg = error instanceof Error ? error.message : "完成授权失败";
@@ -185,6 +188,20 @@ export default function CodexAccountsPage() {
       toast.error(msg);
     } finally {
       setOauthSubmitting(false);
+    }
+  }
+
+  // 加/导入/OAuth 入库后自动拉一次额度,免得新账号一直显示「—」。失败不影响入库,用户仍可手动「刷新」。
+  async function refreshQuotaSilently(accountId?: number) {
+    if (!accountId) return;
+    try {
+      await fetch("/api/rosetta/codex-refresh-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+    } catch {
+      // best-effort：失败时账号已入库,用户可手动点「刷新」。
     }
   }
 
