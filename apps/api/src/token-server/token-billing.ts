@@ -129,8 +129,10 @@ export interface ProviderBilling {
   buckets: string[];
   /** Which bucket a model counts toward. */
   bucketOf(modelKey: string): string;
-  /** Per-bucket limit derived from the card's base token-window limit. */
-  bucketLimit(baseLimit: number, bucket: string): number;
+  /** Per-bucket limit derived from the card's base token-window limit.
+   *  When `record` is supplied and has a `bucketLimits` override for the
+   *  bucket, that value takes priority over the default multiplier. */
+  bucketLimit(baseLimit: number, bucket: string, record?: any): number;
   /** Human label used in limit-exceeded error messages. */
   bucketLabel(bucket: string): string;
 }
@@ -155,7 +157,12 @@ export const UNIVERSAL_BILLING: ProviderBilling = {
   buckets: ['gemini', 'codex', 'opus'],
   bucketOf: (modelKey: string) =>
     isGeminiModel(modelKey) ? 'gemini' : isCodexModel(modelKey) ? 'codex' : 'opus',
-  bucketLimit: (baseLimit: number, bucket: string) => (bucket === 'gemini' ? baseLimit * 5 : baseLimit),
+  bucketLimit: (baseLimit: number, bucket: string, record?: any) => {
+    // Per-card override: record.bucketLimits.{bucket} takes priority.
+    const custom = Number(record?.bucketLimits?.[bucket] ?? 0);
+    if (custom > 0) return custom;
+    return bucket === 'gemini' ? baseLimit * 5 : baseLimit;
+  },
   bucketLabel: (bucket: string) => (bucket === 'gemini' ? 'Gemini' : bucket === 'codex' ? 'Codex' : 'Opus'),
 };
 

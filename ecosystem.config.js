@@ -2,9 +2,9 @@ module.exports = {
   apps: [
     {
       name: 'gfa-daemon',
-      script: 'C:\\Users\\Administrator\\Desktop\\GFA\\scripts\\start.mjs',
+      script: 'C:\\Users\\Administrator\\Desktop\\GFA-per\\scripts\\start.mjs',
       args: '--no-build',
-      cwd: 'C:\\Users\\Administrator\\Desktop\\GFA',
+      cwd: 'C:\\Users\\Administrator\\Desktop\\GFA-per',
       interpreter: 'node',
       autorestart: true,
       max_restarts: 5,
@@ -13,8 +13,8 @@ module.exports = {
     },
     {
       name: 'caddy',
-      script: 'C:\\Users\\Administrator\\Desktop\\caddy\\caddy.exe',
-      args: 'run --config Caddyfile',
+      script: 'C:\\Users\\Administrator\\AppData\\Local\\Microsoft\\WinGet\\Links\\caddy.exe',
+      args: 'run --config C:\\Users\\Administrator\\Desktop\\caddy\\Caddyfile',
       cwd: 'C:\\Users\\Administrator\\Desktop\\caddy',
       interpreter: 'none',
       autorestart: true,

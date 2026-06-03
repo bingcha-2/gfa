@@ -5,8 +5,11 @@ import { toast } from "sonner";
 import {
   Plus, Power, Trash2, RefreshCw, Copy, Search,
   Download, FolderOpen, Users, UserCheck, UserX, KeyRound, Gauge,
-  SlidersHorizontal,
+  SlidersHorizontal, ExternalLinkIcon, GitMerge,
 } from "lucide-react";
+import {
+  CANONICAL_MODELS, resolveCanonicalModel, quotaBarColor,
+} from "../rosetta-load/constants";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +45,7 @@ type RosettaAccount = {
   id: string;
   email: string;
   enabled: boolean;
+  poolEnabled: boolean;
   alias?: string;
   projectId?: string;
   planType?: string;
@@ -54,14 +58,64 @@ type RosettaAccount = {
   familyStatus?: string;
   motherId?: string;
   seatId?: string;
+  modelQuotaFractions?: Record<string, number>;
+  modelQuotaResetTimes?: Record<string, string>;
+  modelQuotaRefreshedAt?: number;
 };
+
+// ── Model quota helpers ──
+const GEMINI_IDS = new Set(CANONICAL_MODELS.filter((m) => m.id.startsWith("gemini-")).map((m) => m.id));
+const CLAUDE_IDS = new Set(CANONICAL_MODELS.filter((m) => m.id.startsWith("claude-")).map((m) => m.id));
+
+function aggregatePoolFraction(
+  fractions: Record<string, number> | undefined,
+  poolIds: Set<string>,
+): number | null {
+  if (!fractions) return null;
+  const vals: number[] = [];
+  for (const [key, val] of Object.entries(fractions)) {
+    const canonical = resolveCanonicalModel(key);
+    if (canonical && poolIds.has(canonical.id)) vals.push(val);
+  }
+  if (vals.length === 0) return null;
+  return Math.round(Math.min(...vals) * 100);
+}
+
+function CompactQuotaCell({ account }: { account: RosettaAccount }) {
+  const gemini = aggregatePoolFraction(account.modelQuotaFractions, GEMINI_IDS);
+  const claude = aggregatePoolFraction(account.modelQuotaFractions, CLAUDE_IDS);
+  if (gemini === null && claude === null) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-col gap-0.5">
+      {gemini !== null && (
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-medium w-3 shrink-0">G</span>
+          <div className="h-1.5 w-11 rounded-full bg-muted overflow-hidden">
+            <div className={`h-full rounded-full ${quotaBarColor(gemini)}`} style={{ width: `${gemini}%` }} />
+          </div>
+          <span className={`text-[10px] tabular-nums font-semibold ${gemini > 60 ? "text-emerald-500" : gemini > 25 ? "text-amber-500" : "text-red-500"}`}>{gemini}%</span>
+        </div>
+      )}
+      {claude !== null && (
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-medium w-3 shrink-0">C</span>
+          <div className="h-1.5 w-11 rounded-full bg-muted overflow-hidden">
+            <div className={`h-full rounded-full ${quotaBarColor(claude)}`} style={{ width: `${claude}%` }} />
+          </div>
+          <span className={`text-[10px] tabular-nums font-semibold ${claude > 60 ? "text-emerald-500" : claude > 25 ? "text-amber-500" : "text-red-500"}`}>{claude}%</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const ALL_COLUMNS = [
   { key: "id", label: "ID" },
   { key: "email", label: "Email" },
+  { key: "planType", label: "套餐" },
+  { key: "modelQuota", label: "模型额度" },
   { key: "alias", label: "别名" },
   { key: "projectId", label: "ProjectId" },
-  { key: "planType", label: "套餐" },
   { key: "oauthProfile", label: "OAuth Profile" },
   { key: "familyRole", label: "Family 角色" },
   { key: "familyStatus", label: "Family 状态" },
@@ -73,7 +127,7 @@ const ALL_COLUMNS = [
 ] as const;
 
 const DEFAULT_VISIBLE = new Set([
-  "email", "alias", "projectId", "planType", "token", "boundCard", "status",
+  "email", "planType", "modelQuota", "token", "boundCard", "status",
 ]);
 
 const PAGE_SIZE = 20;
@@ -116,13 +170,58 @@ export default function RosettaAccountsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // Google OAuth state
+  const [oauthStarting, setOauthStarting] = useState(false);
+  const [oauthLoginId, setOauthLoginId] = useState("");
+  const [oauthStatusText, setOauthStatusText] = useState("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
+  const [oauthCallbackInput, setOauthCallbackInput] = useState("");
+  const [oauthSubmitting, setOauthSubmitting] = useState(false);
+
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/rosetta/accounts");
-      const data = await res.json();
+      const [accountsRes, statusRes] = await Promise.all([
+        fetch("/api/rosetta/accounts"),
+        fetch("/api/remote-token/status").catch(() => null),
+      ]);
+      const data = await accountsRes.json();
       if (!data.ok) throw new Error(data.error || "加载失败");
-      setAccounts(data.accounts || []);
+
+      // Merge model quota data from token-server status
+      let quotaMap = new Map<number, { fractions?: Record<string, number>; resetTimes?: Record<string, string>; refreshedAt?: number }>();
+      if (statusRes?.ok) {
+        try {
+          const statusData = await statusRes.json();
+          for (const qa of statusData?.quota?.accounts || []) {
+            quotaMap.set(Number(qa.id), {
+              fractions: qa.modelQuotaFractions,
+              resetTimes: qa.modelQuotaResetTimes,
+              refreshedAt: qa.modelQuotaRefreshedAt,
+            });
+          }
+        } catch { /* ignore status parse error */ }
+      }
+
+      const merged = (data.accounts || []).map((a: RosettaAccount) => {
+        const q = quotaMap.get(Number(a.id));
+        return q ? { ...a, modelQuotaFractions: q.fractions, modelQuotaResetTimes: q.resetTimes, modelQuotaRefreshedAt: q.refreshedAt } : a;
+      });
+
+      // Sort: plan tier priority → Claude quota desc → no quota last
+      const PLAN_ORDER: Record<string, number> = { ultra: 0, premium: 1, antigravity: 2, free: 3 };
+      merged.sort((a: RosettaAccount, b: RosettaAccount) => {
+        const pa = PLAN_ORDER[a.planType || ""] ?? 2.5;
+        const pb = PLAN_ORDER[b.planType || ""] ?? 2.5;
+        if (pa !== pb) return pa - pb;
+        const ca = aggregatePoolFraction(a.modelQuotaFractions, CLAUDE_IDS);
+        const cb = aggregatePoolFraction(b.modelQuotaFractions, CLAUDE_IDS);
+        if (ca === null && cb === null) return 0;
+        if (ca === null) return 1;
+        if (cb === null) return -1;
+        return cb - ca;
+      });
+      setAccounts(merged);
       setDataDir(data.dataDir || "");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "加载账号失败");
@@ -217,6 +316,80 @@ export default function RosettaAccountsPage() {
     }
   }
 
+  async function handleOAuthStart() {
+    setOauthStarting(true);
+    try {
+      const res = await fetch("/api/rosetta/google-oauth-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oauthProfile: "antigravity" }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Google OAuth start failed");
+      setOauthLoginId(data.loginId);
+      setOauthAuthUrl(data.authUrl || "");
+      setOauthCallbackInput("");
+      setOauthStatusText("");
+      window.open(data.authUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Google OAuth start failed");
+      setOauthLoginId("");
+      setOauthAuthUrl("");
+      setOauthStatusText("");
+    } finally {
+      setOauthStarting(false);
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    const input = oauthCallbackInput.trim();
+    if (!input) {
+      toast.error("请粘贴授权后跳转的回调 URL 或其中的 code");
+      return;
+    }
+    setOauthSubmitting(true);
+    setOauthStatusText("");
+    try {
+      const res = await fetch("/api/rosetta/google-oauth-submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: oauthLoginId, input }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "完成授权失败");
+      toast.success(data.isUpdate ? `OAuth 已更新 ${data.email}` : `OAuth 已添加 ${data.email}`);
+      setOauthLoginId("");
+      setOauthAuthUrl("");
+      setOauthCallbackInput("");
+      setOauthStatusText("");
+      loadAccounts();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "完成授权失败";
+      setOauthStatusText(msg);
+      toast.error(msg);
+    } finally {
+      setOauthSubmitting(false);
+    }
+  }
+
+  async function handleOAuthCancel() {
+    const loginId = oauthLoginId;
+    setOauthLoginId("");
+    setOauthStatusText("");
+    setOauthAuthUrl("");
+    setOauthCallbackInput("");
+    if (!loginId) return;
+    try {
+      await fetch("/api/rosetta/google-oauth-cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId }),
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
   async function handleToggle(accountId: string) {
     setTogglingId(accountId);
     try {
@@ -233,6 +406,27 @@ export default function RosettaAccountsPage() {
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "切换状态失败");
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function handleTogglePool(accountId: string) {
+    setTogglingId(accountId);
+    try {
+      const res = await fetch("/api/rosetta/toggle-account-pool", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "切换失败");
+      toast.success(`${data.email} ${data.poolEnabled ? "已入池" : "已出池"}（${data.poolEnabled ? "允许池轮询" : "仅绑定卡可用"}）`);
+      setAccounts((prev) =>
+        prev.map((a) => a.id === accountId ? { ...a, poolEnabled: data.poolEnabled } : a),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "切换入池状态失败");
     } finally {
       setTogglingId(null);
     }
@@ -340,6 +534,8 @@ export default function RosettaAccountsPage() {
             </TooltipContent>
           </Tooltip>
         );
+      case "modelQuota":
+        return <CompactQuotaCell account={account} />;
       case "alias":
         return account.alias || "-";
       case "projectId":
@@ -385,6 +581,7 @@ export default function RosettaAccountsPage() {
   function getHeadClassName(colKey: string) {
     switch (colKey) {
       case "id": return "w-16";
+      case "modelQuota": return "w-[110px]";
       case "token": return "text-center";
       case "status": return "text-center";
       default: return "";
@@ -544,6 +741,10 @@ export default function RosettaAccountsPage() {
 
             {/* Right group: refresh + add */}
             <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
+                {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
+                OAuth 登录
+              </Button>
               <Button variant="outline" size="icon" onClick={loadAccounts} disabled={loading}>
                 <RefreshCw className={loading ? "animate-spin" : ""} />
               </Button>
@@ -577,6 +778,38 @@ export default function RosettaAccountsPage() {
             </div>
           )}
         </CardHeader>
+
+        {oauthLoginId ? (
+          <div className="mx-6 mb-4 flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
+            <div className="space-y-1">
+              <p className="font-medium">完成 Google OAuth 登录</p>
+              <p className="text-muted-foreground">
+                1. 在新打开的页面完成 Google 授权（没弹出的话，
+                {oauthAuthUrl ? (
+                  <a href={oauthAuthUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">点此打开授权页</a>
+                ) : "请重新发起"}
+                ）。
+              </p>
+              <p className="text-muted-foreground">
+                2. 授权后浏览器会跳到 <code className="rounded bg-muted px-1">localhost:1456/auth/callback?...</code>（页面打不开是正常的），把<strong>整个地址栏 URL</strong> 复制粘贴到下面，点「完成授权」。
+              </p>
+            </div>
+            <Textarea
+              rows={3}
+              placeholder="http://localhost:1456/auth/callback?code=...&state=..."
+              value={oauthCallbackInput}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setOauthCallbackInput(e.target.value)}
+            />
+            {oauthStatusText ? <p className="text-destructive">{oauthStatusText}</p> : null}
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleOAuthSubmit} disabled={oauthSubmitting}>
+                {oauthSubmitting ? <Spinner size={14} /> : null}
+                完成授权
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleOAuthCancel} disabled={oauthSubmitting}>取消</Button>
+            </div>
+          </div>
+        ) : null}
 
         <CardContent>
           {loading ? (
@@ -647,6 +880,21 @@ export default function RosettaAccountsPage() {
                                   : <Power className={`size-3.5 ${account.enabled ? "text-emerald-500" : "text-muted-foreground"}`} />}
                               </TooltipTrigger>
                               <TooltipContent>{account.enabled ? "禁用" : "启用"}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={togglingId === account.id}
+                                    onClick={() => void handleTogglePool(account.id)}
+                                  />
+                                }
+                              >
+                                <GitMerge className={`size-3.5 ${account.poolEnabled ? "text-blue-500" : "text-muted-foreground"}`} />
+                              </TooltipTrigger>
+                              <TooltipContent>{account.poolEnabled ? "已入池（点击出池）" : "已出池（点击入池）"}</TooltipContent>
                             </Tooltip>
                             <Tooltip>
                               <TooltipTrigger

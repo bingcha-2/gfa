@@ -7,7 +7,7 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { AgentAccountService } from "../automation/agent-account.service";
 
-import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS } from "../token-server/token-billing";
+import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired } from "../token-server/token-billing";
 import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   type CachedToken,
@@ -18,6 +18,9 @@ import {
   discoverProject,
   extractTierFromModelsJson,
   DEFAULT_CLOUD_ENDPOINT,
+  resolveOAuthCredentials,
+  ANTIGRAVITY_OAUTH_CLIENT_ID,
+  ANTIGRAVITY_OAUTH_CLIENT_SECRET,
 } from "./google-api";
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
 import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
@@ -39,6 +42,13 @@ const CODEX_OAUTH_ORIGINATOR = "codex_vscode";
 const CODEX_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
 
+// ── Google OAuth constants (Antigravity account pool) ──────────────────
+const GOOGLE_OAUTH_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const GOOGLE_OAUTH_SCOPES = "openid email profile https://www.googleapis.com/auth/cloud-platform";
+const GOOGLE_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:1456/auth/callback";
+
 type CodexOAuthPending = {
   loginId: string;
   state: string;
@@ -51,6 +61,9 @@ type CodexOAuthPending = {
   error?: string;
   isUpdate?: boolean;
 };
+
+/** Pending Google OAuth login (Antigravity account pool). Same shape as Codex. */
+type GoogleOAuthPending = CodexOAuthPending;
 
 /** A card's share weight (份额): 1..4, default 1 (拼车). */
 function cardWeight(key: any): number {
@@ -342,6 +355,7 @@ export class RosettaService {
   private readonly accessKeysFile: CachedJsonFile;
   private readonly accountsFile: CachedJsonFile;
   private codexOAuthPending: CodexOAuthPending | null = null;
+  private googleOAuthPending: GoogleOAuthPending | null = null;
 
   constructor(
     @Optional() options: RosettaServiceOptions = {},
@@ -380,6 +394,7 @@ export class RosettaService {
         provider: String(key.provider || ""),
         boundAccountId: Number(key.boundAccountId || 0),
         bindings: (key.bindings && typeof key.bindings === "object" ? key.bindings : {}) as Record<string, number>,
+        bucketLimits: (key.bucketLimits && typeof key.bucketLimits === "object" ? key.bucketLimits : {}) as Record<string, number>,
         weight: cardWeight(key),
         createdAt: String(key.createdAt || ""),
         lastUsedAt: String(key.lastUsedAt || ""),
@@ -427,6 +442,7 @@ export class RosettaService {
       id: Number(account.id || 0),
       email: String(account.email || ""),
       enabled: account.enabled !== false,
+      poolEnabled: account.poolEnabled !== false,
       alias: String(account.alias || ""),
       projectId: String(account.projectId || ""),
       planType: String(account.planType || ""),
@@ -506,6 +522,18 @@ export class RosettaService {
     return { ok: true, email: account.email, enabled: account.enabled };
   }
 
+  toggleAccountPool(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.poolEnabled = account.poolEnabled === false ? true : false;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, poolEnabled: account.poolEnabled };
+  }
+
   deleteAccount(payload: any) {
     const accountId = Number(payload?.accountId);
     const filePath = path.join(this.dataDir, "accounts.json");
@@ -531,6 +559,7 @@ export class RosettaService {
       id: Number(account.id || 0),
       email: String(account.email || ""),
       enabled: account.enabled !== false,
+      poolEnabled: account.poolEnabled !== false,
       alias: String(account.alias || ""),
       planType: String(account.planType || ""),
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
@@ -1079,6 +1108,190 @@ export class RosettaService {
     if (clearCompleted) this.codexOAuthPending = null;
   }
 
+  // ── Google OAuth (Antigravity account pool) ──────────────────────────
+
+  async startGoogleOAuthLogin(oauthProfile = "antigravity") {
+    const existing = this.googleOAuthPending;
+    if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
+      return {
+        ok: true,
+        loginId: existing.loginId,
+        authUrl: existing.authUrl,
+        redirectUri: existing.redirectUri,
+        expiresAt: existing.expiresAt,
+      };
+    }
+    this.closeGoogleOAuthPending();
+
+    const oauth = resolveOAuthCredentials(oauthProfile);
+    const codeVerifier = base64Url(crypto.randomBytes(32));
+    const state = base64Url(crypto.randomBytes(32));
+    const loginId = base64Url(crypto.randomBytes(18));
+    const redirectUri = GOOGLE_OAUTH_REDIRECT_URI;
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: oauth.clientId,
+      redirect_uri: redirectUri,
+      scope: GOOGLE_OAUTH_SCOPES,
+      code_challenge: codeChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+
+    const pending: GoogleOAuthPending = {
+      loginId,
+      state,
+      codeVerifier,
+      redirectUri,
+      authUrl: `${GOOGLE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+      expiresAt: Date.now() + GOOGLE_OAUTH_TIMEOUT_MS,
+      status: "pending",
+    };
+
+    (pending as any).oauthProfile = oauthProfile;
+    (pending as any).clientId = oauth.clientId;
+    (pending as any).clientSecret = oauth.clientSecret;
+    this.googleOAuthPending = pending;
+    return {
+      ok: true,
+      loginId,
+      authUrl: pending.authUrl,
+      redirectUri,
+      expiresAt: pending.expiresAt,
+    };
+  }
+
+  getGoogleOAuthLoginStatus(loginId: string) {
+    const pending = this.googleOAuthPending;
+    if (!pending || pending.loginId !== loginId) return { ok: false, status: "missing", error: "login session not found" };
+    if (pending.status === "pending" && pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = "OAuth login timed out";
+      this.closeGoogleOAuthPending(false);
+    }
+    return {
+      ok: true,
+      status: pending.status,
+      loginId: pending.loginId,
+      email: pending.email || "",
+      error: pending.error || "",
+      isUpdate: Boolean(pending.isUpdate),
+      expiresAt: pending.expiresAt,
+    };
+  }
+
+  cancelGoogleOAuthLogin(loginId: string) {
+    if (this.googleOAuthPending?.loginId !== loginId) return { ok: false, error: "login session not found" };
+    this.closeGoogleOAuthPending();
+    return { ok: true };
+  }
+
+  async submitGoogleOAuthCallback(loginId: string, rawInput: string) {
+    const pending = this.googleOAuthPending;
+    if (!pending || pending.loginId !== loginId) {
+      return { ok: false, status: "missing", error: "登录会话不存在或已过期，请重新发起 OAuth 登录" };
+    }
+    if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = pending.error || "OAuth 登录会话已失效，请重新发起";
+      this.closeGoogleOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    const input = String(rawInput || "").trim();
+    if (!input) return { ok: false, status: "pending", error: "请粘贴回调 URL 或授权码 code" };
+
+    let code = "";
+    let state = "";
+    try {
+      const url = new URL(input);
+      code = (url.searchParams.get("code") || "").trim();
+      state = (url.searchParams.get("state") || "").trim();
+    } catch {
+      if (input.includes("code=")) {
+        const query = input.includes("?") ? input.slice(input.indexOf("?") + 1) : input.replace(/^[#&?]+/, "");
+        const params = new URLSearchParams(query);
+        code = (params.get("code") || "").trim();
+        state = (params.get("state") || "").trim();
+      } else {
+        code = input;
+      }
+    }
+
+    if (!code) return { ok: false, status: "pending", error: "未能从输入中解析出授权码 code" };
+    if (state && state !== pending.state) {
+      pending.status = "failed";
+      pending.error = "OAuth state 不匹配，可能是会话串了，请重新发起登录";
+      this.closeGoogleOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    try {
+      const result = await this.completeGoogleOAuthLogin(pending, code);
+      this.closeGoogleOAuthPending(false);
+      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate, accountId: result.accountId };
+    } catch (error) {
+      pending.status = "failed";
+      pending.error = error instanceof Error ? error.message : "OAuth 完成失败";
+      this.closeGoogleOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
+  }
+
+  private async completeGoogleOAuthLogin(pending: GoogleOAuthPending, code: string) {
+    const clientId = (pending as any).clientId || ANTIGRAVITY_OAUTH_CLIENT_ID;
+    const clientSecret = (pending as any).clientSecret || ANTIGRAVITY_OAUTH_CLIENT_SECRET;
+    const oauthProfile = (pending as any).oauthProfile || "antigravity";
+
+    const body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: pending.redirectUri,
+      code_verifier: pending.codeVerifier,
+    });
+    const response = await fetch(GOOGLE_OAUTH_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Google token exchange failed: ${response.status} ${text.slice(0, 300)}`);
+
+    const tokenData = JSON.parse(text);
+    const refreshToken = String(tokenData.refresh_token || "").trim();
+    if (!refreshToken) throw new Error("Google token response did not include a refresh_token (需 prompt=consent + access_type=offline)");
+
+    // Decode id_token to get email
+    const profile = decodeJwtPayload(String(tokenData.id_token || ""));
+    const email = String(profile.email || "").trim();
+    if (!email) throw new Error("Google token response did not include an email");
+
+    // Save account via addAccountChecked (writes to accounts.json + probes token)
+    const result = await this.addAccountChecked({
+      email,
+      refreshToken,
+      oauthProfile,
+      alias: profile.name || "",
+    });
+    if (!result.ok) throw new Error(String(result.error || "Failed to save Antigravity account"));
+
+    pending.status = "completed";
+    pending.email = email;
+    pending.isUpdate = Boolean(result.isUpdate);
+    return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
+  }
+
+  private closeGoogleOAuthPending(clearCompleted = true) {
+    const pending = this.googleOAuthPending;
+    if (!pending) return;
+    if (clearCompleted) this.googleOAuthPending = null;
+  }
+
   toggleCodexAccount(payload: any) {
     const accountId = Number(payload?.accountId);
     const filePath = path.join(this.dataDir, "codex-accounts.json");
@@ -1089,6 +1302,18 @@ export class RosettaService {
     account.enabled = !account.enabled;
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, email: account.email, enabled: account.enabled };
+  }
+
+  toggleCodexAccountPool(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.poolEnabled = account.poolEnabled === false ? true : false;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, poolEnabled: account.poolEnabled };
   }
 
   deleteCodexAccount(payload: any) {
@@ -1181,8 +1406,64 @@ export class RosettaService {
         ? Number(payload[field])
         : String(payload[field]);
     }
+    // Per-bucket custom limits: merge provided values, delete keys set to 0/null.
+    if (payload.bucketLimits !== undefined && typeof payload.bucketLimits === "object") {
+      const existing = (record.bucketLimits && typeof record.bucketLimits === "object") ? { ...record.bucketLimits } : {};
+      for (const [bucket, value] of Object.entries(payload.bucketLimits)) {
+        const num = Number(value);
+        if (Number.isFinite(num) && num > 0) {
+          existing[bucket] = num;
+        } else {
+          delete existing[bucket];
+        }
+      }
+      record.bucketLimits = Object.keys(existing).length > 0 ? existing : undefined;
+    }
     writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
+  }
+
+  /**
+   * Return per-bucket limits and current-window usage for a single card.
+   * Used by the admin console "limits" dialog.
+   */
+  getAccessKeyLimits(cardId: string) {
+    const id = String(cardId || "");
+    if (!id) return { ok: false, error: "id 不能为空" };
+
+    const data = this.accessKeysFile.read();
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const record = keys.find((k: any) => String(k.id) === id);
+    if (!record) return { ok: false, error: "卡密不存在" };
+
+    const now = Date.now();
+
+    resetWindowIfExpired(record, now);
+    const baseLimit = tokenWindowLimit(record);
+    const bucketUsage: Map<string, number> = recentBucketUsage(record, UNIVERSAL_BILLING.bucketOf, now);
+    const customLimits = (record.bucketLimits && typeof record.bucketLimits === "object") ? record.bucketLimits : {};
+
+    const buckets = UNIVERSAL_BILLING.buckets.map((bucket: string) => {
+      const customValue = Number(customLimits[bucket] || 0);
+      const effectiveLimit = customValue > 0 ? customValue : UNIVERSAL_BILLING.bucketLimit(baseLimit, bucket);
+      return {
+        bucket,
+        label: UNIVERSAL_BILLING.bucketLabel(bucket),
+        customLimit: customValue > 0 ? customValue : null,
+        defaultLimit: UNIVERSAL_BILLING.bucketLimit(baseLimit, bucket, {}), // without record override
+        effectiveLimit,
+        used: bucketUsage.get(bucket) || 0,
+      };
+    });
+
+    return {
+      ok: true,
+      id,
+      name: String(record.name || ""),
+      tokenWindowLimit: baseLimit,
+      bucketLimits: customLimits,
+      buckets,
+    };
   }
 
   deleteAccessKey(payload: any) {
@@ -1353,6 +1634,7 @@ export class RosettaService {
    */
   private isAccountBindable(provider: string, account: any, level: string): boolean {
     if (account?.enabled === false) return false;
+    if (account?.poolEnabled === false) return false;
     if (!(account?.refreshToken || account?.accessToken)) return false;
     if (provider === "antigravity" && !String(account?.projectId || "").trim()) return false;
     if (String(account?.planType || "") !== level) return false;

@@ -288,7 +288,7 @@ export class AccessKeyStore {
       if (modelKeyStr) {
         const bucket = this.billing.bucketOf(modelKeyStr);
         const used = bucketUsage.get(bucket) || 0;
-        const limit = this.billing.bucketLimit(baseLimit, bucket);
+        const limit = this.billing.bucketLimit(baseLimit, bucket, record);
         if (limit > 0 && used >= limit) {
           this.writeCache();
           return {
@@ -306,7 +306,7 @@ export class AccessKeyStore {
         const usedBuckets = this.billing.buckets.filter((b) => (bucketUsage.get(b) || 0) > 0);
         const allExhausted =
           usedBuckets.length > 0 &&
-          usedBuckets.every((b) => (bucketUsage.get(b) || 0) >= this.billing.bucketLimit(baseLimit, b));
+          usedBuckets.every((b) => (bucketUsage.get(b) || 0) >= this.billing.bucketLimit(baseLimit, b, record));
         if (allExhausted) {
           this.writeCache();
           return {
@@ -327,7 +327,7 @@ export class AccessKeyStore {
       if (modelKeyStr) {
         const bucket = this.billing.bucketOf(modelKeyStr);
         const used = weeklyUsage.get(bucket) || 0;
-        const limit = this.billing.bucketLimit(wLimit, bucket);
+        const limit = this.billing.bucketLimit(wLimit, bucket, record);
         if (limit > 0 && used >= limit) {
           this.writeCache();
           return {
@@ -339,7 +339,7 @@ export class AccessKeyStore {
         const usedBuckets = this.billing.buckets.filter((b) => (weeklyUsage.get(b) || 0) > 0);
         const allExhausted =
           usedBuckets.length > 0 &&
-          usedBuckets.every((b) => (weeklyUsage.get(b) || 0) >= this.billing.bucketLimit(wLimit, b));
+          usedBuckets.every((b) => (weeklyUsage.get(b) || 0) >= this.billing.bucketLimit(wLimit, b, record));
         if (allExhausted) {
           this.writeCache();
           return {
@@ -586,17 +586,17 @@ export class AccessKeyStore {
       // bucket map so a non-gemini/opus provider (codex) reports 0 here and its
       // usage shows under its own bucket in `buckets` below.
       opusTokensUsed: bucketUsage.get('opus') || 0,
-      opusTokenLimit: tLimit > 0 ? tLimit : (windowLimit > 0 ? windowLimit * 100_000 : 0),
+      opusTokenLimit: this.billing.bucketLimit(tLimit, 'opus', record) || (windowLimit > 0 ? windowLimit * 100_000 : 0),
       geminiTokensUsed: bucketUsage.get('gemini') || 0,
-      geminiTokenLimit: tLimit > 0 ? tLimit * 5 : (windowLimit > 0 ? windowLimit * 500_000 : 0),
+      geminiTokenLimit: this.billing.bucketLimit(tLimit, 'gemini', record) || (windowLimit > 0 ? windowLimit * 500_000 : 0),
       // Codex flat fields (mirror opus/gemini) so the client can show a codex bar.
       codexTokensUsed: bucketUsage.get('codex') || 0,
-      codexTokenLimit: this.billing.bucketLimit(tLimit, 'codex'),
+      codexTokenLimit: this.billing.bucketLimit(tLimit, 'codex', record),
       // Provider-correct per-bucket view (gemini/opus for antigravity, codex for codex).
       buckets: this.billing.buckets.map((bucket) => ({
         bucket,
         used: bucketUsage.get(bucket) || 0,
-        limit: this.billing.bucketLimit(tLimit, bucket),
+        limit: this.billing.bucketLimit(tLimit, bucket, record),
       })),
       tokenWindowLimit: tLimit,
       tokenWindowMs: tokenWindowMs(record),
@@ -612,7 +612,7 @@ export class AccessKeyStore {
         ? this.billing.buckets.map((bucket) => ({
             bucket,
             used: wkBucketUsage.get(bucket) || 0,
-            limit: this.billing.bucketLimit(wkLimit, bucket),
+            limit: this.billing.bucketLimit(wkLimit, bucket, record),
           }))
         : [],
       hasActiveSession: Boolean(

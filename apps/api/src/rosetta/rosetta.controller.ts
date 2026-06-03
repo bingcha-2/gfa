@@ -59,6 +59,11 @@ export class RosettaController {
     return this.rosetta.toggleAccount(body);
   }
 
+  @Post("toggle-account-pool")
+  toggleAccountPool(@Body() body: any) {
+    return this.rosetta.toggleAccountPool(body);
+  }
+
   @Post("delete-account")
   deleteAccount(@Body() body: any) {
     return this.rosetta.deleteAccount(body);
@@ -68,6 +73,27 @@ export class RosettaController {
   @Post("refresh-account-quota")
   refreshAccountQuota(@Body() body: any) {
     return this.rosetta.refreshAccountQuota(body);
+  }
+
+  // ── Google OAuth (Antigravity account pool) ──────────────────────────
+  @Post("google-oauth-start")
+  startGoogleOAuthLogin(@Body() body: any) {
+    return this.rosetta.startGoogleOAuthLogin(String(body?.oauthProfile || "antigravity"));
+  }
+
+  @Get("google-oauth-status")
+  getGoogleOAuthLoginStatus(@Query("loginId") loginId?: string) {
+    return this.rosetta.getGoogleOAuthLoginStatus(String(loginId || ""));
+  }
+
+  @Post("google-oauth-cancel")
+  cancelGoogleOAuthLogin(@Body() body: any) {
+    return this.rosetta.cancelGoogleOAuthLogin(String(body?.loginId || ""));
+  }
+
+  @Post("google-oauth-submit")
+  submitGoogleOAuthCallback(@Body() body: any) {
+    return this.rosetta.submitGoogleOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
   }
 
   // ── Codex account pool ──────────────────────────────────────────────
@@ -118,6 +144,11 @@ export class RosettaController {
     return this.rosetta.toggleCodexAccount(body);
   }
 
+  @Post("codex-toggle-account-pool")
+  toggleCodexAccountPool(@Body() body: any) {
+    return this.rosetta.toggleCodexAccountPool(body);
+  }
+
   @Post("codex-delete-account")
   deleteCodexAccount(@Body() body: any) {
     return this.rosetta.deleteCodexAccount(body);
@@ -141,6 +172,11 @@ export class RosettaController {
     const result = this.rosetta.updateAccessKey(body);
     this.reloadKeyStores();
     return result;
+  }
+
+  @Get("access-key-limits")
+  getAccessKeyLimits(@Query("id") id: string) {
+    return this.rosetta.getAccessKeyLimits(id);
   }
 
   @Post("access-key-bind")
