@@ -15,8 +15,8 @@ import (
 )
 
 // API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
-// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
-var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.space/remote-token")
+// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.lol/remote-token")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 

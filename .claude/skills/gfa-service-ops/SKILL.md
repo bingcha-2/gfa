@@ -8,7 +8,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 ## Rules
 
 - Assume Windows PowerShell on customer servers.
-- Default repo path: `C:\Users\Administrator\Desktop\GFA`.
+- Default repo path: `C:\Users\Administrator\Desktop\GFA-per`.
 - Do not touch Caddy during normal code updates.
 - Do not delete `.env`, `prisma/dev.db`, backups, logs, or `apps\web\public\updates\*` unless explicitly requested.
 - Check the deployed branch before pulling. This repo currently uses `main`; old servers may use `master`.
@@ -29,7 +29,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 Normal code update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 pnpm start:stop
 git branch --show-current
 git pull origin main
@@ -43,7 +43,7 @@ Use `git pull origin master` only if `git branch --show-current` prints `master`
 Schema-sensitive update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 git pull origin main
 powershell -ExecutionPolicy Bypass -File scripts\deploy-update.ps1
 ```
@@ -53,7 +53,7 @@ Use this when Prisma schema may have changed; it backs up `prisma\dev.db` into `
 Restart only:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 pnpm start:stop
 pnpm start:daemon
 ```
@@ -106,7 +106,7 @@ The Wails build output is `apps\bcai-wails\build\bin\`, but that is not the publ
 Windows local build example:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
+cd C:\Users\Administrator\Desktop\GFA-per\apps\bcai-wails
 wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=5.1.6"
 Copy-Item .\build\bin\BingchaAI.exe ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe
 Get-FileHash ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe -Algorithm SHA256
@@ -134,7 +134,7 @@ if (-not $gh) { throw "gh CLI not found; use the curl fallback below." }
 Private GitHub Actions artifact download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $repo = "<github-owner>/<private-repo>"
 $artifactName = "BingchaAI"
 $outDir = ".\apps\web\public\updates"
@@ -157,7 +157,7 @@ If the artifact name is platform-specific, list available artifact names:
 Private GitHub Release asset download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $repo = "<github-owner>/<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"
 $outDir = ".\apps\web\public\updates"
@@ -170,7 +170,7 @@ Get-FileHash "$outDir\$assetName" -Algorithm SHA256
 If `gh` cannot be installed or authenticated, use GitHub API + `curl.exe` and `$env:GITHUB_TOKEN`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $artifactName = "BingchaAI"
@@ -193,7 +193,7 @@ If the zip extracts into a nested folder, move the final `BingchaAI-*` files up 
 Private GitHub Release asset download:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"

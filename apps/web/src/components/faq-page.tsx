@@ -64,7 +64,7 @@ export function FaqPage({ faqs, contactWechat, contactQrcodeUrl }: FaqPageProps)
           <div className="faq-nav-links">
             <a href="https://bcai.store" target="_blank" rel="noopener noreferrer">🍵 冰茶商店</a>
             <a href="https://bcai.online" target="_blank" rel="noopener noreferrer">⚡ 冰茶API</a>
-            <a href="https://bcai.space" target="_blank" rel="noopener noreferrer">🖥️ 冰茶AI终端</a>
+            <a href="https://bcai.lol" target="_blank" rel="noopener noreferrer">🖥️ 冰茶AI终端</a>
           </div>
           <input
             className="faq-search"

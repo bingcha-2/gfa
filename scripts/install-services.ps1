@@ -8,8 +8,8 @@ if (-not $NODE) { Write-Host "ERROR: node not found"; exit 1 }
 
 $CADDY = "C:\Users\Administrator\Desktop\caddy\caddy.exe"
 $CADDYFILE = "C:\Users\Administrator\Desktop\caddy\Caddyfile"
-$REMOTE_TOKEN_SERVER = "C:\Users\Administrator\Desktop\GFA\apps\gfa-extension\bundled-rosetta\remote-token-server\index.js"
-$GFA_ROOT = "C:\Users\Administrator\Desktop\GFA"
+$REMOTE_TOKEN_SERVER = "C:\Users\Administrator\Desktop\GFA-per\apps\gfa-extension\bundled-rosetta\remote-token-server\index.js"
+$GFA_ROOT = "C:\Users\Administrator\Desktop\GFA-per"
 
 # ── 1. Caddy (reverse proxy) ──
 $taskName = "GFA-Caddy"
