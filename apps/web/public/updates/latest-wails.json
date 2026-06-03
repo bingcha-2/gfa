@@ -1,27 +1,27 @@
 {
-  "version": "7.2.0",
-  "url": "https://bcai.lol/updates/BingchaAI-7.2.0.exe",
-  "sha256": "5CF47B0AC6CA40C23A3F26CBBBC0F57C61EA00ECBFB909D07701C1A6A31A6285",
-  "size": 18266624,
-  "changelog": "域名迁移 bcai.space -> bcai.lol",
+  "version": "7.2.1",
+  "url": "https://bcai.lol/updates/BingchaAI-7.2.1.exe",
+  "sha256": "7DA9EBD0437478C79E57A31922277E3C0965924B44401386627CAB5696887AAC",
+  "size": 18269696,
+  "changelog": "稳定性更新",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.lol/updates/BingchaAI-7.2.0-arm64.dmg",
-      "sha256": "D92353822F867D1EE4930EA9BB6040D7B871722F2228BF27BF341D9BA62E9285",
-      "size": 9203218
+      "url": "https://bcai.lol/updates/BingchaAI-7.2.1-arm64.dmg",
+      "sha256": "66801DDDFE1760B1504A0AC2F9BF9F15F604F6E78D176EC436BDD97157668B5F",
+      "size": 9205406
     },
     "amd64": {
-      "url": "https://bcai.lol/updates/BingchaAI-7.2.0-amd64.dmg",
-      "sha256": "2964CB1596EBBDE82BE2D94ACC849594C71DAFE3C61CCA165140E17F7A5C0F2F",
-      "size": 9821590
+      "url": "https://bcai.lol/updates/BingchaAI-7.2.1-amd64.dmg",
+      "sha256": "B3B11ACBAB73DDBFE28D49CD58339404474BB9AE6087D1B5A7AFA57FEF40418E",
+      "size": 9822557
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.lol/updates/BingchaAI-7.2.0-linux-amd64.tar.gz",
-      "sha256": "90C2917E91BCBB8ECC5DCD37C4796453C86AB4FF479F3FD6B99ED7F847BCADE8",
-      "size": 7690791
+      "url": "https://bcai.lol/updates/BingchaAI-7.2.1-linux-amd64.tar.gz",
+      "sha256": "95BB9723078B2D0B24FC3FB810C0D283A3DA58531772C9D5D14B02FFDABA6AE3",
+      "size": 7690950
     }
   }
 }
