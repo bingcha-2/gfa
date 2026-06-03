@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as crypto from "crypto";
-import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 
@@ -51,7 +50,6 @@ type CodexOAuthPending = {
   email?: string;
   error?: string;
   isUpdate?: boolean;
-  server?: http.Server;
 };
 
 /** A card's share weight (份额): 1..4, default 1 (拼车). */
@@ -203,19 +201,90 @@ function firstNumber(source: any, paths: string[][]): number {
   return 0;
 }
 
+function expandCodexCandidate(account: any): any {
+  if (account?.credentials && typeof account.credentials === "object") {
+    return { ...account, ...account.credentials };
+  }
+  return account || {};
+}
+
 function firstCodexImportCandidate(parsed: any): any {
-  if (Array.isArray(parsed)) return parsed[0] || {};
+  return collectCodexImportCandidates(parsed)[0] || {};
+}
+
+/**
+ * Collect every importable account object from a pasted JSON blob.
+ * Handles a bare array, our export shape `{ accounts: [...] }`, a single
+ * `{ credentials: {...} }` envelope, or a single flat object. Mirrors
+ * firstCodexImportCandidate but returns all candidates so an exported pool
+ * can be re-imported in one paste.
+ */
+function collectCodexImportCandidates(parsed: any): any[] {
+  if (Array.isArray(parsed)) return parsed.filter(Boolean).map(expandCodexCandidate);
   if (Array.isArray(parsed?.accounts) && parsed.accounts.length > 0) {
-    const account = parsed.accounts[0];
-    if (account?.credentials && typeof account.credentials === "object") {
-      return { ...account, ...account.credentials };
-    }
-    return account || {};
+    return parsed.accounts.filter(Boolean).map(expandCodexCandidate);
   }
   if (parsed?.credentials && typeof parsed.credentials === "object") {
-    return { ...parsed, ...parsed.credentials };
+    return [{ ...parsed, ...parsed.credentials }];
   }
-  return parsed || {};
+  return parsed ? [parsed] : [];
+}
+
+// Stored fields beyond the core identity/token set that we preserve on a
+// round-trip (export → import). Anything outside this allowlist (e.g. junk in a
+// pasted blob like WARNING_BANNER) is intentionally dropped on import.
+const CODEX_PRESERVED_IMPORT_KEYS = [
+  "codexHourlyPercent",
+  "codexWeeklyPercent",
+  "codexHourlyResetTime",
+  "codexWeeklyResetTime",
+  "modelQuotaFractions",
+  "modelQuotaResetTimes",
+  "modelQuotaRefreshedAt",
+] as const;
+
+type CodexImportFields = {
+  email: string;
+  alias: string;
+  planType: string;
+  refreshToken: string;
+  accessToken: string;
+  sessionToken: string;
+  accessTokenExpiresAt: number;
+  enabled: boolean;
+  // Allowlisted extra fields carried through verbatim (quota / reset times).
+  extra: Record<string, unknown>;
+};
+
+/** Normalize one candidate object into the fields we persist to codex-accounts.json. */
+function extractCodexImportFields(source: any): CodexImportFields {
+  const email = firstString(source, [["user", "email"], ["profile", "email"], ["email"], ["name"]]);
+  const alias = firstString(source, [["user", "name"], ["alias"], ["name"]]);
+  const planType = firstString(source, [["account", "planType"], ["planType"], ["plan_type"]]);
+  const refreshToken = firstString(source, [["refreshToken"], ["refresh_token"]]);
+  const accessToken = firstString(source, [["accessToken"], ["access_token"]]);
+  const sessionToken = firstString(source, [["sessionToken"], ["session_token"]]);
+  const expires = firstString(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["expired"]]);
+  let accessTokenExpiresAt = expires ? Date.parse(expires) : 0;
+  // Some token JSONs express expiry as a numeric epoch instead of a date string;
+  // firstString() drops non-strings, so fall back to a numeric read and normalize
+  // seconds → milliseconds (heuristic: values below ~1e12 are second-granularity).
+  if (!Number.isFinite(accessTokenExpiresAt) || accessTokenExpiresAt <= 0) {
+    const numericExpires = firstNumber(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["exp"]]);
+    if (numericExpires > 0) {
+      accessTokenExpiresAt = numericExpires < 1e12 ? Math.round(numericExpires * 1000) : numericExpires;
+    }
+  }
+  // Carry through allowlisted extra fields (quota / reset times) so an export
+  // round-trips losslessly; unknown junk is left behind.
+  const extra: Record<string, unknown> = {};
+  if (source && typeof source === "object") {
+    for (const key of CODEX_PRESERVED_IMPORT_KEYS) {
+      if (source[key] !== undefined) extra[key] = source[key];
+    }
+  }
+  // Honor an explicit enabled flag (export round-trip); default to enabled otherwise.
+  return { email, alias, planType, refreshToken, accessToken, sessionToken, accessTokenExpiresAt, enabled: source?.enabled !== false, extra };
 }
 
 function parseJsonFromText(text: string): any | null {
@@ -519,47 +588,29 @@ export class RosettaService {
     return { ...r, tokenValid: true };
   }
 
-  importCodexAccountFromText(payload: any) {
-    const parsed = parseJsonFromText(String(payload?.text || payload?.json || ""));
-    if (!parsed || typeof parsed !== "object") return { ok: false, error: "未找到有效 JSON" };
-    const source = firstCodexImportCandidate(parsed);
-
-    const email = firstString(source, [["user", "email"], ["profile", "email"], ["email"], ["name"]]);
-    const alias = firstString(source, [["user", "name"], ["alias"], ["name"]]);
-    const planType = firstString(source, [["account", "planType"], ["planType"], ["plan_type"]]);
-    const refreshToken = firstString(source, [["refreshToken"], ["refresh_token"]]);
-    const accessToken = firstString(source, [["accessToken"], ["access_token"]]);
-    const sessionToken = firstString(source, [["sessionToken"], ["session_token"]]);
-    const expires = firstString(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["expired"]]);
-    let accessTokenExpiresAt = expires ? Date.parse(expires) : 0;
-    // Some token JSONs express expiry as a numeric epoch instead of a date string;
-    // firstString() drops non-strings, so fall back to a numeric read and normalize
-    // seconds → milliseconds (heuristic: values below ~1e12 are second-granularity).
-    if (!Number.isFinite(accessTokenExpiresAt) || accessTokenExpiresAt <= 0) {
-      const numericExpires = firstNumber(source, [["expires"], ["expiresAt"], ["accessTokenExpiresAt"], ["expires_at"], ["exp"]]);
-      if (numericExpires > 0) {
-        accessTokenExpiresAt = numericExpires < 1e12 ? Math.round(numericExpires * 1000) : numericExpires;
-      }
+  /**
+   * Upsert one normalized candidate into an in-memory accounts array (no write).
+   * Returns either the row outcome or an `error` describing why it was skipped.
+   */
+  private upsertCodexAccount(accounts: any[], fields: CodexImportFields) {
+    if (!fields.email) return { error: "email 不能为空" };
+    if (!fields.refreshToken && !fields.accessToken && !fields.sessionToken) {
+      return { error: "缺少可用 token" };
     }
-
-    if (!email) return { ok: false, error: "email 不能为空" };
-    if (!refreshToken && !accessToken && !sessionToken) return { ok: false, error: "缺少可用 token" };
-
-    const filePath = path.join(this.dataDir, "codex-accounts.json");
-    const data = readJson(filePath, { accounts: [] });
-    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
-    const updates: Record<string, unknown> = {
-      enabled: payload?.enabled !== undefined ? payload.enabled !== false : true,
-    };
-    if (alias) updates.alias = alias;
-    if (planType) updates.planType = planType;
-    if (refreshToken) updates.refreshToken = refreshToken;
-    if (accessToken) updates.accessToken = accessToken;
-    if (Number.isFinite(accessTokenExpiresAt) && accessTokenExpiresAt > 0) {
-      updates.accessTokenExpiresAt = accessTokenExpiresAt;
+    const existing = accounts.find(
+      (account: any) => String(account.email || "").toLowerCase() === fields.email.toLowerCase(),
+    );
+    const updates: Record<string, unknown> = { enabled: fields.enabled };
+    if (fields.alias) updates.alias = fields.alias;
+    if (fields.planType) updates.planType = fields.planType;
+    if (fields.refreshToken) updates.refreshToken = fields.refreshToken;
+    if (fields.accessToken) updates.accessToken = fields.accessToken;
+    if (Number.isFinite(fields.accessTokenExpiresAt) && fields.accessTokenExpiresAt > 0) {
+      updates.accessTokenExpiresAt = fields.accessTokenExpiresAt;
     }
-    if (sessionToken) updates.sessionToken = sessionToken;
+    if (fields.sessionToken) updates.sessionToken = fields.sessionToken;
+    // Allowlisted extras (quota / reset times) — disjoint from the core keys above.
+    Object.assign(updates, fields.extra);
 
     let accountId: number;
     if (existing) {
@@ -568,17 +619,72 @@ export class RosettaService {
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
       accountId = maxId + 1;
-      accounts.push({
-        id: accountId,
-        email,
-        alias: "",
-        planType: "",
-        refreshToken: "",
-        ...updates,
-      });
+      accounts.push({ id: accountId, email: fields.email, alias: "", planType: "", refreshToken: "", ...updates });
+    }
+    return { id: accountId, email: fields.email, isUpdate: Boolean(existing), hasRefreshToken: Boolean(fields.refreshToken) };
+  }
+
+  importCodexAccountFromText(payload: any) {
+    const parsed = parseJsonFromText(String(payload?.text || payload?.json || ""));
+    if (!parsed || typeof parsed !== "object") return { ok: false, error: "未找到有效 JSON" };
+    const fields = extractCodexImportFields(firstCodexImportCandidate(parsed));
+    // Legacy override: callers may force the enabled flag regardless of the source.
+    if (payload?.enabled !== undefined) fields.enabled = payload.enabled !== false;
+
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const r = this.upsertCodexAccount(accounts, fields);
+    if ("error" in r) return { ok: false, error: r.error };
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, id: r.id, email: r.email, isUpdate: r.isUpdate, totalAccounts: accounts.length, hasRefreshToken: r.hasRefreshToken };
+  }
+
+  /** Export the full codex pool for backup / migration. Lossless: every stored
+   *  field (tokens, 额度百分比/reset 时间, modelQuota*) is emitted verbatim so the
+   *  blob re-imports without dropping anything via importCodexAccountsFromText. */
+  exportCodexAccounts() {
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
+      ...account,
+      id: Number(account.id || 0),
+      email: String(account.email || ""),
+      enabled: account.enabled !== false,
+    }));
+    return { ok: true, type: "codex-accounts-export", exportedAt: nowIso(), count: accounts.length, accounts };
+  }
+
+  /** Import one OR many codex accounts from pasted text. Accepts the export
+   *  shape `{ accounts: [...] }`, a bare array, or a single object; upserts each
+   *  by email. Writes once and returns a per-row summary. */
+  importCodexAccountsFromText(payload: any) {
+    const parsed = parseJsonFromText(String(payload?.text || payload?.json || ""));
+    if (!parsed || typeof parsed !== "object") return { ok: false, error: "未找到有效 JSON" };
+    const candidates = collectCodexImportCandidates(parsed);
+    if (!candidates.length) return { ok: false, error: "未找到账号数据" };
+
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const results: any[] = [];
+    let added = 0;
+    let updated = 0;
+    let failed = 0;
+    for (const source of candidates) {
+      const fields = extractCodexImportFields(source);
+      const r = this.upsertCodexAccount(accounts, fields);
+      if ("error" in r) {
+        failed += 1;
+        results.push({ ok: false, email: fields.email || "", error: r.error });
+        continue;
+      }
+      if (r.isUpdate) updated += 1;
+      else added += 1;
+      results.push({ ok: true, id: r.id, email: r.email, isUpdate: r.isUpdate, hasRefreshToken: r.hasRefreshToken });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length, hasRefreshToken: Boolean(refreshToken) };
+    return { ok: true, bulk: true, added, updated, failed, totalAccounts: accounts.length, results };
   }
 
   /** codex-import-account + 入库探活(后台入口用;仅当带 refresh_token 时可验证)。 */
@@ -591,6 +697,39 @@ export class RosettaService {
       return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
     }
     return { ...r, tokenValid: true };
+  }
+
+  /**
+   * Backend import entry: transparently handles a single pasted token JSON or a
+   * whole exported pool. One candidate falls back to the single-account flow
+   * (preserving its response shape); many candidates run the bulk importer and
+   * probe each refresh_token in parallel, disabling any that fail validation.
+   */
+  async importCodexAccountsCheckedFromText(payload: any) {
+    const parsed = parseJsonFromText(String(payload?.text || payload?.json || ""));
+    if (!parsed || typeof parsed !== "object") return { ok: false, error: "未找到有效 JSON" };
+    const candidates = collectCodexImportCandidates(parsed);
+    if (candidates.length <= 1) return this.importCodexAccountCheckedFromText(payload);
+
+    const r = this.importCodexAccountsFromText(payload);
+    if (!r.ok || !Array.isArray(r.results)) return r;
+    let disabled = 0;
+    await Promise.all(
+      r.results
+        .filter((row: any) => row.ok && row.hasRefreshToken)
+        .map(async (row: any) => {
+          const probe = await this.probeCodexToken(String(row.email || ""), this.codexRefreshTokenOf(row.id));
+          if (!probe.valid) {
+            this.setAccountEnabled("codex-accounts.json", row.id, false);
+            row.tokenValid = false;
+            row.warning = probe.error;
+            disabled += 1;
+          } else {
+            row.tokenValid = true;
+          }
+        }),
+    );
+    return { ...r, disabled };
   }
 
   /** 读取 codex 账号当前的 refreshToken(导入时 token 在 JSON 文本里,这里兜底从落盘取)。 */
@@ -798,7 +937,9 @@ export class RosettaService {
       status: "pending",
     };
 
-    pending.server = await this.listenForCodexOAuthCallback(pending);
+    // 不起本地回调 server:授权完成后由用户把回调 URL / 授权码粘回后台,
+    // 走 submitCodexOAuthCallback 在服务端换 token,远程后台也能用,
+    // 不依赖「点授权那台机器上的 localhost:1455」。
     this.codexOAuthPending = pending;
     return {
       ok: true,
@@ -834,46 +975,62 @@ export class RosettaService {
     return { ok: true };
   }
 
-  private listenForCodexOAuthCallback(pending: CodexOAuthPending) {
-    return new Promise<http.Server>((resolve, reject) => {
-      const server = http.createServer((req, res) => {
-        void this.handleCodexOAuthCallback(pending, req, res);
-      });
-      server.on("error", (error: NodeJS.ErrnoException) => {
-        reject(new Error(error.code === "EADDRINUSE"
-          ? `Codex OAuth callback port ${this.codexOAuthPort} is already in use`
-          : `Codex OAuth callback failed: ${error.message}`));
-      });
-      server.listen(this.codexOAuthPort, "127.0.0.1", () => resolve(server));
-    });
-  }
+  /**
+   * 手动完成 Codex OAuth:用户在浏览器授权后,把回调地址
+   * (http://localhost:1455/auth/callback?code=...&state=...) 或其中的授权码粘回后台,
+   * 服务端在这里解析出 code 换 token。不再依赖本地回调 server,远程后台也能完成登录。
+   * rawInput 接受三种形式:完整回调 URL、query 片段(code=...&state=...)、或纯 code。
+   */
+  async submitCodexOAuthCallback(loginId: string, rawInput: string) {
+    const pending = this.codexOAuthPending;
+    if (!pending || pending.loginId !== loginId) {
+      return { ok: false, status: "missing", error: "登录会话不存在或已过期,请重新发起 OAuth 登录" };
+    }
+    if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = pending.error || "OAuth 登录会话已失效,请重新发起";
+      this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
 
-  private async handleCodexOAuthCallback(pending: CodexOAuthPending, req: http.IncomingMessage, res: http.ServerResponse) {
+    const input = String(rawInput || "").trim();
+    if (!input) return { ok: false, status: "pending", error: "请粘贴回调 URL 或授权码 code" };
+
+    let code = "";
+    let state = "";
     try {
-      const callbackUrl = new URL(req.url || "/", pending.redirectUri);
-      if (callbackUrl.pathname !== "/auth/callback") {
-        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-        res.end("Not found");
-        return;
+      const url = new URL(input);
+      code = (url.searchParams.get("code") || "").trim();
+      state = (url.searchParams.get("state") || "").trim();
+    } catch {
+      // 不是完整 URL:可能是 query 片段(code=...&state=...)或纯 code
+      if (input.includes("code=")) {
+        const query = input.includes("?") ? input.slice(input.indexOf("?") + 1) : input.replace(/^[#&?]+/, "");
+        const params = new URLSearchParams(query);
+        code = (params.get("code") || "").trim();
+        state = (params.get("state") || "").trim();
+      } else {
+        code = input;
       }
-      if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
-        throw new Error("OAuth login session is no longer active");
-      }
-      const state = callbackUrl.searchParams.get("state") || "";
-      const code = callbackUrl.searchParams.get("code") || "";
-      if (state !== pending.state) throw new Error("OAuth state mismatch");
-      if (!code) throw new Error("OAuth callback is missing code");
+    }
 
+    if (!code) return { ok: false, status: "pending", error: "未能从输入中解析出授权码 code" };
+    if (state && state !== pending.state) {
+      pending.status = "failed";
+      pending.error = "OAuth state 不匹配,可能是会话串了,请重新发起登录";
+      this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    try {
       const result = await this.completeCodexOAuthLogin(pending, code);
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<h1>Codex OAuth saved</h1><p>${result.email} has been added to GFA. You can close this window.</p>`);
+      this.closeCodexOAuthPending(false);
+      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate, accountId: result.accountId };
     } catch (error) {
       pending.status = "failed";
-      pending.error = error instanceof Error ? error.message : "OAuth callback failed";
-      res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<h1>Codex OAuth failed</h1><p>${pending.error}</p>`);
-    } finally {
+      pending.error = error instanceof Error ? error.message : "OAuth 完成失败";
       this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
     }
   }
 
@@ -912,14 +1069,12 @@ export class RosettaService {
     pending.status = "completed";
     pending.email = email;
     pending.isUpdate = Boolean(result.isUpdate);
-    return { email, isUpdate: Boolean(result.isUpdate) };
+    return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
   }
 
   private closeCodexOAuthPending(clearCompleted = true) {
     const pending = this.codexOAuthPending;
     if (!pending) return;
-    pending.server?.close();
-    pending.server = undefined;
     if (clearCompleted) this.codexOAuthPending = null;
   }
 

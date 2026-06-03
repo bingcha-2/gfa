@@ -185,7 +185,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "7.0.1";
+    this.minClientVersion = options.minClientVersion ?? "7.1.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.creditTracker = options.creditTracker || null;
@@ -406,22 +406,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         const runtime = this.ensureRuntime(account.id);
         runtime.consecutiveErrors = 0;
         lastError = null;
-        // [诊断] 打印下发 token 的 JWT claims,排查 /responses 401(scope/aud/account_id)。
-        // 仅对 JWT 形式的 token(codex/OpenAI 是 3 段 JWT);antigravity 的 Google access
-        // token 是不透明字符串,跳过 —— 否则会刷"token claims decode failed"噪音。
-        const _segs = accessToken.split(".");
-        if (_segs.length === 3 && _segs[1]) {
-          try {
-            const json = Buffer.from(_segs[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-            const c = JSON.parse(json);
-            const auth = c["https://api.openai.com/auth"] || {};
-            console.log(
-              `[lease-diag] account#${account.id} token claims: aud=${JSON.stringify(c.aud)} scope=${JSON.stringify(c.scope || c.scp)} chatgpt_account_id=${auth.chatgpt_account_id} plan=${auth.chatgpt_plan_type} exp=${c.exp}`,
-            );
-          } catch {
-            /* 不是规范 JWT(base64 段非 JSON)→ 忽略,不刷噪音 */
-          }
-        }
         break;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

@@ -79,14 +79,21 @@ export class RosettaController {
     return this.rosetta.listCodexAccounts();
   }
 
+  // 导出全部 codex 账号(含 token),返回可被 codex-import-account 原样导入的 JSON。
+  @Get("codex-accounts-export")
+  exportCodexAccounts() {
+    return this.rosetta.exportCodexAccounts();
+  }
+
   @Post("codex-add-account")
   addCodexAccount(@Body() body: any) {
     return this.rosetta.addCodexAccountChecked(body);
   }
 
+  // 单条粘贴 token JSON,或整段导出数据(多账号),统一从这里导入。
   @Post("codex-import-account")
   importCodexAccount(@Body() body: any) {
-    return this.rosetta.importCodexAccountCheckedFromText(body);
+    return this.rosetta.importCodexAccountsCheckedFromText(body);
   }
 
   @Post("codex-oauth-start")
@@ -102,6 +109,11 @@ export class RosettaController {
   @Post("codex-oauth-cancel")
   cancelCodexOAuthLogin(@Body() body: any) {
     return this.rosetta.cancelCodexOAuthLogin(String(body?.loginId || ""));
+  }
+
+  @Post("codex-oauth-submit")
+  submitCodexOAuthCallback(@Body() body: any) {
+    return this.rosetta.submitCodexOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
   }
 
   @Post("codex-toggle-account")

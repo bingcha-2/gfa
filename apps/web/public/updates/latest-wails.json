@@ -1,27 +1,27 @@
 {
-  "version": "7.0.0",
-  "url": "https://bcai.site/updates/BingchaAI-7.0.0.exe",
-  "sha256": "2955B6079CF18A5B7C3EF06D0BD0C207EBCFD59113D6ACBBA7321CF2C92E5EA3",
-  "size": 18266112,
-  "changelog": "静态绑定卡密(拼车)+ 血条用量展示;Claude via Antigravity 路由修复(daily 端点)+ 风控/验证处理优化;激活即拉真实额度。",
+  "version": "7.1.0",
+  "url": "https://bcai.site/updates/BingchaAI-7.1.0.exe",
+  "sha256": "E1858D1DF82F648DD11126D27F661F526CEB62C239811AEE47C1199BD998A038",
+  "size": 18266624,
+  "changelog": "修复 codex 用量计量(此前流式 token 显示为0);仪表盘纳入 codex 请求/输入输出 token/已节省统计;codex 恢复流式输出;日志优化",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.0-arm64.dmg",
-      "sha256": "7F6CB670CB0792E7B068FCC97D8E5997EE91806D3BE5E5BDF8D2C51BE1BDD200",
-      "size": 9202958
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-arm64.dmg",
+      "sha256": "98417EFE683034B7D2EF1229F54500E16E74BDF79F6BAECC7FBD78D0ABDF82EC",
+      "size": 9203181
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.0-amd64.dmg",
-      "sha256": "8646F933B5B05317C130EA40F996F16BFEA12E10BABFF06C110FC630950F0961",
-      "size": 9820533
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-amd64.dmg",
+      "sha256": "A63C285C70EF474F545D315E61DCA86FD3703EFCACA39811644780E25E1AFC6A",
+      "size": 9821614
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.0.0-linux-amd64.tar.gz",
-      "sha256": "BE74085953D9A2978BCA92D80F301EA35AD5B4C558B7E7D45024965FA3CAE297",
-      "size": 7690540
+      "url": "https://bcai.site/updates/BingchaAI-7.1.0-linux-amd64.tar.gz",
+      "sha256": "35D9EF43A42D8E99BB76027F89B3282EDB75801192047960844A36585F120A89",
+      "size": 7690721
     }
   }
 }
