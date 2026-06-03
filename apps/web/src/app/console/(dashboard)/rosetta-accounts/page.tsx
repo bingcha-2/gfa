@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Plus, Power, Trash2, RefreshCw, Copy, Search,
-  Download, FolderOpen, Users, UserCheck, UserX, KeyRound,
+  Download, FolderOpen, Users, UserCheck, UserX, KeyRound, Gauge,
   SlidersHorizontal,
 } from "lucide-react";
 
@@ -109,6 +109,8 @@ export default function RosettaAccountsPage() {
   const [addSubmitting, setAddSubmitting] = useState(false);
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -233,6 +235,26 @@ export default function RosettaAccountsPage() {
       toast.error(err instanceof Error ? err.message : "切换状态失败");
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  // 「刷新」= 强制刷 token + 拉额度(后端一个接口)。
+  async function handleRefresh(accountId: string) {
+    setBusyId(accountId);
+    try {
+      const res = await fetch("/api/rosetta/refresh-account-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "刷新失败");
+      toast.success(`${data.email} 已刷新${data.planType ? `(${data.planType})` : ""}`);
+      loadAccounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "刷新失败");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -625,6 +647,23 @@ export default function RosettaAccountsPage() {
                                   : <Power className={`size-3.5 ${account.enabled ? "text-emerald-500" : "text-muted-foreground"}`} />}
                               </TooltipTrigger>
                               <TooltipContent>{account.enabled ? "禁用" : "启用"}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={busyId === account.id}
+                                    onClick={() => void handleRefresh(account.id)}
+                                  />
+                                }
+                              >
+                                {busyId === account.id
+                                  ? <Spinner className="size-3.5" />
+                                  : <Gauge className="size-3.5" />}
+                              </TooltipTrigger>
+                              <TooltipContent>刷新 token + 获取额度</TooltipContent>
                             </Tooltip>
                             <Button
                               variant="ghost"

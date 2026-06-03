@@ -13,12 +13,15 @@ import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   type CachedToken,
   getAccessToken,
+  refreshAccessToken,
   fetchAccountHealth,
   fetchAvailableModels,
   discoverProject,
   extractTierFromModelsJson,
   DEFAULT_CLOUD_ENDPOINT,
 } from "./google-api";
+import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
+import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
 
 type RosettaServiceOptions = {
   dataDir?: string;
@@ -380,16 +383,19 @@ export class RosettaService {
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    let accountId: number;
     if (existing) {
       existing.refreshToken = refreshToken;
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.projectId !== undefined) existing.projectId = String(payload.projectId || "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accountId = maxId + 1;
       accounts.push({
-        id: maxId + 1,
+        id: accountId,
         email,
         refreshToken,
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
@@ -400,7 +406,22 @@ export class RosettaService {
       });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+    return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  /** add-account + 入库探活(后台入口用):同步写入后刷一次 token,失败则置停用 + warning。 */
+  async addAccountChecked(payload: any) {
+    const r = this.addAccount(payload);
+    if (!r.ok || !r.id) return r;
+    const probe = await this.probeAntigravityToken(
+      String(payload?.refreshToken || "").trim(),
+      String(payload?.oauthProfile || "antigravity"),
+    );
+    if (!probe.valid) {
+      this.setAccountEnabled("accounts.json", r.id, false);
+      return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
+    }
+    return { ...r, tokenValid: true };
   }
 
   toggleAccount(payload: any) {
@@ -463,15 +484,18 @@ export class RosettaService {
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    let accountId: number;
     if (existing) {
       existing.refreshToken = refreshToken;
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accountId = maxId + 1;
       accounts.push({
-        id: maxId + 1,
+        id: accountId,
         email,
         refreshToken,
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
@@ -480,7 +504,19 @@ export class RosettaService {
       });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+    return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  /** codex-add-account + 入库探活(后台入口用)。 */
+  async addCodexAccountChecked(payload: any) {
+    const r = this.addCodexAccount(payload);
+    if (!r.ok || !r.id) return r;
+    const probe = await this.probeCodexToken(String(payload?.email || "").trim(), String(payload?.refreshToken || "").trim());
+    if (!probe.valid) {
+      this.setAccountEnabled("codex-accounts.json", r.id, false);
+      return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
+    }
+    return { ...r, tokenValid: true };
   }
 
   importCodexAccountFromText(payload: any) {
@@ -525,12 +561,15 @@ export class RosettaService {
     }
     if (sessionToken) updates.sessionToken = sessionToken;
 
+    let accountId: number;
     if (existing) {
       Object.assign(existing, updates);
+      accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
+      accountId = maxId + 1;
       accounts.push({
-        id: maxId + 1,
+        id: accountId,
         email,
         alias: "",
         planType: "",
@@ -539,7 +578,184 @@ export class RosettaService {
       });
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+    return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length, hasRefreshToken: Boolean(refreshToken) };
+  }
+
+  /** codex-import-account + 入库探活(后台入口用;仅当带 refresh_token 时可验证)。 */
+  async importCodexAccountCheckedFromText(payload: any) {
+    const r = this.importCodexAccountFromText(payload);
+    if (!r.ok || !r.id || !r.hasRefreshToken) return r;
+    const probe = await this.probeCodexToken(String(r.email || ""), String(payload?.refreshToken || "").trim() || this.codexRefreshTokenOf(r.id));
+    if (!probe.valid) {
+      this.setAccountEnabled("codex-accounts.json", r.id, false);
+      return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
+    }
+    return { ...r, tokenValid: true };
+  }
+
+  /** 读取 codex 账号当前的 refreshToken(导入时 token 在 JSON 文本里,这里兜底从落盘取)。 */
+  private codexRefreshTokenOf(accountId: number): string {
+    const data = readJson(path.join(this.dataDir, "codex-accounts.json"), { accounts: [] });
+    const acc = (Array.isArray(data.accounts) ? data.accounts : []).find((a: any) => Number(a.id) === accountId);
+    return String(acc?.refreshToken || "");
+  }
+
+  /** 通用:把某账号(antigravity accounts.json / codex-accounts.json)的 enabled 置位。 */
+  private setAccountEnabled(fileName: string, accountId: number, enabled: boolean) {
+    const filePath = path.join(this.dataDir, fileName);
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return;
+    acc.enabled = enabled;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+  }
+
+  // ── 探活 + 单账号刷新 token / 获取额度 ───────────────────────────────────
+  // 全部手动触发(后台按钮 / 入库探活),不参与任何自动轮询。
+
+  /** antigravity:用 refresh_token 换一次 access_token,验证有效性。 */
+  private async probeAntigravityToken(
+    refreshToken: string,
+    oauthProfile: string,
+  ): Promise<{ valid: boolean; error?: string }> {
+    try {
+      await refreshAccessToken(refreshToken, oauthProfile);
+      return { valid: true };
+    } catch (err: any) {
+      return { valid: false, error: String(err?.message || err) };
+    }
+  }
+
+  /** codex:用 refresh_token 刷一次 access_token,验证有效性(强制刷新,不吃缓存)。 */
+  private async probeCodexToken(
+    email: string,
+    refreshToken: string,
+  ): Promise<{ valid: boolean; error?: string }> {
+    try {
+      await refreshCodexAccessToken({ email, refreshToken } as any);
+      return { valid: true };
+    } catch (err: any) {
+      return { valid: false, error: String(err?.message || err) };
+    }
+  }
+
+  /**
+   * 后台「刷新」(antigravity 单账号)= 强制刷新 token + 拉额度(二者本是一件事:
+   * 拉额度必须先有有效 token)。发现 project → 刷 token → credits/planType + per-model 额度。
+   */
+  async refreshAccountQuota(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const accountsFile = path.join(this.dataDir, "accounts.json");
+    const quotaFile = path.join(this.dataDir, "quota-data.json");
+    const data = readJson(accountsFile, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    try {
+      if (!acc.projectId) await this.tryDiscoverProject(acc);
+      if (!acc.projectId) return { ok: false, email: acc.email, error: "无法发现 projectId" };
+      this.tokenCache.delete(accountId); // 清缓存 → 强制真正刷一次 token
+      const token = await getAccessToken(accountId, acc.refreshToken, acc.oauthProfile, this.tokenCache);
+      const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+      acc.credits = {
+        known: health.credits.known,
+        available: health.credits.available,
+        creditAmount: health.credits.creditAmount,
+        minCreditAmount: health.credits.minCreditAmount,
+        paidTierID: health.credits.paidTierID,
+        creditsRefreshedAt: new Date().toISOString(),
+      };
+      if (health.planType && health.planType !== acc.planType) acc.planType = health.planType;
+
+      const modelsResult = await fetchAvailableModels(token, acc.projectId);
+      if (modelsResult) {
+        const detectedTier = extractTierFromModelsJson(modelsResult.rawJson);
+        if (detectedTier && detectedTier !== acc.planType) acc.planType = detectedTier;
+        acc.modelQuotaFractions = {};
+        acc.modelQuotaResetTimes = {};
+        acc.modelQuotaRefreshedAt = Date.now();
+        for (const [modelKey, info] of Object.entries(modelsResult.models)) {
+          if (info.remainingFraction != null) acc.modelQuotaFractions[modelKey] = info.remainingFraction;
+          if (info.resetTime) acc.modelQuotaResetTimes[modelKey] = info.resetTime;
+        }
+        const quotaData: Record<string, any> = readJson(quotaFile, {});
+        quotaData[acc.email] = {
+          modelsJson: modelsResult.rawJson,
+          refreshedAt: nowIso(),
+          alias: acc.alias || "",
+          planType: acc.planType || "",
+        };
+        writeJson(quotaFile, quotaData);
+      }
+      writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
+      return {
+        ok: true,
+        email: acc.email,
+        tokenValid: true,
+        planType: acc.planType || "",
+        credits: acc.credits,
+        modelQuotaFractions: acc.modelQuotaFractions || {},
+      };
+    } catch (err: any) {
+      return { ok: false, email: acc.email, tokenValid: false, error: String(err?.message || err) };
+    }
+  }
+
+  /**
+   * 后台「刷新」(codex 单账号)= 强制刷新 token + 拉额度。先刷 token(回写 access/refresh
+   * token + 到期),再用新 token 拉上游 wham/usage 落盘 5h/周余量。token 刷新成功即算成功:
+   * 额度接口失败(如号被上游封)只回带 quotaError,不否定 token 已刷新这件事。
+   */
+  async refreshCodexAccountQuota(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "codex-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    try {
+      const probe = { email: acc.email, refreshToken: acc.refreshToken } as any;
+      const token = await refreshCodexAccessToken(probe);
+      acc.accessToken = token;
+      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
+      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
+
+      const snap = await fetchCodexQuotaUpstream(token);
+      if (!snap) {
+        // token 已刷新成功并落盘;仅额度接口失败 → 仍算成功,回带 quotaError 让前端提示。
+        writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+        return { ok: true, email: acc.email, tokenValid: true, quotaError: "上游额度获取失败(usage 接口无数据或被拒)" };
+      }
+      // 落盘:与 codex.provider.applyQuotaSnapshot 同字段,供血条/选号读取。
+      if (snap.planType) acc.planType = snap.planType;
+      const cq = snap.codexQuota;
+      const weeklyBinds = cq.weeklyPercent < cq.hourlyPercent;
+      const bindingPercent = weeklyBinds ? cq.weeklyPercent : cq.hourlyPercent;
+      const bindingReset = weeklyBinds ? cq.weeklyResetTime : cq.hourlyResetTime;
+      acc.modelQuotaFractions = { codex: bindingPercent / 100 };
+      if (bindingReset) acc.modelQuotaResetTimes = { codex: bindingReset };
+      acc.modelQuotaRefreshedAt = Date.now();
+      acc.codexHourlyPercent = cq.hourlyPercent;
+      acc.codexWeeklyPercent = cq.weeklyPercent;
+      acc.codexHourlyResetTime = cq.hourlyResetTime || "";
+      acc.codexWeeklyResetTime = cq.weeklyResetTime || "";
+      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+      return {
+        ok: true,
+        email: acc.email,
+        tokenValid: true,
+        planType: acc.planType || "",
+        hourlyPercent: cq.hourlyPercent,
+        weeklyPercent: cq.weeklyPercent,
+        hourlyResetTime: cq.hourlyResetTime || "",
+        weeklyResetTime: cq.weeklyResetTime || "",
+      };
+    } catch (err: any) {
+      return { ok: false, email: acc.email, error: String(err?.message || err) };
+    }
   }
 
   async startCodexOAuthLogin() {

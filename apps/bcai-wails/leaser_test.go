@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,6 +67,98 @@ func TestMarkCardUnusableStopsAutoLease(t *testing.T) {
 	}
 	if st := l.GetStatus(); st["cardUnusable"] != true {
 		t.Fatalf("GetStatus 应上报 cardUnusable=true, 得到 %v", st["cardUnusable"])
+	}
+}
+
+// 整体逻辑核心:coversAntigravity 由卡的 products 决定。池子卡(空)/含 antigravity → 跑;
+// 只绑 codex(或其它非 antigravity 产品) → 不跑。
+func TestCoversAntigravity(t *testing.T) {
+	cases := []struct {
+		products []interface{}
+		want     bool
+		desc     string
+	}{
+		{nil, true, "池子卡(products 未知/空)→ 覆盖一切"},
+		{[]interface{}{}, true, "池子卡(products 空数组)→ 覆盖一切"},
+		{[]interface{}{"antigravity"}, true, "antigravity-only 卡"},
+		{[]interface{}{"codex", "antigravity"}, true, "双开卡"},
+		{[]interface{}{"codex"}, false, "codex-only 卡 → 不跑 antigravity"},
+		{[]interface{}{"other"}, false, "只开其它产品 → 不跑 antigravity"},
+	}
+	for _, c := range cases {
+		l := &Leaser{}
+		if c.products != nil {
+			l.accessKeyStatus = map[string]interface{}{"products": c.products}
+		}
+		if got := l.coversAntigravity(); got != c.want {
+			t.Fatalf("%s: coversAntigravity()=%v, want %v", c.desc, got, c.want)
+		}
+	}
+}
+
+// codex-only 卡:StartAutoLease 直接按 products 跳过 antigravity 自动租号 ——
+// 不启动 worker(leaseFn 一次都不调)、不刷错(lastError 空)、不禁用整卡。
+func TestStartAutoLeaseSkipsAntigravityForCodexOnlyCard(t *testing.T) {
+	var calls int32
+	l := &Leaser{
+		accessKeyStatus: map[string]interface{}{"products": []interface{}{"codex"}},
+		leaseFn: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error) {
+			atomic.AddInt32(&calls, 1)
+			return nil, errors.New("此卡未开通该服务，请联系客服")
+		},
+	}
+
+	l.StartAutoLease("BCAI-CODEX-ONLY", "dev-1", "")
+
+	// 给可能误启动的 goroutine 一点时间暴露问题。
+	time.Sleep(50 * time.Millisecond)
+
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("codex-only 卡不该发起任何 antigravity 租号,实际调用 %d 次", n)
+	}
+	st := l.GetStatus()
+	if st["autoLeaseRunning"] != false {
+		t.Fatalf("codex-only 卡不该启动 antigravity 自动租号 worker: autoLeaseRunning=%v", st["autoLeaseRunning"])
+	}
+	if st["cardUnusable"] != false {
+		t.Fatalf("不该禁用整卡(codex 仍可用): cardUnusable=%v", st["cardUnusable"])
+	}
+	if st["lastError"] != "" {
+		t.Fatalf("不该向前端报错: lastError=%q", st["lastError"])
+	}
+	if st["serviceState"] == "error" {
+		t.Fatalf("不该进入 error 状态: serviceState=%v", st["serviceState"])
+	}
+}
+
+// 池子卡 / antigravity 卡:StartAutoLease 正常跑 antigravity 自动租号(warmup 会调 leaseFn)。
+func TestStartAutoLeaseRunsAntigravityForCoveredCard(t *testing.T) {
+	for _, products := range [][]interface{}{nil, {"antigravity"}, {"codex", "antigravity"}} {
+		var calls int32
+		l := &Leaser{
+			leaseFn: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error) {
+				atomic.AddInt32(&calls, 1)
+				// 返回一个 token(Bound=false)→ refreshBoundQuota 早退,不打真实网络。
+				return &TokenLease{AccessToken: "t", ProjectId: "p", ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}, nil
+			},
+		}
+		if products != nil {
+			l.accessKeyStatus = map[string]interface{}{"products": products}
+		}
+
+		l.StartAutoLease("BCAI-CARD", "dev-1", "")
+
+		deadline := time.Now().Add(2 * time.Second)
+		for atomic.LoadInt32(&calls) == 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if n := atomic.LoadInt32(&calls); n == 0 {
+			t.Fatalf("products=%v 的卡应跑 antigravity warmup 租号,但 leaseFn 从未被调用", products)
+		}
+		if st := l.GetStatus(); st["autoLeaseRunning"] != true {
+			t.Fatalf("products=%v 的卡应在运行 antigravity 自动租号", products)
+		}
+		l.StopAutoLease()
 	}
 }
 

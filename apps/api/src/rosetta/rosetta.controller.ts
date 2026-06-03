@@ -51,7 +51,7 @@ export class RosettaController {
 
   @Post("add-account")
   addAccount(@Body() body: any) {
-    return this.rosetta.addAccount(body);
+    return this.rosetta.addAccountChecked(body);
   }
 
   @Post("toggle-account")
@@ -64,6 +64,12 @@ export class RosettaController {
     return this.rosetta.deleteAccount(body);
   }
 
+  // 「刷新」= 强制刷 token + 拉额度(合并为一个动作)。
+  @Post("refresh-account-quota")
+  refreshAccountQuota(@Body() body: any) {
+    return this.rosetta.refreshAccountQuota(body);
+  }
+
   // ── Codex account pool ──────────────────────────────────────────────
   @Get("codex-accounts")
   listCodexAccounts() {
@@ -72,12 +78,12 @@ export class RosettaController {
 
   @Post("codex-add-account")
   addCodexAccount(@Body() body: any) {
-    return this.rosetta.addCodexAccount(body);
+    return this.rosetta.addCodexAccountChecked(body);
   }
 
   @Post("codex-import-account")
   importCodexAccount(@Body() body: any) {
-    return this.rosetta.importCodexAccountFromText(body);
+    return this.rosetta.importCodexAccountCheckedFromText(body);
   }
 
   @Post("codex-oauth-start")
@@ -103,6 +109,12 @@ export class RosettaController {
   @Post("codex-delete-account")
   deleteCodexAccount(@Body() body: any) {
     return this.rosetta.deleteCodexAccount(body);
+  }
+
+  // 「刷新」= 强制刷 token + 拉上游额度(合并为一个动作)。
+  @Post("codex-refresh-quota")
+  refreshCodexAccountQuota(@Body() body: any) {
+    return this.rosetta.refreshCodexAccountQuota(body);
   }
 
   @Post("access-key")

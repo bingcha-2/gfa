@@ -99,6 +99,20 @@ type Leaser struct {
 	// 卡密不可用(被服务端判为 Invalid/过期/禁用/未激活)。一旦置位,自动租号停止、
 	// 功能禁用,只允许用户手动退出接管。重新激活有效卡(StartAutoLease)时复位。
 	cardUnusable bool
+	// leaseFn 允许测试注入租号逻辑;nil 时走真实的 LeaseToken。仅供 StartAutoLease
+	// 的自动租号循环使用,不影响代理/激活路径直接调用 LeaseToken。
+	leaseFn func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error)
+}
+
+// autoLease 是 StartAutoLease 循环用的租号入口:默认调真实 LeaseToken,测试可注入 leaseFn。
+func (l *Leaser) autoLease(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error) {
+	l.mu.RLock()
+	fn := l.leaseFn
+	l.mu.RUnlock()
+	if fn != nil {
+		return fn(card, deviceId, force, options, upstreamProxy)
+	}
+	return l.LeaseToken(card, deviceId, force, options, upstreamProxy)
 }
 
 // isCardFatalError 判断租号/激活错误是否代表"卡密本身不可用"(无可用卡密)。
@@ -268,6 +282,9 @@ type ActivateData struct {
 	AccountCard struct {
 		ExpiresAt string `json:"expiresAt"`
 	} `json:"accountCard"`
+	// 服务端 activate 即返回权威 accessKeyStatus(含 products) —— 客户端据此知道这张卡
+	// 开通了哪些产品(codex / antigravity / 空=池子卡),无需等一次成功租号才能得知。
+	AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
 }
 
 type LeaseTokenResp struct {
@@ -349,7 +366,12 @@ func (l *Leaser) Activate(card, deviceId string, upstreamProxy string) (string, 
 	l.lastError = ""
 	l.mu.Unlock()
 
-	Log("[token-leaser] Activated OK, expires at: %s", actData.AccountCard.ExpiresAt)
+	// 存下权威 accessKeyStatus → CardProducts() 立即可用,决定哪个产品自动租号/显示血条。
+	if actData.AccessKeyStatus != nil {
+		l.syncFromServer(actData.AccessKeyStatus)
+	}
+
+	Log("[token-leaser] Activated OK, expires at: %s (products=%v)", actData.AccountCard.ExpiresAt, l.CardProducts())
 	return actData.AccountCard.ExpiresAt, nil
 }
 
@@ -866,7 +888,26 @@ func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 	}
 }
 
+// coversAntigravity 当前卡是否需要跑 antigravity 自动租号:池子卡(products 空)
+// 或开通了 antigravity 的卡 → true;只绑了 codex 等其它产品的卡 → false。
+// products 由 Activate / 成功租号写入 accessKeyStatus(见 CardProducts)。
+func (l *Leaser) coversAntigravity() bool {
+	return cardCoversProduct(l.CardProducts(), "antigravity")
+}
+
 func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
+	// 整体逻辑:antigravity 自动租号只服务"开通了 antigravity 的卡"(或池子卡)。
+	// 只绑了 codex 的卡在此直接跳过 —— 不发无谓的 antigravity 租号请求,也不会把
+	// "此卡未开通该服务"当成错误刷屏/弹给前端。codex 路径走自己的 leaser,不受影响。
+	if !l.coversAntigravity() {
+		l.mu.Lock()
+		l.lastError = "" // 不是错误:本卡没开通 antigravity → 前端不进入 error 状态
+		l.leaseRunning = false
+		l.mu.Unlock()
+		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 自动租号;codex 不受影响", l.CardProducts())
+		return
+	}
+
 	l.mu.Lock()
 	if l.leaseRunning {
 		if l.cancelLease != nil {
@@ -891,7 +932,7 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		if warmupModel != "" {
 			warmupOpts = map[string]interface{}{"modelKey": warmupModel}
 		}
-		if _, err := l.LeaseToken(card, deviceId, false, warmupOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
+		if _, err := l.autoLease(card, deviceId, false, warmupOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
 			l.markCardUnusable(err)
 			return
 		}
@@ -933,7 +974,7 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 					if renewalModel != "" {
 						renewOpts = map[string]interface{}{"modelKey": renewalModel}
 					}
-					if _, err := l.LeaseToken(card, deviceId, false, renewOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
+					if _, err := l.autoLease(card, deviceId, false, renewOpts, upstreamProxy); err != nil && isCardFatalError(err.Error()) {
 						l.markCardUnusable(err)
 						return
 					}
@@ -1024,6 +1065,15 @@ func (l *Leaser) StopAutoLease() {
 func (l *Leaser) ClearCache() {
 	l.mu.Lock()
 	l.cachedToken = nil
+	l.mu.Unlock()
+}
+
+// ClearAccessKeyStatus 清空缓存的卡密状态(含 products)。换卡时调用,避免旧卡的
+// products 被新卡复用 —— 新卡 products 由下一次 Activate/成功租号重新写入。
+func (l *Leaser) ClearAccessKeyStatus() {
+	l.mu.Lock()
+	l.accessKeyStatus = nil
+	l.accessKeyStatusAt = time.Time{}
 	l.mu.Unlock()
 }
 

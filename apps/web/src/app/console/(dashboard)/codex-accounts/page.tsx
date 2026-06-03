@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, ExternalLinkIcon, FileJsonIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +56,8 @@ export default function CodexAccountsPage() {
   const [oauthStatusText, setOauthStatusText] = useState("");
 
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
+  // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -233,6 +235,30 @@ export default function CodexAccountsPage() {
     }
   }
 
+  // 「刷新」= 强制刷 token + 拉上游额度(后端一个接口)。
+  async function handleRefresh(account: CodexAccount) {
+    setBusyId(account.id);
+    try {
+      const res = await fetch("/api/rosetta/codex-refresh-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "刷新失败");
+      if (data.quotaError) {
+        toast.success(`#${account.id} token 已刷新(额度获取失败:${data.quotaError})`);
+      } else {
+        toast.success(`#${account.id} 已刷新 · 5h ${Math.round(data.hourlyPercent)}% · 周 ${Math.round(data.weeklyPercent)}%`);
+      }
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "刷新失败");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -368,6 +394,10 @@ export default function CodexAccountsPage() {
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
                     </TableCell>
                     <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" title="刷新 token + 获取额度" disabled={busyId === a.id}
+                        onClick={() => handleRefresh(a)}>
+                        {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
                         <Trash2Icon className="size-4 text-destructive" />
                       </Button>

@@ -52,6 +52,12 @@ func (a *App) startup(ctx context.Context) {
 			leaser.cardExpires = cfg.CardExpiry
 			leaser.mu.Unlock()
 		}
+		// 先 Activate 拿到权威 products(开通了哪些产品),StartAutoLease 据此决定是否跑
+		// antigravity 自动租号 —— 避免 codex-only 卡在启动时盲发 antigravity 租号并报错。
+		// Activate 失败(网络等)不阻塞:StartAutoLease 仍会尝试(池子卡语义)。
+		if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy); err != nil {
+			Log("[app] 启动时 Activate 失败(不阻塞自动租号): %v", err)
+		}
 		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 	} else {
 		Log("[app] No account card configured. Waiting for user configuration.")
@@ -118,17 +124,24 @@ func (a *App) SaveConfig(cfg Config) error {
 
 		Log("[app] Core settings changed. Restarting services...")
 
-		// 换卡时清空本地统计数据
+		// 换卡时清空本地统计数据 + 旧卡的 products(accessKeyStatus),避免用旧卡产品
+		// 误判新卡是否开通 antigravity;新卡 products 由下面的 Activate 重新写入。
 		if oldCfg.AccountCard != cfg.AccountCard {
 			Log("[app] Account card changed: clearing local stats")
 			GetUsageStats().Reset()
 			GetLeaser().ResetLocalQuota()
+			GetLeaser().ClearAccessKeyStatus()
 		}
 
 		GetLeaser().StopAutoLease()
 		GetHTTPProxy().Stop()
 
 		if cfg.AccountCard != "" {
+			// 重新 Activate 拿到(可能换了卡的)权威 products,再让 StartAutoLease 按产品决定
+			// 是否跑 antigravity 自动租号,避免沿用旧卡 products 误判。
+			if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy); err != nil {
+				Log("[app] 重启时 Activate 失败(不阻塞自动租号): %v", err)
+			}
 			GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 		}
 
@@ -162,8 +175,12 @@ func (a *App) ActivateCard(card string) (string, error) {
 
 	// Best-effort warm probe — never fatal. If the pool is momentarily dry the
 	// card is still activated; the user just sees a "busy" hint at request time.
-	if _, leaseErr := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, cfg.UpstreamProxy); leaseErr != nil {
-		Log("[activate] card activated but warm lease failed (non-fatal): %v", leaseErr)
+	// 只为开通了 antigravity 的卡(或池子卡)预热 —— codex-only 卡预热 antigravity 无意义,
+	// 且会把"此卡未开通该服务"写进 lastError、弹给前端。
+	if GetLeaser().coversAntigravity() {
+		if _, leaseErr := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, cfg.UpstreamProxy); leaseErr != nil {
+			Log("[activate] card activated but warm lease failed (non-fatal): %v", leaseErr)
+		}
 	}
 
 	return expiresAt, nil

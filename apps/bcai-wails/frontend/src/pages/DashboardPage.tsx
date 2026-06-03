@@ -111,7 +111,9 @@ export function DashboardPage() {
   const visibleBars = usageBarsForProducts(cardProducts)
   // 绑定账号当前不可用(租号报错且非致命):额度数据不可信 → 血条显示「未知」+ 顶部提示,
   // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
-  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable
+  // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
+  // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
+  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable && visibleBars.opus
 
   const { modalProps, showAlert } = useModal()
   const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs, recoveryWindowMs)
