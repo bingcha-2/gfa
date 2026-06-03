@@ -1,0 +1,4 @@
+interface:
+  display_name: "GFA Service Ops"
+  short_description: "GFA service updates, restarts, and client releases"
+  default_prompt: "Use $gfa-service-ops to update, restart, inspect, or publish the GFA service and BingchaAI client safely."
