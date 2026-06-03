@@ -90,8 +90,7 @@ func (l *CodexLeaser) reportQuotaOnly(card, upstreamProxy string, lease *CodexTo
 		Log("[codex-quota] 即时额度上报失败(不致命): %v", err)
 		return
 	}
-	Log("[codex-quota] ✓ 即时额度上报成功 account#%d hourly=%.0f%% weekly=%.0f%% → 后台应已更新",
-		lease.AccountId, snap.CodexQuota.HourlyPercent, snap.CodexQuota.WeeklyPercent)
+	Log("[codex-quota] ✓ 上报成功 [codex] account#%d", lease.AccountId)
 }
 
 // 上游额度拉取的最小间隔。5h/周窗口变化很慢,没必要每个请求都拉。被节流跳过时
@@ -168,8 +167,6 @@ func (l *CodexLeaser) fetchCodexQuotaAsync(lease *CodexTokenLease, upstreamProxy
 	l.cachedQuota = snap // 一次性(给下次 report 带上)
 	l.lastQuota = snap   // 持久(给前端血条显示)
 	l.mu.Unlock()
-	Log("[codex-quota] account #%d hourly=%.0f%% weekly=%.0f%% plan=%s",
-		lease.AccountId, window.HourlyPercent, window.WeeklyPercent, usage.PlanType)
 }
 
 func parseCodexUsage(u *codexUsageResponse) *CodexQuotaWindow {

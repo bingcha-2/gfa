@@ -270,12 +270,6 @@ func (l *Leaser) fetchAccountQuotaAsync() {
 	l.cachedQuotaSnapshot = snapshot
 	l.mu.Unlock()
 
-	creditAmt := float64(0)
-	if credits != nil {
-		creditAmt = credits.CreditAmount
-	}
-	Log("[quota-sync] account #%d: plan=%s credits=%.0f models=%d",
-		token.AccountId, planType, creditAmt, len(snapshot.ModelQuota))
 }
 
 // ResetQuotaSync 清理 quota 缓存（切换账号等场景）
@@ -333,7 +327,7 @@ func (l *Leaser) reportQuotaOnly(card, upstreamProxy string, snap *AccountQuotaS
 		Log("[quota-sync] 即时额度上报失败(不致命): %v", err)
 		return
 	}
-	Log("[quota-sync] ✓ 即时额度上报成功 account#%d models=%d → 后台应已更新", lease.AccountId, len(snap.ModelQuota))
+	Log("[quota-sync] ✓ 上报成功 [antigravity] account#%d", lease.AccountId)
 }
 
 // refreshBoundAntigravityQuota 主动拉一次上游 per-model 额度 → 记录血条 + 上报服务端。
@@ -353,10 +347,6 @@ func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string, force 
 	}
 	for modelKey, q := range snap.ModelQuota {
 		recordBoundFractionForModel(modelKey, q.RemainingFraction, isoToEpochMs(q.ResetTime))
-		// [诊断] 打印各模型(尤其 Claude)的真实 fraction + reset,确认血条数据来源。
-		if !isGeminiModel(modelKey) {
-			Log("[quota-sync] 绑定号模型额度 %s: remaining=%.1f%% reset=%q", modelKey, q.RemainingFraction*100, q.ResetTime)
-		}
 	}
 	l.reportQuotaOnly(card, upstreamProxy, snap)
 }

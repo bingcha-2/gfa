@@ -15,7 +15,8 @@ import (
 const DefaultCodexEndpoint = "https://chatgpt.com"
 
 // codexDebugUsage 打开后:流式解析不到 usage 的含 "usage" 行会打日志,用于对齐字段格式。
-var codexDebugUsage = true
+// 默认关闭,排查 usage 字段格式时再临时改 true。
+var codexDebugUsage = false
 
 // Codex 官方客户端身份头(值对照 cockpit DEFAULT_CODEX_*)。chatgpt.com 的
 // /backend-api/codex 用它们校验请求来自合法 Codex 客户端,缺则 401。
@@ -170,6 +171,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		p.sendJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	// 计入仪表盘统计(今日请求)。codex 与 antigravity 共用同一套 UsageStatsStore,
+	// 这里在确认是生成请求(POST)后计一次,中转/号池两条路都覆盖。
+	GetUsageStats().AddRequest()
 	// 中转(API 卡密)模式:不租号、不要 card,直接用本地配置的 key 转发到中转站。
 	// 取一次快照贯穿整条请求,避免中途 UI 改配置导致前后不一致。
 	if relay := p.currentRelay(); relay != nil && strings.TrimSpace(relay.BaseURL) != "" && strings.TrimSpace(relay.APIKey) != "" {
@@ -261,7 +265,15 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	defer resp.Body.Close()
 	_ = accountIDForLog
 
-	if isCodexStreamingResponse(resp) {
+	// 何时按流式转发回 codex:上游对 responses 流式 200 有时**不带 Content-Type**
+	// (实测 chatgpt.com 的 codex 后端回空 CT)。只靠响应头判流式会漏判 → 把整段 SSE
+	// 当成单个 JSON 整体读,既丢了边转边发的流式体验,又因整段不是合法 JSON 解析不出
+	// usage(tokens=0)。codex 的 responses 请求恒为流式,故改判据为:上游 2xx 且
+	// (响应声明了 SSE 或请求要流式)。copyStreamingCodexResponse 对单行裸 JSON 也能解
+	// usage,真·非流式 2xx 走到这里也不会误伤;非 2xx 仍落到下面的整体读分支(带错误体日志)。
+	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
+		(isCodexStreamingResponse(resp) || requestWantsStream(body))
+	if streamBack {
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		input, output, total, copyErr := copyStreamingCodexResponse(w, resp.Body)
@@ -643,6 +655,10 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	if details.BillableTotalTokens > 0 {
 		GetLeaser().RecordLocalUsage(details.ModelKey, details.BillableTotalTokens)
 	}
+	// 再计入仪表盘统计(输入/输出 Token + 累计已节省)。与 antigravity 路径
+	// (proxy_tokens.go)共用 UsageStatsStore;节省金额在 AddTokens 内按 in/out 价格算。
+	GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, 0)
+	GetUsageStats().AddGeneration()
 }
 
 func (p *CodexProxy) reportProblemSafe(card, deviceId string, details ReportDetails, upstreamProxy string, lease *CodexTokenLease) {
@@ -651,6 +667,8 @@ func (p *CodexProxy) reportProblemSafe(card, deviceId string, details ReportDeta
 		reportFunc = GetCodexLeaser().ReportProblem
 	}
 	reportFunc(card, deviceId, details, upstreamProxy, lease)
+	// 计入仪表盘错误数(codex 上游报错/流中断)。
+	GetUsageStats().AddError()
 }
 
 func copyCodexHeaders(dst, src http.Header) {
