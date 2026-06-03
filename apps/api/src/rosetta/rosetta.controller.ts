@@ -153,6 +153,26 @@ export class RosettaController {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
+  @Post("claude-oauth-start")
+  startClaudeOAuthLogin() {
+    return this.rosetta.startClaudeOAuthLogin();
+  }
+
+  @Get("claude-oauth-status")
+  getClaudeOAuthLoginStatus(@Query("loginId") loginId?: string) {
+    return this.rosetta.getClaudeOAuthLoginStatus(String(loginId || ""));
+  }
+
+  @Post("claude-oauth-cancel")
+  cancelClaudeOAuthLogin(@Body() body: any) {
+    return this.rosetta.cancelClaudeOAuthLogin(String(body?.loginId || ""));
+  }
+
+  @Post("claude-oauth-submit")
+  submitClaudeOAuthCallback(@Body() body: any) {
+    return this.rosetta.submitClaudeOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
+  }
+
   @Post("access-key")
   createAccessKey(@Body() body: any) {
     const result = this.rosetta.createAccessKey(body);

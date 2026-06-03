@@ -26,6 +26,7 @@ type RosettaServiceOptions = {
   dataDir?: string;
   codexOAuthPort?: number;
   codexOAuthFetch?: typeof fetch;
+  claudeOAuthFetch?: typeof fetch;
 };
 
 /** Total shares (份) per upstream account. A card consumes `weight` shares:
@@ -38,6 +39,16 @@ const CODEX_OAUTH_SCOPES = "openid profile email offline_access api.connectors.r
 const CODEX_OAUTH_ORIGINATOR = "codex_vscode";
 const CODEX_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
+
+// Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
+// claude.com),全部可经 env 覆盖以便线上纠偏而不重新发版。手动流:授权后用户把
+// 回调页展示的 code(形如 "code#state")或整个回调 URL 粘回后台换 token。
+const CLAUDE_OAUTH_CLIENT_ID = process.env.BCAI_CLAUDE_CLIENT_ID || "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const CLAUDE_OAUTH_AUTH_ENDPOINT = process.env.BCAI_CLAUDE_AUTHORIZE_URL || "https://claude.com/cai/oauth/authorize";
+const CLAUDE_OAUTH_TOKEN_ENDPOINT = process.env.BCAI_CLAUDE_TOKEN_ENDPOINT || "https://platform.claude.com/v1/oauth/token";
+const CLAUDE_OAUTH_REDIRECT_URI = process.env.BCAI_CLAUDE_REDIRECT_URI || "https://platform.claude.com/oauth/code/callback";
+const CLAUDE_OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
+const CLAUDE_OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
 
 type CodexOAuthPending = {
   loginId: string;
@@ -335,6 +346,7 @@ export class RosettaService {
   private readonly dataDir: string;
   private readonly codexOAuthPort: number;
   private readonly codexOAuthFetch: typeof fetch;
+  private readonly claudeOAuthFetch: typeof fetch;
   private readonly logger = new Logger(RosettaService.name);
   /** In-memory access_token cache: accountId → { accessToken, expiresAt } */
   private readonly tokenCache = new Map<number, CachedToken>();
@@ -342,6 +354,7 @@ export class RosettaService {
   private readonly accessKeysFile: CachedJsonFile;
   private readonly accountsFile: CachedJsonFile;
   private codexOAuthPending: CodexOAuthPending | null = null;
+  private claudeOAuthPending: CodexOAuthPending | null = null;
 
   constructor(
     @Optional() options: RosettaServiceOptions = {},
@@ -351,6 +364,7 @@ export class RosettaService {
     this.dataDir = options.dataDir || defaultDataDir();
     this.codexOAuthPort = Number(options.codexOAuthPort ?? CODEX_OAUTH_DEFAULT_CALLBACK_PORT);
     this.codexOAuthFetch = options.codexOAuthFetch || fetch;
+    this.claudeOAuthFetch = options.claudeOAuthFetch || fetch;
     this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
     this.accountsFile = new CachedJsonFile(path.join(this.dataDir, "accounts.json"), { accounts: [] });
   }
@@ -1145,21 +1159,177 @@ export class RosettaService {
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      if (payload.accessToken) existing.accessToken = String(payload.accessToken);
+      if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
       accountId = maxId + 1;
-      accounts.push({
+      const record: any = {
         id: accountId,
         email,
         refreshToken,
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
         alias: String(payload.alias || ""),
         planType: String(payload.planType || ""),
-      });
+      };
+      if (payload.accessToken) record.accessToken = String(payload.accessToken);
+      if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
+      accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, id: accountId, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  // ── Claude OAuth(手动粘贴回调,对照 codex 同名流程)────────────────────────
+  // 不起本地回调 server:用户在浏览器登录 Claude 订阅号授权后,把回调页展示的
+  // code(形如 "code#state")或整段回调 URL 粘回后台,这里换 token 并入库。
+
+  async startClaudeOAuthLogin() {
+    const existing = this.claudeOAuthPending;
+    if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
+      return { ok: true, loginId: existing.loginId, authUrl: existing.authUrl, redirectUri: existing.redirectUri, expiresAt: existing.expiresAt };
+    }
+    this.claudeOAuthPending = null;
+
+    const codeVerifier = base64Url(crypto.randomBytes(32));
+    const state = base64Url(crypto.randomBytes(32));
+    const loginId = base64Url(crypto.randomBytes(18));
+    const params = new URLSearchParams({
+      code: "true",
+      response_type: "code",
+      client_id: CLAUDE_OAUTH_CLIENT_ID,
+      redirect_uri: CLAUDE_OAUTH_REDIRECT_URI,
+      scope: CLAUDE_OAUTH_SCOPES,
+      code_challenge: codeChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      state,
+    });
+    const pending: CodexOAuthPending = {
+      loginId,
+      state,
+      codeVerifier,
+      redirectUri: CLAUDE_OAUTH_REDIRECT_URI,
+      authUrl: `${CLAUDE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+      expiresAt: Date.now() + CLAUDE_OAUTH_TIMEOUT_MS,
+      status: "pending",
+    };
+    this.claudeOAuthPending = pending;
+    return { ok: true, loginId, authUrl: pending.authUrl, redirectUri: pending.redirectUri, expiresAt: pending.expiresAt };
+  }
+
+  getClaudeOAuthLoginStatus(loginId: string) {
+    const pending = this.claudeOAuthPending;
+    if (!pending || pending.loginId !== loginId) return { ok: false, status: "missing", error: "login session not found" };
+    if (pending.status === "pending" && pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = "OAuth login timed out";
+    }
+    return {
+      ok: true,
+      status: pending.status,
+      loginId: pending.loginId,
+      email: pending.email || "",
+      error: pending.error || "",
+      isUpdate: Boolean(pending.isUpdate),
+      expiresAt: pending.expiresAt,
+    };
+  }
+
+  cancelClaudeOAuthLogin(loginId: string) {
+    if (this.claudeOAuthPending?.loginId !== loginId) return { ok: false, error: "login session not found" };
+    this.claudeOAuthPending = null;
+    return { ok: true };
+  }
+
+  async submitClaudeOAuthCallback(loginId: string, rawInput: string) {
+    const pending = this.claudeOAuthPending;
+    if (!pending || pending.loginId !== loginId) {
+      return { ok: false, status: "missing", error: "登录会话不存在或已过期,请重新发起 OAuth 登录" };
+    }
+    if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = pending.error || "OAuth 登录会话已失效,请重新发起";
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    const input = String(rawInput || "").trim();
+    if (!input) return { ok: false, status: "pending", error: "请粘贴回调 URL 或授权码 code" };
+
+    let code = "";
+    let state = "";
+    try {
+      const url = new URL(input);
+      code = (url.searchParams.get("code") || "").trim();
+      state = (url.searchParams.get("state") || "").trim();
+    } catch {
+      // 非完整 URL:Claude 手动流回调页展示的是 "code#state";也兼容 query 片段 / 纯 code。
+      if (input.includes("#")) {
+        const [c, s] = input.split("#");
+        code = (c || "").trim();
+        state = (s || "").trim();
+      } else if (input.includes("code=")) {
+        const query = input.includes("?") ? input.slice(input.indexOf("?") + 1) : input.replace(/^[#&?]+/, "");
+        const params = new URLSearchParams(query);
+        code = (params.get("code") || "").trim();
+        state = (params.get("state") || "").trim();
+      } else {
+        code = input;
+      }
+    }
+
+    if (!code) return { ok: false, status: "pending", error: "未能从输入中解析出授权码 code" };
+    if (state && state !== pending.state) {
+      pending.status = "failed";
+      pending.error = "OAuth state 不匹配,可能是会话串了,请重新发起登录";
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    try {
+      const result = await this.completeClaudeOAuthLogin(pending, code, state || pending.state);
+      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate, accountId: result.accountId };
+    } catch (error) {
+      pending.status = "failed";
+      pending.error = error instanceof Error ? error.message : "OAuth 完成失败";
+      return { ok: false, status: "failed", error: pending.error };
+    }
+  }
+
+  private async completeClaudeOAuthLogin(pending: CodexOAuthPending, code: string, state: string) {
+    const response = await this.claudeOAuthFetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code,
+        state,
+        client_id: CLAUDE_OAUTH_CLIENT_ID,
+        redirect_uri: pending.redirectUri,
+        code_verifier: pending.codeVerifier,
+      }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Token exchange failed: ${response.status} ${text}`);
+
+    const tokenData = JSON.parse(text);
+    const email = String(tokenData?.account?.email_address || tokenData?.account?.email || "").trim();
+    if (!email) throw new Error("Token response did not include an account email");
+    const refreshToken = String(tokenData.refresh_token || "");
+    if (!refreshToken) throw new Error("Token response did not include a refresh_token");
+
+    const result = this.addClaudeAccount({
+      email,
+      refreshToken,
+      accessToken: tokenData.access_token || "",
+      accessTokenExpiresAt: Date.now() + Number(tokenData.expires_in || 3600) * 1000,
+      alias: String(tokenData?.organization?.name || ""),
+    });
+    if (!result.ok) throw new Error(String(result.error || "Failed to save Claude account"));
+
+    pending.status = "completed";
+    pending.email = email;
+    pending.isUpdate = Boolean(result.isUpdate);
+    return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
   }
 
   toggleClaudeAccount(payload: any) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -50,6 +51,13 @@ export default function ClaudeAccountsPage() {
   const [adding, setAdding] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAccount | null>(null);
+
+  const [oauthStarting, setOauthStarting] = useState(false);
+  const [oauthLoginId, setOauthLoginId] = useState("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
+  const [oauthCallbackInput, setOauthCallbackInput] = useState("");
+  const [oauthStatusText, setOauthStatusText] = useState("");
+  const [oauthSubmitting, setOauthSubmitting] = useState(false);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -94,6 +102,71 @@ export default function ClaudeAccountsPage() {
       toast.error(error instanceof Error ? error.message : "添加失败");
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function handleOAuthStart() {
+    setOauthStarting(true);
+    try {
+      const res = await fetch("/api/rosetta/claude-oauth-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Claude OAuth start failed");
+      setOauthLoginId(data.loginId);
+      setOauthAuthUrl(data.authUrl || "");
+      setOauthCallbackInput("");
+      setOauthStatusText("");
+      window.open(data.authUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Claude OAuth start failed");
+      setOauthLoginId(""); setOauthAuthUrl(""); setOauthStatusText("");
+    } finally {
+      setOauthStarting(false);
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    const input = oauthCallbackInput.trim();
+    if (!input) {
+      toast.error("请粘贴授权后页面显示的 code(或回调 URL)");
+      return;
+    }
+    setOauthSubmitting(true);
+    setOauthStatusText("");
+    try {
+      const res = await fetch("/api/rosetta/claude-oauth-submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: oauthLoginId, input }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "完成授权失败");
+      toast.success(data.isUpdate ? `OAuth 已更新 ${data.email}` : `OAuth 已添加 ${data.email}`);
+      setOauthLoginId(""); setOauthAuthUrl(""); setOauthCallbackInput(""); setOauthStatusText("");
+      fetchAccounts();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "完成授权失败";
+      setOauthStatusText(msg);
+      toast.error(msg);
+    } finally {
+      setOauthSubmitting(false);
+    }
+  }
+
+  async function handleOAuthCancel() {
+    const loginId = oauthLoginId;
+    setOauthLoginId(""); setOauthStatusText(""); setOauthAuthUrl(""); setOauthCallbackInput("");
+    if (!loginId) return;
+    try {
+      await fetch("/api/rosetta/claude-oauth-cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId }),
+      });
+    } catch {
+      // best-effort
     }
   }
 
@@ -151,12 +224,48 @@ export default function ClaudeAccountsPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
+            {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
+            OAuth 登录
+          </Button>
           <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
             {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
             刷新
           </Button>
         </div>
       </div>
+
+      {oauthLoginId ? (
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
+          <div className="space-y-1">
+            <p className="font-medium">完成 Claude OAuth 登录</p>
+            <p className="text-muted-foreground">
+              1. 在新打开的页面用 Claude 订阅号(Pro/Max)登录并授权(没弹出的话,
+              {oauthAuthUrl ? (
+                <a href={oauthAuthUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">点此打开授权页</a>
+              ) : "请重新发起"}
+              )。
+            </p>
+            <p className="text-muted-foreground">
+              2. 授权后页面会显示一段授权码(形如 <code className="rounded bg-muted px-1">code#state</code>),把它整段复制粘贴到下面,点「完成授权」。也可直接粘贴回调 URL。
+            </p>
+          </div>
+          <Textarea
+            rows={3}
+            placeholder="粘贴页面显示的授权码 code#state,或完整回调 URL"
+            value={oauthCallbackInput}
+            onChange={(e) => setOauthCallbackInput(e.target.value)}
+          />
+          {oauthStatusText ? <p className="text-destructive">{oauthStatusText}</p> : null}
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleOAuthSubmit} disabled={oauthSubmitting}>
+              {oauthSubmitting ? <Spinner size={14} /> : null}
+              完成授权
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleOAuthCancel} disabled={oauthSubmitting}>取消</Button>
+          </div>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>

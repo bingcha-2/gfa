@@ -343,6 +343,48 @@ describe("RosettaService", () => {
     expect(stored.accounts[0]).not.toHaveProperty("ignoredField");
   });
 
+  it("starts Claude OAuth, exchanges the pasted code, and saves the account", async () => {
+    const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || "{}"));
+      expect(body.grant_type).toBe("authorization_code");
+      expect(body.code).toBe("auth-code-123");
+      expect(body.code_verifier).toBeTruthy();
+      expect(body.client_id).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+      return new Response(JSON.stringify({
+        access_token: "sk-ant-oat-access",
+        refresh_token: "sk-ant-ort-refresh",
+        expires_in: 3600,
+        account: { email_address: "max-user@example.com", uuid: "acc-uuid" },
+        organization: { name: "Max Org" },
+      }), { status: 200 });
+    }) as typeof fetch;
+    const svc = new RosettaService({ dataDir: tempDir, claudeOAuthFetch: tokenFetch });
+
+    const started = await svc.startClaudeOAuthLogin();
+    expect(started.ok).toBe(true);
+    const authUrl = new URL(started.authUrl);
+    expect(authUrl.searchParams.get("client_id")).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+    expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authUrl.searchParams.get("scope")).toContain("user:inference");
+    expect(started.redirectUri).toBe("https://platform.claude.com/oauth/code/callback");
+
+    const state = authUrl.searchParams.get("state");
+    // Claude's manual flow returns "code#state" — the submit must parse that form too.
+    const submit = await svc.submitClaudeOAuthCallback(started.loginId, `auth-code-123#${state}`);
+    expect(submit).toMatchObject({ ok: true, status: "completed", email: "max-user@example.com" });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    expect(stored.accounts[0]).toMatchObject({
+      email: "max-user@example.com",
+      refreshToken: "sk-ant-ort-refresh",
+      accessToken: "sk-ant-oat-access",
+      enabled: true,
+    });
+    // Status must never leak raw tokens.
+    const status = svc.getClaudeOAuthLoginStatus(started.loginId);
+    expect(JSON.stringify(status)).not.toContain("sk-ant-ort-refresh");
+  });
+
   it("starts Codex OAuth, exchanges the callback code, and saves the account without exposing tokens in status", async () => {
     const port = await getFreePort();
     const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
