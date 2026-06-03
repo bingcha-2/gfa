@@ -29,6 +29,23 @@ import (
 // ANTHROPIC_API_BASE 上游基址(可经 env 覆盖,默认官方域名)。
 var ANTHROPIC_API_BASE = getEnvOrDefault("BCAI_ANTHROPIC_API_BASE", "https://api.anthropic.com")
 
+// claudeOAuthBeta 是订阅号 OAuth token 必带的 anthropic-beta 值(对照 Claude Code 2.x)。
+const claudeOAuthBeta = "oauth-2025-04-20"
+
+// mergeAnthropicBeta 把 want 合并进逗号分隔的 anthropic-beta 头(已存在则不重复)。
+func mergeAnthropicBeta(existing, want string) string {
+	existing = strings.TrimSpace(existing)
+	if existing == "" {
+		return want
+	}
+	for _, part := range strings.Split(existing, ",") {
+		if strings.TrimSpace(part) == want {
+			return existing
+		}
+	}
+	return existing + "," + want
+}
+
 // isClaudeAPIRequest 判断是否是注入给 Claude Code 的 Anthropic 路由请求。
 func isClaudeAPIRequest(path string) bool {
 	return path == "/v1/messages" || strings.HasPrefix(path, "/v1/messages/")
@@ -253,6 +270,10 @@ func applyClaudeUpstreamHeaders(dst, src http.Header, accessToken, targetURL str
 	if dst.Get("anthropic-version") == "" {
 		dst.Set("anthropic-version", "2023-06-01")
 	}
+	// api.anthropic.com 只在带 anthropic-beta: oauth-2025-04-20 时才接受订阅号 OAuth
+	// (sk-ant-oat…)token。自定义 base_url 模式下 Claude Code 可能不带,这里强制补齐
+	// (合并保留已有的其它 beta flag),否则上游 401。值对照 Claude Code 2.x 实测常量。
+	dst.Set("anthropic-beta", mergeAnthropicBeta(dst.Get("anthropic-beta"), claudeOAuthBeta))
 	if u, err := url.Parse(targetURL); err == nil {
 		dst.Set("Host", u.Host)
 	}

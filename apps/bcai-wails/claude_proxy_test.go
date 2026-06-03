@@ -87,6 +87,41 @@ func TestClaudeProxyStreamsAndMeters(t *testing.T) {
 	}
 }
 
+func TestClaudeProxyEnsuresOAuthBetaHeader(t *testing.T) {
+	// api.anthropic.com rejects OAuth (sk-ant-oat...) tokens unless the request
+	// carries anthropic-beta: oauth-2025-04-20. In custom-base-url mode Claude Code
+	// may omit it, so the proxy must guarantee it (merging with any existing betas).
+	var gotBeta string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBeta = r.Header.Get("anthropic-beta")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sampleClaudeSSE))
+	}))
+	defer upstream.Close()
+	withAnthropicAPIBase(t, upstream.URL)
+
+	p := &ClaudeProxy{
+		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 1, LeaseId: "l1"}, nil
+		},
+		reportUsage: func(string, string, ReportDetails, string, *ClaudeTokenLease) {},
+	}
+
+	// Incoming request carries an unrelated beta but NOT the oauth one.
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-x","stream":true}`))
+	req.Header.Set("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
+	rw := httptest.NewRecorder()
+	p.ServeHTTP(rw, req, "card-1", "dev-1", "")
+
+	if !strings.Contains(gotBeta, "oauth-2025-04-20") {
+		t.Fatalf("upstream anthropic-beta must contain oauth-2025-04-20, got %q", gotBeta)
+	}
+	if !strings.Contains(gotBeta, "fine-grained-tool-streaming-2025-05-14") {
+		t.Fatalf("existing beta flags must be preserved, got %q", gotBeta)
+	}
+}
+
 func TestClaudeProxyRejectsWithoutCard(t *testing.T) {
 	p := &ClaudeProxy{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-x"}`))
