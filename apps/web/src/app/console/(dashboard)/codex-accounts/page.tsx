@@ -61,6 +61,8 @@ export default function CodexAccountsPage() {
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
   const [busyId, setBusyId] = useState<number | null>(null);
+  // 「刷新无额度账号」批量进行中。
+  const [refreshingMissing, setRefreshingMissing] = useState(false);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -280,6 +282,37 @@ export default function CodexAccountsPage() {
     }
   }
 
+  // 批量刷新所有「额度缺失(列表显示 —)」的账号,逐个走 codex-refresh-quota。
+  // 也可当诊断用:点完看 toast 的成功/失败数,就知道拉额度接口通不通。
+  async function handleRefreshMissing() {
+    const targets = accounts.filter((a) => a.codexHourlyPercent < 0 || a.codexWeeklyPercent < 0);
+    if (targets.length === 0) {
+      toast.info("没有缺额度的账号");
+      return;
+    }
+    setRefreshingMissing(true);
+    let ok = 0;
+    let fail = 0;
+    for (const acc of targets) {
+      try {
+        const res = await fetch("/api/rosetta/codex-refresh-quota", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accountId: acc.id }),
+        });
+        const data = await res.json();
+        if (data.ok && !data.quotaError) ok++;
+        else fail++;
+      } catch {
+        fail++;
+      }
+    }
+    setRefreshingMissing(false);
+    if (fail) toast.error(`刷新完成:成功 ${ok},失败 ${fail}(共 ${targets.length})`);
+    else toast.success(`已刷新 ${ok} 个无额度账号`);
+    fetchAccounts(true);
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -303,6 +336,10 @@ export default function CodexAccountsPage() {
           <Button variant="outline" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
             {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
             OAuth 登录
+          </Button>
+          <Button variant="outline" onClick={handleRefreshMissing} disabled={refreshingMissing}>
+            {refreshingMissing ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+            刷新无额度账号
           </Button>
           <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
           {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
