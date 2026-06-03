@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,23 @@ import { RosettaService } from "../rosetta.service";
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function getFreePort() {
+  return new Promise<number>((resolve, reject) => {
+    const server = http.createServer();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+function jwtWithPayload(payload: Record<string, unknown>) {
+  const enc = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${enc({ alg: "none" })}.${enc(payload)}.sig`;
 }
 
 describe("RosettaService", () => {
@@ -148,6 +166,51 @@ describe("RosettaService", () => {
       refreshToken: "new-refresh-token",
       accessToken: "new-access-token",
     });
+  });
+
+  it("starts Codex OAuth, exchanges the callback code, and saves the account without exposing tokens in status", async () => {
+    const port = await getFreePort();
+    const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body as URLSearchParams;
+      expect(body.get("grant_type")).toBe("authorization_code");
+      expect(body.get("code")).toBe("callback-code");
+      expect(body.get("code_verifier")).toBeTruthy();
+      return new Response(JSON.stringify({
+        id_token: jwtWithPayload({ email: "oauth-codex@example.com", name: "OAuth Codex" }),
+        access_token: "access-from-oauth",
+        refresh_token: "refresh-from-oauth",
+        expires_in: 3600,
+      }), { status: 200 });
+    }) as typeof fetch;
+    const svc = new RosettaService({ dataDir: tempDir, codexOAuthPort: port, codexOAuthFetch: tokenFetch });
+
+    const started = await svc.startCodexOAuthLogin();
+    expect(started.ok).toBe(true);
+    expect(started.redirectUri).toBe(`http://localhost:${port}/auth/callback`);
+    const authUrl = new URL(started.authUrl);
+    expect(authUrl.hostname).toBe("auth.openai.com");
+    expect(authUrl.searchParams.get("client_id")).toBe("app_EMoamEEZ73f0CkXaXp7hrann");
+    expect(authUrl.searchParams.get("scope")).toContain("offline_access");
+    expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+
+    const state = authUrl.searchParams.get("state");
+    const callback = await fetch(`http://127.0.0.1:${port}/auth/callback?code=callback-code&state=${state}`);
+    expect(callback.status).toBe(200);
+
+    const status = svc.getCodexOAuthLoginStatus(started.loginId);
+    expect(status).toMatchObject({ ok: true, status: "completed", email: "oauth-codex@example.com" });
+    expect(JSON.stringify(status)).not.toContain("refresh-from-oauth");
+    expect(JSON.stringify(status)).not.toContain("access-from-oauth");
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "codex-accounts.json"), "utf8"));
+    expect(stored.accounts[0]).toMatchObject({
+      email: "oauth-codex@example.com",
+      alias: "OAuth Codex",
+      refreshToken: "refresh-from-oauth",
+      accessToken: "access-from-oauth",
+      enabled: true,
+    });
+    svc.cancelCodexOAuthLogin(started.loginId);
   });
 
   it("imports a codex account from a sub2api accounts export", () => {

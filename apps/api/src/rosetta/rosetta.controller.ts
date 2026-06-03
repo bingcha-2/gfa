@@ -80,6 +80,21 @@ export class RosettaController {
     return this.rosetta.importCodexAccountFromText(body);
   }
 
+  @Post("codex-oauth-start")
+  startCodexOAuthLogin() {
+    return this.rosetta.startCodexOAuthLogin();
+  }
+
+  @Get("codex-oauth-status")
+  getCodexOAuthLoginStatus(@Query("loginId") loginId?: string) {
+    return this.rosetta.getCodexOAuthLoginStatus(String(loginId || ""));
+  }
+
+  @Post("codex-oauth-cancel")
+  cancelCodexOAuthLogin(@Body() body: any) {
+    return this.rosetta.cancelCodexOAuthLogin(String(body?.loginId || ""));
+  }
+
   @Post("codex-toggle-account")
   toggleCodexAccount(@Body() body: any) {
     return this.rosetta.toggleCodexAccount(body);

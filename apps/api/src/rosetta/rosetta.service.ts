@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as crypto from "crypto";
+import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 
@@ -21,11 +22,34 @@ import {
 
 type RosettaServiceOptions = {
   dataDir?: string;
+  codexOAuthPort?: number;
+  codexOAuthFetch?: typeof fetch;
 };
 
 /** Total shares (份) per upstream account. A card consumes `weight` shares:
  * 1 = 拼车 (4 such cards share one account), 4 = 独享 (one card takes the account). */
 const ACCOUNT_SHARE_CAPACITY = 4;
+const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/oauth/authorize";
+const CODEX_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
+const CODEX_OAUTH_SCOPES = "openid profile email offline_access api.connectors.read api.connectors.invoke";
+const CODEX_OAUTH_ORIGINATOR = "codex_vscode";
+const CODEX_OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
+
+type CodexOAuthPending = {
+  loginId: string;
+  state: string;
+  codeVerifier: string;
+  redirectUri: string;
+  authUrl: string;
+  expiresAt: number;
+  status: "pending" | "completed" | "failed";
+  email?: string;
+  error?: string;
+  isUpdate?: boolean;
+  server?: http.Server;
+};
 
 /** A card's share weight (份额): 1..4, default 1 (拼车). */
 function cardWeight(key: any): number {
@@ -118,6 +142,24 @@ function nowIso() {
 
 function newAccessKeyValue() {
   return `BCAI-${crypto.randomBytes(6).toString("hex").toUpperCase()}-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+}
+
+function base64Url(bytes: Buffer) {
+  return bytes.toString("base64url");
+}
+
+function codeChallenge(codeVerifier: string) {
+  return base64Url(crypto.createHash("sha256").update(codeVerifier).digest());
+}
+
+function decodeJwtPayload(token: string): any {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return {};
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return {};
+  }
 }
 
 function getStringAt(source: any, pathParts: string[]) {
@@ -219,12 +261,15 @@ function parseJsonFromText(text: string): any | null {
 @Injectable()
 export class RosettaService {
   private readonly dataDir: string;
+  private readonly codexOAuthPort: number;
+  private readonly codexOAuthFetch: typeof fetch;
   private readonly logger = new Logger(RosettaService.name);
   /** In-memory access_token cache: accountId → { accessToken, expiresAt } */
   private readonly tokenCache = new Map<number, CachedToken>();
   /** mtime-cached file readers for hot-path list queries */
   private readonly accessKeysFile: CachedJsonFile;
   private readonly accountsFile: CachedJsonFile;
+  private codexOAuthPending: CodexOAuthPending | null = null;
 
   constructor(
     @Optional() options: RosettaServiceOptions = {},
@@ -232,6 +277,8 @@ export class RosettaService {
     @Optional() private readonly agentAccounts?: AgentAccountService,
   ) {
     this.dataDir = options.dataDir || defaultDataDir();
+    this.codexOAuthPort = Number(options.codexOAuthPort ?? CODEX_OAUTH_DEFAULT_CALLBACK_PORT);
+    this.codexOAuthFetch = options.codexOAuthFetch || fetch;
     this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
     this.accountsFile = new CachedJsonFile(path.join(this.dataDir, "accounts.json"), { accounts: [] });
   }
@@ -493,6 +540,171 @@ export class RosettaService {
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, email, isUpdate: Boolean(existing), totalAccounts: accounts.length };
+  }
+
+  async startCodexOAuthLogin() {
+    const existing = this.codexOAuthPending;
+    if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
+      return {
+        ok: true,
+        loginId: existing.loginId,
+        authUrl: existing.authUrl,
+        redirectUri: existing.redirectUri,
+        expiresAt: existing.expiresAt,
+      };
+    }
+    this.closeCodexOAuthPending();
+
+    const codeVerifier = base64Url(crypto.randomBytes(32));
+    const state = base64Url(crypto.randomBytes(32));
+    const loginId = base64Url(crypto.randomBytes(18));
+    const redirectUri = `http://localhost:${this.codexOAuthPort}/auth/callback`;
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: CODEX_OAUTH_CLIENT_ID,
+      redirect_uri: redirectUri,
+      scope: CODEX_OAUTH_SCOPES,
+      code_challenge: codeChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      id_token_add_organizations: "true",
+      codex_cli_simplified_flow: "true",
+      state,
+      originator: CODEX_OAUTH_ORIGINATOR,
+    });
+
+    const pending: CodexOAuthPending = {
+      loginId,
+      state,
+      codeVerifier,
+      redirectUri,
+      authUrl: `${CODEX_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+      expiresAt: Date.now() + CODEX_OAUTH_TIMEOUT_MS,
+      status: "pending",
+    };
+
+    pending.server = await this.listenForCodexOAuthCallback(pending);
+    this.codexOAuthPending = pending;
+    return {
+      ok: true,
+      loginId,
+      authUrl: pending.authUrl,
+      redirectUri,
+      expiresAt: pending.expiresAt,
+    };
+  }
+
+  getCodexOAuthLoginStatus(loginId: string) {
+    const pending = this.codexOAuthPending;
+    if (!pending || pending.loginId !== loginId) return { ok: false, status: "missing", error: "login session not found" };
+    if (pending.status === "pending" && pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = "OAuth login timed out";
+      this.closeCodexOAuthPending(false);
+    }
+    return {
+      ok: true,
+      status: pending.status,
+      loginId: pending.loginId,
+      email: pending.email || "",
+      error: pending.error || "",
+      isUpdate: Boolean(pending.isUpdate),
+      expiresAt: pending.expiresAt,
+    };
+  }
+
+  cancelCodexOAuthLogin(loginId: string) {
+    if (this.codexOAuthPending?.loginId !== loginId) return { ok: false, error: "login session not found" };
+    this.closeCodexOAuthPending();
+    return { ok: true };
+  }
+
+  private listenForCodexOAuthCallback(pending: CodexOAuthPending) {
+    return new Promise<http.Server>((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        void this.handleCodexOAuthCallback(pending, req, res);
+      });
+      server.on("error", (error: NodeJS.ErrnoException) => {
+        reject(new Error(error.code === "EADDRINUSE"
+          ? `Codex OAuth callback port ${this.codexOAuthPort} is already in use`
+          : `Codex OAuth callback failed: ${error.message}`));
+      });
+      server.listen(this.codexOAuthPort, "127.0.0.1", () => resolve(server));
+    });
+  }
+
+  private async handleCodexOAuthCallback(pending: CodexOAuthPending, req: http.IncomingMessage, res: http.ServerResponse) {
+    try {
+      const callbackUrl = new URL(req.url || "/", pending.redirectUri);
+      if (callbackUrl.pathname !== "/auth/callback") {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Not found");
+        return;
+      }
+      if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
+        throw new Error("OAuth login session is no longer active");
+      }
+      const state = callbackUrl.searchParams.get("state") || "";
+      const code = callbackUrl.searchParams.get("code") || "";
+      if (state !== pending.state) throw new Error("OAuth state mismatch");
+      if (!code) throw new Error("OAuth callback is missing code");
+
+      const result = await this.completeCodexOAuthLogin(pending, code);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<h1>Codex OAuth saved</h1><p>${result.email} has been added to GFA. You can close this window.</p>`);
+    } catch (error) {
+      pending.status = "failed";
+      pending.error = error instanceof Error ? error.message : "OAuth callback failed";
+      res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<h1>Codex OAuth failed</h1><p>${pending.error}</p>`);
+    } finally {
+      this.closeCodexOAuthPending(false);
+    }
+  }
+
+  private async completeCodexOAuthLogin(pending: CodexOAuthPending, code: string) {
+    const body = new URLSearchParams({
+      client_id: CODEX_OAUTH_CLIENT_ID,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: pending.redirectUri,
+      code_verifier: pending.codeVerifier,
+    });
+    const response = await this.codexOAuthFetch(CODEX_OAUTH_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Token exchange failed: ${response.status} ${text}`);
+
+    const tokenData = JSON.parse(text);
+    const profile = decodeJwtPayload(String(tokenData.id_token || ""));
+    const email = String(profile.email || tokenData.email || "").trim();
+    if (!email) throw new Error("Token response did not include an email");
+
+    const expiresAt = Date.now() + Number(tokenData.expires_in || 3600) * 1000;
+    const result = this.importCodexAccountFromText({
+      text: JSON.stringify({
+        user: { email, name: profile.name || profile.given_name || "" },
+        refreshToken: tokenData.refresh_token || "",
+        accessToken: tokenData.access_token || "",
+        expiresAt,
+      }),
+    });
+    if (!result.ok) throw new Error(String(result.error || "Failed to save Codex account"));
+
+    pending.status = "completed";
+    pending.email = email;
+    pending.isUpdate = Boolean(result.isUpdate);
+    return { email, isUpdate: Boolean(result.isUpdate) };
+  }
+
+  private closeCodexOAuthPending(clearCompleted = true) {
+    const pending = this.codexOAuthPending;
+    if (!pending) return;
+    pending.server?.close();
+    pending.server = undefined;
+    if (clearCompleted) this.codexOAuthPending = null;
   }
 
   toggleCodexAccount(payload: any) {

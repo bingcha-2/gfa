@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, FileJsonIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, FileJsonIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,9 @@ export default function CodexAccountsPage() {
   const [adding, setAdding] = useState(false);
   const [importText, setImportText] = useState("");
   const [importing, setImporting] = useState(false);
+  const [oauthStarting, setOauthStarting] = useState(false);
+  const [oauthLoginId, setOauthLoginId] = useState("");
+  const [oauthStatusText, setOauthStatusText] = useState("");
 
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
 
@@ -75,6 +78,38 @@ export default function CodexAccountsPage() {
       setLoading(false);
     })();
   }, [fetchAccounts]);
+
+  useEffect(() => {
+    if (!oauthLoginId) return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const res = await fetch(`/api/rosetta/codex-oauth-status?loginId=${encodeURIComponent(oauthLoginId)}`, { cache: "no-store" });
+        const data = await res.json();
+        if (stopped) return;
+        if (data.status === "completed") {
+          toast.success(data.isUpdate ? `OAuth updated ${data.email}` : `OAuth added ${data.email}`);
+          setOauthLoginId("");
+          setOauthStatusText("");
+          fetchAccounts();
+        } else if (data.status === "failed" || data.status === "missing") {
+          toast.error(data.error || "Codex OAuth failed");
+          setOauthLoginId("");
+          setOauthStatusText("");
+        } else {
+          setOauthStatusText("Waiting for browser authorization...");
+        }
+      } catch (error) {
+        if (!stopped) setOauthStatusText(error instanceof Error ? error.message : "OAuth status check failed");
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [fetchAccounts, oauthLoginId]);
 
   async function handleAdd() {
     if (!email.trim() || !refreshToken.trim()) {
@@ -121,6 +156,47 @@ export default function CodexAccountsPage() {
       toast.error(error instanceof Error ? error.message : "导入失败");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleOAuthStart() {
+    setOauthStarting(true);
+    try {
+      const res = await fetch("/api/rosetta/codex-oauth-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Codex OAuth start failed");
+      setOauthLoginId(data.loginId);
+      setOauthStatusText("Waiting for browser authorization...");
+      const opened = window.open(data.authUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        await navigator.clipboard?.writeText(data.authUrl);
+        toast.info("OAuth URL copied. Open it in your browser to continue.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Codex OAuth start failed");
+      setOauthLoginId("");
+      setOauthStatusText("");
+    } finally {
+      setOauthStarting(false);
+    }
+  }
+
+  async function handleOAuthCancel() {
+    const loginId = oauthLoginId;
+    setOauthLoginId("");
+    setOauthStatusText("");
+    if (!loginId) return;
+    try {
+      await fetch("/api/rosetta/codex-oauth-cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId }),
+      });
+    } catch {
+      // Best-effort cleanup only; the server-side session also expires.
     }
   }
 
@@ -176,11 +252,24 @@ export default function CodexAccountsPage() {
             管理独立的 codex-accounts.json(OpenAI OAuth 账号);卡密与用量复用 access-keys.json。
           </p>
         </div>
-        <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
+            {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
+            OAuth 登录
+          </Button>
+          <Button variant="outline" onClick={() => fetchAccounts()} disabled={refreshing}>
           {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
           刷新
-        </Button>
+          </Button>
+        </div>
       </div>
+
+      {oauthLoginId ? (
+        <div className="flex flex-col gap-2 rounded-lg border bg-card p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <span>{oauthStatusText || "Waiting for browser authorization..."}</span>
+          <Button size="sm" variant="outline" onClick={handleOAuthCancel}>Cancel OAuth</Button>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
