@@ -148,12 +148,15 @@ export default function RosettaKeysPage() {
   // binding); selecting one/both auto-binds an open-seat account per product.
   const [createCodex, setCreateCodex] = useState(false);
   const [createAnti, setCreateAnti] = useState(false);
+  const [createClaude, setCreateClaude] = useState(false);
   // 会员等级(planType):每个开通的产品必选一个等级,只绑定该等级且可用的账号。
   const [createCodexLevel, setCreateCodexLevel] = useState("");
   const [createAntiLevel, setCreateAntiLevel] = useState("");
+  const [createClaudeLevel, setCreateClaudeLevel] = useState("");
   // 各号池里存在的等级选项(去重),用于上面的下拉。
   const [codexLevels, setCodexLevels] = useState<string[]>([]);
   const [antiLevels, setAntiLevels] = useState<string[]>([]);
+  const [claudeLevels, setClaudeLevels] = useState<string[]>([]);
   // 份额(weight):1 拼车(4人共享一个号)… 4 独享(一张卡占满一个号)。
   const [createWeight, setCreateWeight] = useState("1");
   const [creating, setCreating] = useState(false);
@@ -218,12 +221,14 @@ export default function RosettaKeysPage() {
 
   const fetchBindableAccounts = useCallback(async () => {
     try {
-      const [codexRes, antiRes] = await Promise.all([
+      const [codexRes, antiRes, claudeRes] = await Promise.all([
         fetch("/api/rosetta/codex-accounts"),
         fetch("/api/rosetta/accounts"),
+        fetch("/api/rosetta/claude-accounts"),
       ]);
       const codex = await codexRes.json();
       const anti = await antiRes.json();
+      const claude = await claudeRes.json();
       setBindableAccounts(toBindableAccounts(codex.accounts, anti.accounts));
       // Distinct, non-empty membership levels present in each pool (for the
       // create form's per-product level picker).
@@ -231,6 +236,7 @@ export default function RosettaKeysPage() {
         [...new Set((list || []).map((a) => String(a.planType || "").trim()).filter(Boolean))].sort();
       setCodexLevels(levelsOf(codex.accounts));
       setAntiLevels(levelsOf(anti.accounts));
+      setClaudeLevels(levelsOf(claude.accounts));
     } catch {
       // Non-fatal: the binding picker just shows no accounts.
     }
@@ -255,6 +261,12 @@ export default function RosettaKeysPage() {
       setCreateAntiLevel(antiLevels[0]);
     }
   }, [createAnti, antiLevels, createAntiLevel]);
+  useEffect(() => {
+    if (!createClaude) return setCreateClaudeLevel("");
+    if (claudeLevels.length && !claudeLevels.includes(createClaudeLevel)) {
+      setCreateClaudeLevel(claudeLevels[0]);
+    }
+  }, [createClaude, claudeLevels, createClaudeLevel]);
 
   const handleBind = async (cardId: string, provider: string, accountId: number) => {
     try {
@@ -382,15 +394,18 @@ export default function RosettaKeysPage() {
       const products = [
         ...(createCodex ? ["codex"] : []),
         ...(createAnti ? ["antigravity"] : []),
+        ...(createClaude ? ["claude"] : []),
       ];
       if (products.length) {
         // Level is required for every selected product.
         if (createCodex && !createCodexLevel) throw new Error("请选择 Codex 会员等级");
         if (createAnti && !createAntiLevel) throw new Error("请选择 Antigravity 会员等级");
+        if (createClaude && !createClaudeLevel) throw new Error("请选择 Claude 会员等级");
         payload.products = products;
         payload.levels = {
           ...(createCodex ? { codex: createCodexLevel } : {}),
           ...(createAnti ? { antigravity: createAntiLevel } : {}),
+          ...(createClaude ? { claude: createClaudeLevel } : {}),
         };
         payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
       }
@@ -573,6 +588,14 @@ export default function RosettaKeysPage() {
                   />
                   Antigravity
                 </label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={createClaude}
+                    onChange={(e) => setCreateClaude(e.target.checked)}
+                  />
+                  Claude
+                </label>
               </div>
             </Field>
             {createCodex && (
@@ -608,6 +631,29 @@ export default function RosettaKeysPage() {
                   <SelectContent>
                     {antiLevels.length ? (
                       antiLevels.map((lv) => (
+                        <SelectItem key={lv} value={lv}>
+                          {lv}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__none" disabled>
+                        无可用等级
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {createClaude && (
+              <Field className="min-w-[140px]">
+                <FieldLabel>Claude 会员等级</FieldLabel>
+                <Select value={createClaudeLevel} onValueChange={setCreateClaudeLevel}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择等级" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {claudeLevels.length ? (
+                      claudeLevels.map((lv) => (
                         <SelectItem key={lv} value={lv}>
                           {lv}
                         </SelectItem>

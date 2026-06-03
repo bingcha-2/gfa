@@ -276,6 +276,18 @@ export function GfaAppSidebar({
     },
   ];
 
+  // Claude (Anthropic) — 账号管理(CLI + VSCode 扩展接管)
+  const claudeNav: NavItem[] = [
+    {
+      id: "claude-accounts",
+      title: "账号池",
+      url: `/${prefix}/claude-accounts`,
+      icon: <DatabaseIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
+  ];
+
   // 跨 provider 的共享服务（只保留真正跨 provider 的）
   const sharedServiceNav: NavItem[] = [
     {
@@ -374,6 +386,7 @@ export function GfaAppSidebar({
       <SidebarContent>
         {renderNavGroup("Antigravity", antigravityNav)}
         {renderNavGroup("Codex", codexNav)}
+        {renderNavGroup("Claude", claudeNav)}
         {renderNavGroup("共享服务", sharedServiceNav)}
         {renderNavGroup("运营", mainNav)}
         {renderNavGroup("管理", managementNav)}
