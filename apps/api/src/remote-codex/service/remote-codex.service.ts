@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
 import { LeaseService, type TokenUsageTracker } from "../../lease-core/lease-service";
+import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
 import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
@@ -30,11 +31,27 @@ export class RemoteCodexHttpError extends RemoteAccessHttpError {}
 @Injectable()
 export class RemoteCodexService extends LeaseService<CodexAccount> implements OnModuleDestroy {
   constructor(@Optional() options: ServiceOptions = {}) {
+    const provider = new CodexProvider({
+      accountsFilePath: options.accountsFilePath,
+      tokenProvider: options.tokenProvider,
+    });
+    let service: RemoteCodexService;
+    const fairShareTracker = new FairShareTracker({
+      getAccountPlanType: (accountId: number) => {
+        try {
+          const status = service.getStatus();
+          const acct = status.quota?.accounts?.find((a: any) => a.id === accountId);
+          return acct?.planType || 'free';
+        } catch { return 'free'; }
+      },
+      getBoundCardIds: (accountId: number) => {
+        try {
+          return service.accessKeyStore.cardsBoundToAccount(accountId, provider.id);
+        } catch { return []; }
+      },
+    });
     super(
-      new CodexProvider({
-        accountsFilePath: options.accountsFilePath,
-        tokenProvider: options.tokenProvider,
-      }),
+      provider,
       {
         accessKeysFilePath: options.accessKeysFilePath,
         now: options.now,
@@ -42,11 +59,13 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         minClientVersion: options.minClientVersion,
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
+        fairShareTracker,
         mode: "remote-codex-server",
         noAccountMessage: "No available Codex accounts",
         errorClass: RemoteCodexHttpError,
       },
     );
+    service = this;
   }
 
   /** Periodically pull the live Codex model list from upstream (best-effort). */
@@ -55,3 +74,4 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
     await this.refreshModels();
   }
 }
+

@@ -511,6 +511,9 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	// 服务端把"绑定号已知的各 bucket 额度"一并带回 → 激活/首次预热那一下就能把每条血条
 	// 都填上真实值(共享号,别人用过就有数据),而非只填被租的那个模型。
 	recordAccountBuckets(body)
+	// 公平份额：如果服务端返回了 per-card fair share 比例，用它覆盖 accountBuckets。
+	// fairShareQuota 反映的是"这张卡的均分额度剩余"而非"整个账号剩余"。
+	recordFairShareQuota(body)
 
 	// Calculate expiry time in millisecond unix timestamp
 	var expiresAt int64
@@ -1246,6 +1249,25 @@ func recordAccountBuckets(body []byte) {
 	for bucket, q := range resp.AccountBuckets {
 		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
 	}
+}
+
+// recordFairShareQuota 解析 lease 响应里的 fairShareQuota(绑定卡的均分额度剩余)。
+// 当存在时,覆盖 accountBuckets 写入的值——血条显示的是"这张卡的公平份额剩余",
+// 而不是"整个账号剩余"。这样多卡拼车时,每张卡看到自己独立的进度条。
+func recordFairShareQuota(body []byte) {
+	var resp struct {
+		FairShareQuota map[string]struct {
+			Fraction float64 `json:"fraction"`
+			ResetAt  int64   `json:"resetAt"`
+		} `json:"fairShareQuota"`
+	}
+	if json.Unmarshal(body, &resp) != nil || len(resp.FairShareQuota) == 0 {
+		return
+	}
+	for bucket, q := range resp.FairShareQuota {
+		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
+	}
+	Log("[token-leaser] Fair-share blood bar updated: %d buckets", len(resp.FairShareQuota))
 }
 
 // boundResetMs 把绑定号上游重置的绝对时间(epoch ms)换算成剩余毫秒;0 表示未知。

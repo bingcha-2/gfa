@@ -233,7 +233,17 @@ export class AccessKeyStore {
     return Number(record?.boundAccountId || 0) > 0;
   }
 
+  /** Find all active card IDs bound to the same upstream account in a given pool. */
+  cardsBoundToAccount(accountId: number, providerId: string): string[] {
+    if (accountId <= 0) return [];
+    const data = this.readAll();
+    return data.keys
+      .filter((k) => (!k.status || k.status === 'active') && this.boundAccountIdFor(k, providerId) === accountId)
+      .map((k) => k.id);
+  }
+
   // ── Request resolution ─────────────────────────────────────────────────
+
 
   /** Extract access key from an HTTP request. */
   static extractKeyFromRequest(req: any, payload: any): string {

@@ -184,6 +184,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	recordAccountBuckets(body)
+	recordFairShareQuota(body)
 	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
 	l.applyCodexWindows(leaseResp.CodexWindows)
 	l.setLastError("")
