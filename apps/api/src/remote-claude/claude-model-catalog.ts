@@ -53,7 +53,7 @@ export class ClaudeModelCatalog implements ModelCatalog {
     return Array.from(this.models.values());
   }
 
-  classify(): string {
+  classify(_modelKey?: string): string {
     return CLAUDE_BUCKET;
   }
 

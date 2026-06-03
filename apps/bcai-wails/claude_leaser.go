@@ -1,0 +1,289 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+)
+
+// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+var CLAUDE_API_BASE = getEnvOrDefault("BCAI_CLAUDE_API_BASE", "https://bcai.space/remote-claude")
+
+// ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
+// 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。
+type ClaudeQuotaWindow struct {
+	HourlyPercent   float64 `json:"hourlyPercent"`
+	WeeklyPercent   float64 `json:"weeklyPercent"`
+	HourlyResetTime string  `json:"hourlyResetTime,omitempty"`
+	WeeklyResetTime string  `json:"weeklyResetTime,omitempty"`
+}
+
+type ClaudeTokenLease struct {
+	AccessToken string `json:"accessToken"`
+	AccountId   int    `json:"accountId"`
+	LeaseId     string `json:"leaseId"`
+	EmailHint   string `json:"emailHint"`
+	ExpiresAt   int64  `json:"expiresAt"`
+	LeasedAt    int64  `json:"leasedAt"`
+}
+
+type claudeLeaseTokenResp struct {
+	Success      *bool           `json:"success"`
+	Ok           *bool           `json:"ok"`
+	Code         string          `json:"code"`
+	Message      string          `json:"message"`
+	Error        string          `json:"error"`
+	AccessToken  string          `json:"accessToken"`
+	AccountId    json.RawMessage `json:"accountId"`
+	LeaseId      string          `json:"leaseId"`
+	EmailHint    string          `json:"emailHint"`
+	ExpiresAt    string          `json:"expiresAt"`
+	BoundAccount *struct {
+		Id       int     `json:"id"`
+		Fraction float64 `json:"fraction"`
+		ResetAt  int64   `json:"resetAt"`
+	} `json:"boundAccount"`
+	// 服务端把绑定/被租 claude 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
+	// 客户端据此渲染 claude 血条,无需自己抓上游(claude 不做客户端上游额度拉取)。
+	ClaudeWindows *ClaudeQuotaWindow `json:"claudeWindows"`
+}
+
+// ClaudeLeaser 镜像 CodexLeaser,但去掉了 codex 的客户端上游额度拉取机制
+// (claude 的 5h/周窗口由服务端从 anthropic-ratelimit-* 头解析后随 lease 下发)。
+type ClaudeLeaser struct {
+	lastError string
+
+	mu             sync.Mutex
+	lastQuota      *ClaudeQuotaWindow // 持久副本(供前端显示 claude 血条)
+	pendingReports []pendingReport    // 失败上报队列(防丢用量)
+}
+
+var globalClaudeLeaser = &ClaudeLeaser{}
+
+func GetClaudeLeaser() *ClaudeLeaser { return globalClaudeLeaser }
+
+// LatestClaudeQuota 返回最近一次拿到的 claude 5h/周限额(供血条显示),无则 nil。
+func (l *ClaudeLeaser) LatestClaudeQuota() *ClaudeQuotaWindow {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastQuota
+}
+
+// setLastError / LastError 用 l.mu 保护 lastError —— LeaseToken/Activate 每个入站代理
+// 请求各调用一次,可能跨 goroutine 并发(其余字段都已加锁,lastError 也必须加锁,
+// 否则 `go test -race` 会报未同步读写)。
+func (l *ClaudeLeaser) setLastError(msg string) {
+	l.mu.Lock()
+	l.lastError = msg
+	l.mu.Unlock()
+}
+
+func (l *ClaudeLeaser) LastError() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastError
+}
+
+func (l *ClaudeLeaser) pendingCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.pendingReports)
+}
+
+func postClaudeBcai(path string, payload interface{}, secret string, upstreamProxy string) ([]byte, int, error) {
+	respBody, status, err := postBcaiBaseWithFallback(CLAUDE_API_BASE, path, payload, secret, upstreamProxy)
+	if err != nil {
+		return respBody, status, err
+	}
+	if status >= 400 {
+		return respBody, status, fmt.Errorf("remote claude status %d: %s", status, string(respBody))
+	}
+	return respBody, status, nil
+}
+
+func (l *ClaudeLeaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
+	payload := map[string]string{"accountCard": card, "deviceId": deviceId}
+	body, _, err := postClaudeBcai("/api/activate", payload, "", upstreamProxy)
+	if err != nil {
+		l.setLastError(err.Error())
+		return "", err
+	}
+	var resp CommonResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", err
+	}
+	if !resp.Success {
+		message := resp.Message
+		if message == "" {
+			message = getApiErrorMessage(resp.Code)
+		}
+		l.setLastError(message)
+		return "", errors.New(message)
+	}
+	var actData ActivateData
+	if err := json.Unmarshal(resp.Data, &actData); err != nil {
+		return "Activated (unknown expiry)", nil
+	}
+	l.setLastError("")
+	return actData.AccountCard.ExpiresAt, nil
+}
+
+func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*ClaudeTokenLease, error) {
+	payload := map[string]interface{}{
+		"reason":             "claude-local-proxy",
+		"clientId":           deviceId,
+		"clientVersion":      AppVersion,
+		"clientDistribution": "go-engine",
+	}
+	for k, v := range options {
+		payload[k] = v
+	}
+
+	body, _, err := postClaudeBcai("/lease-token", payload, card, upstreamProxy)
+	if err != nil {
+		l.setLastError(err.Error())
+		return nil, err
+	}
+
+	var leaseResp claudeLeaseTokenResp
+	if err := json.Unmarshal(body, &leaseResp); err != nil {
+		return nil, err
+	}
+	if (leaseResp.Success != nil && !*leaseResp.Success) || (leaseResp.Ok != nil && !*leaseResp.Ok) {
+		message := leaseResp.Message
+		if message == "" {
+			message = leaseResp.Error
+		}
+		if message == "" {
+			message = getApiErrorMessage(leaseResp.Code)
+		}
+		l.setLastError(message)
+		return nil, errors.New(message)
+	}
+	if leaseResp.AccessToken == "" {
+		return nil, errors.New("empty Claude accessToken returned from server")
+	}
+
+	expiresAt := time.Now().Add(5 * time.Minute).UnixMilli()
+	if leaseResp.ExpiresAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, leaseResp.ExpiresAt); err == nil {
+			expiresAt = parsed.UnixMilli()
+		}
+	}
+	lease := &ClaudeTokenLease{
+		AccessToken: leaseResp.AccessToken,
+		AccountId:   parseAccountId(leaseResp.AccountId),
+		LeaseId:     leaseResp.LeaseId,
+		EmailHint:   leaseResp.EmailHint,
+		ExpiresAt:   expiresAt,
+		LeasedAt:    time.Now().UnixMilli(),
+	}
+	// 记录 claude 绑定号的真实上游剩余(供血条显示真实余量)。
+	if leaseResp.BoundAccount != nil {
+		mk, _ := options["modelKey"].(string)
+		if mk == "" {
+			mk = "claude-opus-4-20250514"
+		}
+		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+	}
+	recordAccountBuckets(body)
+	l.applyClaudeWindows(leaseResp.ClaudeWindows)
+	l.setLastError("")
+	return lease, nil
+}
+
+// applyClaudeWindows 用服务端下发的 5h/周窗口更新本地持久快照(供血条显示)。
+// nil 表示服务端暂无该号窗口数据 → 保留现有快照,不清空。
+func (l *ClaudeLeaser) applyClaudeWindows(w *ClaudeQuotaWindow) {
+	if w == nil {
+		return
+	}
+	l.mu.Lock()
+	cp := *w
+	l.lastQuota = &cp
+	l.mu.Unlock()
+}
+
+func (l *ClaudeLeaser) ReportUsage(card, deviceId string, details ReportDetails, upstreamProxy string, lease *ClaudeTokenLease) {
+	l.reportResult(card, details, upstreamProxy, lease)
+}
+
+func (l *ClaudeLeaser) ReportProblem(card, deviceId string, details ReportDetails, upstreamProxy string, lease *ClaudeTokenLease) {
+	l.reportResult(card, details, upstreamProxy, lease)
+}
+
+func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstreamProxy string, lease *ClaudeTokenLease) {
+	if lease == nil || lease.LeaseId == "" {
+		return
+	}
+	payload := map[string]interface{}{
+		"leaseId":           lease.LeaseId,
+		"reportId":          newReportID(lease.LeaseId),
+		"accountId":         lease.AccountId,
+		"status":            details.StatusCode,
+		"modelKey":          details.ModelKey,
+		"reason":            details.Reason,
+		"retryAfterMs":      details.RetryAfterMs,
+		"inputTokens":       details.InputTokens,
+		"outputTokens":      details.OutputTokens,
+		"cachedInputTokens": details.CachedInputTokens,
+		"rawTotalTokens":    details.RawTotalTokens,
+		"totalTokens":       details.BillableTotalTokens,
+		"errorText":         getErrorSnippet(details.ErrorText),
+	}
+	go l.doClaudeReportWithRetry(payload, card, upstreamProxy)
+}
+
+// doClaudeReportWithRetry 带退避重试上报;最终失败入队列,下次成功时补发。
+func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, card, upstreamProxy string) {
+	var err error
+	for attempt := 1; attempt <= reportMaxRetries; attempt++ {
+		if _, _, e := postClaudeBcai("/report-result", payload, card, upstreamProxy); e == nil {
+			err = nil
+			break
+		} else {
+			err = e
+		}
+		if attempt < reportMaxRetries {
+			time.Sleep(time.Duration(attempt*2) * time.Second) // 2s, 4s
+		}
+	}
+	if err != nil {
+		Log("[claude-leaser] ✗ 用量上报失败(已重试%d次,入队待补发): %v —— 这会导致服务端/web额度不刷新", reportMaxRetries, err)
+		l.queueClaudeReport(payload, card, upstreamProxy)
+		return
+	}
+	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v tokens=%v)→ 服务端额度应已更新", payload["leaseId"], payload["totalTokens"])
+	l.flushClaudePending(card, upstreamProxy)
+}
+
+func (l *ClaudeLeaser) queueClaudeReport(payload map[string]interface{}, card, upstreamProxy string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.pendingReports) >= maxPendingReports {
+		l.pendingReports = l.pendingReports[1:] // 队列满丢最旧
+	}
+	l.pendingReports = append(l.pendingReports, pendingReport{
+		Payload: payload, Card: card, UpstreamProxy: upstreamProxy, AddedAt: time.Now(),
+	})
+	Log("[claude-leaser] queued failed report (%d pending)", len(l.pendingReports))
+}
+
+// flushClaudePending 在一次成功上报后补发积压队列;补发失败的重新入队。
+func (l *ClaudeLeaser) flushClaudePending(card, upstreamProxy string) {
+	l.mu.Lock()
+	pending := l.pendingReports
+	l.pendingReports = nil
+	l.mu.Unlock()
+
+	for _, r := range pending {
+		if time.Since(r.AddedAt) > 30*time.Minute {
+			continue // 过期丢弃
+		}
+		if _, _, err := postClaudeBcai("/report-result", r.Payload, r.Card, r.UpstreamProxy); err != nil {
+			l.queueClaudeReport(r.Payload, r.Card, r.UpstreamProxy) // 仍失败,重新入队
+		}
+	}
+}
