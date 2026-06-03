@@ -19,4 +19,12 @@ describe('usageBarsForProducts', () => {
   it('shows all three for a universal card bound to both pools', () => {
     expect(usageBarsForProducts(['codex', 'antigravity'])).toEqual({ opus: true, gemini: true, codex: true })
   })
+
+  it('shows the Opus bar for a claude-bound card (Claude bills to the opus bucket)', () => {
+    expect(usageBarsForProducts(['claude'])).toEqual({ opus: true, gemini: false, codex: false })
+  })
+
+  it('shows Opus + Codex for a claude+codex card', () => {
+    expect(usageBarsForProducts(['claude', 'codex'])).toEqual({ opus: true, gemini: false, codex: true })
+  })
 })

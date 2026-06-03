@@ -27,6 +27,7 @@ import { Zap, Cloud, HardDrive, KeyRound, Plus, X } from 'lucide-react'
 function idToTarget(id: string): string {
   if (id === 'antigravity_ide') return 'ide'
   if (id === 'codex') return 'codex'
+  if (id === 'claude_code') return 'claude'
   return 'hub'
 }
 
@@ -46,6 +47,7 @@ export function TokenSourceControl() {
 
   const agApps = ideProducts.filter((p) => p.id.startsWith('antigravity'))
   const codexApp = ideProducts.find((p) => p.id === 'codex')
+  const claudeApp = ideProducts.find((p) => p.id === 'claude_code')
   const isMac = /mac/i.test(navigator.platform)
 
   const [busy, setBusy] = useState<string | null>(null)
@@ -98,7 +100,10 @@ export function TokenSourceControl() {
 
   // target → 展示名(loading 文案用)。
   const targetName = (target: string) =>
-    target === 'codex' ? 'Codex' : target === 'ide' ? 'Antigravity IDE' : 'Antigravity Hub'
+    target === 'codex' ? 'Codex'
+      : target === 'claude' ? 'Claude Code'
+      : target === 'ide' ? 'Antigravity IDE'
+      : 'Antigravity Hub'
 
   // 轮询 IDE 状态,直到目标产品的 injected 翻到期望值(接管/还原后端是异步的:
   // 改文件 + 拉起/重启 app,getIDEStatus 可能短暂仍是旧值)。超时则返回当前值,
@@ -167,6 +172,16 @@ export function TokenSourceControl() {
       return
     }
     await runTakeover(target, !product.injected)
+  }
+
+  // ── Claude Code(CLI + VSCode 扩展,单一接管开关,仅租号)────────
+  const claudeInjected = !!claudeApp?.injected
+  const handleClaudeToggle = async () => {
+    if (!claudeInjected && !hasCard) {
+      await showAlert('请先激活账号卡', 'Claude Code 接管需要账号卡,请在「账号卡配置」激活。')
+      return
+    }
+    await runTakeover('claude', !claudeInjected)
   }
 
   // ── Codex(三态) ────────────────────────────────────────────
@@ -416,6 +431,41 @@ export function TokenSourceControl() {
               </Button>
             </div>
           )}
+        </div>
+
+        <div className="border-t border-[var(--border-light)]" />
+
+        {/* ── Claude Code(CLI + VSCode 扩展) ── */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Claude</span>
+            {!claudeApp?.detected && <span className="text-[10px] text-[var(--text-muted)]">未检测到</span>}
+          </div>
+          <div
+            className={cn(
+              'flex items-center justify-between px-3 h-[44px] rounded-[8px] border',
+              claudeApp?.detected ? 'border-[var(--border-light)]' : 'opacity-40 border-transparent',
+            )}
+          >
+            <div>
+              <div className="text-[12px] text-[var(--text-primary)] font-medium">Claude Code (CLI + VSCode)</div>
+              <div className={cn('text-[10px]', claudeInjected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+                {!claudeApp?.detected ? '未检测到 ~/.claude' : claudeInjected ? '✓ 已接管' : '未接管'}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={claudeInjected ? 'danger' : 'default'}
+              disabled={!claudeApp?.detected || busy === 'claude'}
+              onClick={handleClaudeToggle}
+              className="shrink-0 cursor-pointer min-w-[68px]"
+            >
+              {busy === 'claude' ? '...' : claudeInjected ? '停止' : '接管'}
+            </Button>
+          </div>
+          <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
+            从远程服务器租用 Claude 订阅号;接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。
+          </div>
         </div>
 
         {/* macOS 权限引导 */}

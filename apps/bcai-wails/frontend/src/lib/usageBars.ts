@@ -14,5 +14,7 @@ export function usageBarsForProducts(products: string[] | undefined): VisibleBar
     return { opus: true, gemini: true, codex: true }
   }
   const anti = products.includes('antigravity')
-  return { opus: anti, gemini: anti, codex: products.includes('codex') }
+  // Claude 也计入 opus 桶(与服务端 UNIVERSAL_BILLING 一致),所以 claude 卡显示 Opus 条。
+  const claude = products.includes('claude')
+  return { opus: anti || claude, gemini: anti, codex: products.includes('codex') }
 }
