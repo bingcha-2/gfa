@@ -54,6 +54,9 @@ export default function CodexAccountsPage() {
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
   const [oauthStatusText, setOauthStatusText] = useState("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
+  const [oauthCallbackInput, setOauthCallbackInput] = useState("");
+  const [oauthSubmitting, setOauthSubmitting] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
@@ -80,38 +83,6 @@ export default function CodexAccountsPage() {
       setLoading(false);
     })();
   }, [fetchAccounts]);
-
-  useEffect(() => {
-    if (!oauthLoginId) return;
-    let stopped = false;
-    const check = async () => {
-      try {
-        const res = await fetch(`/api/rosetta/codex-oauth-status?loginId=${encodeURIComponent(oauthLoginId)}`, { cache: "no-store" });
-        const data = await res.json();
-        if (stopped) return;
-        if (data.status === "completed") {
-          toast.success(data.isUpdate ? `OAuth updated ${data.email}` : `OAuth added ${data.email}`);
-          setOauthLoginId("");
-          setOauthStatusText("");
-          fetchAccounts();
-        } else if (data.status === "failed" || data.status === "missing") {
-          toast.error(data.error || "Codex OAuth failed");
-          setOauthLoginId("");
-          setOauthStatusText("");
-        } else {
-          setOauthStatusText("Waiting for browser authorization...");
-        }
-      } catch (error) {
-        if (!stopped) setOauthStatusText(error instanceof Error ? error.message : "OAuth status check failed");
-      }
-    };
-    check();
-    const timer = window.setInterval(check, 2000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [fetchAccounts, oauthLoginId]);
 
   async function handleAdd() {
     if (!email.trim() || !refreshToken.trim()) {
@@ -171,18 +142,49 @@ export default function CodexAccountsPage() {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Codex OAuth start failed");
       setOauthLoginId(data.loginId);
-      setOauthStatusText("Waiting for browser authorization...");
-      const opened = window.open(data.authUrl, "_blank", "noopener,noreferrer");
-      if (!opened) {
-        await navigator.clipboard?.writeText(data.authUrl);
-        toast.info("OAuth URL copied. Open it in your browser to continue.");
-      }
+      setOauthAuthUrl(data.authUrl || "");
+      setOauthCallbackInput("");
+      setOauthStatusText("");
+      // 尝试自动打开授权页;若被浏览器拦截,下方面板里也有可点击的授权链接兜底。
+      window.open(data.authUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Codex OAuth start failed");
       setOauthLoginId("");
+      setOauthAuthUrl("");
       setOauthStatusText("");
     } finally {
       setOauthStarting(false);
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    const input = oauthCallbackInput.trim();
+    if (!input) {
+      toast.error("请粘贴授权后跳转的回调 URL 或其中的 code");
+      return;
+    }
+    setOauthSubmitting(true);
+    setOauthStatusText("");
+    try {
+      const res = await fetch("/api/rosetta/codex-oauth-submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: oauthLoginId, input }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "完成授权失败");
+      toast.success(data.isUpdate ? `OAuth updated ${data.email}` : `OAuth added ${data.email}`);
+      setOauthLoginId("");
+      setOauthAuthUrl("");
+      setOauthCallbackInput("");
+      setOauthStatusText("");
+      fetchAccounts();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "完成授权失败";
+      setOauthStatusText(msg);
+      toast.error(msg);
+    } finally {
+      setOauthSubmitting(false);
     }
   }
 
@@ -190,6 +192,8 @@ export default function CodexAccountsPage() {
     const loginId = oauthLoginId;
     setOauthLoginId("");
     setOauthStatusText("");
+    setOauthAuthUrl("");
+    setOauthCallbackInput("");
     if (!loginId) return;
     try {
       await fetch("/api/rosetta/codex-oauth-cancel", {
@@ -291,9 +295,34 @@ export default function CodexAccountsPage() {
       </div>
 
       {oauthLoginId ? (
-        <div className="flex flex-col gap-2 rounded-lg border bg-card p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <span>{oauthStatusText || "Waiting for browser authorization..."}</span>
-          <Button size="sm" variant="outline" onClick={handleOAuthCancel}>Cancel OAuth</Button>
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
+          <div className="space-y-1">
+            <p className="font-medium">完成 Codex OAuth 登录</p>
+            <p className="text-muted-foreground">
+              1. 在新打开的页面完成授权(没弹出的话，
+              {oauthAuthUrl ? (
+                <a href={oauthAuthUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">点此打开授权页</a>
+              ) : "请重新发起"}
+              )。
+            </p>
+            <p className="text-muted-foreground">
+              2. 授权后浏览器会跳到 <code className="rounded bg-muted px-1">localhost:1455/auth/callback?...</code>（页面打不开是正常的），把<strong>整个地址栏 URL</strong> 复制粘贴到下面，点「完成授权」。
+            </p>
+          </div>
+          <Textarea
+            rows={3}
+            placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+            value={oauthCallbackInput}
+            onChange={(e) => setOauthCallbackInput(e.target.value)}
+          />
+          {oauthStatusText ? <p className="text-destructive">{oauthStatusText}</p> : null}
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleOAuthSubmit} disabled={oauthSubmitting}>
+              {oauthSubmitting ? <Spinner size={14} /> : null}
+              完成授权
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleOAuthCancel} disabled={oauthSubmitting}>取消</Button>
+          </div>
         </div>
       ) : null}
 

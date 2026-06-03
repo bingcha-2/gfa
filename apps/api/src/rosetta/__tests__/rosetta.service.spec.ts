@@ -194,8 +194,11 @@ describe("RosettaService", () => {
     expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
 
     const state = authUrl.searchParams.get("state");
-    const callback = await fetch(`http://127.0.0.1:${port}/auth/callback?code=callback-code&state=${state}`);
-    expect(callback.status).toBe(200);
+    const submit = await svc.submitCodexOAuthCallback(
+      started.loginId,
+      `http://localhost:${port}/auth/callback?code=callback-code&state=${state}`,
+    );
+    expect(submit).toMatchObject({ ok: true, status: "completed", email: "oauth-codex@example.com" });
 
     const status = svc.getCodexOAuthLoginStatus(started.loginId);
     expect(status).toMatchObject({ ok: true, status: "completed", email: "oauth-codex@example.com" });

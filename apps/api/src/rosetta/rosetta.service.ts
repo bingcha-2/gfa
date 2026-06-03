@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as crypto from "crypto";
-import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 
@@ -51,7 +50,6 @@ type CodexOAuthPending = {
   email?: string;
   error?: string;
   isUpdate?: boolean;
-  server?: http.Server;
 };
 
 /** A card's share weight (份额): 1..4, default 1 (拼车). */
@@ -798,7 +796,9 @@ export class RosettaService {
       status: "pending",
     };
 
-    pending.server = await this.listenForCodexOAuthCallback(pending);
+    // 不起本地回调 server:授权完成后由用户把回调 URL / 授权码粘回后台,
+    // 走 submitCodexOAuthCallback 在服务端换 token,远程后台也能用,
+    // 不依赖「点授权那台机器上的 localhost:1455」。
     this.codexOAuthPending = pending;
     return {
       ok: true,
@@ -834,46 +834,62 @@ export class RosettaService {
     return { ok: true };
   }
 
-  private listenForCodexOAuthCallback(pending: CodexOAuthPending) {
-    return new Promise<http.Server>((resolve, reject) => {
-      const server = http.createServer((req, res) => {
-        void this.handleCodexOAuthCallback(pending, req, res);
-      });
-      server.on("error", (error: NodeJS.ErrnoException) => {
-        reject(new Error(error.code === "EADDRINUSE"
-          ? `Codex OAuth callback port ${this.codexOAuthPort} is already in use`
-          : `Codex OAuth callback failed: ${error.message}`));
-      });
-      server.listen(this.codexOAuthPort, "127.0.0.1", () => resolve(server));
-    });
-  }
+  /**
+   * 手动完成 Codex OAuth:用户在浏览器授权后,把回调地址
+   * (http://localhost:1455/auth/callback?code=...&state=...) 或其中的授权码粘回后台,
+   * 服务端在这里解析出 code 换 token。不再依赖本地回调 server,远程后台也能完成登录。
+   * rawInput 接受三种形式:完整回调 URL、query 片段(code=...&state=...)、或纯 code。
+   */
+  async submitCodexOAuthCallback(loginId: string, rawInput: string) {
+    const pending = this.codexOAuthPending;
+    if (!pending || pending.loginId !== loginId) {
+      return { ok: false, status: "missing", error: "登录会话不存在或已过期,请重新发起 OAuth 登录" };
+    }
+    if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
+      pending.status = "failed";
+      pending.error = pending.error || "OAuth 登录会话已失效,请重新发起";
+      this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
 
-  private async handleCodexOAuthCallback(pending: CodexOAuthPending, req: http.IncomingMessage, res: http.ServerResponse) {
+    const input = String(rawInput || "").trim();
+    if (!input) return { ok: false, status: "pending", error: "请粘贴回调 URL 或授权码 code" };
+
+    let code = "";
+    let state = "";
     try {
-      const callbackUrl = new URL(req.url || "/", pending.redirectUri);
-      if (callbackUrl.pathname !== "/auth/callback") {
-        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-        res.end("Not found");
-        return;
+      const url = new URL(input);
+      code = (url.searchParams.get("code") || "").trim();
+      state = (url.searchParams.get("state") || "").trim();
+    } catch {
+      // 不是完整 URL:可能是 query 片段(code=...&state=...)或纯 code
+      if (input.includes("code=")) {
+        const query = input.includes("?") ? input.slice(input.indexOf("?") + 1) : input.replace(/^[#&?]+/, "");
+        const params = new URLSearchParams(query);
+        code = (params.get("code") || "").trim();
+        state = (params.get("state") || "").trim();
+      } else {
+        code = input;
       }
-      if (pending.status !== "pending" || pending.expiresAt <= Date.now()) {
-        throw new Error("OAuth login session is no longer active");
-      }
-      const state = callbackUrl.searchParams.get("state") || "";
-      const code = callbackUrl.searchParams.get("code") || "";
-      if (state !== pending.state) throw new Error("OAuth state mismatch");
-      if (!code) throw new Error("OAuth callback is missing code");
+    }
 
+    if (!code) return { ok: false, status: "pending", error: "未能从输入中解析出授权码 code" };
+    if (state && state !== pending.state) {
+      pending.status = "failed";
+      pending.error = "OAuth state 不匹配,可能是会话串了,请重新发起登录";
+      this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
+    }
+
+    try {
       const result = await this.completeCodexOAuthLogin(pending, code);
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<h1>Codex OAuth saved</h1><p>${result.email} has been added to GFA. You can close this window.</p>`);
+      this.closeCodexOAuthPending(false);
+      return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate };
     } catch (error) {
       pending.status = "failed";
-      pending.error = error instanceof Error ? error.message : "OAuth callback failed";
-      res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<h1>Codex OAuth failed</h1><p>${pending.error}</p>`);
-    } finally {
+      pending.error = error instanceof Error ? error.message : "OAuth 完成失败";
       this.closeCodexOAuthPending(false);
+      return { ok: false, status: "failed", error: pending.error };
     }
   }
 
@@ -918,8 +934,6 @@ export class RosettaService {
   private closeCodexOAuthPending(clearCompleted = true) {
     const pending = this.codexOAuthPending;
     if (!pending) return;
-    pending.server?.close();
-    pending.server = undefined;
     if (clearCompleted) this.codexOAuthPending = null;
   }
 

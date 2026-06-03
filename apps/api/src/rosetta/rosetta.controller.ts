@@ -101,6 +101,11 @@ export class RosettaController {
     return this.rosetta.cancelCodexOAuthLogin(String(body?.loginId || ""));
   }
 
+  @Post("codex-oauth-submit")
+  submitCodexOAuthCallback(@Body() body: any) {
+    return this.rosetta.submitCodexOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
+  }
+
   @Post("codex-toggle-account")
   toggleCodexAccount(@Body() body: any) {
     return this.rosetta.toggleCodexAccount(body);
