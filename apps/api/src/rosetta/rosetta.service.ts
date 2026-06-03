@@ -375,6 +375,7 @@ export class RosettaService {
         recentWindowTokens: recentTokenUsage(key),
         tokenWindowLimit: tokenWindowLimit(key),
         windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
+        weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
         durationMs: Number(key.durationMs || 0),
         provider: String(key.provider || ""),
         boundAccountId: Number(key.boundAccountId || 0),
@@ -1154,6 +1155,8 @@ export class RosettaService {
         // Per-card rate-limit window duration (configurable hours/days, set at
         // creation). Drives the fixed-period reset in resetWindowIfExpired().
         windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
+        // Weekly (long) window limit — second tier of rate limiting (0 = unlimited).
+        weeklyTokenLimit: Math.max(0, Number(payload?.weeklyTokenLimit || 0)),
         weight,
         ...(products.length ? { bindings } : {}),
         createdAt: nowIso(),
@@ -1173,7 +1176,7 @@ export class RosettaService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
-    for (const field of ["name", "status", "durationMs", "windowLimit", "tokenWindowLimit", "windowMs"]) {
+    for (const field of ["name", "status", "durationMs", "windowLimit", "tokenWindowLimit", "windowMs", "weeklyTokenLimit"]) {
       if (payload[field] !== undefined) record[field] = field.endsWith("Ms") || field.endsWith("Limit")
         ? Number(payload[field])
         : String(payload[field]);

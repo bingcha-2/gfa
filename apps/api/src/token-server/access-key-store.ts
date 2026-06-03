@@ -11,10 +11,15 @@ import {
   readTokenCount,
   billableTokenUsageTotal,
   resetWindowIfExpired,
+  resetWeeklyWindowIfExpired,
   tokenWindowMs,
   tokenWindowLimit,
+  weeklyTokenLimit,
+  weeklyWindowMs as weeklyWindowMsFn,
+  weeklyWindowResetMs,
   recentTokenUsage,
   recentBucketUsage,
+  recentWeeklyBucketUsage,
   tokenWindowResetMs,
   UNIVERSAL_BILLING,
   ProviderBilling,
@@ -39,6 +44,11 @@ export interface AccessKeyRecord {
   windowStartedAt?: number;
   usageEvents?: any[];
   tokenUsageEvents?: any[];
+  /** Weekly (long) window fields — independent second tier of rate limiting. */
+  weeklyWindowMs?: number;
+  weeklyTokenLimit?: number;
+  weeklyWindowStartedAt?: number;
+  weeklyTokenUsageEvents?: any[];
   /** Per-product static binding: { codex?: accountId, antigravity?: accountId }.
    * A card may be sold for one or both pools; each entry pins it to one account
    * in that pool. */
@@ -165,6 +175,12 @@ export class AccessKeyStore {
           if (Array.isArray(key.tokenUsageEvents)) {
             key.tokenUsageEvents = key.tokenUsageEvents.filter((e: any) => e.at >= windowStart);
           }
+        }
+        // Prune weekly window events too.
+        resetWeeklyWindowIfExpired(key, now);
+        const weeklyStart = Number(key.weeklyWindowStartedAt || 0);
+        if (weeklyStart > 0 && Array.isArray(key.weeklyTokenUsageEvents)) {
+          key.weeklyTokenUsageEvents = key.weeklyTokenUsageEvents.filter((e: any) => e.at >= weeklyStart);
         }
       }
       writeJsonFile(this.filePath, this.cache);
@@ -301,6 +317,39 @@ export class AccessKeyStore {
       }
     }
 
+    // ── Weekly window check (second tier) ──────────────────────────────────
+    resetWeeklyWindowIfExpired(record, now);
+    const wLimit = weeklyTokenLimit(record);
+    if (options.enforceLimit && wLimit > 0) {
+      const modelKeyStr = String(options.modelKey || '').trim();
+      const weeklyUsage = recentWeeklyBucketUsage(record, this.billing.bucketOf, now);
+
+      if (modelKeyStr) {
+        const bucket = this.billing.bucketOf(modelKeyStr);
+        const used = weeklyUsage.get(bucket) || 0;
+        const limit = this.billing.bucketLimit(wLimit, bucket);
+        if (limit > 0 && used >= limit) {
+          this.writeCache();
+          return {
+            key: keyValue, record: null,
+            error: `Access key ${this.billing.bucketLabel(bucket)} weekly token limit exceeded (${used}/${limit} tokens/week)`,
+          };
+        }
+      } else {
+        const usedBuckets = this.billing.buckets.filter((b) => (weeklyUsage.get(b) || 0) > 0);
+        const allExhausted =
+          usedBuckets.length > 0 &&
+          usedBuckets.every((b) => (weeklyUsage.get(b) || 0) >= this.billing.bucketLimit(wLimit, b));
+        if (allExhausted) {
+          this.writeCache();
+          return {
+            key: keyValue, record: null,
+            error: `Access key weekly token limit exceeded`,
+          };
+        }
+      }
+    }
+
     if (options.activate) this.writeCache();
     return { key: keyValue, record, data };
   }
@@ -380,6 +429,15 @@ export class AccessKeyStore {
     if (totalTokens > 0) {
       if (!record.tokenUsageEvents) record.tokenUsageEvents = [];
       record.tokenUsageEvents.push({
+        at: now, status: Number(status || 0),
+        inputTokens, outputTokens, cachedInputTokens,
+        rawTotalTokens, totalTokens, modelKey: modelKey || '',
+      });
+
+      // Weekly window: dual-write the same event into the weekly array.
+      resetWeeklyWindowIfExpired(record, now);
+      if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
+      record.weeklyTokenUsageEvents.push({
         at: now, status: Number(status || 0),
         inputTokens, outputTokens, cachedInputTokens,
         rawTotalTokens, totalTokens, modelKey: modelKey || '',
@@ -495,6 +553,12 @@ export class AccessKeyStore {
     const resetMs = tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
+    // Weekly window
+    resetWeeklyWindowIfExpired(record, now);
+    const wkLimit = weeklyTokenLimit(record);
+    const wkBucketUsage = wkLimit > 0 ? recentWeeklyBucketUsage(record, this.billing.bucketOf, now) : new Map<string, number>();
+    const wkResetMs = wkLimit > 0 ? weeklyWindowResetMs(record, now) : 0;
+
     const windowLimit = Number(record.windowLimit || 0);
 
     // Products the card is sold for (bindings keys with a real account id).
@@ -539,6 +603,18 @@ export class AccessKeyStore {
       tokenWindowRemaining: tLimit > 0 ? Math.max(0, tLimit - recentTokens.totalTokens) : 0,
       tokenWindowResetMs: resetMs,
       tokenWindowResetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',
+      // Weekly window status — only present when weeklyTokenLimit > 0.
+      weeklyTokenLimit: wkLimit,
+      weeklyWindowMs: wkLimit > 0 ? weeklyWindowMsFn(record) : 0,
+      weeklyWindowResetMs: wkResetMs,
+      weeklyWindowResetAt: wkResetMs > 0 ? new Date(now + wkResetMs).toISOString() : '',
+      weeklyBuckets: wkLimit > 0
+        ? this.billing.buckets.map((bucket) => ({
+            bucket,
+            used: wkBucketUsage.get(bucket) || 0,
+            limit: this.billing.bucketLimit(wkLimit, bucket),
+          }))
+        : [],
       hasActiveSession: Boolean(
         record.activeSessionId && !isAccessKeySessionExpired(record, now),
       ),
