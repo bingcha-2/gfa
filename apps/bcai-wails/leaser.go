@@ -1287,6 +1287,23 @@ func boundResetMs(resetAt int64) int64 {
 	return rem
 }
 
+// leaserReadyWithoutAntigravity 判断卡「已明确开通产品、但不含 antigravity」。
+// 这类卡(claude-only / codex-only 绑定卡)不会去租 antigravity,主 cachedToken 恒为
+// nil,故不能据此判定「还在等首租」。products 为空(池子卡=不限产品,覆盖 antigravity)
+// 时返回 false —— 它仍需等 antigravity 首租,保持原行为。无锁直读(调用方已持 RLock)。
+func leaserReadyWithoutAntigravity(aks map[string]interface{}) bool {
+	raw, ok := aks["products"].([]interface{})
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	for _, v := range raw {
+		if s, _ := v.(string); s == "antigravity" {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *Leaser) GetStatus() map[string]interface{} {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -1307,6 +1324,12 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		state = "ready"
 	} else if l.lastError != "" {
 		state = "error"
+	} else if leaserReadyWithoutAntigravity(l.accessKeyStatus) {
+		// 该卡未开通 antigravity:主(antigravity)租号被有意跳过(见 prewarm 的
+		// "本卡未开通 Antigravity,跳过"),cachedToken 恒为 nil —— 不代表还在等首租。
+		// codex/claude 按需租号,代理已就绪。否则 claude/codex-only 绑定卡会永远卡在
+		// 「获取租约中…」。
+		state = "ready"
 	}
 
 	// Dynamically adjust tokenWindowResetMs to account for elapsed time

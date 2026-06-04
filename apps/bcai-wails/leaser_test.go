@@ -26,6 +26,35 @@ func TestSyncFromServerDerivesModelLimitsFromTokenWindowLimit(t *testing.T) {
 	}
 }
 
+// claude-only(或 codex-only)绑定卡:主 antigravity 租号被有意跳过,cachedToken
+// 永远为 nil —— serviceState 不应卡死在 waiting_first_lease(UI 永远「获取租约中…」)。
+func TestServiceStateReadyForNonAntigravityBoundCard(t *testing.T) {
+	l := &Leaser{
+		accessKeyStatus: map[string]interface{}{
+			"products": []interface{}{"claude"},
+		},
+	}
+	if got := l.GetStatus()["serviceState"]; got != "ready" {
+		t.Fatalf("claude-only 卡 serviceState = %v, want ready", got)
+	}
+}
+
+// 开通 antigravity 的卡,在拿到 token 前仍应 waiting_first_lease(原行为不变)。
+func TestServiceStateWaitsForAntigravityCard(t *testing.T) {
+	l := &Leaser{accessKeyStatus: map[string]interface{}{"products": []interface{}{"antigravity"}}}
+	if got := l.GetStatus()["serviceState"]; got != "waiting_first_lease" {
+		t.Fatalf("antigravity 卡无 token serviceState = %v, want waiting_first_lease", got)
+	}
+}
+
+// 池子卡(products 空 = 不限产品,覆盖 antigravity),无 token 时仍 waiting_first_lease。
+func TestServiceStateWaitsForPoolCard(t *testing.T) {
+	l := &Leaser{accessKeyStatus: map[string]interface{}{}}
+	if got := l.GetStatus()["serviceState"]; got != "waiting_first_lease" {
+		t.Fatalf("池子卡无 token serviceState = %v, want waiting_first_lease", got)
+	}
+}
+
 func TestIsCardFatalError(t *testing.T) {
 	// 卡本身不可用 → 致命,应停掉自动租号。
 	fatal := []string{
