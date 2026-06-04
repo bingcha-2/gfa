@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -39,56 +40,72 @@ interface BindAccountControlProps {
   onApply: (bindings: Record<string, number>) => Promise<void> | void;
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  codex: "Codex",
-  antigravity: "Antigravity",
-};
+const PROVIDERS = [
+  { id: "codex", label: "Codex" },
+  { id: "antigravity", label: "Antigravity" },
+] as const;
 
 function providerLabel(provider: string): string {
-  return PROVIDER_LABEL[provider] || provider;
+  return PROVIDERS.find((p) => p.id === provider)?.label || provider;
 }
 
-/** 下拉里"池子模式"选项的哨兵值(Select 不能用空串)。 */
-const POOL = "__pool";
+const ACCOUNT_NONE = "__none";
 
 /**
- * 卡片绑定管理:表格里只显示当前绑定摘要 + 一个按钮(池子卡=「绑定」,已绑卡=「换绑」)。
- * 点按钮弹出二级弹窗,弹窗里每个产品可在「池子模式」与「绑定到某账号」之间切换,保存时
- * 一次性提交最终映射(走 /access-key-set-bindings 原子写入)。
+ * 卡片绑定管理:表格里只显示当前绑定摘要 + 一个「设置」按钮,点开二级弹窗。弹窗与
+ * 「新增卡密」同构:顶层切「绑定模式 / 池子模式」,绑定模式下勾开通产品 + 每个产品选账号
+ * (取消勾选=解绑该产品,换账号=换绑,切池子=全解绑)。保存时一次性提交最终映射
+ * (走 /access-key-set-bindings 原子写入)。
  */
 export function BindAccountControl({ card, accounts, onApply }: BindAccountControlProps) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  // 弹窗内每个 provider 的选择:POOL 或 accountId 字符串。
-  const [sel, setSel] = useState<Record<string, string>>({});
+  const [mode, setMode] = useState<"pool" | "bound">("pool");
+  // 每个产品:是否开通 + 选中的账号 id 字符串。
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [accSel, setAccSel] = useState<Record<string, string>>({});
 
   const bindings = card.bindings || {};
   const cardWeight = Math.max(1, Math.min(4, Number(card.weight || 1)));
   const boundProviders = Object.entries(bindings).filter(([, id]) => Number(id) > 0);
 
-  // 池里有号的 provider 才能绑;固定顺序 codex → antigravity。
-  const providers = ["codex", "antigravity"].filter((p) =>
-    accounts.some((a) => a.provider === p),
-  );
+  // 池里有号的产品才能绑。
+  const availProviders = PROVIDERS.filter((p) => accounts.some((a) => a.provider === p.id));
 
   const openDialog = () => {
-    const init: Record<string, string> = {};
-    for (const p of providers) {
-      const cur = Number(bindings[p] || 0);
-      init[p] = cur > 0 ? String(cur) : POOL;
+    setMode(boundProviders.length > 0 ? "bound" : "pool");
+    const nextChecked: Record<string, boolean> = {};
+    const nextAcc: Record<string, string> = {};
+    for (const p of PROVIDERS) {
+      const cur = Number(bindings[p.id] || 0);
+      nextChecked[p.id] = cur > 0;
+      nextAcc[p.id] = cur > 0 ? String(cur) : "";
     }
-    setSel(init);
+    setChecked(nextChecked);
+    setAccSel(nextAcc);
     setOpen(true);
   };
 
   const save = async () => {
+    const desired: Record<string, number> = {};
+    if (mode === "bound") {
+      const sel = availProviders.filter((p) => checked[p.id]);
+      if (sel.length === 0) {
+        toast.error("绑定模式请至少开通一个产品");
+        return;
+      }
+      for (const p of sel) {
+        const id = Number(accSel[p.id] || 0);
+        if (!(id > 0)) {
+          toast.error(`请为 ${p.label} 选择账号`);
+          return;
+        }
+        desired[p.id] = id;
+      }
+    }
+    // mode === "pool" → desired 为空 → 池子卡。
     setSaving(true);
     try {
-      const desired: Record<string, number> = {};
-      for (const p of providers) {
-        const v = sel[p];
-        if (v && v !== POOL) desired[p] = Number(v);
-      }
       await onApply(desired);
       setOpen(false);
     } catch {
@@ -118,7 +135,7 @@ export function BindAccountControl({ card, accounts, onApply }: BindAccountContr
         </div>
       )}
       <Button size="sm" variant="outline" onClick={openDialog}>
-        {boundProviders.length > 0 ? "换绑" : "绑定"}
+        设置
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -126,52 +143,96 @@ export function BindAccountControl({ card, accounts, onApply }: BindAccountContr
           <DialogHeader>
             <DialogTitle>设置绑定账号</DialogTitle>
             <DialogDescription>
-              每个产品可选「池子模式」(不绑号、走动态池)或绑定到具体账号。
+              选择「池子模式」或「绑定模式」(与新增卡密一致)。
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4 py-2">
-            {providers.length === 0 ? (
+            {/* 顶层模式 */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">模式</span>
+              <Select value={mode} onValueChange={(v) => setMode(v as "pool" | "bound")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bound">绑定模式（开通指定产品）</SelectItem>
+                  <SelectItem value="pool">池子模式（万能卡 · 不绑号）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {mode === "pool" ? (
+              <span className="text-sm text-muted-foreground">
+                万能池子卡:不绑号,codex/antigravity 都能用,走动态池。
+              </span>
+            ) : availProviders.length === 0 ? (
               <span className="text-sm text-muted-foreground">暂无可绑定账号</span>
             ) : (
-              providers.map((provider) => {
-                const cur = sel[provider] || POOL;
-                const provAccounts = accounts.filter((a) => a.provider === provider);
-                return (
-                  <div key={provider} className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium">{providerLabel(provider)}</span>
-                    <Select
-                      value={cur}
-                      onValueChange={(v) => setSel((m) => ({ ...m, [provider]: v }))}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={POOL}>池子模式（不绑号）</SelectItem>
-                        {provAccounts.map((a) => {
-                          const isCurrent = Number(bindings[provider] || 0) === a.id;
-                          // 满额禁选;但当前已绑的号永远可选(它的 usedShares 含本卡)。
-                          const full = !isCurrent && a.usedShares + cardWeight > a.shareCapacity;
-                          return (
-                            <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                              {a.email}
-                              {a.planType ? ` · ${a.planType}` : ""} ({a.usedShares}/{a.shareCapacity}份)
-                              {full ? " · 满" : ""}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">开通产品（只开的能用）</span>
+                  <div className="flex items-center gap-4 h-9">
+                    {availProviders.map((p) => (
+                      <label
+                        key={p.id}
+                        className="flex items-center gap-1.5 text-sm cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!checked[p.id]}
+                          onChange={(e) =>
+                            setChecked((m) => ({ ...m, [p.id]: e.target.checked }))
+                          }
+                        />
+                        {p.label}
+                      </label>
+                    ))}
                   </div>
-                );
-              })
+                </div>
+
+                {availProviders
+                  .filter((p) => checked[p.id])
+                  .map((p) => {
+                    const provAccounts = accounts.filter((a) => a.provider === p.id);
+                    const cur = accSel[p.id] || ACCOUNT_NONE;
+                    return (
+                      <div key={p.id} className="flex flex-col gap-1.5">
+                        <span className="text-sm font-medium">{p.label} 账号</span>
+                        <Select
+                          value={cur}
+                          onValueChange={(v) =>
+                            setAccSel((m) => ({ ...m, [p.id]: v === ACCOUNT_NONE ? "" : v }))
+                          }
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={ACCOUNT_NONE}>选择账号…</SelectItem>
+                            {provAccounts.map((a) => {
+                              const isCurrent = Number(bindings[p.id] || 0) === a.id;
+                              const full = !isCurrent && a.usedShares + cardWeight > a.shareCapacity;
+                              return (
+                                <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                                  {a.email}
+                                  {a.planType ? ` · ${a.planType}` : ""} ({a.usedShares}/{a.shareCapacity}份)
+                                  {full ? " · 满" : ""}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  })}
+              </>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
               取消
             </Button>
-            <Button onClick={save} disabled={saving || providers.length === 0}>
+            <Button onClick={save} disabled={saving}>
               {saving ? "保存中…" : "保存"}
             </Button>
           </DialogFooter>
