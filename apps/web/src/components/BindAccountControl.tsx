@@ -12,7 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -21,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export interface BindableAccount {
   provider: string;
@@ -59,7 +59,7 @@ const MODE_ITEMS = [
 
 /**
  * 卡片绑定管理:表格里只显示当前绑定摘要 + 一个「设置」按钮,点开二级弹窗。弹窗与
- * 「新增卡密」同构:顶层切「绑定模式 / 池子模式」,绑定模式下用 ToggleGroup 多选开通产品 +
+ * 「新增卡密」同构:顶层切「绑定模式 / 池子模式」,绑定模式下用 Checkbox 多选开通产品 +
  * 每个产品选账号(取消产品=解绑,换账号=换绑,切池子=全解绑)。保存一次性提交最终映射
  * (走 /access-key-set-bindings 原子写入)。
  */
@@ -180,21 +180,29 @@ export function BindAccountControl({ card, accounts, onApply }: BindAccountContr
               <p className="text-sm text-muted-foreground">暂无可绑定账号</p>
             ) : (
               <>
-                <Field>
-                  <FieldLabel>开通产品（只开的能用）</FieldLabel>
-                  <ToggleGroup
-                    multiple
-                    variant="outline"
-                    value={products}
-                    onValueChange={(v: string[]) => setProducts(v)}
-                  >
+                <FieldSet>
+                  <FieldLegend variant="label">开通产品（只开的能用）</FieldLegend>
+                  <FieldGroup className="gap-3">
                     {availProviders.map((p) => (
-                      <ToggleGroupItem key={p.id} value={p.id}>
-                        {p.label}
-                      </ToggleGroupItem>
+                      <Field key={p.id} orientation="horizontal">
+                        <Checkbox
+                          id={`bind-${card.id}-${p.id}`}
+                          checked={products.includes(p.id)}
+                          onCheckedChange={(c) =>
+                            setProducts((prev) =>
+                              c === true
+                                ? [...new Set([...prev, p.id])]
+                                : prev.filter((x) => x !== p.id),
+                            )
+                          }
+                        />
+                        <FieldLabel htmlFor={`bind-${card.id}-${p.id}`} className="font-normal">
+                          {p.label}
+                        </FieldLabel>
+                      </Field>
                     ))}
-                  </ToggleGroup>
-                </Field>
+                  </FieldGroup>
+                </FieldSet>
 
                 {availProviders
                   .filter((p) => products.includes(p.id))

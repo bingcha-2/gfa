@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   Empty,
   EmptyHeader,
@@ -48,7 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tooltip,
   TooltipContent,
@@ -634,24 +634,31 @@ export default function RosettaKeysPage() {
               </Select>
             </Field>
             {createMode === "bound" && (
-              <Field className="min-w-[180px]">
-                <FieldLabel>开通产品（只开的能用）</FieldLabel>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  value={[
-                    ...(createCodex ? ["codex"] : []),
-                    ...(createAnti ? ["antigravity"] : []),
-                  ]}
-                  onValueChange={(v: string[]) => {
-                    setCreateCodex(v.includes("codex"));
-                    setCreateAnti(v.includes("antigravity"));
-                  }}
-                >
-                  <ToggleGroupItem value="codex">Codex</ToggleGroupItem>
-                  <ToggleGroupItem value="antigravity">Antigravity</ToggleGroupItem>
-                </ToggleGroup>
-              </Field>
+              <FieldSet className="min-w-[180px]">
+                <FieldLegend variant="label">开通产品（只开的能用）</FieldLegend>
+                <FieldGroup className="gap-3">
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id="create-codex"
+                      checked={createCodex}
+                      onCheckedChange={(c) => setCreateCodex(c === true)}
+                    />
+                    <FieldLabel htmlFor="create-codex" className="font-normal">
+                      Codex
+                    </FieldLabel>
+                  </Field>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id="create-anti"
+                      checked={createAnti}
+                      onCheckedChange={(c) => setCreateAnti(c === true)}
+                    />
+                    <FieldLabel htmlFor="create-anti" className="font-normal">
+                      Antigravity
+                    </FieldLabel>
+                  </Field>
+                </FieldGroup>
+              </FieldSet>
             )}
             {createCodex && (
               <Field className="min-w-[140px]">
