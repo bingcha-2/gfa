@@ -256,7 +256,7 @@ export default function RosettaKeysPage() {
       const [codexRes, antiRes, claudeRes] = await Promise.all([
         fetch("/api/rosetta/codex-accounts"),
         fetch("/api/rosetta/accounts"),
-        fetch("/api/rosetta/claude-accounts"),
+        fetch("/api/rosetta/anthropic-accounts"),
       ]);
       const codex = await codexRes.json();
       const anti = await antiRes.json();
@@ -435,24 +435,24 @@ export default function RosettaKeysPage() {
         const products = [
           ...(createCodex ? ["codex"] : []),
           ...(createAnti ? ["antigravity"] : []),
-          ...(createClaude ? ["claude"] : []),
+          ...(createClaude ? ["anthropic"] : []),
         ];
         if (!products.length) throw new Error("绑定模式请至少选择一个产品");
         // Level is required for every selected product.
         if (createCodex && !createCodexLevel) throw new Error("请选择 Codex 会员等级");
         if (createAnti && !createAntiLevel) throw new Error("请选择 Antigravity 会员等级");
-        if (createClaude && !createClaudeLevel) throw new Error("请选择 Claude 会员等级");
+        if (createClaude && !createClaudeLevel) throw new Error("请选择 Anthropic 会员等级");
         payload.products = products;
         payload.levels = {
           ...(createCodex ? { codex: createCodexLevel } : {}),
           ...(createAnti ? { antigravity: createAntiLevel } : {}),
-          ...(createClaude ? { claude: createClaudeLevel } : {}),
+          ...(createClaude ? { anthropic: createClaudeLevel } : {}),
         };
         // 可选:手动指定账号("" = 自动分配,不传该 product)。
         const accountIds: Record<string, number> = {
           ...(createCodex && createCodexAccountId ? { codex: Number(createCodexAccountId) } : {}),
           ...(createAnti && createAntiAccountId ? { antigravity: Number(createAntiAccountId) } : {}),
-          ...(createClaude && createClaudeAccountId ? { claude: Number(createClaudeAccountId) } : {}),
+          ...(createClaude && createClaudeAccountId ? { anthropic: Number(createClaudeAccountId) } : {}),
         };
         if (Object.keys(accountIds).length) payload.accountIds = accountIds;
         payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
@@ -685,7 +685,7 @@ export default function RosettaKeysPage() {
                       onCheckedChange={(c) => setCreateClaude(c === true)}
                     />
                     <FieldLabel htmlFor="create-claude" className="font-normal">
-                      Claude
+                      Anthropic
                     </FieldLabel>
                   </Field>
                 </FieldGroup>
@@ -812,7 +812,7 @@ export default function RosettaKeysPage() {
             )}
             {createClaude && (
               <Field className="min-w-[140px]">
-                <FieldLabel>Claude 会员等级</FieldLabel>
+                <FieldLabel>Anthropic 会员等级</FieldLabel>
                 <Select
                   items={levelItems(claudeLevels)}
                   value={createClaudeLevel || null}
@@ -835,9 +835,9 @@ export default function RosettaKeysPage() {
             )}
             {createClaude && (
               <Field className="min-w-[200px]">
-                <FieldLabel>Claude 账号(可选,默认自动)</FieldLabel>
+                <FieldLabel>Anthropic 账号(可选,默认自动)</FieldLabel>
                 <Select
-                  items={accountItems("claude", createClaudeLevel)}
+                  items={accountItems("anthropic", createClaudeLevel)}
                   value={createClaudeAccountId || ACCOUNT_AUTO}
                   onValueChange={(v) => setCreateClaudeAccountId(v === ACCOUNT_AUTO ? "" : v)}
                 >
@@ -847,7 +847,7 @@ export default function RosettaKeysPage() {
                   <SelectContent>
                     <SelectGroup>
                       <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
-                      {accountPickerOptions("claude", createClaudeLevel).map((a) => {
+                      {accountPickerOptions("anthropic", createClaudeLevel).map((a) => {
                         const full = a.usedShares + numWeight * numCount > a.shareCapacity;
                         return (
                           <SelectItem key={a.id} value={String(a.id)} disabled={full}>

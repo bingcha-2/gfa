@@ -27,5 +27,5 @@ export function toBindableAccounts(
       shareCapacity: Number(a.shareCapacity || 0) > 0 ? Number(a.shareCapacity) : 4,
       planType: String(a.planType || ""),
     }));
-  return [...tag(codex, "codex"), ...tag(antigravity, "antigravity"), ...tag(claude, "claude")];
+  return [...tag(codex, "codex"), ...tag(antigravity, "antigravity"), ...tag(claude, "anthropic")];
 }

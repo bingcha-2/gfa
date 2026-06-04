@@ -46,6 +46,7 @@ interface BindAccountControlProps {
 const PROVIDERS = [
   { id: "codex", label: "Codex" },
   { id: "antigravity", label: "Antigravity" },
+  { id: "anthropic", label: "Anthropic" },
 ] as const;
 
 function providerLabel(provider: string): string {

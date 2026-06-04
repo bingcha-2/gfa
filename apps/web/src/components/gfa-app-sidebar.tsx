@@ -279,9 +279,9 @@ export function GfaAppSidebar({
   // Claude (Anthropic) — 账号管理(CLI + VSCode 扩展接管)
   const claudeNav: NavItem[] = [
     {
-      id: "claude-accounts",
+      id: "anthropic-accounts",
       title: "账号池",
-      url: `/${prefix}/claude-accounts`,
+      url: `/${prefix}/anthropic-accounts`,
       icon: <DatabaseIcon />,
       permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
@@ -386,7 +386,7 @@ export function GfaAppSidebar({
       <SidebarContent>
         {renderNavGroup("Antigravity", antigravityNav)}
         {renderNavGroup("Codex", codexNav)}
-        {renderNavGroup("Claude", claudeNav)}
+        {renderNavGroup("Anthropic", claudeNav)}
         {renderNavGroup("共享服务", sharedServiceNav)}
         {renderNavGroup("运营", mainNav)}
         {renderNavGroup("管理", managementNav)}

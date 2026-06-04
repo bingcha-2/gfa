@@ -66,7 +66,7 @@ export default function ClaudeAccountsPage() {
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const res = await fetch("/api/rosetta/claude-accounts", { cache: "no-store" });
+      const res = await fetch("/api/rosetta/anthropic-accounts", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAccounts(Array.isArray(data.accounts) ? data.accounts : []);
@@ -92,7 +92,7 @@ export default function ClaudeAccountsPage() {
     }
     setAdding(true);
     try {
-      const res = await fetch("/api/rosetta/claude-add-account", {
+      const res = await fetch("/api/rosetta/anthropic-add-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), refreshToken: refreshToken.trim(), planType: planType.trim(), alias: alias.trim(), proxyUrl: proxyUrl.trim() }),
@@ -112,19 +112,19 @@ export default function ClaudeAccountsPage() {
   async function handleOAuthStart() {
     setOauthStarting(true);
     try {
-      const res = await fetch("/api/rosetta/claude-oauth-start", {
+      const res = await fetch("/api/rosetta/anthropic-oauth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Claude OAuth start failed");
+      if (!data.ok) throw new Error(data.error || "Anthropic OAuth start failed");
       setOauthLoginId(data.loginId);
       setOauthAuthUrl(data.authUrl || "");
       setOauthCallbackInput("");
       setOauthStatusText("");
       window.open(data.authUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Claude OAuth start failed");
+      toast.error(error instanceof Error ? error.message : "Anthropic OAuth start failed");
       setOauthLoginId(""); setOauthAuthUrl(""); setOauthStatusText("");
     } finally {
       setOauthStarting(false);
@@ -140,7 +140,7 @@ export default function ClaudeAccountsPage() {
     setOauthSubmitting(true);
     setOauthStatusText("");
     try {
-      const res = await fetch("/api/rosetta/claude-oauth-submit", {
+      const res = await fetch("/api/rosetta/anthropic-oauth-submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId: oauthLoginId, input }),
@@ -164,7 +164,7 @@ export default function ClaudeAccountsPage() {
     setOauthLoginId(""); setOauthStatusText(""); setOauthAuthUrl(""); setOauthCallbackInput("");
     if (!loginId) return;
     try {
-      await fetch("/api/rosetta/claude-oauth-cancel", {
+      await fetch("/api/rosetta/anthropic-oauth-cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId }),
@@ -176,7 +176,7 @@ export default function ClaudeAccountsPage() {
 
   async function handleToggle(account: ClaudeAccount) {
     try {
-      const res = await fetch("/api/rosetta/claude-toggle-account", {
+      const res = await fetch("/api/rosetta/anthropic-toggle-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -192,7 +192,7 @@ export default function ClaudeAccountsPage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
-      const res = await fetch("/api/rosetta/claude-delete-account", {
+      const res = await fetch("/api/rosetta/anthropic-delete-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: deleteTarget.id }),
@@ -212,7 +212,7 @@ export default function ClaudeAccountsPage() {
   async function handleRefresh(account: ClaudeAccount) {
     setBusyId(account.id);
     try {
-      const res = await fetch("/api/rosetta/claude-refresh-quota", {
+      const res = await fetch("/api/rosetta/anthropic-refresh-quota", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -250,9 +250,9 @@ export default function ClaudeAccountsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal">Claude 账号池</h1>
+          <h1 className="text-2xl font-semibold tracking-normal">Anthropic 账号池</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            管理独立的 claude-accounts.json(Anthropic 订阅 OAuth 账号);卡密与用量复用 access-keys.json。
+            管理独立的 anthropic-accounts.json(Anthropic 订阅 OAuth 账号);卡密与用量复用 access-keys.json。
             5h/周额度在客户端发起请求并上报后显示。
           </p>
         </div>
@@ -271,9 +271,9 @@ export default function ClaudeAccountsPage() {
       {oauthLoginId ? (
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
           <div className="space-y-1">
-            <p className="font-medium">完成 Claude OAuth 登录</p>
+            <p className="font-medium">完成 Anthropic OAuth 登录</p>
             <p className="text-muted-foreground">
-              1. 在新打开的页面用 Claude 订阅号(Pro/Max)登录并授权(没弹出的话,
+              1. 在新打开的页面用 Anthropic 订阅号(Pro/Max)登录并授权(没弹出的话,
               {oauthAuthUrl ? (
                 <a href={oauthAuthUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">点此打开授权页</a>
               ) : "请重新发起"}
@@ -343,7 +343,7 @@ export default function ClaudeAccountsPage() {
         </CardHeader>
         <CardContent>
           {!accounts.length ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无 Claude 账号</div>
+            <div className="py-8 text-center text-sm text-muted-foreground">暂无 Anthropic 账号</div>
           ) : (
             <Table>
               <TableHeader>
@@ -405,7 +405,7 @@ export default function ClaudeAccountsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除 Claude 账号</AlertDialogTitle>
+            <AlertDialogTitle>删除 Anthropic 账号</AlertDialogTitle>
             <AlertDialogDescription>
               确定删除 #{deleteTarget?.id} {deleteTarget?.email}?此操作不可撤销。
             </AlertDialogDescription>
