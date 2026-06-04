@@ -95,7 +95,7 @@ function LocalPoolQuotaDisplay() {
 
 export function DashboardPage() {
   const {
-    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, bucketFractions, bucketResetMs, codexQuota,
+    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, quotaMode, bucketFractions, bucketResetMs, codexQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens, cumulativeSaving,
     opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit, recoveryRemainingMs, recoveryWindowMs,
   } = useAppStore()
@@ -237,10 +237,9 @@ export function DashboardPage() {
                       ⚠ 绑定账号暂时不可用,额度数据无法确认:{leaserError}
                     </div>
                   )}
-                  {/* 远程/绑定模式:无 bucket 数据 / 账号异常 → 显示「未知」(fraction=-1),
-                      不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。 */}
-                  {visibleBars.opus && <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} fraction={accountProblem ? -1 : (bucketFractions?.opus ?? -1)} resetMs={bucketResetMs?.opus} color="bg-purple-500" />}
-                  {visibleBars.gemini && <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} fraction={accountProblem ? -1 : (bucketFractions?.gemini ?? -1)} resetMs={bucketResetMs?.gemini} color="bg-[var(--accent)]" />}
+                  {/* static 模式:显示 used/limit 进度条; dynamic/unlimited:显示百分比血条 */}
+                  {visibleBars.opus && <UsageBar label="Claude (Opus)" used={quotaMode === 'static' ? opusUsed : null} limit={quotaMode === 'static' ? opusLimit : null} fraction={quotaMode !== 'static' ? (accountProblem ? -1 : (bucketFractions?.opus ?? -1)) : -1} resetMs={bucketResetMs?.opus} color="bg-purple-500" />}
+                  {visibleBars.gemini && <UsageBar label="Gemini" used={quotaMode === 'static' ? geminiUsed : null} limit={quotaMode === 'static' ? geminiLimit : null} fraction={quotaMode !== 'static' ? (accountProblem ? -1 : (bucketFractions?.gemini ?? -1)) : -1} resetMs={bucketResetMs?.gemini} color="bg-[var(--accent)]" />}
                   {visibleBars.codex && (codexQuota && !accountProblem ? (
                     <>
                       <UsageBar label="Codex · 5h" used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />

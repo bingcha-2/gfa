@@ -4,6 +4,7 @@ import { LeaseService, LeaseServiceHttpError, type CreditTracker, type TokenUsag
 import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
+import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -51,6 +52,14 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
           return service.accessKeyStore.cardsBoundToAccount(accountId, provider.id);
         } catch { return []; }
       },
+      getCardWeight: (cardId: string) => {
+        try {
+          const record = service.accessKeyStore.findById(cardId);
+          const w = Math.floor(Number((record as any)?.weight ?? 1));
+          return (Number.isFinite(w) && w >= 1) ? Math.min(w, ACCOUNT_SHARE_CAPACITY) : 1;
+        } catch { return 1; }
+      },
+      accountShareCapacity: ACCOUNT_SHARE_CAPACITY,
     });
     super(
       provider,

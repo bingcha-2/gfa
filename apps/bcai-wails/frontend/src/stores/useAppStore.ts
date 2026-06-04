@@ -22,6 +22,7 @@ interface AppState {
   autoLeaseRunning: boolean
   cardUnusable: boolean
   cardProducts: string[]
+  quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
   bucketFractions: Record<string, number>
   bucketResetMs: Record<string, number>
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
@@ -80,6 +81,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoLeaseRunning: false,
   cardUnusable: false,
   cardProducts: [],
+  quotaMode: '',
   bucketFractions: {},
   bucketResetMs: {},
   codexQuota: null,
@@ -120,6 +122,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         autoLeaseRunning: data.leaser?.autoLeaseRunning || false,
         cardUnusable: data.leaser?.cardUnusable || false,
         cardProducts: data.leaser?.accessKeyStatus?.products || [],
+        quotaMode: data.leaser?.quotaMode || data.leaser?.accessKeyStatus?.quotaMode || '',
         bucketFractions: data.leaser?.bucketFractions || {},
         bucketResetMs: data.leaser?.bucketResetMs || {},
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,

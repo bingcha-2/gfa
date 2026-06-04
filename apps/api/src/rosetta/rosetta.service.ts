@@ -7,7 +7,7 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { AgentAccountService } from "../automation/agent-account.service";
 
-import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired } from "../token-server/token-billing";
+import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired, ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   type CachedToken,
@@ -31,9 +31,7 @@ type RosettaServiceOptions = {
   codexOAuthFetch?: typeof fetch;
 };
 
-/** Total shares (份) per upstream account. A card consumes `weight` shares:
- * 1 = 拼车 (4 such cards share one account), 4 = 独享 (one card takes the account). */
-const ACCOUNT_SHARE_CAPACITY = 4;
+// ACCOUNT_SHARE_CAPACITY is now imported from token-billing.ts (shared constant).
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/oauth/authorize";
 const CODEX_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
@@ -1408,6 +1406,11 @@ export class RosettaService {
         weeklyTokenLimit: Math.max(0, Number(payload?.weeklyTokenLimit || 0)),
         weight,
         ...(products.length ? { bindings } : {}),
+        // Universal cards can also select products (restrict available services).
+        // Empty products = all products available.
+        ...(!products.length && Array.isArray(payload?.products) && payload.products.length
+          ? { products: payload.products.map((p: unknown) => String(p)).filter((p: string) => p === 'codex' || p === 'antigravity') }
+          : {}),
         createdAt: nowIso(),
       };
       keys.push(record);

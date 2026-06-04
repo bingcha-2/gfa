@@ -571,16 +571,23 @@ export class AccessKeyStore {
 
     const windowLimit = Number(record.windowLimit || 0);
 
-    // Products the card is sold for (bindings keys with a real account id).
-    // Empty = pool card. Lets the client show only the relevant usage bars.
+    // Products the card is sold for (bindings keys with a real account id,
+    // or explicit products array for universal cards). Empty = pool card / all products.
     const products = record.bindings && typeof record.bindings === 'object'
       ? Object.keys(record.bindings).filter((p) => Number((record.bindings as Record<string, number>)[p]) > 0)
-      : [];
+      : (Array.isArray((record as any).products) ? (record as any).products : []);
+
+    // quotaMode tells the client which quota system to use:
+    //   static    — card has its own tokenWindowLimit, use localQuota
+    //   dynamic   — bound card, fair-share + upstream controls quota
+    //   unlimited — no limit, no binding
+    const quotaMode = tLimit > 0 ? 'static' : (this.hasAnyBinding(record) ? 'dynamic' : 'unlimited');
 
     return {
       id: record.id,
       name: record.name || '',
       status: record.status || 'active',
+      quotaMode,
       products,
       firstUsedAt: record.firstUsedAt || '',
       expiresAt,
