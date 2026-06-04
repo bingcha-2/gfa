@@ -14,8 +14,11 @@
 //      `anthropic-ratelimit-*` header (rawHeaders) so the real format can be
 //      confirmed from one live click and the parser finalized if needed.
 
+// The unified 5h/weekly rate-limit headers only appear on a REAL generation
+// response — count_tokens returns none. So the probe sends a minimal
+// /v1/messages with max_tokens:1 (≈1 output token, cost negligible).
 const CLAUDE_MESSAGES_URL =
-  process.env.BCAI_CLAUDE_PROBE_URL || "https://api.anthropic.com/v1/messages/count_tokens";
+  process.env.BCAI_CLAUDE_PROBE_URL || "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODELS_URL =
   process.env.BCAI_CLAUDE_MODELS_URL || "https://api.anthropic.com/v1/models";
 // Fallback model when discovery fails. Model availability varies per subscription
@@ -159,8 +162,9 @@ export async function fetchClaudeQuotaUpstream(
       },
       body: JSON.stringify({
         model,
+        max_tokens: 1,
         system: [{ type: "text", text: CLAUDE_CODE_SYSTEM }],
-        messages: [{ role: "user", content: "quota probe" }],
+        messages: [{ role: "user", content: "hi" }],
       }),
     });
   } catch (err: any) {

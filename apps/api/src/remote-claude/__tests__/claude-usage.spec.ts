@@ -80,9 +80,10 @@ describe("fetchClaudeQuotaUpstream", () => {
     );
     const snap = await fetchClaudeQuotaUpstream("token");
     expect(calls[0].url).toContain("/v1/models");
-    expect(calls[1].url).toContain("count_tokens");
+    expect(calls[1].url).toMatch(/\/v1\/messages$/);
     // Prefers the haiku from the discovered list, not the opus.
     expect(calls[1].body.model).toBe("claude-haiku-4-5-20251001");
+    expect(calls[1].body.max_tokens).toBe(1);
     expect(snap.claudeQuota?.hourlyPercent).toBe(55);
   });
 
