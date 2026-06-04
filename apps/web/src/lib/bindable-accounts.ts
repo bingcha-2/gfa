@@ -5,6 +5,7 @@ interface RawAccount {
   email: string;
   usedShares?: number;
   shareCapacity?: number;
+  planType?: string;
 }
 
 /**
@@ -23,6 +24,7 @@ export function toBindableAccounts(
       email: String(a.email || ""),
       usedShares: Number(a.usedShares || 0),
       shareCapacity: Number(a.shareCapacity || 0) > 0 ? Number(a.shareCapacity) : 4,
+      planType: String(a.planType || ""),
     }));
   return [...tag(codex, "codex"), ...tag(antigravity, "antigravity")];
 }

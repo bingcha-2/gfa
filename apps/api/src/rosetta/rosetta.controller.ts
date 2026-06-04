@@ -193,6 +193,13 @@ export class RosettaController {
     return result;
   }
 
+  @Post("access-key-set-bindings")
+  setAccessKeyBindings(@Body() body: any) {
+    const result = this.rosetta.setAccessKeyBindings(body);
+    this.reloadKeyStores();
+    return result;
+  }
+
   @Post("access-key-delete")
   async deleteAccessKey(@Body() body: any) {
     const result = this.rosetta.deleteAccessKey(body);
