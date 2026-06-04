@@ -104,8 +104,54 @@ func TestRestoreClaudeSettingsRemovesInjectedKeysWhenAbsentBefore(t *testing.T) 
 	if _, ok := env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN should be removed on restore: %v", env)
 	}
+	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
+		t.Fatalf("ANTHROPIC_API_KEY should be removed on restore (was absent before): %v", env)
+	}
 	if IsClaudeInjected(9000) {
 		t.Fatal("IsClaudeInjected should be false after restore")
+	}
+}
+
+// 注入必须把 ANTHROPIC_API_KEY 置「空串」(而非删除):空串经 Object.assign 覆盖
+// shell/settings 里的真实 key,强制 claude 走哨兵 AUTH_TOKEN→代理,不进 API-key 模式。
+func TestInjectClaudeSettingsNeutralizesApiKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"env": map[string]interface{}{"ANTHROPIC_API_KEY": "sk-user-real-key"},
+	})
+
+	if err := InjectClaudeSettings(9000); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	env := claudeEnvBlock(t)
+	v, ok := env["ANTHROPIC_API_KEY"]
+	if !ok {
+		t.Fatal("ANTHROPIC_API_KEY must remain present (empty) to override shell — not deleted")
+	}
+	if v != "" {
+		t.Fatalf("ANTHROPIC_API_KEY should be neutralized to empty string, got %v", v)
+	}
+}
+
+func TestRestoreClaudeSettingsRestoresPriorApiKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"env": map[string]interface{}{"ANTHROPIC_API_KEY": "sk-user-real-key"},
+	})
+
+	if err := InjectClaudeSettings(7777); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	if claudeEnvBlock(t)["ANTHROPIC_API_KEY"] != "" {
+		t.Fatal("api key not neutralized while injected")
+	}
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	if got := claudeEnvBlock(t)["ANTHROPIC_API_KEY"]; got != "sk-user-real-key" {
+		t.Fatalf("prior api key not restored: %v", got)
 	}
 }
 

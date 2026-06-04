@@ -29,10 +29,19 @@ import (
 const (
 	claudeBaseURLKey   = "ANTHROPIC_BASE_URL"
 	claudeAuthTokenKey = "ANTHROPIC_AUTH_TOKEN"
+	claudeApiKeyKey    = "ANTHROPIC_API_KEY"
 	// 哨兵 token:Claude Code 要求 ANTHROPIC_AUTH_TOKEN 非空才会走 ANTHROPIC_BASE_URL;
 	// 真正打上游用的 OAuth token 由本地代理在转发时替换,这里只占位。
 	claudeSentinelAuthToken = "bcai-claude-proxy"
 )
+
+// 为什么要中和 ANTHROPIC_API_KEY:Claude Code 启动时 Object.assign(process.env,
+// settings.env),只要进程里存在非空 ANTHROPIC_API_KEY(来自用户 shell 或 settings.json
+// 自带),claude 就进入「API Usage Billing」(API-key 模式),忽略我们注入的哨兵
+// ANTHROPIC_AUTH_TOKEN,把用户个人 key 直接发给本地代理 → 接管失效 + "Both
+// ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set" 告警。把它在 settings.env 里置「空字符串」
+// 而非删除:置空才能经 Object.assign 覆盖 shell 里 export 的同名变量(删除挡不住 shell)。
+// 空串被 claude 视作未设置 → 强制改走 AUTH_TOKEN→代理链路。还原时按备份写回/删除。
 
 var claudeInjectMu sync.Mutex
 
@@ -59,6 +68,8 @@ type claudeEnvBackup struct {
 	PrevBaseURL   string `json:"prevBaseUrl"`
 	HadAuthToken  bool   `json:"hadAuthToken"`
 	PrevAuthToken string `json:"prevAuthToken"`
+	HadApiKey     bool   `json:"hadApiKey"`
+	PrevApiKey    string `json:"prevApiKey"`
 }
 
 // loadClaudeSettings 读取 settings.json 为通用 map。返回 (settings, exists)。
@@ -118,6 +129,12 @@ func InjectClaudeSettings(proxyPort int) error {
 		} else if _, ok := env[claudeAuthTokenKey]; ok {
 			bk.HadAuthToken = true
 		}
+		if v, ok := env[claudeApiKeyKey].(string); ok {
+			bk.HadApiKey = true
+			bk.PrevApiKey = v
+		} else if _, ok := env[claudeApiKeyKey]; ok {
+			bk.HadApiKey = true
+		}
 		if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
 			_ = os.MkdirAll(claudeConfigDir(), 0o755)
 			_ = writeFileAtomic(claudeBackupPath(), b, 0o644)
@@ -126,6 +143,8 @@ func InjectClaudeSettings(proxyPort int) error {
 
 	env[claudeBaseURLKey] = claudeProxyBaseURL(proxyPort)
 	env[claudeAuthTokenKey] = claudeSentinelAuthToken
+	// 中和 ANTHROPIC_API_KEY(置空覆盖 shell/settings 里的真实 key),强制走哨兵 AUTH_TOKEN→代理。
+	env[claudeApiKeyKey] = ""
 	settings["env"] = env
 
 	if err := writeClaudeSettings(settings); err != nil {
@@ -160,10 +179,12 @@ func RestoreClaudeSettings() error {
 	if bk != nil {
 		restoreKey(claudeBaseURLKey, bk.PrevBaseURL, bk.HadBaseURL)
 		restoreKey(claudeAuthTokenKey, bk.PrevAuthToken, bk.HadAuthToken)
+		restoreKey(claudeApiKeyKey, bk.PrevApiKey, bk.HadApiKey)
 	} else {
-		// 没有备份(异常情况):尽力移除我们写入的两个键。
+		// 没有备份(异常情况):尽力移除我们写入的键。
 		delete(env, claudeBaseURLKey)
 		delete(env, claudeAuthTokenKey)
+		delete(env, claudeApiKeyKey)
 	}
 
 	if len(env) == 0 {
