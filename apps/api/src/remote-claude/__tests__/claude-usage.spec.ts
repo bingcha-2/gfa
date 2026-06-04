@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fetchClaudeQuotaUpstream } from "../auth/claude-usage";
 
-function mockFetchOnce(status: number, headers: Record<string, string>, body = "{}") {
+function mockUsage(status: number, json: unknown) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(body, { status, headers })),
+    vi.fn(async () => new Response(typeof json === "string" ? json : JSON.stringify(json), { status })),
   );
 }
 
@@ -13,78 +13,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("fetchClaudeQuotaUpstream", () => {
-  it("parses 5h + weekly remaining% from limit/remaining headers and resets to ISO", async () => {
-    mockFetchOnce(200, {
-      "anthropic-ratelimit-unified-5h-limit": "100",
-      "anthropic-ratelimit-unified-5h-remaining": "73",
-      "anthropic-ratelimit-unified-5h-reset": "1893456000", // unix seconds
-      "anthropic-ratelimit-unified-7d-limit": "1000",
-      "anthropic-ratelimit-unified-7d-remaining": "410",
+describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
+  it("converts USED utilization (0–1 fraction) to REMAINING percent and keeps ISO resets", async () => {
+    const reset5h = "2026-06-04T18:00:00.000Z";
+    const reset7d = "2026-06-09T00:00:00.000Z";
+    mockUsage(200, {
+      five_hour: { utilization: 0.27, resets_at: reset5h },
+      seven_day: { utilization: 0.6, resets_at: reset7d },
     });
     const snap = await fetchClaudeQuotaUpstream("token");
     expect(snap.httpStatus).toBe(200);
-    expect(snap.claudeQuota).toMatchObject({ hourlyPercent: 73, weeklyPercent: 41 });
-    expect(snap.claudeQuota?.hourlyResetTime).toBe(new Date(1893456000 * 1000).toISOString());
+    // remaining = (1 - used) * 100
+    expect(snap.claudeQuota).toMatchObject({ hourlyPercent: 73, weeklyPercent: 40 });
+    expect(snap.claudeQuota?.hourlyResetTime).toBe(reset5h);
+    expect(snap.claudeQuota?.weeklyResetTime).toBe(reset7d);
   });
 
-  it("honors a direct remaining-percent header when present", async () => {
-    mockFetchOnce(200, {
-      "anthropic-ratelimit-unified-5h-remaining-percent": "12.5",
-      "anthropic-ratelimit-unified-week-remaining-percent": "80",
+  it("also accepts utilization already expressed as 0–100", async () => {
+    mockUsage(200, { five_hour: { utilization: 25, resets_at: null } });
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.claudeQuota?.hourlyPercent).toBe(75);
+  });
+
+  it("falls back to the most restrictive weekly variant when seven_day is absent", async () => {
+    mockUsage(200, {
+      five_hour: { utilization: 0.1, resets_at: null },
+      seven_day_opus: { utilization: 0.2, resets_at: null }, // 80% remaining
+      seven_day_sonnet: { utilization: 0.7, resets_at: null }, // 30% remaining (more restrictive)
     });
     const snap = await fetchClaudeQuotaUpstream("token");
-    expect(snap.claudeQuota).toMatchObject({ hourlyPercent: 12.5, weeklyPercent: 80 });
+    expect(snap.claudeQuota?.weeklyPercent).toBe(30);
   });
 
-  it("captures every anthropic-ratelimit-* header but returns no quota when windows are absent", async () => {
-    mockFetchOnce(200, {
-      "anthropic-ratelimit-requests-limit": "5",
-      "anthropic-ratelimit-requests-remaining": "4",
-      "content-type": "application/json",
-    });
+  it("returns raw payload but no quota when no windows are present", async () => {
+    mockUsage(200, { extra_usage: { is_enabled: false } });
     const snap = await fetchClaudeQuotaUpstream("token");
     expect(snap.claudeQuota).toBeUndefined();
-    expect(snap.rawHeaders).toMatchObject({
-      "anthropic-ratelimit-requests-limit": "5",
-      "anthropic-ratelimit-requests-remaining": "4",
-    });
-    expect(snap.rawHeaders["content-type"]).toBeUndefined();
+    expect(snap.raw).toMatchObject({ extra_usage: { is_enabled: false } });
   });
 
-  it("surfaces an error (and any captured headers) on a non-ok response", async () => {
-    mockFetchOnce(401, { "anthropic-ratelimit-unified-status": "rejected" }, "unauthorized");
+  it("surfaces an error on a non-ok response", async () => {
+    mockUsage(401, "unauthorized");
     const snap = await fetchClaudeQuotaUpstream("token");
     expect(snap.httpStatus).toBe(401);
     expect(snap.error).toContain("401");
-    expect(snap.rawHeaders["anthropic-ratelimit-unified-status"]).toBe("rejected");
-  });
-
-  it("discovers a model from /v1/models (prefers haiku) and uses it for the probe", async () => {
-    const calls: Array<{ url: string; body?: any }> = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: any) => {
-        calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
-        if (String(url).includes("/v1/models")) {
-          return new Response(
-            JSON.stringify({ data: [{ id: "claude-opus-4-20250514" }, { id: "claude-haiku-4-5-20251001" }] }),
-            { status: 200 },
-          );
-        }
-        return new Response("{}", {
-          status: 200,
-          headers: { "anthropic-ratelimit-unified-5h-remaining-percent": "55" },
-        });
-      }),
-    );
-    const snap = await fetchClaudeQuotaUpstream("token");
-    expect(calls[0].url).toContain("/v1/models");
-    expect(calls[1].url).toMatch(/\/v1\/messages$/);
-    // Prefers the haiku from the discovered list, not the opus.
-    expect(calls[1].body.model).toBe("claude-haiku-4-5-20251001");
-    expect(calls[1].body.max_tokens).toBe(1);
-    expect(snap.claudeQuota?.hourlyPercent).toBe(55);
   });
 
   it("returns an error without calling fetch when no token is given", async () => {

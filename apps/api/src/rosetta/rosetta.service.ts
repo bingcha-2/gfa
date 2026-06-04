@@ -1607,25 +1607,22 @@ export class RosettaService {
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
 
       const snap = await fetchClaudeQuotaUpstream(token);
-      // 始终记录抓到的限流头,便于一次真实点击后核对/定稿解析。
+      // 记录 /api/oauth/usage 原始返回,便于核对/排查。
       console.log(
-        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} headers=${JSON.stringify(snap.rawHeaders)}${snap.error ? ` error=${snap.error}` : ""}`,
+        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} usage=${JSON.stringify(snap.raw)}${snap.error ? ` error=${snap.error}` : ""}`,
       );
       const cq = snap.claudeQuota;
       if (!cq) {
-        // token 已刷新并落盘;额度头未解析到 → 仍算成功,回带原始头让前端/日志可见。
+        // token 已刷新并落盘;额度未解析到 → 仍算成功,回带原始返回便于排查。
         writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-        const headerNames = Object.keys(snap.rawHeaders);
         return {
           ok: true,
           email: acc.email,
           tokenValid: true,
           quotaError: snap.error
-            ? `额度探测失败:${snap.error}`
-            : headerNames.length
-              ? `本次未解析到 5h/周额度头(已记录:${headerNames.join(", ")})`
-              : "本次探测未返回任何限流头(已记录)",
-          rawHeaders: snap.rawHeaders,
+            ? `额度获取失败:${snap.error}`
+            : "本次未拿到 5h/周额度(该号可能非订阅号或无用量数据)",
+          raw: snap.raw,
         };
       }
       const weeklyBinds = cq.weeklyPercent < cq.hourlyPercent;
@@ -1648,7 +1645,6 @@ export class RosettaService {
         weeklyPercent: cq.weeklyPercent,
         hourlyResetTime: cq.hourlyResetTime || "",
         weeklyResetTime: cq.weeklyResetTime || "",
-        rawHeaders: snap.rawHeaders,
       };
     } catch (err: any) {
       return { ok: false, email: acc.email, error: String(err?.message || err) };

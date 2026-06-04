@@ -1,34 +1,24 @@
-// Server-side Claude (Anthropic) upstream quota probe.
+// Server-side Claude (Anthropic) upstream quota fetch.
 //
-// Unlike codex (which has a JSON usage endpoint), Claude exposes its 5h/weekly
-// subscription windows ONLY via `anthropic-ratelimit-unified-*` response headers
-// on real API calls. So the console "刷新额度" button fires a minimal probe with
-// a freshly-refreshed OAuth access token and reads those headers.
+// Claude Code reads subscription usage from a dedicated, side-effect-free
+// endpoint: GET https://api.anthropic.com/api/oauth/usage (see Claude Code
+// source: src/services/api/usage.ts). It returns per-window utilization — NO
+// message is sent and NO quota is consumed. We mirror that here so the console
+// "刷新额度" button can pull the account's 5h/weekly windows on demand.
 //
-// Two hard constraints (both handled here):
-//   1. OAuth subscription tokens are authorized ONLY for Claude Code — the probe
-//      must mimic Claude Code (anthropic-beta: oauth-2025-04-20 + the Claude Code
-//      system prompt) or Anthropic rejects it (401/400).
-//   2. The exact unified header field names are not pinned in this repo. We parse
-//      defensively across the known candidate names AND return EVERY captured
-//      `anthropic-ratelimit-*` header (rawHeaders) so the real format can be
-//      confirmed from one live click and the parser finalized if needed.
+// Response shape (Claude Code's `Utilization`):
+//   { five_hour?: { utilization, resets_at }, seven_day?: {...},
+//     seven_day_opus?, seven_day_sonnet?, seven_day_oauth_apps?, extra_usage? }
+// `utilization` is a USED fraction (Claude Code's StatusLine multiplies by 100),
+// `resets_at` is an ISO 8601 timestamp. We store REMAINING percent (higher =
+// healthier) to match codex/the blood bar: remaining = (1 - utilization) * 100.
 
-// The unified 5h/weekly rate-limit headers only appear on a REAL generation
-// response — count_tokens returns none. So the probe sends a minimal
-// /v1/messages with max_tokens:1 (≈1 output token, cost negligible).
-const CLAUDE_MESSAGES_URL =
-  process.env.BCAI_CLAUDE_PROBE_URL || "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODELS_URL =
-  process.env.BCAI_CLAUDE_MODELS_URL || "https://api.anthropic.com/v1/models";
-// Fallback model when discovery fails. Model availability varies per subscription
-// (a hardcoded id can 404), so we discover a valid one from the account first.
-const CLAUDE_PROBE_MODEL_FALLBACK =
-  process.env.BCAI_CLAUDE_PROBE_MODEL || "claude-haiku-4-5-20251001";
+const CLAUDE_USAGE_URL =
+  process.env.BCAI_CLAUDE_USAGE_URL || "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
-// Anthropic only accepts OAuth subscription tokens when the request looks like
-// Claude Code — the first system block must be exactly this string.
-const CLAUDE_CODE_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude.";
+// Claude Code sends `claude-code/<version>`; the endpoint is lenient but we
+// mirror the shape. Overridable if Anthropic ever gates on a specific version.
+const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.0.5";
 
 export interface ClaudeQuotaWindow {
   hourlyPercent: number;
@@ -39,14 +29,18 @@ export interface ClaudeQuotaWindow {
 
 export interface ClaudeQuotaSnapshot {
   planType?: string;
-  // Present only when the unified 5h/weekly headers could be parsed.
+  // Present only when at least one window could be read.
   claudeQuota?: ClaudeQuotaWindow;
-  // Every captured `anthropic-ratelimit-*` header (lowercased name → value),
-  // always returned for diagnosis/finalizing the parser.
-  rawHeaders: Record<string, string>;
+  // Parsed usage payload, always returned for diagnosis/logging.
+  raw: unknown;
   httpStatus: number;
-  // Best-effort error text when the probe itself failed (network / auth).
+  // Best-effort error text when the fetch itself failed (network / auth).
   error?: string;
+}
+
+interface RawRateLimit {
+  utilization?: number | null;
+  resets_at?: string | number | null;
 }
 
 function clampPercent(value: number): number {
@@ -54,129 +48,56 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-/** Convert a reset header (unix seconds, unix ms, or HTTP/ISO date) to ISO. */
-function resetToIso(raw: string | undefined): string {
-  if (!raw) return "";
-  const trimmed = raw.trim();
+/** Convert a reset value (ISO string, or unix seconds/ms) to an ISO string. */
+function resetToIso(raw: string | number | null | undefined): string {
+  if (raw == null) return "";
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return new Date(raw < 1e12 ? raw * 1000 : raw).toISOString();
+  }
+  const trimmed = String(raw).trim();
   if (!trimmed) return "";
   if (/^\d+$/.test(trimmed)) {
-    let n = Number(trimmed);
-    if (!Number.isFinite(n) || n <= 0) return "";
-    // Heuristic: < 1e12 → seconds; else milliseconds.
-    if (n < 1e12) n *= 1000;
-    return new Date(n).toISOString();
+    const n = Number(trimmed);
+    return new Date(n < 1e12 ? n * 1000 : n).toISOString();
   }
   const parsed = Date.parse(trimmed);
   return Number.isFinite(parsed) && parsed > 0 ? new Date(parsed).toISOString() : "";
 }
 
-/**
- * Derive a remaining-percent for one window from a header set, trying several
- * shapes Anthropic has used: a direct percentage, or remaining/limit counts.
- * Returns -1 when nothing usable is found.
- */
-function windowPercent(h: Record<string, string>, keys: string[]): number {
-  for (const k of keys) {
-    const pctKey = `anthropic-ratelimit-unified-${k}-remaining-percent`;
-    if (h[pctKey] != null) return clampPercent(Number(h[pctKey]));
-  }
-  for (const k of keys) {
-    const remaining = h[`anthropic-ratelimit-unified-${k}-remaining`];
-    const limit = h[`anthropic-ratelimit-unified-${k}-limit`];
-    if (remaining != null && limit != null) {
-      const r = Number(remaining);
-      const l = Number(limit);
-      if (Number.isFinite(r) && Number.isFinite(l) && l > 0) return clampPercent((r / l) * 100);
-    }
-  }
-  return -1;
-}
-
-function windowReset(h: Record<string, string>, keys: string[]): string {
-  for (const k of keys) {
-    const v = h[`anthropic-ratelimit-unified-${k}-reset`];
-    const iso = resetToIso(v);
-    if (iso) return iso;
-  }
-  return "";
+/** REMAINING percent from a window's USED `utilization` (0–1 fraction, or 0–100). */
+function remainingPercent(w: RawRateLimit | null | undefined): number {
+  if (!w || w.utilization == null || !Number.isFinite(Number(w.utilization))) return -1;
+  const util = Number(w.utilization);
+  const usedPct = util <= 1 ? util * 100 : util;
+  return clampPercent(100 - usedPct);
 }
 
 /**
- * Pick a model the account can actually use. A hardcoded id can 404 (model set
- * varies per subscription), so we read /v1/models and prefer the cheapest
- * (a haiku). Best-effort: returns "" on any failure so the caller falls back.
- */
-async function discoverProbeModel(accessToken: string): Promise<string> {
-  try {
-    const res = await fetch(CLAUDE_MODELS_URL, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": CLAUDE_OAUTH_BETA,
-        accept: "application/json",
-      },
-    });
-    if (!res.ok) return "";
-    const body: any = await res.json();
-    const arr = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : [];
-    const ids: string[] = arr
-      .map((m: any) => String(m?.id || m?.slug || m?.model || m || "").trim())
-      .filter(Boolean);
-    if (!ids.length) return "";
-    return ids.find((id) => id.toLowerCase().includes("haiku")) || ids[0];
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Probe Anthropic with the account's access token and read the subscription
- * 5h/weekly windows from the response's `anthropic-ratelimit-unified-*` headers.
- * Best-effort: never throws. Always returns rawHeaders so the caller can log and
- * (if needed) finalize the parser against the real header names.
+ * Fetch the account's Claude 5h/weekly remaining quota from the dedicated
+ * /api/oauth/usage endpoint (no message sent, no quota consumed). Best-effort:
+ * never throws. Always returns `raw` (+ httpStatus) for diagnosis.
  */
 export async function fetchClaudeQuotaUpstream(
   accessToken: string,
 ): Promise<ClaudeQuotaSnapshot> {
-  const empty = (extra: Partial<ClaudeQuotaSnapshot>): ClaudeQuotaSnapshot => ({
-    rawHeaders: {},
-    httpStatus: 0,
-    ...extra,
-  });
-  if (!accessToken) return empty({ error: "missing access token" });
-
-  const model = (await discoverProbeModel(accessToken)) || CLAUDE_PROBE_MODEL_FALLBACK;
+  if (!accessToken) return { raw: null, httpStatus: 0, error: "missing access token" };
 
   let resp: Response;
   try {
-    resp = await fetch(CLAUDE_MESSAGES_URL, {
-      method: "POST",
+    resp = await fetch(CLAUDE_USAGE_URL, {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "content-type": "application/json",
         accept: "application/json",
-        "anthropic-version": "2023-06-01",
         "anthropic-beta": CLAUDE_OAUTH_BETA,
-        "user-agent": "claude-cli/1.0.0 (external, cli)",
+        "user-agent": CLAUDE_CODE_UA,
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1,
-        system: [{ type: "text", text: CLAUDE_CODE_SYSTEM }],
-        messages: [{ role: "user", content: "hi" }],
-      }),
     });
   } catch (err: any) {
-    return empty({ error: String(err?.message || err) });
+    return { raw: null, httpStatus: 0, error: String(err?.message || err) };
   }
-
-  // Capture every anthropic-ratelimit-* header (lowercased) for diagnosis.
-  const rawHeaders: Record<string, string> = {};
-  resp.headers.forEach((value, name) => {
-    const lower = name.toLowerCase();
-    if (lower.startsWith("anthropic-ratelimit")) rawHeaders[lower] = value;
-  });
 
   if (!resp.ok) {
     let body = "";
@@ -185,27 +106,43 @@ export async function fetchClaudeQuotaUpstream(
     } catch {
       // ignore
     }
-    return { rawHeaders, httpStatus: resp.status, error: `HTTP ${resp.status} ${body}`.trim() };
+    return { raw: body, httpStatus: resp.status, error: `HTTP ${resp.status} ${body}`.trim() };
   }
 
-  // 5h window: try "5h" then "five_hour"; weekly: "7d" / "week" / "weekly".
-  const hourly = windowPercent(rawHeaders, ["5h", "five_hour", "fivehour"]);
-  const weekly = windowPercent(rawHeaders, ["7d", "week", "weekly", "seven_day"]);
-  const hourlyReset = windowReset(rawHeaders, ["5h", "five_hour", "fivehour"]);
-  const weeklyReset = windowReset(rawHeaders, ["7d", "week", "weekly", "seven_day"]);
+  let data: any;
+  try {
+    data = await resp.json();
+  } catch (err: any) {
+    return { raw: null, httpStatus: resp.status, error: `bad JSON: ${String(err?.message || err)}` };
+  }
+
+  const hourly = remainingPercent(data?.five_hour);
+  // Weekly: prefer the account-level seven_day window; otherwise the most
+  // restrictive (lowest remaining) of the model-specific weekly variants.
+  let weekly = remainingPercent(data?.seven_day);
+  let weeklyWindow: RawRateLimit | null | undefined = data?.seven_day;
+  if (weekly < 0) {
+    for (const key of ["seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"]) {
+      const p = remainingPercent(data?.[key]);
+      if (p >= 0 && (weekly < 0 || p < weekly)) {
+        weekly = p;
+        weeklyWindow = data?.[key];
+      }
+    }
+  }
 
   if (hourly < 0 && weekly < 0) {
-    // Probe succeeded but the unified windows weren't found under any known name.
-    return { rawHeaders, httpStatus: resp.status };
+    // Endpoint answered but carried no usable windows (e.g. non-subscriber).
+    return { raw: data, httpStatus: resp.status };
   }
   return {
-    rawHeaders,
+    raw: data,
     httpStatus: resp.status,
     claudeQuota: {
       hourlyPercent: hourly < 0 ? 100 : hourly,
       weeklyPercent: weekly < 0 ? 100 : weekly,
-      hourlyResetTime: hourlyReset,
-      weeklyResetTime: weeklyReset,
+      hourlyResetTime: resetToIso(data?.five_hour?.resets_at),
+      weeklyResetTime: resetToIso(weeklyWindow?.resets_at),
     },
   };
 }

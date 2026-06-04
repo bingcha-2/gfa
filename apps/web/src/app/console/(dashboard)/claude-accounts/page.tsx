@@ -219,9 +219,9 @@ export default function ClaudeAccountsPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "刷新失败");
-      if (data.rawHeaders) {
-        // 把抓到的真实限流头打到控制台,便于核对/定稿解析。
-        console.log(`[claude-refresh] #${account.id} anthropic-ratelimit headers:`, data.rawHeaders);
+      if (data.raw) {
+        // 打印 /api/oauth/usage 原始返回,便于排查。
+        console.log(`[claude-refresh] #${account.id} usage:`, data.raw);
       }
       if (data.quotaError) {
         toast.success(`#${account.id} token 已刷新(${data.quotaError})`);
