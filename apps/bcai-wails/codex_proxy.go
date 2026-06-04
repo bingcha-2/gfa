@@ -10,7 +10,32 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+// ttftReader 包住上游响应体,记录第一个字节到达的时刻,用于算 TTFT(首字节时延)。
+// 号池运营时 TTFT 能区分"是账号慢还是网络/上游慢",纯 token 计数看不出来。
+type ttftReader struct {
+	r           io.Reader
+	start       time.Time
+	firstByteAt time.Time
+}
+
+func (t *ttftReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if n > 0 && t.firstByteAt.IsZero() {
+		t.firstByteAt = time.Now()
+	}
+	return n, err
+}
+
+// ttftMs 返回首字节时延(毫秒);未读到任何字节时返回 -1。
+func (t *ttftReader) ttftMs() int64 {
+	if t.firstByteAt.IsZero() {
+		return -1
+	}
+	return t.firstByteAt.Sub(t.start).Milliseconds()
+}
 
 const DefaultCodexEndpoint = "https://chatgpt.com"
 
@@ -21,8 +46,8 @@ var codexDebugUsage = false
 // Codex 官方客户端身份头(值对照 cockpit DEFAULT_CODEX_*)。chatgpt.com 的
 // /backend-api/codex 用它们校验请求来自合法 Codex 客户端,缺则 401。
 const (
-	codexDefaultUserAgent  = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
-	codexDefaultOriginator = "codex_cli_rs"
+	codexDefaultUserAgent  = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexDefaultOriginator = "codex-tui"
 )
 
 // applyCodexOfficialHeaders 在转发生成请求前补齐 Codex 官方头(仅在下游未带时补)。
@@ -191,6 +216,12 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 	body = normalizeCodexRequestBody(r.URL.Path, body)
+	// 换号池 token 转发前剔除非法 reasoning.encrypted_content:上一个账号的签名对新
+	// 账号无效,留着会让 chatgpt.com 直接报签名错误(换号场景的莫名 4xx 主因)。
+	if cleaned, dropped := sanitizeCodexReasoningEncryptedContent(body); dropped > 0 {
+		body = cleaned
+		Log("[codex-proxy] #%d [生成] 剔除 %d 条非法 reasoning.encrypted_content(换号签名失配)", reqID, dropped)
+	}
 	modelKey := extractCodexModelKey(body)
 	if modelKey == "" {
 		modelKey = "gpt-5-codex"
@@ -250,6 +281,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// mid-stream. Always use the streaming client (bounded by ResponseHeaderTimeout,
 	// not a hard total timeout).
 	client := createStreamingHttpClient(upstreamProxy)
+	reqStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -276,7 +308,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if streamBack {
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		input, output, total, copyErr := copyStreamingCodexResponse(w, resp.Body)
+		tr := &ttftReader{r: resp.Body, start: reqStart}
+		input, output, total, copyErr := copyStreamingCodexResponse(w, tr)
 		details := ReportDetails{
 			StatusCode:          resp.StatusCode,
 			ModelKey:            modelKey,
@@ -294,8 +327,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			return
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			Log("[codex-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) → 已提交用量上报",
-				reqID, resp.StatusCode, input, output, total)
+			Log("[codex-proxy] #%d [生成] ✓ 上游码=%d TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
+				reqID, resp.StatusCode, tr.ttftMs(), input, output, total)
 			p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
 		} else {
 			Log("[codex-proxy] #%d [生成] ✗ 上游码=%d(非2xx)→ 上报为问题,不计费", reqID, resp.StatusCode)
