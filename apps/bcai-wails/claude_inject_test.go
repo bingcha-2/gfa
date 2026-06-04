@@ -155,6 +155,40 @@ func TestRestoreClaudeSettingsRestoresPriorApiKey(t *testing.T) {
 	}
 }
 
+// 升级边界:老版本已接管(settings 里有 base/auth 注入 + 用户真实 API key),备份文件
+// 是老格式(无 API key 字段)。新版再次注入必须补记真实 key 并置空;取消时还原回来,
+// 不能丢钥。
+func TestInjectCapturesApiKeyWhenBackupPredatesField(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	// settings.json:老版本注入留下的 base/auth + 用户真实 key(老版本没动它)。
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"env": map[string]interface{}{
+			"ANTHROPIC_BASE_URL":   "http://127.0.0.1:5000",
+			"ANTHROPIC_AUTH_TOKEN": "bcai-claude-proxy",
+			"ANTHROPIC_API_KEY":    "sk-user-real-key",
+		},
+	})
+	// 老格式备份:只记了 base/auth,没有 API key 字段。
+	oldBackup := `{"injected":true,"hadBaseUrl":false,"hadAuthToken":false}`
+	if err := os.WriteFile(filepath.Join(dir, ".bcai-claude-backup.json"), []byte(oldBackup), 0o644); err != nil {
+		t.Fatalf("seed backup: %v", err)
+	}
+
+	if err := InjectClaudeSettings(5000); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	if got := claudeEnvBlock(t)["ANTHROPIC_API_KEY"]; got != "" {
+		t.Fatalf("api key should be neutralized, got %v", got)
+	}
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	if got := claudeEnvBlock(t)["ANTHROPIC_API_KEY"]; got != "sk-user-real-key" {
+		t.Fatalf("real api key lost across upgrade-mid-takeover restore: %v", got)
+	}
+}
+
 func TestRestoreClaudeSettingsRestoresPriorUserValue(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

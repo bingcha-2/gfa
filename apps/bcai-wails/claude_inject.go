@@ -114,9 +114,15 @@ func InjectClaudeSettings(proxyPort int) error {
 	settings, _ := loadClaudeSettings()
 	env := envBlock(settings)
 
-	// 首次注入:把两个目标键的原值备份(再次注入时不覆盖备份,保证还原拿到的是用户原值)。
-	if _, statErr := os.Stat(claudeBackupPath()); os.IsNotExist(statErr) {
-		bk := claudeEnvBackup{Injected: true}
+	// 备份原值,供 Restore 精确还原。BASE_URL/AUTH_TOKEN 只在「首次注入」记录(再次注入
+	// 不覆盖,保证拿到的是用户原值)。ANTHROPIC_API_KEY 是真实密钥,必须在被置空前可靠捕获:
+	// 只要当前 settings 里存在真实 key(非空串)且备份尚未记过,就补记 —— 兼容「老版本已接管
+	// 中途升级到新版」(老备份没有 API key 字段)的场景,避免还原时把用户的真实 key 丢掉。
+	bk := readClaudeBackup()
+	backupChanged := false
+	if bk == nil {
+		bk = &claudeEnvBackup{Injected: true}
+		backupChanged = true
 		if v, ok := env[claudeBaseURLKey].(string); ok {
 			bk.HadBaseURL = true
 			bk.PrevBaseURL = v
@@ -129,12 +135,16 @@ func InjectClaudeSettings(proxyPort int) error {
 		} else if _, ok := env[claudeAuthTokenKey]; ok {
 			bk.HadAuthToken = true
 		}
-		if v, ok := env[claudeApiKeyKey].(string); ok {
+	}
+	if !bk.HadApiKey {
+		// 仅捕获真实 key(非空字符串);我们自己写入的占位空串不会被误记。
+		if v, ok := env[claudeApiKeyKey].(string); ok && v != "" {
 			bk.HadApiKey = true
 			bk.PrevApiKey = v
-		} else if _, ok := env[claudeApiKeyKey]; ok {
-			bk.HadApiKey = true
+			backupChanged = true
 		}
+	}
+	if backupChanged {
 		if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
 			_ = os.MkdirAll(claudeConfigDir(), 0o755)
 			_ = writeFileAtomic(claudeBackupPath(), b, 0o644)
