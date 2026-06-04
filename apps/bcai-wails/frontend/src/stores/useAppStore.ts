@@ -122,7 +122,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         autoLeaseRunning: data.leaser?.autoLeaseRunning || false,
         cardUnusable: data.leaser?.cardUnusable || false,
         cardProducts: data.leaser?.accessKeyStatus?.products || [],
-        quotaMode: data.leaser?.quotaMode || data.leaser?.accessKeyStatus?.quotaMode || '',
+        quotaMode: (data.leaser as any)?.quotaMode || (data.leaser?.accessKeyStatus as any)?.quotaMode || '',
         bucketFractions: data.leaser?.bucketFractions || {},
         bucketResetMs: data.leaser?.bucketResetMs || {},
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
