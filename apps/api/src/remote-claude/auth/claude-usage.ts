@@ -18,7 +18,7 @@ const CLAUDE_USAGE_URL =
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 // Claude Code sends `claude-code/<version>`; the endpoint is lenient but we
 // mirror the shape. Overridable if Anthropic ever gates on a specific version.
-const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.0.5";
+const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.1.156";
 
 export interface ClaudeQuotaWindow {
   hourlyPercent: number;
