@@ -1,0 +1,30 @@
+bcai.space {
+    # Next.js session routes (login/logout via httpOnly cookie)
+    handle /api/session/* {
+        reverse_proxy localhost:3000
+    }
+
+    # NestJS API (all other /api/* go directly to backend)
+    handle /api/* {
+        reverse_proxy localhost:3001
+    }
+
+    # Remote token server (migrated into NestJS API on :3001)
+    # Legacy clients still call /remote-token/* without /api prefix
+    handle /remote-token/* {
+        rewrite * /api{uri}
+        reverse_proxy localhost:3001
+    }
+
+    # 客户端自动升级 + 下载（直接从文件夹 serve，无需 Next.js 重建）
+    handle /updates/* {
+        root * C:/Users/Administrator/Desktop/GFA/apps/web/public/updates
+        uri strip_prefix /updates
+        file_server
+    }
+
+    # Everything else → Next.js (pages, static assets)
+    handle {
+        reverse_proxy localhost:3000
+    }
+}

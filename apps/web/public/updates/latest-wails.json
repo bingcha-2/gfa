@@ -1,27 +1,27 @@
 {
-  "version": "7.1.0",
-  "url": "https://bcai.site/updates/BingchaAI-7.1.0.exe",
-  "sha256": "E1858D1DF82F648DD11126D27F661F526CEB62C239811AEE47C1199BD998A038",
-  "size": 18266624,
-  "changelog": "修复 codex 用量计量(此前流式 token 显示为0);仪表盘纳入 codex 请求/输入输出 token/已节省统计;codex 恢复流式输出;日志优化",
+  "version": "7.2.2",
+  "url": "https://bcai.site/updates/BingchaAI-7.2.2.exe",
+  "sha256": "E456AE47DCD6A94C41B32F3D5C91C9683A96906153EEC2490AD3872DB1A83F0E",
+  "size": 18271232,
+  "changelog": "feat: fair-share quota",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.1.0-arm64.dmg",
-      "sha256": "98417EFE683034B7D2EF1229F54500E16E74BDF79F6BAECC7FBD78D0ABDF82EC",
-      "size": 9203181
+      "url": "https://bcai.site/updates/BingchaAI-7.2.2-arm64.dmg",
+      "sha256": "2D0088897EA811639D7B6A5A423C2DDA10E9133B3950F55FDC1B86C1CBC5CC11",
+      "size": 9204792
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.1.0-amd64.dmg",
-      "sha256": "A63C285C70EF474F545D315E61DCA86FD3703EFCACA39811644780E25E1AFC6A",
-      "size": 9821614
+      "url": "https://bcai.site/updates/BingchaAI-7.2.2-amd64.dmg",
+      "sha256": "86DCF71758C2E7EAE9B8DF87C8B354B840A700388FD0165EEBE497BA540C4D16",
+      "size": 9822692
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.1.0-linux-amd64.tar.gz",
-      "sha256": "35D9EF43A42D8E99BB76027F89B3282EDB75801192047960844A36585F120A89",
-      "size": 7690721
+      "url": "https://bcai.site/updates/BingchaAI-7.2.2-linux-amd64.tar.gz",
+      "sha256": "FE05D9F9EE68499A69291227DE9EB3B2B9E231E35919EE522E06CBADA52AF3F4",
+      "size": 7691155
     }
   }
 }

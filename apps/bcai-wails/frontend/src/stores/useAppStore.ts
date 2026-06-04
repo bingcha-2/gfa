@@ -72,7 +72,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => ({
   config: null,
   proxyRunning: false,
-  proxyPort: 60670,
+  proxyPort: 48800,
   leaserState: 'unconfigured',
   leaserError: '',
   accountId: 0,

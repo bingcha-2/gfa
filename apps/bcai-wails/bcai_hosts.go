@@ -5,7 +5,7 @@ import "net/url"
 // 双域名故障转移：主域名优先，失败回退到备域名。
 // 可通过环境变量 BCAI_PRIMARY_HOST / BCAI_FALLBACK_HOST 覆盖。
 var (
-	BcaiPrimaryHost  = getEnvOrDefault("BCAI_PRIMARY_HOST", "bcai.space")
+	BcaiPrimaryHost  = getEnvOrDefault("BCAI_PRIMARY_HOST", "bcai.lol")
 	BcaiFallbackHost = getEnvOrDefault("BCAI_FALLBACK_HOST", "bcai.site")
 )
 

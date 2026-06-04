@@ -1,6 +1,6 @@
 ---
 name: gfa-service-ops
-description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, extracting release artifacts into apps/web/public/updates, editing latest-wails.json, or bumping apps/bcai-wails/updater.go AppVersion.
+description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, extracting release artifacts into apps/web/public/updates, editing latest-wails.json, or bumping apps/bcai-wails/updater.go AppVersion. CRITICAL caveat for agent sandbox terminals where daemon child processes get reaped - use foreground mode instead.
 ---
 
 # GFA Service Ops
@@ -8,7 +8,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 ## Rules
 
 - Assume Windows PowerShell on customer servers.
-- Default repo path: `C:\Users\Administrator\Desktop\GFA`.
+- Default repo path: `C:\Users\Administrator\Desktop\GFA-per`.
 - Do not touch Caddy during normal code updates.
 - Do not delete `.env`, `prisma/dev.db`, backups, logs, or `apps\web\public\updates\*` unless explicitly requested.
 - Check the deployed branch before pulling. This repo currently uses `main`; old servers may use `master`.
@@ -29,11 +29,11 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 Normal code update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 pnpm start:stop
 git branch --show-current
 git pull origin main
-pnpm start:daemon
+pnpm start:daemon          # human terminal only — see caveat below
 ```
 
 Use `git pull origin master` only if `git branch --show-current` prints `master`.
@@ -43,7 +43,7 @@ Use `git pull origin master` only if `git branch --show-current` prints `master`
 Schema-sensitive update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 git pull origin main
 powershell -ExecutionPolicy Bypass -File scripts\deploy-update.ps1
 ```
@@ -53,12 +53,32 @@ Use this when Prisma schema may have changed; it backs up `prisma\dev.db` into `
 Restart only:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 pnpm start:stop
-pnpm start:daemon
+pnpm start:daemon          # human terminal only — see caveat below
 ```
 
+### Agent Terminal Caveat
+
+**CRITICAL:** `pnpm start:daemon` will NOT survive in agent sandbox terminals (e.g. Antigravity IDE, Claude Code). The daemon script spawns child processes and exits; the sandbox then reaps the orphaned child process tree. Symptoms: daemon reports `✅ All services started successfully` but `curl health` and `netstat` show nothing seconds later.
+
+**When running from an agent terminal, use foreground mode instead:**
+
+```powershell
+cd C:\Users\Administrator\Desktop\GFA-per
+pnpm start:stop
+git branch --show-current
+git pull origin main
+node scripts/start.mjs     # foreground — stays alive as a background task
+```
+
+This keeps the service alive as a long-running background task within the agent session. The service runs for as long as the agent session / task is alive.
+
+**Verification after foreground start:** Wait ~60s for build + boot, then health-check from a separate command. Do NOT kill the foreground task.
+
 ## Checks
+
+Health check may take 30-60s after start (build + boot time). Retry if first attempt gets `Connection refused`.
 
 ```powershell
 netstat -ano | findstr ":3000 :3001"
@@ -68,6 +88,15 @@ Get-Content .\logs\api-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 Get-Content .\logs\web-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 Get-Content .\logs\worker-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 ```
+
+If health check returns `Connection refused` but logs show `listening on http://localhost:3001/api`, the process likely died. Check PID:
+
+```powershell
+Get-Content .\gfa.pid
+Get-Process -Id (Get-Content .\gfa.pid) -ErrorAction SilentlyContinue
+```
+
+If PID is gone → daemon child was reaped (see Agent Terminal Caveat above). Switch to foreground mode.
 
 If a stale process still owns a GFA port:
 
@@ -106,7 +135,7 @@ The Wails build output is `apps\bcai-wails\build\bin\`, but that is not the publ
 Windows local build example:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
+cd C:\Users\Administrator\Desktop\GFA-per\apps\bcai-wails
 wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=5.1.6"
 Copy-Item .\build\bin\BingchaAI.exe ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe
 Get-FileHash ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe -Algorithm SHA256
@@ -134,7 +163,7 @@ if (-not $gh) { throw "gh CLI not found; use the curl fallback below." }
 Private GitHub Actions artifact download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $repo = "<github-owner>/<private-repo>"
 $artifactName = "BingchaAI"
 $outDir = ".\apps\web\public\updates"
@@ -157,7 +186,7 @@ If the artifact name is platform-specific, list available artifact names:
 Private GitHub Release asset download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $repo = "<github-owner>/<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"
 $outDir = ".\apps\web\public\updates"
@@ -170,7 +199,7 @@ Get-FileHash "$outDir\$assetName" -Algorithm SHA256
 If `gh` cannot be installed or authenticated, use GitHub API + `curl.exe` and `$env:GITHUB_TOKEN`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $artifactName = "BingchaAI"
@@ -193,7 +222,7 @@ If the zip extracts into a nested folder, move the final `BingchaAI-*` files up 
 Private GitHub Release asset download:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA
+cd C:\Users\Administrator\Desktop\GFA-per
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"
@@ -214,7 +243,16 @@ Linux caveat: current Linux in-app updater replaces the binary directly from `bc
 
 ## Final Verification
 
-- `pnpm start:daemon` reports services ready.
-- `curl.exe http://127.0.0.1:3001/api/health` succeeds.
+- `curl.exe http://127.0.0.1:3001/api/health` returns `{"status":"ok"}`.
 - `netstat -ano | findstr ":3000 :3001"` shows expected listeners.
+- If using agent foreground mode, the `node scripts/start.mjs` background task is still RUNNING (check via task status).
 - For client updates, `/updates/latest-wails.json` is reachable and referenced asset URLs download.
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Using `pnpm start:daemon` from agent terminal | Use `node scripts/start.mjs` (foreground) instead |
+| Health check immediately after start | Wait 60s for build + boot; retry on `Connection refused` |
+| Not killing stale port owners before restart | `netstat` + `taskkill /F /PID` first |
+| `git pull` on wrong branch | Always `git branch --show-current` before pull |

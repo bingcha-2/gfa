@@ -411,7 +411,7 @@ export function FaqPanel({ showToast }: { showToast: (type: "success" | "error" 
         <div className="section-copy">
           <p className="label">FAQ 管理</p>
           <h2 className="panel-title">常见问题管理</h2>
-          <p className="muted">管理 bcai.space/faq 公开页面上展示的常见问题。共 {faqs.length} 条。</p>
+          <p className="muted">管理 bcai.lol/faq 公开页面上展示的常见问题。共 {faqs.length} 条。</p>
         </div>
         <div className="toolbar">
           <Button onClick={startCreate} type="button">新建 FAQ</Button>

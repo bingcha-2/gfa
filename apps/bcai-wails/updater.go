@@ -17,12 +17,12 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "7.1.0"
+var AppVersion = "7.2.2"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
-	// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
-	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.space/updates/latest-wails.json")
+	// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.lol/updates/latest-wails.json")
 	UpdateCheckFreq = 30 * time.Minute
 )
 

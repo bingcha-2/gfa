@@ -1,6 +1,7 @@
 import { Injectable, Optional, OnModuleDestroy } from "@nestjs/common";
 
 import { LeaseService, LeaseServiceHttpError, type CreditTracker, type TokenUsageTracker } from "../lease-core/lease-service";
+import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 
@@ -29,11 +30,30 @@ export class TokenServerHttpError extends LeaseServiceHttpError {}
 @Injectable()
 export class TokenServerService extends LeaseService<TokenAccount> implements OnModuleDestroy {
   constructor(@Optional() options: ServiceOptions = {}) {
+    const provider = new AntigravityProvider({
+      accountsFilePath: options.accountsFilePath,
+      tokenProvider: options.tokenProvider,
+    });
+    // Auto-create fair-share tracker wired to this service's own accessKeyStore.
+    // Uses a deferred pattern: the tracker's callbacks reference `service` which
+    // is assigned after super() returns.
+    let service: TokenServerService;
+    const fairShareTracker = new FairShareTracker({
+      getAccountPlanType: (accountId: number) => {
+        try {
+          const status = service.getStatus();
+          const acct = status.quota?.accounts?.find((a: any) => a.id === accountId);
+          return acct?.planType || 'free';
+        } catch { return 'free'; }
+      },
+      getBoundCardIds: (accountId: number) => {
+        try {
+          return service.accessKeyStore.cardsBoundToAccount(accountId, provider.id);
+        } catch { return []; }
+      },
+    });
     super(
-      new AntigravityProvider({
-        accountsFilePath: options.accountsFilePath,
-        tokenProvider: options.tokenProvider,
-      }),
+      provider,
       {
         accessKeysFilePath: options.accessKeysFilePath,
         now: options.now,
@@ -43,8 +63,10 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         affinityTtlMs: options.affinityTtlMs,
         creditTracker: options.creditTracker,
         tokenUsageTracker: options.tokenUsageTracker,
+        fairShareTracker,
         errorClass: TokenServerHttpError,
       },
     );
+    service = this;
   }
 }

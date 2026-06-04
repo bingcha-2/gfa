@@ -13,6 +13,7 @@ export const DEFAULT_LEASE_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_AFFINITY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
 export const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
+export const DEFAULT_WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_KEY_WINDOW_LIMIT = 300;
 export const DEFAULT_KEY_TOKENS_PER_REQUEST = Math.max(
   1000,
@@ -128,8 +129,10 @@ export interface ProviderBilling {
   buckets: string[];
   /** Which bucket a model counts toward. */
   bucketOf(modelKey: string): string;
-  /** Per-bucket limit derived from the card's base token-window limit. */
-  bucketLimit(baseLimit: number, bucket: string): number;
+  /** Per-bucket limit derived from the card's base token-window limit.
+   *  When `record` is supplied and has a `bucketLimits` override for the
+   *  bucket, that value takes priority over the default multiplier. */
+  bucketLimit(baseLimit: number, bucket: string, record?: any): number;
   /** Human label used in limit-exceeded error messages. */
   bucketLabel(bucket: string): string;
 }
@@ -154,7 +157,12 @@ export const UNIVERSAL_BILLING: ProviderBilling = {
   buckets: ['gemini', 'codex', 'opus'],
   bucketOf: (modelKey: string) =>
     isGeminiModel(modelKey) ? 'gemini' : isCodexModel(modelKey) ? 'codex' : 'opus',
-  bucketLimit: (baseLimit: number, bucket: string) => (bucket === 'gemini' ? baseLimit * 5 : baseLimit),
+  bucketLimit: (baseLimit: number, bucket: string, record?: any) => {
+    // Per-card override: record.bucketLimits.{bucket} takes priority.
+    const custom = Number(record?.bucketLimits?.[bucket] ?? 0);
+    if (custom > 0) return custom;
+    return bucket === 'gemini' ? baseLimit * 5 : baseLimit;
+  },
   bucketLabel: (bucket: string) => (bucket === 'gemini' ? 'Gemini' : bucket === 'codex' ? 'Codex' : 'Opus'),
 };
 
@@ -293,6 +301,58 @@ export function tokenWindowResetMs(record: any, now = Date.now()): number {
   if (startedAt <= 0) return 0;
   const windowMs = Number(record.windowMs || DEFAULT_KEY_WINDOW_MS);
   return Math.max(0, startedAt + windowMs - now);
+}
+
+// ── Weekly window management ─────────────────────────────────────────────────
+
+/** Fixed-period weekly window reset: if the current weekly window has expired,
+ *  clear all weekly usage events and start a new window. */
+export function resetWeeklyWindowIfExpired(record: any, now = Date.now()): boolean {
+  const windowMs = Number(record.weeklyWindowMs || DEFAULT_WEEKLY_WINDOW_MS);
+  const startedAt = Number(record.weeklyWindowStartedAt || 0);
+  if (startedAt === 0 || now - startedAt >= windowMs) {
+    record.weeklyWindowStartedAt = now;
+    record.weeklyTokenUsageEvents = [];
+    return true;
+  }
+  return false;
+}
+
+/** Get the weekly token window limit. 0 = unlimited. */
+export function weeklyTokenLimit(record: any): number {
+  const explicit = Number(record?.weeklyTokenLimit ?? 0);
+  return Number.isFinite(explicit) && explicit > 0 ? Math.floor(explicit) : 0;
+}
+
+/** Get the weekly window duration in ms. */
+export function weeklyWindowMs(record: any): number {
+  const configured = Number(record?.weeklyWindowMs || 0);
+  return configured > 0 ? configured : DEFAULT_WEEKLY_WINDOW_MS;
+}
+
+/** Get remaining ms until the weekly window resets. */
+export function weeklyWindowResetMs(record: any, now = Date.now()): number {
+  resetWeeklyWindowIfExpired(record, now);
+  const startedAt = Number(record.weeklyWindowStartedAt || 0);
+  if (startedAt <= 0) return 0;
+  const windowMs = Number(record.weeklyWindowMs || DEFAULT_WEEKLY_WINDOW_MS);
+  return Math.max(0, startedAt + windowMs - now);
+}
+
+/** Aggregate weekly-window billable tokens grouped by billing bucket. */
+export function recentWeeklyBucketUsage(
+  record: any,
+  bucketOf: (modelKey: string) => string,
+  now = Date.now(),
+): Map<string, number> {
+  resetWeeklyWindowIfExpired(record, now);
+  const out = new Map<string, number>();
+  for (const item of record.weeklyTokenUsageEvents || []) {
+    const billable = billableTokenUsageTotal(item, item?.modelKey);
+    const bucket = bucketOf(String(item?.modelKey || ''));
+    out.set(bucket, (out.get(bucket) || 0) + billable);
+  }
+  return out;
 }
 
 // ── Key expiration ───────────────────────────────────────────────────────────

@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// 默认走主域名 bcai.space，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
-var CLAUDE_API_BASE = getEnvOrDefault("BCAI_CLAUDE_API_BASE", "https://bcai.space/remote-claude")
+// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+var CLAUDE_API_BASE = getEnvOrDefault("BCAI_CLAUDE_API_BASE", "https://bcai.lol/remote-claude")
 
 // ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
 // 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。

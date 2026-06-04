@@ -69,8 +69,10 @@ import {
   Loader2Icon,
   UnplugIcon,
   BarChart3Icon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 import { CardUsageDialog } from "./card-usage-dialog";
+import { CardLimitsDialog } from "./card-limits-dialog";
 import { BindAccountControl, type BindableAccount } from "@/components/BindAccountControl";
 import { toBindableAccounts } from "@/lib/bindable-accounts";
 
@@ -94,6 +96,7 @@ type AccessKey = {
   sessionClientId: string;
   sessionExpiresAt: string;
   anomalyCount?: number;
+  bucketLimits?: Record<string, number>;
 };
 
 const PAGE_SIZE = 20;
@@ -131,7 +134,7 @@ export default function RosettaKeysPage() {
   const [totalAll, setTotalAll] = useState(0);
   const [totalActive, setTotalActive] = useState(0);
 
-  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
 
@@ -173,6 +176,10 @@ export default function RosettaKeysPage() {
   // Token usage detail dialog
   const [usageTarget, setUsageTarget] = useState<AccessKey | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+
+  // Card limits dialog
+  const [limitsTarget, setLimitsTarget] = useState<AccessKey | null>(null);
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   // Cleanup states
   const [cleaningExpired, setCleaningExpired] = useState(false);
@@ -1053,6 +1060,26 @@ export default function RosettaKeysPage() {
                                       size="icon"
                                       className="size-7"
                                       onClick={() => {
+                                        setLimitsTarget(item);
+                                        setLimitsOpen(true);
+                                      }}
+                                    />
+                                  }
+                                >
+                                  <SlidersHorizontalIcon data-icon className="size-3.5" />
+                                </TooltipTrigger>
+                                <TooltipContent>模型限额</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7"
+                                      onClick={() => {
                                         setUsageTarget(item);
                                         setUsageOpen(true);
                                       }}
@@ -1194,6 +1221,14 @@ export default function RosettaKeysPage() {
         card={usageTarget}
         open={usageOpen}
         onOpenChange={setUsageOpen}
+      />
+
+      {/* Card Limits Dialog */}
+      <CardLimitsDialog
+        card={limitsTarget}
+        open={limitsOpen}
+        onOpenChange={setLimitsOpen}
+        onSaved={() => fetchKeys()}
       />
 
       {/* Delete Confirmation */}

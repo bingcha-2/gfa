@@ -4,6 +4,7 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
+import { FairShareTracker } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
@@ -62,6 +63,8 @@ export type LeaseServiceOptions = {
   affinityTtlMs?: number;
   creditTracker?: CreditTracker;
   tokenUsageTracker?: TokenUsageTracker;
+  /** Fair-share tracker for bound-card dynamic quota. */
+  fairShareTracker?: FairShareTracker;
   /** Error class thrown by fail(); the controller routes on `instanceof`. */
   errorClass?: LeaseHttpErrorClass;
   /** getStatus().mode label. Default "remote-token-server". */
@@ -147,6 +150,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly affinityTtlMs: number;
   private readonly creditTracker: CreditTracker | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
+  readonly fairShareTracker: FairShareTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
   private readonly mode: string;
   private readonly noAccountMessage: string;
@@ -190,6 +194,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.creditTracker = options.creditTracker || null;
     this.tokenUsageTracker = options.tokenUsageTracker || null;
+    this.fairShareTracker = options.fairShareTracker || null;
     this.errorClass = options.errorClass || LeaseServiceHttpError;
     this.mode = options.mode || "remote-token-server";
     this.noAccountMessage = options.noAccountMessage || "No account with projectId is available.";
@@ -348,6 +353,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       throw this.fail(409, "此卡未开通该服务，请联系客服");
     }
 
+    // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
+    if (boundAccountId > 0 && this.fairShareTracker) {
+      const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+      const check = this.fairShareTracker.checkFairShare(boundAccountId, auth.record.id, bucket);
+      if (!check.allowed) {
+        throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复");
+      }
+    }
+
     const versionCheck = validateClientVersion(payload, this.minClientVersion);
     if (!versionCheck.ok) {
       throw this.fail(versionCheck.statusCode || 426, "当前插件版本过低", {
@@ -460,6 +474,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // to skip the futile "exclude account + re-lease" rotation on 429/503, while
       // STILL allowing wait-and-retry on the SAME account for transient capacity.
       bound: boundAccountId > 0,
+      // Per-card fair-share quota fractions for blood bar display.
+      // Only populated for bound cards with co-tenants.
+      fairShareQuota: (boundAccountId > 0 && this.fairShareTracker)
+        ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, auth.record.id)
+        : undefined,
     };
   }
 
@@ -538,6 +557,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let creditDelta: CreditDelta | null = null;
     if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       creditDelta = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
+      // Fair-share: push updated quota fractions into the tracker.
+      if (this.fairShareTracker) {
+        const account = this.readAccounts().find((a) => a.id === accountId);
+        const fractions = (account as any)?.modelQuotaFractions;
+        if (fractions && typeof fractions === "object") {
+          for (const [model, frac] of Object.entries(fractions)) {
+            const f = Number(frac);
+            if (Number.isFinite(f) && f >= 0 && f <= 1) {
+              const bucket = UNIVERSAL_BILLING.bucketOf(model);
+              this.fairShareTracker.updateBudgetEstimate(accountId, bucket, f);
+            }
+          }
+        }
+      }
     }
 
     if (!reportId && success && lease?.successfulReportSeen) {
@@ -553,6 +586,18 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         ok: true, ignored: true, reason: "already_reported",
         accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
       };
+    }
+
+    // Fair-share: record weighted usage for bound cards.
+    if (accountId && this.fairShareTracker && success) {
+      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey);
+      if (detail.totalTokens > 0) {
+        const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+        this.fairShareTracker.recordUsage(
+          accountId, cardId, bucket,
+          detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
+        );
+      }
     }
 
     // Per-call token usage log (queryable, persisted to Prisma). Runs only for
@@ -615,6 +660,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
           const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
+          // Fair-share: confirm budget ceiling on upstream exhaustion.
+          if (this.fairShareTracker && status === 429) {
+            const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+            this.fairShareTracker.confirmBudget(accountId, bucket);
+          }
         } else if (status === 403) {
           const reason = String(payload?.reason || "http_403");
           // 403(验证挑战 / service_disabled / forbidden)是瞬时反滥用或配置类错误,不是

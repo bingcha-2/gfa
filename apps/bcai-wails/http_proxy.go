@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const DefaultProxyPort = 60670
+const DefaultProxyPort = 48800
 
 // LocalHTTPProxy 本地 HTTP 代理服务器（参考 timo 的 proxy/server.rs）
 // 监听 127.0.0.1:{port}，接收 IDE/Hub 的请求并转发到 Google API

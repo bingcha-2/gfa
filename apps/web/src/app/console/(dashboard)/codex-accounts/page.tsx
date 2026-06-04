@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ type CodexAccount = {
   id: number;
   email: string;
   enabled: boolean;
+  poolEnabled: boolean;
   alias: string;
   planType: string;
   hasToken: boolean;
@@ -71,7 +72,22 @@ export default function CodexAccountsPage() {
       const res = await fetch("/api/rosetta/codex-accounts", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setAccounts(Array.isArray(data.accounts) ? data.accounts : []);
+      const list: CodexAccount[] = Array.isArray(data.accounts) ? data.accounts : [];
+
+      // Sort: plan tier priority (pro > plus > others) → weekly quota desc → no data last
+      const CODEX_PLAN_ORDER: Record<string, number> = { pro: 0, plus: 1 };
+      list.sort((a, b) => {
+        const pa = CODEX_PLAN_ORDER[a.planType || ""] ?? 2;
+        const pb = CODEX_PLAN_ORDER[b.planType || ""] ?? 2;
+        if (pa !== pb) return pa - pb;
+        const wa = a.codexWeeklyPercent;
+        const wb = b.codexWeeklyPercent;
+        if (wa < 0 && wb < 0) return 0;
+        if (wa < 0) return 1;
+        if (wb < 0) return -1;
+        return wb - wa;
+      });
+      setAccounts(list);
     } catch (error) {
       if (!silent) toast.error(`获取失败: ${error instanceof Error ? error.message : "未知错误"}`);
     } finally {
@@ -270,6 +286,22 @@ export default function CodexAccountsPage() {
       fetchAccounts(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
+    }
+  }
+
+  async function handleTogglePool(account: CodexAccount) {
+    try {
+      const res = await fetch("/api/rosetta/codex-toggle-account-pool", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "操作失败");
+      toast.success(`${data.email} ${data.poolEnabled ? "已入池" : "已出池"}`);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "切换入池状态失败");
     }
   }
 
@@ -488,6 +520,7 @@ export default function CodexAccountsPage() {
                   <TableHead>Token</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
+                  <TableHead>入池</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -512,6 +545,16 @@ export default function CodexAccountsPage() {
                     </TableCell>
                     <TableCell>
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        title={a.poolEnabled ? "已入池（点击出池）" : "已出池（点击入池）"}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-muted transition-colors"
+                        onClick={() => handleTogglePool(a)}
+                      >
+                        <GitMergeIcon className={`size-4 ${a.poolEnabled ? "text-blue-500" : "text-muted-foreground"}`} />
+                      </button>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" title="刷新 token + 获取额度" disabled={busyId === a.id}
