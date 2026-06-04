@@ -1608,19 +1608,43 @@ export class RosettaService {
       payload?.levels && typeof payload.levels === "object" ? payload.levels : {};
     // Share weight (份额): 1 = 拼车 (default), 4 = 独享.
     const weight = cardWeight({ weight: payload?.weight });
+    // 可选:每个产品手动指定要绑定的账号(accountIds[product] > 0)。指定后整批卡都
+    // 绑到该账号(管理员显式选择,镜像 bindAccessKey 的宽松策略:只校验份额容量,不校
+    // 验等级/出池/配额);留空则回退到原有的自动分配空位逻辑。
+    const accountIds: Record<string, number> =
+      payload?.accountIds && typeof payload.accountIds === "object" ? payload.accountIds : {};
     const seatPlan: Record<string, number[]> = {};
     for (const product of products) {
       const label = product === "codex" ? "Codex" : product === "claude" ? "Claude" : "Antigravity";
       const level = String(levels[product] || "").trim();
       if (!level) return { ok: false, error: `请为 ${label} 选择会员等级` };
-      const seats = this.autoAssignSeats(product, count, weight, level);
-      if (!seats) {
-        return {
-          ok: false,
-          error: `${label} ${level} 等级可用账号不足（无配额充足且份额足够的号），请增加该等级账号`,
-        };
+      const manualId = Number(accountIds[product] || 0);
+      if (manualId > 0) {
+        const pool = readJson(this.poolFileFor(product), { accounts: [] });
+        const account = (Array.isArray(pool.accounts) ? pool.accounts : []).find(
+          (a: any) => Number(a.id) === manualId,
+        );
+        if (!account) return { ok: false, error: `所选 ${label} 账号不存在` };
+        // 整批 count 张卡都绑到这个号,合计需要 count*weight 份,不能超过容量。
+        const used = this.usedShares(product, manualId, "");
+        const need = count * weight;
+        if (used + need > ACCOUNT_SHARE_CAPACITY) {
+          return {
+            ok: false,
+            error: `所选 ${label} 账号(${account.email || "#" + manualId})份额不足：已用 ${used}/${ACCOUNT_SHARE_CAPACITY} 份，本次需 ${need} 份`,
+          };
+        }
+        seatPlan[product] = new Array(count).fill(manualId);
+      } else {
+        const seats = this.autoAssignSeats(product, count, weight, level);
+        if (!seats) {
+          return {
+            ok: false,
+            error: `${label} ${level} 等级可用账号不足（无配额充足且份额足够的号），请增加该等级账号`,
+          };
+        }
+        seatPlan[product] = seats;
       }
-      seatPlan[product] = seats;
     }
 
     const created: any[] = [];
@@ -1823,6 +1847,46 @@ export class RosettaService {
       record.provider = "";
       record.boundAccountId = 0;
     }
+    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    return { ok: true, key: this.publicAccessKey(record) };
+  }
+
+  /**
+   * 一次性设置一张卡的全部绑定(绑定弹窗"保存"用)。bindings 是期望的最终映射:
+   * { codex?: accountId, antigravity?: accountId };某 provider 缺省或 ≤0 = 设为池子
+   * (不绑)。先校验每个要绑的号份额够(排除本卡自身),全部通过才一次性写入 ——
+   * 避免前端分别调 bind/unbind 并发读写同一个 json 打架。
+   */
+  setAccessKeyBindings(payload: any) {
+    const id = String(payload?.id || "");
+    const desired: Record<string, number> =
+      payload?.bindings && typeof payload.bindings === "object" ? payload.bindings : {};
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const record = keys.find((key: any) => String(key.id) === id);
+    if (!record) return { ok: false, error: "卡密不存在" };
+
+    const need = cardWeight(record);
+    const nextBindings: Record<string, number> = {};
+    for (const provider of ["codex", "antigravity"]) {
+      const accountId = Number(desired[provider] || 0);
+      if (!(accountId > 0)) continue; // 该 provider → 池子模式(不绑)
+      // 份额:目标号已用(排除本卡) + 本卡份额 ≤ 4。
+      const used = this.usedShares(provider, accountId, id);
+      if (used + need > ACCOUNT_SHARE_CAPACITY) {
+        const label = provider === "codex" ? "Codex" : "Antigravity";
+        return {
+          ok: false,
+          error: `${label} 所选账号份额不足（已用 ${used}/${ACCOUNT_SHARE_CAPACITY} 份，本卡需 ${need} 份）`,
+        };
+      }
+      nextBindings[provider] = accountId;
+    }
+    record.bindings = nextBindings; // {} = 纯池子卡
+    // 清掉历史单绑字段,避免与 bindings 冲突。
+    record.provider = "";
+    record.boundAccountId = 0;
     writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
   }

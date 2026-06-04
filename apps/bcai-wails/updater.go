@@ -17,7 +17,7 @@ import (
 )
 
 // 当前版本（构建时通过 ldflags 注入）
-var AppVersion = "7.2.2"
+var AppVersion = "7.3.0"
 
 var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）

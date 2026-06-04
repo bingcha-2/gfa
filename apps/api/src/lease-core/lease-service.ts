@@ -189,7 +189,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "7.1.0";
+    this.minClientVersion = options.minClientVersion ?? "7.3.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.creditTracker = options.creditTracker || null;
@@ -881,6 +881,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.modelGates.cleanupExpiredGates(now);
     return this.readAccounts().filter((account) =>
       (boundAccountId ? account.id === boundAccountId : true) &&
+      // 出池号(poolEnabled===false)只服务"绑定它的卡":绑定卡(boundAccountId>0)钉号
+      // 不受限;池子卡(boundAccountId===0)的动态池则跳过出池号。与 UI「已出池(仅绑定卡
+      // 可用)」一致。建卡自动分配另有 isAccountBindable 把关,这里补的是运行时这一层。
+      (boundAccountId ? true : (account as any).poolEnabled !== false) &&
       (account as any).enabled !== false &&
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&

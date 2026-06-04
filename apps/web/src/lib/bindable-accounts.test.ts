@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { toBindableAccounts } from "./bindable-accounts";
 
 describe("toBindableAccounts", () => {
-  it("tags each pool with its provider and lists codex first, carrying shares", () => {
+  it("tags each pool with its provider and lists codex first, carrying shares + level", () => {
     const result = toBindableAccounts(
-      [{ id: 7, email: "c@x.com", usedShares: 2, shareCapacity: 4 }],
+      [{ id: 7, email: "c@x.com", usedShares: 2, shareCapacity: 4, planType: "Plus" }],
       [{ id: 1, email: "a@x.com", usedShares: 0, shareCapacity: 4 }],
     );
     expect(result).toEqual([
-      { provider: "codex", id: 7, email: "c@x.com", usedShares: 2, shareCapacity: 4 },
-      { provider: "antigravity", id: 1, email: "a@x.com", usedShares: 0, shareCapacity: 4 },
+      { provider: "codex", id: 7, email: "c@x.com", usedShares: 2, shareCapacity: 4, planType: "Plus" },
+      { provider: "antigravity", id: 1, email: "a@x.com", usedShares: 0, shareCapacity: 4, planType: "" },
     ]);
   });
 
