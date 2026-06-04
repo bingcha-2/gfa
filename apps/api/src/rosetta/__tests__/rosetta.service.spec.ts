@@ -37,6 +37,7 @@ describe("RosettaService", () => {
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
+    vi.unstubAllGlobals();
   });
 
   it("lists access keys with full key, masked key, and token window totals", () => {
@@ -137,6 +138,57 @@ describe("RosettaService", () => {
     // Written to claude-accounts.json, NOT the codex/antigravity pools.
     const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
     expect(Array.isArray(stored.accounts)).toBe(true);
+  });
+
+  it("refreshClaudeAccountQuota refreshes the token, then writes 5h/周 remaining + 套餐 + modelQuotaFractions", async () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addClaudeAccount({ email: "max@x.com", refreshToken: "rt", planType: "" });
+    // Stub the three upstream GETs/POSTs: token refresh, /api/oauth/usage, /api/oauth/profile.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes("/api/oauth/usage")) {
+          return new Response(
+            JSON.stringify({
+              five_hour: { utilization: 0.2, resets_at: null }, // 80% remaining
+              seven_day: { utilization: 0.5, resets_at: null }, // 50% remaining (binding)
+            }),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/api/oauth/profile")) {
+          return new Response(JSON.stringify({ organization: { organization_type: "claude_max" } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ access_token: "fresh-at", expires_in: 3600 }), { status: 200 });
+      }),
+    );
+
+    const r = await svc.refreshClaudeAccountQuota({ accountId: 1 });
+    expect(r).toMatchObject({ ok: true, tokenValid: true, hourlyPercent: 80, weeklyPercent: 50, planType: "max" });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    const acc = stored.accounts[0];
+    expect(acc).toMatchObject({ claudeHourlyPercent: 80, claudeWeeklyPercent: 50, planType: "max", accessToken: "fresh-at" });
+    // Binding window = the more restrictive (weekly 50 < hourly 80) → claude fraction 0.5.
+    expect(acc.modelQuotaFractions).toMatchObject({ claude: 0.5 });
+  });
+
+  it("refreshClaudeAccountQuota still succeeds (token refreshed) when usage has no windows", async () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    svc.addClaudeAccount({ email: "x@x.com", refreshToken: "rt" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes("/api/oauth/usage")) return new Response(JSON.stringify({ extra_usage: { is_enabled: false } }), { status: 200 });
+        if (u.includes("/api/oauth/profile")) return new Response(JSON.stringify({}), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), { status: 200 });
+      }),
+    );
+    const r = await svc.refreshClaudeAccountQuota({ accountId: 1 });
+    expect(r).toMatchObject({ ok: true, tokenValid: true });
+    expect((r as any).quotaError).toBeTruthy();
   });
 
   it("surfaces claude 5h/weekly percentages and bound-card counts in listClaudeAccounts", () => {
