@@ -60,6 +60,32 @@ describe("fetchClaudeQuotaUpstream", () => {
     expect(snap.rawHeaders["anthropic-ratelimit-unified-status"]).toBe("rejected");
   });
 
+  it("discovers a model from /v1/models (prefers haiku) and uses it for the probe", async () => {
+    const calls: Array<{ url: string; body?: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: any) => {
+        calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
+        if (String(url).includes("/v1/models")) {
+          return new Response(
+            JSON.stringify({ data: [{ id: "claude-opus-4-20250514" }, { id: "claude-haiku-4-5-20251001" }] }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", {
+          status: 200,
+          headers: { "anthropic-ratelimit-unified-5h-remaining-percent": "55" },
+        });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(calls[0].url).toContain("/v1/models");
+    expect(calls[1].url).toContain("count_tokens");
+    // Prefers the haiku from the discovered list, not the opus.
+    expect(calls[1].body.model).toBe("claude-haiku-4-5-20251001");
+    expect(snap.claudeQuota?.hourlyPercent).toBe(55);
+  });
+
   it("returns an error without calling fetch when no token is given", async () => {
     const spy = vi.fn();
     vi.stubGlobal("fetch", spy);

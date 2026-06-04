@@ -16,8 +16,12 @@
 
 const CLAUDE_MESSAGES_URL =
   process.env.BCAI_CLAUDE_PROBE_URL || "https://api.anthropic.com/v1/messages/count_tokens";
-// Cheap, current model; count_tokens does not generate so cost is ~nil.
-const CLAUDE_PROBE_MODEL = process.env.BCAI_CLAUDE_PROBE_MODEL || "claude-3-5-haiku-20241022";
+const CLAUDE_MODELS_URL =
+  process.env.BCAI_CLAUDE_MODELS_URL || "https://api.anthropic.com/v1/models";
+// Fallback model when discovery fails. Model availability varies per subscription
+// (a hardcoded id can 404), so we discover a valid one from the account first.
+const CLAUDE_PROBE_MODEL_FALLBACK =
+  process.env.BCAI_CLAUDE_PROBE_MODEL || "claude-haiku-4-5-20251001";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 // Anthropic only accepts OAuth subscription tokens when the request looks like
 // Claude Code — the first system block must be exactly this string.
@@ -95,6 +99,35 @@ function windowReset(h: Record<string, string>, keys: string[]): string {
 }
 
 /**
+ * Pick a model the account can actually use. A hardcoded id can 404 (model set
+ * varies per subscription), so we read /v1/models and prefer the cheapest
+ * (a haiku). Best-effort: returns "" on any failure so the caller falls back.
+ */
+async function discoverProbeModel(accessToken: string): Promise<string> {
+  try {
+    const res = await fetch(CLAUDE_MODELS_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": CLAUDE_OAUTH_BETA,
+        accept: "application/json",
+      },
+    });
+    if (!res.ok) return "";
+    const body: any = await res.json();
+    const arr = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : [];
+    const ids: string[] = arr
+      .map((m: any) => String(m?.id || m?.slug || m?.model || m || "").trim())
+      .filter(Boolean);
+    if (!ids.length) return "";
+    return ids.find((id) => id.toLowerCase().includes("haiku")) || ids[0];
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Probe Anthropic with the account's access token and read the subscription
  * 5h/weekly windows from the response's `anthropic-ratelimit-unified-*` headers.
  * Best-effort: never throws. Always returns rawHeaders so the caller can log and
@@ -110,6 +143,8 @@ export async function fetchClaudeQuotaUpstream(
   });
   if (!accessToken) return empty({ error: "missing access token" });
 
+  const model = (await discoverProbeModel(accessToken)) || CLAUDE_PROBE_MODEL_FALLBACK;
+
   let resp: Response;
   try {
     resp = await fetch(CLAUDE_MESSAGES_URL, {
@@ -123,7 +158,7 @@ export async function fetchClaudeQuotaUpstream(
         "user-agent": "claude-cli/1.0.0 (external, cli)",
       },
       body: JSON.stringify({
-        model: CLAUDE_PROBE_MODEL,
+        model,
         system: [{ type: "text", text: CLAUDE_CODE_SYSTEM }],
         messages: [{ role: "user", content: "quota probe" }],
       }),
