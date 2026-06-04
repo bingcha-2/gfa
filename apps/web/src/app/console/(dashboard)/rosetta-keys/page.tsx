@@ -43,10 +43,12 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
   TooltipContent,
@@ -100,6 +102,22 @@ type AccessKey = {
 };
 
 const PAGE_SIZE = 20;
+
+// base-ui Select 需要 items(否则关闭时 SelectValue 显示原始 value 而非标签)。
+const MODE_ITEMS = [
+  { label: "绑定模式（开通指定产品）", value: "bound" },
+  { label: "池子模式（万能卡 · 不绑号）", value: "pool" },
+];
+const UNIT_ITEMS = [
+  { label: "小时", value: "h" },
+  { label: "天", value: "d" },
+];
+const WEIGHT_ITEMS = [
+  { label: "拼车 · 1份(4人/号)", value: "1" },
+  { label: "2份(2人/号)", value: "2" },
+  { label: "独享 · 4份(独占一个号)", value: "4" },
+];
+const ACCOUNT_AUTO = "__auto";
 
 type SortField =
   | "totalTokensUsed"
@@ -559,6 +577,16 @@ export default function RosettaKeysPage() {
   const numCount = Math.max(1, Math.min(200, Number(createCount) || 1));
   const accountPickerOptions = (provider: string, level: string) =>
     bindableAccounts.filter((a) => a.provider === provider && a.planType === level);
+  // base-ui Select items(含标签解析用的占位/自动项)。
+  const levelItems = (levels: string[]) =>
+    levels.length ? levels.map((lv) => ({ label: lv, value: lv })) : [{ label: "无可用等级", value: null }];
+  const accountItems = (provider: string, level: string) => [
+    { label: "自动分配", value: ACCOUNT_AUTO },
+    ...accountPickerOptions(provider, level).map((a) => ({
+      label: `${a.email} (${a.usedShares}/${a.shareCapacity}份)`,
+      value: String(a.id),
+    })),
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -586,58 +614,64 @@ export default function RosettaKeysPage() {
             </Field>
             <Field className="min-w-[150px]">
               <FieldLabel>模式</FieldLabel>
-              <Select value={createMode} onValueChange={(v) => setCreateMode(v as "pool" | "bound")}>
+              <Select
+                items={MODE_ITEMS}
+                value={createMode}
+                onValueChange={(v) => setCreateMode(v as "pool" | "bound")}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="bound">绑定模式（开通指定产品）</SelectItem>
-                  <SelectItem value="pool">池子模式（万能卡 · 不绑号）</SelectItem>
+                  <SelectGroup>
+                    {MODE_ITEMS.map((it) => (
+                      <SelectItem key={it.value} value={it.value}>
+                        {it.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
             {createMode === "bound" && (
               <Field className="min-w-[180px]">
                 <FieldLabel>开通产品（只开的能用）</FieldLabel>
-                <div className="flex items-center gap-3 h-9">
-                  <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createCodex}
-                      onChange={(e) => setCreateCodex(e.target.checked)}
-                    />
-                    Codex
-                  </label>
-                  <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createAnti}
-                      onChange={(e) => setCreateAnti(e.target.checked)}
-                    />
-                    Antigravity
-                  </label>
-                </div>
+                <ToggleGroup
+                  multiple
+                  variant="outline"
+                  value={[
+                    ...(createCodex ? ["codex"] : []),
+                    ...(createAnti ? ["antigravity"] : []),
+                  ]}
+                  onValueChange={(v: string[]) => {
+                    setCreateCodex(v.includes("codex"));
+                    setCreateAnti(v.includes("antigravity"));
+                  }}
+                >
+                  <ToggleGroupItem value="codex">Codex</ToggleGroupItem>
+                  <ToggleGroupItem value="antigravity">Antigravity</ToggleGroupItem>
+                </ToggleGroup>
               </Field>
             )}
             {createCodex && (
               <Field className="min-w-[140px]">
                 <FieldLabel>Codex 会员等级</FieldLabel>
-                <Select value={createCodexLevel} onValueChange={setCreateCodexLevel}>
+                <Select
+                  items={levelItems(codexLevels)}
+                  value={createCodexLevel || null}
+                  onValueChange={setCreateCodexLevel}
+                >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择等级" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {codexLevels.length ? (
-                      codexLevels.map((lv) => (
+                    <SelectGroup>
+                      {codexLevels.map((lv) => (
                         <SelectItem key={lv} value={lv}>
                           {lv}
                         </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__none" disabled>
-                        无可用等级
-                      </SelectItem>
-                    )}
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
@@ -646,22 +680,25 @@ export default function RosettaKeysPage() {
               <Field className="min-w-[200px]">
                 <FieldLabel>Codex 账号(可选,默认自动)</FieldLabel>
                 <Select
-                  value={createCodexAccountId || "__auto"}
-                  onValueChange={(v) => setCreateCodexAccountId(v === "__auto" ? "" : v)}
+                  items={accountItems("codex", createCodexLevel)}
+                  value={createCodexAccountId || ACCOUNT_AUTO}
+                  onValueChange={(v) => setCreateCodexAccountId(v === ACCOUNT_AUTO ? "" : v)}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__auto">自动分配</SelectItem>
-                    {accountPickerOptions("codex", createCodexLevel).map((a) => {
-                      const full = a.usedShares + numWeight * numCount > a.shareCapacity;
-                      return (
-                        <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                          {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
-                        </SelectItem>
-                      );
-                    })}
+                    <SelectGroup>
+                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
+                      {accountPickerOptions("codex", createCodexLevel).map((a) => {
+                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
+                        return (
+                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
@@ -669,22 +706,22 @@ export default function RosettaKeysPage() {
             {createAnti && (
               <Field className="min-w-[140px]">
                 <FieldLabel>Antigravity 会员等级</FieldLabel>
-                <Select value={createAntiLevel} onValueChange={setCreateAntiLevel}>
+                <Select
+                  items={levelItems(antiLevels)}
+                  value={createAntiLevel || null}
+                  onValueChange={setCreateAntiLevel}
+                >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择等级" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {antiLevels.length ? (
-                      antiLevels.map((lv) => (
+                    <SelectGroup>
+                      {antiLevels.map((lv) => (
                         <SelectItem key={lv} value={lv}>
                           {lv}
                         </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__none" disabled>
-                        无可用等级
-                      </SelectItem>
-                    )}
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
@@ -693,22 +730,25 @@ export default function RosettaKeysPage() {
               <Field className="min-w-[200px]">
                 <FieldLabel>Antigravity 账号(可选,默认自动)</FieldLabel>
                 <Select
-                  value={createAntiAccountId || "__auto"}
-                  onValueChange={(v) => setCreateAntiAccountId(v === "__auto" ? "" : v)}
+                  items={accountItems("antigravity", createAntiLevel)}
+                  value={createAntiAccountId || ACCOUNT_AUTO}
+                  onValueChange={(v) => setCreateAntiAccountId(v === ACCOUNT_AUTO ? "" : v)}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__auto">自动分配</SelectItem>
-                    {accountPickerOptions("antigravity", createAntiLevel).map((a) => {
-                      const full = a.usedShares + numWeight * numCount > a.shareCapacity;
-                      return (
-                        <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                          {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
-                        </SelectItem>
-                      );
-                    })}
+                    <SelectGroup>
+                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
+                      {accountPickerOptions("antigravity", createAntiLevel).map((a) => {
+                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
+                        return (
+                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
@@ -716,14 +756,18 @@ export default function RosettaKeysPage() {
             {createMode === "bound" && (
               <Field className="min-w-[130px]">
                 <FieldLabel>份额(几人享用)</FieldLabel>
-                <Select value={createWeight} onValueChange={setCreateWeight}>
+                <Select items={WEIGHT_ITEMS} value={createWeight} onValueChange={setCreateWeight}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">拼车 · 1份(4人/号)</SelectItem>
-                    <SelectItem value="2">2份(2人/号)</SelectItem>
-                    <SelectItem value="4">独享 · 4份(独占一个号)</SelectItem>
+                    <SelectGroup>
+                      {WEIGHT_ITEMS.map((it) => (
+                        <SelectItem key={it.value} value={it.value}>
+                          {it.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </Field>
@@ -739,6 +783,7 @@ export default function RosettaKeysPage() {
                   onChange={(e) => setCreateDurationValue(e.target.value)}
                 />
                 <Select
+                  items={UNIT_ITEMS}
                   value={createDurationUnit}
                   onValueChange={setCreateDurationUnit}
                 >
@@ -746,8 +791,13 @@ export default function RosettaKeysPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="h">小时</SelectItem>
-                    <SelectItem value="d">天</SelectItem>
+                    <SelectGroup>
+                      {UNIT_ITEMS.map((it) => (
+                        <SelectItem key={it.value} value={it.value}>
+                          {it.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
@@ -784,6 +834,7 @@ export default function RosettaKeysPage() {
                   onChange={(e) => setCreateWindowValue(e.target.value)}
                 />
                 <Select
+                  items={UNIT_ITEMS}
                   value={createWindowUnit}
                   onValueChange={setCreateWindowUnit}
                 >
@@ -791,8 +842,13 @@ export default function RosettaKeysPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="h">小时</SelectItem>
-                    <SelectItem value="d">天</SelectItem>
+                    <SelectGroup>
+                      {UNIT_ITEMS.map((it) => (
+                        <SelectItem key={it.value} value={it.value}>
+                          {it.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>

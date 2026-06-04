@@ -46,6 +46,14 @@ describe("BindAccountControl", () => {
     expect(screen.getByText("模式")).toBeInTheDocument();
   });
 
+  it("mode trigger shows the LABEL (not the raw value) via Select items", () => {
+    // 池子卡打开 → 模式应显示「池子模式…」标签,而不是裸 value "pool"。
+    render(<BindAccountControl card={{ id: "c1" }} accounts={ACCOUNTS} onApply={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(screen.getByText(/池子模式（万能卡/)).toBeInTheDocument();
+    expect(screen.queryByText(/^pool$/)).toBeNull();
+  });
+
   it("saving an unchanged bound card submits its current bindings", () => {
     const onApply = vi.fn();
     render(
