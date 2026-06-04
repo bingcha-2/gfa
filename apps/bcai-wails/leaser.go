@@ -907,7 +907,7 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		l.lastError = "" // 不是错误:本卡没开通 antigravity → 前端不进入 error 状态
 		l.leaseRunning = false
 		l.mu.Unlock()
-		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 自动租号;codex 不受影响", l.CardProducts())
+		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 常驻自动租号;codex/claude 各走自己的按需租号,不受影响", l.CardProducts())
 		return
 	}
 
