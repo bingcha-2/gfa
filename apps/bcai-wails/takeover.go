@@ -72,6 +72,11 @@ func cardCoversProduct(cardProducts []string, required string) bool {
 		if p == required {
 			return true
 		}
+		// 过渡兼容:产品 claude 已改名 anthropic,但新客户端可能连到尚未升级的服务端
+		// (仍下发 products=["claude"])。把旧值 claude 视作 anthropic,避免门控错配。
+		if required == "anthropic" && p == "claude" {
+			return true
+		}
 	}
 	return false
 }

@@ -49,6 +49,10 @@ func TestAnthropicCardGating(t *testing.T) {
 	if cardCoversProduct([]string{"codex"}, "anthropic") {
 		t.Fatal("codex-only card must NOT cover anthropic")
 	}
+	// 过渡兼容:连到未升级服务端(products=["claude"])时,anthropic 门控仍放行。
+	if !cardCoversProduct([]string{"claude"}, "anthropic") {
+		t.Fatal("legacy claude product must still satisfy the anthropic gate")
+	}
 }
 
 func TestCardCoversProduct(t *testing.T) {
