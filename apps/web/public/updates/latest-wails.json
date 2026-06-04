@@ -1,27 +1,27 @@
 {
-  "version": "7.2.2",
-  "url": "https://bcai.site/updates/BingchaAI-7.2.2.exe",
-  "sha256": "E456AE47DCD6A94C41B32F3D5C91C9683A96906153EEC2490AD3872DB1A83F0E",
-  "size": 18271232,
-  "changelog": "feat: fair-share quota",
+  "version": "7.3.0",
+  "url": "https://bcai.site/updates/BingchaAI-7.3.0.exe",
+  "sha256": "617840094D09A22FA44AAC387EB82E92F6A50743712A00E7A9F902599C71D62A",
+  "size": 20389376,
+  "changelog": "修复 Codex 接管后无法唤醒 GUI 的问题;强制升级至 7.3.0",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.2.2-arm64.dmg",
-      "sha256": "2D0088897EA811639D7B6A5A423C2DDA10E9133B3950F55FDC1B86C1CBC5CC11",
-      "size": 9204792
+      "url": "https://bcai.site/updates/BingchaAI-7.3.0-arm64.dmg",
+      "sha256": "22FFE141B5B08A7E9544A5D84D2A898B93BE6E6A178A98FC1238A0682E142378",
+      "size": 9999134
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.2.2-amd64.dmg",
-      "sha256": "86DCF71758C2E7EAE9B8DF87C8B354B840A700388FD0165EEBE497BA540C4D16",
-      "size": 9822692
+      "url": "https://bcai.site/updates/BingchaAI-7.3.0-amd64.dmg",
+      "sha256": "733B6AE6234EC749F90C14AA0F16E75A7E78D6C8DEE731B45168A82CD23C14EB",
+      "size": 10714693
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.2.2-linux-amd64.tar.gz",
-      "sha256": "FE05D9F9EE68499A69291227DE9EB3B2B9E231E35919EE522E06CBADA52AF3F4",
-      "size": 7691155
+      "url": "https://bcai.site/updates/BingchaAI-7.3.0-linux-amd64.tar.gz",
+      "sha256": "2B06F63BCD9F983B5ED63C48A1C311FE14A489BD9DF081CC6C7BDC3A61E9E5A5",
+      "size": 8471479
     }
   }
 }
