@@ -154,6 +154,9 @@ export default function RosettaKeysPage() {
   // 会员等级(planType):每个开通的产品必选一个等级,只绑定该等级且可用的账号。
   const [createCodexLevel, setCreateCodexLevel] = useState("");
   const [createAntiLevel, setCreateAntiLevel] = useState("");
+  // 可选:手动指定要绑定的账号("" = 自动分配)。选了就整批绑到该号。
+  const [createCodexAccountId, setCreateCodexAccountId] = useState("");
+  const [createAntiAccountId, setCreateAntiAccountId] = useState("");
   // 各号池里存在的等级选项(去重),用于上面的下拉。
   const [codexLevels, setCodexLevels] = useState<string[]>([]);
   const [antiLevels, setAntiLevels] = useState<string[]>([]);
@@ -262,6 +265,14 @@ export default function RosettaKeysPage() {
       setCreateAntiLevel(antiLevels[0]);
     }
   }, [createAnti, antiLevels, createAntiLevel]);
+
+  // 产品关闭或等级变化时,清掉手动选的账号(避免把别的等级的旧选择带出去)。
+  useEffect(() => {
+    setCreateCodexAccountId("");
+  }, [createCodex, createCodexLevel]);
+  useEffect(() => {
+    setCreateAntiAccountId("");
+  }, [createAnti, createAntiLevel]);
 
   const handleBind = async (cardId: string, provider: string, accountId: number) => {
     try {
@@ -399,6 +410,12 @@ export default function RosettaKeysPage() {
           ...(createCodex ? { codex: createCodexLevel } : {}),
           ...(createAnti ? { antigravity: createAntiLevel } : {}),
         };
+        // 可选:手动指定账号("" = 自动分配,不传该 product)。
+        const accountIds: Record<string, number> = {
+          ...(createCodex && createCodexAccountId ? { codex: Number(createCodexAccountId) } : {}),
+          ...(createAnti && createAntiAccountId ? { antigravity: Number(createAntiAccountId) } : {}),
+        };
+        if (Object.keys(accountIds).length) payload.accountIds = accountIds;
         payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
       }
 
@@ -537,6 +554,12 @@ export default function RosettaKeysPage() {
     }
   };
 
+  // 整批卡需要的份额 = 份额 × 张数;用于手动选号下拉的"份额不足"判断。
+  const numWeight = Math.max(1, Math.min(4, Number(createWeight) || 1));
+  const numCount = Math.max(1, Math.min(200, Number(createCount) || 1));
+  const accountPickerOptions = (provider: string, level: string) =>
+    bindableAccounts.filter((a) => a.provider === provider && a.planType === level);
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -605,6 +628,30 @@ export default function RosettaKeysPage() {
                 </Select>
               </Field>
             )}
+            {createCodex && (
+              <Field className="min-w-[200px]">
+                <FieldLabel>Codex 账号(可选,默认自动)</FieldLabel>
+                <Select
+                  value={createCodexAccountId || "__auto"}
+                  onValueChange={(v) => setCreateCodexAccountId(v === "__auto" ? "" : v)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__auto">自动分配</SelectItem>
+                    {accountPickerOptions("codex", createCodexLevel).map((a) => {
+                      const full = a.usedShares + numWeight * numCount > a.shareCapacity;
+                      return (
+                        <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                          {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             {createAnti && (
               <Field className="min-w-[140px]">
                 <FieldLabel>Antigravity 会员等级</FieldLabel>
@@ -624,6 +671,30 @@ export default function RosettaKeysPage() {
                         无可用等级
                       </SelectItem>
                     )}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {createAnti && (
+              <Field className="min-w-[200px]">
+                <FieldLabel>Antigravity 账号(可选,默认自动)</FieldLabel>
+                <Select
+                  value={createAntiAccountId || "__auto"}
+                  onValueChange={(v) => setCreateAntiAccountId(v === "__auto" ? "" : v)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__auto">自动分配</SelectItem>
+                    {accountPickerOptions("antigravity", createAntiLevel).map((a) => {
+                      const full = a.usedShares + numWeight * numCount > a.shareCapacity;
+                      return (
+                        <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                          {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </Field>

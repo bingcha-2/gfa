@@ -12,6 +12,8 @@ export interface BindableAccount {
   usedShares: number;
   /** Total shares per account (份). Default 4. */
   shareCapacity: number;
+  /** Membership level (planType), used to filter/label in pickers. */
+  planType?: string;
 }
 
 interface BindAccountControlProps {
@@ -44,6 +46,8 @@ export function BindAccountControl({
 }: BindAccountControlProps) {
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
+  // 每个已绑定 provider 的"换绑到"下拉选中值。
+  const [swapSel, setSwapSel] = useState<Record<string, string>>({});
 
   const bindings = card.bindings || {};
   const cardWeight = Math.max(1, Math.min(4, Number(card.weight || 1)));
@@ -68,9 +72,48 @@ export function BindAccountControl({
           const label = acct
             ? `${providerLabel(provider)} · ${acct.email}`
             : `${providerLabel(provider)} · #${accountId}`;
+          // 换绑候选:同 provider、排除当前账号。容量按"目标号已用份额 + 本卡份额"判断
+          // (服务端会排除本卡自身,这里目标号不是当前号,故其 usedShares 不含本卡)。
+          const swapOptions = accounts.filter(
+            (a) => a.provider === provider && a.id !== Number(accountId),
+          );
+          const sel = swapSel[provider] || "";
           return (
-            <div key={provider} className="flex items-center gap-2">
+            <div key={provider} className="flex flex-wrap items-center gap-2">
               <span className="text-sm">{label}</span>
+              {swapOptions.length > 0 && (
+                <>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    value={sel}
+                    onChange={(e) =>
+                      setSwapSel((m) => ({ ...m, [provider]: e.target.value }))
+                    }
+                  >
+                    <option value="">换绑到…</option>
+                    {swapOptions.map((a) => (
+                      <option
+                        key={a.id}
+                        value={String(a.id)}
+                        disabled={a.usedShares + cardWeight > a.shareCapacity}
+                      >
+                        {a.email}
+                        {a.planType ? ` · ${a.planType}` : ""} ({a.usedShares}/{a.shareCapacity} 份)
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    disabled={!sel}
+                    onClick={() => {
+                      onBind(provider, Number(sel));
+                      setSwapSel((m) => ({ ...m, [provider]: "" }));
+                    }}
+                  >
+                    换绑
+                  </Button>
+                </>
+              )}
               <Button size="sm" variant="outline" onClick={() => onUnbind(provider)}>
                 解绑 {providerLabel(provider)}
               </Button>
