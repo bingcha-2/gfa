@@ -122,9 +122,9 @@ export function BindAccountControl({
         })
       )}
 
-      {/* 仅对"已是绑定卡"的(至少绑了一个池)显示添加绑定框 —— 池子卡(无绑定)
-          就是不绑号,不显示绑定框。池子/绑定的归属在建卡时由产品决定。 */}
-      {boundProviders.length > 0 && addableAll.length > 0 && (
+      {/* 绑定框:已绑定卡可"再加一个池";池子卡(无绑定)也显示,允许直接绑号 ——
+          否则单账号卡解绑后变池子就再也绑不回去了(死路)。换绑见上方每行的「换绑到…」。 */}
+      {addableAll.length > 0 && (
       <div className="flex items-center gap-2">
         <input
           className="h-8 w-32 rounded-md border border-input bg-background px-2 text-sm"
