@@ -15,7 +15,18 @@
 
 const CLAUDE_USAGE_URL =
   process.env.BCAI_CLAUDE_USAGE_URL || "https://api.anthropic.com/api/oauth/usage";
+// Subscription/套餐 lives on the profile endpoint, not usage (Claude Code source:
+// src/services/oauth/client.ts fetchProfileInfo → organization.organization_type).
+const CLAUDE_PROFILE_URL =
+  process.env.BCAI_CLAUDE_PROFILE_URL || "https://api.anthropic.com/api/oauth/profile";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
+// organization_type → 套餐, mirroring Claude Code's subscriptionType mapping.
+const ORG_TYPE_TO_PLAN: Record<string, string> = {
+  claude_max: "max",
+  claude_pro: "pro",
+  claude_enterprise: "enterprise",
+  claude_team: "team",
+};
 // Claude Code sends `claude-code/<version>`; the endpoint is lenient but we
 // mirror the shape. Overridable if Anthropic ever gates on a specific version.
 const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.1.162";
@@ -74,15 +85,48 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
 }
 
 /**
- * Fetch the account's Claude 5h/weekly remaining quota from the dedicated
- * /api/oauth/usage endpoint (no message sent, no quota consumed). Best-effort:
- * never throws. Always returns `raw` (+ httpStatus) for diagnosis.
+ * Read the account's 套餐 from GET /api/oauth/profile (no quota cost). Maps
+ * organization.organization_type → max/pro/enterprise/team. "" on any failure.
+ */
+async function fetchClaudePlanType(accessToken: string): Promise<string> {
+  try {
+    const res = await fetch(CLAUDE_PROFILE_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        accept: "application/json",
+        "user-agent": CLAUDE_CODE_UA,
+      },
+    });
+    if (!res.ok) return "";
+    const data: any = await res.json();
+    const orgType = String(data?.organization?.organization_type || "").trim();
+    return ORG_TYPE_TO_PLAN[orgType] || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Fetch the account's Claude 5h/weekly remaining quota (GET /api/oauth/usage)
+ * AND 套餐 (GET /api/oauth/profile) — both side-effect-free, no message sent,
+ * no quota consumed. Best-effort: never throws; always returns `raw` + httpStatus.
  */
 export async function fetchClaudeQuotaUpstream(
   accessToken: string,
 ): Promise<ClaudeQuotaSnapshot> {
   if (!accessToken) return { raw: null, httpStatus: 0, error: "missing access token" };
+  const [snap, planType] = await Promise.all([
+    fetchUsageSnapshot(accessToken),
+    fetchClaudePlanType(accessToken),
+  ]);
+  if (planType) snap.planType = planType;
+  return snap;
+}
 
+/** GET /api/oauth/usage → 5h/weekly remaining windows. See fetchClaudeQuotaUpstream. */
+async function fetchUsageSnapshot(accessToken: string): Promise<ClaudeQuotaSnapshot> {
   let resp: Response;
   try {
     resp = await fetch(CLAUDE_USAGE_URL, {

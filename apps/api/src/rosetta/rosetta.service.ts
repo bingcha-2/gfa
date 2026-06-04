@@ -1611,6 +1611,8 @@ export class RosettaService {
       console.log(
         `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} usage=${JSON.stringify(snap.raw)}${snap.error ? ` error=${snap.error}` : ""}`,
       );
+      // 套餐(来自 /api/oauth/profile):有就更新,对齐 codex 的行为。
+      if (snap.planType) acc.planType = snap.planType;
       const cq = snap.claudeQuota;
       if (!cq) {
         // token 已刷新并落盘;额度未解析到 → 仍算成功,回带原始返回便于排查。

@@ -52,6 +52,21 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     expect(snap.raw).toMatchObject({ extra_usage: { is_enabled: false } });
   });
 
+  it("reads 套餐 from /api/oauth/profile (organization_type → plan)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(JSON.stringify({ organization: { organization_type: "claude_max" } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("max");
+    expect(snap.claudeQuota?.hourlyPercent).toBe(90);
+  });
+
   it("surfaces an error on a non-ok response", async () => {
     mockUsage(401, "unauthorized");
     const snap = await fetchClaudeQuotaUpstream("token");
