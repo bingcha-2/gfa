@@ -907,7 +907,10 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		l.lastError = "" // 不是错误:本卡没开通 antigravity → 前端不进入 error 状态
 		l.leaseRunning = false
 		l.mu.Unlock()
-		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 常驻自动租号;codex/claude 各走自己的按需租号,不受影响", l.CardProducts())
+		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 常驻自动租号;codex/anthropic 激活时预热一次各自的额度", l.CardProducts())
+		// 即便没有 antigravity 常驻租号,也要在激活时预热 codex/anthropic 的额度,
+		// 否则它们的血条永远「未知」(预热原本只在 antigravity 路径里执行)。
+		go l.preheatBoundProducts(card, deviceId, upstreamProxy, true)
 		return
 	}
 
@@ -1018,14 +1021,23 @@ func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force b
 	// 让血条/后台在"还没发请求"时也有真实数据(antigravity 否则只在生成上报后才拉)。
 	l.refreshBoundAntigravityQuota(card, upstreamProxy, force)
 
-	// 该卡若开通 codex,顺带刷新 codex 窗口(空 products = 池子卡,这里已被 bound 挡掉)。
+	// codex / anthropic 预热 —— 独立于 antigravity 主 token。
+	l.preheatBoundProducts(card, deviceId, upstreamProxy, force)
+}
+
+// preheatBoundProducts 预热 codex / anthropic(claude 模型)绑定号的额度。这两条走各自
+// 独立的 leaser,不依赖 antigravity 主 token,因此 codex-only / anthropic-only 卡也能在
+// 激活时把血条刷出真实余量(否则 StartAutoLease 因「未开通 antigravity」提前 return,
+// 这两个预热永远不执行 → 血条「未知」)。
+func (l *Leaser) preheatBoundProducts(card, deviceId, upstreamProxy string, force bool) {
+	// 该卡若开通 codex,刷新 codex 5h/周窗口 + bucket(独立 leaser / 独立端点)。
 	if cardCoversProduct(l.CardProducts(), "codex") {
 		if lease, err := GetCodexLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy); err == nil {
 			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease, force)
 		}
 	}
-	// 该卡若开通 anthropic 产品,预热一次 claude 模型租号,让 5h 血条在首个 /v1/messages
-	// 之前就有数据(服务端把 claudeWindows 随 lease 带回)。用量计量在代理请求时进行,这里仅预热。
+	// 该卡若开通 anthropic,预热一次 claude 模型租号,让 5h 血条在首个 /v1/messages 之前
+	// 就有数据(服务端把 claudeWindows + accountBuckets 随 lease 带回)。计量在代理请求时进行。
 	if cardCoversProduct(l.CardProducts(), "anthropic") {
 		_, _ = GetClaudeLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy)
 	}
