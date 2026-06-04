@@ -189,6 +189,76 @@ func TestInjectCapturesApiKeyWhenBackupPredatesField(t *testing.T) {
 	}
 }
 
+// 接管必须预置 ~/.claude.json 的 theme + hasCompletedOnboarding,否则 /logout 后
+// claude 会弹首次 onboarding(Welcome/Security notes/Press Enter)挡住接管。
+func readGlobalConfig(t *testing.T, dir string) map[string]interface{} {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("read .claude.json: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse .claude.json: %v", err)
+	}
+	return m
+}
+
+func TestInjectCompletesOnboardingInGlobalConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	// 模拟 /logout 后的状态:无 theme + hasCompletedOnboarding=false + 用户其它键。
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"),
+		[]byte(`{"hasCompletedOnboarding":false,"someUserKey":"keep"}`), 0o600); err != nil {
+		t.Fatalf("seed global config: %v", err)
+	}
+
+	if err := InjectClaudeSettings(9000); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	cfg := readGlobalConfig(t, dir)
+	if cfg["theme"] != "dark" {
+		t.Fatalf("theme not seeded: %v", cfg["theme"])
+	}
+	if cfg["hasCompletedOnboarding"] != true {
+		t.Fatalf("hasCompletedOnboarding not set: %v", cfg["hasCompletedOnboarding"])
+	}
+	if cfg["someUserKey"] != "keep" {
+		t.Fatalf("unrelated global config key lost: %v", cfg["someUserKey"])
+	}
+}
+
+func TestInjectPreservesExistingTheme(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"),
+		[]byte(`{"theme":"light","hasCompletedOnboarding":true}`), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := InjectClaudeSettings(9000); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	if got := readGlobalConfig(t, dir)["theme"]; got != "light" {
+		t.Fatalf("existing theme overwritten: %v", got)
+	}
+}
+
+func TestInjectDoesNotClobberMalformedGlobalConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	bad := `{ not valid json `
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(bad), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := InjectClaudeSettings(9000); err != nil {
+		t.Fatalf("InjectClaudeSettings should not error: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if string(data) != bad {
+		t.Fatalf("malformed global config must not be rewritten, got: %q", string(data))
+	}
+}
+
 func TestRestoreClaudeSettingsRestoresPriorUserValue(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)

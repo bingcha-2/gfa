@@ -57,6 +57,17 @@ func claudeConfigDir() string {
 func claudeSettingsPath() string { return filepath.Join(claudeConfigDir(), "settings.json") }
 func claudeBackupPath() string   { return filepath.Join(claudeConfigDir(), ".bcai-claude-backup.json") }
 
+// claudeGlobalConfigPath 返回全局配置 .claude.json 的路径。注意:它在「家目录(或
+// CLAUDE_CONFIG_DIR)」根下,与 settings.json(在 ~/.claude 子目录)不同 —— 对照反编译
+// 源码 src/utils/env.ts: join(process.env.CLAUDE_CONFIG_DIR || homedir(), ".claude.json")。
+func claudeGlobalConfigPath() string {
+	base := os.Getenv("CLAUDE_CONFIG_DIR")
+	if base == "" {
+		base, _ = os.UserHomeDir()
+	}
+	return filepath.Join(base, ".claude.json")
+}
+
 func claudeProxyBaseURL(proxyPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 }
@@ -160,9 +171,59 @@ func InjectClaudeSettings(proxyPort int) error {
 	if err := writeClaudeSettings(settings); err != nil {
 		return err
 	}
+	// 预置 onboarding,接管后不再弹首次引导(Welcome/Security notes/Press Enter)。
+	ensureClaudeOnboardingComplete()
 	Log("[claude-inject] 已注入 ~/.claude/settings.json: %s=%s (path: %s)",
 		claudeBaseURLKey, claudeProxyBaseURL(proxyPort), claudeSettingsPath())
 	return nil
+}
+
+// ensureClaudeOnboardingComplete 预置 ~/.claude.json 的 theme + hasCompletedOnboarding,
+// 让 claude 接管后不再弹首次 onboarding。判定依据反编译源码 interactiveHelpers.tsx:
+// `!config.theme || !config.hasCompletedOnboarding` 就弹;且 `claude /logout` 会把
+// hasCompletedOnboarding 重置为 false(logout.tsx),故每次接管都兜一下。
+//
+// 仅在缺失/为假时写;这两个标志幂等且良性,取消接管「不」还原 —— 还原成 false 反而会
+// 让用户下次正常用 claude 又弹引导。文件存在但 JSON 解析失败时直接跳过,绝不回写,
+// 避免毁掉用户那份(含登录态/项目历史的)全局配置。
+func ensureClaudeOnboardingComplete() {
+	cfg, ok := loadClaudeGlobalConfig()
+	if !ok {
+		return
+	}
+	changed := false
+	if t, _ := cfg["theme"].(string); t == "" {
+		cfg["theme"] = "dark"
+		changed = true
+	}
+	if done, _ := cfg["hasCompletedOnboarding"].(bool); !done {
+		cfg["hasCompletedOnboarding"] = true
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if data, e := json.MarshalIndent(cfg, "", "  "); e == nil {
+		_ = writeFileAtomic(claudeGlobalConfigPath(), data, 0o600)
+		Log("[claude-inject] 已预置 onboarding(theme + hasCompletedOnboarding): %s", claudeGlobalConfigPath())
+	}
+}
+
+// loadClaudeGlobalConfig 读 ~/.claude.json 为 map。返回 (cfg, ok):文件不存在 → 空 map+true
+// (可安全新建);存在但解析失败 → nil+false(调用方据此跳过回写,保护用户配置)。
+func loadClaudeGlobalConfig() (map[string]interface{}, bool) {
+	data, err := os.ReadFile(claudeGlobalConfigPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]interface{}{}, true
+		}
+		return nil, false
+	}
+	m := map[string]interface{}{}
+	if json.Unmarshal(data, &m) != nil {
+		return nil, false
+	}
+	return m, true
 }
 
 // RestoreClaudeSettings 还原注入前的状态:原本没有这两个键就删掉,原本有值就写回。
