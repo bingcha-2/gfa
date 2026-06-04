@@ -164,48 +164,48 @@ export class RosettaController {
   }
 
   // ── Claude account pool ─────────────────────────────────────────────
-  @Get("claude-accounts")
+  @Get("anthropic-accounts")
   listClaudeAccounts() {
     return this.rosetta.listClaudeAccounts();
   }
 
-  @Post("claude-add-account")
+  @Post("anthropic-add-account")
   addClaudeAccount(@Body() body: any) {
     return this.rosetta.addClaudeAccount(body);
   }
 
-  @Post("claude-toggle-account")
+  @Post("anthropic-toggle-account")
   toggleClaudeAccount(@Body() body: any) {
     return this.rosetta.toggleClaudeAccount(body);
   }
 
-  @Post("claude-delete-account")
+  @Post("anthropic-delete-account")
   deleteClaudeAccount(@Body() body: any) {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
-  @Post("claude-oauth-start")
+  @Post("anthropic-oauth-start")
   startClaudeOAuthLogin() {
     return this.rosetta.startClaudeOAuthLogin();
   }
 
-  @Get("claude-oauth-status")
+  @Get("anthropic-oauth-status")
   getClaudeOAuthLoginStatus(@Query("loginId") loginId?: string) {
     return this.rosetta.getClaudeOAuthLoginStatus(String(loginId || ""));
   }
 
-  @Post("claude-oauth-cancel")
+  @Post("anthropic-oauth-cancel")
   cancelClaudeOAuthLogin(@Body() body: any) {
     return this.rosetta.cancelClaudeOAuthLogin(String(body?.loginId || ""));
   }
 
-  @Post("claude-oauth-submit")
+  @Post("anthropic-oauth-submit")
   submitClaudeOAuthCallback(@Body() body: any) {
     return this.rosetta.submitClaudeOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
   }
 
   // 「刷新」= 强制刷 token + 探测拉额度(合并为一个动作)。
-  @Post("claude-refresh-quota")
+  @Post("anthropic-refresh-quota")
   refreshClaudeAccountQuota(@Body() body: any) {
     return this.rosetta.refreshClaudeAccountQuota(body);
   }

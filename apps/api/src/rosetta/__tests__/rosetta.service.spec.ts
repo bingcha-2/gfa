@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RosettaService } from "../rosetta.service";
+import { RosettaService, migrateClaudeProductToAnthropic } from "../rosetta.service";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -135,9 +135,33 @@ describe("RosettaService", () => {
     svc.deleteClaudeAccount({ accountId: id });
     expect(svc.listClaudeAccounts().accounts).toHaveLength(0);
 
-    // Written to claude-accounts.json, NOT the codex/antigravity pools.
-    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    // Written to anthropic-accounts.json, NOT the codex/antigravity pools.
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
     expect(Array.isArray(stored.accounts)).toBe(true);
+  });
+
+  it("migrateClaudeProductToAnthropic renames the pool file and rewrites card claude→anthropic keys (idempotent)", () => {
+    writeJson(path.join(tempDir, "claude-accounts.json"), { accounts: [{ id: 1, email: "a@x.com", refreshToken: "rt" }] });
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [
+        { id: "c1", products: ["claude"], bindings: { claude: 1 }, levels: { claude: "pro" }, accountIds: { claude: 1 } },
+        { id: "c2", products: ["codex"], bindings: { codex: 2 } },
+      ],
+    });
+
+    const r = migrateClaudeProductToAnthropic(tempDir);
+    expect(r).toMatchObject({ renamedPool: true, cardsRewritten: 1 });
+
+    expect(fs.existsSync(path.join(tempDir, "claude-accounts.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, "anthropic-accounts.json"))).toBe(true);
+
+    const ak = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+    expect(ak.keys[0]).toMatchObject({ products: ["anthropic"], bindings: { anthropic: 1 }, levels: { anthropic: "pro" }, accountIds: { anthropic: 1 } });
+    expect(ak.keys[0].bindings).not.toHaveProperty("claude");
+    expect(ak.keys[1]).toMatchObject({ products: ["codex"], bindings: { codex: 2 } });
+
+    // Idempotent: second run does nothing.
+    expect(migrateClaudeProductToAnthropic(tempDir)).toMatchObject({ renamedPool: false, cardsRewritten: 0 });
   });
 
   it("refreshClaudeAccountQuota refreshes the token, then writes 5h/周 remaining + 套餐 + modelQuotaFractions", async () => {
@@ -167,7 +191,7 @@ describe("RosettaService", () => {
     const r = await svc.refreshClaudeAccountQuota({ accountId: 1 });
     expect(r).toMatchObject({ ok: true, tokenValid: true, hourlyPercent: 80, weeklyPercent: 50, planType: "max" });
 
-    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
     const acc = stored.accounts[0];
     expect(acc).toMatchObject({ claudeHourlyPercent: 80, claudeWeeklyPercent: 50, planType: "max", accessToken: "fresh-at" });
     // Binding window = the more restrictive (weekly 50 < hourly 80) → claude fraction 0.5.
@@ -193,7 +217,7 @@ describe("RosettaService", () => {
 
   it("surfaces claude 5h/weekly percentages and bound-card counts in listClaudeAccounts", () => {
     const svc = new RosettaService({ dataDir: tempDir });
-    writeJson(path.join(tempDir, "claude-accounts.json"), {
+    writeJson(path.join(tempDir, "anthropic-accounts.json"), {
       accounts: [
         {
           id: 7,
@@ -425,7 +449,7 @@ describe("RosettaService", () => {
     const submit = await svc.submitClaudeOAuthCallback(started.loginId, `auth-code-123#${state}`);
     expect(submit).toMatchObject({ ok: true, status: "completed", email: "max-user@example.com" });
 
-    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "claude-accounts.json"), "utf8"));
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
     expect(stored.accounts[0]).toMatchObject({
       email: "max-user@example.com",
       refreshToken: "sk-ant-ort-refresh",
@@ -1039,27 +1063,27 @@ describe("RosettaService", () => {
       expect(key.bindings).toMatchObject({ codex: id });
     });
 
-    it("mints and auto-binds a Claude card to a claude-accounts.json seat", () => {
+    it("mints and auto-binds an Anthropic card to an anthropic-accounts.json seat", () => {
       const svc = new RosettaService({ dataDir: tempDir });
-      // No admin CRUD for the claude pool yet — seed claude-accounts.json directly
-      // (offline-harvested accounts land here). Auto-bind must read this pool.
-      writeJson(path.join(tempDir, "claude-accounts.json"), {
+      // Seed the anthropic pool directly (offline-harvested accounts land here).
+      // Auto-bind must read this pool.
+      writeJson(path.join(tempDir, "anthropic-accounts.json"), {
         accounts: [{ id: 501, email: "max@x.com", refreshToken: "rt", enabled: true, planType: "max" }],
       });
-      const res: any = svc.createAccessKey({ products: ["claude"], levels: { claude: "max" } });
+      const res: any = svc.createAccessKey({ products: ["anthropic"], levels: { anthropic: "max" } });
       expect(res.ok).toBe(true);
       const key = svc.listAccessKeys({}).keys[0] as any;
-      expect(key.bindings).toMatchObject({ claude: 501 });
+      expect(key.bindings).toMatchObject({ anthropic: 501 });
     });
 
-    it("rejects a Claude card (with a Claude-labelled error) when no max-level claude account has a seat", () => {
+    it("rejects an Anthropic card (with an Anthropic-labelled error) when no max-level account has a seat", () => {
       const svc = new RosettaService({ dataDir: tempDir });
-      writeJson(path.join(tempDir, "claude-accounts.json"), {
+      writeJson(path.join(tempDir, "anthropic-accounts.json"), {
         accounts: [{ id: 502, email: "pro@x.com", refreshToken: "rt", enabled: true, planType: "pro" }],
       });
-      const res: any = svc.createAccessKey({ products: ["claude"], levels: { claude: "max" } });
+      const res: any = svc.createAccessKey({ products: ["anthropic"], levels: { anthropic: "max" } });
       expect(res.ok).toBe(false);
-      expect(res.error).toContain("Claude");
+      expect(res.error).toContain("Anthropic");
       expect(svc.listAccessKeys({}).keys).toHaveLength(0);
     });
 

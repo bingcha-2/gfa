@@ -138,6 +138,75 @@ function writeJson(filePath: string, value: unknown) {
   fs.renameSync(tmpPath, filePath);
 }
 
+/**
+ * 一次性产品改名迁移:产品 `claude` → `anthropic`。幂等、尽力而为、写前备份。
+ * 1) 账号池文件 `claude-accounts.json` → `anthropic-accounts.json`(仅当新文件不存在且旧文件存在)。
+ * 2) `access-keys.json` 每张卡的 `products[]` / `bindings` / `levels` / `accountIds` 里的
+ *    产品 key `"claude"` → `"anthropic"`(若已有 anthropic 则去重)。仅当确有 claude key 时改并备份。
+ * 不动模型层:模型名 `claude-*`、`modelQuotaFractions.claude`、`claudeHourlyPercent` 等保持不变。
+ */
+export function migrateClaudeProductToAnthropic(dataDir: string): { renamedPool: boolean; cardsRewritten: number } {
+  let renamedPool = false;
+  let cardsRewritten = 0;
+
+  try {
+    const oldPool = path.join(dataDir, "claude-accounts.json");
+    const newPool = path.join(dataDir, "anthropic-accounts.json");
+    if (fs.existsSync(oldPool) && !fs.existsSync(newPool)) {
+      fs.renameSync(oldPool, newPool);
+      renamedPool = true;
+    }
+  } catch {
+    // best-effort: 文件系统异常不阻塞启动
+  }
+
+  try {
+    const akPath = path.join(dataDir, "access-keys.json");
+    if (fs.existsSync(akPath)) {
+      const data = readJson(akPath, { keys: [] });
+      const keys = Array.isArray(data.keys) ? data.keys : [];
+      // 把对象里产品 key "claude" 迁成 "anthropic"(已有 anthropic 则仅删 claude)。
+      const renameKey = (obj: any): boolean => {
+        if (!obj || typeof obj !== "object" || !("claude" in obj)) return false;
+        if (!("anthropic" in obj)) obj.anthropic = obj.claude;
+        delete obj.claude;
+        return true;
+      };
+      let changed = false;
+      for (const key of keys) {
+        let cardChanged = false;
+        if (Array.isArray(key.products)) {
+          const idx = key.products.indexOf("claude");
+          if (idx >= 0) {
+            if (key.products.includes("anthropic")) key.products.splice(idx, 1);
+            else key.products[idx] = "anthropic";
+            cardChanged = true;
+          }
+        }
+        if (renameKey(key.bindings)) cardChanged = true;
+        if (renameKey(key.levels)) cardChanged = true;
+        if (renameKey(key.accountIds)) cardChanged = true;
+        if (cardChanged) {
+          changed = true;
+          cardsRewritten += 1;
+        }
+      }
+      if (changed) {
+        try {
+          fs.copyFileSync(akPath, `${akPath}.bak-claude2anthropic-${Date.now()}`);
+        } catch {
+          // 备份失败不阻塞迁移
+        }
+        writeJson(akPath, data);
+      }
+    }
+  } catch {
+    // best-effort
+  }
+
+  return { renamedPool, cardsRewritten };
+}
+
 function maskKey(value: unknown) {
   const raw = String(value || "");
   if (raw.length <= 4) return raw ? "***" : "";
@@ -378,6 +447,9 @@ export class RosettaService {
     @Optional() private readonly agentAccounts?: AgentAccountService,
   ) {
     this.dataDir = options.dataDir || defaultDataDir();
+    // 启动时一次性把产品 claude→anthropic 迁移到位(改文件名 + 卡绑定 key),必须在任何
+    // 账号池/卡密读取之前;幂等,无旧数据时为 no-op。
+    migrateClaudeProductToAnthropic(this.dataDir);
     this.codexOAuthPort = Number(options.codexOAuthPort ?? CODEX_OAUTH_DEFAULT_CALLBACK_PORT);
     this.codexOAuthFetch = options.codexOAuthFetch || fetch;
     this.claudeOAuthFetch = options.claudeOAuthFetch || fetch;
@@ -1344,16 +1416,17 @@ export class RosettaService {
     return { ok: true, totalAccounts: filtered.length };
   }
 
-  // ── Claude account pool (claude-accounts.json) ──────────────────────────
-  // Mirrors the codex account methods above but targets the claude pool. Claude
-  // accounts (Anthropic subscription OAuth) have no projectId/oauthProfile and,
-  // like codex, an account-level single quota window (the "claude" key).
+  // ── Anthropic account pool (anthropic-accounts.json) ────────────────────
+  // The "anthropic" PRODUCT pool (Anthropic subscription OAuth accounts). Hosts
+  // the "claude" MODEL — account-level single quota window stored under the
+  // "claude" model key (kept on the product rename). Method names keep the
+  // legacy "Claude" spelling; only the product key / file are "anthropic".
 
   listClaudeAccounts() {
-    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });
-    const boundCounts = this.boundCardCounts("claude");
-    const shares = this.boundSharesByAccount("claude");
+    const boundCounts = this.boundCardCounts("anthropic");
+    const shares = this.boundSharesByAccount("anthropic");
     const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account: any) => ({
       id: Number(account.id || 0),
       email: String(account.email || ""),
@@ -1378,7 +1451,7 @@ export class RosettaService {
     if (!email) return { ok: false, error: "email 不能为空" };
     if (!refreshToken) return { ok: false, error: "refreshToken 不能为空" };
 
-    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
@@ -1565,7 +1638,7 @@ export class RosettaService {
 
   toggleClaudeAccount(payload: any) {
     const accountId = Number(payload?.accountId);
-    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const account = accounts.find((item: any) => Number(item.id) === accountId);
@@ -1577,13 +1650,13 @@ export class RosettaService {
 
   deleteClaudeAccount(payload: any) {
     const accountId = Number(payload?.accountId);
-    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const filtered = accounts.filter((account: any) => Number(account.id) !== accountId);
     if (filtered.length === accounts.length) return { ok: false, error: "账号不存在" };
     writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
-    this.clearBindingsForAccount("claude", accountId);
+    this.clearBindingsForAccount("anthropic", accountId);
     return { ok: true, totalAccounts: filtered.length };
   }
 
@@ -1593,7 +1666,7 @@ export class RosettaService {
   // 为尽力而为,并回带 rawHeaders 便于核对真实头名。
   async refreshClaudeAccountQuota(payload: any) {
     const accountId = Number(payload?.accountId);
-    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
     const acc = accounts.find((a: any) => Number(a.id) === accountId);
@@ -1668,7 +1741,7 @@ export class RosettaService {
     const products: string[] = Array.isArray(payload?.products)
       ? payload.products
           .map((p: unknown) => String(p))
-          .filter((p: string) => p === "codex" || p === "antigravity" || p === "claude")
+          .filter((p: string) => p === "codex" || p === "antigravity" || p === "anthropic")
       : [];
     // Membership level (planType) chosen per product — REQUIRED for every
     // selected product. Auto-bind only considers accounts of the exact level.
@@ -1683,7 +1756,7 @@ export class RosettaService {
       payload?.accountIds && typeof payload.accountIds === "object" ? payload.accountIds : {};
     const seatPlan: Record<string, number[]> = {};
     for (const product of products) {
-      const label = product === "codex" ? "Codex" : product === "claude" ? "Claude" : "Antigravity";
+      const label = product === "codex" ? "Codex" : product === "anthropic" ? "Anthropic" : "Antigravity";
       const level = String(levels[product] || "").trim();
       if (!level) return { ok: false, error: `请为 ${label} 选择会员等级` };
       const manualId = Number(accountIds[product] || 0);
@@ -1981,7 +2054,7 @@ export class RosettaService {
   /** Account-pool file for a provider. */
   private poolFileFor(provider: string): string {
     const fileName =
-      provider === "codex" ? "codex-accounts.json" : provider === "claude" ? "claude-accounts.json" : "accounts.json";
+      provider === "codex" ? "codex-accounts.json" : provider === "anthropic" ? "anthropic-accounts.json" : "accounts.json";
     return path.join(this.dataDir, fileName);
   }
 
@@ -2006,9 +2079,12 @@ export class RosettaService {
    * getModelQuotaFraction already treats a passed reset time as refilled.
    */
   private accountHasQuota(provider: string, account: any): boolean {
-    if (provider === "codex" || provider === "claude") {
-      // Both are account-level single-window quotas (the "codex"/"claude" key).
-      const f = getModelQuotaFraction(account, provider);
+    if (provider === "codex" || provider === "anthropic") {
+      // Account-level single-window quota. codex stores it under the "codex" key;
+      // the anthropic PRODUCT hosts the "claude" MODEL, whose window is stored under
+      // the "claude" model key (kept model-level on rename). Map product→model key.
+      const modelKey = provider === "anthropic" ? "claude" : provider;
+      const f = getModelQuotaFraction(account, modelKey);
       return f === null || f > 0;
     }
     const fractions = account?.modelQuotaFractions;

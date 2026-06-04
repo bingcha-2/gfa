@@ -52,9 +52,9 @@ describe("RosettaController — static binding", () => {
     expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
   });
 
-  it("bindAccessKey reloads the claude pool too", () => {
+  it("bindAccessKey reloads the anthropic pool too", () => {
     const { controller, remoteClaude } = makeController();
-    controller.bindAccessKey({ id: "c1", provider: "claude", accountId: 1 });
+    controller.bindAccessKey({ id: "c1", provider: "anthropic", accountId: 1 });
     expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
   });
 });

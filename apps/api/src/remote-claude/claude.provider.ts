@@ -36,7 +36,7 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   private readonly tokenProvider: (account: ClaudeAccount) => Promise<string>;
 
   constructor(options: ClaudeProviderOptions = {}) {
-    this.accountsFilePath = options.accountsFilePath || path.join(defaultRemoteAccessDataDir(), "claude-accounts.json");
+    this.accountsFilePath = options.accountsFilePath || path.join(defaultRemoteAccessDataDir(), "anthropic-accounts.json");
     this.tokenProvider = options.tokenProvider || refreshClaudeAccessToken;
   }
 
