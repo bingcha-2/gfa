@@ -280,7 +280,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// be read through the 120s client and any generation past 2 min gets truncated
 	// mid-stream. Always use the streaming client (bounded by ResponseHeaderTimeout,
 	// not a hard total timeout).
-	client := createStreamingHttpClient(upstreamProxy)
+	// 发往 chatgpt.com 走 uTLS(Chrome 指纹)绕过 Cloudflare TLS 指纹拦截;
+	// fallback 内部对非受保护域名自动回退到标准 transport。
+	client := createCodexStreamingHttpClient(upstreamProxy)
 	reqStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -415,7 +417,9 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	Log("[codex-proxy] #%d [中转] %s model=%s proto=%s → %s(本地卡密)",
 		reqID, r.URL.Path, modelKey, relayProtoLabel(chatMode), targetURL)
 
-	client := createStreamingHttpClient(upstreamProxy)
+	// 中转目标多为第三方域名,会自动回退到标准 transport;仅当中转指向 chatgpt.com
+	// 才会命中 uTLS(用同一入口便于统一维护)。
+	client := createCodexStreamingHttpClient(upstreamProxy)
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
