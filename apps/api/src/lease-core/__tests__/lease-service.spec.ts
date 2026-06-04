@@ -397,12 +397,12 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     });
 
-    // Below the in-code floor (now 7.1.0) must be rejected (426 upgrade required)…
+    // Below the in-code floor (now 7.3.0) must be rejected (426 upgrade required)…
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "7.0.1" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "7.2.2" }),
     ).rejects.toThrow();
     // …while the floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "7.1.0" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "7.3.0" });
     expect(ok.ok).toBe(true);
   });
 

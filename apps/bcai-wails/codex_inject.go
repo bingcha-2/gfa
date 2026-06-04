@@ -214,13 +214,49 @@ func IsCodexInjected() bool {
 	return ok
 }
 
-// codexProcessPattern 是用于 pgrep/pkill 匹配 Codex 主 app 进程树的模式。
+// codexProcessPattern 是用于 pgrep/pkill 匹配 Codex 整个 app 进程树的模式
+// (主进程 + 渲染/GPU 辅助 + Resources/codex app-server 等子进程)。
 // 注意:"Codex.app/Contents" 不会误匹配 "Codex Computer Use.app/Contents"
 // (后者无 "Codex.app" 子串),所以不会误杀 computer-use 辅助服务。
 const codexProcessPattern = "Codex.app/Contents"
 
-// IsCodexRunning 检测 Codex 主 app 是否在运行。
+// codexGUIProcessPattern 只匹配 GUI 主进程(Codex.app/Contents/MacOS/Codex),
+// 用于判断"GUI 是否真的起来了"。它刻意排除:
+//   - Resources/codex(headless CLI / app-server 子进程)—— 接管失败时可能残留,
+//     旧逻辑会把它误判成"Codex 在运行",掩盖 GUI 没拉起的事实;
+//   - Frameworks/.../Helpers/Codex (Renderer|GPU).app —— 这些路径前缀不是 "Codex.app"。
+const codexGUIProcessPattern = "Codex.app/Contents/MacOS/Codex"
+
+// IsCodexRunning 检测 Codex GUI 主程序是否在运行(不含 bundle 内的 CLI 子进程)。
 func IsCodexRunning() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := exec.Command("pgrep", "-f", codexGUIProcessPattern).Output()
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(string(out)) != ""
+	case "linux":
+		out, err := exec.Command("pgrep", "-f", codexProcessPattern).Output()
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(string(out)) != ""
+	case "windows":
+		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Codex.exe", "/NH").Output()
+		if err != nil {
+			return false
+		}
+		return !strings.Contains(string(out), "No tasks")
+	default:
+		return false
+	}
+}
+
+// isCodexProcessTreeRunning 检测 Codex 进程树是否还有任何进程存活(含 CLI/app-server 子进程)。
+// QuitCodexApp 用它来等待"彻底退出":只有当 Resources/codex app-server 也退出后,
+// state_5.sqlite 的锁才会释放,后续历史对齐才安全。比 IsCodexRunning(只看 GUI)更宽。
+func isCodexProcessTreeRunning() bool {
 	switch runtime.GOOS {
 	case "darwin", "linux":
 		out, err := exec.Command("pgrep", "-f", codexProcessPattern).Output()
@@ -248,20 +284,21 @@ func IsCodexRunning() bool {
 func QuitCodexApp() {
 	switch runtime.GOOS {
 	case "darwin", "linux":
-		if !IsCodexRunning() {
+		// 用进程树检查(含 Resources/codex app-server),确保等到 sqlite 锁释放。
+		if !isCodexProcessTreeRunning() {
 			return
 		}
 		killProcessesByPattern(codexProcessPattern, "-TERM")
-		if !waitForProcessExit(IsCodexRunning, 5*time.Second) {
+		if !waitForProcessExit(isCodexProcessTreeRunning, 5*time.Second) {
 			killProcessesByPattern(codexProcessPattern, "-9")
-			waitForProcessExit(IsCodexRunning, 2*time.Second)
+			waitForProcessExit(isCodexProcessTreeRunning, 2*time.Second)
 		}
-		if IsCodexRunning() {
+		if isCodexProcessTreeRunning() {
 			Log("[codex] 警告:Codex 仍在运行,可能影响配置重载")
 		}
 	case "windows":
 		_ = exec.Command("taskkill", "/IM", "Codex.exe", "/T", "/F").Run()
-		waitForProcessExit(IsCodexRunning, 3*time.Second)
+		waitForProcessExit(isCodexProcessTreeRunning, 3*time.Second)
 	}
 }
 
@@ -274,15 +311,36 @@ func LaunchCodexApp() {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		// open -a 对 .app bundle 是正确方式;-n 不强制新实例(已退出时正常冷启动)。
-		if err := exec.Command("open", "-a", path).Start(); err != nil {
-			Log("[codex] 启动 Codex 失败: %v", err)
+		// detectCodexAppPath 现在优先返回 chrome-native-hosts.json 里的 codexCliPath,
+		// 它指向 bundle 内的 CLI 可执行文件(如 .../Codex.app/Contents/Resources/codex),
+		// 而非 bundle 主可执行文件。对这种"bundle 内非主可执行文件"路径,`open -a <path>`
+		// 会直接以子进程方式运行该 CLI(headless),并不会拉起 GUI —— 表现为"无法唤醒 Codex"。
+		// 因此先把路径归一到外层 .app bundle 再 `open`,确保拉起的是 GUI。
+		if bundle := codexAppBundlePath(path); strings.HasSuffix(bundle, ".app") {
+			if err := exec.Command("open", bundle).Start(); err != nil {
+				Log("[codex] 启动 Codex 失败: %v", err)
+			}
+		} else {
+			// 独立安装的 CLI(不在 .app 内,无 GUI 可拉起):直接执行。
+			if err := exec.Command(path).Start(); err != nil {
+				Log("[codex] 启动 Codex 失败: %v", err)
+			}
 		}
 	case "windows", "linux":
 		if err := exec.Command(path).Start(); err != nil {
 			Log("[codex] 启动 Codex 失败: %v", err)
 		}
 	}
+}
+
+// codexAppBundlePath 把 bundle 内的任意路径归一到外层 .app bundle 路径。
+// 例如 /Applications/Codex.app/Contents/Resources/codex → /Applications/Codex.app。
+// 非 bundle 内路径(不含 ".app/")原样返回。
+func codexAppBundlePath(p string) string {
+	if idx := strings.Index(p, ".app/"); idx >= 0 {
+		return p[:idx+len(".app")]
+	}
+	return p
 }
 
 // RestartCodexAfterTakeover 退出 → 把历史会话 provider 对齐到 targetProvider → 启动。
