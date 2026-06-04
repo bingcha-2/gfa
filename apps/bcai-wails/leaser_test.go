@@ -26,16 +26,16 @@ func TestSyncFromServerDerivesModelLimitsFromTokenWindowLimit(t *testing.T) {
 	}
 }
 
-// claude-only(或 codex-only)绑定卡:主 antigravity 租号被有意跳过,cachedToken
+// anthropic-only(或 codex-only)绑定卡:主 antigravity 租号被有意跳过,cachedToken
 // 永远为 nil —— serviceState 不应卡死在 waiting_first_lease(UI 永远「获取租约中…」)。
 func TestServiceStateReadyForNonAntigravityBoundCard(t *testing.T) {
 	l := &Leaser{
 		accessKeyStatus: map[string]interface{}{
-			"products": []interface{}{"claude"},
+			"products": []interface{}{"anthropic"},
 		},
 	}
 	if got := l.GetStatus()["serviceState"]; got != "ready" {
-		t.Fatalf("claude-only 卡 serviceState = %v, want ready", got)
+		t.Fatalf("anthropic-only 卡 serviceState = %v, want ready", got)
 	}
 }
 

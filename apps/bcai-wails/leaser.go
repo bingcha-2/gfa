@@ -1024,9 +1024,9 @@ func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force b
 			GetCodexLeaser().RefreshQuotaUpstream(card, upstreamProxy, lease, force)
 		}
 	}
-	// 该卡若开通 claude,预热一次 claude 租号,让 5h 血条在首个 /v1/messages 之前就有数据
-	// (服务端把 claudeWindows 随 lease 带回)。claude 用量计量在代理请求时进行,这里仅预热。
-	if cardCoversProduct(l.CardProducts(), "claude") {
+	// 该卡若开通 anthropic 产品,预热一次 claude 模型租号,让 5h 血条在首个 /v1/messages
+	// 之前就有数据(服务端把 claudeWindows 随 lease 带回)。用量计量在代理请求时进行,这里仅预热。
+	if cardCoversProduct(l.CardProducts(), "anthropic") {
 		_, _ = GetClaudeLeaser().LeaseToken(card, deviceId, true, nil, upstreamProxy)
 	}
 }

@@ -56,7 +56,7 @@ func targetRequiredProduct(productID string) string {
 	case "antigravity_ide", "antigravity_hub":
 		return "antigravity"
 	case "claude_code":
-		return "claude"
+		return "anthropic"
 	default:
 		return ""
 	}
@@ -82,8 +82,8 @@ func productLabel(product string) string {
 		return "Codex"
 	case "antigravity":
 		return "Antigravity"
-	case "claude":
-		return "Claude"
+	case "anthropic":
+		return "Anthropic"
 	default:
 		return product
 	}

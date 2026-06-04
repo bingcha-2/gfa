@@ -7,7 +7,7 @@ func TestTargetRequiredProduct(t *testing.T) {
 		"codex":           "codex",
 		"antigravity_ide": "antigravity",
 		"antigravity_hub": "antigravity",
-		"claude_code":     "claude",
+		"claude_code":     "anthropic",
 		"unknown":         "",
 	}
 	for in, want := range cases {
@@ -32,22 +32,22 @@ func TestClaudeCodeTargetIsRegistered(t *testing.T) {
 	}
 }
 
-func TestProductLabelClaude(t *testing.T) {
-	if productLabel("claude") != "Claude" {
-		t.Fatalf("productLabel(claude)=%q want Claude", productLabel("claude"))
+func TestProductLabelAnthropic(t *testing.T) {
+	if productLabel("anthropic") != "Anthropic" {
+		t.Fatalf("productLabel(anthropic)=%q want Anthropic", productLabel("anthropic"))
 	}
 }
 
-func TestClaudeCardGating(t *testing.T) {
-	// A claude-only card may take over Claude Code but not codex/antigravity.
-	if !cardCoversProduct([]string{"claude"}, "claude") {
-		t.Fatal("claude card should cover claude")
+func TestAnthropicCardGating(t *testing.T) {
+	// An anthropic-only card may take over Claude Code but not codex/antigravity.
+	if !cardCoversProduct([]string{"anthropic"}, "anthropic") {
+		t.Fatal("anthropic card should cover anthropic")
 	}
-	if cardCoversProduct([]string{"claude"}, "codex") {
-		t.Fatal("claude-only card must NOT cover codex")
+	if cardCoversProduct([]string{"anthropic"}, "codex") {
+		t.Fatal("anthropic-only card must NOT cover codex")
 	}
-	if cardCoversProduct([]string{"codex"}, "claude") {
-		t.Fatal("codex-only card must NOT cover claude")
+	if cardCoversProduct([]string{"codex"}, "anthropic") {
+		t.Fatal("codex-only card must NOT cover anthropic")
 	}
 }
 
