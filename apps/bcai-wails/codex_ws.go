@@ -31,9 +31,11 @@ import (
 // refresh_token 永不下发:号池 token 由服务器侧轮换,客户端只拿短期 access。
 
 const (
-	codexWSBetaHeader      = "responses_websockets=2026-02-06"
-	codexWSDefaultUA       = "codex-cli"
-	codexWSDefaultOrigin   = "codex_cli_rs"
+	codexWSBetaHeader = "responses_websockets=2026-02-06"
+	// 默认身份头对齐 HTTP 路径(codexDefaultUserAgent / codexDefaultOriginator),
+	// 避免裸 "codex-cli" 这种明显非官方客户端的 UA 被上游按指纹拦截。仅在下游未带时补。
+	codexWSDefaultUA       = codexDefaultUserAgent
+	codexWSDefaultOrigin   = codexDefaultOriginator
 	codexWSConnectTimeout  = 30 * time.Second
 	codexWSInitMsgTimeout  = 30 * time.Second
 	codexWSHandshakeBuffer = 64 * 1024
@@ -146,13 +148,20 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 	}
 	defer up.Close()
 
-	// 5. 先把首帧转给上游,再双向桥接。
+	// 5. 先把首帧转给上游,再双向桥接。换号后剔除首帧 response.create 里非法的
+	//    reasoning.encrypted_content(上一个账号的签名对新账号无效,留着上游报错)。
+	if msgType == websocket.TextMessage {
+		if cleaned, dropped := sanitizeCodexReasoningEncryptedContent(initial); dropped > 0 {
+			initial = cleaned
+			Log("[codex-proxy] #%d [WS][生成] 剔除 %d 条非法 reasoning.encrypted_content(换号签名失配)", reqID, dropped)
+		}
+	}
 	if err := up.WriteMessage(msgType, initial); err != nil {
 		Log("[codex-proxy] #%d [WS] 转发首帧失败: %v", reqID, err)
 		return
 	}
 
-	usage := p.bridgeCodexWS(reqID, down, up)
+	usage := p.bridgeCodexWS(reqID, down, up, time.Now())
 
 	// 6. 计量上报。
 	details := ReportDetails{
@@ -164,8 +173,8 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 		BillableTotalTokens: usage.total,
 	}
 	if usage.total > 0 {
-		Log("[codex-proxy] #%d [WS][生成] ✓ tokens(in=%d out=%d total=%d) → 已提交用量上报",
-			reqID, usage.input, usage.output, usage.total)
+		Log("[codex-proxy] #%d [WS][生成] ✓ TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
+			reqID, usage.ttftMs, usage.input, usage.output, usage.total)
 		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
 	} else {
 		Log("[codex-proxy] #%d [WS][生成] 连接结束,未解析到 usage(可能被中断或上游未返回用量)", reqID)
@@ -269,11 +278,12 @@ type codexWSUsage struct {
 	input  int64
 	output int64
 	total  int64
+	ttftMs int64 // 首个下行(上游→Codex)数据帧时延;未收到则为 -1
 }
 
 // bridgeCodexWS 双向全双工泵帧,直到任一方关闭。扫描两个方向的帧解析 usage。
-func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn) codexWSUsage {
-	var usage codexWSUsage
+func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start time.Time) codexWSUsage {
+	usage := codexWSUsage{ttftMs: -1}
 	var usageMu sync.Mutex
 	var once sync.Once
 	done := make(chan struct{})
@@ -319,6 +329,11 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn) codexW
 				return
 			}
 			if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
+				usageMu.Lock()
+				if usage.ttftMs < 0 {
+					usage.ttftMs = time.Since(start).Milliseconds()
+				}
+				usageMu.Unlock()
 				scan(data)
 			}
 			if err := down.WriteMessage(mt, data); err != nil {
