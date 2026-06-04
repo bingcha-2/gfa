@@ -24,6 +24,8 @@ import {
 } from "./google-api";
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
 import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
+import { refreshClaudeAccessToken } from "../remote-claude/auth/claude-token-provider";
+import { fetchClaudeQuotaUpstream } from "../remote-claude/auth/claude-usage";
 
 type RosettaServiceOptions = {
   dataDir?: string;
@@ -1583,6 +1585,74 @@ export class RosettaService {
     writeJson(filePath, { ...data, accounts: filtered, updatedAt: nowIso() });
     this.clearBindingsForAccount("claude", accountId);
     return { ok: true, totalAccounts: filtered.length };
+  }
+
+  // 「刷新」= 强制刷 token + 探测拉额度(合并为一个动作),对齐 codex 的按钮。
+  // Claude 无独立用量接口,只能用账号 token 向 Anthropic 发一次最小探测请求,从
+  // anthropic-ratelimit-unified-* 响应头解析 5h/周剩余。token 一定会刷新;额度解析
+  // 为尽力而为,并回带 rawHeaders 便于核对真实头名。
+  async refreshClaudeAccountQuota(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.dataDir, "claude-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === accountId);
+    if (!acc) return { ok: false, error: "账号不存在" };
+    if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
+    try {
+      const probe = { email: acc.email, refreshToken: acc.refreshToken } as any;
+      const token = await refreshClaudeAccessToken(probe);
+      acc.accessToken = token;
+      acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
+      if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
+
+      const snap = await fetchClaudeQuotaUpstream(token);
+      // 始终记录抓到的限流头,便于一次真实点击后核对/定稿解析。
+      console.log(
+        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} headers=${JSON.stringify(snap.rawHeaders)}${snap.error ? ` error=${snap.error}` : ""}`,
+      );
+      const cq = snap.claudeQuota;
+      if (!cq) {
+        // token 已刷新并落盘;额度头未解析到 → 仍算成功,回带原始头让前端/日志可见。
+        writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+        const headerNames = Object.keys(snap.rawHeaders);
+        return {
+          ok: true,
+          email: acc.email,
+          tokenValid: true,
+          quotaError: snap.error
+            ? `额度探测失败:${snap.error}`
+            : headerNames.length
+              ? `本次未解析到 5h/周额度头(已记录:${headerNames.join(", ")})`
+              : "本次探测未返回任何限流头(已记录)",
+          rawHeaders: snap.rawHeaders,
+        };
+      }
+      const weeklyBinds = cq.weeklyPercent < cq.hourlyPercent;
+      const bindingPercent = weeklyBinds ? cq.weeklyPercent : cq.hourlyPercent;
+      const bindingReset = weeklyBinds ? cq.weeklyResetTime : cq.hourlyResetTime;
+      acc.modelQuotaFractions = { claude: bindingPercent / 100 };
+      if (bindingReset) acc.modelQuotaResetTimes = { claude: bindingReset };
+      acc.modelQuotaRefreshedAt = Date.now();
+      acc.claudeHourlyPercent = cq.hourlyPercent;
+      acc.claudeWeeklyPercent = cq.weeklyPercent;
+      acc.claudeHourlyResetTime = cq.hourlyResetTime || "";
+      acc.claudeWeeklyResetTime = cq.weeklyResetTime || "";
+      writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+      return {
+        ok: true,
+        email: acc.email,
+        tokenValid: true,
+        planType: acc.planType || "",
+        hourlyPercent: cq.hourlyPercent,
+        weeklyPercent: cq.weeklyPercent,
+        hourlyResetTime: cq.hourlyResetTime || "",
+        weeklyResetTime: cq.weeklyResetTime || "",
+        rawHeaders: snap.rawHeaders,
+      };
+    } catch (err: any) {
+      return { ok: false, email: acc.email, error: String(err?.message || err) };
+    }
   }
 
   createAccessKey(payload: any) {

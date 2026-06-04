@@ -204,6 +204,12 @@ export class RosettaController {
     return this.rosetta.submitClaudeOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
   }
 
+  // 「刷新」= 强制刷 token + 探测拉额度(合并为一个动作)。
+  @Post("claude-refresh-quota")
+  refreshClaudeAccountQuota(@Body() body: any) {
+    return this.rosetta.refreshClaudeAccountQuota(body);
+  }
+
   @Post("access-key")
   createAccessKey(@Body() body: any) {
     const result = this.rosetta.createAccessKey(body);

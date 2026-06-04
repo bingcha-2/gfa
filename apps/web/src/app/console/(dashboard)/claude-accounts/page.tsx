@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, ExternalLinkIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,8 @@ export default function ClaudeAccountsPage() {
   const [adding, setAdding] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAccount | null>(null);
+  // 手动「刷新」(刷 token + 探测拉额度)进行中的账号 id。
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
@@ -202,6 +204,35 @@ export default function ClaudeAccountsPage() {
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除失败");
+    }
+  }
+
+  // 「刷新」= 强制刷 token + 探测拉额度(后端一个接口)。Claude 无独立用量接口,
+  // 后端会用该账号 token 向 Anthropic 发一次最小探测请求,从限流响应头解析 5h/周。
+  async function handleRefresh(account: ClaudeAccount) {
+    setBusyId(account.id);
+    try {
+      const res = await fetch("/api/rosetta/claude-refresh-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "刷新失败");
+      if (data.rawHeaders) {
+        // 把抓到的真实限流头打到控制台,便于核对/定稿解析。
+        console.log(`[claude-refresh] #${account.id} anthropic-ratelimit headers:`, data.rawHeaders);
+      }
+      if (data.quotaError) {
+        toast.success(`#${account.id} token 已刷新(${data.quotaError})`);
+      } else {
+        toast.success(`#${account.id} 已刷新 · 5h ${Math.round(data.hourlyPercent)}% · 周 ${Math.round(data.weeklyPercent)}%`);
+      }
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "刷新失败");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -355,6 +386,10 @@ export default function ClaudeAccountsPage() {
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
                     </TableCell>
                     <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}
+                        onClick={() => handleRefresh(a)}>
+                        {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
                         <Trash2Icon className="size-4 text-destructive" />
                       </Button>
