@@ -147,8 +147,11 @@ export default function RosettaKeysPage() {
   const [createWindowValue, setCreateWindowValue] = useState("5");
   const [createWindowUnit, setCreateWindowUnit] = useState("h");
   const [createCount, setCreateCount] = useState("1");
-  // Products the new card is sold for. None selected = pool-mode card (no
-  // binding); selecting one/both auto-binds an open-seat account per product.
+  // 顶层模式:池子卡(无绑定、万能、走动态池)或 绑定卡(开通指定产品 + 绑号,只有开通
+  // 的产品能用)。默认绑定模式(主要业务)。
+  const [createMode, setCreateMode] = useState<"pool" | "bound">("bound");
+  // Products the bound card is sold for. 绑定模式下至少选一个;只有选中的产品能用,
+  // 其余请求会被 409 拒(此卡未开通该服务)。
   const [createCodex, setCreateCodex] = useState(false);
   const [createAnti, setCreateAnti] = useState(false);
   // 会员等级(planType):每个开通的产品必选一个等级,只绑定该等级且可用的账号。
@@ -266,6 +269,14 @@ export default function RosettaKeysPage() {
     }
   }, [createAnti, antiLevels, createAntiLevel]);
 
+  // 切到池子模式时,清掉产品选择(对应的等级/账号字段随之隐藏)。
+  useEffect(() => {
+    if (createMode === "pool") {
+      setCreateCodex(false);
+      setCreateAnti(false);
+    }
+  }, [createMode]);
+
   // 产品关闭或等级变化时,清掉手动选的账号(避免把别的等级的旧选择带出去)。
   useEffect(() => {
     setCreateCodexAccountId("");
@@ -274,35 +285,21 @@ export default function RosettaKeysPage() {
     setCreateAntiAccountId("");
   }, [createAnti, createAntiLevel]);
 
-  const handleBind = async (cardId: string, provider: string, accountId: number) => {
+  // 一次性提交一张卡的最终绑定映射(绑定弹窗"保存")。失败时抛错,让弹窗保持打开。
+  const handleSetBindings = async (cardId: string, bindings: Record<string, number>) => {
     try {
-      const res = await fetch("/api/rosetta/access-key-bind", {
+      const res = await fetch("/api/rosetta/access-key-set-bindings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: cardId, provider, accountId }),
+        body: JSON.stringify({ id: cardId, bindings }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "绑定失败");
-      toast.success("已绑定账号");
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success("绑定已更新");
       await Promise.all([fetchKeys(), fetchBindableAccounts()]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "绑定失败");
-    }
-  };
-
-  const handleUnbind = async (cardId: string, provider: string) => {
-    try {
-      const res = await fetch("/api/rosetta/access-key-unbind", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: cardId, provider }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "解绑失败");
-      toast.success("已解绑");
-      await Promise.all([fetchKeys(), fetchBindableAccounts()]);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "解绑失败");
+      toast.error(err instanceof Error ? err.message : "保存失败");
+      throw err;
     }
   };
 
@@ -397,11 +394,14 @@ export default function RosettaKeysPage() {
       if (createTokenLimit.trim()) {
         payload.tokenWindowLimit = Number(createTokenLimit);
       }
-      const products = [
-        ...(createCodex ? ["codex"] : []),
-        ...(createAnti ? ["antigravity"] : []),
-      ];
-      if (products.length) {
+      // 池子模式:不传 products → 服务端建为无绑定的万能池子卡。
+      // 绑定模式:至少选一个产品,只有开通的产品能用。
+      if (createMode === "bound") {
+        const products = [
+          ...(createCodex ? ["codex"] : []),
+          ...(createAnti ? ["antigravity"] : []),
+        ];
+        if (!products.length) throw new Error("绑定模式请至少选择一个产品");
         // Level is required for every selected product.
         if (createCodex && !createCodexLevel) throw new Error("请选择 Codex 会员等级");
         if (createAnti && !createAntiLevel) throw new Error("请选择 Antigravity 会员等级");
@@ -584,27 +584,41 @@ export default function RosettaKeysPage() {
                 onChange={(e) => setCreateName(e.target.value)}
               />
             </Field>
-            <Field className="min-w-[180px]">
-              <FieldLabel>开通产品（不选=池子模式）</FieldLabel>
-              <div className="flex items-center gap-3 h-9">
-                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={createCodex}
-                    onChange={(e) => setCreateCodex(e.target.checked)}
-                  />
-                  Codex
-                </label>
-                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={createAnti}
-                    onChange={(e) => setCreateAnti(e.target.checked)}
-                  />
-                  Antigravity
-                </label>
-              </div>
+            <Field className="min-w-[150px]">
+              <FieldLabel>模式</FieldLabel>
+              <Select value={createMode} onValueChange={(v) => setCreateMode(v as "pool" | "bound")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bound">绑定模式（开通指定产品）</SelectItem>
+                  <SelectItem value="pool">池子模式（万能卡 · 不绑号）</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
+            {createMode === "bound" && (
+              <Field className="min-w-[180px]">
+                <FieldLabel>开通产品（只开的能用）</FieldLabel>
+                <div className="flex items-center gap-3 h-9">
+                  <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={createCodex}
+                      onChange={(e) => setCreateCodex(e.target.checked)}
+                    />
+                    Codex
+                  </label>
+                  <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={createAnti}
+                      onChange={(e) => setCreateAnti(e.target.checked)}
+                    />
+                    Antigravity
+                  </label>
+                </div>
+              </Field>
+            )}
             {createCodex && (
               <Field className="min-w-[140px]">
                 <FieldLabel>Codex 会员等级</FieldLabel>
@@ -699,19 +713,21 @@ export default function RosettaKeysPage() {
                 </Select>
               </Field>
             )}
-            <Field className="min-w-[130px]">
-              <FieldLabel>份额(几人享用)</FieldLabel>
-              <Select value={createWeight} onValueChange={setCreateWeight}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">拼车 · 1份(4人/号)</SelectItem>
-                  <SelectItem value="2">2份(2人/号)</SelectItem>
-                  <SelectItem value="4">独享 · 4份(独占一个号)</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
+            {createMode === "bound" && (
+              <Field className="min-w-[130px]">
+                <FieldLabel>份额(几人享用)</FieldLabel>
+                <Select value={createWeight} onValueChange={setCreateWeight}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">拼车 · 1份(4人/号)</SelectItem>
+                    <SelectItem value="2">2份(2人/号)</SelectItem>
+                    <SelectItem value="4">独享 · 4份(独占一个号)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Field className="min-w-[180px]">
               <FieldLabel>有效期</FieldLabel>
               <div className="flex items-center gap-1">
@@ -1016,8 +1032,7 @@ export default function RosettaKeysPage() {
                           <BindAccountControl
                             card={{ id: item.id, bindings: item.bindings, weight: item.weight }}
                             accounts={bindableAccounts}
-                            onBind={(provider, accountId) => handleBind(item.id, provider, accountId)}
-                            onUnbind={(provider) => handleUnbind(item.id, provider)}
+                            onApply={(bindings) => handleSetBindings(item.id, bindings)}
                           />
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">

@@ -1592,6 +1592,46 @@ export class RosettaService {
     return { ok: true, key: this.publicAccessKey(record) };
   }
 
+  /**
+   * 一次性设置一张卡的全部绑定(绑定弹窗"保存"用)。bindings 是期望的最终映射:
+   * { codex?: accountId, antigravity?: accountId };某 provider 缺省或 ≤0 = 设为池子
+   * (不绑)。先校验每个要绑的号份额够(排除本卡自身),全部通过才一次性写入 ——
+   * 避免前端分别调 bind/unbind 并发读写同一个 json 打架。
+   */
+  setAccessKeyBindings(payload: any) {
+    const id = String(payload?.id || "");
+    const desired: Record<string, number> =
+      payload?.bindings && typeof payload.bindings === "object" ? payload.bindings : {};
+    const filePath = path.join(this.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    const record = keys.find((key: any) => String(key.id) === id);
+    if (!record) return { ok: false, error: "卡密不存在" };
+
+    const need = cardWeight(record);
+    const nextBindings: Record<string, number> = {};
+    for (const provider of ["codex", "antigravity"]) {
+      const accountId = Number(desired[provider] || 0);
+      if (!(accountId > 0)) continue; // 该 provider → 池子模式(不绑)
+      // 份额:目标号已用(排除本卡) + 本卡份额 ≤ 4。
+      const used = this.usedShares(provider, accountId, id);
+      if (used + need > ACCOUNT_SHARE_CAPACITY) {
+        const label = provider === "codex" ? "Codex" : "Antigravity";
+        return {
+          ok: false,
+          error: `${label} 所选账号份额不足（已用 ${used}/${ACCOUNT_SHARE_CAPACITY} 份，本卡需 ${need} 份）`,
+        };
+      }
+      nextBindings[provider] = accountId;
+    }
+    record.bindings = nextBindings; // {} = 纯池子卡
+    // 清掉历史单绑字段,避免与 bindings 冲突。
+    record.provider = "";
+    record.boundAccountId = 0;
+    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    return { ok: true, key: this.publicAccessKey(record) };
+  }
+
   /** Clear bindings that point at a deleted account, so no card is orphaned. */
   private clearBindingsForAccount(provider: string, accountId: number) {
     const filePath = path.join(this.dataDir, "access-keys.json");

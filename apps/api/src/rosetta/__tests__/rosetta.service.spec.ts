@@ -695,6 +695,88 @@ describe("RosettaService", () => {
       expect(key.bindings).toEqual({ antigravity: 3 });
     });
 
+    it("setAccessKeyBindings sets the full map in one shot", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      expect(svc.setAccessKeyBindings({ id: "c1", bindings: { codex: 7, antigravity: 3 } }).ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({ codex: 7, antigravity: 3 });
+    });
+
+    it("setAccessKeyBindings swaps a binding (换绑) to a different account", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 });
+      expect(svc.setAccessKeyBindings({ id: "c1", bindings: { codex: 8 } }).ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({ codex: 8 });
+    });
+
+    it("setAccessKeyBindings with empty map turns a bound card back into a pool card", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 });
+      expect(svc.setAccessKeyBindings({ id: "c1", bindings: {} }).ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({});
+    });
+
+    it("setAccessKeyBindings rejects on capacity and does NOT partially apply", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.bindAccessKey({ id: "c1", provider: "codex", accountId: 7 });
+      // 把 antigravity #3 占满(4 张卡)。
+      for (let i = 1; i <= 4; i++) {
+        svc.createAccessKey({ id: `f${i}` });
+        svc.bindAccessKey({ id: `f${i}`, provider: "antigravity", accountId: 3 });
+      }
+      const r = svc.setAccessKeyBindings({ id: "c1", bindings: { codex: 8, antigravity: 3 } });
+      expect(r.ok).toBe(false);
+      // 原子:codex 仍是原来的 7,antigravity 没绑上。
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(key.bindings).toEqual({ codex: 7 });
+    });
+
+    it("createAccessKey honours a manually picked account (accountIds)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      const r: any = svc.createAccessKey({
+        id: "m1",
+        products: ["codex"],
+        levels: { codex: "Plus" },
+        accountIds: { codex: id },
+      });
+      expect(r.ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "m1") as any;
+      expect(key.bindings).toEqual({ codex: id });
+    });
+
+    it("createAccessKey rejects a manual account that can't fit the whole batch", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      const r: any = svc.createAccessKey({
+        count: 5, // 5 × 1 份 > 4 容量
+        products: ["codex"],
+        levels: { codex: "Plus" },
+        accountIds: { codex: id },
+      });
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("份额不足");
+    });
+
+    it("createAccessKey rejects a manual account that does not exist", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      const r: any = svc.createAccessKey({
+        products: ["codex"],
+        levels: { codex: "Plus" },
+        accountIds: { codex: 999 },
+      });
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("不存在");
+    });
+
     it("surfaces boundCardCount on codex accounts", () => {
       const svc = new RosettaService({ dataDir: tempDir });
       svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
