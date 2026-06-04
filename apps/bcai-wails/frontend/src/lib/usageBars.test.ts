@@ -20,11 +20,15 @@ describe('usageBarsForProducts', () => {
     expect(usageBarsForProducts(['codex', 'antigravity'])).toEqual({ opus: true, gemini: true, codex: true })
   })
 
-  it('shows the Opus bar for a claude-bound card (Claude bills to the opus bucket)', () => {
-    expect(usageBarsForProducts(['claude'])).toEqual({ opus: true, gemini: false, codex: false })
+  it('shows the Opus bar for an anthropic-bound card (Claude model bills to the opus bucket)', () => {
+    expect(usageBarsForProducts(['anthropic'])).toEqual({ opus: true, gemini: false, codex: false })
   })
 
-  it('shows Opus + Codex for a claude+codex card', () => {
-    expect(usageBarsForProducts(['claude', 'codex'])).toEqual({ opus: true, gemini: false, codex: true })
+  it('shows Opus + Codex for an anthropic+codex card', () => {
+    expect(usageBarsForProducts(['anthropic', 'codex'])).toEqual({ opus: true, gemini: false, codex: true })
+  })
+
+  it('still shows the Opus bar for a legacy claude product value (pre-migration fallback)', () => {
+    expect(usageBarsForProducts(['claude'])).toEqual({ opus: true, gemini: false, codex: false })
   })
 })
