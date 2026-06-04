@@ -20,7 +20,17 @@ describe("toBindableAccounts", () => {
     expect(result[0].shareCapacity).toBe(4);
   });
 
-  it("tolerates undefined pools", () => {
+  it("tags the claude pool last when provided", () => {
+    const result = toBindableAccounts(
+      [{ id: 7, email: "c@x.com", planType: "Plus" }],
+      [{ id: 1, email: "a@x.com" }],
+      [{ id: 3, email: "cl@x.com", usedShares: 1, shareCapacity: 4, planType: "Max" }],
+    );
+    expect(result.map((a) => a.provider)).toEqual(["codex", "antigravity", "claude"]);
+    expect(result[2]).toEqual({ provider: "claude", id: 3, email: "cl@x.com", usedShares: 1, shareCapacity: 4, planType: "Max" });
+  });
+
+  it("tolerates undefined pools (claude omitted)", () => {
     expect(toBindableAccounts(undefined, undefined)).toEqual([]);
   });
 });

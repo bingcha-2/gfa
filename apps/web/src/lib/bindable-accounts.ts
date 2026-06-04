@@ -9,13 +9,14 @@ interface RawAccount {
 }
 
 /**
- * Merge the codex and antigravity account-pool API shapes into a single
+ * Merge the codex, antigravity and claude account-pool API shapes into a single
  * provider-tagged list for BindAccountControl. Codex first (the pool sold
- * first), then antigravity.
+ * first), then antigravity, then claude.
  */
 export function toBindableAccounts(
   codex: RawAccount[] | undefined,
   antigravity: RawAccount[] | undefined,
+  claude?: RawAccount[] | undefined,
 ): BindableAccount[] {
   const tag = (list: RawAccount[] | undefined, provider: string): BindableAccount[] =>
     (list || []).map((a) => ({
@@ -26,5 +27,5 @@ export function toBindableAccounts(
       shareCapacity: Number(a.shareCapacity || 0) > 0 ? Number(a.shareCapacity) : 4,
       planType: String(a.planType || ""),
     }));
-  return [...tag(codex, "codex"), ...tag(antigravity, "antigravity")];
+  return [...tag(codex, "codex"), ...tag(antigravity, "antigravity"), ...tag(claude, "claude")];
 }

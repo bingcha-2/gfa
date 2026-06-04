@@ -180,6 +180,7 @@ export default function RosettaKeysPage() {
   // 可选:手动指定要绑定的账号("" = 自动分配)。选了就整批绑到该号。
   const [createCodexAccountId, setCreateCodexAccountId] = useState("");
   const [createAntiAccountId, setCreateAntiAccountId] = useState("");
+  const [createClaudeAccountId, setCreateClaudeAccountId] = useState("");
   // 各号池里存在的等级选项(去重),用于上面的下拉。
   const [codexLevels, setCodexLevels] = useState<string[]>([]);
   const [antiLevels, setAntiLevels] = useState<string[]>([]);
@@ -260,7 +261,7 @@ export default function RosettaKeysPage() {
       const codex = await codexRes.json();
       const anti = await antiRes.json();
       const claude = await claudeRes.json();
-      setBindableAccounts(toBindableAccounts(codex.accounts, anti.accounts));
+      setBindableAccounts(toBindableAccounts(codex.accounts, anti.accounts, claude.accounts));
       // Distinct, non-empty membership levels present in each pool (for the
       // create form's per-product level picker).
       const levelsOf = (list: Array<{ planType?: string }> | undefined) =>
@@ -304,6 +305,7 @@ export default function RosettaKeysPage() {
     if (createMode === "pool") {
       setCreateCodex(false);
       setCreateAnti(false);
+      setCreateClaude(false);
     }
   }, [createMode]);
 
@@ -314,6 +316,9 @@ export default function RosettaKeysPage() {
   useEffect(() => {
     setCreateAntiAccountId("");
   }, [createAnti, createAntiLevel]);
+  useEffect(() => {
+    setCreateClaudeAccountId("");
+  }, [createClaude, createClaudeLevel]);
 
   // 一次性提交一张卡的最终绑定映射(绑定弹窗"保存")。失败时抛错,让弹窗保持打开。
   const handleSetBindings = async (cardId: string, bindings: Record<string, number>) => {
@@ -447,6 +452,7 @@ export default function RosettaKeysPage() {
         const accountIds: Record<string, number> = {
           ...(createCodex && createCodexAccountId ? { codex: Number(createCodexAccountId) } : {}),
           ...(createAnti && createAntiAccountId ? { antigravity: Number(createAntiAccountId) } : {}),
+          ...(createClaude && createClaudeAccountId ? { claude: Number(createClaudeAccountId) } : {}),
         };
         if (Object.keys(accountIds).length) payload.accountIds = accountIds;
         payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
@@ -822,6 +828,33 @@ export default function RosettaKeysPage() {
                           {lv}
                         </SelectItem>
                       ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {createClaude && (
+              <Field className="min-w-[200px]">
+                <FieldLabel>Claude 账号(可选,默认自动)</FieldLabel>
+                <Select
+                  items={accountItems("claude", createClaudeLevel)}
+                  value={createClaudeAccountId || ACCOUNT_AUTO}
+                  onValueChange={(v) => setCreateClaudeAccountId(v === ACCOUNT_AUTO ? "" : v)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
+                      {accountPickerOptions("claude", createClaudeLevel).map((a) => {
+                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
+                        return (
+                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
+                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
