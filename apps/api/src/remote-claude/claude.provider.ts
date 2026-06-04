@@ -30,7 +30,8 @@ export type ClaudeProviderOptions = {
  * "claude" quota key and the claudeWindows/claude* display fields.
  */
 export class ClaudeProvider implements Provider<ClaudeAccount> {
-  readonly id = "claude";
+  // 产品 key(= 卡 bindings 的 key)。产品=anthropic;模型仍是 claude。
+  readonly id = "anthropic";
   readonly accountsFilePath: string;
   readonly models = new ClaudeModelCatalog();
   private readonly tokenProvider: (account: ClaudeAccount) => Promise<string>;

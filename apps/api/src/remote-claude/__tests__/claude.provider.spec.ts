@@ -4,9 +4,10 @@ import { ClaudeProvider } from "../claude.provider";
 import { getModelQuotaFraction } from "../../token-server/lease-scheduler";
 
 describe("ClaudeProvider basics", () => {
-  it("has the claude id and an opus-bucketed model catalog", () => {
+  it("has the anthropic product id and an opus-bucketed claude model catalog", () => {
     const provider = new ClaudeProvider();
-    expect(provider.id).toBe("claude");
+    // Product key = "anthropic" (matches card bindings); models are still claude-*.
+    expect(provider.id).toBe("anthropic");
     // Claude models bill to the universal 'opus' bucket.
     expect(provider.models.classify("claude-opus-4-20250514")).toBe("opus");
     expect(provider.models.list().length).toBeGreaterThan(0);
