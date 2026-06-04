@@ -33,6 +33,7 @@ type ClaudeAccount = {
   claudeHourlyPercent: number;
   claudeWeeklyPercent: number;
   modelQuotaRefreshedAt: number;
+  proxyUrl: string;
 };
 
 function pct(value: number) {
@@ -48,6 +49,7 @@ export default function ClaudeAccountsPage() {
   const [refreshToken, setRefreshToken] = useState("");
   const [planType, setPlanType] = useState("");
   const [alias, setAlias] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [adding, setAdding] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAccount | null>(null);
@@ -91,12 +93,12 @@ export default function ClaudeAccountsPage() {
       const res = await fetch("/api/rosetta/claude-add-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), refreshToken: refreshToken.trim(), planType: planType.trim(), alias: alias.trim() }),
+        body: JSON.stringify({ email: email.trim(), refreshToken: refreshToken.trim(), planType: planType.trim(), alias: alias.trim(), proxyUrl: proxyUrl.trim() }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "添加失败");
       toast.success(data.isUpdate ? "已更新账号" : "已添加账号");
-      setEmail(""); setRefreshToken(""); setPlanType(""); setAlias("");
+      setEmail(""); setRefreshToken(""); setPlanType(""); setAlias(""); setProxyUrl("");
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "添加失败");
@@ -289,6 +291,10 @@ export default function ClaudeAccountsPage() {
               <FieldLabel>别名</FieldLabel>
               <Input placeholder="可选" value={alias} onChange={(e) => setAlias(e.target.value)} />
             </Field>
+            <Field className="min-w-[240px] flex-1">
+              <FieldLabel>出口代理(可选,每号粘性)</FieldLabel>
+              <Input placeholder="socks5://user:pass@host:1080" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} />
+            </Field>
             <Button onClick={handleAdd} disabled={adding}>
               {adding ? <Spinner data-icon className="size-4" /> : <PlusIcon data-icon className="size-4" />}
               添加
@@ -317,6 +323,7 @@ export default function ClaudeAccountsPage() {
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
+                  <TableHead>出口代理</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead className="text-right">操作</TableHead>
@@ -335,6 +342,9 @@ export default function ClaudeAccountsPage() {
                     <TableCell className="text-sm">{pct(a.claudeWeeklyPercent)}</TableCell>
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={a.proxyUrl || ""}>
+                      {a.proxyUrl ? a.proxyUrl : <span className="text-[var(--text-muted)]">直连</span>}
                     </TableCell>
                     <TableCell>
                       <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>

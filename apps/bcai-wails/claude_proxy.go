@@ -148,7 +148,9 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
 
-	client := createStreamingHttpClient(upstreamProxy)
+	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
+	// 否则回落到用户自己配置的上游代理。
+	client := newClaudeUpstreamClient(effectiveClaudeProxy(lease.ProxyURL, upstreamProxy))
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -230,7 +232,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
 
-	resp, err := createStreamingHttpClient(upstreamProxy).Do(req)
+	resp, err := newClaudeUpstreamClient(effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)).Do(req)
 	if err != nil {
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
@@ -241,6 +243,17 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
 	Log("[claude-proxy] #%d [辅助] %s 上游码=%d", reqID, r.URL.Path, resp.StatusCode)
+}
+
+// effectiveClaudeProxy 选出口代理:每号粘性住宅代理优先,否则用户配置的上游代理。
+func effectiveClaudeProxy(accountProxy, userProxy string) string {
+	if strings.TrimSpace(accountProxy) != "" {
+		return strings.TrimSpace(accountProxy)
+	}
+	if up := strings.TrimSpace(userProxy); up != "" && !isDirectProxyMode(up) {
+		return up
+	}
+	return ""
 }
 
 func isClaudeStreamingResponse(resp *http.Response) bool {

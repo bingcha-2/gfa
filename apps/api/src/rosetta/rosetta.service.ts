@@ -1365,6 +1365,7 @@ export class RosettaService {
       claudeHourlyPercent: Number(account.claudeHourlyPercent ?? -1),
       claudeWeeklyPercent: Number(account.claudeWeeklyPercent ?? -1),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+      proxyUrl: String(account.proxyUrl || ""),
     }));
     return { ok: true, accounts, dataDir: this.dataDir };
   }
@@ -1387,6 +1388,7 @@ export class RosettaService {
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
       if (payload.accessToken) existing.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
+      if (payload.proxyUrl !== undefined) existing.proxyUrl = String(payload.proxyUrl || "");
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -1401,6 +1403,7 @@ export class RosettaService {
       };
       if (payload.accessToken) record.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
+      if (payload.proxyUrl) record.proxyUrl = String(payload.proxyUrl);
       accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });

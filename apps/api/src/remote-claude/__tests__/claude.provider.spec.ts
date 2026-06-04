@@ -135,6 +135,20 @@ describe("ClaudeProvider.leaseResponseExtras", () => {
     const provider = new ClaudeProvider();
     expect(provider.leaseResponseExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any)).toEqual({});
   });
+
+  it("surfaces the account's sticky proxy URL so the client pins that account's egress IP", () => {
+    const provider = new ClaudeProvider();
+    const extras = provider.leaseResponseExtras({
+      id: 1, email: "a@b.c", refreshToken: "r", proxyUrl: "socks5://u:p@res.example:1080",
+    } as any);
+    expect(extras.claudeProxyUrl).toBe("socks5://u:p@res.example:1080");
+  });
+
+  it("omits claudeProxyUrl when the account has no proxy configured", () => {
+    const provider = new ClaudeProvider();
+    const extras = provider.leaseResponseExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any);
+    expect(extras.claudeProxyUrl).toBeUndefined();
+  });
 });
 
 describe("ClaudeProvider.statusAccountExtras", () => {

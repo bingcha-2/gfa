@@ -77,17 +77,22 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
    */
   leaseResponseExtras(account: ClaudeAccount): Record<string, unknown> {
     const a = account as Record<string, unknown>;
+    const extras: Record<string, unknown> = {};
+    // 每号粘性出口代理(住宅 IP):客户端据此固定该号出口,规避多 IP 聚类/不可能旅行。
+    const proxyUrl = typeof a.proxyUrl === "string" ? a.proxyUrl.trim() : "";
+    if (proxyUrl) extras.claudeProxyUrl = proxyUrl;
+
     const hourly = typeof a.claudeHourlyPercent === "number" ? a.claudeHourlyPercent : null;
     const weekly = typeof a.claudeWeeklyPercent === "number" ? a.claudeWeeklyPercent : null;
-    if (hourly === null && weekly === null) return {};
-    return {
-      claudeWindows: {
+    if (hourly !== null || weekly !== null) {
+      extras.claudeWindows = {
         hourlyPercent: hourly,
         weeklyPercent: weekly,
         hourlyResetTime: a.claudeHourlyResetTime ? String(a.claudeHourlyResetTime) : "",
         weeklyResetTime: a.claudeWeeklyResetTime ? String(a.claudeWeeklyResetTime) : "",
-      },
-    };
+      };
+    }
+    return extras;
   }
 
   /** Blood bar = the account-level claude binding (min hourly/weekly) fraction.

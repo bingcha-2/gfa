@@ -27,6 +27,9 @@ type ClaudeTokenLease struct {
 	EmailHint   string `json:"emailHint"`
 	ExpiresAt   int64  `json:"expiresAt"`
 	LeasedAt    int64  `json:"leasedAt"`
+	// ProxyURL 是服务端为该账号下发的粘性出口代理(住宅/移动 IP),空=直连。
+	// 客户端用它路由打 api.anthropic.com 的那一跳,实现"每号固定出口 IP"。
+	ProxyURL string `json:"proxyUrl"`
 }
 
 type claudeLeaseTokenResp struct {
@@ -48,6 +51,8 @@ type claudeLeaseTokenResp struct {
 	// 服务端把绑定/被租 claude 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
 	// 客户端据此渲染 claude 血条,无需自己抓上游(claude 不做客户端上游额度拉取)。
 	ClaudeWindows *ClaudeQuotaWindow `json:"claudeWindows"`
+	// 该账号的粘性出口代理(住宅 IP),供客户端固定该号出口。空=直连。
+	ClaudeProxyUrl string `json:"claudeProxyUrl"`
 }
 
 // ClaudeLeaser 镜像 CodexLeaser,但去掉了 codex 的客户端上游额度拉取机制
@@ -179,6 +184,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		EmailHint:   leaseResp.EmailHint,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
+		ProxyURL:    leaseResp.ClaudeProxyUrl,
 	}
 	// 记录 claude 绑定号的真实上游剩余(供血条显示真实余量)。
 	if leaseResp.BoundAccount != nil {
