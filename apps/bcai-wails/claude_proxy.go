@@ -303,7 +303,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
-	egress := effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)
+	egress := claudeEgressProxy(lease.ProxyURL)
 	// 安全闸:禁止从本机 IP 直连 anthropic。没有出口代理 → 拒绝,绝不泄露本机 IP。
 	if claudeEgressBlocked(egress) {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -442,7 +442,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		dumpClaudeHeaders(reqID, "aux-upstream-req-hdr", req.Header)
 	}
 
-	auxEgress := effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)
+	auxEgress := claudeEgressProxy(lease.ProxyURL)
 	// 安全闸:辅助请求同样禁止从本机 IP 直连 anthropic。
 	if claudeEgressBlocked(auxEgress) {
 		Log("[claude-proxy] #%d [辅助] ✗ 拒绝直连本机:未配出口代理", reqID)
@@ -464,15 +464,10 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	Log("[claude-proxy] #%d [辅助] %s 上游码=%d", reqID, r.URL.Path, resp.StatusCode)
 }
 
-// effectiveClaudeProxy 选出口代理:每号粘性住宅代理优先,否则用户配置的上游代理。
-func effectiveClaudeProxy(accountProxy, userProxy string) string {
-	if strings.TrimSpace(accountProxy) != "" {
-		return strings.TrimSpace(accountProxy)
-	}
-	if up := strings.TrimSpace(userProxy); up != "" && !isDirectProxyMode(up) {
-		return up
-	}
-	return ""
+// claudeEgressProxy 返回该号的出口代理 = 服务端为账号下发的粘性住宅代理(lease.ProxyURL)。
+// claude 出口【只】由服务端按号控制,不再回落客户端 upstreamProxy;为空则被安全闸拒绝(不直连)。
+func claudeEgressProxy(accountProxy string) string {
+	return strings.TrimSpace(accountProxy)
 }
 
 func isClaudeStreamingResponse(resp *http.Response) bool {
