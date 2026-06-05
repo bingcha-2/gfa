@@ -97,6 +97,80 @@ func (p *ClaudeProxy) doReportProblem(card, deviceId string, d ReportDetails, up
 	GetClaudeLeaser().ReportProblem(card, deviceId, d, up, lease)
 }
 
+// claudeDbg 控制"代理全量 trace"(请求/转发/响应 的头+体)。默认开,抓完头名可设
+// BCAI_CLAUDE_DEBUG=0 关掉。OAuth token / cookie 一律打码。
+var claudeDbg = getEnvOrDefault("BCAI_CLAUDE_DEBUG", "1") == "1"
+
+func maskClaudeSecret(s string) string {
+	if len(s) <= 16 {
+		return "***"
+	}
+	return s[:10] + "...(" + fmt.Sprintf("%d", len(s)) + "ch)..." + s[len(s)-4:]
+}
+
+// dumpClaudeHeaders 把一组头逐行打到日志(敏感头打码)。
+func dumpClaudeHeaders(reqID int64, tag string, h http.Header) {
+	if !claudeDbg {
+		return
+	}
+	for k, vs := range h {
+		val := strings.Join(vs, ",")
+		switch strings.ToLower(k) {
+		case "authorization", "x-api-key", "cookie", "set-cookie":
+			val = maskClaudeSecret(val)
+		}
+		Log("[claude-proxy] #%d [%s] %s: %s", reqID, tag, k, val)
+	}
+}
+
+// dumpClaudeBody 打印 body(截断到 4KB,避免刷屏)。
+func dumpClaudeBody(reqID int64, tag string, b []byte) {
+	if !claudeDbg {
+		return
+	}
+	const capN = 4096
+	s := string(b)
+	if len(s) > capN {
+		s = s[:capN] + fmt.Sprintf("...(+%d bytes)", len(b)-capN)
+	}
+	Log("[claude-proxy] #%d [%s] (%d bytes) %s", reqID, tag, len(b), s)
+}
+
+// capWriter 累积写入的前 max 字节(用于 tee 流式响应到日志)。
+type capWriter struct {
+	buf []byte
+	max int
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if len(c.buf) < c.max {
+		n := c.max - len(c.buf)
+		if n > len(p) {
+			n = len(p)
+		}
+		c.buf = append(c.buf, p[:n]...)
+	}
+	return len(p), nil
+}
+
+// teeFlushWriter 把写入同时复制到 cap,并把 Flush 透传给底层 ResponseWriter
+// (保留 SSE 的逐块 flush,不破坏流式)。
+type teeFlushWriter struct {
+	w   http.ResponseWriter
+	cap *capWriter
+}
+
+func (t *teeFlushWriter) Write(p []byte) (int, error) {
+	t.cap.Write(p)
+	return t.w.Write(p)
+}
+
+func (t *teeFlushWriter) Flush() {
+	if f, ok := t.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string) {
 	reqID := atomic.AddInt64(&p.totalRequests, 1)
 
@@ -126,6 +200,13 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		modelKey = "claude-opus-4-20250514"
 	}
 
+	// ── 全量 trace:入站请求(Claude Code 发来的)──
+	if claudeDbg {
+		Log("[claude-proxy] #%d [req] %s %s", reqID, r.Method, r.URL.String())
+		dumpClaudeHeaders(reqID, "req-hdr", r.Header)
+		dumpClaudeBody(reqID, "req-body", body)
+	}
+
 	lease, err := p.lease()(card, deviceId, true, map[string]interface{}{
 		"modelKey":  modelKey,
 		"bodyBytes": len(body),
@@ -147,6 +228,8 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		return
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
+	// ── 全量 trace:转发给 anthropic 的请求头(Authorization 打码)──
+	dumpClaudeHeaders(reqID, "upstream-req-hdr", req.Header)
 
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
@@ -173,24 +256,26 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 观测点②b:已拿到响应头。能区分"卡在网络"还是"上游回了码但 body 不对"。
 	Log("[claude-proxy] #%d [生成] ← 上游响应头 码=%d ct=%q ce=%q",
 		reqID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"))
-	// 探针:成功响应时把 anthropic 限流头打到日志,确认 5h/周额度的 unified 头真实名
-	// (代码里没有、429 响应也不带,只能从真实 200 抓)。拿到头名后据此实现"解析→搭
-	// reportResult 回服务端落库"的额度刷新,零额外请求。
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		for k, vs := range resp.Header {
-			lk := strings.ToLower(k)
-			if strings.Contains(lk, "ratelimit") || strings.HasPrefix(lk, "anthropic-") || lk == "retry-after" {
-				Log("[claude-proxy] #%d [hdr-probe] %s: %s", reqID, k, strings.Join(vs, ","))
-			}
-		}
-	}
+	// ── 全量 trace:上游响应的【所有】头(含 anthropic-ratelimit-unified-* 限流头,
+	// 即 5h/周额度的真实来源)。不限状态码,200/429 都打。──
+	dumpClaudeHeaders(reqID, "resp-hdr", resp.Header)
 
 	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 		(isClaudeStreamingResponse(resp) || requestWantsStream(body))
 	if streamBack {
 		writeUpstreamHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		usage, copyErr := copyStreamingClaudeResponse(w, resp.Body)
+		// 全量 trace:把 SSE 同时 tee 到容量缓冲(保留 flush,不破坏流式),copy 后打日志。
+		var sink io.Writer = w
+		var sseCap *capWriter
+		if claudeDbg {
+			sseCap = &capWriter{max: 8192}
+			sink = &teeFlushWriter{w: w, cap: sseCap}
+		}
+		usage, copyErr := copyStreamingClaudeResponse(sink, resp.Body)
+		if claudeDbg && sseCap != nil {
+			dumpClaudeBody(reqID, "resp-sse", sseCap.buf)
+		}
 		details := claudeReportDetailsFromUsage(resp.StatusCode, modelKey, usage)
 		if copyErr != nil {
 			details.StatusCode = 502
@@ -221,6 +306,8 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read Claude upstream response")
 		return
 	}
+	// 全量 trace:非流式响应体(JSON,含错误 body 等)。
+	dumpClaudeBody(reqID, "resp-body", respBody)
 	writeUpstreamHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
@@ -264,6 +351,12 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		return
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
+	if claudeDbg {
+		Log("[claude-proxy] #%d [辅助][req] %s %s", reqID, r.Method, r.URL.String())
+		dumpClaudeHeaders(reqID, "aux-req-hdr", r.Header)
+		dumpClaudeBody(reqID, "aux-req-body", body)
+		dumpClaudeHeaders(reqID, "aux-upstream-req-hdr", req.Header)
+	}
 
 	resp, err := newClaudeUpstreamClient(effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)).Do(req)
 	if err != nil {
@@ -272,6 +365,8 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	dumpClaudeHeaders(reqID, "aux-resp-hdr", resp.Header)
+	dumpClaudeBody(reqID, "aux-resp-body", respBody)
 	writeUpstreamHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
