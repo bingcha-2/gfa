@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // macOS 下的 OS 副作用：装/卸根 CA（系统钥匙串信任）、退出并带代理 env 重启 Claude.app。
@@ -57,24 +58,32 @@ func detectClaudeDesktopPath() string {
 	return ""
 }
 
+const mitmClaudeAppPath = "/Applications/Claude.app"
+
 func mitmQuitClaude() {
 	_ = exec.Command("osascript", "-e", `quit app "Claude"`).Run()
 	// 兜底强杀（quit 可能被未保存对话拦下）。
 	_ = exec.Command("pkill", "-9", "-f", mitmClaudeAppBinary).Run()
+	// 给退出留点时间，避免随后的 open 命中正在退出的旧实例。
+	time.Sleep(2 * time.Second)
 }
 
+// mitmRelaunchClaudeWithProxy 经 LaunchServices(`open`)重启 Claude.app，并用 --env
+// 仅给本次启动注入代理变量。必须走 `open` 而非直接 exec 二进制——后者会绕过
+// LaunchServices，使 Claude 失去 TCC 授权(报「无法读取该文件夹」)。
 func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
-	bin := mitmClaudeBinaryPath()
-	if _, err := os.Stat(bin); err != nil {
-		return fmt.Errorf("Claude.app not found at %s", bin)
+	if _, err := os.Stat(mitmClaudeAppPath); err != nil {
+		return fmt.Errorf("Claude.app not found at %s", mitmClaudeAppPath)
 	}
 	mitmQuitClaude()
-	cmd := exec.Command(bin)
-	cmd.Env = mitmProxyEnv(os.Environ(), proxyAddr, caCertPath)
-	return cmd.Start()
+	args := []string{"-a", mitmClaudeAppPath}
+	for _, kv := range mitmProxyEnvPairs(proxyAddr, caCertPath) {
+		args = append(args, "--env", kv)
+	}
+	return exec.Command("open", args...).Run()
 }
 
 func mitmRelaunchClaudePlain() error {
 	mitmQuitClaude()
-	return exec.Command("open", "-a", "Claude").Start()
+	return exec.Command("open", "-a", mitmClaudeAppPath).Run()
 }

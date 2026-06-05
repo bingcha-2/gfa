@@ -21,23 +21,37 @@ func mitmUpsertEnv(env []string, key, value string) []string {
 	return append(env, prefix+value)
 }
 
-// mitmProxyEnv 基于 base 环境，注入把流量导向本地 MITM 所需的代理变量。
+// mitmProxyEnvPairs 返回把流量导向本地 MITM 所需的代理变量(KEY=VALUE 列表)。
+// 用于 macOS `open --env`(逐条注入,保留 LaunchServices/TCC),也是 mitmProxyEnv 的来源。
+func mitmProxyEnvPairs(proxyAddr, caCertPath string) []string {
+	proxyURL := "http://" + proxyAddr
+	pairs := []string{
+		"HTTPS_PROXY=" + proxyURL,
+		"HTTP_PROXY=" + proxyURL,
+		"https_proxy=" + proxyURL,
+		"http_proxy=" + proxyURL,
+		"NODE_TLS_REJECT_UNAUTHORIZED=0",
+		"NO_PROXY=127.0.0.1,localhost",
+		"no_proxy=127.0.0.1,localhost",
+	}
+	if caCertPath != "" {
+		pairs = append(pairs,
+			"NODE_EXTRA_CA_CERTS="+caCertPath,
+			"SSL_CERT_FILE="+caCertPath,
+			"REQUESTS_CA_BUNDLE="+caCertPath,
+		)
+	}
+	return pairs
+}
+
+// mitmProxyEnv 基于 base 环境 upsert 代理变量(用于直接传 exec.Cmd.Env 的场景/测试)。
 func mitmProxyEnv(base []string, proxyAddr, caCertPath string) []string {
 	env := make([]string, len(base))
 	copy(env, base)
-
-	proxyURL := "http://" + proxyAddr
-	env = mitmUpsertEnv(env, "HTTPS_PROXY", proxyURL)
-	env = mitmUpsertEnv(env, "HTTP_PROXY", proxyURL)
-	env = mitmUpsertEnv(env, "https_proxy", proxyURL)
-	env = mitmUpsertEnv(env, "http_proxy", proxyURL)
-	env = mitmUpsertEnv(env, "NODE_TLS_REJECT_UNAUTHORIZED", "0")
-	if caCertPath != "" {
-		env = mitmUpsertEnv(env, "NODE_EXTRA_CA_CERTS", caCertPath)
-		env = mitmUpsertEnv(env, "SSL_CERT_FILE", caCertPath)
-		env = mitmUpsertEnv(env, "REQUESTS_CA_BUNDLE", caCertPath)
+	for _, kv := range mitmProxyEnvPairs(proxyAddr, caCertPath) {
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			env = mitmUpsertEnv(env, kv[:i], kv[i+1:])
+		}
 	}
-	env = mitmUpsertEnv(env, "NO_PROXY", "127.0.0.1,localhost")
-	env = mitmUpsertEnv(env, "no_proxy", "127.0.0.1,localhost")
 	return env
 }
