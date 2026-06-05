@@ -1,11 +1,11 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package main
 
 import "fmt"
 
-// 非 macOS 平台的占位实现。Windows/Linux 的装 CA(certutil / NSS db)与带代理重启
-// 留待 Phase 2.2/2.3 实现；当前调用返回明确错误，保证跨平台可编译。
+// Linux 及其它平台占位：Claude 桌面端无官方 Linux 版，detectClaudeDesktopPath 返回空，
+// 故接管 target 在这些平台显示「未检测到」、永不触发重启；以下函数仅为跨平台可编译。
 
 func mitmInstallCA(certPath string) error {
 	return fmt.Errorf("mitm: CA 安装暂未在该平台实现")
