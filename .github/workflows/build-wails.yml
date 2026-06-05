@@ -246,7 +246,7 @@ jobs:
       # ── 创建 GitHub Release（公开仓库，无需认证即可下载）──
       - name: Create GitHub Release on public repo
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.BCAIDOWNLOAD }}
         run: |
           VERSION="${{ github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
