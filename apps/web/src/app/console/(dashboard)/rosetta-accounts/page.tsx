@@ -49,7 +49,6 @@ type RosettaAccount = {
   alias?: string;
   projectId?: string;
   planType?: string;
-  oauthProfile?: string;
   hasToken?: boolean;
   boundCardCount?: number;
   usedShares?: number;
@@ -116,7 +115,6 @@ const ALL_COLUMNS = [
   { key: "modelQuota", label: "模型额度" },
   { key: "alias", label: "别名" },
   { key: "projectId", label: "ProjectId" },
-  { key: "oauthProfile", label: "OAuth Profile" },
   { key: "familyRole", label: "Family 角色" },
   { key: "familyStatus", label: "Family 状态" },
   { key: "token", label: "Token" },
@@ -158,7 +156,7 @@ export default function RosettaAccountsPage() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({
-    email: "", refreshToken: "", alias: "", projectId: "", oauthProfile: "antigravity",
+    email: "", refreshToken: "", alias: "", projectId: "",
   });
   const [addSubmitting, setAddSubmitting] = useState(false);
 
@@ -300,13 +298,12 @@ export default function RosettaAccountsPage() {
           refreshToken: addForm.refreshToken.trim(),
           alias: addForm.alias.trim() || undefined,
           projectId: addForm.projectId.trim() || undefined,
-          oauthProfile: addForm.oauthProfile.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "添加失败");
       toast.success(data.isUpdate ? `已更新 ${data.email}` : `已添加 ${data.email}，共 ${data.totalAccounts} 个账号`);
-      setAddForm({ email: "", refreshToken: "", alias: "", projectId: "", oauthProfile: "antigravity" });
+      setAddForm({ email: "", refreshToken: "", alias: "", projectId: "" });
       setAddOpen(false);
       await loadAccounts();
     } catch (err) {
@@ -322,7 +319,7 @@ export default function RosettaAccountsPage() {
       const res = await fetch("/api/rosetta/google-oauth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ oauthProfile: "antigravity" }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Google OAuth start failed");
@@ -542,8 +539,6 @@ export default function RosettaAccountsPage() {
         return <span className="font-mono text-xs">{account.projectId || "-"}</span>;
       case "planType":
         return account.planType || "-";
-      case "oauthProfile":
-        return <span className="max-w-[120px] truncate block">{account.oauthProfile || "-"}</span>;
       case "familyRole":
         return account.familyRole || "-";
       case "familyStatus":
@@ -594,7 +589,6 @@ export default function RosettaAccountsPage() {
       case "email": return "";
       case "alias": return "text-sm";
       case "planType": return "text-xs";
-      case "oauthProfile": return "text-xs";
       case "familyRole": return "text-xs";
       case "familyStatus": return "text-xs";
       case "token": return "text-center";
@@ -980,14 +974,6 @@ export default function RosettaAccountsPage() {
                 />
               </Field>
             </div>
-            <Field>
-              <FieldLabel>OAuth Profile</FieldLabel>
-              <Input
-                placeholder="antigravity"
-                value={addForm.oauthProfile}
-                onChange={(e) => setAddForm((f) => ({ ...f, oauthProfile: e.target.value }))}
-              />
-            </Field>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>取消</Button>
               <Button type="submit" disabled={addSubmitting}>

@@ -21,8 +21,8 @@ import {
   affinityKey,
   normalizeModelKey,
   validateClientVersion,
-  UNIVERSAL_BILLING,
 } from "../token-server/token-billing";
+import { bucketKey } from "./product-bucket";
 import type { CreditDelta, Provider } from "./provider";
 
 export type CreditTracker = {
@@ -355,7 +355,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
     if (boundAccountId > 0 && this.fairShareTracker) {
-      const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+      const bucket = bucketKey(this.provider.id, modelKey);
       const check = this.fairShareTracker.checkFairShare(boundAccountId, auth.record.id, bucket);
       if (!check.allowed) {
         throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复");
@@ -514,7 +514,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     for (const model of Object.keys(fractions)) {
       const f = getModelQuotaFraction(account, model);
       if (f === null || f < 0) continue;
-      const bucket = UNIVERSAL_BILLING.bucketOf(model);
+      const bucket = bucketKey(this.provider.id, model);
       if (!(bucket in out) || f < out[bucket].fraction) {
         out[bucket] = { fraction: f, resetAt: getModelQuotaResetAt(account, model) };
       }
@@ -565,7 +565,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           for (const [model, frac] of Object.entries(fractions)) {
             const f = Number(frac);
             if (Number.isFinite(f) && f >= 0 && f <= 1) {
-              const bucket = UNIVERSAL_BILLING.bucketOf(model);
+              const bucket = bucketKey(this.provider.id, model);
               this.fairShareTracker.updateBudgetEstimate(accountId, bucket, f);
             }
           }
@@ -580,7 +580,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
     const usage = this.usageForBilling(lease, status, payload);
-    const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId);
+    const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id);
     if (!wasNew) {
       return {
         ok: true, ignored: true, reason: "already_reported",
@@ -590,9 +590,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     // Fair-share: record weighted usage for bound cards.
     if (accountId && this.fairShareTracker && success) {
-      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey);
+      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
-        const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+        const bucket = bucketKey(this.provider.id, modelKey);
         this.fairShareTracker.recordUsage(
           accountId, cardId, bucket,
           detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
@@ -605,7 +605,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // the same canonical numbers the card counters persist; skip zero-token
     // reports (errors / capacity rejections carry no usage).
     if (this.tokenUsageTracker) {
-      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey);
+      const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
         this.tokenUsageTracker.record({
           accessKeyId: cardId,
@@ -662,7 +662,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
           // Fair-share: confirm budget ceiling on upstream exhaustion.
           if (this.fairShareTracker && status === 429) {
-            const bucket = UNIVERSAL_BILLING.bucketOf(modelKey);
+            const bucket = bucketKey(this.provider.id, modelKey);
             this.fairShareTracker.confirmBudget(accountId, bucket);
           }
         } else if (status === 403) {

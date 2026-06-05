@@ -4,7 +4,7 @@ import {main} from '../models';
 
 export function ActivateCard(arg1:string):Promise<string>;
 
-export function AddPoolAccount(arg1:string,arg2:string,arg3:string):Promise<Record<string, any>>;
+export function AddPoolAccount(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function BrowseForPath(arg1:string):Promise<string>;
 
@@ -48,7 +48,7 @@ export function IsIDERunningCheck():Promise<boolean>;
 
 export function LockPoolAccount(arg1:number):Promise<Record<string, any>>;
 
-export function OAuthLogin(arg1:string):Promise<Record<string, any>>;
+export function OAuthLogin():Promise<Record<string, any>>;
 
 export function OpenSystemPermissionSettings():Promise<void>;
 

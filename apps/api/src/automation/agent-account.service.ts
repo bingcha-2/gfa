@@ -1053,7 +1053,6 @@ export class AgentAccountService {
           refreshToken: acc.refreshToken,
           enabled: true,
           alias: "",
-          oauthProfile: "antigravity",
           ...(projectId ? { projectId } : {}),
         });
         added.push({ id: acc.id, email: acc.loginEmail });

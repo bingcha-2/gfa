@@ -20,9 +20,6 @@ import (
 const (
 	GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
-	LEGACY_OAUTH_CLIENT_ID     = "884354919052-36trc1jjb3tguiac32ov6cod268c5blh.apps.googleusercontent.com"
-	LEGACY_OAUTH_CLIENT_SECRET = "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"
-
 	ANTIGRAVITY_OAUTH_CLIENT_ID     = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 	ANTIGRAVITY_OAUTH_CLIENT_SECRET = "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"
 
@@ -62,7 +59,6 @@ type AccountEntry struct {
 	Alias             string            `json:"alias,omitempty"`
 	ProjectId         string            `json:"projectId,omitempty"`
 	PlanType          string            `json:"planType,omitempty"`
-	OAuthProfile      string            `json:"oauthProfile,omitempty"` // "legacy" or "antigravity"
 
 	// Runtime state (not persisted to accounts.json)
 	accessToken       string
@@ -162,7 +158,6 @@ type accountFileEntry struct {
 	Alias        string `json:"alias,omitempty"`
 	ProjectId    string `json:"projectId,omitempty"`
 	PlanType     string `json:"planType,omitempty"`
-	OAuthProfile string `json:"oauthProfile,omitempty"`
 }
 
 func (p *AccountPool) LoadAccounts() {
@@ -200,7 +195,6 @@ func (p *AccountPool) LoadAccounts() {
 			maxId = id
 		}
 
-		profile := normalizeOAuthProfile(entry.OAuthProfile)
 		p.accounts[id] = &AccountEntry{
 			ID:           id,
 			Email:        entry.Email,
@@ -209,7 +203,6 @@ func (p *AccountPool) LoadAccounts() {
 			Alias:        entry.Alias,
 			ProjectId:    entry.ProjectId,
 			PlanType:     entry.PlanType,
-			OAuthProfile: profile,
 			quotaStatus:  "ok",
 			blockedModels: make(map[string]time.Time),
 		}
@@ -243,7 +236,6 @@ func (p *AccountPool) SaveAccounts() {
 			Alias:        acc.Alias,
 			ProjectId:    acc.ProjectId,
 			PlanType:     acc.PlanType,
-			OAuthProfile: acc.OAuthProfile,
 		})
 	}
 
@@ -263,7 +255,7 @@ func (p *AccountPool) SaveAccounts() {
 
 // ─── CRUD ────────────────────────────────────────────────────────────────
 
-func (p *AccountPool) AddAccount(email, refreshToken, oauthProfile string) (int, error) {
+func (p *AccountPool) AddAccount(email, refreshToken string) (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -284,19 +276,16 @@ func (p *AccountPool) AddAccount(email, refreshToken, oauthProfile string) (int,
 	id := p.nextId
 	p.nextId++
 
-	profile := normalizeOAuthProfile(oauthProfile)
-
 	p.accounts[id] = &AccountEntry{
 		ID:            id,
 		Email:         email,
 		RefreshToken:  refreshToken,
 		Enabled:       true,
-		OAuthProfile:  profile,
 		quotaStatus:   "ok",
 		blockedModels: make(map[string]time.Time),
 	}
 
-	Log("[account-pool] Added account #%d: %s (profile: %s)", id, email, profile)
+	Log("[account-pool] Added account #%d: %s", id, email)
 
 	go func() {
 		p.SaveAccounts()
@@ -364,7 +353,7 @@ func (p *AccountPool) EnabledCount() int {
 // ─── OAuth2 Token Refresh ────────────────────────────────────────────────
 
 func (p *AccountPool) RefreshAccessToken(acc *AccountEntry) (string, error) {
-	clientId, clientSecret := resolveOAuthCreds(acc.OAuthProfile)
+	clientId, clientSecret := resolveOAuthCreds()
 
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -641,7 +630,6 @@ type AccountInfo struct {
 	Enabled         bool              `json:"enabled"`
 	ProjectId       string            `json:"projectId"`
 	PlanType        string            `json:"planType"`
-	OAuthProfile    string            `json:"oauthProfile"`
 	HasAccessToken  bool              `json:"hasAccessToken"`
 	TokenExpiresIn  int               `json:"tokenExpiresIn"` // seconds
 	QuotaStatus     string            `json:"quotaStatus"`
@@ -718,7 +706,6 @@ func (p *AccountPool) ListAccounts() []AccountInfo {
 			Enabled:        acc.Enabled,
 			ProjectId:      acc.ProjectId,
 			PlanType:       acc.PlanType,
-			OAuthProfile:   acc.OAuthProfile,
 			HasAccessToken: acc.accessToken != "" && acc.accessTokenExpiry.After(now),
 			TokenExpiresIn: tokenExpiresIn,
 			QuotaStatus:    acc.quotaStatus,

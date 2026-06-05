@@ -95,7 +95,7 @@ function LocalPoolQuotaDisplay() {
 
 export function DashboardPage() {
   const {
-    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, bucketFractions, bucketResetMs, codexQuota,
+    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, bucketFractions, bucketResetMs, codexQuota, claudeQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens, cumulativeSaving,
     opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit, recoveryRemainingMs, recoveryWindowMs,
   } = useAppStore()
@@ -113,7 +113,7 @@ export function DashboardPage() {
   // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
   // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
-  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable && visibleBars.opus
+  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude')
 
   const { modalProps, showAlert } = useModal()
   const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs, recoveryWindowMs)
@@ -239,16 +239,40 @@ export function DashboardPage() {
                   )}
                   {/* 远程/绑定模式:无 bucket 数据 / 账号异常 → 显示「未知」(fraction=-1),
                       不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。 */}
-                  {visibleBars.opus && <UsageBar label="Claude (Opus)" used={opusUsed} limit={opusLimit} fraction={accountProblem ? -1 : (bucketFractions?.opus ?? -1)} resetMs={bucketResetMs?.opus} color="bg-purple-500" />}
-                  {visibleBars.gemini && <UsageBar label="Gemini" used={geminiUsed} limit={geminiLimit} fraction={accountProblem ? -1 : (bucketFractions?.gemini ?? -1)} resetMs={bucketResetMs?.gemini} color="bg-[var(--accent)]" />}
-                  {visibleBars.codex && (codexQuota && !accountProblem ? (
-                    <>
-                      <UsageBar label="Codex · 5h" used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />
-                      <UsageBar label="Codex · 周" used={null} limit={null} fraction={codexQuota.weeklyFraction} resetMs={codexQuota.weeklyResetMs} color="bg-emerald-600" />
-                    </>
-                  ) : (
-                    <UsageBar label="Codex" used={codexUsed} limit={codexLimit} fraction={accountProblem ? -1 : (bucketFractions?.codex ?? -1)} resetMs={bucketResetMs?.codex} color="bg-emerald-500" />
-                  ))}
+                  {visibleBars.map((bar) => {
+                    // Codex bar: prefer the upstream 5h/周 windows when present.
+                    if (bar.family === 'gpt' && codexQuota && !accountProblem) {
+                      return [
+                        <UsageBar key="codex-5h" label="Codex · 5h" used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />,
+                        <UsageBar key="codex-week" label="Codex · 周" used={null} limit={null} fraction={codexQuota.weeklyFraction} resetMs={codexQuota.weeklyResetMs} color="bg-emerald-600" />,
+                      ]
+                    }
+                    // Anthropic subscription is also an account-level 5h + 周 window
+                    // (like codex). Only the anthropic-claude bar gets the split —
+                    // antigravity's Claude (IDE ×1 bucket) keeps a single bar.
+                    if (bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem) {
+                      return [
+                        <UsageBar key="claude-5h" label="Claude · 5h" used={null} limit={null} fraction={claudeQuota.hourlyFraction} resetMs={claudeQuota.hourlyResetMs} color="bg-purple-500" />,
+                        <UsageBar key="claude-week" label="Claude · 周" used={null} limit={null} fraction={claudeQuota.weeklyFraction} resetMs={claudeQuota.weeklyResetMs} color="bg-purple-600" />,
+                      ]
+                    }
+                    // Local used/limit are family-scoped (server still sends the
+                    // flat per-family fields); the fraction comes from the
+                    // composite bucket so two same-family bars stay separate.
+                    const used = bar.family === 'gemini' ? geminiUsed : bar.family === 'gpt' ? codexUsed : opusUsed
+                    const limit = bar.family === 'gemini' ? geminiLimit : bar.family === 'gpt' ? codexLimit : opusLimit
+                    return (
+                      <UsageBar
+                        key={bar.bucket}
+                        label={bar.label}
+                        used={used}
+                        limit={limit}
+                        fraction={accountProblem ? -1 : (bucketFractions?.[bar.bucket] ?? -1)}
+                        resetMs={bucketResetMs?.[bar.bucket]}
+                        color={bar.color}
+                      />
+                    )
+                  })}
                 </div>
               )}
             </CardContent>

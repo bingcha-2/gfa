@@ -202,10 +202,12 @@ setup_client_env() {
 
   export BCAI_API_BASE="http://127.0.0.1:3001/api/remote-token"
   export BCAI_CODEX_API_BASE="http://127.0.0.1:3001/api/remote-codex"
+  export BCAI_ANTHROPIC_REMOTE_BASE="http://127.0.0.1:3001/api/remote-anthropic"
   export BCAI_UPDATE_URL="http://127.0.0.1:3000/updates/latest-wails.json"
 
   echo -e "  ${GREEN}✓${NC} BCAI_API_BASE  → ${CYAN}$BCAI_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_CODEX_API_BASE → ${CYAN}$BCAI_CODEX_API_BASE${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_ANTHROPIC_REMOTE_BASE → ${CYAN}$BCAI_ANTHROPIC_REMOTE_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_UPDATE_URL → ${CYAN}$BCAI_UPDATE_URL${NC}"
   echo -e "  ${DIM}无需修改源码，环境变量仅在本次运行生效${NC}"
   echo ""

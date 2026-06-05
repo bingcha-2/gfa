@@ -9,17 +9,20 @@ import (
 // classifyModel
 // ═══════════════════════════════════════════════════════════════════════════
 
-func TestClassifyModel_Opus(t *testing.T) {
-	cases := []string{"claude-opus-4", "opus", "Claude-Opus", "claude-4-opus"}
+// classifyModel now delegates to the shared modelFamily: gemini/claude/gpt,
+// with claude as the fallback (matching the server billing classifier). Only an
+// empty model key returns "other".
+func TestClassifyModel_Claude(t *testing.T) {
+	cases := []string{"claude-opus-4", "opus", "Claude-Opus", "claude-4-opus", "claude-sonnet-4"}
 	for _, m := range cases {
-		if got := classifyModel(m); got != "opus" {
-			t.Errorf("classifyModel(%q) = %q, want opus", m, got)
+		if got := classifyModel(m); got != "claude" {
+			t.Errorf("classifyModel(%q) = %q, want claude", m, got)
 		}
 	}
 }
 
 func TestClassifyModel_Gemini(t *testing.T) {
-	cases := []string{"gemini-2.5-pro", "gemini-2.5-flash", "pro", "flash"}
+	cases := []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-pro"}
 	for _, m := range cases {
 		if got := classifyModel(m); got != "gemini" {
 			t.Errorf("classifyModel(%q) = %q, want gemini", m, got)
@@ -27,12 +30,22 @@ func TestClassifyModel_Gemini(t *testing.T) {
 	}
 }
 
-func TestClassifyModel_Other(t *testing.T) {
-	cases := []string{"", "gpt-4o", "unknown-model"}
+func TestClassifyModel_Gpt(t *testing.T) {
+	cases := []string{"gpt-4o", "gpt-5-codex"}
 	for _, m := range cases {
-		if got := classifyModel(m); got != "other" {
-			t.Errorf("classifyModel(%q) = %q, want other", m, got)
+		if got := classifyModel(m); got != "gpt" {
+			t.Errorf("classifyModel(%q) = %q, want gpt", m, got)
 		}
+	}
+}
+
+func TestClassifyModel_Other(t *testing.T) {
+	// Only the empty key is "other"; unknown models fall back to claude.
+	if got := classifyModel(""); got != "other" {
+		t.Errorf("classifyModel(\"\") = %q, want other", got)
+	}
+	if got := classifyModel("unknown-model"); got != "claude" {
+		t.Errorf("classifyModel(unknown) = %q, want claude (fallback)", got)
 	}
 }
 
@@ -877,10 +890,10 @@ func TestBuildFallbackModels(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 func TestClassifyModel_ClaudeWithoutOpus(t *testing.T) {
-	// "claude-sonnet-4" contains "claude" → should be classified as opus
+	// "claude-sonnet-4" contains "claude" → claude family.
 	got := classifyModel("claude-sonnet-4")
-	if got != "opus" {
-		t.Errorf("classifyModel('claude-sonnet-4') = %q, want opus", got)
+	if got != "claude" {
+		t.Errorf("classifyModel('claude-sonnet-4') = %q, want claude", got)
 	}
 }
 

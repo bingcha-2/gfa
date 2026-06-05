@@ -16,27 +16,14 @@ import (
 // ─── OAuth2 Helpers + Login Flow ─────────────────────────────────────────
 //
 // 本文件包含 Google OAuth2 相关的辅助函数和完整的授权码登录流程：
-// - normalizeOAuthProfile / resolveOAuthCreds
+// - resolveOAuthCreds
 // - maskEmail
 // - StartOAuthLogin（启动本地回调服务器 → 打开浏览器 → 交换 token）
 // - fetchUserEmail
 
-func normalizeOAuthProfile(profile string) string {
-	p := strings.TrimSpace(strings.ToLower(profile))
-	switch p {
-	case "legacy", "legacy-cloud-code", "cloud-code", "cc":
-		return "legacy"
-	case "antigravity", "antigravity-uss", "uss", "modern", "":
-		return "antigravity"
-	default:
-		return "antigravity"
-	}
-}
-
-func resolveOAuthCreds(profile string) (clientId, clientSecret string) {
-	if profile == "legacy" {
-		return LEGACY_OAUTH_CLIENT_ID, LEGACY_OAUTH_CLIENT_SECRET
-	}
+// resolveOAuthCreds 返回唯一的 OAuth client 凭证 —— 所有 Google 账号都走
+// Antigravity client。（旧的 legacy "cloud-code" client 已移除。）
+func resolveOAuthCreds() (clientId, clientSecret string) {
 	return ANTIGRAVITY_OAUTH_CLIENT_ID, ANTIGRAVITY_OAUTH_CLIENT_SECRET
 }
 
@@ -81,9 +68,8 @@ type OAuthLoginResult struct {
 // 3. Exchanges the auth code for tokens
 // 4. Fetches user email via userinfo API
 // 5. Returns email + refresh_token
-func (p *AccountPool) StartOAuthLogin(profile string, openURL func(string)) (*OAuthLoginResult, error) {
-	profile = normalizeOAuthProfile(profile)
-	clientId, clientSecret := resolveOAuthCreds(profile)
+func (p *AccountPool) StartOAuthLogin(openURL func(string)) (*OAuthLoginResult, error) {
+	clientId, clientSecret := resolveOAuthCreds()
 
 	// Use random port (Google Desktop App OAuth allows any loopback port)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -164,7 +150,7 @@ func (p *AccountPool) StartOAuthLogin(profile string, openURL func(string)) (*OA
 		url.QueryEscape(oauthState),
 	)
 
-	Log("[oauth] Opening browser for OAuth login (profile: %s)", profile)
+	Log("[oauth] Opening browser for OAuth login")
 	openURL(authURL)
 
 	// Wait for callback (timeout: 5 minutes)

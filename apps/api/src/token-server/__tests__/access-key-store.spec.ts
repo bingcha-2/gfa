@@ -225,28 +225,29 @@ describe('AccessKeyStore', () => {
       }]);
     }
 
-    it('should reject when Opus tokens exceed limit', () => {
+    it('should reject when Claude (anthropic) tokens exceed limit', () => {
       const store = makeKeyWithUsage([
-        { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6' },
+        { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
       ]);
       const result = store.resolveFromRequest(
         { headers: { 'x-access-key': 'secret1' } } as any,
         {},
-        { enforceLimit: true, modelKey: 'claude-sonnet-4-6' },
+        { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
       );
       expect(result.record).toBeNull();
-      expect(result.error).toContain('Opus token limit exceeded');
+      // Composite bucket anthropic-claude → label "Anthropic · Claude".
+      expect(result.error).toContain('Claude token limit exceeded');
     });
 
     it('should reject when Gemini tokens exceed limit (5x multiplier)', () => {
       // Gemini limit = tokenWindowLimit * 5 = 2,500,000
       const store = makeKeyWithUsage([
-        { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro' },
+        { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
       ]);
       const result = store.resolveFromRequest(
         { headers: { 'x-access-key': 'secret1' } } as any,
         {},
-        { enforceLimit: true, modelKey: 'gemini-2.5-pro' },
+        { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
       );
       expect(result.record).toBeNull();
       expect(result.error).toContain('Gemini token limit exceeded');

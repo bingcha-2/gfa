@@ -18,10 +18,10 @@ interface PoolState {
 
   setMode: (m: 'remote' | 'local') => Promise<void>
   fetchAccounts: () => Promise<void>
-  addAccount: (email: string, token: string, profile: string) => Promise<{ success: boolean; error?: string }>
+  addAccount: (email: string, token: string) => Promise<{ success: boolean; error?: string }>
   removeAccount: (id: number) => Promise<void>
   toggleAccount: (id: number, enabled: boolean) => Promise<void>
-  oauthLogin: (profile: string) => Promise<{ success: boolean; email?: string; error?: string }>
+  oauthLogin: () => Promise<{ success: boolean; email?: string; error?: string }>
   initMode: () => Promise<void>
 
   // ── 新增操作 ──
@@ -59,10 +59,10 @@ export const usePoolStore = create<PoolState>((set, get) => ({
     }
   },
 
-  addAccount: async (email, token, profile) => {
+  addAccount: async (email, token) => {
     set({ loading: true })
     try {
-      const result = await api.addPoolAccount(email, token, profile)
+      const result = await api.addPoolAccount(email, token)
       if (result.success) await get().fetchAccounts()
       return result
     } finally {
@@ -80,10 +80,10 @@ export const usePoolStore = create<PoolState>((set, get) => ({
     await get().fetchAccounts()
   },
 
-  oauthLogin: async (profile) => {
+  oauthLogin: async () => {
     set({ loading: true })
     try {
-      const result = await api.oauthLogin(profile)
+      const result = await api.oauthLogin()
       if (result.success) await get().fetchAccounts()
       return result
     } finally {

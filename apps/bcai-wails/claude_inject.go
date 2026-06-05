@@ -35,6 +35,18 @@ const (
 	claudeSentinelAuthToken = "bcai-claude-proxy"
 )
 
+// claudeModelOverrideKeys 是 Claude Code 用来「把某个模型槽位定死成具体模型名」的 env 键。
+// 接管时必须把用户这些定义【删掉】:它们常被设成 -thinking 等别名(如
+// claude-opus-4-6-thinking),而我们转发到的公开 API api.anthropic.com 不认这类别名 → 404。
+// 删掉后 Claude Code 用自带的合法默认模型 id。取消接管时按备份原样写回(不丢用户配置)。
+var claudeModelOverrideKeys = []string{
+	"ANTHROPIC_MODEL",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	"ANTHROPIC_SMALL_FAST_MODEL",
+}
+
 // 为什么要中和 ANTHROPIC_API_KEY:Claude Code 启动时 Object.assign(process.env,
 // settings.env),只要进程里存在非空 ANTHROPIC_API_KEY(来自用户 shell 或 settings.json
 // 自带),claude 就进入「API Usage Billing」(API-key 模式),忽略我们注入的哨兵
@@ -72,7 +84,7 @@ func claudeProxyBaseURL(proxyPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 }
 
-// claudeEnvBackup 记录注入前两个目标键的原始状态(供精确还原)。
+// claudeEnvBackup 记录注入前目标键的原始状态(供精确还原)。
 type claudeEnvBackup struct {
 	Injected      bool   `json:"injected"`
 	HadBaseURL    bool   `json:"hadBaseUrl"`
@@ -81,6 +93,16 @@ type claudeEnvBackup struct {
 	PrevAuthToken string `json:"prevAuthToken"`
 	HadApiKey     bool   `json:"hadApiKey"`
 	PrevApiKey    string `json:"prevApiKey"`
+	// 接管时删除的模型覆盖键原值;ModelsBackedUp=true 表示已捕获过(避免重复注入覆盖)。
+	ModelsBackedUp bool                     `json:"modelsBackedUp"`
+	Models         []claudeModelBackupEntry `json:"models,omitempty"`
+}
+
+// claudeModelBackupEntry 记录单个模型覆盖键注入前的状态。
+type claudeModelBackupEntry struct {
+	Key  string `json:"key"`
+	Had  bool   `json:"had"`
+	Prev string `json:"prev"`
 }
 
 // loadClaudeSettings 读取 settings.json 为通用 map。返回 (settings, exists)。
@@ -155,6 +177,23 @@ func InjectClaudeSettings(proxyPort int) error {
 			backupChanged = true
 		}
 	}
+	// 模型覆盖键:首次接管(或老备份升级到新版,ModelsBackedUp 仍为 false)时捕获用户原值,
+	// 之后在下方从 env 删除。兼容「老版本已接管、此刻才升级到会删模型键的新版」:那时这些键
+	// 还原封不动地在 env 里,正好能被捕获到。
+	if !bk.ModelsBackedUp {
+		for _, key := range claudeModelOverrideKeys {
+			entry := claudeModelBackupEntry{Key: key}
+			if v, ok := env[key].(string); ok {
+				entry.Had = true
+				entry.Prev = v
+			} else if _, ok := env[key]; ok {
+				entry.Had = true // 非字符串(异常)也记为存在,还原时按原值写不回但至少不丢键语义
+			}
+			bk.Models = append(bk.Models, entry)
+		}
+		bk.ModelsBackedUp = true
+		backupChanged = true
+	}
 	if backupChanged {
 		if b, e := json.MarshalIndent(bk, "", "  "); e == nil {
 			_ = os.MkdirAll(claudeConfigDir(), 0o755)
@@ -166,6 +205,11 @@ func InjectClaudeSettings(proxyPort int) error {
 	env[claudeAuthTokenKey] = claudeSentinelAuthToken
 	// 中和 ANTHROPIC_API_KEY(置空覆盖 shell/settings 里的真实 key),强制走哨兵 AUTH_TOKEN→代理。
 	env[claudeApiKeyKey] = ""
+	// 删除用户的模型覆盖键(原值已备份):避免 -thinking 等别名打到公开 API 被 404,
+	// 让 Claude Code 用自带合法默认模型。取消接管时 RestoreClaudeSettings 会写回。
+	for _, key := range claudeModelOverrideKeys {
+		delete(env, key)
+	}
 	settings["env"] = env
 
 	if err := writeClaudeSettings(settings); err != nil {
@@ -251,11 +295,18 @@ func RestoreClaudeSettings() error {
 		restoreKey(claudeBaseURLKey, bk.PrevBaseURL, bk.HadBaseURL)
 		restoreKey(claudeAuthTokenKey, bk.PrevAuthToken, bk.HadAuthToken)
 		restoreKey(claudeApiKeyKey, bk.PrevApiKey, bk.HadApiKey)
+		// 把接管时删掉的模型覆盖键写回(原本没有的保持删除)。
+		for _, m := range bk.Models {
+			restoreKey(m.Key, m.Prev, m.Had)
+		}
 	} else {
-		// 没有备份(异常情况):尽力移除我们写入的键。
+		// 没有备份(异常情况):尽力移除我们写入的键 + 我们会删的模型键(无原值可还,只能删)。
 		delete(env, claudeBaseURLKey)
 		delete(env, claudeAuthTokenKey)
 		delete(env, claudeApiKeyKey)
+		for _, key := range claudeModelOverrideKeys {
+			delete(env, key)
+		}
 	}
 
 	if len(env) == 0 {

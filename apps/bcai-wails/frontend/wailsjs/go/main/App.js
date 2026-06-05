@@ -6,8 +6,8 @@ export function ActivateCard(arg1) {
   return window['go']['main']['App']['ActivateCard'](arg1);
 }
 
-export function AddPoolAccount(arg1, arg2, arg3) {
-  return window['go']['main']['App']['AddPoolAccount'](arg1, arg2, arg3);
+export function AddPoolAccount(arg1, arg2) {
+  return window['go']['main']['App']['AddPoolAccount'](arg1, arg2);
 }
 
 export function BrowseForPath(arg1) {
@@ -94,8 +94,8 @@ export function LockPoolAccount(arg1) {
   return window['go']['main']['App']['LockPoolAccount'](arg1);
 }
 
-export function OAuthLogin(arg1) {
-  return window['go']['main']['App']['OAuthLogin'](arg1);
+export function OAuthLogin() {
+  return window['go']['main']['App']['OAuthLogin']();
 }
 
 export function OpenSystemPermissionSettings() {

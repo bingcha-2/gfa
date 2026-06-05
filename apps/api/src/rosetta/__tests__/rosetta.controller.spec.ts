@@ -10,16 +10,16 @@ function makeController() {
   };
   const tokenServer = { reloadAccessKeys: vi.fn() };
   const remoteCodex = { reloadAccessKeys: vi.fn() };
-  const remoteClaude = { reloadAccessKeys: vi.fn() };
+  const remoteAnthropic = { reloadAccessKeys: vi.fn() };
   const controller = new RosettaController(
     rosetta as any,
     {} as any,
     {} as any,
     tokenServer as any,
     remoteCodex as any,
-    remoteClaude as any,
+    remoteAnthropic as any,
   );
-  return { controller, rosetta, tokenServer, remoteCodex, remoteClaude };
+  return { controller, rosetta, tokenServer, remoteCodex, remoteAnthropic };
 }
 
 describe("RosettaController — static binding", () => {
@@ -47,14 +47,14 @@ describe("RosettaController — static binding", () => {
   });
 
   it("createAccessKey reloads the claude pool too (so new claude bindings are visible)", () => {
-    const { controller, remoteClaude } = makeController();
+    const { controller, remoteAnthropic } = makeController();
     controller.createAccessKey({ name: "x" });
-    expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
+    expect(remoteAnthropic.reloadAccessKeys).toHaveBeenCalledTimes(1);
   });
 
   it("bindAccessKey reloads the anthropic pool too", () => {
-    const { controller, remoteClaude } = makeController();
+    const { controller, remoteAnthropic } = makeController();
     controller.bindAccessKey({ id: "c1", provider: "anthropic", accountId: 1 });
-    expect(remoteClaude.reloadAccessKeys).toHaveBeenCalledTimes(1);
+    expect(remoteAnthropic.reloadAccessKeys).toHaveBeenCalledTimes(1);
   });
 });

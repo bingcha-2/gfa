@@ -6,6 +6,34 @@
  */
 
 import { compareVersions } from './data-store';
+import {
+  isGeminiModel,
+  isCodexModel,
+  modelFamily,
+  bucketKey,
+  bucketLabel as composeBucketLabel,
+} from '../lease-core/product-bucket';
+
+// Re-exported from the single naming/mapping source (lease-core/product-bucket).
+// Kept here for the many existing import sites; do not re-implement classification.
+export { isGeminiModel, isCodexModel };
+
+/** The family segment of a bucket key — composite `<product>-<family>` → family,
+ *  bare legacy `gemini|claude|gpt` → itself. Used for limit multipliers. */
+function bucketFamilyName(bucket: string): string {
+  const i = bucket.indexOf('-');
+  return i >= 0 ? bucket.slice(i + 1) : bucket;
+}
+
+/** The billing bucket a stored usage event counts toward. Composite
+ *  `<product>-<family>` when the event recorded its product; bare family for
+ *  legacy events written before product was tracked (they self-heal as the
+ *  5h/weekly window rolls over). */
+function eventBucket(item: any): string {
+  const product = String(item?.product || '');
+  const model = String(item?.modelKey || '');
+  return product ? bucketKey(product, model) : modelFamily(model);
+}
 
 // ── Default constants ────────────────────────────────────────────────────────
 
@@ -113,22 +141,12 @@ export function readTokenCount(value: unknown): number {
   return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0;
 }
 
-/** Detect if a model key refers to a Gemini model. */
-export function isGeminiModel(modelKey: unknown): boolean {
-  const key = String(modelKey || '').toLowerCase();
-  return key.includes('gemini') || key.startsWith('gem');
-}
-
 // ── Provider-driven billing buckets ──────────────────────────────────────────
 // A card's token-window usage is split into named buckets. Each (window, bucket)
 // has its own limit. Antigravity: gemini(×5)/opus(×1) within one 5h window.
 // Codex: a single "codex" bucket (×1). The scheme is supplied per-provider so the
 // access-key store no longer hardcodes gemini/opus.
 export interface ProviderBilling {
-  /** Buckets this provider exposes (for status enumeration). */
-  buckets: string[];
-  /** Which bucket a model counts toward. */
-  bucketOf(modelKey: string): string;
   /** Per-bucket limit derived from the card's base token-window limit.
    *  When `record` is supplied and has a `bucketLimits` override for the
    *  bucket, that value takes priority over the default multiplier. */
@@ -137,49 +155,32 @@ export interface ProviderBilling {
   bucketLabel(bucket: string): string;
 }
 
-/** Detect an OpenAI/Codex model (gpt-* or *-codex). Used for billing buckets. */
-export function isCodexModel(modelKey: unknown): boolean {
-  const key = String(modelKey || '').toLowerCase();
-  return key.startsWith('gpt') || key.includes('codex');
-}
-
 /**
- * Universal billing scheme — a single card is usable across ALL providers
- * (the bcai client routes one accountCard through both the Gemini and Codex
- * proxies). Usage is split into three buckets so providers never cross-pollute:
- *   gemini  — limit ×5  (cheap)
- *   codex   — limit ×1
- *   opus    — limit ×1  (everything else, e.g. Claude/Opus)
- * The bucket is resolved from the modelKey at read time, so it's correct no
- * matter which provider/endpoint records or reads the usage.
+ * Universal billing scheme — a single card is usable across ALL products.
+ * Usage is split into composite `<product>-<family>` buckets (see product-bucket)
+ * so the same Claude model served via antigravity vs anthropic never cross-counts,
+ * and the per-family limit multiplier still applies (gemini ×5, others ×1).
  */
 export const UNIVERSAL_BILLING: ProviderBilling = {
-  buckets: ['gemini', 'codex', 'opus'],
-  bucketOf: (modelKey: string) =>
-    isGeminiModel(modelKey) ? 'gemini' : isCodexModel(modelKey) ? 'codex' : 'opus',
   bucketLimit: (baseLimit: number, bucket: string, record?: any) => {
     // Per-card override: record.bucketLimits.{bucket} takes priority.
     const custom = Number(record?.bucketLimits?.[bucket] ?? 0);
     if (custom > 0) return custom;
-    return bucket === 'gemini' ? baseLimit * 5 : baseLimit;
+    return bucketFamilyName(bucket) === 'gemini' ? baseLimit * 5 : baseLimit;
   },
-  bucketLabel: (bucket: string) => (bucket === 'gemini' ? 'Gemini' : bucket === 'codex' ? 'Codex' : 'Opus'),
+  bucketLabel: (bucket: string) => composeBucketLabel(bucket),
 };
 
 /** @deprecated cards are universal; kept as an alias of UNIVERSAL_BILLING. */
 export const ANTIGRAVITY_BILLING = UNIVERSAL_BILLING;
 
-/** Aggregate current-window billable tokens grouped by billing bucket. */
-export function recentBucketUsage(
-  record: any,
-  bucketOf: (modelKey: string) => string,
-  now = Date.now(),
-): Map<string, number> {
+/** Aggregate current-window billable tokens grouped by composite billing bucket. */
+export function recentBucketUsage(record: any, now = Date.now()): Map<string, number> {
   resetWindowIfExpired(record, now);
   const out = new Map<string, number>();
   for (const item of record.tokenUsageEvents || []) {
     const billable = billableTokenUsageTotal(item, item?.modelKey);
-    const bucket = bucketOf(String(item?.modelKey || ''));
+    const bucket = eventBucket(item);
     out.set(bucket, (out.get(bucket) || 0) + billable);
   }
   return out;
@@ -339,17 +340,13 @@ export function weeklyWindowResetMs(record: any, now = Date.now()): number {
   return Math.max(0, startedAt + windowMs - now);
 }
 
-/** Aggregate weekly-window billable tokens grouped by billing bucket. */
-export function recentWeeklyBucketUsage(
-  record: any,
-  bucketOf: (modelKey: string) => string,
-  now = Date.now(),
-): Map<string, number> {
+/** Aggregate weekly-window billable tokens grouped by composite billing bucket. */
+export function recentWeeklyBucketUsage(record: any, now = Date.now()): Map<string, number> {
   resetWeeklyWindowIfExpired(record, now);
   const out = new Map<string, number>();
   for (const item of record.weeklyTokenUsageEvents || []) {
     const billable = billableTokenUsageTotal(item, item?.modelKey);
-    const bucket = bucketOf(String(item?.modelKey || ''));
+    const bucket = eventBucket(item);
     out.set(bucket, (out.get(bucket) || 0) + billable);
   }
   return out;

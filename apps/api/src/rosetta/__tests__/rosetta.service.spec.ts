@@ -1168,6 +1168,21 @@ describe("RosettaService", () => {
       const key = svc.listAccessKeys({}).keys[0] as any;
       expect(key.bindings).toEqual({ codex: freshId });
     });
+
+    it("auto-binds to an out-of-pool account (出池 only gates pool-card 租号, not binding)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      // 出池号(poolEnabled:false)本就是留给绑定卡专用的;绑定卡运行时无视 poolEnabled,
+      // 所以建卡的自动分配也必须能绑到它,否则会误报「可用账号不足」。
+      writeJson(path.join(tempDir, "codex-accounts.json"), {
+        accounts: [
+          { id: 9, email: "out@x.com", refreshToken: "rt", enabled: true, poolEnabled: false, planType: "plus" },
+        ],
+      });
+      const res: any = svc.createAccessKey({ products: ["codex"], levels: { codex: "plus" } });
+      expect(res.ok).toBe(true);
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.bindings).toEqual({ codex: 9 });
+    });
   });
 
   describe("adspowerImport", () => {

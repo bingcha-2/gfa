@@ -105,7 +105,6 @@ export namespace main {
 	    enabled: boolean;
 	    projectId: string;
 	    planType: string;
-	    oauthProfile: string;
 	    hasAccessToken: boolean;
 	    tokenExpiresIn: number;
 	    quotaStatus: string;
@@ -137,7 +136,6 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.projectId = source["projectId"];
 	        this.planType = source["planType"];
-	        this.oauthProfile = source["oauthProfile"];
 	        this.hasAccessToken = source["hasAccessToken"];
 	        this.tokenExpiresIn = source["tokenExpiresIn"];
 	        this.quotaStatus = source["quotaStatus"];

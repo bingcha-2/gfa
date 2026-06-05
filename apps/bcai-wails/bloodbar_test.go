@@ -8,24 +8,26 @@ import (
 func TestRecordAndSnapshotBoundFractions(t *testing.T) {
 	boundFractions = map[string]bucketQuota{} // reset
 
-	recordBoundFractionForModel("gemini-2.5-pro", 0.42, 0)
-	recordBoundFractionForModel("gpt-5-codex", 0.10, 0)
-	recordBoundFractionForModel("claude-opus-4-6", 0.88, 0)
+	// Buckets are composite product-family — the same Claude model under
+	// antigravity vs anthropic must land in distinct buckets.
+	recordBoundFractionForModel("antigravity", "gemini-2.5-pro", 0.42, 0)
+	recordBoundFractionForModel("codex", "gpt-5-codex", 0.10, 0)
+	recordBoundFractionForModel("anthropic", "claude-opus-4-6", 0.88, 0)
 
 	s := snapshotBoundFractions()
-	if s["gemini"] != 0.42 || s["codex"] != 0.10 || s["opus"] != 0.88 {
+	if s["antigravity-gemini"] != 0.42 || s["codex-gpt"] != 0.10 || s["anthropic-claude"] != 0.88 {
 		t.Fatalf("分桶不对: %v", s)
 	}
 
 	// 空 modelKey(探针)忽略,不写入空 bucket。
-	recordBoundFractionForModel("", 0.5, 0)
-	if _, ok := snapshotBoundFractions()[""]; ok {
+	recordBoundFractionForModel("antigravity", "", 0.5, 0)
+	if _, ok := snapshotBoundFractions()["antigravity-"]; ok {
 		t.Fatal("空 modelKey 不应写入")
 	}
 
 	// snapshot 是拷贝,改它不影响内部。
-	s["gemini"] = 9
-	if snapshotBoundFractions()["gemini"] != 0.42 {
+	s["antigravity-gemini"] = 9
+	if snapshotBoundFractions()["antigravity-gemini"] != 0.42 {
 		t.Fatal("snapshot 应是拷贝")
 	}
 }
@@ -33,18 +35,18 @@ func TestRecordAndSnapshotBoundFractions(t *testing.T) {
 func TestSnapshotBoundResets(t *testing.T) {
 	boundFractions = map[string]bucketQuota{} // reset
 	now := int64(1_000_000)
-	recordBoundFractionForModel("claude-opus-4-6", 0, now+3_600_000) // 1h 后恢复
-	recordBoundFractionForModel("gemini-2.5-pro", 0.8, 0)            // 无 reset
-	recordBoundFractionForModel("gpt-5-codex", 0.5, now-100)         // 已过 → 0
+	recordBoundFractionForModel("anthropic", "claude-opus-4-6", 0, now+3_600_000) // 1h 后恢复
+	recordBoundFractionForModel("antigravity", "gemini-2.5-pro", 0.8, 0)          // 无 reset
+	recordBoundFractionForModel("codex", "gpt-5-codex", 0.5, now-100)             // 已过 → 0
 
 	r := snapshotBoundResets(now)
-	if r["opus"] != 3_600_000 {
-		t.Fatalf("opus resetMs 应为 1h, 得到 %v", r["opus"])
+	if r["anthropic-claude"] != 3_600_000 {
+		t.Fatalf("anthropic-claude resetMs 应为 1h, 得到 %v", r["anthropic-claude"])
 	}
-	if _, ok := r["gemini"]; ok {
+	if _, ok := r["antigravity-gemini"]; ok {
 		t.Fatal("无 reset 的 bucket 不应出现")
 	}
-	if r["codex"] != 0 {
+	if r["codex-gpt"] != 0 {
 		t.Fatal("已过的 reset 应为 0")
 	}
 }
@@ -74,5 +76,25 @@ func TestCodexQuotaStatus(t *testing.T) {
 	past := &CodexQuotaWindow{HourlyResetTime: now.Add(-time.Hour).Format(time.RFC3339)}
 	if codexQuotaStatus(past, now.UnixMilli())["hourlyResetMs"].(int64) != 0 {
 		t.Fatal("已过期的 reset 应为 0")
+	}
+}
+
+func TestClaudeQuotaStatus(t *testing.T) {
+	now := time.Date(2026, 6, 2, 8, 0, 0, 0, time.UTC)
+	w := &ClaudeQuotaWindow{
+		HourlyPercent:   55,
+		WeeklyPercent:   30,
+		HourlyResetTime: now.Add(3 * time.Hour).Format(time.RFC3339),
+		WeeklyResetTime: now.Add(72 * time.Hour).Format(time.RFC3339),
+	}
+	s := claudeQuotaStatus(w, now.UnixMilli())
+	if s["hourlyFraction"].(float64) != 0.55 || s["weeklyFraction"].(float64) != 0.3 {
+		t.Fatalf("分数不对: %v", s)
+	}
+	if s["hourlyResetMs"].(int64) != int64(3*3600*1000) {
+		t.Fatalf("hourlyResetMs 不对: %v", s["hourlyResetMs"])
+	}
+	if claudeQuotaStatus(nil, now.UnixMilli()) != nil {
+		t.Fatal("nil window 应返回 nil")
 	}
 }

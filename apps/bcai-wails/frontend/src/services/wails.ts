@@ -71,6 +71,7 @@ export interface StatsResponse {
     bucketFractions?: Record<string, number>
     bucketResetMs?: Record<string, number>
     codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
+    claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     hasToken: boolean
     lastError: string
     activationExpiresAt: string
@@ -193,10 +194,9 @@ export async function getPoolStatus(): Promise<Record<string, number>> {
 
 export async function addPoolAccount(
   email: string,
-  refreshToken: string,
-  oauthProfile: string
+  refreshToken: string
 ): Promise<{ success: boolean; id?: number; error?: string }> {
-  return _AddPoolAccount(email, refreshToken, oauthProfile) as any
+  return _AddPoolAccount(email, refreshToken) as any
 }
 
 export async function removePoolAccount(id: number): Promise<{ success: boolean; error?: string }> {
@@ -218,10 +218,8 @@ export async function getPoolMode(): Promise<string> {
   return GetPoolMode()
 }
 
-export async function oauthLogin(
-  profile: string
-): Promise<{ success: boolean; email?: string; id?: number; error?: string }> {
-  return _OAuthLogin(profile) as any
+export async function oauthLogin(): Promise<{ success: boolean; email?: string; id?: number; error?: string }> {
+  return _OAuthLogin() as any
 }
 
 // ===== Pool Quota Management =====

@@ -68,7 +68,6 @@ export interface AccountInfo {
   enabled: boolean
   projectId: string
   planType: string
-  oauthProfile: string
   hasAccessToken: boolean
   tokenExpiresIn: number
   quotaStatus: string

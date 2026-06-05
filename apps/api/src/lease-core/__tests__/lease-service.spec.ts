@@ -20,9 +20,10 @@ function writeJson(filePath: string, value: unknown) {
 function makeFakeProvider(
   accountsFilePath: string,
   refreshToken: (account: any) => Promise<string>,
+  id = "fake",
 ): Provider<any> {
   return {
-    id: "fake",
+    id,
     accountsFilePath,
     refreshToken,
     normalizeAccount: (raw: any) => ({
@@ -338,10 +339,35 @@ describe("LeaseService (generic core)", () => {
       keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { fake: 1 } }],
     });
     // A model-less warmup lease (as on activation) still returns ALL buckets.
+    // Buckets are composite `<product>-<family>`; the fake provider's id is "fake".
     const r: any = await makeBoundService().leaseToken(REQ, { clientId: "c1" });
-    expect(r.accountBuckets.opus.fraction).toBeCloseTo(0.3, 5);
-    expect(r.accountBuckets.gemini.fraction).toBeCloseTo(0.9, 5);
-    expect(r.accountBuckets.opus.resetAt).toBe(Date.parse("2026-06-10T00:00:00.000Z"));
+    expect(r.accountBuckets["fake-claude"].fraction).toBeCloseTo(0.3, 5);
+    expect(r.accountBuckets["fake-gemini"].fraction).toBeCloseTo(0.9, 5);
+    expect(r.accountBuckets["fake-claude"].resetAt).toBe(Date.parse("2026-06-10T00:00:00.000Z"));
+  });
+
+  it("keys account buckets by product — anthropic-claude never collides with antigravity-claude (root cause B)", async () => {
+    refreshToken.mockResolvedValue("tok");
+    // Same Claude model fraction stored on an account; the product prefix (from
+    // provider.id) is what keeps the two products' blood bars separate.
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1, email: "a@example.com", refreshToken: "rt-1", enabled: true,
+        modelQuotaFractions: { claude: 0.3 },
+      }],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { anthropic: 1 } }],
+    });
+    const service = new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "anthropic"),
+      { accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    );
+    const r: any = await service.leaseToken(REQ, { clientId: "c1" });
+    expect(r.accountBuckets["anthropic-claude"].fraction).toBeCloseTo(0.3, 5);
+    // The old flat "opus" key and the other product's bucket must NOT appear.
+    expect(r.accountBuckets["opus"]).toBeUndefined();
+    expect(r.accountBuckets["antigravity-claude"]).toBeUndefined();
   });
 
   it("surfaces the bound account's blood-bar fraction in the lease response", async () => {

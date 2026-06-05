@@ -181,7 +181,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		if mk == "" {
 			mk = "gpt-5-codex"
 		}
-		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+		recordBoundFractionForModel("codex", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	recordAccountBuckets(body)
 	recordFairShareQuota(body)

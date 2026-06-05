@@ -70,7 +70,7 @@ func (l *Leaser) ReportProblemWithDetails(card, deviceId string, details ReportD
 	// 这样血条立刻反映真实情况,不再因"没采到额度"而乐观显示满。短 429(<5s 速率限制)
 	// 会很快恢复,不当作用尽。
 	if details.StatusCode == 429 && details.ModelKey != "" && details.RetryAfterMs >= 5000 {
-		recordBoundFractionForModel(details.ModelKey, 0, time.Now().UnixMilli()+details.RetryAfterMs)
+		recordBoundFractionForModel("antigravity", details.ModelKey, 0, time.Now().UnixMilli()+details.RetryAfterMs)
 	}
 
 	payload := map[string]interface{}{

@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-// withClaudeAPIBase points CLAUDE_API_BASE at a test server for the duration of fn.
+// withClaudeAPIBase points ANTHROPIC_REMOTE_BASE at a test server for the duration of fn.
 func withClaudeAPIBase(t *testing.T, base string) {
 	t.Helper()
-	prev := CLAUDE_API_BASE
-	CLAUDE_API_BASE = base
-	t.Cleanup(func() { CLAUDE_API_BASE = prev })
+	prev := ANTHROPIC_REMOTE_BASE
+	ANTHROPIC_REMOTE_BASE = base
+	t.Cleanup(func() { ANTHROPIC_REMOTE_BASE = prev })
 }
 
 func TestClaudeLeaseTokenSuccessAppliesWindows(t *testing.T) {

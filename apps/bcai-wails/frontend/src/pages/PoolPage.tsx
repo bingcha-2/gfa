@@ -342,8 +342,6 @@ function AddAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 
   const [email, setEmail] = useState('')
   const [token, setToken] = useState('')
-  const [profile, setProfile] = useState('antigravity')
-  const [oauthProfile, setOauthProfile] = useState('antigravity')
   const [oauthStatus, setOauthStatus] = useState('')
 
   const handleAddAccount = async () => {
@@ -351,7 +349,7 @@ function AddAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       await showAlert('提示', '请填写邮箱和 Refresh Token')
       return
     }
-    const result = await addAccount(email.trim(), token.trim(), profile)
+    const result = await addAccount(email.trim(), token.trim())
     if (result.success) {
       setEmail(''); setToken('')
       onOpenChange(false)
@@ -362,7 +360,7 @@ function AddAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 
   const handleOAuth = async () => {
     setOauthStatus('等待授权...')
-    const result = await oauthLogin(oauthProfile)
+    const result = await oauthLogin()
     if (result.success) {
       setOauthStatus(`✓ ${result.email} 导入成功`)
       setTimeout(() => onOpenChange(false), 1500)
@@ -410,15 +408,7 @@ function AddAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             <div className="flex flex-col gap-3 pt-2">
               <p className="text-[12px] text-[var(--text-muted)]">通过 Google 账号登录自动获取 Refresh Token 并导入号池</p>
               <div className="flex gap-2">
-                <select
-                  value={oauthProfile}
-                  onChange={(e) => setOauthProfile(e.target.value)}
-                  className="flex-1 h-9 rounded-[8px] border border-[var(--border)] bg-[var(--bg-secondary)] px-3 text-[13px] text-[var(--text-primary)] outline-none"
-                >
-                  <option value="antigravity">Antigravity</option>
-                  <option value="legacy">Legacy (Cloud Code)</option>
-                </select>
-                <Button onClick={handleOAuth} disabled={loading}>
+                <Button onClick={handleOAuth} disabled={loading} className="flex-1">
                   {loading ? '等待授权...' : 'Google 登录'}
                 </Button>
               </div>
@@ -437,15 +427,7 @@ function AddAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
               <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="邮箱地址" />
               <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Refresh Token (1//...)" />
               <div className="flex gap-2">
-                <select
-                  value={profile}
-                  onChange={(e) => setProfile(e.target.value)}
-                  className="flex-1 h-9 rounded-[8px] border border-[var(--border)] bg-[var(--bg-secondary)] px-3 text-[13px] text-[var(--text-primary)] outline-none"
-                >
-                  <option value="antigravity">Antigravity</option>
-                  <option value="legacy">Legacy (Cloud Code)</option>
-                </select>
-                <Button onClick={handleAddAccount} disabled={loading}>
+                <Button onClick={handleAddAccount} disabled={loading} className="flex-1">
                   {loading ? '添加中...' : '添加'}
                 </Button>
               </div>

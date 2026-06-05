@@ -28,6 +28,18 @@ import {
   isAccessKeySessionExpired,
   ACCESS_KEY_BINDING_GRACE_MS,
 } from './token-billing';
+import {
+  bucketKey,
+  modelFamily,
+  bucketFamily,
+  bucketsForProducts,
+} from '../lease-core/product-bucket';
+
+/** Bucket key for the model a request is asking for, scoped to the product
+ *  serving it. Falls back to bare family when product is unknown (legacy path). */
+function requestBucket(product: string | undefined, modelKey: string): string {
+  return product ? bucketKey(product, modelKey) : modelFamily(modelKey);
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -265,7 +277,7 @@ export class AccessKeyStore {
   resolveFromRequest(
     req: any,
     payload: any,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string } = {},
   ): ResolveResult {
     const keyValue = AccessKeyStore.extractKeyFromRequest(req, payload);
     if (!keyValue) return { key: keyValue, record: null, error: 'Missing access key' };
@@ -293,10 +305,10 @@ export class AccessKeyStore {
 
     if (options.enforceLimit && baseLimit > 0) {
       const modelKeyStr = String(options.modelKey || '').trim();
-      const bucketUsage = recentBucketUsage(record, this.billing.bucketOf, now);
+      const bucketUsage = recentBucketUsage(record, now);
 
       if (modelKeyStr) {
-        const bucket = this.billing.bucketOf(modelKeyStr);
+        const bucket = requestBucket(options.product, modelKeyStr);
         const used = bucketUsage.get(bucket) || 0;
         const limit = this.billing.bucketLimit(baseLimit, bucket, record);
         if (limit > 0 && used >= limit) {
@@ -311,9 +323,9 @@ export class AccessKeyStore {
         // exhausted. Buckets with zero usage are excluded: otherwise a bucket the
         // card never serves (e.g. codex on an antigravity-only card) has usage 0 <
         // limit forever, so `every` is never true and an exhausted card is never
-        // rejected. Filtering to used buckets restores the original intent
-        // (reject when out of budget across the buckets in play).
-        const usedBuckets = this.billing.buckets.filter((b) => (bucketUsage.get(b) || 0) > 0);
+        // rejected. Enumerate only the buckets actually used (the keys present in
+        // the usage map) so this stays correct under composite product-family keys.
+        const usedBuckets = [...bucketUsage.keys()].filter((b) => (bucketUsage.get(b) || 0) > 0);
         const allExhausted =
           usedBuckets.length > 0 &&
           usedBuckets.every((b) => (bucketUsage.get(b) || 0) >= this.billing.bucketLimit(baseLimit, b, record));
@@ -332,10 +344,10 @@ export class AccessKeyStore {
     const wLimit = weeklyTokenLimit(record);
     if (options.enforceLimit && wLimit > 0) {
       const modelKeyStr = String(options.modelKey || '').trim();
-      const weeklyUsage = recentWeeklyBucketUsage(record, this.billing.bucketOf, now);
+      const weeklyUsage = recentWeeklyBucketUsage(record, now);
 
       if (modelKeyStr) {
-        const bucket = this.billing.bucketOf(modelKeyStr);
+        const bucket = requestBucket(options.product, modelKeyStr);
         const used = weeklyUsage.get(bucket) || 0;
         const limit = this.billing.bucketLimit(wLimit, bucket, record);
         if (limit > 0 && used >= limit) {
@@ -346,7 +358,7 @@ export class AccessKeyStore {
           };
         }
       } else {
-        const usedBuckets = this.billing.buckets.filter((b) => (weeklyUsage.get(b) || 0) > 0);
+        const usedBuckets = [...weeklyUsage.keys()].filter((b) => (weeklyUsage.get(b) || 0) > 0);
         const allExhausted =
           usedBuckets.length > 0 &&
           usedBuckets.every((b) => (weeklyUsage.get(b) || 0) >= this.billing.bucketLimit(wLimit, b, record));
@@ -371,7 +383,7 @@ export class AccessKeyStore {
    * bucket) that recordUsage() persists. Exposed so callers (e.g. the per-call
    * token-usage tracker) record EXACTLY the same numbers as the card counters.
    */
-  computeUsageDetail(usage: any = {}, modelKey = '') {
+  computeUsageDetail(usage: any = {}, modelKey = '', product = '') {
     const inputTokens = readTokenCount(usage.inputTokens);
     const outputTokens = readTokenCount(usage.outputTokens);
     const cachedInputTokens = readTokenCount(usage.cachedInputTokens);
@@ -386,7 +398,7 @@ export class AccessKeyStore {
       cachedInputTokens,
       rawTotalTokens,
       totalTokens,
-      bucket: this.billing.bucketOf(modelKey || ''),
+      bucket: requestBucket(product, modelKey || ''),
     };
   }
 
@@ -401,7 +413,7 @@ export class AccessKeyStore {
    * (legacy clients) cannot be deduped here; the caller handles their
    * once-per-success semantics via lease.successfulReportSeen.
    */
-  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = ''): boolean {
+  recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = ''): boolean {
     if (!cardId) return false;
     const record = this.findById(cardId);
     if (!record) return false;
@@ -423,7 +435,7 @@ export class AccessKeyStore {
     }
 
     const { inputTokens, outputTokens, cachedInputTokens, rawTotalTokens, totalTokens } =
-      this.computeUsageDetail(usage, modelKey);
+      this.computeUsageDetail(usage, modelKey, product);
 
     record.totalRequests = Number(record.totalRequests || 0) + 1;
     record.totalInputTokens = Number(record.totalInputTokens || 0) + inputTokens;
@@ -441,7 +453,7 @@ export class AccessKeyStore {
       record.tokenUsageEvents.push({
         at: now, status: Number(status || 0),
         inputTokens, outputTokens, cachedInputTokens,
-        rawTotalTokens, totalTokens, modelKey: modelKey || '',
+        rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
       });
 
       // Weekly window: dual-write the same event into the weekly array.
@@ -450,7 +462,7 @@ export class AccessKeyStore {
       record.weeklyTokenUsageEvents.push({
         at: now, status: Number(status || 0),
         inputTokens, outputTokens, cachedInputTokens,
-        rawTotalTokens, totalTokens, modelKey: modelKey || '',
+        rawTotalTokens, totalTokens, modelKey: modelKey || '', product: product || '',
       });
     }
 
@@ -558,7 +570,7 @@ export class AccessKeyStore {
     const now = Date.now();
     resetWindowIfExpired(record, now);
     const recentTokens = recentTokenUsage(record, now);
-    const bucketUsage = recentBucketUsage(record, this.billing.bucketOf, now);
+    const bucketUsage = recentBucketUsage(record, now);
     const tLimit = tokenWindowLimit(record);
     const resetMs = tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
@@ -566,7 +578,7 @@ export class AccessKeyStore {
     // Weekly window
     resetWeeklyWindowIfExpired(record, now);
     const wkLimit = weeklyTokenLimit(record);
-    const wkBucketUsage = wkLimit > 0 ? recentWeeklyBucketUsage(record, this.billing.bucketOf, now) : new Map<string, number>();
+    const wkBucketUsage = wkLimit > 0 ? recentWeeklyBucketUsage(record, now) : new Map<string, number>();
     const wkResetMs = wkLimit > 0 ? weeklyWindowResetMs(record, now) : 0;
 
     const windowLimit = Number(record.windowLimit || 0);
@@ -576,6 +588,17 @@ export class AccessKeyStore {
     const products = record.bindings && typeof record.bindings === 'object'
       ? Object.keys(record.bindings).filter((p) => Number((record.bindings as Record<string, number>)[p]) > 0)
       : [];
+
+    // Composite product-family buckets this card can use. Sum usage by family for
+    // the legacy flat fields below (kept until clients consume `buckets` directly).
+    const enumBuckets = bucketsForProducts(products);
+    const familyUsed = (family: string): number => {
+      let sum = 0;
+      for (const [k, v] of bucketUsage) if (bucketFamily(k) === family) sum += v;
+      return sum;
+    };
+    const familyLimitX1 = this.billing.bucketLimit(tLimit, 'anthropic-claude', record);
+    const familyLimitGemini = this.billing.bucketLimit(tLimit, 'antigravity-gemini', record);
 
     return {
       id: record.id,
@@ -592,18 +615,17 @@ export class AccessKeyStore {
       totalRawTokensUsed: Number(record.totalRawTokensUsed || 0),
       totalTokensUsed: Number(record.totalTokensUsed || 0),
       recentWindowTokens: recentTokens.totalTokens,
-      // Legacy gemini/opus fields (antigravity client contract). Derived from the
-      // bucket map so a non-gemini/opus provider (codex) reports 0 here and its
-      // usage shows under its own bucket in `buckets` below.
-      opusTokensUsed: bucketUsage.get('opus') || 0,
-      opusTokenLimit: this.billing.bucketLimit(tLimit, 'opus', record) || (windowLimit > 0 ? windowLimit * 100_000 : 0),
-      geminiTokensUsed: bucketUsage.get('gemini') || 0,
-      geminiTokenLimit: this.billing.bucketLimit(tLimit, 'gemini', record) || (windowLimit > 0 ? windowLimit * 500_000 : 0),
-      // Codex flat fields (mirror opus/gemini) so the client can show a codex bar.
-      codexTokensUsed: bucketUsage.get('codex') || 0,
-      codexTokenLimit: this.billing.bucketLimit(tLimit, 'codex', record),
-      // Provider-correct per-bucket view (gemini/opus for antigravity, codex for codex).
-      buckets: this.billing.buckets.map((bucket) => ({
+      // Legacy flat fields (older client contract). Each is the sum across the
+      // composite buckets of that family — kept until clients read `buckets`
+      // directly. opus≈claude family, gemini, codex≈gpt family.
+      opusTokensUsed: familyUsed('claude'),
+      opusTokenLimit: familyLimitX1 || (windowLimit > 0 ? windowLimit * 100_000 : 0),
+      geminiTokensUsed: familyUsed('gemini'),
+      geminiTokenLimit: familyLimitGemini || (windowLimit > 0 ? windowLimit * 500_000 : 0),
+      codexTokensUsed: familyUsed('gpt'),
+      codexTokenLimit: familyLimitX1,
+      // Composite product-family per-bucket view (the authoritative shape).
+      buckets: enumBuckets.map((bucket) => ({
         bucket,
         used: bucketUsage.get(bucket) || 0,
         limit: this.billing.bucketLimit(tLimit, bucket, record),
@@ -619,7 +641,7 @@ export class AccessKeyStore {
       weeklyWindowResetMs: wkResetMs,
       weeklyWindowResetAt: wkResetMs > 0 ? new Date(now + wkResetMs).toISOString() : '',
       weeklyBuckets: wkLimit > 0
-        ? this.billing.buckets.map((bucket) => ({
+        ? enumBuckets.map((bucket) => ({
             bucket,
             used: wkBucketUsage.get(bucket) || 0,
             limit: this.billing.bucketLimit(wkLimit, bucket, record),

@@ -33,28 +33,29 @@ describe("AccessKeyStore — codex billing bucket", () => {
     return new AccessKeyStore(accessKeysPath, CODEX_BILLING);
   }
 
-  it("bills codex usage under the codex bucket, not opus", () => {
+  it("bills codex usage under the composite codex-gpt bucket, not claude", () => {
     const store = codexStore(1000);
-    store.recordUsage("c", 200, { totalTokens: 300 }, "gpt-5-codex", "r1");
+    store.recordUsage("c", 200, { totalTokens: 300 }, "gpt-5-codex", "r1", "codex");
 
     const st = store.publicStatus(store.findById("c")!) as any;
     expect(st.opusTokensUsed).toBe(0);
     expect(st.geminiTokensUsed).toBe(0);
-    const codexBucket = st.buckets.find((b: any) => b.bucket === "codex");
+    const codexBucket = st.buckets.find((b: any) => b.bucket === "codex-gpt");
     expect(codexBucket.used).toBe(300);
     expect(codexBucket.limit).toBe(1000);
   });
 
   it("rejects over the codex 5h bucket limit with a Codex-labelled error", () => {
     const store = codexStore(200);
-    store.recordUsage("c", 200, { totalTokens: 200 }, "gpt-5-codex", "r1");
+    store.recordUsage("c", 200, { totalTokens: 200 }, "gpt-5-codex", "r1", "codex");
 
     const res = store.resolveFromRequest(
       { headers: { "x-access-key": "cs" } } as any,
       {},
-      { enforceLimit: true, modelKey: "gpt-5-codex" },
+      { enforceLimit: true, modelKey: "gpt-5-codex", product: "codex" },
     );
     expect(res.record).toBeNull();
-    expect(res.error).toContain("Codex token limit exceeded");
+    expect(res.error).toContain("Codex");
+    expect(res.error).toContain("token limit exceeded");
   });
 });

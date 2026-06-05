@@ -17,9 +17,9 @@ type ServiceOptions = {
   tokenUsageTracker?: TokenUsageTracker;
 };
 
-/** HTTP error thrown by the claude lease server. Subclass so RemoteClaudeController
+/** HTTP error thrown by the claude lease server. Subclass so RemoteAnthropicController
  * can route on `instanceof`. */
-export class RemoteClaudeHttpError extends RemoteAccessHttpError {}
+export class RemoteAnthropicHttpError extends RemoteAccessHttpError {}
 
 /**
  * Claude (Anthropic subscription OAuth) token server. A thin wrapper over the
@@ -28,7 +28,7 @@ export class RemoteClaudeHttpError extends RemoteAccessHttpError {}
  * report dedup) the codex/antigravity flows already had.
  */
 @Injectable()
-export class RemoteClaudeService extends LeaseService<ClaudeAccount> implements OnModuleDestroy {
+export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implements OnModuleDestroy {
   constructor(@Optional() options: ServiceOptions = {}) {
     super(
       new ClaudeProvider({
@@ -42,9 +42,9 @@ export class RemoteClaudeService extends LeaseService<ClaudeAccount> implements 
         minClientVersion: options.minClientVersion,
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
-        mode: "remote-claude-server",
+        mode: "remote-anthropic-server",
         noAccountMessage: "No available Claude accounts",
-        errorClass: RemoteClaudeHttpError,
+        errorClass: RemoteAnthropicHttpError,
       },
     );
   }

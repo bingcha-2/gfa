@@ -506,7 +506,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	// 记录绑定号在该模型上的真实上游剩余 + 恢复时间(供血条显示真实余量/倒计时)。
 	if leaseResp.BoundAccount != nil {
 		mk, _ := options["modelKey"].(string)
-		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+		recordBoundFractionForModel("antigravity", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	// 服务端把"绑定号已知的各 bucket 额度"一并带回 → 激活/首次预热那一下就能把每条血条
 	// 都填上真实值(共享号,别人用过就有数据),而非只填被租的那个模型。

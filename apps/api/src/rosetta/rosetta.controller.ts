@@ -5,7 +5,7 @@ import { CreditStatsService } from "./credit-stats.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
-import { RemoteClaudeService } from "../remote-claude/service/remote-claude.service";
+import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
 
 // NOTE: intentionally NOT @Public() — these are admin-console operations
 // (account pool, access keys, Codex OAuth token import) that must be gated by the
@@ -21,7 +21,7 @@ export class RosettaController {
     private readonly tokenUsageStats: TokenUsageStatsService,
     private readonly tokenServer: TokenServerService,
     private readonly remoteCodex: RemoteCodexService,
-    private readonly remoteClaude: RemoteClaudeService,
+    private readonly remoteAnthropic: RemoteAnthropicService,
   ) {}
 
   /**
@@ -34,7 +34,7 @@ export class RosettaController {
   private reloadKeyStores() {
     this.tokenServer.reloadAccessKeys();
     this.remoteCodex.reloadAccessKeys();
-    this.remoteClaude.reloadAccessKeys();
+    this.remoteAnthropic.reloadAccessKeys();
   }
 
   @Get("access-keys")
@@ -80,8 +80,8 @@ export class RosettaController {
 
   // ── Google OAuth (Antigravity account pool) ──────────────────────────
   @Post("google-oauth-start")
-  startGoogleOAuthLogin(@Body() body: any) {
-    return this.rosetta.startGoogleOAuthLogin(String(body?.oauthProfile || "antigravity"));
+  startGoogleOAuthLogin() {
+    return this.rosetta.startGoogleOAuthLogin();
   }
 
   @Get("google-oauth-status")

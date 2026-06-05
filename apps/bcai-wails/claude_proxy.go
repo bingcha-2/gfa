@@ -150,10 +150,19 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
-	client := newClaudeUpstreamClient(effectiveClaudeProxy(lease.ProxyURL, upstreamProxy))
+	egress := effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)
+	egressLabel := egress
+	if egressLabel == "" {
+		egressLabel = "direct(本机IP)"
+	}
+	client := newClaudeUpstreamClient(egress)
+	// 观测点①:发起上游请求之前。卡在 Do(连不上/握手/等响应头)时,日志会停在这一行。
+	Log("[claude-proxy] #%d [生成] → 请求上游 %s egress=%s", reqID, targetURL, egressLabel)
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		// 观测点②a:Do 直接失败(连接/握手/响应头超时)——这里能看到真实错误文本。
+		Log("[claude-proxy] #%d [生成] ✗ 上游请求失败(Do err):%v", reqID, err)
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "upstream_error", ErrorText: err.Error(),
 		}, upstreamProxy, lease)
@@ -161,6 +170,9 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		return
 	}
 	defer resp.Body.Close()
+	// 观测点②b:已拿到响应头。能区分"卡在网络"还是"上游回了码但 body 不对"。
+	Log("[claude-proxy] #%d [生成] ← 上游响应头 码=%d ct=%q ce=%q",
+		reqID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"))
 
 	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 		(isClaudeStreamingResponse(resp) || requestWantsStream(body))
@@ -175,6 +187,13 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 			details.ErrorText = copyErr.Error()
 			Log("[claude-proxy] #%d [生成] 上游码=%d 流中断:%v(不上报用量)", reqID, resp.StatusCode, copyErr)
 			p.doReportProblem(card, deviceId, details, upstreamProxy, lease)
+			// 头和 200 已发出,改不了状态码;补发一个 SSE error 事件,让 Claude Code 明确知道
+			// 是上游中断而非正常结束(否则只看到流被截断、无错误提示)。
+			msg, _ := json.Marshal("upstream stream interrupted: " + copyErr.Error())
+			fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"upstream_stream_error\",\"message\":%s}}\n\n", msg)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
 			return
 		}
 		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) → 已提交用量上报",

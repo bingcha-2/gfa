@@ -35,19 +35,13 @@ func discountedCachedTokens(cached int64) int64 {
 	return (cached + 9) / 10 // ceil(cached / 10)
 }
 
-// classifyModel 将模型名分类为 opus / gemini / other
+// classifyModel 将模型名分类为厂商族(gemini/claude/gpt),复用唯一分类真源
+// modelFamily(product_bucket.go),不再各写一套 Contains 特判。空名返回 other。
 func classifyModel(modelKey string) string {
 	if modelKey == "" {
 		return "other"
 	}
-	lower := strings.ToLower(modelKey)
-	if strings.Contains(lower, "opus") || strings.Contains(lower, "claude") {
-		return "opus"
-	}
-	if strings.Contains(lower, "gemini") || strings.Contains(lower, "pro") || strings.Contains(lower, "flash") {
-		return "gemini"
-	}
-	return "other"
+	return modelFamily(modelKey)
 }
 
 func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string, modelKey string) TokenUsageResult {
@@ -114,7 +108,7 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 	// 按模型分类累加
 	category := classifyModel(modelKey)
 	switch category {
-	case "opus":
+	case "claude":
 		if inputTokens > 0 {
 			atomic.AddInt64(&p.stats.OpusInputTokens, inputTokens)
 		}

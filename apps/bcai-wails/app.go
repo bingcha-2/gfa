@@ -193,9 +193,12 @@ func (a *App) GetStats() map[string]interface{} {
 	// 绑定号各 bucket 的真实上游剩余分数 + 各自恢复倒计时(跨两个 leaser 汇总)。
 	leaserStatus["bucketFractions"] = snapshotBoundFractions()
 	leaserStatus["bucketResetMs"] = snapshotBoundResets(time.Now().UnixMilli())
-	// Codex 是账号级双窗口(5h + 周),像后台一样分两条显示。
+	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
 	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["codexQuota"] = cq
+	}
+	if cq := claudeQuotaStatus(GetClaudeLeaser().LatestClaudeQuota(), time.Now().UnixMilli()); cq != nil {
+		leaserStatus["claudeQuota"] = cq
 	}
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()
@@ -487,8 +490,8 @@ func (a *App) GetPoolStatus() map[string]interface{} {
 }
 
 // AddPoolAccount 添加账号到号池
-func (a *App) AddPoolAccount(email, refreshToken, oauthProfile string) map[string]interface{} {
-	id, err := GetAccountPool().AddAccount(email, refreshToken, oauthProfile)
+func (a *App) AddPoolAccount(email, refreshToken string) map[string]interface{} {
+	id, err := GetAccountPool().AddAccount(email, refreshToken)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}
 	}
@@ -542,8 +545,8 @@ func (a *App) GetPoolMode() string {
 }
 
 // OAuthLogin starts a Google OAuth login flow and auto-adds the account to the pool
-func (a *App) OAuthLogin(profile string) map[string]interface{} {
-	result, err := GetAccountPool().StartOAuthLogin(profile, func(url string) {
+func (a *App) OAuthLogin() map[string]interface{} {
+	result, err := GetAccountPool().StartOAuthLogin(func(url string) {
 		runtime.BrowserOpenURL(a.ctx, url)
 	})
 	if err != nil {
@@ -551,7 +554,7 @@ func (a *App) OAuthLogin(profile string) map[string]interface{} {
 	}
 
 	// Auto-add to pool
-	id, addErr := GetAccountPool().AddAccount(result.Email, result.RefreshToken, profile)
+	id, addErr := GetAccountPool().AddAccount(result.Email, result.RefreshToken)
 	if addErr != nil {
 		return map[string]interface{}{
 			"success": false,

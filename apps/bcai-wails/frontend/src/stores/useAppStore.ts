@@ -25,6 +25,7 @@ interface AppState {
   bucketFractions: Record<string, number>
   bucketResetMs: Record<string, number>
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
+  claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   activationExpiresAt: string
 
   // Today stats
@@ -83,6 +84,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bucketFractions: {},
   bucketResetMs: {},
   codexQuota: null,
+  claudeQuota: null,
   activationExpiresAt: '',
   todayRequests: 0,
   todayErrors: 0,
@@ -123,6 +125,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bucketFractions: data.leaser?.bucketFractions || {},
         bucketResetMs: data.leaser?.bucketResetMs || {},
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
+        claudeQuota: (data.leaser?.claudeQuota as AppState['claudeQuota']) || null,
         activationExpiresAt: data.leaser?.activationExpiresAt || '',
         todayRequests: today.requests || 0,
         todayErrors: today.errors || 0,

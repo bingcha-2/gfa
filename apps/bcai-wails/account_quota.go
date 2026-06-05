@@ -517,19 +517,10 @@ func parseModelsResponse(body []byte) []QuotaGroup {
 	return groups
 }
 
-// classifyProvider 将模型名分类为 gemini/claude/gpt/other
+// classifyProvider 将模型名分类为厂商族 gemini/claude/gpt。复用唯一的分类真源
+// modelFamily(product_bucket.go),与服务端 billing 保持一致,不再各写一套特判。
 func classifyProvider(modelName string) string {
-	lower := strings.ToLower(modelName)
-	if strings.Contains(lower, "gemini") || strings.Contains(lower, "pro") || strings.Contains(lower, "flash") {
-		return "gemini"
-	}
-	if strings.Contains(lower, "claude") || strings.Contains(lower, "opus") || strings.Contains(lower, "sonnet") {
-		return "claude"
-	}
-	if strings.Contains(lower, "gpt") || strings.Contains(lower, "o3") || strings.Contains(lower, "o4") {
-		return "gpt"
-	}
-	return "other"
+	return modelFamily(modelName)
 }
 
 func min(a, b int) int {

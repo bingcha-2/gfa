@@ -8,6 +8,7 @@ import { AutomationService } from "../automation/automation.service";
 import { AgentAccountService } from "../automation/agent-account.service";
 
 import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired } from "../token-server/token-billing";
+import { bucketsForProducts } from "../lease-core/product-bucket";
 import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   type CachedToken,
@@ -24,8 +25,8 @@ import {
 } from "./google-api";
 import { refreshCodexAccessToken } from "../remote-codex/auth/codex-token-provider";
 import { fetchCodexQuotaUpstream } from "../remote-codex/auth/codex-usage";
-import { refreshClaudeAccessToken } from "../remote-claude/auth/claude-token-provider";
-import { fetchClaudeQuotaUpstream } from "../remote-claude/auth/claude-usage";
+import { refreshClaudeAccessToken } from "../remote-anthropic/auth/claude-token-provider";
+import { fetchClaudeQuotaUpstream } from "../remote-anthropic/auth/claude-usage";
 
 type RosettaServiceOptions = {
   dataDir?: string;
@@ -534,7 +535,6 @@ export class RosettaService {
       alias: String(account.alias || ""),
       projectId: String(account.projectId || ""),
       planType: String(account.planType || ""),
-      oauthProfile: String(account.oauthProfile || ""),
       hasToken: Boolean(account.refreshToken),
       boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
       usedShares: shares.get(Number(account.id || 0)) || 0,
@@ -574,7 +574,6 @@ export class RosettaService {
         refreshToken,
         enabled: payload.enabled !== undefined ? payload.enabled !== false : true,
         alias: String(payload.alias || ""),
-        oauthProfile: String(payload.oauthProfile || "antigravity"),
         projectId: String(payload.projectId || ""),
         planType: String(payload.planType || ""),
       });
@@ -589,7 +588,6 @@ export class RosettaService {
     if (!r.ok || !r.id) return r;
     const probe = await this.probeAntigravityToken(
       String(payload?.refreshToken || "").trim(),
-      String(payload?.oauthProfile || "antigravity"),
     );
     if (!probe.valid) {
       this.setAccountEnabled("accounts.json", r.id, false);
@@ -636,7 +634,7 @@ export class RosettaService {
 
   // ── Codex account pool (codex-accounts.json) ────────────────────────────
   // Mirrors the antigravity account methods above but targets the codex pool
-  // and omits projectId/oauthProfile (codex accounts don't have them).
+  // and omits projectId (codex accounts don't have one).
 
   listCodexAccounts() {
     const filePath = path.join(this.dataDir, "codex-accounts.json");
@@ -874,10 +872,9 @@ export class RosettaService {
   /** antigravity:用 refresh_token 换一次 access_token,验证有效性。 */
   private async probeAntigravityToken(
     refreshToken: string,
-    oauthProfile: string,
   ): Promise<{ valid: boolean; error?: string }> {
     try {
-      await refreshAccessToken(refreshToken, oauthProfile);
+      await refreshAccessToken(refreshToken);
       return { valid: true };
     } catch (err: any) {
       return { valid: false, error: String(err?.message || err) };
@@ -914,7 +911,7 @@ export class RosettaService {
       if (!acc.projectId) await this.tryDiscoverProject(acc);
       if (!acc.projectId) return { ok: false, email: acc.email, error: "无法发现 projectId" };
       this.tokenCache.delete(accountId); // 清缓存 → 强制真正刷一次 token
-      const token = await getAccessToken(accountId, acc.refreshToken, acc.oauthProfile, this.tokenCache);
+      const token = await getAccessToken(accountId, acc.refreshToken, this.tokenCache);
       const health = await fetchAccountHealth(token, acc.projectId, acc.email);
       acc.credits = {
         known: health.credits.known,
@@ -1198,7 +1195,7 @@ export class RosettaService {
 
   // ── Google OAuth (Antigravity account pool) ──────────────────────────
 
-  async startGoogleOAuthLogin(oauthProfile = "antigravity") {
+  async startGoogleOAuthLogin() {
     const existing = this.googleOAuthPending;
     if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
       return {
@@ -1211,7 +1208,7 @@ export class RosettaService {
     }
     this.closeGoogleOAuthPending();
 
-    const oauth = resolveOAuthCredentials(oauthProfile);
+    const oauth = resolveOAuthCredentials();
     const codeVerifier = base64Url(crypto.randomBytes(32));
     const state = base64Url(crypto.randomBytes(32));
     const loginId = base64Url(crypto.randomBytes(18));
@@ -1238,7 +1235,6 @@ export class RosettaService {
       status: "pending",
     };
 
-    (pending as any).oauthProfile = oauthProfile;
     (pending as any).clientId = oauth.clientId;
     (pending as any).clientSecret = oauth.clientSecret;
     this.googleOAuthPending = pending;
@@ -1331,7 +1327,6 @@ export class RosettaService {
   private async completeGoogleOAuthLogin(pending: GoogleOAuthPending, code: string) {
     const clientId = (pending as any).clientId || ANTIGRAVITY_OAUTH_CLIENT_ID;
     const clientSecret = (pending as any).clientSecret || ANTIGRAVITY_OAUTH_CLIENT_SECRET;
-    const oauthProfile = (pending as any).oauthProfile || "antigravity";
 
     const body = new URLSearchParams({
       client_id: clientId,
@@ -1363,7 +1358,6 @@ export class RosettaService {
     const result = await this.addAccountChecked({
       email,
       refreshToken,
-      oauthProfile,
       alias: profile.name || "",
     });
     if (!result.ok) throw new Error(String(result.error || "Failed to save Antigravity account"));
@@ -1864,10 +1858,13 @@ export class RosettaService {
 
     resetWindowIfExpired(record, now);
     const baseLimit = tokenWindowLimit(record);
-    const bucketUsage: Map<string, number> = recentBucketUsage(record, UNIVERSAL_BILLING.bucketOf, now);
+    const bucketUsage: Map<string, number> = recentBucketUsage(record, now);
     const customLimits = (record.bucketLimits && typeof record.bucketLimits === "object") ? record.bucketLimits : {};
 
-    const buckets = UNIVERSAL_BILLING.buckets.map((bucket: string) => {
+    const products = record.bindings && typeof record.bindings === "object"
+      ? Object.keys(record.bindings).filter((p) => Number(record.bindings[p]) > 0)
+      : [];
+    const buckets = bucketsForProducts(products).map((bucket: string) => {
       const customValue = Number(customLimits[bucket] || 0);
       const effectiveLimit = customValue > 0 ? customValue : UNIVERSAL_BILLING.bucketLimit(baseLimit, bucket);
       return {
@@ -2099,12 +2096,17 @@ export class RosettaService {
 
   /**
    * Can a card be auto-bound to this account? Mirrors the lease-time eligibility
-   * (enabled + token + provider-specific eligibility) AND the mint-time policy:
-   * exact membership-level (planType) match + quota not exhausted.
+   * for a BOUND card (enabled + token + provider-specific eligibility) AND the
+   * mint-time policy: exact membership-level (planType) match + quota not
+   * exhausted.
+   *
+   * 注意:这里是「绑定卡」的自动分配,故意 NOT 看 poolEnabled。入池/出池只决定一个号要
+   * 不要参与「池子卡」的租号轮换(见 lease-service.availableAccounts),与「能不能被绑定」
+   * 无关——入池号、出池号都可被自动分配绑定。绑定卡运行时本就无视 poolEnabled
+   * (boundAccountId 钉号绕过),自动分配与之保持一致。
    */
   private isAccountBindable(provider: string, account: any, level: string): boolean {
     if (account?.enabled === false) return false;
-    if (account?.poolEnabled === false) return false;
     if (!(account?.refreshToken || account?.accessToken)) return false;
     if (provider === "antigravity" && !String(account?.projectId || "").trim()) return false;
     if (String(account?.planType || "") !== level) return false;
@@ -2480,7 +2482,7 @@ export class RosettaService {
         }
 
         const token = await getAccessToken(
-          Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+          Number(acc.id), acc.refreshToken, this.tokenCache,
         );
         const health = await fetchAccountHealth(token, acc.projectId, acc.email);
 
@@ -2564,7 +2566,7 @@ export class RosettaService {
     await this.runConcurrent(ready, 5, async (acc) => {
       try {
         const token = await getAccessToken(
-          Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+          Number(acc.id), acc.refreshToken, this.tokenCache,
         );
 
         // Phase 2: Credits + planType via loadCodeAssist
@@ -2654,7 +2656,7 @@ export class RosettaService {
     if (!acc.refreshToken) return;
     try {
       const token = await getAccessToken(
-        Number(acc.id), acc.refreshToken, acc.oauthProfile, this.tokenCache,
+        Number(acc.id), acc.refreshToken, this.tokenCache,
       );
       const result = await discoverProject(token);
       if (result?.projectId) {

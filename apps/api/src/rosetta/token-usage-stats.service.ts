@@ -3,6 +3,18 @@ import { Cron } from "@nestjs/schedule";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { beijingDayKey, beijingDayKeysSince, beijingDayStart } from "../common/beijing-time";
+import { productOfBucket } from "../lease-core/product-bucket";
+
+/** Product a usage row's bucket belongs to. Composite `<product>-<family>` →
+ *  product; legacy bare buckets (gemini/opus/codex) map to their old provider. */
+function bucketProduct(bucket: string): "antigravity" | "codex" | "anthropic" {
+  if (bucket && bucket.includes("-")) {
+    const p = productOfBucket(bucket);
+    if (p === "codex" || p === "anthropic") return p;
+    return "antigravity";
+  }
+  return bucket === "codex" ? "codex" : "antigravity"; // legacy bare: opus/gemini → antigravity
+}
 
 /**
  * Query + maintenance side of the per-card token usage log (CardTokenUsage).
@@ -160,11 +172,12 @@ export class TokenUsageStatsService {
     const byProvider = {
       antigravity: { tokens: 0, requests: 0 },
       codex: { tokens: 0, requests: 0 },
+      anthropic: { tokens: 0, requests: 0 },
     };
     for (const r of rows) {
       totalTokens += r.totalTokens;
       requests += 1;
-      const target = r.bucket === "codex" ? byProvider.codex : byProvider.antigravity;
+      const target = byProvider[bucketProduct(r.bucket)];
       target.tokens += r.totalTokens;
       target.requests += 1;
     }
@@ -195,20 +208,19 @@ export class TokenUsageStatsService {
 
     const map = new Map<
       string,
-      { antigravity: number; codex: number; totalTokens: number; requests: number }
+      { antigravity: number; codex: number; anthropic: number; totalTokens: number; requests: number }
     >();
     for (const r of rows) {
       const key = beijingDayKey(r.timestamp);
-      const d = map.get(key) || { antigravity: 0, codex: 0, totalTokens: 0, requests: 0 };
+      const d = map.get(key) || { antigravity: 0, codex: 0, anthropic: 0, totalTokens: 0, requests: 0 };
       d.totalTokens += r.totalTokens;
       d.requests += 1;
-      if (r.bucket === "codex") d.codex += r.totalTokens;
-      else d.antigravity += r.totalTokens;
+      d[bucketProduct(r.bucket)] += r.totalTokens;
       map.set(key, d);
     }
 
     const daily = beijingDayKeysSince(days).map((date) => {
-      const d = map.get(date) || { antigravity: 0, codex: 0, totalTokens: 0, requests: 0 };
+      const d = map.get(date) || { antigravity: 0, codex: 0, anthropic: 0, totalTokens: 0, requests: 0 };
       return { date, ...d };
     });
 

@@ -9,7 +9,7 @@ import (
 )
 
 // 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
-var CLAUDE_API_BASE = getEnvOrDefault("BCAI_CLAUDE_API_BASE", "https://bcai.lol/remote-claude")
+var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://bcai.lol/remote-anthropic")
 
 // ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
 // 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。
@@ -98,7 +98,7 @@ func (l *ClaudeLeaser) pendingCount() int {
 }
 
 func postClaudeBcai(path string, payload interface{}, secret string, upstreamProxy string) ([]byte, int, error) {
-	respBody, status, err := postBcaiBaseWithFallback(CLAUDE_API_BASE, path, payload, secret, upstreamProxy)
+	respBody, status, err := postBcaiBaseWithFallback(ANTHROPIC_REMOTE_BASE, path, payload, secret, upstreamProxy)
 	if err != nil {
 		return respBody, status, err
 	}
@@ -192,7 +192,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		if mk == "" {
 			mk = "claude-opus-4-20250514"
 		}
-		recordBoundFractionForModel(mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
+		recordBoundFractionForModel("anthropic", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	recordAccountBuckets(body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)

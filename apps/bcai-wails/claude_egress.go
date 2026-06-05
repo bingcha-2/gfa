@@ -87,8 +87,13 @@ func dialRawThroughProxy(ctx context.Context, addr string, proxyURL string) (net
 }
 
 // newClaudeUpstreamTransport 构造到 api.anthropic.com 的 transport:
-// DialTLSContext = (经代理的原始 TCP)+ utls Firefox(≈Node)握手。强制 HTTP/1.1
-// (设了 DialTLSContext 时 Go 不自动升 h2;anthropic 支持 1.1,SSE 计量也更稳)。
+// DialTLSContext = (经代理的原始 TCP)+ utls Firefox(≈Node)握手,并【强制 ALPN 只剩
+// http/1.1】。
+//
+// 关键坑(对照 reclaude 的 chromeHTTPClient):光设 DialTLSContext 只能让 Go 客户端不主动
+// 发起 h2,但 Firefox 预设的 ALPN 仍向服务器宣告 h2 → 服务器选 HTTP/2 回二进制帧,而本
+// transport 按 HTTP/1.1 解析 → "malformed HTTP response"。所以必须把 ALPN 扩展改成只剩
+// http/1.1,逼服务器走 1.1。指纹其余部分保持 Firefox。
 func newClaudeUpstreamTransport(proxyURL string) *http.Transport {
 	return &http.Transport{
 		Proxy: nil, // 代理在 DialTLSContext 内处理,不走 Transport.Proxy。
@@ -101,14 +106,33 @@ func newClaudeUpstreamTransport(proxyURL string) *http.Transport {
 			if splitErr != nil {
 				host = addr
 			}
-			conn := utls.UClient(raw, &utls.Config{ServerName: host}, utls.HelloFirefox_Auto)
+			// 取 Firefox 预设的 ClientHello spec,把 ALPN 改成只 http/1.1 后再握手。
+			spec, specErr := utls.UTLSIdToSpec(utls.HelloFirefox_Auto)
+			if specErr != nil {
+				raw.Close()
+				return nil, fmt.Errorf("utls spec: %w", specErr)
+			}
+			for i, ext := range spec.Extensions {
+				if alpn, ok := ext.(*utls.ALPNExtension); ok {
+					alpn.AlpnProtocols = []string{"http/1.1"}
+					spec.Extensions[i] = alpn
+				}
+			}
+			conn := utls.UClient(raw, &utls.Config{ServerName: host}, utls.HelloCustom)
+			if err := conn.ApplyPreset(&spec); err != nil {
+				raw.Close()
+				return nil, fmt.Errorf("utls apply preset: %w", err)
+			}
 			if err := conn.HandshakeContext(ctx); err != nil {
 				raw.Close()
 				return nil, err
 			}
 			return conn, nil
 		},
-		ResponseHeaderTimeout:  180 * time.Second, // thinking 可能久才出 header
+		// 响应头超时:流式请求里 header(200 + text/event-stream)在 thinking 之前就下发,
+		// 不需要等到首字节,所以 60s 足够;调小是为了让"卡在上游连接"的请求快速失败、
+		// 暴露问题,而不是干等 3 分钟。流式 body 的耗时由请求 context 控制,不受此限。
+		ResponseHeaderTimeout:  60 * time.Second,
 		MaxIdleConns:           100,
 		IdleConnTimeout:        90 * time.Second,
 		DisableCompression:     true,

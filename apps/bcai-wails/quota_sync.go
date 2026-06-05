@@ -346,7 +346,7 @@ func (l *Leaser) refreshBoundAntigravityQuota(card, upstreamProxy string, force 
 		return // 被节流跳过 / 拉取失败 —— 血条仍由租号响应的 accountBuckets 兜底
 	}
 	for modelKey, q := range snap.ModelQuota {
-		recordBoundFractionForModel(modelKey, q.RemainingFraction, isoToEpochMs(q.ResetTime))
+		recordBoundFractionForModel("antigravity", modelKey, q.RemainingFraction, isoToEpochMs(q.ResetTime))
 	}
 	l.reportQuotaOnly(card, upstreamProxy, snap)
 }

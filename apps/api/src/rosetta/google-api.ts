@@ -17,13 +17,6 @@
 
 const _s = (...p: string[]) => p.join("-");
 
-export const LEGACY_OAUTH_CLIENT_ID =
-  process.env.ROSETTA_LEGACY_CLIENT_ID ||
-  "884354919052-36trc1jjb3tguiac32ov6cod268c5blh.apps.googleusercontent.com";
-export const LEGACY_OAUTH_CLIENT_SECRET =
-  process.env.ROSETTA_LEGACY_CLIENT_SECRET ||
-  _s("GOCSPX", "9YQWpF7RWDC0QTdj", "YxKMwR0ZtsX");
-
 export const ANTIGRAVITY_OAUTH_CLIENT_ID =
   process.env.ROSETTA_CLIENT_ID ||
   "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
@@ -42,7 +35,6 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 min before expiry
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface OAuthCredentials {
-  oauthProfile: string;
   clientId: string;
   clientSecret: string;
 }
@@ -83,25 +75,10 @@ export interface CachedToken {
 
 // ── OAuth helpers ────────────────────────────────────────────────────
 
-function normalizeOAuthProfile(value: string | undefined, fallback = "antigravity"): string {
-  const n = String(value || "").trim().toLowerCase();
-  if (!n) return fallback;
-  if (["legacy", "legacy-cloud-code", "cloud-code", "cc"].includes(n)) return "legacy";
-  if (["antigravity", "antigravity-uss", "uss", "modern"].includes(n)) return "antigravity";
-  return fallback;
-}
-
-export function resolveOAuthCredentials(profile?: string): OAuthCredentials {
-  const p = normalizeOAuthProfile(profile);
-  if (p === "legacy") {
-    return {
-      oauthProfile: "legacy",
-      clientId: LEGACY_OAUTH_CLIENT_ID,
-      clientSecret: LEGACY_OAUTH_CLIENT_SECRET,
-    };
-  }
+/** The only OAuth client now — every Google account authenticates via the
+ *  Antigravity client. (The legacy "cloud-code" client was removed.) */
+export function resolveOAuthCredentials(): OAuthCredentials {
   return {
-    oauthProfile: "antigravity",
     clientId: ANTIGRAVITY_OAUTH_CLIENT_ID,
     clientSecret: ANTIGRAVITY_OAUTH_CLIENT_SECRET,
   };
@@ -115,9 +92,8 @@ export function resolveOAuthCredentials(profile?: string): OAuthCredentials {
  */
 export async function refreshAccessToken(
   refreshToken: string,
-  oauthProfile?: string,
 ): Promise<CachedToken> {
-  const oauth = resolveOAuthCredentials(oauthProfile);
+  const oauth = resolveOAuthCredentials();
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
@@ -152,14 +128,13 @@ export async function refreshAccessToken(
 export async function getAccessToken(
   accountId: number,
   refreshToken: string,
-  oauthProfile: string | undefined,
   tokenCache: Map<number, CachedToken>,
 ): Promise<string> {
   const cached = tokenCache.get(accountId);
   if (cached && cached.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
     return cached.accessToken;
   }
-  const fresh = await refreshAccessToken(refreshToken, oauthProfile);
+  const fresh = await refreshAccessToken(refreshToken);
   tokenCache.set(accountId, fresh);
   return fresh.accessToken;
 }

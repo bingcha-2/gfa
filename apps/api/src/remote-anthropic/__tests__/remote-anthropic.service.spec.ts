@@ -4,14 +4,14 @@ import * as path from "path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RemoteClaudeService } from "../service/remote-claude.service";
+import { RemoteAnthropicService } from "../service/remote-anthropic.service";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-describe("RemoteClaudeService", () => {
+describe("RemoteAnthropicService", () => {
   let tempDir: string;
   let accountsFilePath: string;
   let accessKeysFilePath: string;
@@ -21,7 +21,7 @@ describe("RemoteClaudeService", () => {
   const MODEL = "claude-opus-4-20250514";
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-remote-claude-"));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-remote-anthropic-"));
     accountsFilePath = path.join(tempDir, "claude-accounts.json");
     accessKeysFilePath = path.join(tempDir, "access-keys.json");
     currentTime = Date.parse("2026-05-29T01:00:00.000Z");
@@ -56,7 +56,7 @@ describe("RemoteClaudeService", () => {
   });
 
   function makeService() {
-    return new RemoteClaudeService({
+    return new RemoteAnthropicService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
@@ -70,7 +70,7 @@ describe("RemoteClaudeService", () => {
     const status = makeService().getStatus();
 
     expect(status.running).toBe(true);
-    expect(status.mode).toBe("remote-claude-server");
+    expect(status.mode).toBe("remote-anthropic-server");
     expect(status.activeLeases).toBe(0);
     expect(status.accounts.total).toBe(1);
     expect(status.accounts.enabled).toBe(1);
