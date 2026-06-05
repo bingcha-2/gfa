@@ -15,7 +15,7 @@ const ADS = [
     title: '冰茶 API',
     desc: 'Claude / Gemini / GPT 低价调用',
     cta: '了解更多',
-    link: 'https://api.bcai.site',
+    link: 'https://api.bcai.space',
     gradient: 'linear-gradient(135deg, #e11d48 0%, #f97316 100%)',
   },
 ]

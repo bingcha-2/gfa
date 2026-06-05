@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.site（见 bcai_hosts.go）
+// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
 var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://bcai.lol/remote-anthropic")
 
 // ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),

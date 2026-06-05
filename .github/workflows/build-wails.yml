@@ -189,7 +189,7 @@ jobs:
             ${{ env.WAILS_DIR }}/build/bin/*-meta.json
             ${{ env.WAILS_DIR }}/build/bin/*.tar.gz
 
-  # ──────────────── 阶段 2: 发布到 bcai.site + GitHub Release ────────────────
+  # ──────────────── 阶段 2: 发布到 bcai.space + GitHub Release ────────────────
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -212,7 +212,7 @@ jobs:
         run: find artifacts -type f -ls
 
       # ── 复制构建产物到 web/public/updates/ ──
-      - name: Deploy to bcai.site updates directory
+      - name: Deploy to bcai.space updates directory
         run: |
           VERSION="${{ github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
@@ -283,26 +283,26 @@ jobs:
           cat > "${UPDATES}/latest-wails.json" << EOF
           {
             "version": "${VERSION}",
-            "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}.exe",
+            "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}.exe",
             "sha256": "${WIN_HASH}",
             "size": ${WIN_SIZE},
             "changelog": "${CHANGELOG}",
             "minVersion": "${VERSION}",
             "macOS": {
               "arm64": {
-                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
+                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
                 "sha256": "${MAC_ARM_HASH}",
                 "size": ${MAC_ARM_SIZE}
               },
               "amd64": {
-                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
+                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
                 "sha256": "${MAC_AMD_HASH}",
                 "size": ${MAC_AMD_SIZE}
               }
             },
             "linux": {
               "amd64": {
-                "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
+                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
                 "sha256": "${LINUX_HASH}",
                 "size": ${LINUX_SIZE}
               }
@@ -359,10 +359,10 @@ jobs:
           ### 下载
           | 平台 | 架构 | 下载 |
           |------|------|------|
-          | Windows | x64 | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}.exe) |
-          | macOS | Apple Silicon (M1/M2/M3) | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
-          | macOS | Intel (x64) | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
-          | Linux | x64 | [bcai.site 下载](https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
+          | Windows | x64 | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}.exe) |
+          | macOS | Apple Silicon (M1/M2/M3) | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
+          | macOS | Intel (x64) | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
+          | Linux | x64 | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
 
           > 已安装用户会自动收到更新推送，无需手动下载。
 

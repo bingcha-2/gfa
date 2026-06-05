@@ -284,9 +284,9 @@ func WarmupConnectionPool(upstreamProxy string) {
 	}
 }
 
-// ── bcai.site 专用直连 client ──
+// ── bcai.space 专用直连 client ──
 // 独立连接池、15s 超时、不走任何代理
-// 用于 lease-token / report-result / activate 等 bcai.site 请求
+// 用于 lease-token / report-result / activate 等 bcai.space 请求
 var (
 	bcaiClientOnce sync.Once
 	bcaiClient     *http.Client
@@ -295,15 +295,15 @@ var (
 func createBcaiClient() *http.Client {
 	bcaiClientOnce.Do(func() {
 		t := newTransport()
-		t.Proxy = nil // bcai.site 直连，不走代理
+		t.Proxy = nil // bcai.space 直连，不走代理
 		bcaiClient = &http.Client{Timeout: 15 * time.Second, Transport: t}
-		Log("[http-client] Created bcai.site direct client (15s timeout, no proxy)")
+		Log("[http-client] Created bcai.space direct client (15s timeout, no proxy)")
 	})
 	return bcaiClient
 }
 
-// postBcaiWithFallback 优先直连 bcai.site，失败后回退到 upstream 代理
-// 用于替代 leaser.go 中所有发往 bcai.site 的 postJsonWithSecret 调用
+// postBcaiWithFallback 优先直连 bcai.space，失败后回退到 upstream 代理
+// 用于替代 leaser.go 中所有发往 bcai.space 的 postJsonWithSecret 调用
 func postBcaiWithFallback(path string, payload interface{}, card string, upstreamProxy string) ([]byte, int, error) {
 	return postBcaiBaseWithFallback(API_BASE, path, payload, card, upstreamProxy)
 }

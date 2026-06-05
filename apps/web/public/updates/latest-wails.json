@@ -1,25 +1,25 @@
 {
   "version": "8.0.0",
-  "url": "https://bcai.site/updates/BingchaAI-8.0.0.exe",
+  "url": "https://bcai.space/updates/BingchaAI-8.0.0.exe",
   "sha256": "A8760DBDCE094AD069B8996EC5D43CFA30499E3C0DFB4C3AA22DBE5162DC8C13",
   "size": 20477440,
   "changelog": "绑定账号信息+会员等级;代理日志单条化;token 全程脱敏;配额系统统一+Claude 拼车;修复 fair-share 桶名计费;强制最低版本 8.0.0",
   "minVersion": "8.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-8.0.0-arm64.dmg",
+      "url": "https://bcai.space/updates/BingchaAI-8.0.0-arm64.dmg",
       "sha256": "F984FDD43272378DD438897BE6F50359963DE9BD761E9D47519DE8C65C8A9DCD",
       "size": 10034114
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-8.0.0-amd64.dmg",
+      "url": "https://bcai.space/updates/BingchaAI-8.0.0-amd64.dmg",
       "sha256": "1005698BC9BE51EDEB5994E05C2224CCB2AE91AF49FCA75039E5FFF22BA0B913",
       "size": 10763009
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-8.0.0-linux-amd64.tar.gz",
+      "url": "https://bcai.space/updates/BingchaAI-8.0.0-linux-amd64.tar.gz",
       "sha256": "C0372B55FA2E5E633C1008137DA25046FCFCEC1433932CD0ABF0C0B6E8AB6CAC",
       "size": 8504650
     }
