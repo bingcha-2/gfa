@@ -287,7 +287,7 @@ jobs:
             "sha256": "${WIN_HASH}",
             "size": ${WIN_SIZE},
             "changelog": "${CHANGELOG}",
-            "minVersion": "4.0.0",
+            "minVersion": "${VERSION}",
             "macOS": {
               "arm64": {
                 "url": "https://bcai.site/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
