@@ -1,6 +1,6 @@
 ---
 name: gfa-service-ops
-description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, extracting release artifacts into apps/web/public/updates, editing latest-wails.json, or bumping apps/bcai-wails/updater.go AppVersion. CRITICAL caveat for agent sandbox terminals where daemon child processes get reaped - use foreground mode instead.
+description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, cutting a Wails client release via the build-wails.yml GitHub Actions workflow (gh workflow run, version input), bumping apps/bcai-wails/updater.go AppVersion or the server minClientVersion floor in apps/api lease-service.ts, or editing latest-wails.json.
 ---
 
 # GFA Service Ops
@@ -8,7 +8,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 ## Rules
 
 - Assume Windows PowerShell on customer servers.
-- Default repo path: `C:\Users\Administrator\Desktop\GFA-per`.
+- Default repo path: `C:\Users\Administrator\Desktop\GFA`.
 - Do not touch Caddy during normal code updates.
 - Do not delete `.env`, `prisma/dev.db`, backups, logs, or `apps\web\public\updates\*` unless explicitly requested.
 - Check the deployed branch before pulling. This repo currently uses `main`; old servers may use `master`.
@@ -29,11 +29,11 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 Normal code update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 pnpm start:stop
 git branch --show-current
 git pull origin main
-pnpm start:daemon          # human terminal only — see caveat below
+pnpm start:daemon
 ```
 
 Use `git pull origin master` only if `git branch --show-current` prints `master`.
@@ -43,7 +43,7 @@ Use `git pull origin master` only if `git branch --show-current` prints `master`
 Schema-sensitive update:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 git pull origin main
 powershell -ExecutionPolicy Bypass -File scripts\deploy-update.ps1
 ```
@@ -53,32 +53,12 @@ Use this when Prisma schema may have changed; it backs up `prisma\dev.db` into `
 Restart only:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 pnpm start:stop
-pnpm start:daemon          # human terminal only — see caveat below
+pnpm start:daemon
 ```
-
-### Agent Terminal Caveat
-
-**CRITICAL:** `pnpm start:daemon` will NOT survive in agent sandbox terminals (e.g. Antigravity IDE, Claude Code). The daemon script spawns child processes and exits; the sandbox then reaps the orphaned child process tree. Symptoms: daemon reports `✅ All services started successfully` but `curl health` and `netstat` show nothing seconds later.
-
-**When running from an agent terminal, use foreground mode instead:**
-
-```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
-pnpm start:stop
-git branch --show-current
-git pull origin main
-node scripts/start.mjs     # foreground — stays alive as a background task
-```
-
-This keeps the service alive as a long-running background task within the agent session. The service runs for as long as the agent session / task is alive.
-
-**Verification after foreground start:** Wait ~60s for build + boot, then health-check from a separate command. Do NOT kill the foreground task.
 
 ## Checks
-
-Health check may take 30-60s after start (build + boot time). Retry if first attempt gets `Connection refused`.
 
 ```powershell
 netstat -ano | findstr ":3000 :3001"
@@ -88,15 +68,6 @@ Get-Content .\logs\api-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 Get-Content .\logs\web-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 Get-Content .\logs\worker-$(Get-Date -Format yyyy-MM-dd).log -Tail 80
 ```
-
-If health check returns `Connection refused` but logs show `listening on http://localhost:3001/api`, the process likely died. Check PID:
-
-```powershell
-Get-Content .\gfa.pid
-Get-Process -Id (Get-Content .\gfa.pid) -ErrorAction SilentlyContinue
-```
-
-If PID is gone → daemon child was reaped (see Agent Terminal Caveat above). Switch to foreground mode.
 
 If a stale process still owns a GFA port:
 
@@ -121,25 +92,58 @@ cd C:\Users\Administrator\Desktop\caddy
 
 Use `start` only when Caddy is not running. Use `reload` only after `Caddyfile` changes.
 
-## Client Update Publishing
+## Client Update Publishing (Wails / BingchaAI)
 
-Required edits/files:
+**Canonical path = trigger the GitHub Actions workflow.** It builds all platforms, publishes the
+GitHub Release, and auto-regenerates + commits the manifest. Do NOT hand-build / hand-edit the
+manifest unless the workflow is unavailable.
 
-- Bump `AppVersion` in `apps\bcai-wails\updater.go`.
-- Put final assets directly under `apps\web\public\updates\`.
-- Edit `apps\web\public\updates\latest-wails.json`.
-- Verify every URL referenced by `latest-wails.json` has a matching file in `apps\web\public\updates\` or production static storage.
+Steps:
 
-The Wails build output is `apps\bcai-wails\build\bin\`, but that is not the public update directory. `apps\bcai-wails\build\windows\info.json` is a Wails build template, not the update manifest.
+1. Bump source-of-truth `AppVersion` in `apps\bcai-wails\updater.go` to the release version
+   (the build also injects it via `-ldflags -X main.AppVersion=<version>`, but keep the source honest).
+2. (If the new version should be mandatory) raise the server minimum — see "Server minimum client version".
+3. Commit + push to `main`, then dispatch the build:
 
-Windows local build example:
+```bash
+gh workflow run build-wails.yml --ref main -f version=8.2.0 -f changelog="桌面端体验优化与稳定性修复"
+gh run list --workflow build-wails.yml --limit 1      # grab run id
+gh run watch <run-id>
+```
+
+`.github/workflows/build-wails.yml` then:
+
+- Builds windows/amd64, macOS arm64 + amd64, linux/amd64 with `AppVersion=<version>`.
+- Publishes Release `wails-v<version>` to the **public** repo `bingcha135-sys/bingcha135-sys-bcai-releases`
+  (auth = secret `BCAIDOWNLOAD`); clients download binaries straight from GitHub CDN.
+- Auto-generates `apps\web\public\updates\latest-wails.json` (both `version` and `minVersion` = the
+  input version) and **git-pushes it to `main`** → run `git pull` afterwards.
+
+⚠ `changelog` is PUBLIC (release notes + in-app update prompt). Keep it neutral; never describe
+internal mechanics.
+
+⚠ `minVersion = version` is a non-skippable forced upgrade: clients below it are pushed to update,
+and the server also rejects them at lease time (see below). Use the exact version you intend as the floor.
+
+Binaries are NO LONGER committed to `apps\web\public\updates\` — only `latest-wails.json` lives there.
+The Wails build output `apps\bcai-wails\build\bin\` is not the public update dir.
+
+### Server minimum client version
+
+`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `8.2.0`) is the
+single floor for ALL lease paths — `RemoteAnthropicService` / `RemoteCodexService` / `TokenServerService`
+all extend `LeaseService` and none override it (their modules call `new XxxService({ tokenUsageTracker })`
+with no `minClientVersion`). Clients below the floor get 426 "upgrade required" at lease time. Bump it
+alongside a release you want mandatory. `lease-core/__tests__/lease-service.spec.ts` pins this floor —
+update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
+
+### Fallback: manual single-platform build (only when the workflow is down)
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per\apps\bcai-wails
-wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=5.1.6"
-Copy-Item .\build\bin\BingchaAI.exe ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe
-Get-FileHash ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe -Algorithm SHA256
-(Get-Item ..\..\apps\web\public\updates\BingchaAI-5.1.6.exe).Length
+cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
+wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.2.0"
+# then upload the .exe to a bingcha135-sys-bcai-releases Release (tag wails-v8.2.0)
+# and hand-edit apps\web\public\updates\latest-wails.json (url/sha256/size/version/minVersion).
 ```
 
 ## GitHub CLI
@@ -163,7 +167,7 @@ if (-not $gh) { throw "gh CLI not found; use the curl fallback below." }
 Private GitHub Actions artifact download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 $repo = "<github-owner>/<private-repo>"
 $artifactName = "BingchaAI"
 $outDir = ".\apps\web\public\updates"
@@ -186,7 +190,7 @@ If the artifact name is platform-specific, list available artifact names:
 Private GitHub Release asset download with `gh`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 $repo = "<github-owner>/<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"
 $outDir = ".\apps\web\public\updates"
@@ -199,7 +203,7 @@ Get-FileHash "$outDir\$assetName" -Algorithm SHA256
 If `gh` cannot be installed or authenticated, use GitHub API + `curl.exe` and `$env:GITHUB_TOKEN`:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $artifactName = "BingchaAI"
@@ -222,7 +226,7 @@ If the zip extracts into a nested folder, move the final `BingchaAI-*` files up 
 Private GitHub Release asset download:
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA-per
+cd C:\Users\Administrator\Desktop\GFA
 $owner = "<github-owner>"
 $repo = "<private-repo>"
 $assetName = "BingchaAI-5.1.6.exe"
@@ -237,22 +241,13 @@ Get-FileHash $outFile -Algorithm SHA256
 (Get-Item $outFile).Length
 ```
 
-Manifest fields to update: `version`, Windows `url`/`sha256`/`size`, `changelog`, `minVersion`, and platform assets under `macOS` / `linux` as applicable. The client checks `https://bcai.site/updates/latest-wails.json` by default; `BCAI_UPDATE_URL` overrides it for local testing.
+Manifest is auto-generated by the workflow; only hand-edit (`version`, `url`/`sha256`/`size`, `changelog`, `minVersion`, and `macOS` / `linux` platform assets) in the manual fallback. The client checks `https://bcai.lol/updates/latest-wails.json` by default (primary domain; auto-falls back to `bcai.space` — see `bcai_hosts.go`); `BCAI_UPDATE_URL` overrides it for local testing.
 
 Linux caveat: current Linux in-app updater replaces the binary directly from `bcai-update-<version>.tmp`; a `.tar.gz` URL is fine for manual download but does not match auto-update unless extraction support is added.
 
 ## Final Verification
 
-- `curl.exe http://127.0.0.1:3001/api/health` returns `{"status":"ok"}`.
+- `pnpm start:daemon` reports services ready.
+- `curl.exe http://127.0.0.1:3001/api/health` succeeds.
 - `netstat -ano | findstr ":3000 :3001"` shows expected listeners.
-- If using agent foreground mode, the `node scripts/start.mjs` background task is still RUNNING (check via task status).
 - For client updates, `/updates/latest-wails.json` is reachable and referenced asset URLs download.
-
-## Common Mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| Using `pnpm start:daemon` from agent terminal | Use `node scripts/start.mjs` (foreground) instead |
-| Health check immediately after start | Wait 60s for build + boot; retry on `Connection refused` |
-| Not killing stale port owners before restart | `netstat` + `taskkill /F /PID` first |
-| `git pull` on wrong branch | Always `git branch --show-current` before pull |
