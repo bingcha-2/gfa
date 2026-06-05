@@ -239,6 +239,18 @@ func (l *ClaudeLeaser) reportResult(card string, details ReportDetails, upstream
 		"totalTokens":       details.BillableTotalTokens,
 		"errorText":         getErrorSnippet(details.ErrorText),
 	}
+	// 带上从上游响应头解析的 5h/周额度,服务端 applyQuotaSnapshot 落库 → 血条+刷新时间。
+	// 字段名对齐服务端 claude.provider.applyQuotaSnapshot(quota.claudeQuota.*)。
+	if details.HasClaudeWindows {
+		payload["accountQuota"] = map[string]interface{}{
+			"claudeQuota": map[string]interface{}{
+				"hourlyPercent":   details.ClaudeHourlyPercent,
+				"weeklyPercent":   details.ClaudeWeeklyPercent,
+				"hourlyResetTime": details.ClaudeHourlyResetTime,
+				"weeklyResetTime": details.ClaudeWeeklyResetTime,
+			},
+		}
+	}
 	go l.doClaudeReportWithRetry(payload, card, upstreamProxy)
 }
 

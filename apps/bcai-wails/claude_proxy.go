@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // ─── Claude 本地代理(Anthropic /v1/messages 路由)──────────────────────────
@@ -97,9 +99,67 @@ func (p *ClaudeProxy) doReportProblem(card, deviceId string, d ReportDetails, up
 	GetClaudeLeaser().ReportProblem(card, deviceId, d, up, lease)
 }
 
-// claudeDbg 控制"代理全量 trace"(请求/转发/响应 的头+体)。默认开,抓完头名可设
-// BCAI_CLAUDE_DEBUG=0 关掉。OAuth token / cookie 一律打码。
-var claudeDbg = getEnvOrDefault("BCAI_CLAUDE_DEBUG", "1") == "1"
+// claudeDbg 控制"代理全量 trace"(请求/转发/响应 的头+体)。默认关,需要抓包时设
+// BCAI_CLAUDE_DEBUG=1。OAuth token / cookie 一律打码。
+var claudeDbg = getEnvOrDefault("BCAI_CLAUDE_DEBUG", "0") == "1"
+
+// parseClaudeUnifiedWindows 从上游 anthropic-ratelimit-unified-* 响应头解析 5h/周额度。
+// 头里是 *-Utilization(已用比例 0..1)+ *-Reset(epoch 秒);转成"剩余 %"+ISO reset。
+// 仅成功(200)响应带这些头;解析到任一窗口即 ok=true。
+func parseClaudeUnifiedWindows(h http.Header) (hourlyPct, weeklyPct float64, hourlyReset, weeklyReset string, ok bool) {
+	remPct := func(key string) (float64, bool) {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			return 0, false
+		}
+		util, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0, false
+		}
+		rem := (1 - util) * 100 // Utilization=已用 → 剩余
+		if rem < 0 {
+			rem = 0
+		} else if rem > 100 {
+			rem = 100
+		}
+		return rem, true
+	}
+	resetISO := func(key string) string {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			return ""
+		}
+		sec, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return ""
+		}
+		return time.Unix(sec, 0).UTC().Format(time.RFC3339)
+	}
+	if p, hok := remPct("Anthropic-Ratelimit-Unified-5h-Utilization"); hok {
+		hourlyPct = p
+		hourlyReset = resetISO("Anthropic-Ratelimit-Unified-5h-Reset")
+		ok = true
+	}
+	if p, wok := remPct("Anthropic-Ratelimit-Unified-7d-Utilization"); wok {
+		weeklyPct = p
+		weeklyReset = resetISO("Anthropic-Ratelimit-Unified-7d-Reset")
+		ok = true
+	}
+	return
+}
+
+// fillClaudeWindows 把解析到的窗口写进上报明细(无则不动)。
+func fillClaudeWindows(d *ReportDetails, h http.Header) {
+	hp, wp, hr, wr, ok := parseClaudeUnifiedWindows(h)
+	if !ok {
+		return
+	}
+	d.HasClaudeWindows = true
+	d.ClaudeHourlyPercent = hp
+	d.ClaudeWeeklyPercent = wp
+	d.ClaudeHourlyResetTime = hr
+	d.ClaudeWeeklyResetTime = wr
+}
 
 func maskClaudeSecret(s string) string {
 	if len(s) <= 16 {
@@ -292,8 +352,10 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 			}
 			return
 		}
-		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) → 已提交用量上报",
-			reqID, resp.StatusCode, details.InputTokens, details.OutputTokens, details.RawTotalTokens)
+		// 解析 5h/周额度窗口(从这次真实 200 响应头),随上报回服务端 → 血条。零额外请求。
+		fillClaudeWindows(&details, resp.Header)
+		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) 额度(5h剩%.0f%% 周剩%.0f%%) → 已提交用量上报",
+			reqID, resp.StatusCode, details.InputTokens, details.OutputTokens, details.RawTotalTokens, details.ClaudeHourlyPercent, details.ClaudeWeeklyPercent)
 		// 喂本地 dashboard 统计(今日输入/输出 Token);对齐 codex_proxy。漏了它 claude 的 token 永远显示 0。
 		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
@@ -314,7 +376,8 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 	details := claudeReportDetailsFromBody(resp.StatusCode, modelKey, respBody)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d total=%d → 已提交用量上报", reqID, resp.StatusCode, details.RawTotalTokens)
+		fillClaudeWindows(&details, resp.Header)
+		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d total=%d 额度(5h剩%.0f%% 周剩%.0f%%) → 已提交用量上报", reqID, resp.StatusCode, details.RawTotalTokens, details.ClaudeHourlyPercent, details.ClaudeWeeklyPercent)
 		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 	} else {

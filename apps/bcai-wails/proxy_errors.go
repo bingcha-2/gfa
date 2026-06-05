@@ -360,6 +360,14 @@ type ReportDetails struct {
 	RawTotalTokens      int64 // input + output 原始总量
 	BillableTotalTokens int64 // 折扣后的计费总量
 	ErrorText           string
+
+	// Claude 5h/周额度窗口:从上游 anthropic-ratelimit-unified-* 响应头解析(仅 200 带),
+	// 随用量上报回服务端 applyQuotaSnapshot → 客户端血条。HasClaudeWindows=false 时不带。
+	HasClaudeWindows      bool
+	ClaudeHourlyPercent   float64 // 5h 剩余 %(0-100)
+	ClaudeWeeklyPercent   float64 // 周 剩余 %(0-100)
+	ClaudeHourlyResetTime string  // ISO8601
+	ClaudeWeeklyResetTime string  // ISO8601
 }
 
 // getErrorSnippet truncates error text for report payloads (max 1200 chars).
