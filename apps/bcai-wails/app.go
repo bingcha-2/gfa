@@ -133,10 +133,7 @@ func (a *App) SaveConfig(cfg Config) error {
 		// 换卡时清空本地统计数据 + 旧卡的 products(accessKeyStatus),避免用旧卡产品
 		// 误判新卡是否开通 antigravity;新卡 products 由下面的 Activate 重新写入。
 		if oldCfg.AccountCard != cfg.AccountCard {
-			Log("[app] Account card changed: clearing local stats")
-			GetUsageStats().Reset()
-			GetLeaser().ResetLocalQuota()
-			GetLeaser().ClearAccessKeyStatus()
+			clearLocalCardState()
 		}
 
 		GetLeaser().StopAutoLease()
@@ -164,11 +161,33 @@ func (a *App) SaveConfig(cfg Config) error {
 	return nil
 }
 
+// clearLocalCardState 换卡时清空所有本地卡级状态:用量统计、本地额度跟踪、缓存的
+// 卡密状态(products)、以及绑定号血条残量。两条换卡路径(ActivateCard 与
+// App.SaveConfig)共用,避免旧卡数据串到新卡。
+func clearLocalCardState() {
+	Log("[app] Account card changed: clearing local stats")
+	GetUsageStats().Reset()
+	GetLeaser().ResetLocalQuota()
+	GetLeaser().ClearAccessKeyStatus()
+	resetBoundFractions()
+}
+
+// switchCardConfig 把配置切到 newCard 并持久化;仅当卡确实变化时清空本地状态,
+// 返回最新配置与是否发生了切换。无网络副作用,可单测。
+func switchCardConfig(newCard string) (Config, bool) {
+	cfg := LoadConfig()
+	switched := cfg.AccountCard != newCard
+	if switched {
+		clearLocalCardState()
+	}
+	cfg.AccountCard = newCard
+	_ = SaveConfig(cfg)
+	return cfg, switched
+}
+
 // ActivateCard saves the account card/access key and validates it server-side.
 func (a *App) ActivateCard(card string) (string, error) {
-	cfg := LoadConfig()
-	cfg.AccountCard = card
-	_ = SaveConfig(cfg)
+	cfg, _ := switchCardConfig(card)
 
 	// Activation = card validation only (/api/activate). Whether a token can be
 	// leased right now (account-pool availability) is a runtime concern, not an
@@ -258,9 +277,9 @@ func (a *App) RestartProxy() error {
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 }
 
-// SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「未登录态 mock」。
-// 关(默认)：透传 /api/hello 等，登录用户保持真实身份；开：伪造已登录 pro，
-// 让没有 Claude 账号的用户也能用号池(桌面端 host-auth 下能否完全生效需实测)。
+// SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「登录态 mock」。
+// 开(默认,对齐 reclaude)：伪造已登录 pro，让没有 Claude 账号的用户也能用号池
+// (桌面端 host-auth 下能否完全生效需实测)；关：透传 /api/hello 等，登录用户保持真实身份。
 func (a *App) SetClaudeDesktopMockLogin(on bool) bool {
 	GetMitmManager().SetMockLogin(on)
 	return on

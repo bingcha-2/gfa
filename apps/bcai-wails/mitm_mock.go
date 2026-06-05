@@ -5,14 +5,17 @@ import (
 	"strings"
 )
 
-// ─── 未登录态 mock：伪造「已登录 pro 账户」 ──────────────────────────────────
+// ─── canned 假 pro 身份：零账号兜底(参考 reclaude buildMockResponse) ─────────
 //
-// 默认不启用——登录用户靠透传 /api/hello 等保持自己的真实身份(已跑通)。
-// 开启后(SetMockLogin(true))，对未登录用户伪造鉴权/账号端点的响应，让客户端以为
-// 已登录 pro，从而无需真实 Claude 账号也能用号池。参考 reclaude buildMockResponse。
+// 默认路径已改为 entitlement mock(mitm_entitlement.go：保留真登录、只改写付费资格)。
+// 本文件的 canned 响应现仅作为「上游 401/403=完全未登录」时的兜底——主要给 Windows/Linux
+// 的零账号场景(那边登录态文件式、可彻底伪造)。
 //
-// 注意：桌面端登录态部分经 host-auth(IPC)下发，未必能仅靠这些 HTTP 端点完全伪造，
-// 实际能否让「完全未登录」的桌面端可用，需真机验证。
+//   - mitmShouldMock：判定某 path 是否属于资格端点(由 mitmRouter 据此路由到资格 handler)。
+//   - mitmMockBody：canned 假 pro 身份/资格响应体，被 entitlement handler 的 401 兜底调用。
+//
+// macOS 实测确认：桌面端登录态走 safeStorage/钥匙串、不读 .credentials.json，纯伪造登录
+// 在 mac 走不通；mac 只能靠 entitlement mock(免费真账号 + 改写付费资格 + 号池出活)。
 
 // mitmShouldMock 判断该端点在 mockLogin 开启时是否伪造响应。
 func mitmShouldMock(path string) bool {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 // withClaudeAPIBase points ANTHROPIC_REMOTE_BASE at a test server for the duration of fn.
@@ -68,6 +69,109 @@ func TestClaudeLeaseTokenErrorSurfacesMessage(t *testing.T) {
 	}
 	if l.LastError() != "No available Claude accounts" {
 		t.Fatalf("LastError not set: %q", l.LastError())
+	}
+}
+
+func TestClaudeLease429TripsBreakerAndRecovers(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	quotaExhausted := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		hits++
+		if quotaExhausted {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok": false, "error": "公平限额已用完 (已用 173K/160K 加权单元)",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true, "accessToken": "sk-ant-ok", "accountId": 1, "leaseId": "l1",
+		})
+	}))
+	defer srv.Close()
+	withClaudeAPIBase(t, srv.URL)
+	hitCount := func() int { mu.Lock(); defer mu.Unlock(); return hits }
+
+	now := time.Unix(1_700_000_000, 0)
+	l := &ClaudeLeaser{nowFn: func() time.Time { return now }}
+
+	// 1) 首次:打到上游,拿 429,开闸熔断。
+	if _, err := l.LeaseToken("card-1", "dev", true, nil, ""); err == nil {
+		t.Fatal("want 429 error on first call")
+	}
+	if got := hitCount(); got != 1 {
+		t.Fatalf("first call should hit upstream once, got %d", got)
+	}
+
+	// 2) 冷却期内:本地快速失败,绝不打上游。
+	if _, err := l.LeaseToken("card-1", "dev", true, nil, ""); err == nil {
+		t.Fatal("want fast-fail during cooldown")
+	}
+	if got := hitCount(); got != 1 {
+		t.Fatalf("cooldown call must NOT hit upstream, hits=%d", got)
+	}
+
+	// 3) 另一张卡不受牵连:照常请求上游(同样 429)。
+	if _, err := l.LeaseToken("card-2", "dev", true, nil, ""); err == nil {
+		t.Fatal("want 429 for card-2")
+	}
+	if got := hitCount(); got != 2 {
+		t.Fatalf("card-2 should hit upstream independently, hits=%d", got)
+	}
+
+	// 4) 时间过了冷却期 + 上游恢复 → 放行成功,并重置该卡熔断。
+	now = now.Add(claudeBreakerBase + time.Second)
+	mu.Lock()
+	quotaExhausted = false
+	mu.Unlock()
+	lease, err := l.LeaseToken("card-1", "dev", true, nil, "")
+	if err != nil {
+		t.Fatalf("after cooldown+recovery want success, got %v", err)
+	}
+	if lease.AccessToken != "sk-ant-ok" {
+		t.Fatalf("unexpected lease %+v", lease)
+	}
+	if got := hitCount(); got != 3 {
+		t.Fatalf("post-cooldown call should hit upstream, hits=%d", got)
+	}
+	if _, open := l.breakerRetryAfter("card-1"); open {
+		t.Fatal("breaker should be reset after a successful lease")
+	}
+}
+
+func TestClaudeLeaseBreakerBackoffGrows(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "公平限额已用完"})
+	}))
+	defer srv.Close()
+	withClaudeAPIBase(t, srv.URL)
+
+	now := time.Unix(1_700_000_000, 0)
+	l := &ClaudeLeaser{nowFn: func() time.Time { return now }}
+
+	// 连续命中 429,每次冷却时长应翻倍(base, 2·base, 4·base …),且不超过封顶。
+	var prev time.Duration
+	for i := 0; i < 4; i++ {
+		if _, err := l.LeaseToken("card-1", "dev", true, nil, ""); err == nil {
+			t.Fatalf("attempt %d: want 429 error", i)
+		}
+		wait, open := l.breakerRetryAfter("card-1")
+		if !open {
+			t.Fatalf("attempt %d: breaker should be open", i)
+		}
+		if i > 0 && wait <= prev && prev < claudeBreakerMax {
+			t.Fatalf("attempt %d: backoff did not grow (prev=%v now=%v)", i, prev, wait)
+		}
+		if wait > claudeBreakerMax {
+			t.Fatalf("attempt %d: backoff %v exceeds cap %v", i, wait, claudeBreakerMax)
+		}
+		prev = wait
+		// 推进到刚好越过本次冷却,让下一次再次打到上游并续期退避。
+		now = now.Add(wait + time.Millisecond)
 	}
 }
 

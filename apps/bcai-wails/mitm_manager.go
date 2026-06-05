@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -30,10 +31,15 @@ type mitmManager struct {
 	deviceId string
 	upstream string
 
-	mockLogin bool // 是否伪造未登录态(默认 false：登录用户透传保持真实身份)
+	mockLogin bool // 是否伪造"付费资格"(默认 true：保留真登录，只把订阅改写成 pro)
 }
 
-var globalMitmManager = &mitmManager{}
+// 默认开启：桌面端接管时把鉴权/资格端点(/api/hello、claude_code/settings、policy_limits)
+// 带用户真账号转发到上游，只把 billing_type/subscription 等字段改写成 pro —— 让免费真账号
+// 也能过 Code/Cowork 的付费闸、推理走号池。不碰登录态(macOS safeStorage/IPC 原生工作)。
+// 上游 401/403(完全未登录)时退回 canned 假 pro 身份(零账号兜底，主要给 Windows/Linux)。
+// 运行时可经 SetMockLogin(false) 关掉以完全透传真实资格；重启回到默认 true。
+var globalMitmManager = &mitmManager{mockLogin: true}
 
 func GetMitmManager() *mitmManager { return globalMitmManager }
 
@@ -43,7 +49,8 @@ func (m *mitmManager) isMockLogin() bool {
 	return m.mockLogin
 }
 
-// SetMockLogin 开关「未登录态 mock」。运行时切换即时生效，无需重启代理。
+// SetMockLogin 开关「付费资格 mock」。默认开：把订阅改写成 pro，让免费真账号也能用号池；
+// 关掉则完全透传真实资格。运行时切换即时生效，无需重启代理；重启回到默认 true。
 func (m *mitmManager) SetMockLogin(on bool) {
 	m.mu.Lock()
 	m.mockLogin = on
@@ -60,15 +67,45 @@ func (m *mitmManager) buildHandler() http.Handler {
 		// 复用现有 Claude 代理：租号池 token → 换 Authorization → 出口闸 → SSE 计费。
 		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream)
 	})
-	// 鉴权端点：开启 mock 时伪造，否则透传(保持真实登录身份)。运行时读 m.mockLogin。
+	// 资格端点：mock 开(默认)时转发真请求再把订阅改写成 pro(保留真身份)，关掉则纯透传。
+	// 运行时读 m.mockLogin。entitlement handler 内含 401/403 → canned 假 pro 的零账号兜底。
+	entitlement := mitmEntitlementHandler(ANTHROPIC_API_BASE, nil)
 	mockOrForward := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m.isMockLogin() {
-			mitmMockHandler().ServeHTTP(w, r)
+			entitlement.ServeHTTP(w, r)
 		} else {
 			forward.ServeHTTP(w, r)
 		}
 	})
-	return mitmRouter(claude, mockOrForward, forward)
+	// 诊断期：把所有非 /v1/messages 的 api.anthropic.com 请求都走 mockOrForward(entitlement)，
+	// 这样每个端点(/api/eval、/api/directory 等)的真实响应体都会被打印，便于定位付费墙判定源。
+	// entitlement 改写只动 billing 白名单键，对这些端点是 no-op，安全。
+	apiRouter := mitmRouter(claude, mockOrForward, mockOrForward)
+
+	// 按 host 分流：claude.ai → utls 解密+订阅改写(掀 UI 付费墙)；其余(api.anthropic.com)→ apiRouter。
+	claudeAi := mitmClaudeAiHandler(nil)
+	// 伪造 Code OAuth(authorize/token):把免费号的 Code 授权换成号池 Pro token(方案 B)。
+	oauthFake := mitmOAuthFakeHandler(func() (string, error) {
+		m.mu.Lock()
+		card, dev, up := m.card, m.deviceId, m.upstream
+		m.mu.Unlock()
+		lease, err := GetClaudeLeaser().LeaseToken(card, dev, false, nil, up)
+		if err != nil {
+			return "", err
+		}
+		return lease.AccessToken, nil
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mitmIsClaudeAiHost(r.Host) {
+			claudeAi.ServeHTTP(w, r)
+			return
+		}
+		if mitmShouldFakeOAuth(r.URL.Path) {
+			oauthFake.ServeHTTP(w, r)
+			return
+		}
+		apiRouter.ServeHTTP(w, r)
+	})
 }
 
 // StartProxy 仅启动本地 MITM 代理（不装 CA、不重启 App）。
@@ -148,6 +185,24 @@ func (m *mitmManager) RelaunchClaudeWithProxy() error {
 	if !m.IsProxyRunning() {
 		return fmt.Errorf("mitm 代理未启动，无法接管")
 	}
+	// 伪 credentials.json 注入只对 Windows/Linux 有意义(那边登录态是文件式)。macOS 实测确认
+	// Claude 登录态走 safeStorage/钥匙串、根本不读该文件 → 注入是 no-op，跳过避免无谓 churn。
+	// mac 走的是 entitlement mock(保留真登录、改写付费资格)，不依赖伪凭证。
+	if m.isMockLogin() && runtime.GOOS != "darwin" {
+		if err := InjectFakeClaudeCredentials(); err != nil {
+			Log("[mitm] 注入伪 credentials.json 失败(不阻塞接管): %v", err)
+		}
+	}
+	// Chromium 渲染进程(登录页/升级墙/主聊天)只信【系统信任库】里的 CA，不认 NODE_EXTRA_CA_CERTS。
+	// 要让 entitlement patch 够得着 Chromium 侧的付费墙(它走 --proxy-server 进 MITM)，必须先把根 CA
+	// 装进系统钥匙串，否则 Chromium 对 MITM 叶证书报 NET::ERR_CERT_AUTHORITY_INVALID、整个聊天打不开。
+	// 已装则跳过(避免每次接管都弹管理员授权框)。装失败不阻塞:仅 Code/Cowork 的 Node 侧仍可走 env 代理。
+	if !mitmIsCAInstalled() {
+		Log("[mitm] 系统钥匙串未安装根 CA，安装中(将弹管理员授权框)…")
+		if err := mitmInstallCA(mitmCACertPath()); err != nil {
+			Log("[mitm] 安装根 CA 失败(Chromium 侧付费墙将掀不翻，Code/Cowork 推理仍可走号池): %v", err)
+		}
+	}
 	if err := mitmRelaunchClaudeWithProxy(m.proxyAddr(), mitmCACertPath()); err != nil {
 		return err
 	}
@@ -157,6 +212,11 @@ func (m *mitmManager) RelaunchClaudeWithProxy() error {
 
 // RelaunchClaudePlain 退出并按原样重启 Claude.app（还原，不带代理），清除「接管中」标记。
 func (m *mitmManager) RelaunchClaudePlain() error {
+	// 还原被伪凭证覆盖的 .credentials.json(无备份则 no-op)。与 mock 开关无关：
+	// 只要接管时写过伪凭证，取消时就得还原用户原状态。
+	if err := RestoreFakeClaudeCredentials(); err != nil {
+		Log("[mitm] 还原 credentials.json 失败(不阻塞还原): %v", err)
+	}
 	err := mitmRelaunchClaudePlain()
 	mitmSetTakeoverActive(false)
 	return err

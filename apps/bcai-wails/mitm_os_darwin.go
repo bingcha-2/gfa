@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -41,10 +42,14 @@ func mitmUninstallCA() error {
 }
 
 func mitmIsCAInstalled() bool {
-	// 钥匙串里存在该 CN 即视为已装（信任与否另算；这里只做安装态指示）。
-	err := exec.Command("security", "find-certificate", "-c", mitmCACommonName,
-		"/Library/Keychains/System.keychain").Run()
-	return err == nil
+	// 必须是「受信任根」，不能只是「存在于钥匙串」——Chromium/Safari 只信任设置里的根，
+	// 仅存在但未设信任会导致 TLS 握手 "unknown certificate"。检查 admin 域信任设置里有无该 CN。
+	// (dump-trust-settings -d 在无任何 admin 信任设置时返回非 0，正好当作"未装")。
+	out, err := exec.Command("security", "dump-trust-settings", "-d").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), mitmCACommonName)
 }
 
 func mitmClaudeBinaryPath() string { return mitmClaudeAppBinary }
@@ -68,9 +73,15 @@ func mitmQuitClaude() {
 	time.Sleep(2 * time.Second)
 }
 
-// mitmRelaunchClaudeWithProxy 经 LaunchServices(`open`)重启 Claude.app，并用 --env
-// 仅给本次启动注入代理变量。必须走 `open` 而非直接 exec 二进制——后者会绕过
-// LaunchServices，使 Claude 失去 TCC 授权(报「无法读取该文件夹」)。
+// mitmRelaunchClaudeWithProxy 经 LaunchServices(`open`)重启 Claude.app，注入代理。必须走
+// `open` 而非直接 exec 二进制——后者会绕过 LaunchServices，使 Claude 失去 TCC 授权。
+//
+// 两条代理通道一起注入：
+//   - --env HTTPS_PROXY 等：给 Code/Cowork 的 Node 子进程(它只认 env)。
+//   - --args --proxy-server：给 Chromium 渲染进程(登录页/升级墙/主聊天，它不认 env、只认
+//     Chromium 命令行 flag)。要掀翻 Chromium 侧的付费墙必须走这条；前提是根 CA 已装进
+//     系统钥匙串(由 RelaunchClaudeWithProxy 在调用本函数前确保)，否则 Chromium 不信 MITM 证书。
+//   - --proxy-bypass-list：放行 localhost，避免 Chromium 把本机回环也代理掉。
 func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 	if _, err := os.Stat(mitmClaudeAppPath); err != nil {
 		return fmt.Errorf("Claude.app not found at %s", mitmClaudeAppPath)
@@ -80,6 +91,11 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 	for _, kv := range mitmProxyEnvPairs(proxyAddr, caCertPath) {
 		args = append(args, "--env", kv)
 	}
+	// --args 之后的都传给 App(Chromium 读取);务必排在所有 --env 之后。
+	args = append(args, "--args",
+		"--proxy-server="+proxyAddr,
+		"--proxy-bypass-list=127.0.0.1,localhost",
+	)
 	return exec.Command("open", args...).Run()
 }
 

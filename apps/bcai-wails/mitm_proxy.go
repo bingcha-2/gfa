@@ -114,9 +114,11 @@ func (p *mitmProxy) handleConn(c net.Conn) {
 	}
 
 	if !mitmShouldIntercept(host) {
+		Log("[mitm] CONNECT %s → 透传(不解密)", req.Host)
 		p.passthrough(c, req.Host)
 		return
 	}
+	Log("[mitm] CONNECT %s → 拦截解密", req.Host)
 
 	leaf, err := p.leafCache.GetTLSCert(host)
 	if err != nil {

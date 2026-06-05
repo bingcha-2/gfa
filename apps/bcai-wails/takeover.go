@@ -301,10 +301,11 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	if !m.IsProxyRunning() {
 		return "", fmt.Errorf("MITM 代理未启动")
 	}
-	// 注意：不装系统根 CA。Code/Cowork 子进程是 Node，靠重启时注入的
-	// NODE_EXTRA_CA_CERTS + NODE_TLS_REJECT_UNAUTHORIZED 即信任 MITM 证书，
-	// 无需改系统信任库（那一步在 GUI 里弹不出授权框，且只有 Chromium 聊天才需要）。
-	// 退出并带代理 env 重启 Claude.app（异步：会杀掉当前 Cowork 会话）。
+	// 重启会做两件事(见 RelaunchClaudeWithProxy)：
+	//   1. Node 侧(Code/Cowork 子进程)：注入 NODE_EXTRA_CA_CERTS + HTTPS_PROXY 即走 MITM。
+	//   2. Chromium 侧(登录页/升级墙/主聊天)：装根 CA 进系统钥匙串(弹管理员授权) + --proxy-server，
+	//      才能解密并掀翻 Chromium 画的付费墙。装 CA 失败不阻塞，Node 侧推理仍可走号池。
+	// 退出并带代理重启 Claude.app（异步：会杀掉当前 Cowork 会话）。
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

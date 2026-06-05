@@ -2,8 +2,8 @@ package main
 
 import "testing"
 
-// MITM 只拦截 api.anthropic.com（Claude Code/Cowork 的推理与鉴权端点都在这里），
-// 其余域名（claude.ai、CDN、统计等）一律透传，避免不必要的解密。
+// MITM 拦截 api.anthropic.com(推理/eval/directory)与 claude.ai(订阅/付费判定，
+// 经 utls 绕 Cloudflare 改写订阅以掀 Code/Cowork 付费墙)；其余域名(子域、CDN、统计)透传。
 func TestMitmShouldIntercept(t *testing.T) {
 	cases := []struct {
 		host string
@@ -11,7 +11,9 @@ func TestMitmShouldIntercept(t *testing.T) {
 	}{
 		{"api.anthropic.com", true},
 		{"api.anthropic.com:443", true}, // 带端口也应识别
-		{"claude.ai", false},
+		{"claude.ai", true},
+		{"claude.ai:443", true},
+		{"a.claude.ai", false}, // 子域(分析/遥测)仍透传
 		{"a-api.anthropic.com", false},
 		{"s-cdn.anthropic.com", false},
 		{"statsig.anthropic.com", false},
