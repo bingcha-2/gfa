@@ -231,6 +231,16 @@ func (t *teeFlushWriter) Flush() {
 	}
 }
 
+// claudeAllowDirect:是否允许从本机 IP 直连 api.anthropic.com。默认【禁止】——出口必须走
+// 号的粘性住宅代理(lease.ProxyURL)或用户上游代理,否则一堆号从同一 IP 直出会被风控。
+// 仅本地调试可显式设 BCAI_CLAUDE_ALLOW_DIRECT=1 放行。
+var claudeAllowDirect = getEnvOrDefault("BCAI_CLAUDE_ALLOW_DIRECT", "0") == "1"
+
+// claudeEgressBlocked 当出口为空(直连本机)且未放行时返回 true,调用方据此拒绝请求。
+func claudeEgressBlocked(egress string) bool {
+	return strings.TrimSpace(egress) == "" && !claudeAllowDirect
+}
+
 func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string) {
 	reqID := atomic.AddInt64(&p.totalRequests, 1)
 
@@ -294,9 +304,20 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
 	egress := effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)
+	// 安全闸:禁止从本机 IP 直连 anthropic。没有出口代理 → 拒绝,绝不泄露本机 IP。
+	if claudeEgressBlocked(egress) {
+		atomic.AddInt64(&p.totalErrors, 1)
+		Log("[claude-proxy] #%d [生成] ✗ 拒绝直连本机:号 accountId=%d 未下发出口代理(proxyUrl)、且无上游代理", reqID, lease.AccountId)
+		p.doReportProblem(card, deviceId, ReportDetails{
+			StatusCode: 502, ModelKey: modelKey, Reason: "no_egress_proxy",
+			ErrorText: "no egress proxy; refusing direct connection from local IP",
+		}, upstreamProxy, lease)
+		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com(给该号配粘性住宅代理 proxyUrl,或设客户端 upstreamProxy;仅本地调试可设 BCAI_CLAUDE_ALLOW_DIRECT=1)")
+		return
+	}
 	egressLabel := egress
 	if egressLabel == "" {
-		egressLabel = "direct(本机IP)"
+		egressLabel = "direct(本机IP·已放行)"
 	}
 	client := newClaudeUpstreamClient(egress)
 	// 观测点①:发起上游请求之前。卡在 Do(连不上/握手/等响应头)时,日志会停在这一行。
@@ -421,7 +442,14 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		dumpClaudeHeaders(reqID, "aux-upstream-req-hdr", req.Header)
 	}
 
-	resp, err := newClaudeUpstreamClient(effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)).Do(req)
+	auxEgress := effectiveClaudeProxy(lease.ProxyURL, upstreamProxy)
+	// 安全闸:辅助请求同样禁止从本机 IP 直连 anthropic。
+	if claudeEgressBlocked(auxEgress) {
+		Log("[claude-proxy] #%d [辅助] ✗ 拒绝直连本机:未配出口代理", reqID)
+		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com")
+		return
+	}
+	resp, err := newClaudeUpstreamClient(auxEgress).Do(req)
 	if err != nil {
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
