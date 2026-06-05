@@ -184,6 +184,12 @@ export class RosettaController {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
+  // 设置该号的出口代理(粘性住宅代理 URL);空=清除。
+  @Post("anthropic-set-proxy")
+  setClaudeAccountProxy(@Body() body: any) {
+    return this.rosetta.setClaudeAccountProxy(body);
+  }
+
   @Post("anthropic-oauth-start")
   startClaudeOAuthLogin() {
     return this.rosetta.startClaudeOAuthLogin();

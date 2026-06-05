@@ -55,6 +55,10 @@ export default function ClaudeAccountsPage() {
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAccount | null>(null);
   // 手动「刷新」(刷 token + 探测拉额度)进行中的账号 id。
   const [busyId, setBusyId] = useState<number | null>(null);
+  // 出口代理行内编辑:正在编辑的账号 id、输入值、保存中。
+  const [proxyEditId, setProxyEditId] = useState<number | null>(null);
+  const [proxyEditVal, setProxyEditVal] = useState("");
+  const [proxySaving, setProxySaving] = useState(false);
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
@@ -236,6 +240,31 @@ export default function ClaudeAccountsPage() {
     }
   }
 
+  function startEditProxy(account: ClaudeAccount) {
+    setProxyEditId(account.id);
+    setProxyEditVal(account.proxyUrl || "");
+  }
+
+  async function handleSaveProxy(account: ClaudeAccount) {
+    setProxySaving(true);
+    try {
+      const res = await fetch("/api/rosetta/anthropic-set-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id, proxyUrl: proxyEditVal.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success(proxyEditVal.trim() ? `#${account.id} 出口代理已设置` : `#${account.id} 出口代理已清除`);
+      setProxyEditId(null);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setProxySaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -374,8 +403,41 @@ export default function ClaudeAccountsPage() {
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={a.proxyUrl || ""}>
-                      {a.proxyUrl ? a.proxyUrl : <span className="text-[var(--text-muted)]">直连</span>}
+                    <TableCell className="max-w-[240px]">
+                      {proxyEditId === a.id ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            className="h-7 text-xs"
+                            autoFocus
+                            placeholder="http(s):// 或 socks5://"
+                            value={proxyEditVal}
+                            onChange={(e) => setProxyEditVal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveProxy(a);
+                              if (e.key === "Escape") setProxyEditId(null);
+                            }}
+                          />
+                          <Button size="sm" className="h-7 px-2" disabled={proxySaving} onClick={() => handleSaveProxy(a)}>
+                            {proxySaving ? <Spinner size={12} /> : "保存"}
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setProxyEditId(null)}>
+                            取消
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="block max-w-[220px] truncate text-left text-xs underline-offset-2 hover:underline"
+                          title={a.proxyUrl || "点此设置出口代理"}
+                          onClick={() => startEditProxy(a)}
+                        >
+                          {a.proxyUrl ? (
+                            <span className="text-muted-foreground">{a.proxyUrl}</span>
+                          ) : (
+                            <span className="text-destructive">未配置·点此设置</span>
+                          )}
+                        </button>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>

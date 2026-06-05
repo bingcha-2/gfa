@@ -1642,6 +1642,25 @@ export class RosettaService {
     return { ok: true, email: account.email, enabled: account.enabled };
   }
 
+  // 设置/清除某 anthropic 账号的出口代理(粘性住宅代理 URL)。空=清除。
+  // 客户端租到该号时随 lease 下发 claudeProxyUrl,该号的 anthropic 出口固定走它(一号一IP)。
+  setClaudeAccountProxy(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const proxyUrl = String(payload?.proxyUrl || "").trim();
+    if (proxyUrl && !/^(https?|socks5h?):\/\//i.test(proxyUrl)) {
+      return { ok: false, error: "代理 URL 必须以 http(s):// 或 socks5:// 开头" };
+    }
+    const filePath = path.join(this.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    if (proxyUrl) account.proxyUrl = proxyUrl;
+    else delete account.proxyUrl;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, proxyUrl };
+  }
+
   deleteClaudeAccount(payload: any) {
     const accountId = Number(payload?.accountId);
     const filePath = path.join(this.dataDir, "anthropic-accounts.json");
