@@ -48,12 +48,15 @@ func TestClaudeProxyStreamsAndMeters(t *testing.T) {
 	reportedOK := false
 	p := &ClaudeProxy{
 		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
-			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth-leased", AccountId: 1, LeaseId: "lease-1"}, nil
+			// ProxyURL 非空才能过 fail-closed 出口闸;实际连接走下面注入的 client。
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth-leased", AccountId: 1, LeaseId: "lease-1", ProxyURL: "http://egress.test:8080"}, nil
 		},
 		reportUsage: func(card, deviceId string, d ReportDetails, up string, lease *ClaudeTokenLease) {
 			reported = d
 			reportedOK = true
 		},
+		// 注入明文 httptest client(绕开生产的 utls TLS 出口),直连测试上游。
+		upstreamClient: func(string) *http.Client { return upstream.Client() },
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
@@ -103,9 +106,10 @@ func TestClaudeProxyEnsuresOAuthBetaHeader(t *testing.T) {
 
 	p := &ClaudeProxy{
 		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
-			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 1, LeaseId: "l1"}, nil
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 1, LeaseId: "l1", ProxyURL: "http://egress.test:8080"}, nil
 		},
-		reportUsage: func(string, string, ReportDetails, string, *ClaudeTokenLease) {},
+		reportUsage:    func(string, string, ReportDetails, string, *ClaudeTokenLease) {},
+		upstreamClient: func(string) *http.Client { return upstream.Client() },
 	}
 
 	// Incoming request carries an unrelated beta but NOT the oauth one.

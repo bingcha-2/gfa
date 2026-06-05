@@ -70,6 +70,16 @@ type ClaudeProxy struct {
 	leaseToken    claudeLeaseFunc
 	reportUsage   claudeReportFunc
 	reportProblem claudeReportFunc
+	// 可注入(测试):上游 client 工厂;nil → 生产用 utls 出口 client(newClaudeUpstreamClient)。
+	upstreamClient func(egress string) *http.Client
+}
+
+// newUpstream 返回打上游的 http.Client。测试可注入(避免 utls TLS / 出口代理),生产走 utls 出口。
+func (p *ClaudeProxy) newUpstream(egress string) *http.Client {
+	if p.upstreamClient != nil {
+		return p.upstreamClient(egress)
+	}
+	return newClaudeUpstreamClient(egress)
 }
 
 var globalClaudeProxy = &ClaudeProxy{}
@@ -239,7 +249,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com。请在 web 后台给该 anthropic 账号设置出口代理(proxyUrl)。")
 		return
 	}
-	client := newClaudeUpstreamClient(egress)
+	client := p.newUpstream(egress)
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
@@ -347,7 +357,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com")
 		return
 	}
-	client := newClaudeUpstreamClient(auxEgress)
+	client := p.newUpstream(auxEgress)
 
 	// count_tokens 幂等、不计费:突发并发下偶发上游 EOF/连接重置,可安全重试。
 	var resp *http.Response
