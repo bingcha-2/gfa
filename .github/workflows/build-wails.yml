@@ -237,13 +237,9 @@ jobs:
           }
 
           {
-            echo "# Windows"
             read_meta "windows-meta.json" | sed 's/^/win_/'
-            echo "# macOS arm64"
             read_meta "macos-arm64-meta.json" | sed 's/^/mac_arm_/'
-            echo "# macOS amd64"
             read_meta "macos-amd64-meta.json" | sed 's/^/mac_amd_/'
-            echo "# Linux amd64"
             read_meta "linux-amd64-meta.json" | sed 's/^/linux_/'
           } >> "$GITHUB_OUTPUT"
 
