@@ -47,7 +47,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	// P1⑦: Stream inactivity timer with keepalive
 	const streamFirstByteTimeout = 180 * time.Second // 3 min for initial thinking
 	streamMidCheckInterval := 60 * time.Second       // 60s between health checks
-	const streamGracePeriod = 30 * time.Second       // 30s per grace extension
 	streamMaxIdle := 5 * time.Minute                 // default max idle
 
 	// 允许通过 ProxyServer 字段覆盖（用于测试）
@@ -82,7 +81,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					// 首字节超时检测
 					if time.Since(startTime) >= streamFirstByteTimeout {
 						streamTimedOut.Store(true)
-						Log("[proxy] #%d [STREAM-TIMEOUT] First byte timeout (%ds)", reqId, int(streamFirstByteTimeout.Seconds()))
 						if closer, ok := body.(io.Closer); ok {
 							closer.Close()
 						}
@@ -101,8 +99,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 				idleDuration := time.Since(time.Unix(0, lastDataNano.Load()))
 				if idleDuration >= dynamicIdle {
 					streamTimedOut.Store(true)
-					Log("[proxy] #%d [STREAM-TIMEOUT] Max idle %ds exceeded (dynamic=%ds, received=%dKB)",
-						reqId, int(idleDuration.Seconds()), int(dynamicIdle.Seconds()), receivedBytes/1024)
 					// 通知 IDE 流已结束，避免一直 working
 					if ok {
 						_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
@@ -119,15 +115,12 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					if writeErr != nil {
 						// 下游（IDE）已断开，立即关闭上游连接
 						streamTimedOut.Store(true)
-						Log("[proxy] #%d [STREAM] downstream disconnected during keepalive: %v", reqId, writeErr)
 						if closer, ok := body.(io.Closer); ok {
 							closer.Close()
 						}
 						return
 					}
 				}
-				Log("[proxy] #%d [STREAM] idle %ds, socket alive, grace +%ds",
-					reqId, int(idleDuration.Seconds()), int(streamGracePeriod.Seconds()))
 			}
 		}
 	}()
@@ -160,9 +153,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					streamErrorModel = modelKey
 					streamRetryAfterMs = retryAfterMs
 
-					Log("[proxy] #%d [STREAM-QUOTA] %s detected mid-stream model=%s retryAfter=%dms, aborting stream (timo-style)",
-						reqId, reason, modelKey, retryAfterMs)
-
 					// 1. 中断上游连接（停止从 Google 读取更多数据）
 					if closer, ok := body.(io.Closer); ok {
 						closer.Close()
@@ -171,7 +161,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					if ok {
 						_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
 					}
-					Log("[proxy] #%d [STREAM-QUOTA] upstream destroyed, stream ended with [DONE]", reqId)
 					break // 退出读取循环
 				}
 			}
@@ -180,7 +169,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			writeErr := writeAndFlush(buffer[:n])
 			// 下游断开（broken pipe）→ 停止从上游读取，节省 API 配额
 			if writeErr != nil {
-				Log("[proxy] #%d [STREAM] downstream write error, aborting: %v", reqId, writeErr)
 				if closer, cOk := body.(io.Closer); cOk {
 					closer.Close()
 				}
@@ -188,9 +176,6 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			}
 		}
 		if err != nil {
-			if err != io.EOF && !streamTimedOut.Load() {
-				Log("[proxy] #%d Stream read error: %v", reqId, err)
-			}
 			break
 		}
 	}

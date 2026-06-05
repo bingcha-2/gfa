@@ -456,6 +456,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
       accountId: account.id,
       emailHint: maskEmail(account.email),
+      // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
+      // 供客户端「绑定账号信息」面板展示。账号尚无快照时为空串。
+      planType: (account as any).planType || "",
       accessToken,
       ...(this.provider.bloodBarFraction
         ? { boundAccount: { id: account.id, ...this.provider.bloodBarFraction(account, modelKey) } }

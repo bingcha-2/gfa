@@ -16,6 +16,7 @@ type CodexTokenLease struct {
 	AccountId   int    `json:"accountId"`
 	LeaseId     string `json:"leaseId"`
 	EmailHint   string `json:"emailHint"`
+	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
 	ExpiresAt   int64  `json:"expiresAt"`
 	LeasedAt    int64  `json:"leasedAt"`
 }
@@ -30,6 +31,7 @@ type codexLeaseTokenResp struct {
 	AccountId   json.RawMessage `json:"accountId"`
 	LeaseId     string          `json:"leaseId"`
 	EmailHint   string          `json:"emailHint"`
+	PlanType    string          `json:"planType"`
 	ExpiresAt   string          `json:"expiresAt"`
 	BoundAccount *struct {
 		Id       int     `json:"id"`
@@ -47,6 +49,7 @@ type CodexLeaser struct {
 	mu               sync.Mutex
 	cachedQuota      *CodexAccountQuotaSnapshot // one-shot snapshot for the next report
 	lastQuota        *CodexAccountQuotaSnapshot // 持久副本(供前端显示 5h/周 两条,不被 Consume 清掉)
+	lastLease        *CodexTokenLease           // 最近一次成功租到的号(供前端"绑定账号信息"显示)
 	quotaFetching    int32                      // CAS guard for fetchCodexQuotaAsync
 	lastQuotaFetchAt int64                      // 上次上游额度拉取时间(epoch ms),用于频率节流
 	pendingReports   []pendingReport            // 失败上报队列(对齐 Gemini,防丢用量)
@@ -172,6 +175,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		LeaseId:     leaseResp.LeaseId,
 		EmailHint:   leaseResp.EmailHint,
+		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
 	}
@@ -187,6 +191,9 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 	recordFairShareQuota(body)
 	// 用服务端带回的 5h/周窗口刷新本地 codex 血条(激活/预热/定时刷新那一下即生效)。
 	l.applyCodexWindows(leaseResp.CodexWindows)
+	l.mu.Lock()
+	l.lastLease = lease
+	l.mu.Unlock()
 	l.setLastError("")
 	return lease, nil
 }

@@ -6,6 +6,7 @@ import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
+import { BoundAccountsCard } from '@/components/BoundAccountsCard'
 import { usageBarsForProducts } from '@/lib/usageBars'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -279,6 +280,9 @@ export function DashboardPage() {
           </Card>
         </div>
       </div>
+
+      {/* ── Row 5: 绑定账号信息(仅绑定卡 + 远程模式显示)── */}
+      <BoundAccountsCard />
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">

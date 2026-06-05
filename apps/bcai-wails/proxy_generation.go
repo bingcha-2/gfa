@@ -16,15 +16,20 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	cfg := LoadConfig()
 	isLocalPool := cfg.PoolMode == "local"
 
+	// 一次代理只出一条日志:全程累积到 audit,defer 时统一输出(含元信息+完整正文+打码token)。
+	audit := newProxyAudit("antigravity", reqId, "生成", r.Method, r.URL.Path)
+	defer audit.emit()
+	audit.reqBody = body
+
 	// 1. Validate: either card (remote) or pool accounts (local) required
 	if !isLocalPool && card == "" {
-		Log("[proxy] #%d [BLOCK] Generation failed: no account card configured", reqId)
+		audit.note = "未配置账号卡"
 		p.sendJsonError(w, 503, "BingchaAI: Please configure and activate your account card first.")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 	if isLocalPool && GetAccountPool().EnabledCount() == 0 {
-		Log("[proxy] #%d [BLOCK] Generation failed: no accounts in local pool", reqId)
+		audit.note = "本地号池无可用账号"
 		p.sendJsonError(w, 503, "BingchaAI: 本地号池中没有可用账号，请先添加账号。")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
@@ -33,26 +38,21 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	// 2. Fail-closed check: JSON body must contain project or projectId field
 	var parsedBody interface{}
 	if err := json.Unmarshal(body, &parsedBody); err != nil {
-		Log("[proxy] #%d [BLOCK] Invalid JSON request body", reqId)
+		audit.note = "请求体非法 JSON"
 		p.sendJsonError(w, 400, "Invalid JSON body")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 
 	hasProject := hasProjectField(parsedBody)
-	if !hasProject {
-		Log("[proxy] #%d [INFO] No project/projectId in body, will inject from lease", reqId)
-	}
 
 	// P0: Extract model key from request body (e.g. "gemini-2.5-pro")
 	requestModelKey := extractModelKeyFromBody(body)
-	if requestModelKey != "" {
-		Log("[proxy] #%d [MODEL] %s", reqId, requestModelKey)
-	}
+	audit.model = requestModelKey
 
 	// 按模型选上游:Claude/GPT 第三方模型走 daily-cloudcode-pa,Gemini 走 cloudcode-pa。
 	targetUrl, _ := url.Parse(cloudCodeEndpointForModel(requestModelKey) + r.URL.Path + "?" + r.URL.RawQuery)
-	Log("[proxy] #%d [UPSTREAM] generation host=%s path=%s model=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, requestModelKey, cfg.PoolMode)
+	audit.target = targetUrl.Host + targetUrl.Path
 	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
 	client := createStreamingHttpClient(upstream)
 
@@ -67,7 +67,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			pool := GetAccountPool()
 			acc, selErr := pool.SelectAccount(requestModelKey, excludeIds)
 			if selErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL] No available account: %v", reqId, selErr)
+				audit.note += fmt.Sprintf("; 无可用账号:%v", selErr)
 				p.sendJsonError(w, 503, fmt.Sprintf("本地号池: %v", selErr))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -75,7 +75,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 			token, tokenErr := pool.GetAccessToken(acc.ID)
 			if tokenErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL] Token refresh failed for #%d (%s): %v", reqId, acc.ID, acc.Email, tokenErr)
+				audit.note += fmt.Sprintf("; token刷新失败#%d:%v", acc.ID, tokenErr)
 				excludeIds = append(excludeIds, acc.ID)
 				pool.MarkError(acc.ID)
 				pool.RecordRequestStats(acc.ID, false)
@@ -94,7 +94,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				AccountId:   acc.ID,
 				EmailHint:   acc.Email,
 			}
-			Log("[proxy] #%d [LOCAL-POOL] attempt=%d account=#%d (%s) project=%s", reqId, attempt, acc.ID, acc.Email, acc.ProjectId)
+			audit.accountID = acc.ID
+			audit.token = token
 			pool.SetActiveAccount(acc.ID)
 
 			rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
@@ -137,7 +138,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			var doErr error
 			resp, doErr = client.Do(req)
 			if doErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL] upstream error: %v", reqId, doErr)
+				audit.note += fmt.Sprintf("; 上游错误:%v", doErr)
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream error: %v", doErr))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -155,14 +156,13 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				break
 			}
 
-			Log("[proxy] #%d [LOCAL-POOL] account #%d returned %d (%s), rotating...", reqId, acc.ID, resp.StatusCode, problemReason)
+			audit.note += fmt.Sprintf("; 轮换#%d(%d %s)", acc.ID, resp.StatusCode, problemReason)
 
 			// 401 = token 过期，不是额度耗尽 → 清除缓存 token，下次自动 refresh
 			if resp.StatusCode == http.StatusUnauthorized {
 				pool.ClearAccessToken(acc.ID)
 				pool.MarkError(acc.ID)
 				pool.RecordRequestStats(acc.ID, false)
-				Log("[proxy] #%d [LOCAL-POOL] 401 → cleared cached token for #%d, will refresh on retry", reqId, acc.ID)
 			} else {
 				// Use retryAfterMs if available, otherwise default 30 min
 				localRetryMs := extractQuotaResetDelayMs(string(readAndResetResponseBody(resp)))
@@ -192,7 +192,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		leaser := GetLeaser()
 		// 本地额度检查
 		if ok, waitMs, reason := leaser.CheckLocalQuota(requestModelKey); !ok {
-			Log("[proxy] #%d [QUOTA-LOCAL] %s", reqId, reason)
+			audit.note += "; 本地额度不足:" + reason
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", waitMs/1000))
 			p.sendJsonError(w, 429, fmt.Sprintf("BingchaAI: %s", reason))
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
@@ -215,7 +215,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 			lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 			if err != nil {
-				Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 租号失败:%v", err)
 				p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -227,7 +227,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 					remoteMaxAttempts = 99
 				}
 			}
-			Log("[proxy] #%d [LEASE] attempt=%d/%d accountId=%d project=%s model=%s", reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
+			audit.accountID = lease.AccountId
+			audit.token = lease.AccessToken
 
 			rewrittenBody, _ := rewriteProjectFields(parsedBody, lease.ProjectId)
 			// 生成请求必须有 project 字段，没有则注入
@@ -254,7 +255,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 			newBodyBytes, err := json.Marshal(rewrittenBody)
 			if err != nil {
-				Log("[proxy] #%d [REWRITE-ERROR] Failed to marshal rewritten body: %v", reqId, err)
+				audit.note += fmt.Sprintf("; body序列化失败:%v", err)
 				p.sendJsonError(w, 500, "Internal rewrite error")
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -262,7 +263,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 			req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(newBodyBytes))
 			if err != nil {
-				Log("[proxy] #%d [REQ-ERROR] Failed to build proxy request: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 构造请求失败:%v", err)
 				p.sendJsonError(w, 500, "Internal request creation error")
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -288,7 +289,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 			resp, err = client.Do(req)
 			if err != nil {
-				Log("[proxy] #%d [FORWARD-ERROR] Upstream request failed: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -330,8 +331,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			// P2⑪: Verification challenge → report + rotate to another account
 			// (mirrors token-proxy.js L1812-L1822: shouldRetryRemoteError → continue)
 			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-				Log("[proxy] #%d [VERIFY] Verification challenge for accountId=%d (%d/%d) body=%s",
-					reqId, lease.AccountId, attempt, remoteMaxAttempts, getErrorSnippet(errorBody))
+				audit.note += fmt.Sprintf("; 验证挑战#%d(%d/%d)", lease.AccountId, attempt, remoteMaxAttempts)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
@@ -340,7 +340,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				// 把上游 403 原文(含 "Verify your account" + validation_url)原样回给 IDE,
 				// 触发 Antigravity 自带的验证流程,而不是吞成"繁忙"误导用户。
 				if lease.Bound {
-					Log("[proxy] #%d [VERIFY] bound card → 透传 Google 验证详情给客户端(账号需人工验证)", reqId)
+					audit.status = http.StatusForbidden
+					audit.note += "; 绑定卡透传验证详情"
 					p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 					atomic.AddInt64(&p.stats.TotalErrors, 1)
 					return
@@ -353,7 +354,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 					continue
 				}
 				// 池子模式所有号都撞验证 → 也把真实详情透传,而不是含糊的 503。
-				Log("[proxy] #%d [VERIFY] all accounts challenged after %d attempts → 透传验证详情", reqId, attempt)
+				audit.status = http.StatusForbidden
+				audit.note += "; 全部撞验证→透传"
 				p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -393,8 +395,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
 				attempt < effectiveMaxAttempts+2 {
 				waitMs := retryAfterMs + 500
-				Log("[proxy] #%d [SHORT-RATELIMIT] 429 RATE_LIMIT_EXCEEDED retryAfter=%dms, waiting %dms and retrying same account=%d",
-					reqId, retryAfterMs, waitMs, lease.AccountId)
+				audit.note += fmt.Sprintf("; 短429等待%dms重试#%d", waitMs, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
@@ -412,8 +413,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 					waitMs = retryAfterMs
 				}
 				accumulatedCapacityWaitMs += waitMs
-				Log("[proxy] #%d [CAPACITY-WAIT] 503 capacity, waiting %dms (total=%dms/%dms) for model=%s",
-					reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+				audit.note += fmt.Sprintf("; 503容量等待%dms(累计%dms)", waitMs, accumulatedCapacityWaitMs)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
@@ -424,8 +424,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 			if canRetry {
 				respStatus := resp.StatusCode
-				Log("[proxy] #%d Upstream returned %d (%s) model=%s retryAfter=%dms for accountId=%d; rotating (%d/%d)",
-					reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+				audit.note += fmt.Sprintf("; 轮换#%d(%d %s)", lease.AccountId, respStatus, problemReason)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				// 将失败的 accountId 加入排除列表，防止异步 report 还没到时又租到同一个号
 				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
@@ -439,18 +438,19 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 				continue
 			}
 
-			Log("[proxy] #%d Upstream returned %d (%s) after %d attempts for accountId=%d, reporting...",
-				reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
+			audit.note += fmt.Sprintf("; 终止%d(%d %s)", attempt, resp.StatusCode, problemReason)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 			break
 		}
 	} // end remote lease mode
 	if resp == nil {
+		audit.note += "; 重试后无响应"
 		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 	defer resp.Body.Close()
+	audit.status = resp.StatusCode
 
 	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
 	// 如果第一个 chunk 就是 quota/capacity 错误（Google 返回 200 但 body 是错误），
@@ -466,8 +466,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			copy(firstChunk, buf[:n])
 			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
 				// 首 chunk 就是错误！关闭连接，上报，不向 IDE 发送任何数据
-				Log("[proxy] #%d [FIRST-CHUNK-ERROR] %s in first chunk model=%s retryAfter=%dms, will NOT commit response",
-					reqId, reason, mk, retryMs)
+				audit.note += fmt.Sprintf("; 首chunk错误(%s model=%s retry=%dms)", reason, mk, retryMs)
+				audit.respBody = firstChunk
 				_ = resp.Body.Close()
 				// 上报错误
 				if isLocalPool && lease != nil {
@@ -496,7 +496,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 		}
 		if readErr != nil && readErr != io.EOF {
-			Log("[proxy] #%d [FIRST-CHUNK] read error: %v", reqId, readErr)
+			audit.note += fmt.Sprintf("; 首chunk读错误:%v", readErr)
 		}
 	}
 
@@ -512,15 +512,16 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 	var tokenResult TokenUsageResult
 	if isStreaming {
+		// 把流式响应同时 tee 到审计缓冲(保留 flush,不破坏流式),供这条日志输出完整响应体。
+		tee := newAuditTee(w)
 		// 先写出已缓冲的首 chunk
 		if len(firstChunk) > 0 {
-			_, _ = w.Write(firstChunk)
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+			_, _ = tee.Write(firstChunk)
+			tee.Flush()
 		}
 		// Streaming response: parse remaining chunks on the fly
-		tokenResult = p.streamResponse(w, resp.Body, reqId)
+		tokenResult = p.streamResponse(tee, resp.Body, reqId)
+		audit.respBody = tee.captured()
 		// 将首 chunk 的 bytes 也计入 token 解析
 		if len(firstChunk) > 0 {
 			tokenResult.StreamBytes += int64(len(firstChunk))
@@ -530,14 +531,15 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
+			audit.respBody = respBytes
 			tokenResult = p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
+	audit.inTokens, audit.outTokens = tokenResult.InputTokens, tokenResult.OutputTokens
 
 	// [TIMO-STYLE] 流式中途 quota 错误：上报 + 标记账号
 	if tokenResult.StreamError {
-		Log("[proxy] #%d [STREAM-QUOTA-REPORT] reporting mid-stream %s for model=%s",
-			reqId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
+		audit.note += fmt.Sprintf("; 流中途quota(%s model=%s)", tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		GetUsageStats().AddError()
 		if isLocalPool && lease != nil {
@@ -603,32 +605,38 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	cfg := LoadConfig()
 	isLocalPool := cfg.PoolMode == "local"
 
+	// 一次代理只出一条日志:全程累积到 audit,defer 时统一输出(含元信息+完整正文+打码token)。
+	audit := newProxyAudit("antigravity", reqId, "Gemini", r.Method, r.URL.Path)
+	defer audit.emit()
+	audit.reqBody = body
+
 	// 提取模型 key（Gemini API 路径包含模型名）
 	requestModelKey := extractModelKeyFromPath(r.URL.Path)
 	if requestModelKey == "" {
 		requestModelKey = extractModelKeyFromBody(body)
 	}
+	audit.model = requestModelKey
 
 	if !isLocalPool && card == "" {
-		Log("[proxy] #%d [BLOCK] Gemini generation failed: no account card configured", reqId)
+		audit.note = "未配置账号卡"
 		p.sendJsonError(w, 503, "BingchaAI: Please configure and activate your account card first.")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 	if isLocalPool && GetAccountPool().EnabledCount() == 0 {
-		Log("[proxy] #%d [BLOCK] Gemini generation failed: no accounts in local pool", reqId)
+		audit.note = "本地号池无可用账号"
 		p.sendJsonError(w, 503, "BingchaAI: 本地号池中没有可用账号，请先添加账号。")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 
 	targetUrl, _ := url.Parse(DefaultGeminiEndpoint + r.URL.Path + "?" + r.URL.RawQuery)
+	audit.target = targetUrl.Host + targetUrl.Path
 	query := targetUrl.Query()
 	if _, ok := query["key"]; ok {
 		query.Del("key")
 		targetUrl.RawQuery = query.Encode()
 	}
-	Log("[proxy] #%d [UPSTREAM] Gemini generation host=%s path=%s (mode=%s)", reqId, targetUrl.Host, targetUrl.Path, cfg.PoolMode)
 	client := createStreamingHttpClient(upstream)
 	attemptSessionId := fmt.Sprintf("%d-%d", time.Now().UnixMilli(), reqId)
 
@@ -642,14 +650,14 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			pool := GetAccountPool()
 			acc, selErr := pool.SelectAccount(requestModelKey, excludeIds)
 			if selErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL-GEMINI] No available account: %v", reqId, selErr)
+				audit.note += fmt.Sprintf("; 无可用账号:%v", selErr)
 				p.sendJsonError(w, 503, fmt.Sprintf("本地号池: %v", selErr))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
 			}
 			token, tokenErr := pool.GetAccessToken(acc.ID)
 			if tokenErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL-GEMINI] Token refresh failed for #%d: %v", reqId, acc.ID, tokenErr)
+				audit.note += fmt.Sprintf("; token刷新失败#%d:%v", acc.ID, tokenErr)
 				excludeIds = append(excludeIds, acc.ID)
 				pool.MarkError(acc.ID)
 				if attempt < MaxCloudCodeGenerationAttempts {
@@ -665,7 +673,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				AccountId:   acc.ID,
 				EmailHint:   acc.Email,
 			}
-			Log("[proxy] #%d [LOCAL-POOL-GEMINI] attempt=%d account=#%d (%s)", reqId, attempt, acc.ID, acc.Email)
+			audit.accountID = acc.ID
+			audit.token = token
 
 			req, _ := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
 			for k, v := range r.Header {
@@ -687,7 +696,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			var doErr error
 			resp, doErr = client.Do(req)
 			if doErr != nil {
-				Log("[proxy] #%d [LOCAL-POOL-GEMINI] upstream error: %v", reqId, doErr)
+				audit.note += fmt.Sprintf("; 上游错误:%v", doErr)
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream error: %v", doErr))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -706,13 +715,12 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				break
 			}
 
-			Log("[proxy] #%d [LOCAL-POOL-GEMINI] account #%d returned %d (%s), rotating...", reqId, acc.ID, resp.StatusCode, problemReason)
+			audit.note += fmt.Sprintf("; 轮换#%d(%d %s)", acc.ID, resp.StatusCode, problemReason)
 
 			// 401 = token 过期，不是额度耗尽 → 清除缓存 token，下次自动 refresh
 			if resp.StatusCode == http.StatusUnauthorized {
 				pool.ClearAccessToken(acc.ID)
 				pool.MarkError(acc.ID)
-				Log("[proxy] #%d [LOCAL-POOL-GEMINI] 401 → cleared cached token for #%d", reqId, acc.ID)
 			} else {
 				localRetryMs := extractQuotaResetDelayMs(string(readAndResetResponseBody(resp)))
 				cooldownMin := 30
@@ -739,7 +747,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		leaser := GetLeaser()
 		// 本地额度检查
 		if ok, waitMs, reason := leaser.CheckLocalQuota(requestModelKey); !ok {
-			Log("[proxy] #%d [QUOTA-LOCAL] %s", reqId, reason)
+			audit.note += "; 本地额度不足:" + reason
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", waitMs/1000))
 			p.sendJsonError(w, 429, fmt.Sprintf("BingchaAI: %s", reason))
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
@@ -761,7 +769,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			var err error
 			lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 			if err != nil {
-				Log("[proxy] #%d [TOKEN-ERROR] Failed to lease token for Gemini API: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 租号失败:%v", err)
 				p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -772,12 +780,12 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 					remoteMaxAttempts = 99
 				}
 			}
-			Log("[proxy] #%d [LEASE-GEMINI] attempt=%d/%d accountId=%d project=%s model=%s",
-				reqId, attempt, remoteMaxAttempts, lease.AccountId, lease.ProjectId, requestModelKey)
+			audit.accountID = lease.AccountId
+			audit.token = lease.AccessToken
 
 			req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
 			if err != nil {
-				Log("[proxy] #%d [REQ-ERROR] Failed to build Gemini API request: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 构造请求失败:%v", err)
 				p.sendJsonError(w, 500, "Internal request creation error")
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -801,7 +809,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 			resp, err = client.Do(req)
 			if err != nil {
-				Log("[proxy] #%d [FORWARD-ERROR] Gemini API request failed: %v", reqId, err)
+				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -838,15 +846,15 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 			// Verification challenge → report + rotate to another account
 			if resp.StatusCode == http.StatusForbidden && isVerificationChallengeError(errorBody) {
-				Log("[proxy] #%d [VERIFY-GEMINI] Verification challenge for accountId=%d (%d/%d) body=%s",
-					reqId, lease.AccountId, attempt, remoteMaxAttempts, getErrorSnippet(errorBody))
+				audit.note += fmt.Sprintf("; 验证挑战#%d(%d/%d)", lease.AccountId, attempt, remoteMaxAttempts)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
 				// 绑定卡:无备号 → 透传 Google 验证详情(含 validation_url)给 IDE,触发其验证流程。
 				if lease.Bound {
-					Log("[proxy] #%d [VERIFY-GEMINI] bound card → 透传 Google 验证详情给客户端(账号需人工验证)", reqId)
+					audit.status = http.StatusForbidden
+					audit.note += "; 绑定卡透传验证详情"
 					p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 					atomic.AddInt64(&p.stats.TotalErrors, 1)
 					return
@@ -858,7 +866,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusForbidden))
 					continue
 				}
-				Log("[proxy] #%d [VERIFY-GEMINI] all accounts challenged after %d attempts → 透传验证详情", reqId, attempt)
+				audit.status = http.StatusForbidden
+				audit.note += "; 全部撞验证→透传"
 				p.passthroughUpstreamError(w, http.StatusForbidden, errorBody)
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -897,8 +906,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				strings.Contains(errorBody, "RATE_LIMIT_EXCEEDED") &&
 				attempt < effectiveMaxAttempts+2 {
 				waitMs := retryAfterMs + 500
-				Log("[proxy] #%d [SHORT-RATELIMIT-GEMINI] 429 retryAfter=%dms, waiting %dms, same account=%d",
-					reqId, retryAfterMs, waitMs, lease.AccountId)
+				audit.note += fmt.Sprintf("; 短429等待%dms重试#%d", waitMs, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				resp = nil
@@ -915,8 +923,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 					waitMs = retryAfterMs
 				}
 				accumulatedCapacityWaitMs += waitMs
-				Log("[proxy] #%d [CAPACITY-WAIT-GEMINI] 503 capacity, waiting %dms (total=%dms/%dms) model=%s",
-					reqId, waitMs, accumulatedCapacityWaitMs, maxCapacityWaitMs, errorModelKey)
+				audit.note += fmt.Sprintf("; 503容量等待%dms(累计%dms)", waitMs, accumulatedCapacityWaitMs)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
@@ -927,8 +934,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 			if canRetry {
 				respStatus := resp.StatusCode
-				Log("[proxy] #%d Gemini API returned %d (%s) model=%s retryAfter=%dms accountId=%d; rotating (%d/%d)",
-					reqId, respStatus, problemReason, errorModelKey, retryAfterMs, lease.AccountId, attempt, remoteMaxAttempts)
+				audit.note += fmt.Sprintf("; 轮换#%d(%d %s)", lease.AccountId, respStatus, problemReason)
 				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 				excludeAccountIds = append(excludeAccountIds, lease.AccountId)
 				_, _ = io.Copy(io.Discard, resp.Body)
@@ -940,19 +946,20 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 				continue
 			}
 
-			Log("[proxy] #%d Gemini API returned %d (%s) after %d attempts for accountId=%d, reporting...",
-				reqId, resp.StatusCode, problemReason, attempt, lease.AccountId)
+			audit.note += fmt.Sprintf("; 终止%d(%d %s)", attempt, resp.StatusCode, problemReason)
 			leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 			break
 		}
 	} // end mode selection
 
 	if resp == nil {
+		audit.note += "; 重试后无响应"
 		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
 	defer resp.Body.Close()
+	audit.status = resp.StatusCode
 
 	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
@@ -965,8 +972,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			firstChunk = make([]byte, n)
 			copy(firstChunk, buf[:n])
 			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
-				Log("[proxy] #%d [FIRST-CHUNK-ERROR-GEMINI] %s in first chunk model=%s retryAfter=%dms",
-					reqId, reason, mk, retryMs)
+				audit.note += fmt.Sprintf("; 首chunk错误(%s model=%s retry=%dms)", reason, mk, retryMs)
+				audit.respBody = firstChunk
 				_ = resp.Body.Close()
 				if isLocalPool && lease != nil {
 					pool := GetAccountPool()
@@ -993,7 +1000,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			}
 		}
 		if readErr != nil && readErr != io.EOF {
-			Log("[proxy] #%d [FIRST-CHUNK-GEMINI] read error: %v", reqId, readErr)
+			audit.note += fmt.Sprintf("; 首chunk读错误:%v", readErr)
 		}
 	}
 
@@ -1007,13 +1014,14 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 
 	var tokenResult TokenUsageResult
 	if isStreaming {
+		// 把流式响应同时 tee 到审计缓冲(保留 flush,不破坏流式),供这条日志输出完整响应体。
+		tee := newAuditTee(w)
 		if len(firstChunk) > 0 {
-			_, _ = w.Write(firstChunk)
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+			_, _ = tee.Write(firstChunk)
+			tee.Flush()
 		}
-		tokenResult = p.streamResponse(w, resp.Body, reqId)
+		tokenResult = p.streamResponse(tee, resp.Body, reqId)
+		audit.respBody = tee.captured()
 		if len(firstChunk) > 0 {
 			tokenResult.StreamBytes += int64(len(firstChunk))
 		}
@@ -1021,14 +1029,15 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
 			_, _ = w.Write(respBytes)
+			audit.respBody = respBytes
 			tokenResult = p.parseAndAddTokenUsage(respBytes, resp.Header.Get("Content-Encoding"), requestModelKey)
 		}
 	}
+	audit.inTokens, audit.outTokens = tokenResult.InputTokens, tokenResult.OutputTokens
 
 	// [TIMO-STYLE] 流式中途 quota 错误：上报 + 标记账号
 	if tokenResult.StreamError {
-		Log("[proxy] #%d [STREAM-QUOTA-REPORT-GEMINI] reporting mid-stream %s for model=%s",
-			reqId, tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
+		audit.note += fmt.Sprintf("; 流中途quota(%s model=%s)", tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		GetUsageStats().AddError()
 		if isLocalPool && lease != nil {

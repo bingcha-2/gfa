@@ -99,10 +99,6 @@ func (p *ClaudeProxy) doReportProblem(card, deviceId string, d ReportDetails, up
 	GetClaudeLeaser().ReportProblem(card, deviceId, d, up, lease)
 }
 
-// claudeDbg 控制"代理全量 trace"(请求/转发/响应 的头+体)。默认关,需要抓包时设
-// BCAI_CLAUDE_DEBUG=1。OAuth token / cookie 一律打码。
-var claudeDbg = getEnvOrDefault("BCAI_CLAUDE_DEBUG", "0") == "1"
-
 // parseClaudeUnifiedWindows 从上游 anthropic-ratelimit-unified-* 响应头解析 5h/周额度。
 // 头里是 *-Utilization(已用比例 0..1)+ *-Reset(epoch 秒);转成"剩余 %"+ISO reset。
 // 仅成功(200)响应带这些头;解析到任一窗口即 ok=true。
@@ -161,76 +157,6 @@ func fillClaudeWindows(d *ReportDetails, h http.Header) {
 	d.ClaudeWeeklyResetTime = wr
 }
 
-func maskClaudeSecret(s string) string {
-	if len(s) <= 16 {
-		return "***"
-	}
-	return s[:10] + "...(" + fmt.Sprintf("%d", len(s)) + "ch)..." + s[len(s)-4:]
-}
-
-// dumpClaudeHeaders 把一组头逐行打到日志(敏感头打码)。
-func dumpClaudeHeaders(reqID int64, tag string, h http.Header) {
-	if !claudeDbg {
-		return
-	}
-	for k, vs := range h {
-		val := strings.Join(vs, ",")
-		switch strings.ToLower(k) {
-		case "authorization", "x-api-key", "cookie", "set-cookie":
-			val = maskClaudeSecret(val)
-		}
-		Log("[claude-proxy] #%d [%s] %s: %s", reqID, tag, k, val)
-	}
-}
-
-// dumpClaudeBody 打印 body(截断到 4KB,避免刷屏)。
-func dumpClaudeBody(reqID int64, tag string, b []byte) {
-	if !claudeDbg {
-		return
-	}
-	const capN = 4096
-	s := string(b)
-	if len(s) > capN {
-		s = s[:capN] + fmt.Sprintf("...(+%d bytes)", len(b)-capN)
-	}
-	Log("[claude-proxy] #%d [%s] (%d bytes) %s", reqID, tag, len(b), s)
-}
-
-// capWriter 累积写入的前 max 字节(用于 tee 流式响应到日志)。
-type capWriter struct {
-	buf []byte
-	max int
-}
-
-func (c *capWriter) Write(p []byte) (int, error) {
-	if len(c.buf) < c.max {
-		n := c.max - len(c.buf)
-		if n > len(p) {
-			n = len(p)
-		}
-		c.buf = append(c.buf, p[:n]...)
-	}
-	return len(p), nil
-}
-
-// teeFlushWriter 把写入同时复制到 cap,并把 Flush 透传给底层 ResponseWriter
-// (保留 SSE 的逐块 flush,不破坏流式)。
-type teeFlushWriter struct {
-	w   http.ResponseWriter
-	cap *capWriter
-}
-
-func (t *teeFlushWriter) Write(p []byte) (int, error) {
-	t.cap.Write(p)
-	return t.w.Write(p)
-}
-
-func (t *teeFlushWriter) Flush() {
-	if f, ok := t.w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
 // claudeEgressBlocked 当出口为空(=会直连本机 IP)时返回 true,调用方据此拒绝请求。
 // 硬性 fail-closed:claude 出口【必须】走服务端给号下发的粘性住宅代理,没有就拒,无任何放行开关。
 func claudeEgressBlocked(egress string) bool {
@@ -256,22 +182,22 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}
 	GetUsageStats().AddRequest()
 
+	// 一次代理只出一条日志:全程累积到 audit,defer 时统一输出(含元信息+完整正文+打码token)。
+	audit := newProxyAudit("claude", reqID, "生成", r.Method, r.URL.Path)
+	defer audit.emit()
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		audit.note = "读请求体失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
+	audit.reqBody = body
 	modelKey := extractClaudeModelKey(body)
 	if modelKey == "" {
 		modelKey = "claude-opus-4-20250514"
 	}
-
-	// ── 全量 trace:入站请求(Claude Code 发来的)──
-	if claudeDbg {
-		Log("[claude-proxy] #%d [req] %s %s", reqID, r.Method, r.URL.String())
-		dumpClaudeHeaders(reqID, "req-hdr", r.Header)
-		dumpClaudeBody(reqID, "req-body", body)
-	}
+	audit.model = modelKey
 
 	lease, err := p.lease()(card, deviceId, true, map[string]interface{}{
 		"modelKey":  modelKey,
@@ -279,23 +205,24 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	}, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "lease 失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Claude token lease failed: %v", err))
 		return
 	}
-	Log("[claude-proxy] #%d [生成] %s model=%s → 用号池token accountId=%d", reqID, r.URL.Path, modelKey, lease.AccountId)
+	audit.accountID = lease.AccountId
+	audit.token = lease.AccessToken
 
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
+	audit.target = targetURL
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
-	// ── 全量 trace:转发给 anthropic 的请求头(Authorization 打码)──
-	dumpClaudeHeaders(reqID, "upstream-req-hdr", req.Header)
 
 	// 出口层:utls 指纹 + 每号粘性代理。优先用服务端为该号下发的住宅代理(lease.ProxyURL),
 	// 否则回落到用户自己配置的上游代理。
@@ -303,7 +230,8 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 安全闸:禁止从本机 IP 直连 anthropic。没有出口代理 → 拒绝,绝不泄露本机 IP。
 	if claudeEgressBlocked(egress) {
 		atomic.AddInt64(&p.totalErrors, 1)
-		Log("[claude-proxy] #%d [生成] ✗ 拒绝直连本机:号 accountId=%d 未下发出口代理(proxyUrl)、且无上游代理", reqID, lease.AccountId)
+		audit.status = 502
+		audit.note = "拒绝直连本机:号未下发出口代理(proxyUrl)、且无上游代理"
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "no_egress_proxy",
 			ErrorText: "no egress proxy; refusing direct connection from local IP",
@@ -312,13 +240,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		return
 	}
 	client := newClaudeUpstreamClient(egress)
-	// 观测点①:发起上游请求之前。卡在 Do(连不上/握手/等响应头)时,日志会停在这一行。
-	Log("[claude-proxy] #%d [生成] → 请求上游 %s egress=%s", reqID, targetURL, egress)
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
-		// 观测点②a:Do 直接失败(连接/握手/响应头超时)——这里能看到真实错误文本。
-		Log("[claude-proxy] #%d [生成] ✗ 上游请求失败(Do err):%v", reqID, err)
+		audit.status = 502
+		audit.note = "上游请求失败(Do err):" + err.Error()
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "upstream_error", ErrorText: err.Error(),
 		}, upstreamProxy, lease)
@@ -326,35 +252,23 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		return
 	}
 	defer resp.Body.Close()
-	// 观测点②b:已拿到响应头。能区分"卡在网络"还是"上游回了码但 body 不对"。
-	Log("[claude-proxy] #%d [生成] ← 上游响应头 码=%d ct=%q ce=%q",
-		reqID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"))
-	// ── 全量 trace:上游响应的【所有】头(含 anthropic-ratelimit-unified-* 限流头,
-	// 即 5h/周额度的真实来源)。不限状态码,200/429 都打。──
-	dumpClaudeHeaders(reqID, "resp-hdr", resp.Header)
+	audit.status = resp.StatusCode
 
 	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 		(isClaudeStreamingResponse(resp) || requestWantsStream(body))
 	if streamBack {
 		writeUpstreamHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		// 全量 trace:把 SSE 同时 tee 到容量缓冲(保留 flush,不破坏流式),copy 后打日志。
-		var sink io.Writer = w
-		var sseCap *capWriter
-		if claudeDbg {
-			sseCap = &capWriter{max: 8192}
-			sink = &teeFlushWriter{w: w, cap: sseCap}
-		}
-		usage, copyErr := copyStreamingClaudeResponse(sink, resp.Body)
-		if claudeDbg && sseCap != nil {
-			dumpClaudeBody(reqID, "resp-sse", sseCap.buf)
-		}
+		// 把 SSE 同时 tee 到审计缓冲(保留 flush,不破坏流式),供这条日志输出完整响应体。
+		tee := newAuditTee(w)
+		usage, copyErr := copyStreamingClaudeResponse(tee, resp.Body)
+		audit.respBody = tee.captured()
 		details := claudeReportDetailsFromUsage(resp.StatusCode, modelKey, usage)
 		if copyErr != nil {
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
-			Log("[claude-proxy] #%d [生成] 上游码=%d 流中断:%v(不上报用量)", reqID, resp.StatusCode, copyErr)
+			audit.note = "流中断(不上报用量):" + copyErr.Error()
 			p.doReportProblem(card, deviceId, details, upstreamProxy, lease)
 			// 头和 200 已发出,改不了状态码;补发一个 SSE error 事件,让 Claude Code 明确知道
 			// 是上游中断而非正常结束(否则只看到流被截断、无错误提示)。
@@ -367,8 +281,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		}
 		// 解析 5h/周额度窗口(从这次真实 200 响应头),随上报回服务端 → 血条。零额外请求。
 		fillClaudeWindows(&details, resp.Header)
-		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) 额度(5h剩%.0f%% 周剩%.0f%%) → 已提交用量上报",
-			reqID, resp.StatusCode, details.InputTokens, details.OutputTokens, details.RawTotalTokens, details.ClaudeHourlyPercent, details.ClaudeWeeklyPercent)
+		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 		// 喂本地 dashboard 统计(今日输入/输出 Token);对齐 codex_proxy。漏了它 claude 的 token 永远显示 0。
 		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
@@ -378,11 +291,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "读上游响应失败:" + readErr.Error()
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read Claude upstream response")
 		return
 	}
-	// 全量 trace:非流式响应体(JSON,含错误 body 等)。
-	dumpClaudeBody(reqID, "resp-body", respBody)
+	audit.respBody = respBody
 	writeUpstreamHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
@@ -390,15 +303,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	details := claudeReportDetailsFromBody(resp.StatusCode, modelKey, respBody)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		fillClaudeWindows(&details, resp.Header)
-		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d total=%d 额度(5h剩%.0f%% 周剩%.0f%%) → 已提交用量上报", reqID, resp.StatusCode, details.RawTotalTokens, details.ClaudeHourlyPercent, details.ClaudeWeeklyPercent)
+		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 	} else {
-		snippet := string(respBody)
-		if len(snippet) > 400 {
-			snippet = snippet[:400]
-		}
-		Log("[claude-proxy] #%d [生成] ✗ 上游码=%d acct=%d body=%q", reqID, resp.StatusCode, lease.AccountId, strings.TrimSpace(snippet))
+		audit.note = "上游错误"
 		details.Reason = "claude_upstream_error"
 		details.ErrorText = string(respBody)
 		p.doReportProblem(card, deviceId, details, upstreamProxy, lease)
@@ -407,53 +316,58 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 // forwardAux 注入 token 后透传非生成的辅助请求(count_tokens 等),不计量。
 func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, deviceId, upstreamProxy string, reqID int64) {
+	audit := newProxyAudit("claude", reqID, "辅助", r.Method, r.URL.Path)
+	defer audit.emit()
+
 	body, _ := io.ReadAll(r.Body)
+	audit.reqBody = body
 	if card == "" {
+		audit.note = "未配置 Claude 账号卡"
 		p.sendJSONError(w, http.StatusUnauthorized, "Claude account card is not configured")
 		return
 	}
 	lease, err := p.lease()(card, deviceId, false, nil, upstreamProxy)
 	if err != nil {
+		audit.note = "lease 失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Claude token lease failed: %v", err))
 		return
 	}
+	audit.accountID = lease.AccountId
+	audit.token = lease.AccessToken
 	targetURL := strings.TrimRight(ANTHROPIC_API_BASE, "/") + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
+	audit.target = targetURL
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
+		audit.note = "构造上游请求失败"
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
 	}
 	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
-	if claudeDbg {
-		Log("[claude-proxy] #%d [辅助][req] %s %s", reqID, r.Method, r.URL.String())
-		dumpClaudeHeaders(reqID, "aux-req-hdr", r.Header)
-		dumpClaudeBody(reqID, "aux-req-body", body)
-		dumpClaudeHeaders(reqID, "aux-upstream-req-hdr", req.Header)
-	}
 
 	auxEgress := claudeEgressProxy(lease.ProxyURL)
 	// 安全闸:辅助请求同样禁止从本机 IP 直连 anthropic。
 	if claudeEgressBlocked(auxEgress) {
-		Log("[claude-proxy] #%d [辅助] ✗ 拒绝直连本机:未配出口代理", reqID)
+		audit.status = 502
+		audit.note = "拒绝直连本机:未配出口代理"
 		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com")
 		return
 	}
 	resp, err := newClaudeUpstreamClient(auxEgress).Do(req)
 	if err != nil {
+		audit.note = "上游请求失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-	dumpClaudeHeaders(reqID, "aux-resp-hdr", resp.Header)
-	dumpClaudeBody(reqID, "aux-resp-body", respBody)
+	audit.status = resp.StatusCode
+	audit.respBody = respBody
 	writeUpstreamHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
-	Log("[claude-proxy] #%d [辅助] %s 上游码=%d", reqID, r.URL.Path, resp.StatusCode)
 }
 
 // claudeEgressProxy 返回该号的出口代理 = 服务端为账号下发的粘性住宅代理(lease.ProxyURL)。

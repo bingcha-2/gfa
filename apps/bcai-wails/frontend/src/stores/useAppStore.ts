@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import * as api from '@/services/wails'
-import type { Config, IDEProduct, UpdateStatus, ActiveAccountSummary } from '@/types'
+import type { Config, IDEProduct, UpdateStatus, ActiveAccountSummary, BoundAccountInfo } from '@/types'
 
 /** Fallback rate-limit window when the server hasn't reported one yet (5h). */
 const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
@@ -26,6 +26,7 @@ interface AppState {
   bucketResetMs: Record<string, number>
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
+  boundAccounts: BoundAccountInfo[]
   activationExpiresAt: string
 
   // Today stats
@@ -85,6 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bucketResetMs: {},
   codexQuota: null,
   claudeQuota: null,
+  boundAccounts: [],
   activationExpiresAt: '',
   todayRequests: 0,
   todayErrors: 0,
@@ -102,7 +104,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ideProducts: [],
   updateStatus: null,
   announcement: '',
-  appVersion: '5.1.3',
+  appVersion: '8.0.0',
   appStartTime: Date.now(),
   activeAccount: null,
 
@@ -126,6 +128,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bucketResetMs: data.leaser?.bucketResetMs || {},
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
         claudeQuota: (data.leaser?.claudeQuota as AppState['claudeQuota']) || null,
+        boundAccounts: data.leaser?.boundAccounts || [],
         activationExpiresAt: data.leaser?.activationExpiresAt || '',
         todayRequests: today.requests || 0,
         todayErrors: today.errors || 0,

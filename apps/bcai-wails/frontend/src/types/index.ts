@@ -97,6 +97,18 @@ export interface CreditsInfo {
   paidTierID: string
 }
 
+// ===== Bound Account (绑定卡每个产品当前租到的账号 + token) =====
+export interface BoundAccountInfo {
+  product: string // antigravity | codex | anthropic
+  accountId: number
+  emailHint: string
+  planType: string // 会员等级:antigravity ultra/premium/…; codex plus/pro; anthropic max/pro
+  accessToken: string
+  expiresAt: number
+  leasedAt: number
+  projectId?: string
+}
+
 // ===== Update =====
 export interface UpdateStatus {
   status: string

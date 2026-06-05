@@ -41,7 +41,7 @@ import {
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
-import type { Config, IDEStatus, AccountInfo, UpdateStatus, ActiveAccountSummary } from '@/types'
+import type { Config, IDEStatus, AccountInfo, UpdateStatus, ActiveAccountSummary, BoundAccountInfo } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -72,6 +72,7 @@ export interface StatsResponse {
     bucketResetMs?: Record<string, number>
     codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
+    boundAccounts?: BoundAccountInfo[]
     hasToken: boolean
     lastError: string
     activationExpiresAt: string

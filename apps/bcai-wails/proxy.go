@@ -88,17 +88,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	GetUsageStats().AddRequest()
 	reqId := atomic.LoadInt64(&p.stats.TotalRequests)
 
-	isNoise := isNoiseRequest(r.URL.Path)
-	if !isNoise {
-		Log("[proxy] #%d <- %s %s", reqId, r.Method, r.URL.Path)
-	}
-
 	// Read body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		if !isNoise {
-			Log("[proxy] #%d Failed to read body: %v", reqId, err)
-		}
 		p.sendJsonError(w, 400, "Failed to read request body")
 		return
 	}
@@ -108,13 +100,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 	// If bypass mode is enabled, forward directly with original headers
 	if bypass {
-		if !isNoise {
-			Log("[proxy] #%d [BYPASS] forwarding directly to Google", reqId)
-		}
-		p.forwardToGoogle(w, r, bodyBytes, upstream, reqId)
+		audit := newProxyAudit("antigravity", reqId, "直连", r.Method, r.URL.Path)
+		defer audit.emit()
+		audit.reqBody = bodyBytes
+		p.forwardToGoogle(w, r, bodyBytes, upstream, reqId, audit)
 		return
 	}
 
+	// 生成请求分派给各自的 handler,它们持有自己的 audit(此处不再重复出审计行)。
 	if isGen {
 		if isCloudCodeRequest(r.URL.Path) {
 			p.handleGenerationRequest(w, r, bodyBytes, card, deviceId, upstream, reqId)
@@ -128,7 +121,11 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 
 func (p *ProxyServer) handleNonGenerationRequest(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
 	if isUndefinedEndpoint(r.URL.Path) {
-		Log("[proxy] #%d [MOCK] undefined endpoint safety net", reqId)
+		audit := newProxyAudit("antigravity", reqId, "MOCK", r.Method, r.URL.Path)
+		defer audit.emit()
+		audit.reqBody = body
+		audit.note = "未定义端点兜底"
+		audit.status = 200
 		p.sendJson(w, 200, map[string]interface{}{})
 		return
 	}
@@ -151,22 +148,33 @@ func (p *ProxyServer) handleNonGenerationRequest(w http.ResponseWriter, r *http.
 	// 认证相关请求（getUserInfo 等）：保留 IDE 原始 OAuth token 透传
 	// 不替换为租用 token，否则 IDE 重启后会认为未登录（与 timo 行为一致）
 	if isPassthroughRequest(r.URL.Path) {
-		Log("[proxy] #%d [PASSTHROUGH] %s (keeping original auth)", reqId, r.URL.Path)
-		p.forwardToGoogle(w, r, body, upstream, reqId)
+		audit := newProxyAudit("antigravity", reqId, "透传", r.Method, r.URL.Path)
+		defer audit.emit()
+		audit.reqBody = body
+		audit.note = "保留原始 auth"
+		p.forwardToGoogle(w, r, body, upstream, reqId, audit)
 		return
 	}
 
 	// 其他非生成请求注入 token 后转发
-	p.forwardWithInjectedToken(w, r, body, card, deviceId, upstream, reqId)
+	audit := newProxyAudit("antigravity", reqId, "转发", r.Method, r.URL.Path)
+	defer audit.emit()
+	audit.reqBody = body
+	p.forwardWithInjectedToken(w, r, body, card, deviceId, upstream, reqId, audit)
 }
 
 // handleFetchModelsWithCache 带缓存 + token 注入的 fetchAvailableModels 处理
 func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
+	audit := newProxyAudit("antigravity", reqId, "模型", r.Method, r.URL.Path)
+	defer audit.emit()
+	audit.reqBody = body
+
 	endpoint := upstreamEndpointForPath(r.URL.Path)
 	targetUrl, _ := url.Parse(endpoint + r.URL.Path + "?" + r.URL.RawQuery)
+	audit.target = targetUrl.Host + targetUrl.Path
 	req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
 	if err != nil {
-		p.serveModelsCache(w, reqId, "request build error")
+		p.serveModelsCache(w, reqId, "request build error", audit)
 		return
 	}
 
@@ -186,28 +194,30 @@ func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.
 		leaser := GetLeaser()
 		lease, err := leaser.LeaseToken(card, deviceId, false, nil, upstream)
 		if err != nil {
-			Log("[proxy] #%d [MODELS] token lease failed: %v, trying cache", reqId, err)
-			p.serveModelsCache(w, reqId, "token lease error")
+			audit.note += fmt.Sprintf("; 租号失败回落缓存:%v", err)
+			p.serveModelsCache(w, reqId, "token lease error", audit)
 			return
 		}
 		req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
-		Log("[proxy] #%d [MODELS] -> fetchAvailableModels (injected token)", reqId)
+		audit.accountID = lease.AccountId
+		audit.token = lease.AccessToken
 	} else {
-		Log("[proxy] #%d [MODELS] -> fetchAvailableModels (no card, using cache)", reqId)
-		p.serveModelsCache(w, reqId, "no card configured")
+		audit.note += "; 无卡回落缓存"
+		p.serveModelsCache(w, reqId, "no card configured", audit)
 		return
 	}
 
 	client := createHttpClient(upstream)
 	resp, err := client.Do(req)
 	if err != nil {
-		Log("[proxy] #%d [MODELS] upstream error: %v", reqId, err)
-		p.serveModelsCache(w, reqId, "network error")
+		audit.note += fmt.Sprintf("; 上游错误回落缓存:%v", err)
+		p.serveModelsCache(w, reqId, "network error", audit)
 		return
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	audit.status = resp.StatusCode
 
 	if resp.StatusCode == 200 {
 		// 成功 → 缓存响应
@@ -216,7 +226,7 @@ func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.
 		copy(p.modelsCache, respBody)
 		p.modelsCacheTime = time.Now().Unix()
 		p.modelsCacheMu.Unlock()
-		Log("[proxy] #%d [MODELS] <- 200 OK, cached (%d bytes)", reqId, len(respBody))
+		audit.respBody = respBody
 
 		for k, v := range resp.Header {
 			if isHopByHopHeader(k) {
@@ -229,18 +239,18 @@ func (p *ProxyServer) handleFetchModelsWithCache(w http.ResponseWriter, r *http.
 		w.WriteHeader(200)
 		_, _ = w.Write(respBody)
 	} else {
-		Log("[proxy] #%d [MODELS] <- %d, serving cache", reqId, resp.StatusCode)
+		audit.note += fmt.Sprintf("; 上游%d回落缓存", resp.StatusCode)
 		// 401 = token 过期或被吊销 → 强制清除缓存 token，下次 LeaseToken 会重新获取
 		if resp.StatusCode == http.StatusUnauthorized {
 			leaser := GetLeaser()
 			leaser.ClearCache()
-			Log("[proxy] #%d [MODELS] 401 → invalidated cached token", reqId)
+			audit.note += "; 401清缓存token"
 		}
-		p.serveModelsCache(w, reqId, fmt.Sprintf("upstream %d", resp.StatusCode))
+		p.serveModelsCache(w, reqId, fmt.Sprintf("upstream %d", resp.StatusCode), audit)
 	}
 }
 
-func (p *ProxyServer) serveModelsCache(w http.ResponseWriter, reqId int64, reason string) {
+func (p *ProxyServer) serveModelsCache(w http.ResponseWriter, reqId int64, reason string, audit *proxyAudit) {
 	p.modelsCacheMu.RLock()
 	cached := p.modelsCache
 	cacheTime := p.modelsCacheTime
@@ -248,22 +258,26 @@ func (p *ProxyServer) serveModelsCache(w http.ResponseWriter, reqId int64, reaso
 
 	if cached != nil && len(cached) > 0 {
 		age := time.Now().Unix() - cacheTime
-		Log("[proxy] #%d [MODELS-CACHE] serving cached models (age: %ds, reason: %s)", reqId, age, reason)
+		audit.note += fmt.Sprintf("; 命中缓存(age=%ds,%s)", age, reason)
+		audit.respBody = cached
+		audit.status = 200
 		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 		w.Header().Set("X-BingchaAI-Cache", "HIT")
 		w.WriteHeader(200)
 		_, _ = w.Write(cached)
 	} else {
-		Log("[proxy] #%d [MODELS-CACHE] no cache, serving fallback (reason: %s)", reqId, reason)
+		audit.note += fmt.Sprintf("; 无缓存→兜底(%s)", reason)
+		audit.status = 200
 		fallback := buildFallbackModels()
 		p.sendJson(w, 200, fallback)
 	}
 }
 
 // forwardWithInjectedToken 为非生成请求注入 token 后转发（loadCodeAssist 等）
-func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
+func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64, audit *proxyAudit) {
 	endpoint := upstreamEndpointForPath(r.URL.Path)
 	targetUrl, _ := url.Parse(endpoint + r.URL.Path + "?" + r.URL.RawQuery)
+	audit.target = targetUrl.Host + targetUrl.Path
 	req, err := http.NewRequest(r.Method, targetUrl.String(), bytes.NewReader(body))
 	if err != nil {
 		p.sendJsonError(w, 500, "Internal request error")
@@ -294,10 +308,12 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 		leaser := GetLeaser()
 		lease, err := leaser.LeaseToken(card, deviceId, false, nil, upstream)
 		if err != nil {
-			Log("[proxy] #%d token lease failed, forwarding with original auth: %v", reqId, err)
+			audit.note += fmt.Sprintf("; 租号失败用原始auth:%v", err)
 			req.Header.Set("Authorization", origAuth)
 		} else {
 			req.Header.Set("Authorization", "Bearer "+lease.AccessToken)
+			audit.accountID = lease.AccountId
+			audit.token = lease.AccessToken
 		}
 	}
 
@@ -323,14 +339,16 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 		}
 		if attempt < maxRetries {
 			backoff := time.Duration(attempt) * time.Second
-			Log("[proxy] #%d Forward attempt %d/%d failed: %v, retrying in %v...", reqId, attempt, maxRetries, doErr, backoff)
+			audit.note += fmt.Sprintf("; 转发重试%d/%d失败:%v", attempt, maxRetries, doErr)
 			time.Sleep(backoff)
 		}
 	}
 
 	if doErr != nil {
-		Log("[proxy] #%d Forward failed after %d attempts: %v", reqId, maxRetries, doErr)
+		audit.note += fmt.Sprintf("; 转发%d次后失败:%v", maxRetries, doErr)
 		if fallback, ok := ideFallbackPayload(r.URL.Path); ok {
+			audit.note += "; 回落兜底"
+			audit.status = 200
 			p.sendJson(w, 200, fallback)
 			return
 		}
@@ -338,9 +356,11 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer resp.Body.Close()
+	audit.status = resp.StatusCode
 
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
+		audit.respBody = respBody
 		for k, v := range resp.Header {
 			if isHopByHopHeader(k) {
 				continue
@@ -365,9 +385,10 @@ func (p *ProxyServer) forwardWithInjectedToken(w http.ResponseWriter, r *http.Re
 	}
 }
 
-func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, body []byte, upstream string, reqId int64) {
+func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, body []byte, upstream string, reqId int64, audit *proxyAudit) {
 	endpoint := upstreamEndpointForPath(r.URL.Path)
 	targetUrl, _ := url.Parse(endpoint + r.URL.Path + "?" + r.URL.RawQuery)
+	audit.target = targetUrl.Host + targetUrl.Path
 
 	isNoise := isNoiseRequest(r.URL.Path)
 
@@ -401,16 +422,17 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 		// EOF/连接错误 → 短暂等待后重试
 		if attempt < maxForwardRetries {
 			backoff := time.Duration(attempt) * time.Second
-			Log("[proxy] #%d Forward attempt %d/%d failed: %v, retrying in %v...", reqId, attempt, maxForwardRetries, lastErr, backoff)
+			audit.note += fmt.Sprintf("; 转发重试%d/%d失败:%v", attempt, maxForwardRetries, lastErr)
 			time.Sleep(backoff)
 			continue
 		}
 	}
 
 	if lastErr != nil {
-		Log("[proxy] #%d Forward failed after %d attempts: %v", reqId, maxForwardRetries, lastErr)
+		audit.note += fmt.Sprintf("; 转发%d次后失败:%v", maxForwardRetries, lastErr)
 		if fallback, ok := ideFallbackPayload(r.URL.Path); ok {
-			Log("[proxy] #%d [FALLBACK] Serving IDE fallback after upstream failure", reqId)
+			audit.note += "; 回落兜底"
+			audit.status = 200
 			p.sendJson(w, 200, fallback)
 			return
 		}
@@ -418,9 +440,11 @@ func (p *ProxyServer) forwardToGoogle(w http.ResponseWriter, r *http.Request, bo
 		return
 	}
 	defer resp.Body.Close()
+	audit.status = resp.StatusCode
 
 	if !isNoise {
 		respBody, _ := io.ReadAll(resp.Body)
+		audit.respBody = respBody
 		// Copy headers
 		for k, v := range resp.Header {
 			if isHopByHopHeader(k) {

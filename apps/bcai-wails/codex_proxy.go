@@ -210,8 +210,13 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		return
 	}
 
+	// 一次代理只出一条日志:全程累积到 audit,defer 时统一输出。
+	audit := newProxyAudit("codex", reqID, "生成", r.Method, r.URL.Path)
+	defer audit.emit()
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		audit.note = "读请求体失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
@@ -220,12 +225,13 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// 账号无效,留着会让 chatgpt.com 直接报签名错误(换号场景的莫名 4xx 主因)。
 	if cleaned, dropped := sanitizeCodexReasoningEncryptedContent(body); dropped > 0 {
 		body = cleaned
-		Log("[codex-proxy] #%d [生成] 剔除 %d 条非法 reasoning.encrypted_content(换号签名失配)", reqID, dropped)
 	}
+	audit.reqBody = body
 	modelKey := extractCodexModelKey(body)
 	if modelKey == "" {
 		modelKey = "gpt-5-codex"
 	}
+	audit.model = modelKey
 
 	leaseFunc := p.leaseToken
 	if leaseFunc == nil {
@@ -237,18 +243,20 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	}, upstreamProxy)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "lease 失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex token lease failed: %v", err))
 		return
 	}
-	// 一眼看清:这是生成请求,已用【号池】token(非本地 token)替换转发。
-	Log("[codex-proxy] #%d [生成] %s model=%s → 用号池token accountId=%d(已替换Codex本地token)",
-		reqID, r.URL.Path, modelKey, lease.AccountId)
+	audit.accountID = lease.AccountId
+	audit.token = lease.AccessToken
 
 	targetURL, err := p.targetURL(r)
 	if err != nil {
+		audit.note = "目标地址错误:" + err.Error()
 		p.sendJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	audit.target = targetURL
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
@@ -287,6 +295,8 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.status = 502
+		audit.note = "上游请求失败(Do err):" + err.Error()
 		p.reportProblemSafe(card, deviceId, ReportDetails{
 			StatusCode: 502,
 			ModelKey:   modelKey,
@@ -298,6 +308,7 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	}
 	defer resp.Body.Close()
 	_ = accountIDForLog
+	audit.status = resp.StatusCode
 
 	// 何时按流式转发回 codex:上游对 responses 流式 200 有时**不带 Content-Type**
 	// (实测 chatgpt.com 的 codex 后端回空 CT)。只靠响应头判流式会漏判 → 把整段 SSE
@@ -310,8 +321,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if streamBack {
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
+		tee := newAuditTee(w)
 		tr := &ttftReader{r: resp.Body, start: reqStart}
-		input, output, total, copyErr := copyStreamingCodexResponse(w, tr)
+		input, output, total, copyErr := copyStreamingCodexResponse(tee, tr)
+		audit.respBody = tee.captured()
 		details := ReportDetails{
 			StatusCode:          resp.StatusCode,
 			ModelKey:            modelKey,
@@ -320,20 +333,19 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 			RawTotalTokens:      total,
 			BillableTotalTokens: total,
 		}
+		audit.inTokens, audit.outTokens = input, output
 		if copyErr != nil {
 			details.StatusCode = 502
 			details.Reason = "stream_copy_error"
 			details.ErrorText = copyErr.Error()
-			Log("[codex-proxy] #%d [生成] 上游码=%d 流中断:%v(不上报用量)", reqID, resp.StatusCode, copyErr)
+			audit.note = "流中断(不上报用量):" + copyErr.Error()
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 			return
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			Log("[codex-proxy] #%d [生成] ✓ 上游码=%d TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
-				reqID, resp.StatusCode, tr.ttftMs(), input, output, total)
 			p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
 		} else {
-			Log("[codex-proxy] #%d [生成] ✗ 上游码=%d(非2xx)→ 上报为问题,不计费", reqID, resp.StatusCode)
+			audit.note = "上游非2xx → 上报为问题,不计费"
 			details.Reason = "codex_upstream_error"
 			p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
 		}
@@ -343,25 +355,22 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "读上游响应失败:" + readErr.Error()
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read Codex upstream response")
 		return
 	}
+	audit.respBody = respBody
 
 	p.writeResponseHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
 
 	details := codexReportDetails(resp.StatusCode, modelKey, respBody)
+	audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		Log("[codex-proxy] #%d [生成] ✓ 上游码=%d tokens=%d → 已提交用量上报",
-			reqID, resp.StatusCode, details.BillableTotalTokens)
 		p.reportUsageSafe(card, deviceId, details, upstreamProxy, lease)
 	} else {
-		snippet := string(respBody)
-		if len(snippet) > 400 {
-			snippet = snippet[:400]
-		}
-		Log("[codex-proxy] #%d [生成] ✗ 上游码=%d acct=%d body=%q", reqID, resp.StatusCode, lease.AccountId, strings.TrimSpace(snippet))
+		audit.note = "上游错误"
 		details.Reason = "codex_upstream_error"
 		details.ErrorText = string(respBody)
 		p.reportProblemSafe(card, deviceId, details, upstreamProxy, lease)
@@ -375,8 +384,12 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 //   - 目标是 {BaseURL}/responses,而非 chatgpt.com/backend-api/codex;
 //   - 不发 Originator / ChatGPT-Account-Id 这些 ChatGPT 专属客户端头。
 func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request, reqID int64, upstreamProxy string, relay *CodexRelayConfig) {
+	audit := newProxyAudit("codex", reqID, "中转", r.Method, r.URL.Path)
+	defer audit.emit()
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		audit.note = "读请求体失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
@@ -402,9 +415,13 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		targetURL = relayTargetURL(relay, r)
 	}
 	modelKey = mappedModel
+	audit.model = modelKey
+	audit.target = targetURL
+	audit.reqBody = body
 
 	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
+		audit.note = "构造中转请求失败"
 		p.sendJSONError(w, http.StatusInternalServerError, "failed to build relay request")
 		return
 	}
@@ -413,9 +430,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", mustParseURL(targetURL).Host)
 	applyCodexRelayHeaders(req.Header, r.Header)
-
-	Log("[codex-proxy] #%d [中转] %s model=%s proto=%s → %s(本地卡密)",
-		reqID, r.URL.Path, modelKey, relayProtoLabel(chatMode), targetURL)
+	audit.token = strings.TrimSpace(relay.APIKey)
 
 	// 中转目标多为第三方域名,会自动回退到标准 transport;仅当中转指向 chatgpt.com
 	// 才会命中 uTLS(用同一入口便于统一维护)。
@@ -423,14 +438,16 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	resp, err := client.Do(req)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "上游请求失败:" + err.Error()
 		p.sendJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	defer resp.Body.Close()
+	audit.status = resp.StatusCode
 
 	// chat 模式:把上游 chat/completions 响应回译成 Codex responses 再返回 Codex。
 	if chatMode {
-		p.serveRelayChatResponse(w, resp, reqID, modelKey)
+		p.serveRelayChatResponse(w, resp, audit, modelKey)
 		return
 	}
 
@@ -438,24 +455,27 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 	if isCodexStreamingResponse(resp) {
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
-		if _, _, _, copyErr := copyStreamingCodexResponse(w, resp.Body); copyErr != nil {
-			Log("[codex-proxy] #%d [中转] 上游码=%d 流中断:%v", reqID, resp.StatusCode, copyErr)
+		tee := newAuditTee(w)
+		if _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
+			audit.note = "流中断:" + copyErr.Error()
 		}
+		audit.respBody = tee.captured()
 		return
 	}
 
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "读中转响应失败:" + readErr.Error()
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read relay upstream response")
 		return
 	}
+	audit.respBody = respBody
 	p.writeResponseHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		atomic.AddInt64(&p.totalErrors, 1)
-		Log("[codex-proxy] #%d [中转] ✗ 上游码=%d", reqID, resp.StatusCode)
 	}
 }
 
@@ -486,7 +506,7 @@ func relayChatTargetURL(relay *CodexRelayConfig, r *http.Request) string {
 // serveRelayChatResponse 处理 chat 协议中转的上游响应:把 chat/completions 回译为
 // Codex responses 格式后返回给 Codex。流式 → responses SSE;非流式 → responses JSON。
 // 转码逻辑见 codex_openai_relay.go。
-func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Response, reqID int64, model string) {
+func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Response, audit *proxyAudit, model string) {
 	created := relayNowUnix()
 	if isCodexStreamingResponse(resp) {
 		h := w.Header()
@@ -494,42 +514,36 @@ func (p *CodexProxy) serveRelayChatResponse(w http.ResponseWriter, resp *http.Re
 		h.Set("Cache-Control", "no-cache")
 		h.Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
-		if _, _, _, err := streamChatToResponses(w, resp.Body, model, created); err != nil {
-			Log("[codex-proxy] #%d [中转/chat] 流中断:%v", reqID, err)
+		tee := newAuditTee(w)
+		if _, _, _, err := streamChatToResponses(tee, resp.Body, model, created); err != nil {
+			audit.note = "chat 流中断:" + err.Error()
 		}
+		audit.respBody = tee.captured()
 		return
 	}
 
 	chatBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
+		audit.note = "读中转响应失败:" + readErr.Error()
 		p.sendJSONError(w, http.StatusBadGateway, "failed to read relay upstream response")
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// 上游报错:打出错误体(截断)便于排查,并原样透传(不强行转码)。
+		// 上游报错:原样透传(不强行转码),错误体进审计正文。
 		atomic.AddInt64(&p.totalErrors, 1)
-		snippet := string(chatBody)
-		if len(snippet) > 600 {
-			snippet = snippet[:600]
-		}
-		Log("[codex-proxy] #%d [中转/chat] ✗ 上游码=%d body=%q", reqID, resp.StatusCode, strings.TrimSpace(snippet))
+		audit.note = "chat 上游错误"
+		audit.respBody = chatBody
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(chatBody)
 		return
 	}
 	out := convertChatToResponsesJSON(chatBody, model, created)
+	audit.respBody = out
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
-}
-
-func relayProtoLabel(chatMode bool) string {
-	if chatMode {
-		return "chat"
-	}
-	return "responses"
 }
 
 // requestWantsStream 读出请求体里的 stream 标志(默认 false)。

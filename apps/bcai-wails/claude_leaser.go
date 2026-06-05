@@ -25,6 +25,7 @@ type ClaudeTokenLease struct {
 	AccountId   int    `json:"accountId"`
 	LeaseId     string `json:"leaseId"`
 	EmailHint   string `json:"emailHint"`
+	PlanType    string `json:"planType"` // 账号会员等级(max/pro/...),供前端展示
 	ExpiresAt   int64  `json:"expiresAt"`
 	LeasedAt    int64  `json:"leasedAt"`
 	// ProxyURL 是服务端为该账号下发的粘性出口代理(住宅/移动 IP),空=直连。
@@ -42,6 +43,7 @@ type claudeLeaseTokenResp struct {
 	AccountId    json.RawMessage `json:"accountId"`
 	LeaseId      string          `json:"leaseId"`
 	EmailHint    string          `json:"emailHint"`
+	PlanType     string          `json:"planType"`
 	ExpiresAt    string          `json:"expiresAt"`
 	BoundAccount *struct {
 		Id       int     `json:"id"`
@@ -62,6 +64,7 @@ type ClaudeLeaser struct {
 
 	mu             sync.Mutex
 	lastQuota      *ClaudeQuotaWindow // 持久副本(供前端显示 claude 血条)
+	lastLease      *ClaudeTokenLease  // 最近一次成功租到的号(供前端"绑定账号信息"显示)
 	pendingReports []pendingReport    // 失败上报队列(防丢用量)
 }
 
@@ -182,6 +185,7 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		AccountId:   parseAccountId(leaseResp.AccountId),
 		LeaseId:     leaseResp.LeaseId,
 		EmailHint:   leaseResp.EmailHint,
+		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
 		ProxyURL:    leaseResp.ClaudeProxyUrl,
@@ -196,6 +200,9 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	}
 	recordAccountBuckets(body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)
+	l.mu.Lock()
+	l.lastLease = lease
+	l.mu.Unlock()
 	l.setLastError("")
 	return lease, nil
 }

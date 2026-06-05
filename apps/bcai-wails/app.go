@@ -200,6 +200,8 @@ func (a *App) GetStats() map[string]interface{} {
 	if cq := claudeQuotaStatus(GetClaudeLeaser().LatestClaudeQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["claudeQuota"] = cq
 	}
+	// 绑定卡各产品当前租到的账号信息 + token,供前端「绑定账号信息」面板显示。
+	leaserStatus["boundAccounts"] = collectBoundAccounts()
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()
 

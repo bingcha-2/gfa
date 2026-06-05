@@ -26,6 +26,7 @@ type TokenLease struct {
 	AccountId      int                    `json:"accountId"`
 	LeaseId        string                 `json:"leaseId"`
 	EmailHint      string                 `json:"emailHint"`
+	PlanType       string                 `json:"planType"` // 账号会员等级(ultra/premium/...),供前端展示
 	ExpiresAt      int64                  `json:"expiresAt"` // millisecond unix timestamp
 	LeasedAt       int64                  `json:"leasedAt"`
 	RetryPolicy    *RemoteRetryPolicy     `json:"-"` // P1④: server-controlled retry policy
@@ -298,6 +299,7 @@ type LeaseTokenResp struct {
 	AccountId            json.RawMessage `json:"accountId"` // API may return number or string
 	LeaseId              string          `json:"leaseId"`
 	EmailHint            string          `json:"emailHint"`
+	PlanType             string          `json:"planType"`
 	AccessTokenExpiresAt string          `json:"accessTokenExpiresAt"`
 	AccessTokenExpiresIn int64           `json:"accessTokenExpiresIn"`
 	ActivationExpiresAt  string          `json:"activationExpiresAt"`
@@ -536,6 +538,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		AccountId:   accountId,
 		LeaseId:     leaseResp.LeaseId,
 		EmailHint:   leaseResp.EmailHint,
+		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixNano() / int64(time.Millisecond),
 		Probation:   leaseResp.Probation,
