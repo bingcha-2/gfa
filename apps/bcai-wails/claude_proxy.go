@@ -173,6 +173,17 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	// 观测点②b:已拿到响应头。能区分"卡在网络"还是"上游回了码但 body 不对"。
 	Log("[claude-proxy] #%d [生成] ← 上游响应头 码=%d ct=%q ce=%q",
 		reqID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Encoding"))
+	// 探针:成功响应时把 anthropic 限流头打到日志,确认 5h/周额度的 unified 头真实名
+	// (代码里没有、429 响应也不带,只能从真实 200 抓)。拿到头名后据此实现"解析→搭
+	// reportResult 回服务端落库"的额度刷新,零额外请求。
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		for k, vs := range resp.Header {
+			lk := strings.ToLower(k)
+			if strings.Contains(lk, "ratelimit") || strings.HasPrefix(lk, "anthropic-") || lk == "retry-after" {
+				Log("[claude-proxy] #%d [hdr-probe] %s: %s", reqID, k, strings.Join(vs, ","))
+			}
+		}
+	}
 
 	streamBack := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 		(isClaudeStreamingResponse(resp) || requestWantsStream(body))

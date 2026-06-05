@@ -5,7 +5,6 @@ import type { CreditDelta, Provider } from "../lease-core/provider";
 import { UNIVERSAL_BILLING } from "../token-server/token-billing";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { ClaudeAccount, refreshClaudeAccessToken } from "./auth/claude-token-provider";
-import { fetchClaudeQuotaUpstream } from "./auth/claude-usage";
 import { ClaudeModelCatalog } from "./claude-model-catalog";
 
 /** Clamp a 0..100 remaining-percentage to a finite number in range. */
@@ -160,23 +159,5 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
       acc.claudeWeeklyResetTime = weeklyReset;
     }
     return { account, creditDelta: null };
-  }
-
-  /**
-   * 服务端为准的血条来源:租号时(60s throttle)GET /api/oauth/usage 拉该号的 5h/周
-   * 剩余 + reset,直接 applyQuotaSnapshot 写到账号 → 本次 lease 响应即带 claudeWindows。
-   * 不依赖客户端上报响应头。best-effort:fetch 永不抛,这里再兜一层。
-   */
-  async refreshQuotaOnLease(account: ClaudeAccount, accessToken: string): Promise<void> {
-    if (!accessToken) return;
-    const refreshedAt = (account as Record<string, unknown>).modelQuotaRefreshedAt;
-    // throttle:lease 是热路径,60s 内不重复打 /api/oauth/usage(额度变化慢)。
-    if (typeof refreshedAt === "number" && Date.now() - refreshedAt < 60_000) return;
-    try {
-      const snap = await fetchClaudeQuotaUpstream(accessToken);
-      if (snap?.claudeQuota) this.applyQuotaSnapshot(account, snap);
-    } catch {
-      // best-effort:刷额度失败不影响租号
-    }
   }
 }

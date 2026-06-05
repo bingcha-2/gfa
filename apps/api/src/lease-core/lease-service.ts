@@ -437,16 +437,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       throw this.fail(503, lastError?.message || this.noAccountMessage);
     }
 
-    // 服务端为准:租号时顺带刷新该号的上游额度快照(provider 自行 throttle + 吞错),
-    // 让本次 lease 响应直接带上新鲜的 5h/周血条,无需客户端上报。anthropic 用之;codex/antigravity 不实现。
-    if (this.provider.refreshQuotaOnLease) {
-      try {
-        await this.provider.refreshQuotaOnLease(account, accessToken);
-      } catch {
-        // best-effort:刷额度失败绝不影响租号本身
-      }
-    }
-
     this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
     const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, boundAccountId, accessToken);
     this.leases.set(lease.leaseId, lease);
