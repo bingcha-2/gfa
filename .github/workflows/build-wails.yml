@@ -189,12 +189,22 @@ jobs:
             ${{ env.WAILS_DIR }}/build/bin/*-meta.json
             ${{ env.WAILS_DIR }}/build/bin/*.tar.gz
 
-  # ──────────────── 阶段 2: 发布到 bcai.space + GitHub Release ────────────────
+  # ──────────────── 阶段 2: 发布到公开 GitHub Release ────────────────
+  # 二进制文件发布到公开仓库 bcai-releases，客户端直接从 GitHub CDN 下载。
+  # 仅 latest-wails.json 提交到本仓库（供 bcai.lol / bcai.space 提供更新检查）。
+  # 前提：
+  #   1. 在 GitHub 创建公开仓库: bingcha135-sys/bcai-releases
+  #   2. 创建 PAT (Fine-grained, contents:write 权限 on bcai-releases)
+  #   3. 在本仓库 Settings → Secrets 添加 RELEASE_PAT
   publish:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
+    env:
+      RELEASE_REPO: bingcha135-sys/bcai-releases
+      GH_DOWNLOAD_BASE: https://github.com/bingcha135-sys/bcai-releases/releases/download
 
     steps:
       - name: Checkout repository
@@ -211,146 +221,54 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f -ls
 
-      # ── 复制构建产物到 web/public/updates/ ──
-      - name: Deploy to bcai.space updates directory
+      # ── 读取各平台 meta (hash + size) ──
+      - name: Read build metadata
+        id: meta
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          CHANGELOG="${{ github.event.inputs.changelog }}"
-          UPDATES="${{ env.UPDATES_DIR }}"
-
-          mkdir -p "$UPDATES"
-
-          # 复制 Windows exe
-          WIN_EXE=$(find artifacts -name "*.exe" | head -1)
-          if [ -n "$WIN_EXE" ]; then
-            cp "$WIN_EXE" "${UPDATES}/${{ env.APP_NAME }}-${VERSION}.exe"
-            echo "✅ Copied Windows exe"
-          fi
-
-          # 复制 macOS DMG (arm64 + amd64)
-          for dmg in $(find artifacts -name "*.dmg"); do
-            BASENAME=$(basename "$dmg")
-            cp "$dmg" "${UPDATES}/${BASENAME}"
-            echo "✅ Copied $BASENAME"
-          done
-
-          # 复制 Linux tar.gz
-          LINUX_TAR=$(find artifacts -name "*.tar.gz" | head -1)
-          if [ -n "$LINUX_TAR" ]; then
-            cp "$LINUX_TAR" "${UPDATES}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz"
-            echo "✅ Copied Linux tar.gz"
-          fi
-
-          # 读取 Windows meta
-          WIN_META=$(find artifacts -name "windows-meta.json" | head -1)
-          WIN_HASH=""
-          WIN_SIZE=0
-          if [ -n "$WIN_META" ] && [ -f "$WIN_META" ]; then
-            WIN_HASH=$(jq -r '.hash' "$WIN_META")
-            WIN_SIZE=$(jq -r '.size' "$WIN_META")
-          fi
-
-          # 读取 macOS arm64 meta
-          MAC_ARM_META=$(find artifacts -name "macos-arm64-meta.json" | head -1)
-          MAC_ARM_HASH=""
-          MAC_ARM_SIZE=0
-          if [ -n "$MAC_ARM_META" ] && [ -f "$MAC_ARM_META" ]; then
-            MAC_ARM_HASH=$(jq -r '.hash' "$MAC_ARM_META")
-            MAC_ARM_SIZE=$(jq -r '.size' "$MAC_ARM_META")
-          fi
-
-          # 读取 macOS amd64 (Intel) meta
-          MAC_AMD_META=$(find artifacts -name "macos-amd64-meta.json" | head -1)
-          MAC_AMD_HASH=""
-          MAC_AMD_SIZE=0
-          if [ -n "$MAC_AMD_META" ] && [ -f "$MAC_AMD_META" ]; then
-            MAC_AMD_HASH=$(jq -r '.hash' "$MAC_AMD_META")
-            MAC_AMD_SIZE=$(jq -r '.size' "$MAC_AMD_META")
-          fi
-
-          # 读取 Linux amd64 meta
-          LINUX_META=$(find artifacts -name "linux-amd64-meta.json" | head -1)
-          LINUX_HASH=""
-          LINUX_SIZE=0
-          if [ -n "$LINUX_META" ] && [ -f "$LINUX_META" ]; then
-            LINUX_HASH=$(jq -r '.hash' "$LINUX_META")
-            LINUX_SIZE=$(jq -r '.size' "$LINUX_META")
-          fi
-
-
-
-          # 生成 latest-wails.json (客户端自动更新用)
-          cat > "${UPDATES}/latest-wails.json" << EOF
-          {
-            "version": "${VERSION}",
-            "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}.exe",
-            "sha256": "${WIN_HASH}",
-            "size": ${WIN_SIZE},
-            "changelog": "${CHANGELOG}",
-            "minVersion": "${VERSION}",
-            "macOS": {
-              "arm64": {
-                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
-                "sha256": "${MAC_ARM_HASH}",
-                "size": ${MAC_ARM_SIZE}
-              },
-              "amd64": {
-                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
-                "sha256": "${MAC_AMD_HASH}",
-                "size": ${MAC_AMD_SIZE}
-              }
-            },
-            "linux": {
-              "amd64": {
-                "url": "https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
-                "sha256": "${LINUX_HASH}",
-                "size": ${LINUX_SIZE}
-              }
-            }
+          read_meta() {
+            local file=$(find artifacts -name "$1" | head -1)
+            if [ -n "$file" ] && [ -f "$file" ]; then
+              echo "hash=$(jq -r '.hash' "$file")"
+              echo "size=$(jq -r '.size' "$file")"
+            else
+              echo "hash="
+              echo "size=0"
+            fi
           }
-          EOF
 
-          echo "✅ latest-wails.json updated"
-          cat "${UPDATES}/latest-wails.json"
+          {
+            echo "# Windows"
+            read_meta "windows-meta.json" | sed 's/^/win_/'
+            echo "# macOS arm64"
+            read_meta "macos-arm64-meta.json" | sed 's/^/mac_arm_/'
+            echo "# macOS amd64"
+            read_meta "macos-amd64-meta.json" | sed 's/^/mac_amd_/'
+            echo "# Linux amd64"
+            read_meta "linux-amd64-meta.json" | sed 's/^/linux_/'
+          } >> "$GITHUB_OUTPUT"
 
-          # 列出最终 updates 目录
-          echo "=== Final updates directory ==="
-          ls -lh "$UPDATES"
-
-      # ── 提交到 Git (触发 web 部署) ──
-      - name: Commit and push updates
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${{ env.UPDATES_DIR }}/"
-          git commit -m "release: BingchaAI v${VERSION} — auto-publish build artifacts
-
-          Windows exe + macOS DMG (arm64/amd64) built by CI
-          Files deployed to web/public/updates/" || echo "No changes to commit"
-          git pull --rebase origin main
-          git push origin main
-
-      # ── 同时创建 GitHub Release (备份下载) ──
-      - name: Create GitHub Release
+      # ── 创建 GitHub Release（公开仓库，无需认证即可下载）──
+      - name: Create GitHub Release on public repo
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION="${{ github.event.inputs.version }}"
           CHANGELOG="${{ github.event.inputs.changelog }}"
           TAG="wails-v${VERSION}"
+          DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
 
           mapfile -t FILES < <(find artifacts -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.tar.gz" \))
 
           if [ ${#FILES[@]} -eq 0 ]; then
-            echo "::warning::No release assets found, skipping GitHub Release"
-            exit 0
+            echo "::error::No release assets found"
+            exit 1
           fi
 
-          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release delete "$TAG" --repo "${{ env.RELEASE_REPO }}" --yes 2>/dev/null || true
 
           gh release create "$TAG" \
             "${FILES[@]}" \
+            --repo "${{ env.RELEASE_REPO }}" \
             --title "冰茶AI v${VERSION}" \
             --notes "## 🍵 冰茶AI v${VERSION}
 
@@ -359,10 +277,10 @@ jobs:
           ### 下载
           | 平台 | 架构 | 下载 |
           |------|------|------|
-          | Windows | x64 | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}.exe) |
-          | macOS | Apple Silicon (M1/M2/M3) | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
-          | macOS | Intel (x64) | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
-          | Linux | x64 | [bcai.space 下载](https://bcai.space/updates/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
+          | Windows | x64 | [${{ env.APP_NAME }}-${VERSION}.exe](${DL}/${{ env.APP_NAME }}-${VERSION}.exe) |
+          | macOS | Apple Silicon | [${{ env.APP_NAME }}-${VERSION}-arm64.dmg](${DL}/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
+          | macOS | Intel | [${{ env.APP_NAME }}-${VERSION}-amd64.dmg](${DL}/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
+          | Linux | x64 | [${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz](${DL}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
 
           > 已安装用户会自动收到更新推送，无需手动下载。
 
@@ -372,3 +290,60 @@ jobs:
           ### Windows
           如 SmartScreen 警告 → 更多信息 → 仍要运行" \
             --latest
+
+          echo "✅ Release created: $TAG"
+
+      # ── 生成 latest-wails.json 并提交（仅此文件，不含二进制）──
+      - name: Generate and commit update manifest
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          CHANGELOG="${{ github.event.inputs.changelog }}"
+          TAG="wails-v${VERSION}"
+          DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
+          UPDATES="${{ env.UPDATES_DIR }}"
+
+          mkdir -p "$UPDATES"
+
+          cat > "${UPDATES}/latest-wails.json" << EOF
+          {
+            "version": "${VERSION}",
+            "url": "${DL}/${{ env.APP_NAME }}-${VERSION}.exe",
+            "sha256": "${{ steps.meta.outputs.win_hash }}",
+            "size": ${{ steps.meta.outputs.win_size }},
+            "changelog": "${CHANGELOG}",
+            "minVersion": "${VERSION}",
+            "macOS": {
+              "arm64": {
+                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-arm64.dmg",
+                "sha256": "${{ steps.meta.outputs.mac_arm_hash }}",
+                "size": ${{ steps.meta.outputs.mac_arm_size }}
+              },
+              "amd64": {
+                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-amd64.dmg",
+                "sha256": "${{ steps.meta.outputs.mac_amd_hash }}",
+                "size": ${{ steps.meta.outputs.mac_amd_size }}
+              }
+            },
+            "linux": {
+              "amd64": {
+                "url": "${DL}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz",
+                "sha256": "${{ steps.meta.outputs.linux_hash }}",
+                "size": ${{ steps.meta.outputs.linux_size }}
+              }
+            }
+          }
+          EOF
+
+          echo "✅ latest-wails.json generated:"
+          cat "${UPDATES}/latest-wails.json"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${UPDATES}/latest-wails.json"
+          git commit -m "release: update manifest for v${VERSION}
+
+          Download URLs now point to GitHub Release (public repo).
+          Binaries no longer committed to git." || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
+
