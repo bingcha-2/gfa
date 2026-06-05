@@ -28,6 +28,7 @@ function idToTarget(id: string): string {
   if (id === 'antigravity_ide') return 'ide'
   if (id === 'codex') return 'codex'
   if (id === 'claude_code') return 'claude'
+  if (id === 'claude_desktop') return 'claude_desktop'
   return 'hub'
 }
 
@@ -40,7 +41,7 @@ export function TokenSourceControl() {
   const proxyPort = useAppStore((s) => s.proxyPort)
   const poolMode = usePoolStore((s) => s.mode)
   const setPoolMode = usePoolStore((s) => s.setMode)
-  const { showAlert, modalProps } = useModal()
+  const { showAlert, showConfirm, modalProps } = useModal()
 
   const hasCard = !!config?.accountCard && config.accountCard.trim() !== ''
   const codexRelay = config?.codexMode === 'relay'
@@ -48,6 +49,7 @@ export function TokenSourceControl() {
   const agApps = ideProducts.filter((p) => p.id.startsWith('antigravity'))
   const codexApp = ideProducts.find((p) => p.id === 'codex')
   const claudeApp = ideProducts.find((p) => p.id === 'claude_code')
+  const claudeDesktopApp = ideProducts.find((p) => p.id === 'claude_desktop')
   const isMac = /mac/i.test(navigator.platform)
 
   const [busy, setBusy] = useState<string | null>(null)
@@ -102,6 +104,7 @@ export function TokenSourceControl() {
   const targetName = (target: string) =>
     target === 'codex' ? 'Codex'
       : target === 'claude' ? 'Claude Code'
+      : target === 'claude_desktop' ? 'Claude Desktop'
       : target === 'ide' ? 'Antigravity IDE'
       : 'Antigravity Hub'
 
@@ -182,6 +185,23 @@ export function TokenSourceControl() {
       return
     }
     await runTakeover('claude', !claudeInjected)
+  }
+
+  // ── Claude Desktop(Code/Cowork,MITM 接管;会重启 Claude.app,中断 Cowork 会话)──
+  const claudeDesktopInjected = !!claudeDesktopApp?.injected
+  const handleClaudeDesktopToggle = async () => {
+    if (!claudeDesktopInjected) {
+      if (!hasCard) {
+        await showAlert('请先激活账号卡', 'Claude Desktop 接管需要账号卡,请在「账号卡配置」激活。')
+        return
+      }
+      const ok = await showConfirm(
+        '接管 Claude Desktop',
+        '接管会向系统信任库安装根证书(需输入密码授权),并重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话。是否继续?',
+      )
+      if (!ok) return
+    }
+    await runTakeover('claude_desktop', !claudeDesktopInjected)
   }
 
   // ── Codex(三态) ────────────────────────────────────────────
@@ -467,6 +487,35 @@ export function TokenSourceControl() {
             从远程服务器租用 Claude 订阅号;接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。
           </div>
         </div>
+
+        {/* ── Claude Desktop(Code/Cowork,MITM 接管;仅 macOS、检测到才显示) ── */}
+        {isMac && claudeDesktopApp?.detected && (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic · 桌面端</span>
+            </div>
+            <div className="flex items-center justify-between px-3 h-[44px] rounded-[8px] border border-[var(--border-light)]">
+              <div>
+                <div className="text-[12px] text-[var(--text-primary)] font-medium">Claude Desktop (Code/Cowork)</div>
+                <div className={cn('text-[10px]', claudeDesktopInjected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+                  {claudeDesktopInjected ? '✓ 已接管' : '未接管'}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant={claudeDesktopInjected ? 'danger' : 'default'}
+                disabled={busy === 'claude_desktop'}
+                onClick={handleClaudeDesktopToggle}
+                className="shrink-0 cursor-pointer min-w-[68px]"
+              >
+                {busy === 'claude_desktop' ? '...' : claudeDesktopInjected ? '停止' : '接管'}
+              </Button>
+            </div>
+            <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
+              桌面端无视 settings.json,需经 MITM 接管:安装根证书(需授权)+重启 Claude(会中断 Cowork 会话),把 /v1/messages 改用号池。
+            </div>
+          </div>
+        )}
 
         {/* macOS 权限引导 */}
         {isMac && agApps.some((p) => p.id === 'antigravity_hub' && p.detected && !p.injected) && (

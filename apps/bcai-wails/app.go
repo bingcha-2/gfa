@@ -81,6 +81,12 @@ func (a *App) startup(ctx context.Context) {
 		a.proxyStartedAt = time.Now()
 	}
 
+	// 常驻启动 Claude 桌面端接管用的 MITM 代理(独立端口 48801)。仅监听,不影响任何流量;
+	// 只有用户开启接管(装 CA + 带代理重启 Claude.app)后,Code/Cowork 子进程才会走它。
+	if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy); err != nil {
+		Log("[app] MITM 代理启动失败(不影响其它功能): %v", err)
+	}
+
 	// 预热连接池，提前建立 TLS 连接
 	WarmupConnectionPool(cfg.UpstreamProxy)
 
@@ -152,6 +158,9 @@ func (a *App) SaveConfig(cfg Config) error {
 		GetHTTPProxy().UpdateConfig(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 	}
 
+	// MITM 代理端口固定,无需重启,只同步卡密/出口(覆盖上面两个分支)。
+	GetMitmManager().UpdateConfig(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
+
 	return nil
 }
 
@@ -172,6 +181,7 @@ func (a *App) ActivateCard(card string) (string, error) {
 	// Start auto-lease / proxy so the client is ready to serve requests.
 	GetLeaser().StartAutoLease(card, cfg.DeviceId, cfg.UpstreamProxy)
 	GetHTTPProxy().UpdateConfig(card, cfg.DeviceId, cfg.UpstreamProxy)
+	GetMitmManager().UpdateConfig(card, cfg.DeviceId, cfg.UpstreamProxy)
 
 	// Best-effort warm probe — never fatal. If the pool is momentarily dry the
 	// card is still activated; the user just sees a "busy" hint at request time.
