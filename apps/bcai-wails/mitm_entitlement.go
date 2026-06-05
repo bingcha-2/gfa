@@ -53,9 +53,6 @@ func mitmEntitlementHandler(upstreamBase string, transport http.RoundTripper) ht
 	}
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			// 转发前就打日志：即便客户端随后取消(context canceled)、ModifyResponse 没机会跑，
-			// 也能确认该资格请求确实经 MITM 到达(诊断 Chromium 是否真走代理)。
-			Log("[mitm-entitlement] → 转发 %s %s", req.Method, req.URL.Path)
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
@@ -82,12 +79,6 @@ func mitmModifyEntitlementResponse(resp *http.Response) error {
 		return nil // 读失败就放过，不破坏原响应链路
 	}
 
-	logBody := string(body)
-	if len(logBody) > 1500 {
-		logBody = logBody[:1500] + "...(截断)"
-	}
-	Log("[mitm-entitlement] %d %s 真实响应: %s", resp.StatusCode, path, logBody)
-
 	var newBody []byte
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
@@ -96,7 +87,6 @@ func mitmModifyEntitlementResponse(resp *http.Response) error {
 		resp.StatusCode = http.StatusOK
 		resp.Status = "200 OK"
 		resp.Header.Set("Content-Type", "application/json")
-		Log("[mitm-entitlement] %s 上游 401/403，退回 canned 假 pro 身份", path)
 	case strings.Contains(resp.Header.Get("Content-Type"), "json") && len(body) > 0:
 		newBody = mitmPatchEntitlement(body)
 	default:

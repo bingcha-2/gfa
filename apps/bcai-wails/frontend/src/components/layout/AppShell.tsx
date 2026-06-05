@@ -5,7 +5,6 @@ import type { PageId } from '@/types'
 
 const pageTitles: Record<string, string> = {
   home: '控制台',
-  pool: '本地号池',
   logs: '日志',
   settings: '设置',
 }

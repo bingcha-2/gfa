@@ -1,26 +1,23 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
-import { usePoolStore } from '@/stores/usePoolStore'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Modal, useModal } from '@/components/Modal'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
-import { Zap, Cloud, HardDrive, KeyRound, Plus, X } from 'lucide-react'
+import { Zap } from 'lucide-react'
 
 /**
- * 「Token 来源与接管」统一控制。把"用什么 token"(来源)和"是否接管"(注入)合成
- * 一个动作 —— 接管某产品 == 用某来源接管它。按产品分两组,语义互不冲突:
+ * 「接管」统一控制。号源固定为「官方透传」(从远程服务器自动获取 Token),
+ * 不再向用户暴露来源选择 —— 每个产品只有一个「接管 / 停止」开关:
  *
- *   Antigravity:号池来源(租号/本地)全局共享 → 顶部一个来源切换;
- *               IDE / Hub 各一个接管开关(接管哪个 app 独立控制)。
- *   Codex:     单 app,三态合一 [租号] [中转 API] [不接管];
- *               选「中转」展开卡密配置(渐进式披露)。
+ *   Antigravity:IDE / Hub 各一个开关。
+ *   Codex:      单一开关。中转(relay)能力仍由后端保留,但不在此处暴露 UI ——
+ *               若后端已配置为中转模式,接管时按中转生效,否则按官方透传。
+ *   Anthropic:  Claude Code(CLI + VSCode)开关;macOS 上额外的 Claude Desktop 开关。
  *
- * 因为「中转」只在 Codex 组出现,不可能给不支持中转的 Antigravity 选到 ——
- * 从根上消除了"接管了不支持中转的产品"的问题。
+ * 本地号池已下线,故无来源切换。
  */
 
 // 产品 id → 接管 target(后端 InjectSelected/RestoreSelected 用)。
@@ -35,16 +32,12 @@ function idToTarget(id: string): string {
 export function TokenSourceControl() {
   const config = useAppStore((s) => s.config)
   const ideProducts = useAppStore((s) => s.ideProducts)
-  const fetchConfig = useAppStore((s) => s.fetchConfig)
   const fetchIDEStatus = useAppStore((s) => s.fetchIDEStatus)
   const proxyRunning = useAppStore((s) => s.proxyRunning)
   const proxyPort = useAppStore((s) => s.proxyPort)
-  const poolMode = usePoolStore((s) => s.mode)
-  const setPoolMode = usePoolStore((s) => s.setMode)
   const { showAlert, showConfirm, modalProps } = useModal()
 
   const hasCard = !!config?.accountCard && config.accountCard.trim() !== ''
-  const codexRelay = config?.codexMode === 'relay'
 
   const agApps = ideProducts.filter((p) => p.id.startsWith('antigravity'))
   const codexApp = ideProducts.find((p) => p.id === 'codex')
@@ -54,51 +47,6 @@ export function TokenSourceControl() {
 
   const [busy, setBusy] = useState<string | null>(null)
   const [busyLabel, setBusyLabel] = useState('')
-
-  // 中转配置(草稿)。
-  const [relayBase, setRelayBase] = useState('')
-  const [relayKey, setRelayKey] = useState('')
-  const [relayProtocol, setRelayProtocol] = useState('responses')
-  // 模型映射:行式编辑(本地模型 → 中转模型),可增删改。
-  const [modelMaps, setModelMaps] = useState<{ from: string; to: string }[]>([])
-  const [forceRelayOpen, setForceRelayOpen] = useState(false)
-  const [savingRelay, setSavingRelay] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    api
-      .getCodexRelayConfig()
-      .then((r) => {
-        if (!alive) return
-        setRelayBase(r.baseURL || '')
-        setRelayKey(r.apiKey || '')
-        setRelayProtocol(r.protocol || 'responses')
-        setModelMaps(Object.entries(r.modelMap || {}).map(([from, to]) => ({ from, to })))
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  // 行数组 → 后端期望的对象;忽略 from/to 任一为空的行。
-  const buildModelMap = (): Record<string, string> => {
-    const map: Record<string, string> = {}
-    for (const { from, to } of modelMaps) {
-      const k = from.trim()
-      const v = to.trim()
-      if (k && v) map[k] = v
-    }
-    return map
-  }
-
-  const updateMapRow = (idx: number, patch: Partial<{ from: string; to: string }>) =>
-    setModelMaps((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
-  const addMapRow = () => setModelMaps((rows) => [...rows, { from: '', to: '' }])
-  const removeMapRow = (idx: number) => setModelMaps((rows) => rows.filter((_, i) => i !== idx))
-
-  // 常见 Codex 本地模型名,供下拉快选(也允许自定义输入)。
-  const KNOWN_MODELS = ['gpt-5-codex', 'gpt-5', 'gpt-5.5', 'codex-mini-latest']
 
   // target → 展示名(loading 文案用)。
   const targetName = (target: string) =>
@@ -153,37 +101,31 @@ export function TokenSourceControl() {
     }
   }
 
-  // ── Antigravity ──────────────────────────────────────────────
-  const handleAGSource = async (mode: 'remote' | 'local') => {
-    if (mode === poolMode) return
-    if (mode === 'remote' && !hasCard) {
-      await showAlert('请先激活账号卡', '租号模式需要账号卡,请在「账号卡配置」激活。')
-      return
-    }
-    try {
-      await setPoolMode(mode)
-      // 来源是全局的,已接管的 app 自动改用新来源,无需重新注入。
-    } catch (err) {
-      await showAlert('切换失败', String(err))
-    }
+  // 接管前校验账号卡;无卡则引导激活,不下发后端动作。
+  const ensureCard = async (productLabel: string): Promise<boolean> => {
+    if (hasCard) return true
+    await showAlert('请先激活账号卡', `${productLabel} 接管需要账号卡,请在「账号卡配置」激活。`)
+    return false
   }
 
+  // ── Antigravity ──────────────────────────────────────────────
   const handleAGToggle = async (product: { id: string; injected: boolean }) => {
     const target = idToTarget(product.id)
-    if (!product.injected && poolMode === 'remote' && !hasCard) {
-      await showAlert('请先激活账号卡', '当前 Antigravity 来源为租号,请先激活账号卡。')
-      return
-    }
+    if (!product.injected && !(await ensureCard('Antigravity'))) return
     await runTakeover(target, !product.injected)
   }
 
-  // ── Claude Code(CLI + VSCode 扩展,单一接管开关,仅租号)────────
+  // ── Codex(单开关;中转能力由后端保留,不在 UI 暴露) ──────────
+  const codexInjected = !!codexApp?.injected
+  const handleCodexToggle = async () => {
+    if (!codexInjected && !(await ensureCard('Codex'))) return
+    await runTakeover('codex', !codexInjected)
+  }
+
+  // ── Claude Code(CLI + VSCode 扩展) ──────────────────────────
   const claudeInjected = !!claudeApp?.injected
   const handleClaudeToggle = async () => {
-    if (!claudeInjected && !hasCard) {
-      await showAlert('请先激活账号卡', 'Claude Code 接管需要账号卡,请在「账号卡配置」激活。')
-      return
-    }
+    if (!claudeInjected && !(await ensureCard('Claude Code'))) return
     await runTakeover('claude', !claudeInjected)
   }
 
@@ -191,10 +133,7 @@ export function TokenSourceControl() {
   const claudeDesktopInjected = !!claudeDesktopApp?.injected
   const handleClaudeDesktopToggle = async () => {
     if (!claudeDesktopInjected) {
-      if (!hasCard) {
-        await showAlert('请先激活账号卡', 'Claude Desktop 接管需要账号卡,请在「账号卡配置」激活。')
-        return
-      }
+      if (!(await ensureCard('Claude Desktop'))) return
       const ok = await showConfirm(
         '接管 Claude Desktop',
         '接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话(聊天不受影响)。是否继续?',
@@ -204,287 +143,100 @@ export function TokenSourceControl() {
     await runTakeover('claude_desktop', !claudeDesktopInjected)
   }
 
-  // ── Codex(三态) ────────────────────────────────────────────
-  type CodexState = 'off' | 'rental' | 'relay'
-  const codexInjected = !!codexApp?.injected
-  const codexState: CodexState = !codexInjected ? 'off' : codexRelay ? 'relay' : 'rental'
-  const relayOpen = codexState === 'relay' || forceRelayOpen
-
-  const persistRelay = async (): Promise<boolean> => {
-    if (!relayBase.trim() || !relayKey.trim()) {
-      await showAlert('保存失败', '启用中转需要填写中转地址和卡密。')
-      return false
-    }
-    await api.saveCodexRelayConfig('relay', relayBase.trim(), relayKey.trim(), relayProtocol, buildModelMap())
-    await fetchConfig()
-    return true
+  // 统一的「产品行」:名称 + 接管状态 + 接管/停止按钮。
+  const takeoverRow = (opts: {
+    target: string
+    name: ReactNode
+    injected: boolean
+    detected?: boolean
+    undetectedText?: string
+    onToggle: () => void
+  }) => {
+    const { target, name, injected, detected = true, undetectedText = '未安装', onToggle } = opts
+    return (
+      <div
+        className={cn(
+          'flex items-center justify-between px-3 h-[44px] rounded-[8px] border',
+          detected ? 'border-[var(--border-light)]' : 'opacity-40 border-transparent',
+        )}
+      >
+        <div>
+          <div className="text-[12px] text-[var(--text-primary)] font-medium">{name}</div>
+          <div className={cn('text-[10px]', injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
+            {!detected ? undetectedText : injected ? '✓ 已接管' : '未接管'}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant={injected ? 'danger' : 'default'}
+          disabled={!detected || busy === target}
+          onClick={onToggle}
+          className="shrink-0 cursor-pointer min-w-[68px]"
+        >
+          {busy === target ? '...' : injected ? '停止' : '接管'}
+        </Button>
+      </div>
+    )
   }
-
-  const handleCodexPick = async (next: CodexState) => {
-    // 已是目标状态、且没有待处理的中转草稿面板 → 无需动作。
-    // (forceRelayOpen 时即便 codexState 仍是 off,点其它态也要把草稿面板收起,
-    //  所以不能在这里提前 return。)
-    if (next === codexState && !forceRelayOpen) return
-
-    if (next === 'off') {
-      setForceRelayOpen(false)
-      // 仅在确实已接管时才执行还原;只是关掉未保存的中转草稿则无需调用后端。
-      if (codexInjected) await runTakeover('codex', false)
-      return
-    }
-
-    if (next === 'rental') {
-      setForceRelayOpen(false)
-      if (!hasCard) {
-        await showAlert('请先激活账号卡', 'Codex 租号模式需要账号卡,请先激活。')
-        return
-      }
-      if (codexRelay) {
-        await api.saveCodexRelayConfig('rental', relayBase.trim(), relayKey.trim(), relayProtocol, buildModelMap())
-        await fetchConfig()
-      }
-      if (!codexInjected) await runTakeover('codex', true)
-      return
-    }
-
-    // next === 'relay'
-    if (!relayBase.trim() || !relayKey.trim()) {
-      setForceRelayOpen(true) // 仅展开面板等用户补齐,不落库。
-      return
-    }
-    setSavingRelay(true)
-    try {
-      if (!(await persistRelay())) return
-      if (!codexInjected) await runTakeover('codex', true)
-      setForceRelayOpen(false)
-    } finally {
-      setSavingRelay(false)
-    }
-  }
-
-  const handleSaveRelay = async () => {
-    setSavingRelay(true)
-    try {
-      if (!(await persistRelay())) return
-      if (!codexInjected) await runTakeover('codex', true)
-      setForceRelayOpen(false)
-      await showAlert('已启用', 'Codex 已切换到中转(API 卡密)模式。')
-    } finally {
-      setSavingRelay(false)
-    }
-  }
-
-  // 分段按钮渲染器。
-  const seg = (active: boolean, onClick: () => void, content: ReactNode, disabled = false) => (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[12px] font-semibold transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed',
-        active
-          ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-          : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
-      )}
-    >
-      {content}
-    </button>
-  )
 
   return (
     <Card className="flex flex-col">
-      <CardHeader><CardTitle><Zap size={15} /> Token 来源与接管</CardTitle></CardHeader>
+      <CardHeader><CardTitle><Zap size={15} /> 接管</CardTitle></CardHeader>
       <CardContent className="flex-1 flex flex-col gap-4">
         {/* ── Antigravity ── */}
         <div>
           <div className="text-[11px] font-semibold text-[var(--text-secondary)] mb-1.5">Antigravity</div>
-          <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
-            {seg(poolMode === 'remote', () => handleAGSource('remote'), <><Cloud size={13} /> 租号</>)}
-            {seg(poolMode === 'local', () => handleAGSource('local'), <><HardDrive size={13} /> 本地号池</>)}
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] mt-1.5">
-            {poolMode === 'remote' ? '从远程服务器自动获取租号 Token' : '使用本地配置的账号池轮询 Token'}
-          </div>
-
-          {/* 每 app 接管开关 */}
-          <div className="mt-2 flex flex-col gap-1.5">
-            {agApps.map((p) => {
-              const target = idToTarget(p.id)
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    'flex items-center justify-between px-3 h-[44px] rounded-[8px] border',
-                    p.detected ? 'border-[var(--border-light)]' : 'opacity-40 border-transparent',
-                  )}
-                >
-                  <div>
-                    <div className="text-[12px] text-[var(--text-primary)] font-medium">{p.name}</div>
-                    <div className={cn('text-[10px]', p.injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                      {!p.detected ? '未安装' : p.injected ? '✓ 已接管' : '未接管'}
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={p.injected ? 'danger' : 'default'}
-                    disabled={!p.detected || busy === target}
-                    onClick={() => handleAGToggle(p)}
-                    className="shrink-0 cursor-pointer min-w-[68px]"
-                  >
-                    {busy === target ? '...' : p.injected ? '停止' : '接管'}
-                  </Button>
-                </div>
-              )
-            })}
+          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程服务器自动获取 Token</div>
+          <div className="flex flex-col gap-1.5">
+            {agApps.map((p) =>
+              <div key={p.id}>
+                {takeoverRow({
+                  target: idToTarget(p.id),
+                  name: p.name,
+                  injected: p.injected,
+                  detected: p.detected,
+                  onToggle: () => handleAGToggle(p),
+                })}
+              </div>,
+            )}
           </div>
         </div>
 
         <div className="border-t border-[var(--border-light)]" />
 
-        {/* ── Codex(三态) ── */}
+        {/* ── Codex ── */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Codex</span>
-            {!codexApp?.detected && <span className="text-[10px] text-[var(--text-muted)]">未安装</span>}
           </div>
-          <div className="flex rounded-[8px] bg-[var(--bg-tertiary)] p-1">
-            {seg(codexState === 'rental' && !forceRelayOpen, () => handleCodexPick('rental'), <><Cloud size={13} /> 租号</>, !codexApp?.detected || busy === 'codex')}
-            {seg(relayOpen, () => handleCodexPick('relay'), <><KeyRound size={13} /> 中转 API</>, !codexApp?.detected || busy === 'codex')}
-            {seg(codexState === 'off' && !forceRelayOpen, () => handleCodexPick('off'), busy === 'codex' ? '...' : '不接管', !codexApp?.detected || busy === 'codex')}
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] mt-1.5">
-            {relayOpen ? '用你的卡密直连第三方中转站(仅 Codex)' : codexState === 'rental' ? '从远程服务器租用 ChatGPT 账号' : 'Codex 不经本地代理,使用其原生登录'}
-          </div>
-
-          {/* 中转配置(渐进式披露) */}
-          {relayOpen && (
-            <div className="mt-3 flex flex-col gap-3 rounded-[8px] border border-[var(--border-light)] bg-[var(--bg-card)] p-3">
-              <div>
-                <div className="text-[11px] text-[var(--text-muted)] mb-1">中转协议</div>
-                <div className="flex gap-2">
-                  {[
-                    { v: 'responses', label: 'Codex /responses' },
-                    { v: 'chat', label: '通用 /chat' },
-                  ].map(({ v, label }) => (
-                    <button
-                      key={v}
-                      onClick={() => setRelayProtocol(v)}
-                      className={cn(
-                        'flex-1 py-1.5 rounded-[6px] text-[12px] font-semibold border transition-colors duration-200 cursor-pointer',
-                        relayProtocol === v
-                          ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary)]/5'
-                          : 'border-[var(--border-light)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-[var(--text-muted)] mt-1 leading-relaxed">
-                  {relayProtocol === 'chat'
-                    ? '中转只支持 /v1/chat/completions(大多数中转站)。客户端自动转码。'
-                    : '中转兼容 Codex /responses 协议。原样透传,最稳。'}
-                </p>
-              </div>
-
-              <div>
-                <div className="text-[11px] text-[var(--text-muted)] mb-1">
-                  中转地址(自动追加 {relayProtocol === 'chat' ? '/chat/completions' : '/responses'})
-                </div>
-                <Input value={relayBase} onChange={(e) => setRelayBase(e.target.value)} placeholder="例: https://your-relay.com/v1" />
-              </div>
-
-              <div>
-                <div className="text-[11px] text-[var(--text-muted)] mb-1">卡密 / API Key</div>
-                <Input type="password" value={relayKey} onChange={(e) => setRelayKey(e.target.value)} placeholder="sk-..." />
-              </div>
-
-              <div>
-                <div className="text-[11px] text-[var(--text-muted)] mb-1">模型映射(可选:把本地模型名映射到中转站的模型)</div>
-                {modelMaps.length === 0 && (
-                  <div className="text-[10px] text-[var(--text-muted)] mb-1.5 leading-relaxed">
-                    不配置则按原模型名透传。中转站若无 gpt-5.5 等模型,需在此映射到它支持的模型。
-                  </div>
-                )}
-                <div className="flex flex-col gap-1.5">
-                  {modelMaps.map((row, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5">
-                      {/* 本地模型:可选常用项或自定义输入 */}
-                      <input
-                        list={`codex-local-models-${idx}`}
-                        value={row.from}
-                        onChange={(e) => updateMapRow(idx, { from: e.target.value })}
-                        placeholder="本地模型"
-                        className="flex-1 min-w-0 h-8 rounded-md border border-[var(--border-light)] bg-transparent px-2 text-[12px] font-mono"
-                      />
-                      <datalist id={`codex-local-models-${idx}`}>
-                        {KNOWN_MODELS.map((m) => (
-                          <option key={m} value={m} />
-                        ))}
-                      </datalist>
-                      <span className="text-[var(--text-muted)] text-[12px] shrink-0">→</span>
-                      <Input
-                        value={row.to}
-                        onChange={(e) => updateMapRow(idx, { to: e.target.value })}
-                        placeholder="中转模型名"
-                        className="flex-1 min-w-0 h-8 text-[12px] font-mono"
-                      />
-                      <button
-                        onClick={() => removeMapRow(idx)}
-                        className="shrink-0 w-8 h-8 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-tertiary)] transition-colors duration-200 cursor-pointer"
-                        title="删除此映射"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  onClick={addMapRow}
-                  className="mt-1.5 flex items-center gap-1 text-[12px] text-[var(--primary)] hover:opacity-80 transition-opacity cursor-pointer"
-                >
-                  <Plus size={13} /> 添加映射
-                </button>
-              </div>
-
-              <Button onClick={handleSaveRelay} disabled={savingRelay} className="w-full cursor-pointer">
-                {savingRelay ? '保存中...' : codexState === 'relay' ? '更新中转配置' : '启用中转并接管'}
-              </Button>
-            </div>
-          )}
+          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程服务器租用 ChatGPT 账号</div>
+          {takeoverRow({
+            target: 'codex',
+            name: 'Codex',
+            injected: codexInjected,
+            detected: !!codexApp?.detected,
+            onToggle: handleCodexToggle,
+          })}
         </div>
 
         <div className="border-t border-[var(--border-light)]" />
 
-        {/* ── Claude Code(CLI + VSCode 扩展) ── */}
+        {/* ── Anthropic · Claude Code(CLI + VSCode 扩展) ── */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic</span>
-            {!claudeApp?.detected && <span className="text-[10px] text-[var(--text-muted)]">未检测到</span>}
           </div>
-          <div
-            className={cn(
-              'flex items-center justify-between px-3 h-[44px] rounded-[8px] border',
-              claudeApp?.detected ? 'border-[var(--border-light)]' : 'opacity-40 border-transparent',
-            )}
-          >
-            <div>
-              <div className="text-[12px] text-[var(--text-primary)] font-medium">Claude Code (CLI + VSCode)</div>
-              <div className={cn('text-[10px]', claudeInjected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                {!claudeApp?.detected ? '未检测到 ~/.claude' : claudeInjected ? '✓ 已接管' : '未接管'}
-              </div>
-            </div>
-            <Button
-              size="sm"
-              variant={claudeInjected ? 'danger' : 'default'}
-              disabled={!claudeApp?.detected || busy === 'claude'}
-              onClick={handleClaudeToggle}
-              className="shrink-0 cursor-pointer min-w-[68px]"
-            >
-              {busy === 'claude' ? '...' : claudeInjected ? '停止' : '接管'}
-            </Button>
-          </div>
+          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程租用 Claude 订阅</div>
+          {takeoverRow({
+            target: 'claude',
+            name: 'Claude Code (CLI + VSCode)',
+            injected: claudeInjected,
+            detected: !!claudeApp?.detected,
+            undetectedText: '未检测到 ~/.claude',
+            onToggle: handleClaudeToggle,
+          })}
           <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-            从远程服务器租用 Claude 订阅号;接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。
+            接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。
           </div>
         </div>
 
@@ -494,25 +246,16 @@ export function TokenSourceControl() {
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic · 桌面端</span>
             </div>
-            <div className="flex items-center justify-between px-3 h-[44px] rounded-[8px] border border-[var(--border-light)]">
-              <div>
-                <div className="text-[12px] text-[var(--text-primary)] font-medium">Claude Desktop (Code/Cowork)</div>
-                <div className={cn('text-[10px]', claudeDesktopInjected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                  {claudeDesktopInjected ? '✓ 已接管' : '未接管'}
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant={claudeDesktopInjected ? 'danger' : 'default'}
-                disabled={busy === 'claude_desktop'}
-                onClick={handleClaudeDesktopToggle}
-                className="shrink-0 cursor-pointer min-w-[68px]"
-              >
-                {busy === 'claude_desktop' ? '...' : claudeDesktopInjected ? '停止' : '接管'}
-              </Button>
-            </div>
+            {takeoverRow({
+              target: 'claude_desktop',
+              name: 'Claude Desktop (Code/Cowork)',
+              injected: claudeDesktopInjected,
+              detected: true,
+              onToggle: handleClaudeDesktopToggle,
+            })}
             <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-              需登录<span className="text-[var(--text-secondary)]">付费 Claude 账号</span>(Code/Cowork 是付费功能,免费号会被升级页挡住)。接管会重启 Claude(中断 Cowork,聊天不受影响),把 Code/Cowork 的 /v1/messages 改用号池。
+              <span className="text-[var(--text-secondary)]">免费号即可</span>,接管后 Code/Cowork 自动走号池,无需付费账号。
+              <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。
             </div>
           </div>
         )}
@@ -541,7 +284,7 @@ export function TokenSourceControl() {
             </span>
           </div>
           <div className="mt-2 text-[10px] text-[var(--text-muted)] leading-relaxed px-1">
-            接管后对应 app 的请求经本地代理自动注入令牌;选「停止 / 不接管」即恢复原状。
+            接管后对应 app 的请求经本地代理自动注入令牌;选「停止」即恢复原状。
           </div>
         </div>
       </CardContent>

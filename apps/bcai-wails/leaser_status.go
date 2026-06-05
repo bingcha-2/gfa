@@ -199,7 +199,6 @@ func recordFairShareQuota(body []byte) {
 	for bucket, q := range resp.FairShareQuota {
 		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
 	}
-	Log("[token-leaser] Fair-share blood bar updated: %d buckets", len(resp.FairShareQuota))
 }
 
 // boundResetMs 把绑定号上游重置的绝对时间(epoch ms)换算成剩余毫秒;0 表示未知。

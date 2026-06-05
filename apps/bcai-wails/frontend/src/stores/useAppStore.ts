@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import * as api from '@/services/wails'
-import type { Config, IDEProduct, UpdateStatus, ActiveAccountSummary, BoundAccountInfo } from '@/types'
+import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo } from '@/types'
 
 /** Fallback rate-limit window when the server hasn't reported one yet (5h). */
 const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
@@ -60,9 +60,6 @@ interface AppState {
   appVersion: string
   appStartTime: number
 
-  // Active account (本地号池)
-  activeAccount: ActiveAccountSummary | null
-
   // ===== Actions =====
   fetchStats: () => Promise<void>
   fetchConfig: () => Promise<void>
@@ -108,7 +105,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   announcement: '',
   appVersion: '8.0.0',
   appStartTime: Date.now(),
-  activeAccount: null,
 
   fetchStats: async () => {
     try {
@@ -152,7 +148,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         recoveryWindowMs: lq?.windowMs && lq.windowMs > 0 ? lq.windowMs : DEFAULT_WINDOW_MS,
         updateStatus: data.updateStatus || null,
         appVersion: data.appVersion || get().appVersion,
-        activeAccount: data.activeAccount || null,
       })
     } catch (err) {
       console.error('fetchStats failed:', err)

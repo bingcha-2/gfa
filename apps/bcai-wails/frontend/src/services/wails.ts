@@ -42,7 +42,7 @@ import {
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
-import type { Config, IDEStatus, AccountInfo, UpdateStatus, ActiveAccountSummary, BoundAccountInfo } from '@/types'
+import type { Config, IDEStatus, AccountInfo, UpdateStatus, BoundAccountInfo } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -117,7 +117,6 @@ export interface StatsResponse {
     lockedAccountId?: number
   }
   proxyStartedAt: string
-  activeAccount?: ActiveAccountSummary | null
 }
 
 export async function getStats(): Promise<StatsResponse> {

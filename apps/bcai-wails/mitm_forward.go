@@ -20,8 +20,6 @@ func mitmForwardHandler(upstreamBase string, transport http.RoundTripper) http.H
 	}
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			// 诊断日志：透传到上游的每个 api.anthropic.com 端点都现形——用来定位付费墙到底查哪个端点。
-			Log("[mitm-forward] → 透传 %s %s", req.Method, req.URL.Path)
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host

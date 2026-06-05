@@ -38,7 +38,6 @@ func mitmClaudeAiHandler(transport http.RoundTripper) http.Handler {
 	}
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			Log("[mitm-claudeai] → 转发 %s %s", req.Method, req.URL.Path)
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
@@ -206,18 +205,15 @@ func mitmModifyClaudeAiResponse(resp *http.Response) error {
 	case strings.Contains(path, "/current_user_access"):
 		if patched, ok := patchJSON(body, patchUserAccessFeatures); ok {
 			newBody = patched
-			Log("[mitm-claudeai] ✏ 改写 current_user_access:Code/Cowork → available")
 		}
 	case strings.HasSuffix(path, "/cowork_settings"):
 		if patched, ok := patchJSON(body, patchCoworkSettings); ok {
 			newBody = patched
-			Log("[mitm-claudeai] ✏ 改写 cowork_settings:enabled → true")
 		}
 	case isClaudeAiOrgRootPath(path) || strings.HasSuffix(path, "/app_start"):
 		// org 根 / bootstrap:把 capabilities/rate_limit_tier/billing_type 升级成 Max(UI 付费墙主信号)。
 		if patched, ok := patchJSON(body, patchSubscriptionTree); ok {
 			newBody = patched
-			Log("[mitm-claudeai] ✏ 改写 %s:订阅信号 → claude_max", path)
 		}
 	}
 

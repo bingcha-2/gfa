@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
-import { usePoolStore } from '@/stores/usePoolStore'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -124,16 +123,15 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
 }
 
 /**
- * 绑定卡每个产品当前租到的账号信息 + token。仅对绑定卡(有 products)且非本地号池模式显示。
+ * 绑定卡每个产品当前租到的账号信息 + token。仅对绑定卡(有 products)显示。
  * 池子卡每次请求轮换账号,展示「绑定账号」无意义,故隐藏。
  */
 export function BoundAccountsCard() {
   const boundAccounts = useAppStore((s) => s.boundAccounts)
   const cardProducts = useAppStore((s) => s.cardProducts)
-  const poolMode = usePoolStore((s) => s.mode)
 
-  // 本地号池模式 / 池子卡(无 products)→ 不展示绑定账号面板。
-  if (poolMode === 'local' || !cardProducts || cardProducts.length === 0) return null
+  // 池子卡(无 products)→ 不展示绑定账号面板。
+  if (!cardProducts || cardProducts.length === 0) return null
 
   const products = cardProducts.map(normalizeProduct)
   const byProduct = new Map(boundAccounts.map((a) => [normalizeProduct(a.product), a]))

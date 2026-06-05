@@ -55,7 +55,6 @@ func mitmOAuthFakeHandler(leaseToken func() (string, error)) http.Handler {
 			if strings.Contains(redirectURI, "?") {
 				sep = "&"
 			}
-			Log("[mitm-oauth] 伪造 authorize 成功(免费号)→ 下发 code")
 			writeJSON(map[string]interface{}{
 				"redirect_uri": redirectURI + sep + "code=" + code + "&state=" + state,
 			})
@@ -73,7 +72,6 @@ func mitmOAuthFakeHandler(leaseToken func() (string, error)) http.Handler {
 			if scope == "" {
 				scope = "user:inference user:file_upload user:profile user:sessions:claude_code"
 			}
-			Log("[mitm-oauth] 伪造 token 成功(免费号)→ 下发号池 Pro access_token")
 			writeJSON(map[string]interface{}{
 				"token_type":    "Bearer",
 				"access_token":  tok,
