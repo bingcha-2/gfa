@@ -134,6 +134,16 @@ export class FairShareTracker {
         tracker.estimatedBudget = estimated;
         tracker.confidence = 'estimated';
       }
+    } else if (fraction >= 0.90 && totalUsed > 0) {
+      // Upstream still reports "full" (e.g. Google's 20% granularity hasn't
+      // budged). We don't know the real budget yet, but it's clearly larger
+      // than our default — grow the floor conservatively (5× totalUsed).
+      // Do NOT upgrade confidence: we have no real signal, so checkFairShare
+      // should remain lenient.
+      const floor = totalUsed * 5;
+      if (floor > tracker.estimatedBudget) {
+        tracker.estimatedBudget = floor;
+      }
     }
     tracker.lastFraction = fraction;
   }
@@ -155,6 +165,14 @@ export class FairShareTracker {
       return { allowed: true, remainingFraction: 1.0 };
     }
     this.ensureWindow(tracker, Date.now());
+
+    // When upstream reports ≥90% remaining, we have no reliable budget estimate.
+    // Allow the lease unconditionally — real protection comes from the upstream
+    // 429 response. Blocking based on a guess would prematurely cut off cards
+    // while Google's coarse 20% granularity hasn't even budged.
+    if (tracker.lastFraction >= 0.90) {
+      return { allowed: true, remainingFraction: tracker.lastFraction };
+    }
 
     const weight = this.opts.getCardWeight(cardId);
     const capacity = this.opts.accountShareCapacity;
@@ -189,12 +207,21 @@ export class FairShareTracker {
 
     for (const [bucket, tracker] of bucketTrackers) {
       this.ensureWindow(tracker, now);
+      const resetAt = tracker.windowStart + WINDOW_MS;
+
+      // When upstream reports ≥90% remaining, we don't know the real budget.
+      // Show the upstream fraction directly so the blood bar stays full
+      // instead of draining based on a guess.
+      if (tracker.lastFraction >= 0.90) {
+        out[bucket] = { fraction: tracker.lastFraction, resetAt };
+        continue;
+      }
+
+      // Real signal available — calculate per-card fair share fraction.
       const perCardBudget = tracker.estimatedBudget * (weight / capacity);
       const myUsage = tracker.perCard.get(cardId) || 0;
       const remaining = Math.max(0, perCardBudget - myUsage);
       const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
-      // Reset at = window start + 5h
-      const resetAt = tracker.windowStart + WINDOW_MS;
       out[bucket] = { fraction, resetAt };
     }
 
