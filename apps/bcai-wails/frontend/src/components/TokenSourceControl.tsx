@@ -438,7 +438,7 @@ export function TokenSourceControl() {
         {/* ── Claude Code(CLI + VSCode 扩展) ── */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Claude</span>
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic</span>
             {!claudeApp?.detected && <span className="text-[10px] text-[var(--text-muted)]">未检测到</span>}
           </div>
           <div
