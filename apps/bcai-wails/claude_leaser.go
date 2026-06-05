@@ -199,6 +199,8 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		recordBoundFractionForModel("anthropic", mk, leaseResp.BoundAccount.Fraction, leaseResp.BoundAccount.ResetAt)
 	}
 	recordAccountBuckets(body)
+	// 多卡拼车:服务端按份额下发 fairShareQuota，覆盖账号级 bucket，让每张卡看到自己份额的血条。
+	recordFairShareQuota(body)
 	l.applyClaudeWindows(leaseResp.ClaudeWindows)
 	l.mu.Lock()
 	l.lastLease = lease

@@ -13,23 +13,41 @@
  *   - Confirmed by 429: estimatedBudget = totalUsed at trigger time
  */
 
+import { bucketFamily } from "../lease-core/product-bucket";
+
 // ── Weight constants (based on pricing ratios) ──────────────────────────────
 
+// 键 = 模型家族(与 product-bucket.ts 的 Family / modelFamily 对齐:gemini/claude/gpt)。
+// 注意:真实桶名是「产品-家族」复合(如 anthropic-claude),查表前要先 bucketFamily() 取家族。
 export const QUOTA_WEIGHTS: Record<string, { input: number; output: number; cache: number }> = {
   gemini: { input: 1.0, output: 4.0, cache: 0.25 },
-  opus:   { input: 1.0, output: 5.0, cache: 0.10 },
-  codex:  { input: 1.0, output: 3.0, cache: 0.0 },
+  claude: { input: 1.0, output: 5.0, cache: 0.10 },
+  gpt:    { input: 1.0, output: 3.0, cache: 0.0 },
 };
 
 // ── Default budgets by planType (conservative, in weighted units) ────────────
 
+// 外层键 = planType(没有统一命名,三条线各抄各上游,这里按线分组覆盖全部真实取值);
+// 内层键 = 模型家族 gemini/claude/gpt(与桶的家族部分对齐,查表前先 bucketFamily() 取家族)。
+// 命中失败回落 free,所以漏一个高配档会把企业号当免费号限流。各值只是「首个 5h 窗口」的初始
+// 估计(加权 token),之后被上游 fraction 反推 + 429 实测覆盖,不必纠结精确。
+//   antigravity(Google paidTier)    : ultra / premium / standard / free
+//   codex(ChatGPT plan_type)        : pro / plus / team / enterprise / business / free
+//   anthropic(Claude org_type 映射) : max / pro / team / enterprise / ""(未知→free)
 const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
-  ultra:    { gemini: 5_000_000, opus: 2_000_000, codex: 2_000_000 },
-  premium:  { gemini: 250_000,   opus: 100_000,   codex: 100_000 },
-  plus:     { gemini: 250_000,   opus: 100_000,   codex: 100_000 },
-  pro:      { gemini: 250_000,   opus: 100_000,   codex: 100_000 },
-  standard: { gemini: 100_000,   opus: 50_000,    codex: 50_000 },
-  free:     { gemini: 50_000,    opus: 20_000,    codex: 20_000 },
+  // —— 顶配档 ——
+  ultra:      { gemini: 5_000_000, claude: 2_000_000, gpt: 2_000_000 }, // antigravity
+  max:        { gemini: 2_000_000, claude: 2_000_000, gpt: 2_000_000 }, // claude
+  enterprise: { gemini: 2_000_000, claude: 2_000_000, gpt: 2_000_000 }, // codex / claude
+  team:       { gemini:   500_000, claude:   300_000, gpt:   300_000 }, // codex / claude
+  business:   { gemini:   500_000, claude:   300_000, gpt:   300_000 }, // codex
+  // —— 中档 ——
+  premium:    { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // antigravity
+  pro:        { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // codex / claude
+  plus:       { gemini:   250_000, claude:   100_000, gpt:   100_000 }, // codex
+  standard:   { gemini:   100_000, claude:    50_000, gpt:    50_000 }, // antigravity
+  // —— 兜底(含 claude 空串/未知) ——
+  free:       { gemini:    50_000, claude:    20_000, gpt:    20_000 },
 };
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
@@ -82,7 +100,7 @@ export class FairShareTracker {
     outputTokens: number,
     cachedInputTokens: number,
   ): number {
-    const w = QUOTA_WEIGHTS[bucket] || QUOTA_WEIGHTS.gemini;
+    const w = QUOTA_WEIGHTS[bucketFamily(bucket)] || QUOTA_WEIGHTS.gemini;
     return inputTokens * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
   }
 
@@ -197,7 +215,7 @@ export class FairShareTracker {
       const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
       tracker = {
         windowStart: Date.now(),
-        estimatedBudget: defaults[bucket] || defaults.gemini || 50_000,
+        estimatedBudget: defaults[bucketFamily(bucket)] || defaults.gemini || 50_000,
         confidence: 'default',
         perCard: new Map(),
         lastFraction: 1.0,
