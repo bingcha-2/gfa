@@ -173,9 +173,6 @@ func detectSystemProxyWindows() string {
 func getSystemProxy() string {
 	systemProxyOnce.Do(func() {
 		systemProxyURL = detectSystemProxy()
-		if systemProxyURL == "" {
-			Log("[系统] 未检测到系统代理，将使用直连")
-		}
 	})
 	return systemProxyURL
 }
@@ -206,8 +203,6 @@ func getHttpClient(upstreamProxy string) *http.Client {
 				transport.Proxy = http.ProxyURL(proxyURL)
 				Log("[http-client] Using system proxy: %s", sysProxy)
 			}
-		} else {
-			Log("[http-client] No proxy detected, using direct connection")
 		}
 		httpClientPool = &http.Client{Timeout: 120 * time.Second, Transport: transport}
 	})
