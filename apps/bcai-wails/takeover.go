@@ -35,6 +35,7 @@ var takeoverTargets = []TakeoverTarget{
 	antigravityHubTarget{},
 	codexTarget{},
 	claudeCodeTarget{},
+	claudeDesktopTarget{},
 }
 
 // findTakeoverTarget 按调度键或产品 id 查找。
@@ -55,7 +56,7 @@ func targetRequiredProduct(productID string) string {
 		return "codex"
 	case "antigravity_ide", "antigravity_hub":
 		return "antigravity"
-	case "claude_code":
+	case "claude_code", "claude_desktop":
 		return "anthropic"
 	default:
 		return ""
@@ -273,4 +274,61 @@ func (claudeCodeTarget) Restore() (string, error) {
 		return "", err
 	}
 	return "Claude Code: ✓ 已恢复(CLI 下次启动生效;VSCode 扩展请 Reload Window)", nil
+}
+
+// ── Claude 桌面端 Code/Cowork(MITM 接管)──────────────────────────────────────
+//
+// 桌面端 spawn 的 Code/Cowork 子进程硬覆盖 ANTHROPIC_BASE_URL，env 注入无效，
+// 故走 MITM：装根 CA + 带代理 env 重启 Claude.app(route A)，把 api.anthropic.com
+// 的 /v1/messages 拦下换号池 token。MITM 代理由 app.go 常驻启动并随卡密同步。
+// 注意：本接管会重启 Claude.app，会中断正在运行的 Cowork 会话。
+
+type claudeDesktopTarget struct{}
+
+func (claudeDesktopTarget) Key() string           { return "claude_desktop" }
+func (claudeDesktopTarget) ProductID() string     { return "claude_desktop" }
+func (claudeDesktopTarget) Name() string          { return "Claude Desktop (Code/Cowork)" }
+func (claudeDesktopTarget) InjectionType() string { return "mitm" }
+func (claudeDesktopTarget) DetectPath() string    { return detectClaudeDesktopPath() }
+
+func (claudeDesktopTarget) IsInjected(_ int) bool { return mitmIsTakeoverActive() }
+
+func (claudeDesktopTarget) Inject(_ int) (string, error) {
+	if detectClaudeDesktopPath() == "" {
+		return "Claude Desktop: 未检测到应用", nil
+	}
+	m := GetMitmManager()
+	if !m.IsProxyRunning() {
+		return "", fmt.Errorf("MITM 代理未启动")
+	}
+	// 重启会做两件事(见 RelaunchClaudeWithProxy)：
+	//   1. Node 侧(Code/Cowork 子进程)：注入 NODE_EXTRA_CA_CERTS + HTTPS_PROXY 即走 MITM。
+	//   2. Chromium 侧(登录页/升级墙/主聊天)：装根 CA 进系统钥匙串(弹管理员授权) + --proxy-server，
+	//      才能解密并掀翻 Chromium 画的付费墙。装 CA 失败不阻塞，Node 侧推理仍可走号池。
+	// 退出并带代理重启 Claude.app（异步：会杀掉当前 Cowork 会话）。
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Log("[takeover] Claude Desktop 重启 goroutine panic: %v", r)
+			}
+		}()
+		if err := m.RelaunchClaudeWithProxy(); err != nil {
+			Log("[takeover] 带代理重启 Claude Desktop 失败: %v", err)
+		}
+	}()
+	return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)...", nil
+}
+
+func (claudeDesktopTarget) Restore() (string, error) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Log("[takeover] Claude Desktop 还原 goroutine panic: %v", r)
+			}
+		}()
+		if err := GetMitmManager().RelaunchClaudePlain(); err != nil {
+			Log("[takeover] 还原重启 Claude Desktop 失败: %v", err)
+		}
+	}()
+	return "Claude Desktop: ✓ 已恢复,正在重启 Claude...", nil
 }

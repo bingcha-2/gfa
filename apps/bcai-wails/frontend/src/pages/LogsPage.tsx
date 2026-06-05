@@ -13,7 +13,6 @@ const filters: { id: LogFilter; label: string }[] = [
   { id: 'warn', label: '警告' },
   { id: 'proxy', label: '代理' },
   { id: 'inject', label: '注入' },
-  { id: 'pool', label: '号池' },
 ]
 
 export function LogsPage() {

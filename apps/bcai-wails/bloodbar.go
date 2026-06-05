@@ -83,6 +83,15 @@ func recordBoundFractionForBucket(bucket string, fraction float64, resetAt int64
 	boundFracMu.Unlock()
 }
 
+// resetBoundFractions 换卡时清空所有绑定号血条额度,避免旧卡残量(及其 resetAt
+// 倒计时)串到新卡。新卡的额度由下一次 lease/quota 应答按 bucket 重新写入。
+func resetBoundFractions() {
+	boundFracMu.Lock()
+	boundFractions = map[string]bucketQuota{}
+	boundFracMu.Unlock()
+	Log("[bloodbar] Bound fractions reset (card changed)")
+}
+
 // snapshotBoundFractions 返回各 bucket 当前剩余分数的拷贝。
 func snapshotBoundFractions() map[string]float64 {
 	boundFracMu.RLock()

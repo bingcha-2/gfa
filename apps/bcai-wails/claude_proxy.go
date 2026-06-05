@@ -339,14 +339,6 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		targetURL += "?" + r.URL.RawQuery
 	}
 	audit.target = targetURL
-	req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
-	if err != nil {
-		audit.note = "构造上游请求失败"
-		p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
-		return
-	}
-	applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
-
 	auxEgress := claudeEgressProxy(lease.ProxyURL)
 	// 安全闸:辅助请求同样禁止从本机 IP 直连 anthropic。
 	if claudeEgressBlocked(auxEgress) {
@@ -355,10 +347,30 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 		p.sendJSONError(w, http.StatusBadGateway, "出口代理未配置:已拒绝从本机直连 api.anthropic.com")
 		return
 	}
-	resp, err := newClaudeUpstreamClient(auxEgress).Do(req)
-	if err != nil {
-		audit.note = "上游请求失败:" + err.Error()
-		p.sendJSONError(w, http.StatusBadGateway, err.Error())
+	client := newClaudeUpstreamClient(auxEgress)
+
+	// count_tokens 幂等、不计费:突发并发下偶发上游 EOF/连接重置,可安全重试。
+	var resp *http.Response
+	for attempt := 1; attempt <= claudeAuxMaxAttempts; attempt++ {
+		req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
+		if err != nil {
+			audit.note = "构造上游请求失败"
+			p.sendJSONError(w, http.StatusInternalServerError, "failed to build upstream request")
+			return
+		}
+		applyClaudeUpstreamHeaders(req.Header, r.Header, lease.AccessToken, targetURL)
+
+		var doErr error
+		resp, doErr = client.Do(req)
+		if doErr == nil {
+			break
+		}
+		if attempt < claudeAuxMaxAttempts && isRetriableUpstreamErr(doErr) {
+			audit.note = fmt.Sprintf("上游瞬时错误,重试 %d/%d: %v", attempt, claudeAuxMaxAttempts, doErr)
+			continue
+		}
+		audit.note = "上游请求失败:" + doErr.Error()
+		p.sendJSONError(w, http.StatusBadGateway, doErr.Error())
 		return
 	}
 	defer resp.Body.Close()

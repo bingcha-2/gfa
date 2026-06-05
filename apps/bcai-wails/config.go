@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type Config struct {
@@ -44,6 +45,16 @@ func getAppDataDir() string {
 func getEnvOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return defaultVal
+}
+
+// getEnvDurationOrDefault 读取形如 "15s"/"5m" 的时长环境变量；缺省或非法则返回 defaultVal。
+func getEnvDurationOrDefault(key string, defaultVal time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
 	}
 	return defaultVal
 }

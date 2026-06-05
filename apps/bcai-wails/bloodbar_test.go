@@ -32,6 +32,27 @@ func TestRecordAndSnapshotBoundFractions(t *testing.T) {
 	}
 }
 
+func TestResetBoundFractions(t *testing.T) {
+	boundFractions = map[string]bucketQuota{} // 起点干净
+
+	recordBoundFractionForModel("anthropic", "claude-opus-4-6", 0.30, 1_000_000)
+	recordBoundFractionForModel("antigravity", "gemini-2.5-pro", 0.50, 0)
+	if len(snapshotBoundFractions()) != 2 {
+		t.Fatalf("前置失败:应有 2 个 bucket, 得到 %v", snapshotBoundFractions())
+	}
+
+	// 换卡:绑定号血条残量必须清零,否则旧卡的 84K/32K 会串到新卡。
+	resetBoundFractions()
+
+	if got := snapshotBoundFractions(); len(got) != 0 {
+		t.Fatalf("换卡后血条应清零, 仍残留: %v", got)
+	}
+	// 倒计时也要一起清,避免旧卡 resetAt 残留。
+	if got := snapshotBoundResets(2_000_000); len(got) != 0 {
+		t.Fatalf("换卡后 reset 倒计时应清零, 仍残留: %v", got)
+	}
+}
+
 func TestSnapshotBoundResets(t *testing.T) {
 	boundFractions = map[string]bucketQuota{} // reset
 	now := int64(1_000_000)

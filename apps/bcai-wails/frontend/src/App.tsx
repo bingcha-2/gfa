@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { DashboardPage } from '@/pages/DashboardPage'
-import { PoolPage } from '@/pages/PoolPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { Modal } from '@/components/Modal'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
-import { usePoolStore } from '@/stores/usePoolStore'
 import { usePolling } from '@/hooks/usePolling'
 import type { PageId } from '@/types'
 
@@ -16,14 +14,12 @@ export default function App() {
 
   const { fetchStats, fetchConfig, fetchIDEStatus, fetchAnnouncement } = useAppStore()
   const { fetchLogs } = useLogStore()
-  const { initMode } = usePoolStore()
 
   // Initialize on mount
   useEffect(() => {
     fetchConfig()
     fetchIDEStatus()
     fetchAnnouncement()
-    initMode()
   }, [])
 
   // Polling: stats every 2s, IDE every 15s, announcement every 5min
@@ -38,7 +34,6 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'home': return <DashboardPage />
-      case 'pool': return <PoolPage />
       case 'logs': return <LogsPage />
       case 'settings': return <SettingsPage />
     }

@@ -81,6 +81,12 @@ func (a *App) startup(ctx context.Context) {
 		a.proxyStartedAt = time.Now()
 	}
 
+	// 常驻启动 Claude 桌面端接管用的 MITM 代理(独立端口 48801)。仅监听,不影响任何流量;
+	// 只有用户开启接管(装 CA + 带代理重启 Claude.app)后,Code/Cowork 子进程才会走它。
+	if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy); err != nil {
+		Log("[app] MITM 代理启动失败(不影响其它功能): %v", err)
+	}
+
 	// 预热连接池，提前建立 TLS 连接
 	WarmupConnectionPool(cfg.UpstreamProxy)
 
@@ -127,10 +133,7 @@ func (a *App) SaveConfig(cfg Config) error {
 		// 换卡时清空本地统计数据 + 旧卡的 products(accessKeyStatus),避免用旧卡产品
 		// 误判新卡是否开通 antigravity;新卡 products 由下面的 Activate 重新写入。
 		if oldCfg.AccountCard != cfg.AccountCard {
-			Log("[app] Account card changed: clearing local stats")
-			GetUsageStats().Reset()
-			GetLeaser().ResetLocalQuota()
-			GetLeaser().ClearAccessKeyStatus()
+			clearLocalCardState()
 		}
 
 		GetLeaser().StopAutoLease()
@@ -152,14 +155,39 @@ func (a *App) SaveConfig(cfg Config) error {
 		GetHTTPProxy().UpdateConfig(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 	}
 
+	// MITM 代理端口固定,无需重启,只同步卡密/出口(覆盖上面两个分支)。
+	GetMitmManager().UpdateConfig(cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
+
 	return nil
+}
+
+// clearLocalCardState 换卡时清空所有本地卡级状态:用量统计、本地额度跟踪、缓存的
+// 卡密状态(products)、以及绑定号血条残量。两条换卡路径(ActivateCard 与
+// App.SaveConfig)共用,避免旧卡数据串到新卡。
+func clearLocalCardState() {
+	Log("[app] Account card changed: clearing local stats")
+	GetUsageStats().Reset()
+	GetLeaser().ResetLocalQuota()
+	GetLeaser().ClearAccessKeyStatus()
+	resetBoundFractions()
+}
+
+// switchCardConfig 把配置切到 newCard 并持久化;仅当卡确实变化时清空本地状态,
+// 返回最新配置与是否发生了切换。无网络副作用,可单测。
+func switchCardConfig(newCard string) (Config, bool) {
+	cfg := LoadConfig()
+	switched := cfg.AccountCard != newCard
+	if switched {
+		clearLocalCardState()
+	}
+	cfg.AccountCard = newCard
+	_ = SaveConfig(cfg)
+	return cfg, switched
 }
 
 // ActivateCard saves the account card/access key and validates it server-side.
 func (a *App) ActivateCard(card string) (string, error) {
-	cfg := LoadConfig()
-	cfg.AccountCard = card
-	_ = SaveConfig(cfg)
+	cfg, _ := switchCardConfig(card)
 
 	// Activation = card validation only (/api/activate). Whether a token can be
 	// leased right now (account-pool availability) is a runtime concern, not an
@@ -172,6 +200,7 @@ func (a *App) ActivateCard(card string) (string, error) {
 	// Start auto-lease / proxy so the client is ready to serve requests.
 	GetLeaser().StartAutoLease(card, cfg.DeviceId, cfg.UpstreamProxy)
 	GetHTTPProxy().UpdateConfig(card, cfg.DeviceId, cfg.UpstreamProxy)
+	GetMitmManager().UpdateConfig(card, cfg.DeviceId, cfg.UpstreamProxy)
 
 	// Best-effort warm probe — never fatal. If the pool is momentarily dry the
 	// card is still activated; the user just sees a "busy" hint at request time.
@@ -246,6 +275,14 @@ func (a *App) RestartProxy() error {
 
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
+}
+
+// SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「登录态 mock」。
+// 开(默认,对齐 reclaude)：伪造已登录 pro，让没有 Claude 账号的用户也能用号池
+// (桌面端 host-auth 下能否完全生效需实测)；关：透传 /api/hello 等，登录用户保持真实身份。
+func (a *App) SetClaudeDesktopMockLogin(on bool) bool {
+	GetMitmManager().SetMockLogin(on)
+	return on
 }
 
 // ======================== Codex 中转(API 卡密)模式 ========================

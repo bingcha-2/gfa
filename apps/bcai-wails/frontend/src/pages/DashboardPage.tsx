@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
-import { usePoolStore } from '@/stores/usePoolStore'
 import { StatusPill } from '@/components/StatusPill'
 import { StatCard } from '@/components/StatCard'
 import { UsageBar } from '@/components/UsageBar'
@@ -13,111 +12,28 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
-import { formatTokens, maskCard, formatDate, cn } from '@/lib/utils'
-import { useCountdown } from '@/hooks/useCountdown'
+import { formatTokens, maskCard, formatDate } from '@/lib/utils'
 import {
   Activity, AlertCircle, ArrowUpRight, ArrowDownRight, DollarSign,
-  Key, Timer, HardDrive,
+  Key,
 } from 'lucide-react'
-import type { ActiveAccountSummary } from '@/types'
-
-const planLabels: Record<string, string> = {
-  ultra: 'Ultra', premium: 'Premium', standard: 'Standard', free: 'Free',
-}
-
-const providerColors: Record<string, string> = {
-  gemini: 'bg-[var(--accent)]',
-  claude: 'bg-purple-500',
-  gpt: 'bg-emerald-500',
-}
-
-function LocalPoolQuotaDisplay() {
-  const activeAccount = useAppStore((s) => s.activeAccount) as ActiveAccountSummary | null
-
-  if (!activeAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-1 py-3 text-center">
-        <HardDrive size={20} className="text-[var(--text-muted)]" />
-        <span className="text-[12px] text-[var(--text-muted)]">本地号池模式下，配额按各账号独立计算</span>
-        <span className="text-[11px] text-[var(--text-muted)]">可在「号池管理」页查看各号额度</span>
-      </div>
-    )
-  }
-
-  const { planType, credits, quotaGroups, email, alias } = activeAccount
-
-  return (
-    <div className="flex flex-col gap-2">
-      {/* 账号 + 套餐 */}
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] text-[var(--text-secondary)] truncate max-w-[140px]">
-          {alias || email}
-        </span>
-        <Badge variant={planType === 'ultra' ? 'success' : planType === 'premium' ? 'default' : 'muted'}>
-          {planLabels[planType] || planType || 'Unknown'}
-        </Badge>
-      </div>
-
-      {/* AI 积分 */}
-      {credits?.known && (
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-[var(--text-muted)]">AI 积分</span>
-          <span className={cn('font-mono-data font-semibold', credits.available ? 'text-[var(--success)]' : 'text-[var(--danger)]')}>
-            {credits.creditAmount.toLocaleString()}
-          </span>
-        </div>
-      )}
-
-      {/* 模型额度条 */}
-      {quotaGroups && quotaGroups.length > 0 ? (
-        quotaGroups.map((g) => (
-          <div key={g.provider} className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-[var(--text-muted)] capitalize">{g.provider}</span>
-              <span className="text-[var(--text-muted)] font-mono-data">{Math.round(g.percent)}%</span>
-            </div>
-            <Progress
-              value={g.percent}
-              className="h-1.5"
-              indicatorClassName={cn(
-                providerColors[g.provider] || 'bg-[var(--primary)]',
-                g.percent <= 0 && 'bg-[var(--danger)]',
-              )}
-            />
-          </div>
-        ))
-      ) : (
-        <span className="text-[11px] text-[var(--text-muted)]">额度数据加载中...</span>
-      )}
-    </div>
-  )
-}
 
 export function DashboardPage() {
   const {
     config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts, bucketFractions, bucketResetMs, codexQuota, claudeQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens, cumulativeSaving,
-    opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit, recoveryRemainingMs, recoveryWindowMs,
+    opusUsed, opusLimit, geminiUsed, geminiLimit, codexUsed, codexLimit,
   } = useAppStore()
 
-  // 限流窗口时长由服务端按卡密下发(可配置小时/天),文案据此动态显示。
-  const windowLabel = (() => {
-    const hours = recoveryWindowMs / 3600000
-    return hours >= 24 ? `${Math.round(hours / 24)}天` : `${Math.round(hours)}h`
-  })()
-
-  const poolMode = usePoolStore((s) => s.mode)
   // 绑定卡只显示它绑了的产品的用量条;池子卡(无 products)三条都显示。
   const visibleBars = usageBarsForProducts(cardProducts)
   // 绑定账号当前不可用(租号报错且非致命):额度数据不可信 → 血条显示「未知」+ 顶部提示,
   // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
   // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
-  const accountProblem = poolMode !== 'local' && !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude')
+  const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude')
 
   const { modalProps, showAlert } = useModal()
-  const { display: recoveryDisplay, percent: recoveryPercent, isDone: recoveryDone } = useCountdown(recoveryRemainingMs, recoveryWindowMs)
 
   const [cardInput, setCardInput] = useState('')
   const [activating, setActivating] = useState(false)
@@ -216,22 +132,7 @@ export function DashboardPage() {
           <Card>
             <CardHeader><CardTitle>模型用量</CardTitle></CardHeader>
             <CardContent>
-              {/* 本地号池模式:单条额度恢复倒计时(远程模式每条血条各自显示恢复时间)。 */}
-              {poolMode === 'local' && recoveryRemainingMs > 0 && (
-                <div className="mb-3 pb-3 border-b border-[var(--border-light)]">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[12px] font-medium text-[var(--text-secondary)] flex items-center gap-1">
-                      <Timer size={12} /> {windowLabel} 额度恢复
-                    </span>
-                    <Badge variant={recoveryDone ? 'success' : 'warning'}>{recoveryDisplay}</Badge>
-                  </div>
-                  <Progress value={recoveryPercent} indicatorClassName={cn(recoveryDone ? 'bg-[var(--success)]' : 'bg-[var(--warning)]')} />
-                </div>
-              )}
-              {poolMode === 'local' ? (
-                <LocalPoolQuotaDisplay />
-              ) : (
-                <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-2.5">
                   {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
                   {accountProblem && (
                     <div className="rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
@@ -274,8 +175,7 @@ export function DashboardPage() {
                       />
                     )
                   })}
-                </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </div>

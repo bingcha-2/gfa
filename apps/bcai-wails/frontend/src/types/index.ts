@@ -121,7 +121,7 @@ export interface UpdateStatus {
 }
 
 // ===== Pages =====
-export type PageId = 'home' | 'pool' | 'logs' | 'settings'
+export type PageId = 'home' | 'logs' | 'settings'
 
 // ===== Log =====
 export interface ParsedLog {
@@ -132,13 +132,3 @@ export interface ParsedLog {
   level: 'info' | 'error' | 'warn' | 'success' | 'system'
 }
 
-// ===== Active Account (本地号池当前账号额度摘要) =====
-export interface ActiveAccountSummary {
-  accountId: number
-  email: string
-  alias?: string
-  planType: string
-  credits?: CreditsInfo | null
-  quotaGroups: QuotaGroup[]
-  quotaRefreshedAt: number
-}

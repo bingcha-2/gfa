@@ -7,7 +7,7 @@ import * as api from '@/services/wails'
 import { parseLogLine } from '@/lib/utils'
 import type { ParsedLog } from '@/types'
 
-export type LogFilter = 'all' | 'error' | 'warn' | 'proxy' | 'inject' | 'pool'
+export type LogFilter = 'all' | 'error' | 'warn' | 'proxy' | 'inject'
 
 interface LogState {
   logs: ParsedLog[]
@@ -60,7 +60,6 @@ export const useLogStore = create<LogState>((set, get) => ({
       if (filter === 'warn') return lo.includes('warn') || lo.includes('retrying')
       if (filter === 'proxy') return lo.includes('[proxy]')
       if (filter === 'inject') return lo.includes('[ide-inject]')
-      if (filter === 'pool') return lo.includes('[pool]') || lo.includes('[local-pool]')
       return true
     })
   },

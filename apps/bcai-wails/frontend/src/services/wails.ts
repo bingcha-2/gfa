@@ -15,6 +15,7 @@ import {
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
+  SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
   GetDetectedPaths,
   BrowseForPath as _BrowseForPath,
   CheckForUpdate as _CheckForUpdate,
@@ -41,7 +42,7 @@ import {
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
-import type { Config, IDEStatus, AccountInfo, UpdateStatus, ActiveAccountSummary, BoundAccountInfo } from '@/types'
+import type { Config, IDEStatus, AccountInfo, UpdateStatus, BoundAccountInfo } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -116,7 +117,6 @@ export interface StatsResponse {
     lockedAccountId?: number
   }
   proxyStartedAt: string
-  activeAccount?: ActiveAccountSummary | null
 }
 
 export async function getStats(): Promise<StatsResponse> {
@@ -152,6 +152,10 @@ export async function injectSelected(targets: string[]): Promise<string> {
 
 export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
+}
+
+export async function setClaudeDesktopMockLogin(on: boolean): Promise<boolean> {
+  return _SetClaudeDesktopMockLogin(on)
 }
 
 export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string }> {
