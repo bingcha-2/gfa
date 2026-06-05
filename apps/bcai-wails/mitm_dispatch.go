@@ -26,12 +26,19 @@ func mitmShouldIntercept(host string) bool {
 }
 
 // mitmRouter 是被拦截连接(api.anthropic.com)上每条解密请求的分派器：
-// /v1/messages* 交给 claudeHandler（复用 ClaudeProxy 换号池 token + 计费），
-// 其余端点交给 forwardHandler（原样透传到真实上游，沿用用户自己的登录态）。
-func mitmRouter(claudeHandler, forwardHandler http.Handler) http.Handler {
+//   - /v1/messages*      → claudeHandler（复用 ClaudeProxy 换号池 token + 计费）
+//   - 鉴权端点(且开启mock) → mockHandler（伪造已登录 pro，给未登录用户）
+//   - 其余                → forwardHandler（透传真实上游，沿用用户自己的登录态）
+//
+// mockHandler 为 nil 时，鉴权端点也走 forwardHandler（默认：登录用户保持真实身份）。
+func mitmRouter(claudeHandler, mockHandler, forwardHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isClaudeAPIRequest(r.URL.Path) {
 			claudeHandler.ServeHTTP(w, r)
+			return
+		}
+		if mockHandler != nil && mitmShouldMock(r.URL.Path) {
+			mockHandler.ServeHTTP(w, r)
 			return
 		}
 		forwardHandler.ServeHTTP(w, r)

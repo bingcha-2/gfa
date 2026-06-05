@@ -29,11 +29,26 @@ type mitmManager struct {
 	card     string
 	deviceId string
 	upstream string
+
+	mockLogin bool // 是否伪造未登录态(默认 false：登录用户透传保持真实身份)
 }
 
 var globalMitmManager = &mitmManager{}
 
 func GetMitmManager() *mitmManager { return globalMitmManager }
+
+func (m *mitmManager) isMockLogin() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mockLogin
+}
+
+// SetMockLogin 开关「未登录态 mock」。运行时切换即时生效，无需重启代理。
+func (m *mitmManager) SetMockLogin(on bool) {
+	m.mu.Lock()
+	m.mockLogin = on
+	m.mu.Unlock()
+}
 
 // buildHandler 构造被拦截连接上的请求分派器。
 func (m *mitmManager) buildHandler() http.Handler {
@@ -45,7 +60,15 @@ func (m *mitmManager) buildHandler() http.Handler {
 		// 复用现有 Claude 代理：租号池 token → 换 Authorization → 出口闸 → SSE 计费。
 		GetClaudeProxy().ServeHTTP(w, r, card, deviceId, upstream)
 	})
-	return mitmRouter(claude, forward)
+	// 鉴权端点：开启 mock 时伪造，否则透传(保持真实登录身份)。运行时读 m.mockLogin。
+	mockOrForward := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.isMockLogin() {
+			mitmMockHandler().ServeHTTP(w, r)
+		} else {
+			forward.ServeHTTP(w, r)
+		}
+	})
+	return mitmRouter(claude, mockOrForward, forward)
 }
 
 // StartProxy 仅启动本地 MITM 代理（不装 CA、不重启 App）。
@@ -163,6 +186,7 @@ type MitmStatus struct {
 	CAInstalled    bool   `json:"caInstalled"`
 	CACertPath     string `json:"caCertPath"`
 	TakeoverActive bool   `json:"takeoverActive"`
+	MockLogin      bool   `json:"mockLogin"`
 }
 
 func (m *mitmManager) GetStatus() MitmStatus {
@@ -174,5 +198,6 @@ func (m *mitmManager) GetStatus() MitmStatus {
 		CAInstalled:    mitmIsCAInstalled(),
 		CACertPath:     mitmCACertPath(),
 		TakeoverActive: mitmIsTakeoverActive(),
+		MockLogin:      m.mockLogin,
 	}
 }

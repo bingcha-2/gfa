@@ -258,6 +258,14 @@ func (a *App) RestartProxy() error {
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, cfg.UpstreamProxy)
 }
 
+// SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「未登录态 mock」。
+// 关(默认)：透传 /api/hello 等，登录用户保持真实身份；开：伪造已登录 pro，
+// 让没有 Claude 账号的用户也能用号池(桌面端 host-auth 下能否完全生效需实测)。
+func (a *App) SetClaudeDesktopMockLogin(on bool) bool {
+	GetMitmManager().SetMockLogin(on)
+	return on
+}
+
 // ======================== Codex 中转(API 卡密)模式 ========================
 
 // GetCodexRelayConfig 返回当前 Codex 中转配置(供前端设置面板回显)。

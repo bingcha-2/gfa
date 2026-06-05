@@ -6,32 +6,39 @@ import (
 	"testing"
 )
 
-// MITM 解密后的请求按路径分派：/v1/messages* 交给 Claude 处理器（换号池 token），
-// 其余端点(/api/hello、/v1/models 等)透传到真实上游。
+// MITM 解密后的请求三路分派：/v1/messages*→Claude(换号池 token)；鉴权端点(开启
+// mock 时)→mock 伪造登录态；其余→透传真实上游。mockHandler 为 nil 时鉴权端点也走透传
+// (登录用户保持自己的真实身份)。
 func TestMitmRouterRoutesByPath(t *testing.T) {
 	cases := []struct {
-		path       string
-		wantClaude bool
+		path    string
+		mockOn  bool
+		want    string // "claude" | "mock" | "forward"
 	}{
-		{"/v1/messages", true},
-		{"/v1/messages/count_tokens", true},
-		{"/api/hello", false},
-		{"/api/auth/me", false},
-		{"/v1/models", false},
-		{"/mcp-registry/v0/servers", false},
+		{"/v1/messages", true, "claude"},
+		{"/v1/messages", false, "claude"},
+		{"/v1/messages/count_tokens", false, "claude"},
+		{"/api/hello", true, "mock"},          // 开启 mock：伪造登录
+		{"/api/hello", false, "forward"},      // 关闭 mock：透传(登录用户保留真实身份)
+		{"/api/auth/me", true, "mock"},
+		{"/api/auth/me", false, "forward"},
+		{"/v1/models", true, "forward"},       // 非鉴权端点，即使开 mock 也透传
+		{"/mcp-registry/v0/servers", false, "forward"},
 	}
 	for _, c := range cases {
-		var hitClaude, hitForward bool
-		claudeH := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hitClaude = true })
-		forwardH := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hitForward = true })
-
-		router := mitmRouter(claudeH, forwardH)
+		var hit string
+		mk := func(name string) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = name })
+		}
+		var mockH http.Handler
+		if c.mockOn {
+			mockH = mk("mock")
+		}
+		router := mitmRouter(mk("claude"), mockH, mk("forward"))
 		req := httptest.NewRequest("POST", "https://api.anthropic.com"+c.path, nil)
 		router.ServeHTTP(httptest.NewRecorder(), req)
-
-		if hitClaude != c.wantClaude || hitForward == c.wantClaude {
-			t.Errorf("path %q: hitClaude=%v hitForward=%v, wantClaude=%v",
-				c.path, hitClaude, hitForward, c.wantClaude)
+		if hit != c.want {
+			t.Errorf("path=%q mockOn=%v: routed to %q, want %q", c.path, c.mockOn, hit, c.want)
 		}
 	}
 }

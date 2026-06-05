@@ -134,6 +134,10 @@ export function SetAccountAlias(arg1, arg2) {
   return window['go']['main']['App']['SetAccountAlias'](arg1, arg2);
 }
 
+export function SetClaudeDesktopMockLogin(arg1) {
+  return window['go']['main']['App']['SetClaudeDesktopMockLogin'](arg1);
+}
+
 export function SetPoolMode(arg1) {
   return window['go']['main']['App']['SetPoolMode'](arg1);
 }

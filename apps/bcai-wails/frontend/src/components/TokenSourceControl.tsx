@@ -55,6 +55,18 @@ export function TokenSourceControl() {
   const [busy, setBusy] = useState<string | null>(null)
   const [busyLabel, setBusyLabel] = useState('')
 
+  // 未登录态 mock 开关(默认关:登录用户透传保真实身份;开:伪造已登录 pro 给未登录用户)。
+  const [mockLogin, setMockLogin] = useState(false)
+  const toggleMockLogin = async () => {
+    const next = !mockLogin
+    setMockLogin(next)
+    try {
+      await api.setClaudeDesktopMockLogin(next)
+    } catch {
+      setMockLogin(!next)
+    }
+  }
+
   // 中转配置(草稿)。
   const [relayBase, setRelayBase] = useState('')
   const [relayKey, setRelayKey] = useState('')
@@ -514,6 +526,10 @@ export function TokenSourceControl() {
             <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
               桌面端无视 settings.json,需经 MITM 接管:重启 Claude(会中断 Cowork 会话,聊天不受影响),把 Code/Cowork 的 /v1/messages 改用号池。
             </div>
+            <label className="flex items-center gap-2 mt-1.5 px-1 cursor-pointer text-[10px] text-[var(--text-muted)]">
+              <input type="checkbox" checked={mockLogin} onChange={toggleMockLogin} className="cursor-pointer" />
+              未登录也能用(伪造登录态)——没有 Claude 账号时勾选;已登录用户请勿开启
+            </label>
           </div>
         )}
 

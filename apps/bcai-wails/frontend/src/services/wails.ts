@@ -15,6 +15,7 @@ import {
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
+  SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
   GetDetectedPaths,
   BrowseForPath as _BrowseForPath,
   CheckForUpdate as _CheckForUpdate,
@@ -152,6 +153,10 @@ export async function injectSelected(targets: string[]): Promise<string> {
 
 export async function restoreSelected(targets: string[]): Promise<string> {
   return _RestoreSelected(targets)
+}
+
+export async function setClaudeDesktopMockLogin(on: boolean): Promise<boolean> {
+  return _SetClaudeDesktopMockLogin(on)
 }
 
 export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string }> {
