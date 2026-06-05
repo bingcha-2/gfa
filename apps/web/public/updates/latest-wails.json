@@ -1,27 +1,27 @@
 {
-  "version": "7.3.1",
-  "url": "https://bcai.site/updates/BingchaAI-7.3.1.exe",
-  "sha256": "7BDEA3B3F58463AACCC8AC725AA991CBCABB5E228C909BA046AAAD779A76845B",
-  "size": 20390400,
-  "changelog": "性能优化和问题修复",
+  "version": "8.0.0",
+  "url": "https://bcai.site/updates/BingchaAI-8.0.0.exe",
+  "sha256": "A8760DBDCE094AD069B8996EC5D43CFA30499E3C0DFB4C3AA22DBE5162DC8C13",
+  "size": 20477440,
+  "changelog": "绑定账号信息+会员等级;代理日志单条化;token 全程脱敏;配额系统统一+Claude 拼车;修复 fair-share 桶名计费;强制最低版本 8.0.0",
   "minVersion": "4.0.0",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.3.1-arm64.dmg",
-      "sha256": "BBEC93FF8AD06ECCBD86450229B9CE72E32D257D79A0C6D4A877F0BD86118B28",
-      "size": 9999866
+      "url": "https://bcai.site/updates/BingchaAI-8.0.0-arm64.dmg",
+      "sha256": "F984FDD43272378DD438897BE6F50359963DE9BD761E9D47519DE8C65C8A9DCD",
+      "size": 10034114
     },
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.3.1-amd64.dmg",
-      "sha256": "16D551E7E20482B8EC086B402476B453DA1522FF5A49544B457664BB7B58F038",
-      "size": 11388947
+      "url": "https://bcai.site/updates/BingchaAI-8.0.0-amd64.dmg",
+      "sha256": "1005698BC9BE51EDEB5994E05C2224CCB2AE91AF49FCA75039E5FFF22BA0B913",
+      "size": 10763009
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.site/updates/BingchaAI-7.3.1-linux-amd64.tar.gz",
-      "sha256": "46A0C17A65404B2CE40D65608C807167B48B2FEBFD32FD8CF205830F5382557A",
-      "size": 8472089
+      "url": "https://bcai.site/updates/BingchaAI-8.0.0-linux-amd64.tar.gz",
+      "sha256": "C0372B55FA2E5E633C1008137DA25046FCFCEC1433932CD0ABF0C0B6E8AB6CAC",
+      "size": 8504650
     }
   }
 }
