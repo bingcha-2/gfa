@@ -85,4 +85,14 @@ export interface Provider<TAccount> {
    * account shows a full bar. Providers that omit it surface no blood bar.
    */
   bloodBarFraction?(account: TAccount, modelKey: string): { fraction: number; resetAt: number };
+
+  /**
+   * Optional: refresh the leased account's quota snapshot from upstream during a
+   * lease, so the lease response carries fresh blood-bar windows — server-side,
+   * no client reporting. Called best-effort with the freshly-refreshed access
+   * token right before the account is persisted + the lease response built.
+   * Implementations MUST throttle internally (lease is hot) and never throw.
+   * Anthropic uses this (GET /api/oauth/usage); codex/antigravity omit it.
+   */
+  refreshQuotaOnLease?(account: TAccount, accessToken: string): Promise<void>;
 }

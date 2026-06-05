@@ -198,6 +198,8 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		}
 		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d tokens(in=%d out=%d total=%d) → 已提交用量上报",
 			reqID, resp.StatusCode, details.InputTokens, details.OutputTokens, details.RawTotalTokens)
+		// 喂本地 dashboard 统计(今日输入/输出 Token);对齐 codex_proxy。漏了它 claude 的 token 永远显示 0。
+		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 		return
 	}
@@ -215,6 +217,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	details := claudeReportDetailsFromBody(resp.StatusCode, modelKey, respBody)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		Log("[claude-proxy] #%d [生成] ✓ 上游码=%d total=%d → 已提交用量上报", reqID, resp.StatusCode, details.RawTotalTokens)
+		GetUsageStats().AddTokens(details.InputTokens, details.OutputTokens, details.CachedInputTokens)
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 	} else {
 		snippet := string(respBody)
