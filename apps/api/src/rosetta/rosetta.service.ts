@@ -1439,6 +1439,18 @@ export class RosettaService {
     return { ok: true, accounts, dataDir: this.dataDir };
   }
 
+  // 归一化代理:接受代理商常见的 host:port:user:pass / host:port 简写(默认按 http 代理),
+  // 或原样的 http(s):// / socks5:// URL。空→空。其它形态原样返回(交上层 scheme 校验报错)。
+  private normalizeProxyUrl(raw: string): string {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    if (/^(https?|socks5h?):\/\//i.test(s)) return s;
+    const p = s.split(":");
+    if (p.length === 4) return `http://${p[2]}:${p[3]}@${p[0]}:${p[1]}`; // host:port:user:pass
+    if (p.length === 2) return `http://${p[0]}:${p[1]}`; // host:port(无鉴权)
+    return s;
+  }
+
   addClaudeAccount(payload: any) {
     const email = String(payload?.email || "").trim();
     const refreshToken = String(payload?.refreshToken || "").trim();
@@ -1457,7 +1469,7 @@ export class RosettaService {
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
       if (payload.accessToken) existing.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
-      if (payload.proxyUrl !== undefined) existing.proxyUrl = String(payload.proxyUrl || "");
+      if (payload.proxyUrl !== undefined) existing.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -1472,7 +1484,7 @@ export class RosettaService {
       };
       if (payload.accessToken) record.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
-      if (payload.proxyUrl) record.proxyUrl = String(payload.proxyUrl);
+      if (payload.proxyUrl) record.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
@@ -1646,9 +1658,10 @@ export class RosettaService {
   // 客户端租到该号时随 lease 下发 claudeProxyUrl,该号的 anthropic 出口固定走它(一号一IP)。
   setClaudeAccountProxy(payload: any) {
     const accountId = Number(payload?.accountId);
-    const proxyUrl = String(payload?.proxyUrl || "").trim();
+    // 接受 host:port:user:pass / host:port 简写,或 http(s):// / socks5:// URL。
+    const proxyUrl = this.normalizeProxyUrl(payload?.proxyUrl);
     if (proxyUrl && !/^(https?|socks5h?):\/\//i.test(proxyUrl)) {
-      return { ok: false, error: "代理 URL 必须以 http(s):// 或 socks5:// 开头" };
+      return { ok: false, error: "代理格式无效:用 host:port:user:pass(或 host:port),或 http(s):// / socks5:// URL" };
     }
     const filePath = path.join(this.dataDir, "anthropic-accounts.json");
     const data = readJson(filePath, { accounts: [] });

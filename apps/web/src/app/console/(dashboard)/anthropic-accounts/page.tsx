@@ -409,7 +409,7 @@ export default function ClaudeAccountsPage() {
                           <Input
                             className="h-7 text-xs"
                             autoFocus
-                            placeholder="http(s):// 或 socks5://"
+                            placeholder="host:port:user:pass 或 http(s)://"
                             value={proxyEditVal}
                             onChange={(e) => setProxyEditVal(e.target.value)}
                             onKeyDown={(e) => {
