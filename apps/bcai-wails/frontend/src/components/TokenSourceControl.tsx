@@ -197,7 +197,7 @@ export function TokenSourceControl() {
       }
       const ok = await showConfirm(
         '接管 Claude Desktop',
-        '接管会向系统信任库安装根证书(需输入密码授权),并重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话。是否继续?',
+        '接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话(聊天不受影响)。是否继续?',
       )
       if (!ok) return
     }
@@ -512,7 +512,7 @@ export function TokenSourceControl() {
               </Button>
             </div>
             <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-              桌面端无视 settings.json,需经 MITM 接管:安装根证书(需授权)+重启 Claude(会中断 Cowork 会话),把 /v1/messages 改用号池。
+              桌面端无视 settings.json,需经 MITM 接管:重启 Claude(会中断 Cowork 会话,聊天不受影响),把 Code/Cowork 的 /v1/messages 改用号池。
             </div>
           </div>
         )}

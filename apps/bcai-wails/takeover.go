@@ -301,10 +301,9 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	if !m.IsProxyRunning() {
 		return "", fmt.Errorf("MITM 代理未启动")
 	}
-	// 装根 CA（系统信任库，需管理员授权弹框）。
-	if err := m.InstallCA(); err != nil {
-		return "", err
-	}
+	// 注意：不装系统根 CA。Code/Cowork 子进程是 Node，靠重启时注入的
+	// NODE_EXTRA_CA_CERTS + NODE_TLS_REJECT_UNAUTHORIZED 即信任 MITM 证书，
+	// 无需改系统信任库（那一步在 GUI 里弹不出授权框，且只有 Chromium 聊天才需要）。
 	// 退出并带代理 env 重启 Claude.app（异步：会杀掉当前 Cowork 会话）。
 	go func() {
 		defer func() {
