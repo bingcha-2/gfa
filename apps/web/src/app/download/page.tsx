@@ -43,10 +43,8 @@ export default function DownloadPage() {
 
   const version = info?.version || "latest";
 
-  // Windows 下载
-  const winUrl = info?.url
-    ? `/updates/BingchaAI-${info.version}.exe`
-    : "/updates/BingchaAI-latest.exe";
+  // Windows 下载（URL 来自 latest-wails.json，指向 GitHub Release）
+  const winUrl = info?.url || "#";
   const winSizeMB = info?.size ? Math.round(info.size / 1024 / 1024) : 12;
 
   // macOS 下载
@@ -215,7 +213,7 @@ export default function DownloadPage() {
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
               {macArm64 && (
                 <a
-                  href={`/updates/BingchaAI-${version}-arm64.dmg`}
+                  href={macArm64?.url || "#"}
                   style={{
                     padding: "10px 24px",
                     borderRadius: 8,
@@ -240,7 +238,7 @@ export default function DownloadPage() {
               )}
               {macAmd64 && (
                 <a
-                  href={`/updates/BingchaAI-${version}-amd64.dmg`}
+                  href={macAmd64?.url || "#"}
                   style={{
                     padding: "10px 24px",
                     borderRadius: 8,
@@ -273,7 +271,7 @@ export default function DownloadPage() {
         {/* ── Linux Download Card ── */}
         {linuxAmd64 && (
           <a
-            href={`/updates/BingchaAI-${version}-linux-amd64.tar.gz`}
+            href={linuxAmd64?.url || "#"}
             style={{
               display: "flex",
               flexDirection: "column",
