@@ -87,6 +87,7 @@ type Leaser struct {
 	inflightResult map[string]*inflightLeaseResult
 	// 本地计费
 	localQuota LocalQuota
+	quotaMode  string // "static" | "dynamic" | "unlimited"（服务端下发,见 syncFromServer)
 	// 上报重试队列
 	pendingReports []pendingReport
 	// 远程租号的 quota 采集（quota_sync.go）

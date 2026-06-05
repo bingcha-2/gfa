@@ -7,7 +7,7 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { AutomationService } from "../automation/automation.service";
 import { AgentAccountService } from "../automation/agent-account.service";
 
-import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired } from "../token-server/token-billing";
+import { billableTokenUsageTotal, readTokenCount, tokenWindowLimit, DEFAULT_KEY_WINDOW_MS, UNIVERSAL_BILLING, recentBucketUsage, resetWindowIfExpired, ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { bucketsForProducts } from "../lease-core/product-bucket";
 import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
@@ -35,9 +35,7 @@ type RosettaServiceOptions = {
   claudeOAuthFetch?: typeof fetch;
 };
 
-/** Total shares (份) per upstream account. A card consumes `weight` shares:
- * 1 = 拼车 (4 such cards share one account), 4 = 独享 (one card takes the account). */
-const ACCOUNT_SHARE_CAPACITY = 4;
+// ACCOUNT_SHARE_CAPACITY is now imported from token-billing.ts (shared constant).
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/oauth/authorize";
 const CODEX_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
@@ -593,6 +591,26 @@ export class RosettaService {
       this.setAccountEnabled("accounts.json", r.id, false);
       return { ...r, enabled: false, tokenValid: false, warning: `token 验证失败,已加入但置为停用: ${probe.error}` };
     }
+
+    // Auto-discover projectId if not provided — without it the account is
+    // invisible in the pool (isAccountEligible requires projectId).
+    if (!String(payload?.projectId || "").trim()) {
+      try {
+        const filePath = path.join(this.dataDir, "accounts.json");
+        const data = readJson(filePath, { accounts: [] });
+        const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
+        const acc = accounts.find((a: any) => Number(a.id) === r.id);
+        if (acc && !acc.projectId) {
+          await this.tryDiscoverProject(acc);
+          if (acc.projectId) {
+            writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`Auto-discover projectId failed for account #${r.id}: ${err.message}`);
+      }
+    }
+
     return { ...r, tokenValid: true };
   }
 
@@ -1834,6 +1852,11 @@ export class RosettaService {
         weeklyTokenLimit: Math.max(0, Number(payload?.weeklyTokenLimit || 0)),
         weight,
         ...(products.length ? { bindings } : {}),
+        // Universal cards can also select products (restrict available services).
+        // Empty products = all products available.
+        ...(!products.length && Array.isArray(payload?.products) && payload.products.length
+          ? { products: payload.products.map((p: unknown) => String(p)).filter((p: string) => p === 'codex' || p === 'antigravity') }
+          : {}),
         createdAt: nowIso(),
       };
       keys.push(record);

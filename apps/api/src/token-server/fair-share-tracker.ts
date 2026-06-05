@@ -56,6 +56,10 @@ export interface FairShareTrackerOptions {
   getAccountPlanType: (accountId: number) => string;
   /** Resolve all active card ids bound to an account in a given provider pool. */
   getBoundCardIds: (accountId: number) => string[];
+  /** Resolve a card's share weight (1..capacity). */
+  getCardWeight: (cardId: string) => number;
+  /** Total share capacity per upstream account (4 or 8). */
+  accountShareCapacity: number;
 }
 
 // ── Core class ──────────────────────────────────────────────────────────────
@@ -128,18 +132,15 @@ export class FairShareTracker {
 
   /** Check if a card is within its fair share. Called before granting a lease. */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
-    const boundCards = this.opts.getBoundCardIds(accountId);
-    if (boundCards.length <= 1) {
-      return { allowed: true, remainingFraction: undefined };
-    }
-
     const tracker = this.trackers.get(accountId)?.get(bucket);
     if (!tracker) {
-      return { allowed: true, remainingFraction: undefined };
+      return { allowed: true, remainingFraction: 1.0 };
     }
     this.ensureWindow(tracker, Date.now());
 
-    const perCardBudget = tracker.estimatedBudget / boundCards.length;
+    const weight = this.opts.getCardWeight(cardId);
+    const capacity = this.opts.accountShareCapacity;
+    const perCardBudget = tracker.estimatedBudget * (weight / capacity);
     const myUsage = tracker.perCard.get(cardId) || 0;
     const remaining = Math.max(0, perCardBudget - myUsage);
     const remainingFraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
@@ -160,18 +161,17 @@ export class FairShareTracker {
    * Returns: { gemini: 0.75, opus: 0.3, codex: 1.0 } or {} if no tracking.
    */
   getCardQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number }> {
-    const boundCards = this.opts.getBoundCardIds(accountId);
-    if (boundCards.length <= 1) return {};
-
     const bucketTrackers = this.trackers.get(accountId);
     if (!bucketTrackers) return {};
 
     const now = Date.now();
+    const weight = this.opts.getCardWeight(cardId);
+    const capacity = this.opts.accountShareCapacity;
     const out: Record<string, { fraction: number; resetAt: number }> = {};
 
     for (const [bucket, tracker] of bucketTrackers) {
       this.ensureWindow(tracker, now);
-      const perCardBudget = tracker.estimatedBudget / boundCards.length;
+      const perCardBudget = tracker.estimatedBudget * (weight / capacity);
       const myUsage = tracker.perCard.get(cardId) || 0;
       const remaining = Math.max(0, perCardBudget - myUsage);
       const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;

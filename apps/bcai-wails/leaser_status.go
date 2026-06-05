@@ -59,6 +59,11 @@ func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
+	// dynamic/unlimited 模式：由服务端 fair-share + 上游窗口控制，客户端不做本地拦截
+	if l.quotaMode == "dynamic" || l.quotaMode == "unlimited" {
+		return true, 0, ""
+	}
+
 	q := l.localQuota
 	if q.OpusTokenLimit <= 0 && q.GeminiTokenLimit <= 0 {
 		return true, 0, "" // 首次无限额 → 放行
@@ -108,26 +113,34 @@ func (l *Leaser) syncFromServer(aks map[string]interface{}) {
 	l.accessKeyStatus = aks
 	l.accessKeyStatusAt = time.Now()
 
-	// 限额以服务端为准
-	if v, ok := aks["opusTokenLimit"].(float64); ok && v > 0 {
+	// 读取额度模式
+	if mode, ok := aks["quotaMode"].(string); ok {
+		l.quotaMode = mode
+	}
+
+	// 限额以服务端为准 — 包括 0（无限制 / 动态模式清零）
+	if v, ok := aks["opusTokenLimit"].(float64); ok {
 		l.localQuota.OpusTokenLimit = int64(v)
 	}
-	if v, ok := aks["geminiTokenLimit"].(float64); ok && v > 0 {
+	if v, ok := aks["geminiTokenLimit"].(float64); ok {
 		l.localQuota.GeminiTokenLimit = int64(v)
 	}
-	if v, ok := aks["codexTokenLimit"].(float64); ok && v > 0 {
+	if v, ok := aks["codexTokenLimit"].(float64); ok {
 		l.localQuota.CodexTokenLimit = int64(v)
 	}
-	if v, ok := aks["tokenWindowLimit"].(float64); ok && v > 0 {
-		baseLimit := int64(v)
-		if l.localQuota.OpusTokenLimit <= 0 {
-			l.localQuota.OpusTokenLimit = baseLimit
-		}
-		if l.localQuota.GeminiTokenLimit <= 0 {
-			l.localQuota.GeminiTokenLimit = baseLimit * 5
-		}
-		if l.localQuota.CodexTokenLimit <= 0 {
-			l.localQuota.CodexTokenLimit = baseLimit
+	// tokenWindowLimit fallback 只在 static 模式下补位
+	if l.quotaMode == "static" || l.quotaMode == "" {
+		if v, ok := aks["tokenWindowLimit"].(float64); ok && v > 0 {
+			baseLimit := int64(v)
+			if l.localQuota.OpusTokenLimit <= 0 {
+				l.localQuota.OpusTokenLimit = baseLimit
+			}
+			if l.localQuota.GeminiTokenLimit <= 0 {
+				l.localQuota.GeminiTokenLimit = baseLimit * 5
+			}
+			if l.localQuota.CodexTokenLimit <= 0 {
+				l.localQuota.CodexTokenLimit = baseLimit
+			}
 		}
 	}
 	if v, ok := aks["tokenWindowMs"].(float64); ok && v > 0 {
@@ -281,6 +294,7 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
+		"quotaMode":           l.quotaMode,
 		"hasToken":            hasToken,
 		"serviceState":        state,
 		"projectId":           projectId,
