@@ -203,8 +203,8 @@ jobs:
       contents: write
 
     env:
-      RELEASE_REPO: bingcha135-sys/bcai-releases
-      GH_DOWNLOAD_BASE: https://github.com/bingcha135-sys/bcai-releases/releases/download
+      RELEASE_REPO: bingcha135-sys/bingcha135-sys-bcai-releases
+      GH_DOWNLOAD_BASE: https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download
 
     steps:
       - name: Checkout repository
