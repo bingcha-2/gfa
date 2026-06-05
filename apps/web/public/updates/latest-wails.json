@@ -1,26 +1,26 @@
 {
-  "version": "8.1.0",
-  "url": "https://bcai.space/updates/BingchaAI-8.1.0.exe",
-  "sha256": "0C1BEA7347B5045D7B3FBC71E21D1228EA10DAB386023AC93678588AE5512F5A",
+  "version": "8.1.1",
+  "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.1.1/BingchaAI-8.1.1.exe",
+  "sha256": "279FF1D3D903FE1BA6ACE082DCBF8D62786356E06836A602B5DE48366E344F09",
   "size": 20477440,
-  "changelog": "性能优化和问题修复",
-  "minVersion": "8.1.0",
+  "changelog": "修复fair-share误阻断;修复macOS 26.1启动崩溃(Bundle ID);备用域名迁移bcai.space;客户端下载改用GitHub CDN",
+  "minVersion": "8.1.1",
   "macOS": {
     "arm64": {
-      "url": "https://bcai.space/updates/BingchaAI-8.1.0-arm64.dmg",
-      "sha256": "9C91A1251B32A717E124C46D77A50DD1F66C2FEAB7637AD9CE32C8D61EFAEECD",
-      "size": 10033928
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.1.1/BingchaAI-8.1.1-arm64.dmg",
+      "sha256": "FB7EC42BCB6ABB1A0D9D90BD7D817D32EBEF68F4BD1D332476B2DFC14DB25F0B",
+      "size": 10033924
     },
     "amd64": {
-      "url": "https://bcai.space/updates/BingchaAI-8.1.0-amd64.dmg",
-      "sha256": "A4EBF3100331D7E4E081DA15303AD3F5C1E4BBF57A36C908D257CAD0C131EE14",
-      "size": 10763074
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.1.1/BingchaAI-8.1.1-amd64.dmg",
+      "sha256": "20C56935643928A998BAE2CFDD4F8431DBB05BB9BA9C19DF8AF0548BD47B4801",
+      "size": 10763072
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://bcai.space/updates/BingchaAI-8.1.0-linux-amd64.tar.gz",
-      "sha256": "C7A31F010BC04E7FD2EE721A7D1A60DCFC1060F886D02DACC5900D3CAA2E11C3",
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.1.1/BingchaAI-8.1.1-linux-amd64.tar.gz",
+      "sha256": "BE074CA16587BACF68EEA45610817BA434C3B9A561529ECD5854CCEF5C93786E",
       "size": 8504709
     }
   }
