@@ -46,7 +46,12 @@ describe('usageBarsForProducts', () => {
     expect(anti.label).not.toBe(anth.label)
   })
 
-  it('does not prefix the lone claude bar on a single-product card', () => {
-    expect(usageBarsForProducts(['anthropic'])[0].label).toBe('Claude (Opus)')
+  it('always labels bars as 产品 · 模型', () => {
+    expect(usageBarsForProducts(['anthropic'])[0].label).toBe('Anthropic · Claude')
+    expect(usageBarsForProducts(['codex'])[0].label).toBe('Codex · GPT')
+    expect(usageBarsForProducts(['antigravity']).map((b) => b.label)).toEqual([
+      'Antigravity · Gemini',
+      'Antigravity · Claude',
+    ])
   })
 })

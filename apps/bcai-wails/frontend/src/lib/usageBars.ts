@@ -25,19 +25,20 @@ const PRODUCT_LABEL: Record<string, string> = {
   anthropic: 'Anthropic',
 }
 
+// 模型(family)显示名。血条统一用「产品名 · 模型」格式,这里只放模型部分。
 const FAMILY_META: Record<Family, { label: string; color: string }> = {
   gemini: { label: 'Gemini', color: 'bg-[var(--accent)]' },
-  claude: { label: 'Claude (Opus)', color: 'bg-purple-500' },
-  gpt: { label: 'Codex', color: 'bg-emerald-500' },
+  claude: { label: 'Claude', color: 'bg-purple-500' },
+  gpt: { label: 'GPT', color: 'bg-emerald-500' },
 }
 
 const ALL_PRODUCTS = ['antigravity', 'codex', 'anthropic']
 
 /**
  * Which model-usage bars to show for a card, as composite buckets. A pool card
- * (no products) shows every product's buckets. When the same family appears
- * under more than one product (Claude via antigravity AND anthropic), each bar's
- * label is prefixed with its product so the two stay distinguishable.
+ * (no products) shows every product's buckets. 每条血条统一用「产品名 · 模型」格式
+ * (Anthropic · Claude / Codex · GPT / Antigravity · Gemini / Antigravity · Claude),
+ * 既消除同家族(antigravity 与 anthropic 的 Claude)歧义,也和卡产品轴 anthropic 对齐。
  */
 export function usageBarsForProducts(products: string[] | undefined): BarSpec[] {
   // Compat: older cards/caches may still carry the pre-rename 'claude' product.
@@ -46,22 +47,13 @@ export function usageBarsForProducts(products: string[] | undefined): BarSpec[] 
 
   const specs: BarSpec[] = []
   const seenBucket = new Set<string>()
-  const familyCount: Record<string, number> = {}
   for (const p of src) {
     for (const family of FAMILIES_BY_PRODUCT[p] || []) {
       const bucket = `${p}-${family}`
       if (seenBucket.has(bucket)) continue
       seenBucket.add(bucket)
-      familyCount[family] = (familyCount[family] || 0) + 1
-      const meta = FAMILY_META[family]
-      specs.push({ bucket, family, label: meta.label, color: meta.color })
-    }
-  }
-  // Disambiguate same-family bars by prefixing the product label.
-  for (const s of specs) {
-    if (familyCount[s.family] > 1) {
-      const product = s.bucket.slice(0, s.bucket.indexOf('-'))
-      s.label = `${PRODUCT_LABEL[product] || product} · ${FAMILY_META[s.family].label}`
+      const label = `${PRODUCT_LABEL[p] || p} · ${FAMILY_META[family].label}`
+      specs.push({ bucket, family, label, color: FAMILY_META[family].color })
     }
   }
   return specs

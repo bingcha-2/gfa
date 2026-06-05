@@ -243,8 +243,8 @@ export function DashboardPage() {
                     // Codex bar: prefer the upstream 5h/周 windows when present.
                     if (bar.family === 'gpt' && codexQuota && !accountProblem) {
                       return [
-                        <UsageBar key="codex-5h" label="Codex · 5h" used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />,
-                        <UsageBar key="codex-week" label="Codex · 周" used={null} limit={null} fraction={codexQuota.weeklyFraction} resetMs={codexQuota.weeklyResetMs} color="bg-emerald-600" />,
+                        <UsageBar key="codex-5h" label={`${bar.label} · 5h`} used={null} limit={null} fraction={codexQuota.hourlyFraction} resetMs={codexQuota.hourlyResetMs} color="bg-emerald-500" />,
+                        <UsageBar key="codex-week" label={`${bar.label} · 周`} used={null} limit={null} fraction={codexQuota.weeklyFraction} resetMs={codexQuota.weeklyResetMs} color="bg-emerald-600" />,
                       ]
                     }
                     // Anthropic subscription is also an account-level 5h + 周 window
@@ -252,8 +252,8 @@ export function DashboardPage() {
                     // antigravity's Claude (IDE ×1 bucket) keeps a single bar.
                     if (bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem) {
                       return [
-                        <UsageBar key="claude-5h" label="Claude · 5h" used={null} limit={null} fraction={claudeQuota.hourlyFraction} resetMs={claudeQuota.hourlyResetMs} color="bg-purple-500" />,
-                        <UsageBar key="claude-week" label="Claude · 周" used={null} limit={null} fraction={claudeQuota.weeklyFraction} resetMs={claudeQuota.weeklyResetMs} color="bg-purple-600" />,
+                        <UsageBar key="claude-5h" label={`${bar.label} · 5h`} used={null} limit={null} fraction={claudeQuota.hourlyFraction} resetMs={claudeQuota.hourlyResetMs} color="bg-purple-500" />,
+                        <UsageBar key="claude-week" label={`${bar.label} · 周`} used={null} limit={null} fraction={claudeQuota.weeklyFraction} resetMs={claudeQuota.weeklyResetMs} color="bg-purple-600" />,
                       ]
                     }
                     // Local used/limit are family-scoped (server still sends the
