@@ -34,7 +34,7 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
         hourlyPercent: 80,
         weeklyPercent: 30,
         hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2099-06-05T00:00:00Z",
       },
     });
 
@@ -43,7 +43,7 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
     // Binding fraction = the more restrictive window = min(80, 30)/100 = 0.3
     expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0.3, 5);
     // Reset time of the binding (weekly) window.
-    expect((account as any).modelQuotaResetTimes.claude).toBe("2026-06-05T00:00:00Z");
+    expect((account as any).modelQuotaResetTimes.claude).toBe("2099-06-05T00:00:00Z");
     // Raw percentages kept for display.
     expect((account as any).claudeHourlyPercent).toBe(80);
     expect((account as any).claudeWeeklyPercent).toBe(30);
@@ -89,13 +89,13 @@ describe("ClaudeProvider.bloodBarFraction", () => {
       claudeQuota: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2099-06-05T00:00:00Z",
       },
     });
 
     const bar = provider.bloodBarFraction(account, "claude-opus-4-20250514");
     expect(bar.fraction).toBeCloseTo(0.3, 5);
-    expect(bar.resetAt).toBe(Date.parse("2026-06-05T00:00:00Z"));
+    expect(bar.resetAt).toBe(Date.parse("2099-06-05T00:00:00Z"));
   });
 
   it("reports unknown (fraction -1) when there is no quota snapshot yet", () => {
@@ -118,7 +118,7 @@ describe("ClaudeProvider.leaseResponseExtras", () => {
         hourlyPercent: 80,
         weeklyPercent: 30,
         hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2099-06-05T00:00:00Z",
       },
     });
 
@@ -127,7 +127,7 @@ describe("ClaudeProvider.leaseResponseExtras", () => {
         hourlyPercent: 80,
         weeklyPercent: 30,
         hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2099-06-05T00:00:00Z",
       },
     });
   });
@@ -161,7 +161,7 @@ describe("ClaudeProvider.statusAccountExtras", () => {
         hourlyPercent: 80,
         weeklyPercent: 30,
         hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2099-06-05T00:00:00Z",
       },
     });
 
@@ -169,7 +169,7 @@ describe("ClaudeProvider.statusAccountExtras", () => {
       claudeHourlyPercent: 80,
       claudeWeeklyPercent: 30,
       claudeHourlyResetTime: "2026-06-01T10:00:00Z",
-      claudeWeeklyResetTime: "2026-06-05T00:00:00Z",
+      claudeWeeklyResetTime: "2099-06-05T00:00:00Z",
     });
   });
 
