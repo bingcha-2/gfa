@@ -1,4 +1,4 @@
-import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download } from 'lucide-react'
+import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download, BookOpen } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
@@ -18,6 +18,7 @@ interface SidebarProps {
 const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
   { id: 'home', label: '控制台', icon: LayoutDashboard },
   { id: 'logs', label: '日志', icon: ScrollText },
+  { id: 'faq', label: '使用指南', icon: BookOpen },
 ]
 
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse }: SidebarProps) {

@@ -64,7 +64,7 @@ export interface UpdateStatus {
 }
 
 // ===== Pages =====
-export type PageId = 'home' | 'logs' | 'settings'
+export type PageId = 'home' | 'logs' | 'faq' | 'settings'
 
 // ===== Log =====
 export interface ParsedLog {

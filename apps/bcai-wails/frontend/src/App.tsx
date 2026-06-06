@@ -3,6 +3,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { FaqPage } from '@/pages/FaqPage'
 import { Modal } from '@/components/Modal'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -35,6 +36,7 @@ export default function App() {
     switch (currentPage) {
       case 'home': return <DashboardPage />
       case 'logs': return <LogsPage />
+      case 'faq': return <FaqPage />
       case 'settings': return <SettingsPage />
     }
   }

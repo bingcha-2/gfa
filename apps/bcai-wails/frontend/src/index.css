@@ -115,3 +115,15 @@ body {
 .animate-marquee:hover {
   animation-play-state: paused;
 }
+
+/* ===== FAQ answer HTML ===== */
+.faq-answer p { margin-bottom: 6px; }
+.faq-answer p:last-child { margin-bottom: 0; }
+.faq-answer ul, .faq-answer ol { padding-left: 18px; margin-bottom: 6px; }
+.faq-answer li { margin-bottom: 2px; }
+.faq-answer a { color: var(--primary); text-decoration: none; }
+.faq-answer a:hover { text-decoration: underline; }
+.faq-answer code { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; }
+.faq-answer strong { color: var(--text-primary); font-weight: 600; }
+.faq-answer img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+
