@@ -24,7 +24,7 @@ export function toBindableAccounts(
       id: Number(a.id),
       email: String(a.email || ""),
       usedShares: Number(a.usedShares || 0),
-      shareCapacity: Number(a.shareCapacity || 0) > 0 ? Number(a.shareCapacity) : 4,
+      shareCapacity: Number(a.shareCapacity || 0) > 0 ? Number(a.shareCapacity) : 8,
       planType: String(a.planType || ""),
     }));
   return [...tag(codex, "codex"), ...tag(antigravity, "antigravity"), ...tag(claude, "anthropic")];

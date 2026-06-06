@@ -14,10 +14,10 @@ describe("toBindableAccounts", () => {
     ]);
   });
 
-  it("defaults missing usedShares to 0 and shareCapacity to 4", () => {
+  it("defaults missing usedShares to 0 and shareCapacity to 8", () => {
     const result = toBindableAccounts([{ id: 7, email: "c@x.com" } as any], []);
     expect(result[0].usedShares).toBe(0);
-    expect(result[0].shareCapacity).toBe(4);
+    expect(result[0].shareCapacity).toBe(8);
   });
 
   it("tags the anthropic (claude) pool last when provided", () => {

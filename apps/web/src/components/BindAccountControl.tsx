@@ -29,14 +29,14 @@ export interface BindableAccount {
   email: string;
   /** Shares already used on this account (sum of bound cards' weights). */
   usedShares: number;
-  /** Total shares per account (份). Default 4. */
+  /** Total shares per account (份). Default 8. */
   shareCapacity: number;
   /** Membership level (planType), used to label in pickers. */
   planType?: string;
 }
 
 interface BindAccountControlProps {
-  /** card.weight = this card's share weight (份额): 1 拼车 … 4 独享. */
+  /** card.weight = this card's share weight (份额): 1 拼车 … 8 独享. */
   card: { id: string; bindings?: Record<string, number>; weight?: number };
   accounts: BindableAccount[];
   /** 一次性提交期望的最终绑定映射({} = 池子卡)。失败请 reject/throw,弹窗会保持打开。 */
@@ -72,7 +72,7 @@ export function BindAccountControl({ card, accounts, onApply }: BindAccountContr
   const [accSel, setAccSel] = useState<Record<string, string>>({});
 
   const bindings = card.bindings || {};
-  const cardWeight = Math.max(1, Math.min(4, Number(card.weight || 1)));
+  const cardWeight = Math.max(1, Math.min(8, Number(card.weight || 1)));
   const boundProviders = Object.entries(bindings).filter(([, id]) => Number(id) > 0);
 
   // 池里有号的产品才能绑。

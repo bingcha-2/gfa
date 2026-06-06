@@ -113,9 +113,10 @@ const UNIT_ITEMS = [
   { label: "天", value: "d" },
 ];
 const WEIGHT_ITEMS = [
-  { label: "拼车 · 1份(4人/号)", value: "1" },
-  { label: "2份(2人/号)", value: "2" },
-  { label: "独享 · 4份(独占一个号)", value: "4" },
+  { label: "拼车 · 1份(8人/号)", value: "1" },
+  { label: "2份(4人/号)", value: "2" },
+  { label: "4份(2人/号)", value: "4" },
+  { label: "独享 · 8份(独占一个号)", value: "8" },
 ];
 const ACCOUNT_AUTO = "__auto";
 
@@ -185,7 +186,7 @@ export default function RosettaKeysPage() {
   const [codexLevels, setCodexLevels] = useState<string[]>([]);
   const [antiLevels, setAntiLevels] = useState<string[]>([]);
   const [claudeLevels, setClaudeLevels] = useState<string[]>([]);
-  // 份额(weight):1 拼车(4人共享一个号)… 4 独享(一张卡占满一个号)。
+  // 份额(weight):1 拼车(8人共享一个号)… 8 独享(一张卡占满一个号,capacity=8)。
   const [createWeight, setCreateWeight] = useState("1");
   const [creating, setCreating] = useState(false);
 
@@ -455,7 +456,7 @@ export default function RosettaKeysPage() {
           ...(createClaude && createClaudeAccountId ? { anthropic: Number(createClaudeAccountId) } : {}),
         };
         if (Object.keys(accountIds).length) payload.accountIds = accountIds;
-        payload.weight = Math.max(1, Math.min(4, Number(createWeight) || 1));
+        payload.weight = Math.max(1, Math.min(8, Number(createWeight) || 1));
       }
 
       const res = await fetch("/api/rosetta/access-key", {
@@ -594,7 +595,7 @@ export default function RosettaKeysPage() {
   };
 
   // 整批卡需要的份额 = 份额 × 张数;用于手动选号下拉的"份额不足"判断。
-  const numWeight = Math.max(1, Math.min(4, Number(createWeight) || 1));
+  const numWeight = Math.max(1, Math.min(8, Number(createWeight) || 1));
   const numCount = Math.max(1, Math.min(200, Number(createCount) || 1));
   const accountPickerOptions = (provider: string, level: string) =>
     bindableAccounts.filter((a) => a.provider === provider && a.planType === level);
