@@ -13,6 +13,8 @@ interface VersionInfo {
   url: string;
   sha256: string;
   size: number;
+  installerUrl?: string;
+  installerSize?: number;
   changelog: string;
   macOS?: {
     arm64?: MacOSPlatform;
@@ -43,9 +45,10 @@ export default function DownloadPage() {
 
   const version = info?.version || "latest";
 
-  // Windows 下载（URL 来自 latest-wails.json，指向 GitHub Release）
-  const winUrl = info?.url || "#";
-  const winSizeMB = info?.size ? Math.round(info.size / 1024 / 1024) : 12;
+  // Windows 下载（优先 NSIS 安装包 installerUrl，旧 manifest 无此字段时回退到裸 exe url）
+  const winUrl = info?.installerUrl || info?.url || "#";
+  const winDownloadSize = info?.installerUrl ? info?.installerSize : info?.size;
+  const winSizeMB = winDownloadSize ? Math.round(winDownloadSize / 1024 / 1024) : 12;
 
   // macOS 下载
   const macArm64 = info?.macOS?.arm64;

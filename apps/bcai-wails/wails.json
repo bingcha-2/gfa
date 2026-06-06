@@ -9,5 +9,12 @@
   "author": {
     "name": "BingchaAI",
     "email": "support@bcai.space"
+  },
+  "info": {
+    "companyName": "BingchaAI",
+    "productName": "冰茶AI",
+    "productVersion": "8.5.0",
+    "copyright": "Copyright © 2026 BingchaAI",
+    "comments": "冰茶AI 客户端 — AI 编程助手代理与额度管理工具"
   }
 }

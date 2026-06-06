@@ -82,27 +82,74 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
+      # NSIS：把 Windows 客户端打成安装包（而非裸 exe），显著降低 Defender/SmartScreen 误报。
+      # GitHub windows runner 不预装 NSIS，需通过 choco 安装并加入 PATH 供 wails 调用 makensis。
+      - name: Install NSIS (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # 把本次发布版本号注入 exe / 安装包的版本信息资源
+      # （ProductVersion / FileVersion / CompanyName / Copyright 等，空元信息本身就是 ML 怀疑点）
+      - name: Inject Windows version metadata (Windows)
+        if: matrix.os_name == 'windows'
+        working-directory: ${{ env.WAILS_DIR }}
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" '.info.productVersion = $v' wails.json > "$tmp" && mv "$tmp" wails.json
+          echo "Patched wails.json info.productVersion=$VERSION"
+          cat wails.json
+
       - name: Build Wails app
         working-directory: ${{ env.WAILS_DIR }}
         shell: bash
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          wails build -ldflags "-X main.AppVersion=${VERSION}"
+          if [ "${{ matrix.os_name }}" = "windows" ]; then
+            # -nsis 同时产出 NSIS 安装包 + 裸 exe；裸 exe 仍保留供自动更新热替换（updater.go）
+            wails build -nsis -ldflags "-X main.AppVersion=${VERSION}"
+          else
+            wails build -ldflags "-X main.AppVersion=${VERSION}"
+          fi
 
-      # ── Windows: 重命名 + 计算 hash ──
+      # ── Windows: 重命名 + 计算 hash（裸 exe 供自动更新，NSIS 安装包供首次下载）──
       - name: Prepare Windows artifact
         if: matrix.os_name == 'windows'
         shell: pwsh
         run: |
           $version = "${{ github.event.inputs.version }}"
-          $src = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}.exe"
-          $dst = "${{ env.WAILS_DIR }}/build/bin/${{ env.APP_NAME }}-${version}.exe"
-          Copy-Item $src $dst
-          $hash = (Get-FileHash $dst -Algorithm SHA256).Hash
-          $size = (Get-Item $dst).Length
-          # 写入 meta 文件供后续 job 使用
-          @{ hash = $hash; size = $size } | ConvertTo-Json | Out-File "${{ env.WAILS_DIR }}/build/bin/windows-meta.json" -Encoding utf8
-          Write-Host "Windows exe: $dst (size=$size, sha256=$hash)"
+          $binDir  = "${{ env.WAILS_DIR }}/build/bin"
+
+          # 1) 裸 exe —— 供 updater.go 热替换自动更新（保持原下载链不变）
+          $srcExe = "$binDir/${{ env.APP_NAME }}.exe"
+          $dstExe = "$binDir/${{ env.APP_NAME }}-$version.exe"
+          Copy-Item $srcExe $dstExe
+          $exeHash = (Get-FileHash $dstExe -Algorithm SHA256).Hash
+          $exeSize = (Get-Item $dstExe).Length
+
+          # 2) NSIS 安装包 —— 供官网/Release 首次下载（文件名可能含中文，按 *-installer.exe 匹配后重命名为 ASCII）
+          $srcInst = Get-ChildItem -Path $binDir -Filter '*-installer.exe' | Select-Object -First 1
+          if (-not $srcInst) {
+            Write-Error "NSIS installer (*-installer.exe) not found in $binDir"
+            Get-ChildItem $binDir | Format-Table Name,Length
+            exit 1
+          }
+          $dstInst = "$binDir/${{ env.APP_NAME }}-$version-setup.exe"
+          Copy-Item $srcInst.FullName $dstInst
+          $instHash = (Get-FileHash $dstInst -Algorithm SHA256).Hash
+          $instSize = (Get-Item $dstInst).Length
+
+          # 写入 meta 文件供后续 job 使用（裸 exe 与安装包各一份 hash/size）
+          @{
+            hash           = $exeHash;  size           = $exeSize;
+            installer_hash = $instHash; installer_size = $instSize
+          } | ConvertTo-Json | Out-File "$binDir/windows-meta.json" -Encoding utf8
+          Write-Host "Windows exe:       $dstExe (size=$exeSize, sha256=$exeHash)"
+          Write-Host "Windows installer: $dstInst (size=$instSize, sha256=$instHash)"
 
       # ── macOS: Ad-hoc 签名 + 打包 DMG ──
       - name: Codesign & Package DMG (macOS)
@@ -243,6 +290,15 @@ jobs:
             read_meta "linux-amd64-meta.json" | sed 's/^/linux_/'
           } >> "$GITHUB_OUTPUT"
 
+          # Windows NSIS 安装包的 hash/size（首次下载用）
+          win_meta=$(find artifacts -name "windows-meta.json" | head -1)
+          if [ -n "$win_meta" ] && [ -f "$win_meta" ]; then
+            {
+              echo "win_installer_hash=$(jq -r '.installer_hash // empty' "$win_meta")"
+              echo "win_installer_size=$(jq -r '.installer_size // 0' "$win_meta")"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
       # ── 创建 GitHub Release（公开仓库，无需认证即可下载）──
       - name: Create GitHub Release on public repo
         env:
@@ -273,7 +329,8 @@ jobs:
           ### 下载
           | 平台 | 架构 | 下载 |
           |------|------|------|
-          | Windows | x64 | [${{ env.APP_NAME }}-${VERSION}.exe](${DL}/${{ env.APP_NAME }}-${VERSION}.exe) |
+          | Windows | x64 | [${{ env.APP_NAME }}-${VERSION}-setup.exe（安装包，推荐）](${DL}/${{ env.APP_NAME }}-${VERSION}-setup.exe) |
+          | Windows | x64 | [${{ env.APP_NAME }}-${VERSION}.exe（免安装裸 exe）](${DL}/${{ env.APP_NAME }}-${VERSION}.exe) |
           | macOS | Apple Silicon | [${{ env.APP_NAME }}-${VERSION}-arm64.dmg](${DL}/${{ env.APP_NAME }}-${VERSION}-arm64.dmg) |
           | macOS | Intel | [${{ env.APP_NAME }}-${VERSION}-amd64.dmg](${DL}/${{ env.APP_NAME }}-${VERSION}-amd64.dmg) |
           | Linux | x64 | [${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz](${DL}/${{ env.APP_NAME }}-${VERSION}-linux-amd64.tar.gz) |
@@ -284,10 +341,52 @@ jobs:
           右键点击应用 → 打开 → 确认打开
 
           ### Windows
-          如 SmartScreen 警告 → 更多信息 → 仍要运行" \
+          推荐下载**安装包(setup.exe)**安装。若 SmartScreen 提示 → 更多信息 → 仍要运行。
+          少数情况下 Defender 可能误报 \`Sabsik.FL.A!ml\`(未签名 Go 程序的常见 ML 误报)，可在 VirusTotal 自行核验后允许运行。" \
             --latest
 
           echo "✅ Release created: $TAG"
+
+      # ── Defender 误报申诉助手 ──
+      # 微软对个人/小团队没有免费的「误报上报 API」（只有企业版 Defender 租户才有），
+      # 所以这里把「提交所需的一切」整理成可直接粘贴的块写进 Job Summary，
+      # 发版后点开 Actions 运行页 → Summary，复制粘贴到门户即可，约 10 秒。
+      - name: Defender false-positive submission helper
+        if: always()
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          TAG="wails-v${VERSION}"
+          DL="${{ env.GH_DOWNLOAD_BASE }}/${TAG}"
+          SETUP_URL="${DL}/${{ env.APP_NAME }}-${VERSION}-setup.exe"
+          EXE_URL="${DL}/${{ env.APP_NAME }}-${VERSION}.exe"
+          SETUP_SHA="${{ steps.meta.outputs.win_installer_hash }}"
+          EXE_SHA="${{ steps.meta.outputs.win_hash }}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## 🛡️ Defender 误报申诉（每版手动一次，约 10 秒）
+
+          门户：<https://www.microsoft.com/en-us/wdsi/filesubmission>
+          → 选 **Software developer** → **Incorrectly detected as malware/malicious**
+
+          **待提交文件 URL（任选其一或都提交）**
+          | 文件 | URL | SHA256 |
+          |------|-----|--------|
+          | 安装包 | $SETUP_URL | \`$SETUP_SHA\` |
+          | 裸 exe | $EXE_URL | \`$EXE_SHA\` |
+
+          **粘贴到 "Additional information" 的说明文案：**
+
+          \`\`\`
+          BingchaAI (冰茶AI) v${VERSION} is a legitimate desktop application built with the
+          Wails framework (Go + WebView2). Windows Defender flags it as
+          Trojan:Win32/Sabsik.FL.A!ml, which is a machine-learning false positive that
+          commonly affects unsigned Go binaries. The application is built transparently and
+          reproducibly via a public GitHub Actions workflow (build-wails.yml). It is not
+          malware and performs no malicious behavior. Please re-evaluate and clear the
+          detection. SHA256 (installer): $SETUP_SHA ; SHA256 (exe): $EXE_SHA
+          \`\`\`
+          EOF
+          echo "Submission helper written to job summary."
 
       # ── 生成 latest-wails.json 并提交（仅此文件，不含二进制）──
       - name: Generate and commit update manifest
@@ -306,6 +405,9 @@ jobs:
             "url": "${DL}/${{ env.APP_NAME }}-${VERSION}.exe",
             "sha256": "${{ steps.meta.outputs.win_hash }}",
             "size": ${{ steps.meta.outputs.win_size }},
+            "installerUrl": "${DL}/${{ env.APP_NAME }}-${VERSION}-setup.exe",
+            "installerSha256": "${{ steps.meta.outputs.win_installer_hash }}",
+            "installerSize": ${{ steps.meta.outputs.win_installer_size }},
             "changelog": "${CHANGELOG}",
             "minVersion": "${VERSION}",
             "macOS": {
