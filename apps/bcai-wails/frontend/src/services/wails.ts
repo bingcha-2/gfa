@@ -23,26 +23,13 @@ import {
   RestartToUpdate as _RestartToUpdate,
   GetAppVersion,
   GetAnnouncement,
-  GetPoolAccounts,
-  GetPoolStatus,
-  AddPoolAccount as _AddPoolAccount,
-  RemovePoolAccount as _RemovePoolAccount,
-  TogglePoolAccount as _TogglePoolAccount,
-  SetPoolMode as _SetPoolMode,
-  GetPoolMode,
-  OAuthLogin as _OAuthLogin,
-  RefreshPoolQuota as _RefreshPoolQuota,
-  SwitchPoolAccount as _SwitchPoolAccount,
-  SetAccountAlias as _SetAccountAlias,
-  LockPoolAccount as _LockPoolAccount,
-  UnlockPoolAccount as _UnlockPoolAccount,
   GetCodexRelayConfig as _GetCodexRelayConfig,
   SaveCodexRelayConfig as _SaveCodexRelayConfig,
 } from '../../wailsjs/go/main/App'
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
-import type { Config, IDEStatus, AccountInfo, UpdateStatus, BoundAccountInfo } from '@/types'
+import type { Config, IDEStatus, UpdateStatus, BoundAccountInfo } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -108,14 +95,6 @@ export interface StatsResponse {
   cumulativeSaving: number
   appVersion: string
   updateStatus: UpdateStatus
-  poolMode: string
-  poolStatus: {
-    total: number
-    available: number
-    exhausted: number
-    withToken: number
-    lockedAccountId?: number
-  }
   proxyStartedAt: string
 }
 
@@ -186,66 +165,6 @@ export async function getAppVersion(): Promise<string> {
 // ===== Announcement =====
 export async function getAnnouncement(): Promise<string> {
   return GetAnnouncement()
-}
-
-// ===== Pool =====
-export async function getPoolAccounts(): Promise<AccountInfo[]> {
-  return GetPoolAccounts() as unknown as Promise<AccountInfo[]>
-}
-
-export async function getPoolStatus(): Promise<Record<string, number>> {
-  return GetPoolStatus() as Promise<Record<string, number>>
-}
-
-export async function addPoolAccount(
-  email: string,
-  refreshToken: string
-): Promise<{ success: boolean; id?: number; error?: string }> {
-  return _AddPoolAccount(email, refreshToken) as any
-}
-
-export async function removePoolAccount(id: number): Promise<{ success: boolean; error?: string }> {
-  return _RemovePoolAccount(id) as any
-}
-
-export async function togglePoolAccount(
-  id: number,
-  enabled: boolean
-): Promise<{ success: boolean; error?: string }> {
-  return _TogglePoolAccount(id, enabled) as any
-}
-
-export async function setPoolMode(mode: string): Promise<{ success: boolean; error?: string }> {
-  return _SetPoolMode(mode) as any
-}
-
-export async function getPoolMode(): Promise<string> {
-  return GetPoolMode()
-}
-
-export async function oauthLogin(): Promise<{ success: boolean; email?: string; id?: number; error?: string }> {
-  return _OAuthLogin() as any
-}
-
-// ===== Pool Quota Management =====
-export async function refreshPoolQuota(): Promise<{ success: boolean; refreshed?: number }> {
-  return _RefreshPoolQuota() as any
-}
-
-export async function switchPoolAccount(id: number): Promise<{ success: boolean }> {
-  return _SwitchPoolAccount(id) as any
-}
-
-export async function setAccountAlias(id: number, alias: string): Promise<{ success: boolean; error?: string }> {
-  return _SetAccountAlias(id, alias) as any
-}
-
-export async function lockPoolAccount(id: number): Promise<{ success: boolean; error?: string }> {
-  return _LockPoolAccount(id) as any
-}
-
-export async function unlockPoolAccount(): Promise<{ success: boolean }> {
-  return _UnlockPoolAccount() as any
 }
 
 // ===== Codex 中转(API 卡密)模式 =====

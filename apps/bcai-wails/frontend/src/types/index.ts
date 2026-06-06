@@ -41,62 +41,6 @@ export interface IDEStatus {
   isLsProxyApplied: boolean
 }
 
-// ===== Quota =====
-export interface QuotaEntry {
-  key: string
-  label: string
-  percent: number
-  isBlocked: boolean
-  resetTime: string
-  provider: string
-}
-
-export interface QuotaGroup {
-  provider: string
-  percent: number
-  resetTime: string
-  modelCount: number
-  blockedCount: number
-  entries: QuotaEntry[]
-}
-
-// ===== Account Pool =====
-export interface AccountInfo {
-  id: number
-  email: string
-  alias: string
-  enabled: boolean
-  projectId: string
-  planType: string
-  hasAccessToken: boolean
-  tokenExpiresIn: number
-  quotaStatus: string
-  quotaReason: string
-  exhaustedUntil?: string
-  consecutiveErrors: number
-  lastUsedAt?: string
-  blockedModels?: Record<string, string>
-  // ── 新增字段 ──
-  isActive: boolean
-  isLocked: boolean
-  successRate: number | null
-  qualityTier: string
-  requestStats: { total: number; successes: number; failures: number }
-  quotaGroups: QuotaGroup[]
-  quotaRefreshedAt?: string
-  accountStatusLabel: string
-  accountStatusTone: string
-  credits?: CreditsInfo | null
-}
-
-export interface CreditsInfo {
-  known: boolean
-  available: boolean
-  creditAmount: number
-  minCreditAmount: number
-  paidTierID: string
-}
-
 // ===== Bound Account (绑定卡每个产品当前租到的账号 + token) =====
 export interface BoundAccountInfo {
   product: string // antigravity | codex | anthropic

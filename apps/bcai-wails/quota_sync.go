@@ -5,10 +5,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 )
+
+// toFloat64 安全转换 interface{} 为 float64
+func toFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case string:
+		f, _ := strconv.ParseFloat(n, 64)
+		return f
+	case int:
+		return float64(n)
+	default:
+		return 0
+	}
+}
 
 // ─── Quota Sync (远程租号模式的额度采集) ─────────────────────────────────────
 //
@@ -24,7 +40,7 @@ type AccountQuotaSnapshot struct {
 	AccountId  int                        `json:"accountId"`
 	PlanType   string                     `json:"planType"`
 	Credits    *AccountCreditsInfo        `json:"credits,omitempty"`
-	ModelQuota map[string]ModelQuotaEntry  `json:"modelQuota,omitempty"`
+	ModelQuota map[string]ModelQuotaEntry `json:"modelQuota,omitempty"`
 	FetchedAt  int64                      `json:"fetchedAt"`
 }
 

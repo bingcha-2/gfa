@@ -95,21 +95,10 @@ func productLabel(product string) string {
 	}
 }
 
-// validateTakeoverPrereqs 接管前置校验:remote 模式需卡密,local 模式需号池账号。
+// validateTakeoverPrereqs 接管前置校验:需已激活账号卡(官方透传)。
 func validateTakeoverPrereqs(cfg Config) error {
-	poolMode := cfg.PoolMode
-	if poolMode == "" {
-		poolMode = "remote"
-	}
-	if poolMode == "remote" && cfg.AccountCard == "" {
+	if cfg.AccountCard == "" {
 		return fmt.Errorf("请先激活账号卡再开启接管")
-	}
-	if poolMode == "local" {
-		poolStatus := GetAccountPool().GetPoolStatus()
-		total, _ := poolStatus["total"].(int)
-		if total <= 0 {
-			return fmt.Errorf("本地号池为空，请先添加账号再开启接管")
-		}
 	}
 	return nil
 }

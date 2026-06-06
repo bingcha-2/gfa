@@ -94,9 +94,6 @@ func (a *App) startup(ctx context.Context) {
 	GetUsageStats().Load()
 	GetUsageStats().StartAutoSave()
 
-	// 初始化本地号池
-	GetAccountPool().Init()
-
 	// 启动自动更新检查
 	GetUpdater().CleanupOldBinary()
 	GetUpdater().Start()
@@ -253,9 +250,6 @@ func (a *App) GetStats() map[string]interface{} {
 		"cumulativeSaving": usageStats.GetCumulativeSavings(),
 		"appVersion":       AppVersion,
 		"updateStatus":     GetUpdater().GetStatus(),
-		"poolMode":         LoadConfig().PoolMode,
-		"poolStatus":       GetAccountPool().GetPoolStatus(),
-		"activeAccount":    GetAccountPool().GetActiveAccountInfo(),
 		"proxyStartedAt":   a.proxyStartedAt.Format(time.RFC3339),
 	}
 }
@@ -514,142 +508,6 @@ func (a *App) RestartToUpdate() error {
 // GetAppVersion 获取当前版本号
 func (a *App) GetAppVersion() string {
 	return AppVersion
-}
-
-// ======================== 本地号池方法 ========================
-
-// GetPoolAccounts 获取号池账号列表（脱敏）
-func (a *App) GetPoolAccounts() []AccountInfo {
-	return GetAccountPool().ListAccounts()
-}
-
-// GetPoolStatus 获取号池状态概览
-func (a *App) GetPoolStatus() map[string]interface{} {
-	return GetAccountPool().GetPoolStatus()
-}
-
-// AddPoolAccount 添加账号到号池
-func (a *App) AddPoolAccount(email, refreshToken string) map[string]interface{} {
-	id, err := GetAccountPool().AddAccount(email, refreshToken)
-	if err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-	// 立即尝试刷新 token 验证账号有效性
-	go func() {
-		_, err := GetAccountPool().GetAccessToken(id)
-		if err != nil {
-			Log("[account-pool] Warning: token refresh for #%d failed: %v", id, err)
-		} else {
-			Log("[account-pool] Account #%d token verified OK", id)
-		}
-	}()
-	return map[string]interface{}{"success": true, "id": id}
-}
-
-// RemovePoolAccount 从号池删除账号
-func (a *App) RemovePoolAccount(id int) map[string]interface{} {
-	if err := GetAccountPool().RemoveAccount(id); err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-	return map[string]interface{}{"success": true}
-}
-
-// TogglePoolAccount 启用/禁用账号
-func (a *App) TogglePoolAccount(id int, enabled bool) map[string]interface{} {
-	if err := GetAccountPool().ToggleAccount(id, enabled); err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-	return map[string]interface{}{"success": true}
-}
-
-// SetPoolMode 切换模式: "remote" 或 "local"
-func (a *App) SetPoolMode(mode string) map[string]interface{} {
-	if mode != "remote" && mode != "local" {
-		return map[string]interface{}{"success": false, "error": "无效模式，只能是 remote 或 local"}
-	}
-	cfg := LoadConfig()
-	cfg.PoolMode = mode
-	_ = SaveConfig(cfg)
-	Log("[app] Pool mode changed to: %s", mode)
-	return map[string]interface{}{"success": true, "mode": mode}
-}
-
-// GetPoolMode 获取当前模式
-func (a *App) GetPoolMode() string {
-	cfg := LoadConfig()
-	if cfg.PoolMode == "" {
-		return "remote"
-	}
-	return cfg.PoolMode
-}
-
-// OAuthLogin starts a Google OAuth login flow and auto-adds the account to the pool
-func (a *App) OAuthLogin() map[string]interface{} {
-	result, err := GetAccountPool().StartOAuthLogin(func(url string) {
-		runtime.BrowserOpenURL(a.ctx, url)
-	})
-	if err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-
-	// Auto-add to pool
-	id, addErr := GetAccountPool().AddAccount(result.Email, result.RefreshToken)
-	if addErr != nil {
-		return map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("OAuth 登录成功 (%s)，但添加到号池失败: %v", result.Email, addErr),
-		}
-	}
-
-	// Verify token
-	go func() {
-		_, err := GetAccountPool().GetAccessToken(id)
-		if err != nil {
-			Log("[oauth] Warning: token refresh for #%d failed: %v", id, err)
-		} else {
-			Log("[oauth] Account #%d token verified OK", id)
-		}
-	}()
-
-	return map[string]interface{}{
-		"success": true,
-		"email":   result.Email,
-		"id":      id,
-	}
-}
-
-// RefreshPoolQuota 刷新所有账号的配额信息
-func (a *App) RefreshPoolQuota() map[string]interface{} {
-	refreshed := GetAccountPool().RefreshAllQuotas()
-	return map[string]interface{}{"success": true, "refreshed": refreshed}
-}
-
-// SwitchPoolAccount 手动切换当前活跃账号
-func (a *App) SwitchPoolAccount(id int) map[string]interface{} {
-	GetAccountPool().SetActiveAccount(id)
-	return map[string]interface{}{"success": true}
-}
-
-// SetAccountAlias 设置账号别名
-func (a *App) SetAccountAlias(id int, alias string) map[string]interface{} {
-	if err := GetAccountPool().SetAccountAlias(id, alias); err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-	return map[string]interface{}{"success": true}
-}
-
-// LockPoolAccount 锁定指定账号（仅使用该账号）
-func (a *App) LockPoolAccount(id int) map[string]interface{} {
-	if err := GetAccountPool().LockAccount(id); err != nil {
-		return map[string]interface{}{"success": false, "error": err.Error()}
-	}
-	return map[string]interface{}{"success": true}
-}
-
-// UnlockPoolAccount 解除账号锁定
-func (a *App) UnlockPoolAccount() map[string]interface{} {
-	GetAccountPool().UnlockAccount()
-	return map[string]interface{}{"success": true}
 }
 
 // GetAnnouncement 从服务器获取滚动公告内容

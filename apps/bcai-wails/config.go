@@ -17,7 +17,6 @@ type Config struct {
 	HubPath       string `json:"hubPath"` // 用户自定义 Hub 安装路径（留空则自动检测）
 	CodexAppPath  string `json:"codexAppPath"`
 	CardExpiry    string `json:"cardExpiry"` // 账号卡到期时间
-	PoolMode      string `json:"poolMode"`   // "remote" (默认, 使用卡密) 或 "local" (本地号池)
 
 	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
 	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。
