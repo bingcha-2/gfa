@@ -6,6 +6,7 @@ import { Modal, useModal } from '@/components/Modal'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
+import { isMacPlatform } from '@/lib/platform'
 import { Zap } from 'lucide-react'
 
 /**
@@ -15,7 +16,7 @@ import { Zap } from 'lucide-react'
  *   Antigravity:IDE / Hub 各一个开关。
  *   Codex:      单一开关。中转(relay)能力仍由后端保留,但不在此处暴露 UI ——
  *               若后端已配置为中转模式,接管时按中转生效,否则按官方透传。
- *   Anthropic:  Claude Code(CLI + VSCode)开关;macOS 上额外的 Claude Desktop 开关。
+ *   Anthropic:  Claude Code(CLI + VSCode)开关;macOS/Windows 上额外的 Claude Desktop 开关。
  *
  * 本地号池已下线,故无来源切换。
  */
@@ -43,7 +44,7 @@ export function TokenSourceControl() {
   const codexApp = ideProducts.find((p) => p.id === 'codex')
   const claudeApp = ideProducts.find((p) => p.id === 'claude_code')
   const claudeDesktopApp = ideProducts.find((p) => p.id === 'claude_desktop')
-  const isMac = /mac/i.test(navigator.platform)
+  const isMac = isMacPlatform()
 
   const [busy, setBusy] = useState<string | null>(null)
   const [busyLabel, setBusyLabel] = useState('')
@@ -240,8 +241,8 @@ export function TokenSourceControl() {
           </div>
         </div>
 
-        {/* ── Claude Desktop(Code/Cowork,MITM 接管;仅 macOS、检测到才显示) ── */}
-        {isMac && claudeDesktopApp?.detected && (
+        {/* ── Claude Desktop(Code/Cowork,MITM 接管;macOS/Windows、检测到才显示) ── */}
+        {claudeDesktopApp?.detected && (
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic · 桌面端</span>

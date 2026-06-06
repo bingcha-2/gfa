@@ -183,7 +183,6 @@ export namespace main {
 	    hubPath: string;
 	    codexAppPath: string;
 	    cardExpiry: string;
-	    poolMode: string;
 	    codexMode: string;
 	    codexRelayBase: string;
 	    codexRelayKey: string;
@@ -204,7 +203,6 @@ export namespace main {
 	        this.hubPath = source["hubPath"];
 	        this.codexAppPath = source["codexAppPath"];
 	        this.cardExpiry = source["cardExpiry"];
-	        this.poolMode = source["poolMode"];
 	        this.codexMode = source["codexMode"];
 	        this.codexRelayBase = source["codexRelayBase"];
 	        this.codexRelayKey = source["codexRelayKey"];
