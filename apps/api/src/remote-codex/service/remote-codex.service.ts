@@ -1,9 +1,13 @@
+import * as path from "path";
 import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
 import { LeaseService, type TokenUsageTracker } from "../../lease-core/lease-service";
+import { QuotaProfileTracker } from "../../lease-core/quota-profile-tracker";
+import { bucketFamily } from "../../lease-core/product-bucket";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
+import { defaultRemoteAccessDataDir } from "../../remote-access/data-dir";
 import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
 import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
@@ -36,6 +40,9 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
       accountsFilePath: options.accountsFilePath,
       tokenProvider: options.tokenProvider,
     });
+    const quotaProfileTracker = new QuotaProfileTracker(
+      path.join(defaultRemoteAccessDataDir(), "quota-profiles.json"),
+    );
     let service: RemoteCodexService;
     const fairShareTracker = new FairShareTracker({
       getAccountPlanType: (accountId: number) => {
@@ -58,6 +65,11 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         } catch { return 1; }
       },
       accountShareCapacity: ACCOUNT_SHARE_CAPACITY,
+      getLearnedBudget: (planType: string, bucket: string) => {
+        return quotaProfileTracker.getLearnedBudget5h(
+          provider.id, planType, bucketFamily(bucket),
+        );
+      },
     });
     super(
       provider,
@@ -69,6 +81,7 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
         fairShareTracker,
+        quotaProfileTracker,
         mode: "remote-codex-server",
         noAccountMessage: "No available Codex accounts",
         errorClass: RemoteCodexHttpError,

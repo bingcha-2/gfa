@@ -10,7 +10,8 @@ export default defineConfig({
     hookTimeout: 30000,
     fileParallelism: false,
     env: {
-      DATABASE_URL: `file:${resolve(__dirname, "../../prisma/test.db")}`
+      DATABASE_URL: `file:${resolve(__dirname, "../../prisma/test.db")}`,
+      BCAI_ACCOUNT_SHARE_CAPACITY: "4"
     }
   },
   resolve: {

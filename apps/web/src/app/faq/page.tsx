@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { FaqPage } from "../../components/faq-page";
+import { PublicShell } from "../../components/public-shell";
 
 export const metadata: Metadata = {
   title: "常见问题 - BingCha AI",
@@ -39,8 +40,12 @@ async function fetchSettings(): Promise<Record<string, string>> {
 export default async function FaqRoute() {
   const [faqs, settings] = await Promise.all([fetchFaqs(), fetchSettings()]);
   return (
-    <main className="page-shell">
-      <FaqPage faqs={faqs} contactWechat={settings.contact_wechat} contactQrcodeUrl={settings.contact_qrcode_url} />
-    </main>
+    <PublicShell>
+      <div style={{ padding: "32px 0" }}>
+        <FaqPage faqs={faqs} contactWechat={settings.contact_wechat} contactQrcodeUrl={settings.contact_qrcode_url} />
+      </div>
+    </PublicShell>
   );
 }
+
+

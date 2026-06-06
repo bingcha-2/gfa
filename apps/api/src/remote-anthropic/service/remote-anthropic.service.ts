@@ -1,9 +1,13 @@
+import * as path from "path";
 import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
 import { LeaseService, type TokenUsageTracker } from "../../lease-core/lease-service";
+import { QuotaProfileTracker } from "../../lease-core/quota-profile-tracker";
+import { bucketFamily } from "../../lease-core/product-bucket";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
+import { defaultRemoteAccessDataDir } from "../../remote-access/data-dir";
 import { ClaudeAccount } from "../auth/claude-token-provider";
 import { ClaudeProvider } from "../claude.provider";
 import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
@@ -36,6 +40,9 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
       accountsFilePath: options.accountsFilePath,
       tokenProvider: options.tokenProvider,
     });
+    const quotaProfileTracker = new QuotaProfileTracker(
+      path.join(defaultRemoteAccessDataDir(), "quota-profiles.json"),
+    );
     let service: RemoteAnthropicService;
     // 多张卡拼一个 Claude 号时,按 weight/capacity 分份额(与 codex/antigravity 同一套)。
     const fairShareTracker = new FairShareTracker({
@@ -59,6 +66,11 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
         } catch { return 1; }
       },
       accountShareCapacity: ACCOUNT_SHARE_CAPACITY,
+      getLearnedBudget: (planType: string, bucket: string) => {
+        return quotaProfileTracker.getLearnedBudget5h(
+          provider.id, planType, bucketFamily(bucket),
+        );
+      },
     });
     super(
       provider,
@@ -70,6 +82,7 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
         fairShareTracker,
+        quotaProfileTracker,
         mode: "remote-anthropic-server",
         noAccountMessage: "No available Claude accounts",
         errorClass: RemoteAnthropicHttpError,

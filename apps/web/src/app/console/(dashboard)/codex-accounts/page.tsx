@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
+import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -448,6 +449,8 @@ export default function CodexAccountsPage() {
           </div>
         </div>
       ) : null}
+
+      <QuotaProfilesCard product="codex" statusUrl="/api/remote-codex/status" />
 
       <Card>
         <CardHeader>

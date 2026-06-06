@@ -6,6 +6,7 @@ import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
+import { QuotaProfileTracker } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
@@ -22,7 +23,7 @@ import {
   normalizeModelKey,
   validateClientVersion,
 } from "../token-server/token-billing";
-import { bucketKey } from "./product-bucket";
+import { bucketKey, familyOfBucket } from "./product-bucket";
 import type { CreditDelta, Provider } from "./provider";
 
 export type CreditTracker = {
@@ -73,6 +74,8 @@ export type LeaseServiceOptions = {
   noAccountMessage?: string;
   /** 503 message when a card's statically-bound account is unavailable. */
   busyMessage?: string;
+  /** Quota profile tracker for learning real upstream budgets from 429 events. */
+  quotaProfileTracker?: QuotaProfileTracker;
 };
 
 type LeaseRecord = {
@@ -151,6 +154,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly creditTracker: CreditTracker | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
   readonly fairShareTracker: FairShareTracker | null;
+  readonly quotaProfileTracker: QuotaProfileTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
   private readonly mode: string;
   private readonly noAccountMessage: string;
@@ -199,6 +203,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.mode = options.mode || "remote-token-server";
     this.noAccountMessage = options.noAccountMessage || "No account with projectId is available.";
     this.busyMessage = options.busyMessage || "当前账号繁忙，额度恢复中，请稍后重试";
+    this.quotaProfileTracker = options.quotaProfileTracker || null;
   }
 
   private ensureDaily() {
@@ -308,6 +313,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       },
       enterpriseProbe: this.enterpriseProbe.getStatus(),
       models: this.provider.models ? this.provider.models.list() : [],
+      quotaProfiles: this.quotaProfileTracker?.getAllProfiles() || {},
     };
   }
 
@@ -588,6 +594,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             }
           }
         }
+        // Sync fair-share window to upstream resetTime
+        const resetTimes = (account as any)?.modelQuotaResetTimes;
+        if (resetTimes && typeof resetTimes === "object") {
+          for (const [model, resetStr] of Object.entries(resetTimes)) {
+            const resetMs = Date.parse(String(resetStr));
+            if (Number.isFinite(resetMs) && resetMs > 0) {
+              const bucket = bucketKey(this.provider.id, model);
+              this.fairShareTracker.syncWindow(accountId, bucket, resetMs);
+            }
+          }
+        }
       }
     }
 
@@ -682,6 +699,22 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           if (this.fairShareTracker && status === 429) {
             const bucket = bucketKey(this.provider.id, modelKey);
             this.fairShareTracker.confirmBudget(accountId, bucket);
+            // Record exhaustion sample for quota profile learning
+            if (this.quotaProfileTracker) {
+              const state = this.fairShareTracker.getTrackerState(accountId, bucket);
+              if (state && state.totalUsed > 0) {
+                const account = this.readAccounts().find((a) => a.id === accountId);
+                const planType = String((account as any)?.planType || "free");
+                const resetAt = getModelQuotaResetAt(account as any, modelKey);
+                const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+                const isWeekly = resetAt > this.now() + FIVE_HOURS_MS;
+                const family = familyOfBucket(bucket);
+                this.quotaProfileTracker.recordExhaustion(
+                  this.provider.id, planType, family,
+                  state.totalUsed, state.lastFraction, isWeekly,
+                );
+              }
+            }
           }
         } else if (status === 403) {
           const reason = String(payload?.reason || "http_403");

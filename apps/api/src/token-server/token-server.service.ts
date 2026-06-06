@@ -1,10 +1,14 @@
+import * as path from "path";
 import { Injectable, Optional, OnModuleDestroy } from "@nestjs/common";
 
 import { LeaseService, LeaseServiceHttpError, type CreditTracker, type TokenUsageTracker } from "../lease-core/lease-service";
+import { QuotaProfileTracker } from "../lease-core/quota-profile-tracker";
+import { bucketFamily } from "../lease-core/product-bucket";
 import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
+import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -35,6 +39,10 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       accountsFilePath: options.accountsFilePath,
       tokenProvider: options.tokenProvider,
     });
+    // Quota profile tracker: learns real upstream budgets from 429 events.
+    const quotaProfileTracker = new QuotaProfileTracker(
+      path.join(defaultRemoteAccessDataDir(), "quota-profiles.json"),
+    );
     // Auto-create fair-share tracker wired to this service's own accessKeyStore.
     // Uses a deferred pattern: the tracker's callbacks reference `service` which
     // is assigned after super() returns.
@@ -60,6 +68,11 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         } catch { return 1; }
       },
       accountShareCapacity: ACCOUNT_SHARE_CAPACITY,
+      getLearnedBudget: (planType: string, bucket: string) => {
+        return quotaProfileTracker.getLearnedBudget5h(
+          provider.id, planType, bucketFamily(bucket),
+        );
+      },
     });
     super(
       provider,
@@ -73,6 +86,7 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         creditTracker: options.creditTracker,
         tokenUsageTracker: options.tokenUsageTracker,
         fairShareTracker,
+        quotaProfileTracker,
         errorClass: TokenServerHttpError,
       },
     );

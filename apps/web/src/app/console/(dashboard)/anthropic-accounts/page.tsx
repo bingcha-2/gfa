@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
+import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -328,6 +329,8 @@ export default function ClaudeAccountsPage() {
           </div>
         </div>
       ) : null}
+
+      <QuotaProfilesCard product="anthropic" statusUrl="/api/remote-anthropic/status" />
 
       <Card>
         <CardHeader>

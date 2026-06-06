@@ -16,8 +16,8 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
       codexQuota: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        hourlyResetTime: "2036-06-01T10:00:00Z",
+        weeklyResetTime: "2036-06-05T00:00:00Z",
       },
     });
 
@@ -26,7 +26,7 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
     // Binding fraction = the more restrictive window = min(80, 30)/100 = 0.3
     expect((account as any).modelQuotaFractions.codex).toBeCloseTo(0.3, 5);
     // Reset time of the binding (weekly) window.
-    expect((account as any).modelQuotaResetTimes.codex).toBe("2026-06-05T00:00:00Z");
+    expect((account as any).modelQuotaResetTimes.codex).toBe("2036-06-05T00:00:00Z");
     // Raw percentages kept for display.
     expect((account as any).codexHourlyPercent).toBe(80);
     expect((account as any).codexWeeklyPercent).toBe(30);
@@ -73,13 +73,13 @@ describe("CodexProvider.bloodBarFraction", () => {
       codexQuota: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        weeklyResetTime: "2036-06-05T00:00:00Z",
       },
     });
 
     const bar = provider.bloodBarFraction(account, "gpt-5-codex");
     expect(bar.fraction).toBeCloseTo(0.3, 5);
-    expect(bar.resetAt).toBe(Date.parse("2026-06-05T00:00:00Z"));
+    expect(bar.resetAt).toBe(Date.parse("2036-06-05T00:00:00Z"));
   });
 
   it("reports unknown (fraction -1) when there is no quota snapshot yet", () => {
@@ -98,8 +98,8 @@ describe("CodexProvider.leaseResponseExtras", () => {
       codexQuota: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        hourlyResetTime: "2036-06-01T10:00:00Z",
+        weeklyResetTime: "2036-06-05T00:00:00Z",
       },
     });
 
@@ -107,8 +107,8 @@ describe("CodexProvider.leaseResponseExtras", () => {
       codexWindows: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        hourlyResetTime: "2036-06-01T10:00:00Z",
+        weeklyResetTime: "2036-06-05T00:00:00Z",
       },
     });
   });
@@ -127,16 +127,16 @@ describe("CodexProvider.statusAccountExtras", () => {
       codexQuota: {
         hourlyPercent: 80,
         weeklyPercent: 30,
-        hourlyResetTime: "2026-06-01T10:00:00Z",
-        weeklyResetTime: "2026-06-05T00:00:00Z",
+        hourlyResetTime: "2036-06-01T10:00:00Z",
+        weeklyResetTime: "2036-06-05T00:00:00Z",
       },
     });
 
     expect(provider.statusAccountExtras(account)).toEqual({
       codexHourlyPercent: 80,
       codexWeeklyPercent: 30,
-      codexHourlyResetTime: "2026-06-01T10:00:00Z",
-      codexWeeklyResetTime: "2026-06-05T00:00:00Z",
+      codexHourlyResetTime: "2036-06-01T10:00:00Z",
+      codexWeeklyResetTime: "2036-06-05T00:00:00Z",
     });
   });
 

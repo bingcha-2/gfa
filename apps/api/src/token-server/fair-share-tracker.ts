@@ -78,6 +78,9 @@ export interface FairShareTrackerOptions {
   getCardWeight: (cardId: string) => number;
   /** Total share capacity per upstream account (4 or 8). */
   accountShareCapacity: number;
+  /** Optional: retrieve a learned budget from QuotaProfileTracker.
+   *  Returns the learned 5h budget in weighted units, or 0 if unknown. */
+  getLearnedBudget?: (planType: string, bucket: string) => number;
 }
 
 // ── Core class ──────────────────────────────────────────────────────────────
@@ -117,6 +120,44 @@ export class FairShareTracker {
     this.ensureWindow(tracker, Date.now());
     const cost = FairShareTracker.weightedCost(bucket, inputTokens, outputTokens, cachedInputTokens);
     tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
+  }
+
+  /**
+   * Synchronize the internal window to the upstream resetTime.
+   * Instead of self-timing a 5h window, we align to Google/Codex/Anthropic's
+   * actual window boundary so totalUsed accurately reflects the real window.
+   *
+   * @param resetTimeMs  Epoch ms of the upstream window reset.
+   */
+  syncWindow(accountId: number, bucket: string, resetTimeMs: number): void {
+    const tracker = this.getOrCreate(accountId, bucket);
+    const windowStart = resetTimeMs - WINDOW_MS;
+    // Only reset if the window start actually changed (> 60s drift tolerance)
+    if (Math.abs(windowStart - tracker.windowStart) > 60_000) {
+      tracker.windowStart = windowStart;
+      tracker.perCard.clear();
+      if (tracker.confidence === 'confirmed') {
+        tracker.confidence = 'estimated';
+      }
+    }
+  }
+
+  /**
+   * Expose internal tracker state for quota profile sampling.
+   * Called by LeaseService on 429 to feed QuotaProfileTracker.
+   */
+  getTrackerState(accountId: number, bucket: string): {
+    totalUsed: number;
+    lastFraction: number;
+    confidence: string;
+  } | null {
+    const tracker = this.trackers.get(accountId)?.get(bucket);
+    if (!tracker) return null;
+    return {
+      totalUsed: this.totalWeighted(tracker),
+      lastFraction: tracker.lastFraction,
+      confidence: tracker.confidence,
+    };
   }
 
   /** Update budget estimate from a quota fraction signal. Called from scheduler/report. */
@@ -239,11 +280,15 @@ export class FairShareTracker {
     let tracker = bucketMap.get(bucket);
     if (!tracker) {
       const planType = (this.opts.getAccountPlanType(accountId) || 'free').toLowerCase();
+      const family = bucketFamily(bucket);
+      // Prefer learned budget from QuotaProfileTracker over hardcoded defaults
+      const learned = this.opts.getLearnedBudget?.(planType, bucket) || 0;
       const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
+      const defaultBudget = defaults[family] || defaults.gemini || 50_000;
       tracker = {
         windowStart: Date.now(),
-        estimatedBudget: defaults[bucketFamily(bucket)] || defaults.gemini || 50_000,
-        confidence: 'default',
+        estimatedBudget: learned > 0 ? learned : defaultBudget,
+        confidence: learned > 0 ? 'estimated' : 'default',
         perCard: new Map(),
         lastFraction: 1.0,
       };
