@@ -1,0 +1,88 @@
+name: CI (bcai-wails)
+
+# push/PR 触发的构建+单测兜底。两个发布 workflow（build-wails.yml / build-client.yml）
+# 都是 tag/dispatch 触发的发布流水线，平时不跑测试 —— 这个 CI 负责在合并前就把
+# bcai-wails 的编译错误和单测失败拦住，尤其是只在对应平台才编译的 *_windows.go /
+# *_darwin.go / *_other.go（靠 windows-latest / macos-latest 这两条腿覆盖）。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/bcai-wails/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'apps/bcai-wails/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  WAILS_DIR: apps/bcai-wails
+
+jobs:
+  build-test:
+    name: build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04（非 latest）：Wails v2 依赖 webkit2gtk-4.0，24.04 已移除。
+        # windows-latest / macos-latest 覆盖各自的平台专属 *.go 文件。
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.WAILS_DIR }}/go.mod
+          cache-dependency-path: ${{ env.WAILS_DIR }}/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ env.WAILS_DIR }}/frontend/package-lock.json
+
+      # Linux 上 Wails(go-webview) 的 cgo 依赖需要 gtk/webkit 头文件
+      - name: Install Linux WebKit deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      # main.go 用 //go:embed all:frontend/dist，而 frontend/dist 被 gitignore，
+      # 不先构建前端，go build/go test 编译 main 包会因 embed 找不到文件而失败。
+      - name: Build frontend (populate embed dist)
+        working-directory: ${{ env.WAILS_DIR }}/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: go build
+        working-directory: ${{ env.WAILS_DIR }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ env.WAILS_DIR }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ env.WAILS_DIR }}
+        run: go test ./... -timeout 8m
