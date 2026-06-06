@@ -2,9 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Search, ChevronRight, ChevronDown, Loader2, AlertCircle, MessageCircle, ExternalLink } from 'lucide-react'
+import * as api from '@/services/wails'
 
-const FAQ_API = 'https://bcai.lol/api/faq'
-const SETTINGS_API = 'https://bcai.lol/api/faq/settings'
 const CACHE_KEY = 'bcai_faq_cache'
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24h
 
@@ -55,25 +54,23 @@ export function FaqPage() {
       setLoading(false)
     }
 
-    const ctrl = new AbortController()
-    Promise.all([
-      fetch(FAQ_API, { signal: ctrl.signal }).then((r) => r.ok ? r.json() : []),
-      fetch(SETTINGS_API, { signal: ctrl.signal }).then((r) => r.ok ? r.json() : {}).catch(() => ({})),
-    ])
-      .then(([faqData, settingsData]) => {
-        setItems(faqData)
-        setSettings(settingsData)
-        saveCache(faqData, settingsData)
+    // Fetch via Wails IPC (Go backend), bypassing CORS
+    api.getFaqData()
+      .then((data) => {
+        const faqItems = (data.items || []) as FaqItem[]
+        const faqSettings = (data.settings || {}) as Record<string, string>
+        if (faqItems.length > 0) {
+          setItems(faqItems)
+          setSettings(faqSettings)
+          saveCache(faqItems, faqSettings)
+        }
         setLoading(false)
         setError('')
       })
       .catch((err) => {
-        if (err.name === 'AbortError') return
         if (!cache) setError('无法加载常见问题，请检查网络连接')
         setLoading(false)
       })
-
-    return () => ctrl.abort()
   }, [])
 
   // Group by category, filter by search

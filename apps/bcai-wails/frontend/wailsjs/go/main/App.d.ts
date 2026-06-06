@@ -4,8 +4,6 @@ import {main} from '../models';
 
 export function ActivateCard(arg1:string):Promise<string>;
 
-export function AddPoolAccount(arg1:string,arg2:string):Promise<Record<string, any>>;
-
 export function BrowseForPath(arg1:string):Promise<string>;
 
 export function CheckForUpdate():Promise<Record<string, any>>;
@@ -26,15 +24,11 @@ export function GetConfig():Promise<main.Config>;
 
 export function GetDetectedPaths():Promise<main.DetectedPaths>;
 
+export function GetFaqData():Promise<Record<string, any>>;
+
 export function GetIDEStatus():Promise<main.IDEStatus>;
 
 export function GetLogs():Promise<Array<string>>;
-
-export function GetPoolAccounts():Promise<Array<main.AccountInfo>>;
-
-export function GetPoolMode():Promise<string>;
-
-export function GetPoolStatus():Promise<Record<string, any>>;
 
 export function GetStats():Promise<Record<string, any>>;
 
@@ -46,15 +40,7 @@ export function IsHubRunningCheck():Promise<boolean>;
 
 export function IsIDERunningCheck():Promise<boolean>;
 
-export function LockPoolAccount(arg1:number):Promise<Record<string, any>>;
-
-export function OAuthLogin():Promise<Record<string, any>>;
-
 export function OpenSystemPermissionSettings():Promise<void>;
-
-export function RefreshPoolQuota():Promise<Record<string, any>>;
-
-export function RemovePoolAccount(arg1:number):Promise<Record<string, any>>;
 
 export function RestartProxy():Promise<void>;
 
@@ -66,14 +52,4 @@ export function SaveCodexRelayConfig(arg1:string,arg2:string,arg3:string,arg4:st
 
 export function SaveConfig(arg1:main.Config):Promise<void>;
 
-export function SetAccountAlias(arg1:number,arg2:string):Promise<Record<string, any>>;
-
 export function SetClaudeDesktopMockLogin(arg1:boolean):Promise<boolean>;
-
-export function SetPoolMode(arg1:string):Promise<Record<string, any>>;
-
-export function SwitchPoolAccount(arg1:number):Promise<Record<string, any>>;
-
-export function TogglePoolAccount(arg1:number,arg2:boolean):Promise<Record<string, any>>;
-
-export function UnlockPoolAccount():Promise<Record<string, any>>;

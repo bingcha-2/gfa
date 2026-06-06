@@ -23,6 +23,7 @@ import {
   RestartToUpdate as _RestartToUpdate,
   GetAppVersion,
   GetAnnouncement,
+  GetFaqData,
   GetCodexRelayConfig as _GetCodexRelayConfig,
   SaveCodexRelayConfig as _SaveCodexRelayConfig,
 } from '../../wailsjs/go/main/App'
@@ -165,6 +166,22 @@ export async function getAppVersion(): Promise<string> {
 // ===== Announcement =====
 export async function getAnnouncement(): Promise<string> {
   return GetAnnouncement()
+}
+
+// ===== FAQ =====
+export interface FaqDataResponse {
+  items?: Array<{
+    id: string
+    category: string
+    question: string
+    answer: string
+    sortOrder: number
+  }>
+  settings?: Record<string, string>
+}
+
+export async function getFaqData(): Promise<FaqDataResponse> {
+  return GetFaqData() as Promise<FaqDataResponse>
 }
 
 // ===== Codex 中转(API 卡密)模式 =====

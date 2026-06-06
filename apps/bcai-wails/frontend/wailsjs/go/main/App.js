@@ -6,10 +6,6 @@ export function ActivateCard(arg1) {
   return window['go']['main']['App']['ActivateCard'](arg1);
 }
 
-export function AddPoolAccount(arg1, arg2) {
-  return window['go']['main']['App']['AddPoolAccount'](arg1, arg2);
-}
-
 export function BrowseForPath(arg1) {
   return window['go']['main']['App']['BrowseForPath'](arg1);
 }
@@ -50,24 +46,16 @@ export function GetDetectedPaths() {
   return window['go']['main']['App']['GetDetectedPaths']();
 }
 
+export function GetFaqData() {
+  return window['go']['main']['App']['GetFaqData']();
+}
+
 export function GetIDEStatus() {
   return window['go']['main']['App']['GetIDEStatus']();
 }
 
 export function GetLogs() {
   return window['go']['main']['App']['GetLogs']();
-}
-
-export function GetPoolAccounts() {
-  return window['go']['main']['App']['GetPoolAccounts']();
-}
-
-export function GetPoolMode() {
-  return window['go']['main']['App']['GetPoolMode']();
-}
-
-export function GetPoolStatus() {
-  return window['go']['main']['App']['GetPoolStatus']();
 }
 
 export function GetStats() {
@@ -90,24 +78,8 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
-export function LockPoolAccount(arg1) {
-  return window['go']['main']['App']['LockPoolAccount'](arg1);
-}
-
-export function OAuthLogin() {
-  return window['go']['main']['App']['OAuthLogin']();
-}
-
 export function OpenSystemPermissionSettings() {
   return window['go']['main']['App']['OpenSystemPermissionSettings']();
-}
-
-export function RefreshPoolQuota() {
-  return window['go']['main']['App']['RefreshPoolQuota']();
-}
-
-export function RemovePoolAccount(arg1) {
-  return window['go']['main']['App']['RemovePoolAccount'](arg1);
 }
 
 export function RestartProxy() {
@@ -130,26 +102,6 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
-export function SetAccountAlias(arg1, arg2) {
-  return window['go']['main']['App']['SetAccountAlias'](arg1, arg2);
-}
-
 export function SetClaudeDesktopMockLogin(arg1) {
   return window['go']['main']['App']['SetClaudeDesktopMockLogin'](arg1);
-}
-
-export function SetPoolMode(arg1) {
-  return window['go']['main']['App']['SetPoolMode'](arg1);
-}
-
-export function SwitchPoolAccount(arg1) {
-  return window['go']['main']['App']['SwitchPoolAccount'](arg1);
-}
-
-export function TogglePoolAccount(arg1, arg2) {
-  return window['go']['main']['App']['TogglePoolAccount'](arg1, arg2);
-}
-
-export function UnlockPoolAccount() {
-  return window['go']['main']['App']['UnlockPoolAccount']();
 }

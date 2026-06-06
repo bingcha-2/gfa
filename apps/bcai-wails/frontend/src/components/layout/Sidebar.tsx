@@ -17,8 +17,8 @@ interface SidebarProps {
 
 const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
   { id: 'home', label: '控制台', icon: LayoutDashboard },
-  { id: 'logs', label: '日志', icon: ScrollText },
   { id: 'faq', label: '使用指南', icon: BookOpen },
+  { id: 'logs', label: '日志', icon: ScrollText },
 ]
 
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse }: SidebarProps) {
@@ -39,7 +39,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
       >
         {/* ① Traffic lights zone */}
         <div
-          className="h-[56px] shrink-0"
+          className="h-[20px] shrink-0"
           style={{ '--wails-draggable': 'drag' } as React.CSSProperties}
         />
 

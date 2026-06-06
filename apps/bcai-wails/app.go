@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
@@ -532,3 +534,59 @@ func (a *App) GetAnnouncement() string {
 	}
 	return ""
 }
+
+// GetFaqData 从服务器获取 FAQ 数据（绕过浏览器 CORS 限制）。
+// 返回 { "items": [...], "settings": {...} }，失败返回空 map。
+func (a *App) GetFaqData() map[string]interface{} {
+	client := createHttpClient("")
+	client.Timeout = 8 * time.Second
+
+	result := map[string]interface{}{}
+
+	// Fetch FAQ items
+	for _, rawURL := range bcaiURLCandidates("https://" + BcaiPrimaryHost + "/api/faq") {
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		var items []interface{}
+		if json.Unmarshal(body, &items) == nil {
+			result["items"] = items
+		}
+		break
+	}
+
+	// Fetch FAQ settings
+	for _, rawURL := range bcaiURLCandidates("https://" + BcaiPrimaryHost + "/api/faq/settings") {
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		var settings map[string]interface{}
+		if json.Unmarshal(body, &settings) == nil {
+			result["settings"] = settings
+		}
+		break
+	}
+
+	return result
+}
+
