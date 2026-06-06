@@ -53,21 +53,74 @@ func mitmIsCAInstalled() bool {
 	return certutilQueryShowsCA(out, err, mitmCACommonName)
 }
 
+// detectClaudeDesktopPath 检测 Claude Desktop 安装路径。
+// 按优先级依次尝试 5 种策略，覆盖 Squirrel 官方安装、注册表自定义路径、
+// Microsoft Store (MSIX)、传统安装器及运行进程嗅探。
 func detectClaudeDesktopPath() string {
-	if pf := os.Getenv("ProgramFiles"); pf != "" {
-		if m, _ := filepath.Glob(filepath.Join(pf, "WindowsApps", "Claude_*", "app", "Claude.exe")); len(m) > 0 {
+	la := os.Getenv("LOCALAPPDATA")
+	pf := os.Getenv("ProgramFiles")
+
+	// ── 策略 1: Squirrel 标准安装(官方安装器,最常见) ──
+	// 根目录 claude.exe 是 Squirrel 启动 shim,路径稳定不随版本变化。
+	if la != "" {
+		shim := filepath.Join(la, "AnthropicClaude", "claude.exe")
+		if _, err := os.Stat(shim); err == nil {
+			return shim
+		}
+	}
+
+	// ── 策略 2: 注册表查找(自定义安装路径/企业分发) ──
+	if loc := registryReadValue(
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AnthropicClaude`,
+		"InstallLocation",
+	); loc != "" {
+		// InstallLocation 指向安装根目录,尝试找 exe
+		for _, name := range []string{"claude.exe", "Claude.exe"} {
+			exe := filepath.Join(loc, name)
+			if _, err := os.Stat(exe); err == nil {
+				return exe
+			}
+		}
+		// 根目录无 exe, 尝试 Squirrel 版本子目录 app-*
+		if m, _ := filepath.Glob(filepath.Join(loc, "app-*", "claude.exe")); len(m) > 0 {
 			return m[len(m)-1] // 取最新版本
 		}
 	}
+
+	// ── 策略 3: Microsoft Store (MSIX/AppX) ──
+	if pf != "" {
+		if m, _ := filepath.Glob(filepath.Join(pf, "WindowsApps", "Claude_*", "app", "Claude.exe")); len(m) > 0 {
+			return m[len(m)-1]
+		}
+	}
+
+	// ── 策略 4: 传统安装器硬编码路径(含大小写变体) ──
 	for _, c := range []string{
-		filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Claude", "Claude.exe"),
-		filepath.Join(os.Getenv("LOCALAPPDATA"), "claude-desktop", "Claude.exe"),
-		filepath.Join(os.Getenv("ProgramFiles"), "Claude", "Claude.exe"),
+		filepath.Join(la, "Programs", "Claude", "Claude.exe"),
+		filepath.Join(la, "Programs", "Claude", "claude.exe"),
+		filepath.Join(la, "claude-desktop", "Claude.exe"),
+		filepath.Join(la, "claude-desktop", "claude.exe"),
+		filepath.Join(pf, "Claude", "Claude.exe"),
+		filepath.Join(pf, "Claude", "claude.exe"),
 	} {
 		if _, err := os.Stat(c); err == nil {
 			return c
 		}
 	}
+
+	// ── 策略 5: 运行进程嗅探(兜底,仅 Claude 正在运行时有效) ──
+	if out, err := hideCmd("wmic", "process", "where",
+		"name='claude.exe'", "get", "ExecutablePath", "/value").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "ExecutablePath=") {
+				if p := strings.TrimSpace(strings.TrimPrefix(line, "ExecutablePath=")); p != "" {
+					return p
+				}
+			}
+		}
+	}
+
 	return ""
 }
 

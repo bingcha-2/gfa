@@ -447,6 +447,23 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const accStats = this.ensureAccountStats(account.id);
     accStats.totalLeases++;
     accStats.lastUsedAt = this.now();
+
+    // Pre-compute account-level and per-card fair-share quota fractions.
+    const accountBucketsData = this.accountBucketQuotas(account);
+    const rawFairShare = (boundAccountId > 0 && this.fairShareTracker)
+      ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, auth.record.id)
+      : undefined;
+    // When fair-share tracker has no data for this card yet (first activation /
+    // server restart), default to 100% for all known buckets so the card doesn't
+    // inherit the shared account-level fraction from accountBuckets. Once the card
+    // has real usage, getCardQuotaFractions() returns actual data and this fallback
+    // is bypassed.
+    const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && boundAccountId > 0)
+      ? Object.fromEntries(
+          Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: Date.now() + 5 * 60 * 60 * 1000 }]),
+        )
+      : rawFairShare;
+
     return {
       ok: true,
       leaseId: lease.leaseId,
@@ -466,7 +483,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // All known per-bucket quotas for the leased account, so the client can show
       // real blood bars for every model right after activation (not just the one
       // leased). Empty {} when the account has no quota snapshots yet.
-      accountBuckets: this.accountBucketQuotas(account),
+      accountBuckets: accountBucketsData,
       ...this.provider.leaseResponseExtras(account),
       expiresAt: lease.expiresAt,
       accessTokenExpiresAt: lease.expiresAt,
@@ -479,9 +496,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       bound: boundAccountId > 0,
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
-      fairShareQuota: (boundAccountId > 0 && this.fairShareTracker)
-        ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, auth.record.id)
-        : undefined,
+      fairShareQuota,
     };
   }
 
