@@ -222,6 +222,13 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	if err := InjectCodexSettings(proxyPort); err != nil {
 		return "", err
 	}
+	// 接管即租号:清掉任何遗留的「中转(relay)」配置,确保生成请求走 bcai 号池租号,
+	// 而不是被旧的中转配置劫持到外部中转站(如 litellm)。热生效,无需重启代理。
+	if cleared, err := ensureCodexRentalMode(); err != nil {
+		return "", err
+	} else if cleared {
+		Log("[codex] 接管已清除遗留的中转(relay)配置,切回租号模式")
+	}
 	// 切到自定义 provider(bingchaai)→ 退出 Codex → 把历史 retag 到 bingchaai
 	// (当前 provider 视图下可见)→ 重启。
 	go RestartCodexAfterTakeover(codexProviderID)

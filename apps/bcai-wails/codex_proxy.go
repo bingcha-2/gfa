@@ -123,6 +123,30 @@ func relayConfigFromConfig(cfg Config) *CodexRelayConfig {
 	return &CodexRelayConfig{BaseURL: base, APIKey: key, ModelMap: cfg.CodexModelMap, Protocol: cfg.CodexRelayProtocol}
 }
 
+// ensureCodexRentalMode 把配置强制切回「租号」模式并清掉所有中转(relay)残留,
+// 然后热生效到全局代理。接管 Codex 时调用——接管即租号,不允许残留的中转配置把
+// 生成请求劫持到外部中转站(见 codexTarget.Inject)。返回是否实际改动了配置
+// (无中转残留时为 no-op,避免每次接管都重写 config.json)。
+func ensureCodexRentalMode() (bool, error) {
+	cfg := LoadConfig()
+	// 已是纯租号且无任何中转残留 → 不动。
+	if !strings.EqualFold(strings.TrimSpace(cfg.CodexMode), "relay") &&
+		cfg.CodexRelayBase == "" && cfg.CodexRelayKey == "" &&
+		cfg.CodexRelayProtocol == "" && len(cfg.CodexModelMap) == 0 {
+		return false, nil
+	}
+	cfg.CodexMode = "rental"
+	cfg.CodexRelayBase = ""
+	cfg.CodexRelayKey = ""
+	cfg.CodexRelayProtocol = ""
+	cfg.CodexModelMap = nil
+	if err := SaveConfig(cfg); err != nil {
+		return false, err
+	}
+	GetCodexProxy().ApplyConfig(cfg) // 热生效:relay 指针置空,下一条请求即走号池
+	return true, nil
+}
+
 // ApplyConfig 把用户配置应用到全局 Codex 代理(目前只切换中转模式)。热生效,
 // 无需重启代理:换掉 relay 指针,下一条请求即用新配置(加写锁与读侧互斥)。
 func (p *CodexProxy) ApplyConfig(cfg Config) {
