@@ -16,7 +16,6 @@ export interface Config {
   hubPath: string
   codexAppPath: string
   cardExpiry: string
-  poolMode: string
   codexMode: string
   codexRelayBase: string
   codexRelayKey: string
