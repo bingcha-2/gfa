@@ -47,7 +47,7 @@ export const DEFAULT_KEY_WINDOW_LIMIT = 300;
  * 1 = shared, 4 = exclusive (capacity=4), up to 8 (capacity=8). Configurable via env. */
 export const ACCOUNT_SHARE_CAPACITY = Math.max(
   4,
-  Math.min(8, Number(process.env.BCAI_ACCOUNT_SHARE_CAPACITY || 4)),
+  Math.min(8, Number(process.env.BCAI_ACCOUNT_SHARE_CAPACITY || 8)),
 );
 export const DEFAULT_KEY_TOKENS_PER_REQUEST = Math.max(
   1000,
