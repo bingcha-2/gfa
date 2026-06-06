@@ -9,7 +9,7 @@ import (
 )
 
 // 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
-var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://bcai.lol/remote-codex")
+var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://bcai.lol/api/remote-codex")
 
 type CodexTokenLease struct {
 	AccessToken string `json:"accessToken"`

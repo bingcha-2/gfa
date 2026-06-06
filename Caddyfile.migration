@@ -9,9 +9,12 @@ bcai.space {
         reverse_proxy localhost:3001
     }
 
-    # Remote token server (migrated into NestJS API on :3001)
-    # Legacy clients still call /remote-token/* without /api prefix
-    handle /remote-token/* {
+    # Legacy 兜底:/api 前缀化之前发布的老客户端会用不带 /api 的 /remote-*/* 路径
+    # (remote-token / remote-codex / remote-anthropic)。新客户端已统一改打
+    # /api/remote-*(见 bcai-wails 的 ANTHROPIC_REMOTE_BASE / CODEX_API_BASE / API_BASE)。
+    # 这里把所有旧路径 rewrite 到 /api{uri},保证已发布的老客户端不落到 Next.js 404。
+    @legacyRemote path /remote-token/* /remote-codex/* /remote-anthropic/*
+    handle @legacyRemote {
         rewrite * /api{uri}
         reverse_proxy localhost:3001
     }

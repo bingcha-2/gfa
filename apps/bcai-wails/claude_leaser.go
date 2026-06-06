@@ -9,7 +9,7 @@ import (
 )
 
 // 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
-var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://bcai.lol/remote-anthropic")
+var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://bcai.lol/api/remote-anthropic")
 
 // 429「公平限额已用完」熔断参数：拿到 429 即按卡开闸，冷却期内本地直接快速失败，
 // 不再逐条把请求打到租号上游（避免 #98→#112 那种一秒几十条 429 的重试风暴）。
