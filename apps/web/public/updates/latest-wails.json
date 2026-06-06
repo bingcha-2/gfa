@@ -1,30 +1,30 @@
 {
-  "version": "8.5.0",
-  "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.5.0/BingchaAI-8.5.0.exe",
-  "sha256": "A542A61BF2995CF34DB12950AEBF4D9A7C93A23E0FFB0A63BB4E2DD6116125CF",
-  "size": 20544512,
-  "installerUrl": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.5.0/BingchaAI-8.5.0-setup.exe",
-  "installerSha256": "1796A808164887CF62AD0F6DDD8D89D250A0CB206210B46585F38116BA20F749",
-  "installerSize": 10969487,
-  "changelog": "安装与更新流程优化，提升兼容性",
-  "minVersion": "8.5.0",
+  "version": "8.6.0",
+  "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.6.0/BingchaAI-8.6.0.exe",
+  "sha256": "DB040E744C255198752FA196AAEFD5F2F42F4263B1EA1D1401D5190BDD597594",
+  "size": 20546560,
+  "installerUrl": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.6.0/BingchaAI-8.6.0-setup.exe",
+  "installerSha256": "2360F9238BE1391BD80955B54C2C12CEE6CA9AC30C5B5839CFE45DD63998543D",
+  "installerSize": 10970337,
+  "changelog": "性能优化与兼容性改进,提升稳定性。",
+  "minVersion": "8.6.0",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.5.0/BingchaAI-8.5.0-arm64.dmg",
-      "sha256": "6789AB6307ADFA6BB0CCAAC3A00FCDEAF086B67BAFE88A8B951FC674D5C04690",
-      "size": 10066235
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.6.0/BingchaAI-8.6.0-arm64.dmg",
+      "sha256": "745682E513F82B3C13EFC2ACA259CFA4882710FA7F5D87C5D41E0AEE4382414C",
+      "size": 10066409
     },
     "amd64": {
-      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.5.0/BingchaAI-8.5.0-amd64.dmg",
-      "sha256": "5B31189CA01AA8E8F77976E07EBEC5F21A1624DADE57D99FB6F7C50CFB209E23",
-      "size": 10791280
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.6.0/BingchaAI-8.6.0-amd64.dmg",
+      "sha256": "BA33A18D1035187995D9D1D0A87A042BC986B7D80B39A8DD1943814AB0D7C2DC",
+      "size": 10792568
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.5.0/BingchaAI-8.5.0-linux-amd64.tar.gz",
-      "sha256": "ABA1CB58131B0EC759F07ADB7F8FA9BB9537EF8BC1A950DDA164C1FBCA15CC6A",
-      "size": 8535160
+      "url": "https://github.com/bingcha135-sys/bingcha135-sys-bcai-releases/releases/download/wails-v8.6.0/BingchaAI-8.6.0-linux-amd64.tar.gz",
+      "sha256": "701B03C3C90F7EBFEDCDBF8A20079452EB5E1D80F524A16B43820397CBB1F6D3",
+      "size": 8534897
     }
   }
 }
