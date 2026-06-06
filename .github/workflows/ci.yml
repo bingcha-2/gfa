@@ -53,13 +53,6 @@ jobs:
           go-version-file: ${{ env.WAILS_DIR }}/go.mod
           cache-dependency-path: ${{ env.WAILS_DIR }}/go.sum
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ${{ env.WAILS_DIR }}/frontend/package-lock.json
-
       # Linux 上 Wails(go-webview) 的 cgo 依赖需要 gtk/webkit 头文件
       - name: Install Linux WebKit deps
         if: runner.os == 'Linux'
@@ -67,13 +60,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
-      # main.go 用 //go:embed all:frontend/dist，而 frontend/dist 被 gitignore，
-      # 不先构建前端，go build/go test 编译 main 包会因 embed 找不到文件而失败。
-      - name: Build frontend (populate embed dist)
-        working-directory: ${{ env.WAILS_DIR }}/frontend
+      # main.go 用 //go:embed all:frontend/dist，dist 被 gitignore，缺它 go build 会失败。
+      # 本 CI 只兜 Go 构建/单测，不验证前端（前端真实构建由发布 workflow 的 wails build
+      # 覆盖，它会重新生成 wailsjs 绑定）；这里放一个占位 dist 满足 embed 即可。
+      - name: Stub embed dist
+        working-directory: ${{ env.WAILS_DIR }}
         run: |
-          npm ci
-          npm run build
+          mkdir -p frontend/dist
+          printf '<!doctype html><title>ci-stub</title>' > frontend/dist/index.html
 
       - name: go build
         working-directory: ${{ env.WAILS_DIR }}
