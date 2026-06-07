@@ -85,3 +85,4 @@ apps/bcai-wails/bcai-wails
 
 # dev-local.sh 临时备份
 *.bak
+.superpowers/
