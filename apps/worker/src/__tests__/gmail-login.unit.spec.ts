@@ -321,3 +321,32 @@ describe("gmailLogin — phone / SMS challenge", () => {
     if (!result.success) expect(["VERIFICATION_REQUIRED", "PHONE_CHALLENGE"]).toContain(result.reason);
   });
 });
+
+describe("gmailLogin — recovery email challenge", () => {
+  it("autofills recovery email when recovery email input page is detected", async () => {
+    const recoveryFill = vi.fn().mockResolvedValue(undefined);
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com/challenge/pwd",
+        "https://accounts.google.com/challenge/pwd",
+        "https://accounts.google.com/challenge/ipe",
+      ],
+      locatorOverrides: {
+        "email": buildLocator({ count: 1 }),
+        "password": buildLocator({ count: 1 }),
+        "knowledgePrereqValue": buildLocator({ count: 1, fill: recoveryFill }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      { loginEmail: "u@gmail.com", loginPassword: "pw", recoveryEmail: "recovery@gmail.com" },
+      buildMockLogger()
+    );
+
+    expect(recoveryFill).toHaveBeenCalledWith("recovery@gmail.com");
+  });
+});

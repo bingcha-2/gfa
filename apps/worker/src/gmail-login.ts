@@ -128,6 +128,7 @@ export interface LoginCredentials {
   loginEmail: string;
   loginPassword: string | null;
   totpSecret?: string | null;
+  recoveryEmail?: string | null;
 }
 
 export interface GmailLoginOptions {
@@ -246,7 +247,7 @@ export async function gmailLogin(
         // Auto-select TOTP if available, then wait for the password field.
         if (afterManualUrl.includes("challenge/selection")) {
           await logger.log("INFO", "[gmail-login] Challenge selection page after CAPTCHA — attempting to select TOTP");
-          const selectionHandled = await handleChallengeSelection(page, totpSecret, logger);
+          const selectionHandled = await handleChallengeSelection(page, credentials, logger);
           if (selectionHandled) {
             await page.waitForURL(
               (url) => !url.toString().includes("challenge/selection"),
@@ -439,6 +440,25 @@ export async function gmailLogin(
         return { success: false, reason: "PHONE_CHALLENGE", detail };
       }
 
+      // Recovery email challenge detection
+      const recoveryEmailInput = page.locator(
+        'input[name="knowledgePrereqValue"], input[id="knowledgePrereqValue"]'
+      );
+      if (await recoveryEmailInput.count() > 0 && await recoveryEmailInput.first().isVisible()) {
+        await logger.log("INFO", "[gmail-login] Recovery email challenge detected");
+        if (!credentials.recoveryEmail) {
+          return {
+            success: false,
+            reason: "VERIFICATION_REQUIRED",
+            detail: "Recovery email verification required but recoveryEmail is not configured",
+          };
+        }
+        await recoveryEmailInput.first().fill(credentials.recoveryEmail);
+        await clickNext(page, logger);
+        await waitForNextState(page, 5000);
+        continue;
+      }
+
       // TOTP 2FA — only check when still on accounts.google.com
       const totpSelector = roundUrl.includes("/challenge/totp")
         ? 'input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]'
@@ -590,7 +610,7 @@ export async function gmailLogin(
           continue;
         }
 
-        const handled = await handleChallengeSelection(page, totpSecret, logger);
+        const handled = await handleChallengeSelection(page, credentials, logger);
         await logger.log("INFO", `[gmail-login] handleChallengeSelection returned: ${handled}`);
         if (!handled) {
           const detail = `Challenge selection page with no automated option at ${roundUrl}`;
@@ -1098,10 +1118,11 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
  */
 async function handleChallengeSelection(
   page: Page,
-  totpSecret: string | null | undefined,
+  credentials: LoginCredentials,
   logger: TaskLogger
 ): Promise<boolean> {
-  await logger.log("INFO", `[gmail-login] handleChallengeSelection called. totpSecret=${totpSecret ? 'YES(len=' + totpSecret.length + ')' : 'NO/EMPTY'}, URL=${page.url().substring(0, 100)}`);
+  const { totpSecret, recoveryEmail } = credentials;
+  await logger.log("INFO", `[gmail-login] handleChallengeSelection called. totpSecret=${totpSecret ? 'YES(len=' + totpSecret.length + ')' : 'NO/EMPTY'}, recoveryEmail=${recoveryEmail ? 'YES' : 'NO'}, URL=${page.url().substring(0, 100)}`);
 
   // Wait for the page to fully render
   await page.waitForTimeout(2000);
@@ -1196,6 +1217,26 @@ async function handleChallengeSelection(
     await logger.log("WARN", "[gmail-login] totpSecret is set but NO matching TOTP elements found on page");
   } else {
     await logger.log("WARN", "[gmail-login] totpSecret is null/empty — cannot auto-select TOTP");
+  }
+
+  // Priority 2: Recovery Email (if recoveryEmail is set)
+  if (recoveryEmail) {
+    const recoveryOption = page.locator([
+      'li:has-text("Confirm your recovery email")',
+      'li:has-text("辅助邮箱")',
+      'li:has-text("備用電子郵件")',
+      'div[role="link"]:has-text("Confirm your recovery email")',
+      'div[role="link"]:has-text("辅助邮箱")',
+      'div[role="link"]:has-text("備用電子郵件")',
+      'a:has-text("Confirm your recovery email")',
+      'a:has-text("辅助邮箱")',
+    ].join(", "));
+    const recoveryCount = await recoveryOption.count();
+    if (recoveryCount > 0) {
+      await recoveryOption.first().click();
+      await logger.log("INFO", "[gmail-login] ✅ Selected Recovery Email option from challenge selection");
+      return true;
+    }
   }
 
   // No automatable option found — log available options for debugging
