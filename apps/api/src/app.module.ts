@@ -30,6 +30,7 @@ import { RosettaModule } from "./rosetta/rosetta.module";
 import { RemoteCodexModule } from "./remote-codex/remote-codex.module";
 import { RemoteAnthropicModule } from "./remote-anthropic/remote-anthropic.module";
 import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
+import { Bulk2faModule } from "./bulk-2fa/bulk-2fa.module";
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
     RemoteAnthropicModule,
     RemoteStatsModule,
     RosettaModule,
+    Bulk2faModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [

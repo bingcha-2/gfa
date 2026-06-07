@@ -22,6 +22,7 @@ import {
   SyncFamilyGroupPayload,
   HealthCheckAccountPayload,
   AutomationPayload,
+  Change2FAPayload,
   QUEUE_NAMES,
 } from "@gfa/shared";
 
@@ -34,6 +35,8 @@ import { processSync } from "./processors/sync.processor";
 import { processHealth } from "./processors/health.processor";
 import { processAutomation } from "./processors/automation.processor";
 import { processAgentReplace, processAgentMigrate, processRosettaFamilyJoin } from "./processors/agent-pool.processor";
+import { processChange2FA } from "./processors/change-2fa.processor";
+import { processBulk2FA } from "./processors/bulk-2fa.processor";
 
 // ---- Configuration ----
 
@@ -176,7 +179,38 @@ const automationWorker = new Worker<AutomationPayload>(
   }
 );
 
-const workers = [inviteWorker, removeWorker, replaceWorker, syncWorker, healthWorker, automationWorker];
+const change2faWorker = new Worker<Change2FAPayload>(
+  QUEUE_NAMES.change2fa,
+  (job) => processChange2FA(job, deps),
+  {
+    connection,
+    concurrency: WORKER_CONCURRENCY,
+    lockDuration: 600_000,
+    stalledInterval: 120_000,
+  }
+);
+
+const bulk2faWorker = new Worker<{ jobId: string }>(
+  QUEUE_NAMES.bulk2fa,
+  (job) => processBulk2FA(job, deps),
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 1800_000,
+    stalledInterval: 120_000,
+  }
+);
+
+const workers = [
+  inviteWorker,
+  removeWorker,
+  replaceWorker,
+  syncWorker,
+  healthWorker,
+  automationWorker,
+  change2faWorker,
+  bulk2faWorker
+];
 
 // ---- Startup: clean up orphaned RUNNING tasks from previous crash ----
 // If the worker crashed mid-task, the DB task stays in RUNNING forever.

@@ -178,6 +178,13 @@ export function GfaAppSidebar({
       roleGuard: () => isAdminOrOps,
     },
     {
+      id: "bulk-2fa",
+      title: "批量修改 2FA",
+      url: `/${prefix}/bulk-2fa`,
+      icon: <KeyIcon />,
+      roleGuard: () => isAdminOrOps,
+    },
+    {
       id: "announcement",
       title: "公告管理",
       url: `/${prefix}/announcement`,

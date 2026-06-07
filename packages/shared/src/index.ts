@@ -5,7 +5,9 @@ export const QUEUE_NAMES = {
   sync: "family-sync-queue",
   health: "account-health-queue",
   retry: "manual-retry-queue",
-  automation: "automation-queue"
+  automation: "automation-queue",
+  change2fa: "change-2fa-queue",
+  bulk2fa: "bulk-2fa-queue"
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -18,7 +20,9 @@ export const TASK_TYPES = {
   healthCheckAccount: "HEALTH_CHECK_ACCOUNT",
   oauthAuthorize: "OAUTH_AUTHORIZE",
   acceptInvite: "ACCEPT_INVITE",
-  phoneVerify: "PHONE_VERIFY"
+  phoneVerify: "PHONE_VERIFY",
+  change2fa: "CHANGE_2FA",
+  bulk2fa: "BULK_2FA"
 } as const;
 
 export type TaskType = (typeof TASK_TYPES)[keyof typeof TASK_TYPES];
@@ -67,6 +71,16 @@ export type HealthCheckAccountPayload = {
   taskId?: string;
   accountId: string;
   ignoreCooldown?: boolean;
+};
+
+export type Change2FAPayload = {
+  taskId?: string;
+  accountId: string;
+  ignoreCooldown?: boolean;
+};
+
+export type Bulk2FAPayload = {
+  jobId: string;
 };
 
 export type PhoneInfo = {
