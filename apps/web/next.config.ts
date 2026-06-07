@@ -53,6 +53,7 @@ const nextConfig: NextConfig = {
       "remote-anthropic",
       "remote-stats",
       "rosetta",
+      "bulk-2fa",
     ];
 
     return [
