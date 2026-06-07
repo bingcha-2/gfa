@@ -6,6 +6,7 @@ import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
+import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { usageBarsForProducts } from '@/lib/usageBars'
 import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -83,6 +84,9 @@ export function DashboardPage() {
           <div className="text-[10px] text-[var(--text-muted)]">累计已节省</div>
         </div>
       </Card>
+
+      {/* ── Row 3.5: Usage trend chart ── */}
+      <UsageTrendChart />
 
       {/* ── Row 4: Source+Takeover (left, tall) / Account card + Usage (right stack) ── */}
       <div className="grid grid-cols-2 gap-4 items-stretch">

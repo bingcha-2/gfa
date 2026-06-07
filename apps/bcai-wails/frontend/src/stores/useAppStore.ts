@@ -37,6 +37,11 @@ interface AppState {
   todayOutputTokens: number
   cumulativeSaving: number
 
+  // Usage trend (history)
+  dailyHistory: { date: string; inputTokens: number; outputTokens: number }[]
+  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number }[]
+  chartMode: string
+
   // Usage
   opusUsed: number | null
   opusLimit: number | null
@@ -92,6 +97,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   todayInputTokens: 0,
   todayOutputTokens: 0,
   cumulativeSaving: 0,
+  dailyHistory: [],
+  hourlyHistory: [],
+  chartMode: 'daily',
   opusUsed: null,
   opusLimit: null,
   geminiUsed: null,
@@ -134,6 +142,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         todayInputTokens: today.inputTokens || 0,
         todayOutputTokens: today.outputTokens || 0,
         cumulativeSaving: data.cumulativeSaving || 0,
+        dailyHistory: data.dailyHistory || [],
+        hourlyHistory: data.hourlyHistory || [],
+        chartMode: data.chartMode || 'daily',
         // localQuota 是唯一 source of truth（和 CheckLocalQuota 读同一个值，保证一致）
         opusUsed: lq?.opusTokensUsed ?? null,
         opusLimit: lq?.opusTokenLimit ?? null,
