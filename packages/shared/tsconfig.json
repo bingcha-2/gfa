@@ -6,7 +6,9 @@
     "declaration": true,
     "noEmit": false,
     "module": "CommonJS",
-    "moduleResolution": "Node"
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "esModuleInterop": true
   },
   "include": ["src/**/*.ts"]
 }
