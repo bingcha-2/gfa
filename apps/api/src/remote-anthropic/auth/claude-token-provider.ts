@@ -8,6 +8,16 @@
 //
 // Logic ported from reclaude-reverse/internal/oauth/anthropic.go (rewritten in
 // TS): refresh_token grant against the Anthropic OAuth token endpoint.
+//
+// Proxy-aware fetch selection: when the account has an exit proxy we route through
+// the installed undici's fetch so it can carry that undici's Dispatcher — Node's
+// bundled fetch rejects a dispatcher from a different undici major ("invalid
+// onRequestStart method"). With NO proxy we use the global fetch: it's the common
+// path, the original behavior, and stays stubbable by tests (vi.stubGlobal).
+
+import { fetch as undiciFetch } from "undici";
+
+import { proxyDispatcherFor } from "./proxy-dispatcher";
 
 // Endpoint + client_id verified against the Claude Code 2.x binary (the current
 // client posts a refresh_token grant to platform.claude.com/v1/oauth/token).
@@ -26,6 +36,9 @@ export type ClaudeAccount = {
   accessTokenExpiresAt?: number;
   enabled?: boolean;
   planType?: string;
+  // Sticky per-account exit proxy (residential IP). When set, the token refresh
+  // is routed through it so refresh and inference share one egress IP.
+  proxyUrl?: string;
   [key: string]: unknown;
 };
 
@@ -37,7 +50,17 @@ export async function refreshClaudeAccessToken(account: ClaudeAccount): Promise<
     throw new Error(`Claude token refresh failed for ${account.email}: missing refresh_token`);
   }
 
-  const response = await fetch(CLAUDE_TOKEN_ENDPOINT, {
+  // Route through the account's exit proxy when one is set. A bad/unsupported
+  // proxy URL is a hard error here — we never fall back to a direct connection,
+  // which would leak the datacenter IP and defeat the whole point of pinning.
+  let dispatcher;
+  try {
+    dispatcher = proxyDispatcherFor(account.proxyUrl);
+  } catch (err) {
+    throw new Error(`Claude token refresh failed for ${account.email}: ${(err as Error).message}`);
+  }
+
+  const init: RequestInit & { dispatcher?: unknown } = {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({
@@ -45,7 +68,12 @@ export async function refreshClaudeAccessToken(account: ClaudeAccount): Promise<
       refresh_token: account.refreshToken,
       client_id: CLAUDE_CLIENT_ID,
     }),
-  });
+  };
+  // Proxy set → installed-undici fetch (carries the Dispatcher). No proxy → global
+  // fetch (common path; also keeps the tests' fetch stub effective).
+  if (dispatcher) init.dispatcher = dispatcher;
+  const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof fetch;
+  const response = await fetchImpl(CLAUDE_TOKEN_ENDPOINT, init);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Claude token refresh failed for ${account.email}: ${response.status} ${text}`);
