@@ -10,10 +10,14 @@ on:
     branches: [main]
     paths:
       - 'apps/bcai-wails/**'
+      - 'packages/shared/**'
+      - 'scripts/sync-pricing.mjs'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'apps/bcai-wails/**'
+      - 'packages/shared/**'
+      - 'scripts/sync-pricing.mjs'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -80,3 +84,21 @@ jobs:
       - name: go test
         working-directory: ${{ env.WAILS_DIR }}
         run: go test ./... -timeout 8m
+
+  # 定价单一源防漂移:packages/shared/src/pricing.json 是唯一源,客户端的
+  # apps/bcai-wails/pricing.json 必须是它的同步副本(由 scripts/sync-pricing.mjs 生成)。
+  # 改了源没同步副本 → 这步红。
+  pricing-sync:
+    name: pricing single-source drift check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Sync pricing and assert no drift
+        run: |
+          node scripts/sync-pricing.mjs
+          git diff --exit-code apps/bcai-wails/pricing.json

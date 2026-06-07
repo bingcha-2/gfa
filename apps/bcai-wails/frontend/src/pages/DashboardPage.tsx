@@ -81,7 +81,7 @@ export function DashboardPage() {
         </div>
         <div className="min-w-0">
           <div className="text-lg font-bold font-mono-data text-[var(--success)]">${cumulativeSaving.toFixed(2)}</div>
-          <div className="text-[10px] text-[var(--text-muted)]">累计已节省</div>
+          <div className="text-[10px] text-[var(--text-muted)]">累计已节省 · 估算(按各模型 API 定价折算)</div>
         </div>
       </Card>
 

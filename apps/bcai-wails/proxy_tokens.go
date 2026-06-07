@@ -124,9 +124,10 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 		}
 	}
 
-	// 持久化到每日统计
+	// 持久化到每日统计。家族复用上面已算的 category(classifyModel→modelFamily,
+	// 唯一分类入口),不另起一套模型→家族判断,避免口径漂移。
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
-		GetUsageStats().AddTokens(familyFromModel(modelKey), inputTokens, outputTokens, cachedTokens)
+		GetUsageStats().AddTokens(category, inputTokens, outputTokens, cachedTokens)
 	}
 
 	return TokenUsageResult{
