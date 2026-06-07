@@ -35,7 +35,7 @@ func TestSwitchCardConfigClearsStaleStatsOnChange(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens(31_700, 47_300, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
 	recordBoundFractionForBucket("anthropic-claude", 0.3, 0)
 	if GetUsageStats().GetTodayRecord().InputTokens == 0 {
 		t.Fatal("前置失败:today 应有数据")
@@ -66,7 +66,7 @@ func TestSwitchCardConfigKeepsStatsOnSameCard(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardB"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens(100, 200, 0)
+	GetUsageStats().AddTokens("claude", 100, 200, 0)
 
 	_, switched := switchCardConfig("cardB")
 	if switched {
@@ -88,7 +88,7 @@ func TestActivateCardSameCardPreservesStats(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens(31_700, 47_300, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
 
 	app := &App{}
 	_, _ = app.ActivateCard("cardA") // 同卡再点激活(Activate 失败不影响断言)
@@ -111,7 +111,7 @@ func TestActivateCardDifferentCardClearsStats(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens(31_700, 47_300, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
 	recordBoundFractionForBucket("anthropic-claude", 0.3, 0)
 
 	app := &App{}

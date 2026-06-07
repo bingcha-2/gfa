@@ -126,7 +126,7 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 
 	// 持久化到每日统计
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
-		GetUsageStats().AddTokens(inputTokens, outputTokens, cachedTokens)
+		GetUsageStats().AddTokens(familyFromModel(modelKey), inputTokens, outputTokens, cachedTokens)
 	}
 
 	return TokenUsageResult{

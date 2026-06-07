@@ -134,15 +134,17 @@ func (s *UsageStatsStore) getHour() *HourlyRecord {
 	return rec
 }
 
-// AddTokens 添加 token 用量
-func (s *UsageStatsStore) AddTokens(input, output, cached int64) {
+// AddTokens 添加 token 用量。family(claude/gemini/gpt)决定省钱折算价,
+// 省钱金额按本次增量 in/out * 家族单价累加(不再整段重算单一价)。
+func (s *UsageStatsStore) AddTokens(family string, input, output, cached int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := s.getToday()
 	rec.InputTokens += input
 	rec.OutputTokens += output
 	rec.CachedTokens += cached
-	rec.SavedMoneyUSD = float64(rec.InputTokens)/1000000.0*5.0 + float64(rec.OutputTokens)/1000000.0*25.0
+	inP, outP := priceFor(family)
+	rec.SavedMoneyUSD += float64(input)/1_000_000.0*inP + float64(output)/1_000_000.0*outP
 	// 小时记录
 	hr := s.getHour()
 	hr.InputTokens += input
