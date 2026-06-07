@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIcon, AlertTriangleIcon, BotIcon, DatabaseIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
+import { ActivityIcon, AlertTriangleIcon, BotIcon, DatabaseIcon, GaugeIcon, RefreshCwIcon, SparklesIcon, CreditCardIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 
@@ -37,6 +37,7 @@ type ModelStat = {
   medianRemaining: number | null;
   bestRemaining: number | null;
   lowCount: number;
+  distribution: import("./distribution").Distribution;
 };
 
 type ProviderStats = {
@@ -47,21 +48,24 @@ type ProviderStats = {
   models: ModelStat[];
 };
 
-const PROVIDER_LABEL: Record<string, string> = { antigravity: "Antigravity", codex: "Codex" };
+const PROVIDER_LABEL: Record<string, string> = { antigravity: "Antigravity", codex: "Codex", anthropic: "Anthropic" };
 const PROVIDER_ICON: Record<string, React.ReactNode> = {
   antigravity: <DatabaseIcon className="size-4" />,
   codex: <BotIcon className="size-4" />,
+  anthropic: <SparklesIcon className="size-4" />,
 };
 
 const trendConfig = {
   antigravity: { label: "Antigravity", color: "var(--chart-1)" },
   codex: { label: "Codex", color: "var(--chart-2)" },
+  anthropic: { label: "Anthropic", color: "var(--chart-3)" },
 };
 
 type TrendDay = {
   date: string;
   antigravity: number;
   codex: number;
+  anthropic: number;
   totalTokens: number;
   requests: number;
 };
@@ -82,11 +86,49 @@ type TodayUsage = {
   byProvider: Record<string, ProviderUsage>;
 };
 
+// ── /api/remote-stats/dashboard shapes ──────────────────────────────────────
+type FairShareEntry = { fraction: number; resetAt: number };
+type DashboardCard = {
+  id: string;
+  name: string;
+  weight: number;
+  totalTokensUsed: number;
+  totalRequests: number;
+  fairShare: Record<string, FairShareEntry>;
+  usageTrend: { date: string; totalTokens: number; requests: number }[];
+  usageTotals: { totalTokens: number; requests: number };
+  hourlyFrequency: { hour: number; requests: number; totalTokens: number }[];
+};
+type WaterPoint = {
+  modelKey: string;
+  hourlyPercent: number | null;
+  weeklyPercent: number | null;
+  hourlyResetAt: string | null;
+  weeklyResetAt: string | null;
+};
+type DashboardAccount = {
+  id: number;
+  email: string;
+  planType: string;
+  quotaStatus: string;
+  activeLeases: number;
+  water: WaterPoint[];
+  waterHistory: { timestamp: string; modelKey: string; hourlyPercent: number | null; weeklyPercent: number | null }[];
+  boundCards: DashboardCard[];
+};
+type DashboardProduct = {
+  id: string;
+  mode: string;
+  accounts: DashboardAccount[];
+  totalAccounts?: number;
+};
+
 export default function UsageStatsPage() {
   const [providers, setProviders] = useState<ProviderStats[]>([]);
   const [today, setToday] = useState<TodayUsage | null>(null);
   const [trend, setTrend] = useState<TrendDay[]>([]);
   const [trendDays, setTrendDays] = useState(7);
+  const [dashboard, setDashboard] = useState<DashboardProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -120,15 +162,29 @@ export default function UsageStatsPage() {
     }
   }, []);
 
+  // Heavier per-account/per-card detail. Fetched on load + manual refresh only
+  // (kept out of the 30s poll so the cheap supply rollup stays snappy).
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const res = await fetch("/api/remote-stats/dashboard", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setDashboard(Array.isArray(data.products) ? data.products : []);
+      }
+    } catch {
+      /* non-critical */
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await fetchStats(true);
+      await Promise.all([fetchStats(true), fetchDashboard()]);
       setLoading(false);
     })();
     const t = setInterval(() => fetchStats(true), 30_000);
     return () => clearInterval(t);
-  }, [fetchStats]);
+  }, [fetchStats, fetchDashboard]);
 
   useEffect(() => {
     fetchTrend(trendDays);
@@ -163,7 +219,7 @@ export default function UsageStatsPage() {
           <h1 className="text-2xl font-semibold tracking-normal">用量与剩余</h1>
           <p className="mt-1 text-sm text-muted-foreground">跨 Provider 看板:账号健康、使用总量、各模型剩余配额。</p>
         </div>
-        <Button variant="outline" onClick={() => fetchStats()} disabled={refreshing} className="cursor-pointer">
+        <Button variant="outline" onClick={() => { fetchStats(); fetchDashboard(); }} disabled={refreshing} className="cursor-pointer">
           {refreshing ? <Spinner size={14} /> : <RefreshCwIcon className="size-4" />}
           刷新
         </Button>
@@ -189,9 +245,18 @@ export default function UsageStatsPage() {
 
       <UsageTrendCard trend={trend} days={trendDays} onDaysChange={setTrendDays} />
 
-      {providers.map((p) => (
-        <ProviderBoard key={p.id} provider={p} today={today?.byProvider?.[p.id]} />
-      ))}
+      {providers.map((p) => {
+        const dp = dashboard.find((d) => d.id === p.id);
+        return (
+          <ProviderBoard
+            key={p.id}
+            provider={p}
+            today={today?.byProvider?.[p.id]}
+            accounts={dp?.accounts ?? []}
+            totalAccounts={dp?.totalAccounts}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -256,6 +321,10 @@ function UsageTrendCard({
                   <stop offset="5%" stopColor="var(--color-codex)" stopOpacity={0.8} />
                   <stop offset="95%" stopColor="var(--color-codex)" stopOpacity={0.1} />
                 </linearGradient>
+                <linearGradient id="fillAnthropic" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-anthropic)" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="var(--color-anthropic)" stopOpacity={0.1} />
+                </linearGradient>
               </defs>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -284,6 +353,13 @@ function UsageTrendCard({
                 stroke="var(--color-codex)"
                 stackId="t"
               />
+              <Area
+                dataKey="anthropic"
+                type="natural"
+                fill="url(#fillAnthropic)"
+                stroke="var(--color-anthropic)"
+                stackId="t"
+              />
               <ChartLegend content={<ChartLegendContent />} />
             </AreaChart>
           </ChartContainer>
@@ -308,7 +384,17 @@ function KpiTile({ icon, label, value, sub }: { icon: React.ReactNode; label: st
   );
 }
 
-function ProviderBoard({ provider: p, today }: { provider: ProviderStats; today?: ProviderUsage }) {
+function ProviderBoard({
+  provider: p,
+  today,
+  accounts = [],
+  totalAccounts,
+}: {
+  provider: ProviderStats;
+  today?: ProviderUsage;
+  accounts?: DashboardAccount[];
+  totalAccounts?: number;
+}) {
   // Most-constrained models first: fewest available accounts, then lowest water level.
   const models = [...p.models].sort((a, b) => {
     if (a.available !== b.available) return a.available - b.available;
@@ -372,9 +458,208 @@ function ProviderBoard({ provider: p, today }: { provider: ProviderStats; today?
             </div>
           )}
         </div>
+
+        {accounts.length > 0 ? (
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <span className="text-sm font-medium">账号水位与绑定卡明细</span>
+              <span className="text-xs text-muted-foreground">
+                有数据 {accounts.length}
+                {typeof totalAccounts === "number" ? ` / 共 ${totalAccounts}` : ""} 账号
+              </span>
+            </div>
+            <div className="grid gap-3">
+              {accounts.map((a) => (
+                <AccountDetailCard key={a.id} account={a} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
+}
+
+const QUOTA_STATUS_LABEL: Record<string, string> = {
+  ok: "正常",
+  cooling: "冷却",
+  exhausted: "耗尽",
+  error: "异常",
+};
+
+function AccountDetailCard({ account: a }: { account: DashboardAccount }) {
+  const statusVariant: "default" | "outline" | "destructive" =
+    a.quotaStatus === "ok" ? "default" : a.quotaStatus === "error" ? "destructive" : "outline";
+  // 5h water sparkline series (chronological hourlyPercent across snapshots).
+  const spark = a.waterHistory
+    .map((h) => (typeof h.hourlyPercent === "number" ? h.hourlyPercent : null))
+    .filter((v): v is number => v !== null);
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="truncate text-sm font-medium">{a.email || `账号 #${a.id}`}</span>
+        {a.planType ? <Badge variant="secondary">{a.planType}</Badge> : null}
+        <Badge variant={statusVariant}>{QUOTA_STATUS_LABEL[a.quotaStatus] || a.quotaStatus}</Badge>
+        {a.activeLeases > 0 ? <Badge variant="outline">并发 {a.activeLeases}</Badge> : null}
+        {spark.length > 1 ? (
+          <span className="ml-auto">
+            <Sparkline values={spark} />
+          </span>
+        ) : null}
+      </div>
+
+      {/* Per-model 5h / 周 water bars */}
+      {a.water.length > 0 ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {a.water.map((w) => (
+            <div key={w.modelKey} className="rounded-md bg-muted/40 p-2">
+              <div className="mb-1 truncate text-xs font-medium text-muted-foreground">{w.modelKey}</div>
+              <WaterBar label="5h" pct={w.hourlyPercent} resetAt={w.hourlyResetAt} />
+              {typeof w.weeklyPercent === "number" ? (
+                <div className="mt-1">
+                  <WaterBar label="周" pct={w.weeklyPercent} resetAt={w.weeklyResetAt} />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-muted-foreground">暂无水位快照(账号有调用后开始累积)</div>
+      )}
+
+      {/* Bound cards */}
+      {a.boundCards.length > 0 ? (
+        <div className="mt-3 overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>绑定卡</TableHead>
+                <TableHead className="w-16 text-center">权重</TableHead>
+                <TableHead className="w-28 text-right">累计 Token</TableHead>
+                <TableHead className="w-20 text-right">请求</TableHead>
+                <TableHead className="w-36">份额剩余</TableHead>
+                <TableHead className="w-40">调用频率(24h 北京)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {a.boundCards.map((c) => (
+                <BoundCardRow key={c.id} card={c} />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <CreditCardIcon className="size-3" />
+          无绑定卡(走动态池)
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BoundCardRow({ card: c }: { card: DashboardCard }) {
+  // Fair-share remaining = the most-constrained bucket for this card.
+  const fractions = Object.values(c.fairShare).map((f) => f.fraction);
+  const minFrac = fractions.length ? Math.min(...fractions) : null;
+  const pct = minFrac === null ? null : Math.round(minFrac * 100);
+  return (
+    <TableRow>
+      <TableCell className="max-w-[160px] truncate font-medium">{c.name || c.id}</TableCell>
+      <TableCell className="text-center">
+        <Badge variant="secondary">×{c.weight}</Badge>
+      </TableCell>
+      <TableCell className="text-right text-sm tabular-nums">{c.totalTokensUsed.toLocaleString()}</TableCell>
+      <TableCell className="text-right text-sm tabular-nums">{c.totalRequests.toLocaleString()}</TableCell>
+      <TableCell>
+        {pct === null ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full" style={{ width: `${Math.max(2, pct)}%`, backgroundColor: barColor(pct) }} />
+            </div>
+            <span className="w-9 text-right text-xs tabular-nums">{pct}%</span>
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        <FrequencyBars data={c.hourlyFrequency} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/** Compact 24-bar hour-of-day call-frequency histogram (no chart lib). */
+function FrequencyBars({ data }: { data: { hour: number; requests: number }[] }) {
+  const max = Math.max(1, ...data.map((d) => d.requests));
+  const total = data.reduce((a, d) => a + d.requests, 0);
+  if (total === 0) return <span className="text-xs text-muted-foreground">无</span>;
+  return (
+    <div className="flex h-7 items-end gap-px" title={`${total} 次 / 近期`}>
+      {Array.from({ length: 24 }, (_, h) => {
+        const reqs = data.find((d) => d.hour === h)?.requests ?? 0;
+        return (
+          <div
+            key={h}
+            className="w-[3px] rounded-sm bg-primary/70"
+            style={{ height: `${reqs === 0 ? 6 : Math.max(12, (reqs / max) * 100)}%`, opacity: reqs === 0 ? 0.25 : 1 }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Tiny inline SVG sparkline (0–100 water level over time). */
+function Sparkline({ values }: { values: number[] }) {
+  const w = 96;
+  const h = 22;
+  const n = values.length;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (n - 1)) * w;
+      const y = h - (Math.max(0, Math.min(100, v)) / 100) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const last = values[n - 1];
+  return (
+    <svg width={w} height={h} className="overflow-visible" aria-label="5h 水位历史">
+      <polyline points={pts} fill="none" stroke={barColor(last)} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function WaterBar({ label, pct, resetAt }: { label: string; pct: number | null; resetAt: string | null }) {
+  const v = pct === null ? null : Math.round(pct);
+  const resetLabel = resetAt ? formatReset(resetAt) : null;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-6 shrink-0 text-[10px] text-muted-foreground">{label}</span>
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+        {v === null ? null : (
+          <div className="h-full rounded-full" style={{ width: `${Math.max(2, v)}%`, backgroundColor: barColor(v) }} />
+        )}
+      </div>
+      <span className="w-9 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+        {v === null ? "—" : `${v}%`}
+      </span>
+      {resetLabel ? <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">{resetLabel}</span> : null}
+    </div>
+  );
+}
+
+/** "重置 6/7 23:00" — local short reset time. */
+function formatReset(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const mm = d.getMonth() + 1;
+  const dd = d.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `重置 ${mm}/${dd} ${hh}:${mi}`;
 }
 
 function ModelSupplyRow({ model: m }: { model: ModelStat }) {
