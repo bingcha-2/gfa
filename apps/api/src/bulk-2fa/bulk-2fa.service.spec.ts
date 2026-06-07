@@ -45,4 +45,14 @@ describe("Bulk2faService - createJob parsing", () => {
     // Verify rawLine is merged as a single flat string
     expect(job.items[0].rawLine).toBe("ParaaMarie647@gmail.com----ycbzttayda----ParaaMarie64718143@westt.site----https://2fa.live/tok/uekama7nd3ekdhiq4fohugdbgw3ym6th");
   });
+
+  it("should extract TOTP secrets containing spaces from 2fa.live URLs", async () => {
+    const text = "ManhoodAshraf918@gmail.com----bdntbnhos----ManhoodAshraf91882213@westt.site----https://2fa.live/tok/e3w5 27tl nblz uwdr vnp5 yhwj or2s wmwi";
+    const job = await service.createJob(text);
+    expect(job.items).toHaveLength(1);
+    expect(job.items[0].email).toBe("ManhoodAshraf918@gmail.com");
+    expect(job.items[0].password).toBe("bdntbnhos");
+    expect(job.items[0].recoveryEmail).toBe("ManhoodAshraf91882213@westt.site");
+    expect(job.items[0].oldSecret).toBe("E3W527TLNBLZUWDRVNP5YHWJOR2SWMWI");
+  });
 });

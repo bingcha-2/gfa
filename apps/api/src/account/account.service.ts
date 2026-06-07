@@ -174,8 +174,8 @@ export class AccountService {
   private extractTotp(raw: string): string {
     const trimmed = raw.trim();
     // Handle 2fa.live URL format
-    const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9]+)/i);
-    if (urlMatch) return urlMatch[1].toUpperCase();
+    const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9\s%\-_=]+)/i);
+    if (urlMatch) return urlMatch[1].replace(/[\s%\-_=]/g, "").toUpperCase();
     // Strip spaces, hyphens, and padding chars; uppercase for raw TOTP secrets
     return trimmed.replace(/[\s\-=]/g, "").toUpperCase();
   }

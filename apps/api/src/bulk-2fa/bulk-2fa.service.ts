@@ -46,8 +46,8 @@ export class Bulk2faService {
 
   private extractTotp(raw: string): string {
     const trimmed = raw.trim();
-    const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9]+)/i);
-    if (urlMatch) return urlMatch[1].toUpperCase();
+    const urlMatch = trimmed.match(/2fa\.live\/tok\/([a-z0-9\s%\-_=]+)/i);
+    if (urlMatch) return urlMatch[1].replace(/[\s%\-_=]/g, "").toUpperCase();
     return trimmed.replace(/[\s\-=]/g, "").toUpperCase();
   }
 
