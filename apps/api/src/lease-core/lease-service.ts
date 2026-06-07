@@ -24,18 +24,7 @@ import {
   validateClientVersion,
 } from "../token-server/token-billing";
 import { bucketKey, familyOfBucket } from "./product-bucket";
-import type { CreditDelta, Provider } from "./provider";
-
-export type CreditTracker = {
-  record: (
-    accountId: number,
-    email: string,
-    oldAmount: number,
-    newAmount: number,
-    accessKeyId?: string,
-    accessKeyName?: string,
-  ) => void;
-};
+import type { Provider } from "./provider";
 
 export type TokenUsageTracker = {
   record: (event: {
@@ -53,6 +42,20 @@ export type TokenUsageTracker = {
   }) => void;
 };
 
+/** 账号 5h/周水位时序写入器(AccountQuotaSnapshotTracker 的最小接口)。 */
+export type AccountQuotaSnapshotRecorder = {
+  record: (input: {
+    provider: string;
+    accountId: number;
+    modelKey: string;
+    email?: string | null;
+    hourlyPercent?: number | null;
+    weeklyPercent?: number | null;
+    hourlyResetAt?: Date | null;
+    weeklyResetAt?: Date | null;
+  }) => void;
+};
+
 export type LeaseHttpErrorClass = new (statusCode: number, message: string, body?: unknown) => Error;
 
 export type LeaseServiceOptions = {
@@ -62,8 +65,8 @@ export type LeaseServiceOptions = {
   minClientVersion?: string;
   leaseTtlMs?: number;
   affinityTtlMs?: number;
-  creditTracker?: CreditTracker;
   tokenUsageTracker?: TokenUsageTracker;
+  accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
   /** Fair-share tracker for bound-card dynamic quota. */
   fairShareTracker?: FairShareTracker;
   /** Error class thrown by fail(); the controller routes on `instanceof`. */
@@ -151,8 +154,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly minClientVersion: string;
   private readonly leaseTtlMs: number;
   private readonly affinityTtlMs: number;
-  private readonly creditTracker: CreditTracker | null;
   private readonly tokenUsageTracker: TokenUsageTracker | null;
+  private readonly accountQuotaSnapshotTracker: AccountQuotaSnapshotRecorder | null;
   readonly fairShareTracker: FairShareTracker | null;
   readonly quotaProfileTracker: QuotaProfileTracker | null;
   private readonly errorClass: LeaseHttpErrorClass;
@@ -196,8 +199,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.minClientVersion = options.minClientVersion ?? "8.6.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
-    this.creditTracker = options.creditTracker || null;
     this.tokenUsageTracker = options.tokenUsageTracker || null;
+    this.accountQuotaSnapshotTracker = options.accountQuotaSnapshotTracker || null;
     this.fairShareTracker = options.fairShareTracker || null;
     this.errorClass = options.errorClass || LeaseServiceHttpError;
     this.mode = options.mode || "remote-token-server";
@@ -277,7 +280,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             quotaStatus: runtime?.quotaStatus || a.quotaStatus || "ok",
             quotaStatusReason: runtime?.quotaStatusReason || a.quotaStatusReason || "",
             blockedUntil: runtime?.exhaustedUntil || a.blockedUntil || 0,
-            credits: a.credits || {},
             modelQuotaFractions: a.modelQuotaFractions || {},
             modelQuotaResetTimes: a.modelQuotaResetTimes || {},
             modelQuotaRefreshedAt: a.modelQuotaRefreshedAt || 0,
@@ -318,6 +320,40 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   /**
+   * Digest of the cards bound to one upstream account, for the usage dashboard.
+   * Encapsulates the (protected) accessKeyStore + fairShareTracker so external
+   * callers (RemoteStatsService) don't reach into internals. Per card: share
+   * weight, lifetime usage counters, and per-bucket fair-share remaining.
+   */
+  getBoundCardsForAccount(accountId: number): Array<{
+    id: string;
+    name: string;
+    weight: number;
+    totalTokensUsed: number;
+    totalRequests: number;
+    fairShare: Record<string, { fraction: number; resetAt: number }>;
+    windowWeightedUsed: number;
+  }> {
+    const ids = this.accessKeyStore.cardsBoundToAccount(accountId, this.provider.id);
+    return ids.map((id) => {
+      const record = this.accessKeyStore.findById(id);
+      const pub = record ? this.accessKeyStore.publicStatus(record) : null;
+      const w = Math.floor(Number((record as any)?.weight ?? 1));
+      const weight = Number.isFinite(w) && w >= 1 ? w : 1;
+      const fairShare = this.fairShareTracker?.getCardQuotaFractions(accountId, id) || {};
+      return {
+        id,
+        name: pub?.name || record?.name || "",
+        weight,
+        totalTokensUsed: Number(pub?.totalTokensUsed || 0),
+        totalRequests: Number(pub?.totalRequests || 0),
+        fairShare,
+        windowWeightedUsed: this.fairShareTracker?.getCardWindowUsed(accountId, id) || 0,
+      };
+    });
+  }
+
+  /**
    * Best-effort upstream model-catalog refresh. Leases a token from any eligible
    * account to authenticate the upstream call; no-ops when the provider has no
    * catalog or no eligible account. Never throws.
@@ -338,15 +374,26 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
   async leaseToken(req: any, payload: any) {
     const modelKey = String(payload?.modelKey || payload?.model || "").trim();
-    // Static-binding model: each card shares one upstream account (≤4 cards/acct)
-    // and relies purely on the account's native 5h rolling quota. The GFA-side
-    // per-card token cap is intentionally NOT enforced — usage is still recorded
-    // (for stats) but never blocks a lease.
+    // 每卡 token 配额(bucketLimits,按复合桶设的每模型上限)在此作为服务端兜底 enforce:
+    // 客户端 localQuota 是主拦截(租号前回 429),服务端按复合桶精确再拦一道,防客户端被绕过。
+    // 绑定卡另有 fair-share(下方)+ 账号原生配额;两层谁先到谁拦。
     const auth = this.accessKeyStore.resolveFromRequest(req, payload, {
       activate: true,
-      enforceLimit: false,
+      enforceLimit: true,
       modelKey,
+      // product 必传:用量事件按复合桶 `<product>-<family>` 记录(recordUsage 用 provider.id),
+      // bucketLimits 也按复合桶配置;不传则 enforce 退化成 bare family,与两者都对不上。
+      product: this.provider.id,
     });
+    // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
+    if (auth.limitExceeded) {
+      const resetMs = Number(auth.resetMs || 0);
+      throw this.fail(429, auth.error || "配额已用尽，请稍后再试", {
+        ok: false,
+        error: auth.error || "配额已用尽",
+        ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
+      });
+    }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
 
     // Two card modes:
@@ -495,7 +542,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accessTokenExpiresAt: lease.expiresAt,
       probation: false,
       candidateStats: { healthyForModel: candidatePool.length },
-      retryPolicy: null,
       // Bound cards have no OTHER account to rotate to. The client proxy uses this
       // to skip the futile "exclude account + re-lease" rotation on 429/503, while
       // STILL allowing wait-and-retry on the SAME account for transient capacity.
@@ -578,9 +624,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const retryAfterMs = Number(payload?.retryAfterMs || 0);
 
     this.accessKeyStore.refreshSession(auth.record, { clientId: lease?.clientId }, this.now());
-    let creditDelta: CreditDelta | null = null;
     if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
-      creditDelta = this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
+      this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
       // Fair-share: push updated quota fractions into the tracker.
       if (this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
@@ -614,7 +659,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
       };
     }
-    const usage = this.usageForBilling(lease, status, payload);
+    const usage = this.usageForBilling(payload);
     const wasNew = this.accessKeyStore.recordUsage(cardId, status, usage, modelKey, dedupId, this.provider.id);
     if (!wasNew) {
       return {
@@ -745,13 +790,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       }
     }
 
-    if (creditDelta && this.creditTracker && creditDelta.available) {
-      this.creditTracker.record(
-        accountId, creditDelta.email, creditDelta.oldAmount, creditDelta.newAmount,
-        cardId, auth.record?.name || undefined,
-      );
-    }
-
     return {
       ok: true,
       accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
@@ -763,14 +801,21 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * the (possibly mutated) account is persisted with debounce. Latest-wins,
    * idempotent — safe on duplicate reports.
    */
-  private applyAccountQuotaSnapshot(accountId: number, quota: any): CreditDelta | null {
-    let delta: CreditDelta | null = null;
+  private applyAccountQuotaSnapshot(accountId: number, quota: any): void {
+    let snapshotAccount: TAccount | null = null;
     this.mutateAccount(accountId, (account) => {
       const result = this.provider.applyQuotaSnapshot(account, quota);
-      delta = result.creditDelta;
+      snapshotAccount = result.account;
       return result.account;
     });
-    return delta;
+    // 御三家归一:统一提取该账号每个 fractions key 的 5h/周水位,写入水位时序。
+    if (snapshotAccount && this.accountQuotaSnapshotTracker && this.provider.quotaSnapshotInputs) {
+      const acc = snapshotAccount as { email?: string };
+      const email = acc.email ?? null;
+      for (const inp of this.provider.quotaSnapshotInputs(snapshotAccount)) {
+        this.accountQuotaSnapshotTracker.record({ provider: this.provider.id, accountId, email, ...inp });
+      }
+    }
   }
 
   activateAccessKey(req: any, payload: any) {
@@ -908,13 +953,26 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
   }
 
-  onModuleDestroy(): void {
+  /** Restore persisted tracker state (quota profiles, fair-share windows) before
+   * the app starts serving. Nest awaits this, so first requests see real budgets
+   * and cross-restart "remaining" instead of defaults. */
+  async onModuleInit(): Promise<void> {
+    try { await this.quotaProfileTracker?.load(); } catch (err) { console.error("[lease-service] quotaProfileTracker load failed:", err); }
+    try { await this.fairShareTracker?.load(); } catch (err) { console.error("[lease-service] fairShareTracker load failed:", err); }
+  }
+
+  async onModuleDestroy(): Promise<void> {
     if (this._accountsSaveTimer) {
       clearTimeout(this._accountsSaveTimer);
       this._accountsSaveTimer = null;
     }
     try { this.flushAccounts(); } catch (err) { console.error("[lease-service] flushAccounts on shutdown failed:", err); }
     try { this.flushAccessKeys(); } catch (err) { console.error("[lease-service] accessKeyStore flush on shutdown failed:", err); }
+    // Persist learned budgets + fair-share windows, then stop their flush timers.
+    try { await this.quotaProfileTracker?.flush(); } catch (err) { console.error("[lease-service] quotaProfileTracker flush on shutdown failed:", err); }
+    this.quotaProfileTracker?.destroy();
+    try { await this.fairShareTracker?.flush(); } catch (err) { console.error("[lease-service] fairShareTracker flush on shutdown failed:", err); }
+    this.fairShareTracker?.destroy();
   }
 
   /** Force the debounced access-key cache to persist now (shutdown / tests). */
@@ -1013,13 +1071,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     };
   }
 
-  private usageForBilling(lease: LeaseRecord | undefined, status: number, payload: any) {
-    const reported = Number(payload?.totalTokens || payload?.rawTotalTokens || 0);
-    if (lease && status >= 200 && status < 400 && lease.isGeneration && reported <= 0) {
-      const inputTokens = Math.max(100, Math.ceil(lease.requestBodyBytes / 4));
-      const outputTokens = Math.max(50, Math.ceil(inputTokens * 0.1));
-      return { inputTokens, outputTokens, rawTotalTokens: inputTokens + outputTokens, totalTokens: inputTokens + outputTokens };
-    }
+  private usageForBilling(payload: any) {
+    // usage 未解析到(0 token)时**不再**按 requestBodyBytes/4 凭空估算 ——
+    // Codex 等请求体=整段本地上下文(且绝大部分是缓存),估出来等于"把全部上下文
+    // 当一次全额用量"。宁可记 0(下游 `detail.totalTokens > 0` 才落库/计份额),也不乱计。
     return {
       inputTokens: payload?.inputTokens,
       outputTokens: payload?.outputTokens,

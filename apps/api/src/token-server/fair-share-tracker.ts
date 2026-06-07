@@ -420,6 +420,19 @@ export class FairShareTracker {
     }
   }
 
+  /** 一张卡本 5h 窗口的加权已用(跨该账号所有 bucket 求和,实测)。 */
+  getCardWindowUsed(accountId: number, cardId: string): number {
+    const bucketMap = this.trackers.get(accountId);
+    if (!bucketMap) return 0;
+    const now = this.nowFn();
+    let total = 0;
+    for (const tracker of bucketMap.values()) {
+      this.ensureWindow(tracker, now);
+      total += tracker.perCard.get(cardId) || 0;
+    }
+    return total;
+  }
+
   /** Snapshot one bucket's tracker state. Test-only. */
   getBucketStateForTesting(accountId: number, bucket: string): {
     windowStart: number;

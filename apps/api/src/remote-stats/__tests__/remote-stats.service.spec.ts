@@ -116,7 +116,7 @@ describe("RemoteStatsService.getDashboard", () => {
       getStatus: () => statusWith("remote-codex-server", [{ key: "gpt-5", displayName: "GPT-5", bucket: "codex-gpt" }]),
       getBoundCardsForAccount: (accountId: number) =>
         accountId === 1
-          ? [{ id: "card-1", name: "卡一", weight: 2, totalTokensUsed: 1234, totalRequests: 5, fairShare: { "codex-gpt": { fraction: 0.7, resetAt: 111 } } }]
+          ? [{ id: "card-1", name: "卡一", weight: 2, totalTokensUsed: 1234, totalRequests: 5, fairShare: { "codex-gpt": { fraction: 0.7, resetAt: 111 } }, windowWeightedUsed: 1500 }]
           : [],
     };
     const empty = {
@@ -170,6 +170,7 @@ describe("RemoteStatsService.getDashboard", () => {
     const card = acct.boundCards[0];
     expect(card).toMatchObject({ id: "card-1", name: "卡一", weight: 2, totalTokensUsed: 1234, totalRequests: 5 });
     expect(card.fairShare).toEqual({ "codex-gpt": { fraction: 0.7, resetAt: 111 } });
+    expect(card.windowWeightedUsed).toBe(1500);
     expect(card.usageTrend).toEqual([{ date: "2026-06-07", totalTokens: 1234, requests: 5 }]);
     expect(card.hourlyFrequency.find((b: any) => b.hour === 18).requests).toBe(5);
   });

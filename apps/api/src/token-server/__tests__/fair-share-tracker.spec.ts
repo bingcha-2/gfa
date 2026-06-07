@@ -147,6 +147,19 @@ describe("FairShareTracker SQL persistence", () => {
   });
 });
 
+describe("FairShareTracker.getCardWindowUsed", () => {
+  it("sums a card's weighted usage across buckets in the current window", () => {
+    const t = new FairShareTracker({
+      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      accountShareCapacity: 8, now: () => 1_700_000_000_000,
+    });
+    t.recordUsage(1, "c1", "codex-gpt", 100, 0, 0); // 100
+    t.recordUsage(1, "c1", "anthropic-claude", 0, 10, 0); // 10*5=50
+    expect(t.getCardWindowUsed(1, "c1")).toBeCloseTo(150, 5);
+    expect(t.getCardWindowUsed(1, "absent")).toBe(0);
+  });
+});
+
 describe("QUOTA_WEIGHTS 派生自定价源", () => {
   it("claude 5/0.10、gemini 8/0.25、gpt 8/0.10", () => {
     expect(SHARED_WEIGHTS.claude.output).toBe(5);

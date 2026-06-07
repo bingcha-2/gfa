@@ -149,6 +149,7 @@ type DashboardProvider = {
     totalTokensUsed: number;
     totalRequests: number;
     fairShare: Record<string, { fraction: number; resetAt: number }>;
+    windowWeightedUsed: number;
   }>;
 };
 
