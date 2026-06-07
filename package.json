@@ -10,7 +10,7 @@
     "dev:web": "pnpm --filter @gfa/web dev",
     "dev:api": "pnpm --filter @gfa/api dev",
     "dev:worker": "pnpm --filter @gfa/worker dev",
-    "dev:setup": "pnpm install && pnpm --filter @gfa/shared build && pnpm db:generate && pnpm db:init:sqlite && pnpm db:seed",
+    "dev:setup": "pnpm install && pnpm --filter @gfa/shared build && pnpm db:generate && pnpm db:migrate && pnpm db:seed",
     "start": "node scripts/start.mjs",
     "start:daemon": "node scripts/start.mjs --daemon",
     "start:stop": "node scripts/start.mjs --stop",
@@ -21,8 +21,9 @@
     "private-hosting:stop": "powershell -ExecutionPolicy Bypass -File ./scripts/private-hosting/launcher.ps1 stop",
     "private-hosting:status": "powershell -ExecutionPolicy Bypass -File ./scripts/private-hosting/launcher.ps1 status",
     "db:generate": "pnpm prisma generate",
-    "db:push": "node scripts/init-sqlite.mjs",
-    "db:migrate": "node scripts/init-sqlite.mjs",
+    "db:migrate": "pnpm prisma migrate deploy",
+    "db:migrate:dev": "pnpm prisma migrate dev",
+    "db:migrate:status": "pnpm prisma migrate status",
     "db:init:sqlite": "node scripts/init-sqlite.mjs",
     "db:reset:sqlite": "node scripts/init-sqlite.mjs --reset",
     "db:seed": "node scripts/seed.mjs",
@@ -31,7 +32,8 @@
     "test:unit": "pnpm -r --if-present run test:unit && pnpm test:go",
     "test:integration": "pnpm -r --if-present run test:integration",
     "test:e2e": "pnpm -r --if-present run test:e2e",
-    "test:go": "cd apps/bcai-wails && go test ./..."
+    "test:go": "cd apps/bcai-wails && go test ./...",
+    "sync:pricing": "node scripts/sync-pricing.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
