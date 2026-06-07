@@ -13,17 +13,16 @@
  *   - Confirmed by 429: estimatedBudget = totalUsed at trigger time
  */
 
+import { QUOTA_WEIGHTS, type Family } from "@gfa/shared";
+
 import { bucketFamily } from "../lease-core/product-bucket";
 
-// ── Weight constants (based on pricing ratios) ──────────────────────────────
+// ── Weight constants (derived from the shared pricing source) ───────────────
 
 // 键 = 模型家族(与 product-bucket.ts 的 Family / modelFamily 对齐:gemini/claude/gpt)。
 // 注意:真实桶名是「产品-家族」复合(如 anthropic-claude),查表前要先 bucketFamily() 取家族。
-export const QUOTA_WEIGHTS: Record<string, { input: number; output: number; cache: number }> = {
-  gemini: { input: 1.0, output: 4.0, cache: 0.25 },
-  claude: { input: 1.0, output: 5.0, cache: 0.10 },
-  gpt:    { input: 1.0, output: 3.0, cache: 0.0 },
-};
+// 权重派生自 @gfa/shared 的单一定价源(pricing.json),改价只改那里。
+export { QUOTA_WEIGHTS };
 
 // ── Default budgets by planType (conservative, in weighted units) ────────────
 
@@ -51,6 +50,9 @@ const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
 };
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
+
+/** Periodic batch-write interval for FairShareWindow persistence (ms). */
+const FLUSH_INTERVAL_MS = 30_000;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -81,6 +83,12 @@ export interface FairShareTrackerOptions {
   /** Optional: retrieve a learned budget from QuotaProfileTracker.
    *  Returns the learned 5h budget in weighted units, or 0 if unknown. */
   getLearnedBudget?: (planType: string, bucket: string) => number;
+  /** PrismaService for FairShareWindow persistence. Omit to disable persistence. */
+  prisma?: any;
+  /** Provider id (antigravity | codex | anthropic) — partitions persisted rows. */
+  provider?: string;
+  /** Injectable clock (defaults to Date.now). Keeps windows test-deterministic. */
+  now?: () => number;
 }
 
 // ── Core class ──────────────────────────────────────────────────────────────
@@ -89,9 +97,22 @@ export class FairShareTracker {
   // accountId → bucket → tracker
   private readonly trackers = new Map<number, Map<string, BucketTracker>>();
   private readonly opts: FairShareTrackerOptions;
+  private readonly prisma: any;
+  private readonly providerId: string;
+  private readonly nowFn: () => number;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private dirty = false;
 
   constructor(opts: FairShareTrackerOptions) {
     this.opts = opts;
+    this.prisma = opts.prisma ?? null;
+    this.providerId = opts.provider || "";
+    this.nowFn = opts.now || Date.now;
+    if (this.prisma && this.providerId) {
+      this.flushTimer = setInterval(() => {
+        void this.flush();
+      }, FLUSH_INTERVAL_MS);
+    }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
@@ -103,8 +124,11 @@ export class FairShareTracker {
     outputTokens: number,
     cachedInputTokens: number,
   ): number {
-    const w = QUOTA_WEIGHTS[bucketFamily(bucket)] || QUOTA_WEIGHTS.gemini;
-    return inputTokens * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
+    const w = QUOTA_WEIGHTS[bucketFamily(bucket) as Family] || QUOTA_WEIGHTS.gemini;
+    // inputTokens 为 gross(含 cached,经 normalizeUsageToGross 归一)。取 netInput 去掉
+    // 缓存部分,避免缓存被 input 权重 + cache 权重双算(Gemini 之前 1.25x)。
+    const netInput = Math.max(0, inputTokens - cachedInputTokens);
+    return netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
   }
 
   /** Record usage from a completed request. Called from reportResult. */
@@ -117,9 +141,10 @@ export class FairShareTracker {
     cachedInputTokens: number,
   ): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, Date.now());
+    this.ensureWindow(tracker, this.nowFn());
     const cost = FairShareTracker.weightedCost(bucket, inputTokens, outputTokens, cachedInputTokens);
     tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
+    this.dirty = true;
   }
 
   /**
@@ -139,6 +164,7 @@ export class FairShareTracker {
       if (tracker.confidence === 'confirmed') {
         tracker.confidence = 'estimated';
       }
+      this.dirty = true;
     }
   }
 
@@ -163,7 +189,7 @@ export class FairShareTracker {
   /** Update budget estimate from a quota fraction signal. Called from scheduler/report. */
   updateBudgetEstimate(accountId: number, bucket: string, fraction: number): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, Date.now());
+    this.ensureWindow(tracker, this.nowFn());
     const totalUsed = this.totalWeighted(tracker);
     const consumed = 1.0 - fraction;
 
@@ -187,6 +213,7 @@ export class FairShareTracker {
       }
     }
     tracker.lastFraction = fraction;
+    this.dirty = true;
   }
 
   /** Confirm budget at 429 — the most accurate signal. */
@@ -196,6 +223,7 @@ export class FairShareTracker {
     if (totalUsed > 0) {
       tracker.estimatedBudget = totalUsed;
       tracker.confidence = 'confirmed';
+      this.dirty = true;
     }
   }
 
@@ -205,7 +233,7 @@ export class FairShareTracker {
     if (!tracker) {
       return { allowed: true, remainingFraction: 1.0 };
     }
-    this.ensureWindow(tracker, Date.now());
+    this.ensureWindow(tracker, this.nowFn());
 
     // When upstream reports ≥90% remaining, we have no reliable budget estimate.
     // Allow the lease unconditionally — real protection comes from the upstream
@@ -241,7 +269,7 @@ export class FairShareTracker {
     const bucketTrackers = this.trackers.get(accountId);
     if (!bucketTrackers) return {};
 
-    const now = Date.now();
+    const now = this.nowFn();
     const weight = this.opts.getCardWeight(cardId);
     const capacity = this.opts.accountShareCapacity;
     const out: Record<string, { fraction: number; resetAt: number }> = {};
@@ -286,7 +314,7 @@ export class FairShareTracker {
       const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
       const defaultBudget = defaults[family] || defaults.gemini || 50_000;
       tracker = {
-        windowStart: Date.now(),
+        windowStart: this.nowFn(),
         estimatedBudget: learned > 0 ? learned : defaultBudget,
         confidence: learned > 0 ? 'estimated' : 'default',
         perCard: new Map(),
@@ -305,6 +333,7 @@ export class FairShareTracker {
       if (tracker.confidence === 'confirmed') {
         tracker.confidence = 'estimated';
       }
+      this.dirty = true;
     }
   }
 
@@ -312,6 +341,136 @@ export class FairShareTracker {
     let total = 0;
     for (const v of tracker.perCard.values()) total += v;
     return total;
+  }
+
+  // ── Persistence (FairShareWindow) ─────────────────────────────────────────
+
+  /**
+   * Restore persisted per-card usage into memory. Call once at startup.
+   * Windows whose 5h boundary has already passed keep their learned budget
+   * (downgraded confirmed→estimated) but drop stale per-card usage — the
+   * upstream window has reset, so "remaining" starts fresh.
+   */
+  async load(): Promise<void> {
+    if (!this.prisma || !this.providerId) return;
+    let rows: any[];
+    try {
+      rows = await this.prisma.fairShareWindow.findMany({ where: { provider: this.providerId } });
+    } catch (err) {
+      console.error("[fair-share-tracker] load failed:", err);
+      return;
+    }
+    const now = this.nowFn();
+    const groups = new Map<string, any[]>();
+    for (const r of rows) {
+      const key = `${r.accountId} ${r.bucket}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = []));
+      g.push(r);
+    }
+    for (const groupRows of groups.values()) {
+      const first = groupRows[0];
+      const accountId = Number(first.accountId);
+      const bucket = String(first.bucket);
+      const windowStart = Number(first.windowStart);
+      const expired = now - windowStart >= WINDOW_MS;
+      let confidence = (String(first.confidence) as BucketTracker["confidence"]) || "default";
+      if (expired && confidence === "confirmed") confidence = "estimated";
+      const perCard = new Map<string, number>();
+      if (!expired) {
+        for (const r of groupRows) perCard.set(String(r.cardId), Number(r.weightedUsed) || 0);
+      }
+      let bucketMap = this.trackers.get(accountId);
+      if (!bucketMap) this.trackers.set(accountId, (bucketMap = new Map()));
+      bucketMap.set(bucket, {
+        windowStart: expired ? now : windowStart,
+        estimatedBudget: Number(first.estimatedBudget) || 0,
+        confidence,
+        perCard,
+        lastFraction: expired ? 1.0 : (Number(first.lastFraction) || 0),
+      });
+    }
+  }
+
+  /**
+   * Persist current in-memory state. Replaces all of this provider's rows in
+   * one transaction (no stale rows survive a window rollover). Dirty-gated so
+   * idle accounts don't churn the DB. Runs on a timer and on shutdown.
+   */
+  async flush(): Promise<void> {
+    if (!this.prisma || !this.providerId || !this.dirty) return;
+    this.dirty = false;
+    const rows = this.serializeRows();
+    try {
+      await this.prisma.$transaction([
+        this.prisma.fairShareWindow.deleteMany({ where: { provider: this.providerId } }),
+        ...(rows.length ? [this.prisma.fairShareWindow.createMany({ data: rows })] : []),
+      ]);
+    } catch (err) {
+      console.error("[fair-share-tracker] flush failed:", err);
+      this.dirty = true; // retry on the next tick
+    }
+  }
+
+  /** Stop the periodic flush timer. */
+  destroy(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  /** Snapshot one bucket's tracker state. Test-only. */
+  getBucketStateForTesting(accountId: number, bucket: string): {
+    windowStart: number;
+    estimatedBudget: number;
+    confidence: string;
+    lastFraction: number;
+    totalUsed: number;
+    perCard: Record<string, number>;
+  } | null {
+    const tracker = this.trackers.get(accountId)?.get(bucket);
+    if (!tracker) return null;
+    return {
+      windowStart: tracker.windowStart,
+      estimatedBudget: tracker.estimatedBudget,
+      confidence: tracker.confidence,
+      lastFraction: tracker.lastFraction,
+      totalUsed: this.totalWeighted(tracker),
+      perCard: Object.fromEntries(tracker.perCard),
+    };
+  }
+
+  private serializeRows(): Array<{
+    provider: string;
+    accountId: number;
+    bucket: string;
+    cardId: string;
+    windowStart: bigint;
+    weightedUsed: number;
+    estimatedBudget: number;
+    confidence: string;
+    lastFraction: number;
+  }> {
+    const rows: ReturnType<FairShareTracker["serializeRows"]> = [];
+    for (const [accountId, bucketMap] of this.trackers) {
+      for (const [bucket, tracker] of bucketMap) {
+        for (const [cardId, weightedUsed] of tracker.perCard) {
+          rows.push({
+            provider: this.providerId,
+            accountId,
+            bucket,
+            cardId,
+            windowStart: BigInt(Math.trunc(tracker.windowStart)),
+            weightedUsed,
+            estimatedBudget: tracker.estimatedBudget,
+            confidence: tracker.confidence,
+            lastFraction: tracker.lastFraction,
+          });
+        }
+      }
+    }
+    return rows;
   }
 }
 
