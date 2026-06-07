@@ -380,3 +380,34 @@ describe("gmailLogin — recaptcha challenge with skipCaptchaManualWait", () => 
     }
   });
 });
+
+describe("gmailLogin — phone challenge with skipPhoneChallengeManualWait", () => {
+  it("returns PHONE_CHALLENGE immediately when skipPhoneChallengeManualWait is true and push prompt text is detected", async () => {
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com/v3/signin/challenge/dp",
+      ],
+      evaluateResult: "Open the Google app on Apple iPhone 15",
+      locatorOverrides: {
+        "email":    buildLocator({ count: 1 }),
+        "password": buildLocator({ count: 1 }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      { loginEmail: "u@gmail.com", loginPassword: "pw" },
+      buildMockLogger(),
+      { skipPhoneChallengeManualWait: true }
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("PHONE_CHALLENGE");
+      expect(result.detail).toContain("Phone/SMS verification required");
+    }
+  });
+});
+

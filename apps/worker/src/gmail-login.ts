@@ -1370,17 +1370,27 @@ async function isPhoneChallengePage(page: Page): Promise<boolean> {
   // Only use text heuristics that are specific to phone/push flows and
   // would NOT appear on a TOTP code-entry page
   const bodyText = await page.evaluate(() => document.body?.innerText ?? "");
+  const lowerText = bodyText.toLowerCase();
   return (
-    bodyText.includes("Get a verification code") ||
-    bodyText.includes("Google will send a verification code") ||
-    bodyText.includes("Verify it’s you") ||
-    bodyText.includes("Verify it's you") ||
-    bodyText.includes("There is something unusual about your activity") ||
-    bodyText.includes("Google prompt") ||
-    bodyText.includes("Check your phone") ||
-    bodyText.includes("check your phone") ||
-    bodyText.includes("查看您的手机") ||
-    bodyText.includes("查看您的手機")
+    lowerText.includes("get a verification code") ||
+    lowerText.includes("google will send a verification code") ||
+    lowerText.includes("verify it’s you") ||
+    lowerText.includes("verify it's you") ||
+    lowerText.includes("there is something unusual about your activity") ||
+    lowerText.includes("google prompt") ||
+    lowerText.includes("check your phone") ||
+    lowerText.includes("查看您的手机") ||
+    lowerText.includes("查看您的手機") ||
+    lowerText.includes("open the google app") ||
+    lowerText.includes("google sent a notification") ||
+    lowerText.includes("tap yes on the prompt") ||
+    lowerText.includes("打开 google 应用") ||
+    lowerText.includes("打开 google app") ||
+    lowerText.includes("在您的手机或平板电脑上打开 google") ||
+    lowerText.includes("在您的手機或平板電腦上打開 google") ||
+    lowerText.includes("点击“是”") ||
+    lowerText.includes("点击 \"是\"") ||
+    lowerText.includes("點擊“是”")
   );
 }
 

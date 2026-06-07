@@ -61,6 +61,7 @@ export default function Bulk2faPage() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showSecrets, setShowSecrets] = useState(false);
+  const [downloading, setDownloading] = useState<"success" | "failed" | null>(null);
   
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -113,6 +114,25 @@ export default function Bulk2faPage() {
     }, 3000);
   }, [fetchJobStatus]);
 
+  // Select a past job to view
+  const handleViewJob = useCallback(async (jobId: string) => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    try {
+      const res = await fetch(`/api/bulk-2fa/jobs/${jobId}`);
+      if (!res.ok) throw new Error("Failed to fetch job details");
+      const job: BulkJob = await res.json();
+      setActiveJob(job);
+      if (job.status === "PENDING" || job.status === "PROCESSING") {
+        startPolling(job.id);
+      }
+    } catch (err: any) {
+      toast.error("加载任务详情失败");
+    }
+  }, [startPolling]);
+
   // Clean up polling on unmount
   useEffect(() => {
     return () => {
@@ -125,6 +145,41 @@ export default function Bulk2faPage() {
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
+
+  // Automatically select the newest job on initial load if none is selected yet
+  const firstLoadRef = useRef(true);
+  useEffect(() => {
+    if (!loadingHistory && firstLoadRef.current) {
+      firstLoadRef.current = false;
+      if (jobsHistory.length > 0 && !activeJob) {
+        handleViewJob(jobsHistory[0].id);
+      }
+    }
+  }, [loadingHistory, jobsHistory, activeJob, handleViewJob]);
+
+  // Handle secure file download via fetch (with Bearer credentials context)
+  const handleDownload = async (type: "success" | "failed") => {
+    if (!activeJob) return;
+    setDownloading(type);
+    try {
+      const res = await fetch(`/api/bulk-2fa/jobs/${activeJob.id}/download?type=${type}`);
+      if (!res.ok) throw new Error("Download request failed");
+      const content = await res.text();
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `2fa_${type}_${activeJob.id}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error("下载失败: " + err.message);
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   // Handle text submission
   const handleSubmit = async () => {
@@ -169,25 +224,6 @@ export default function Bulk2faPage() {
       toast.error("读取文件失败");
     };
     reader.readAsText(file);
-  };
-
-  // Select a past job to view
-  const handleViewJob = async (jobId: string) => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    try {
-      const res = await fetch(`/api/bulk-2fa/jobs/${jobId}`);
-      if (!res.ok) throw new Error("Failed to fetch job details");
-      const job: BulkJob = await res.json();
-      setActiveJob(job);
-      if (job.status === "PENDING" || job.status === "PROCESSING") {
-        startPolling(job.id);
-      }
-    } catch (err: any) {
-      toast.error("加载任务详情失败");
-    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -338,18 +374,26 @@ export default function Bulk2faPage() {
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <a href={`/api/bulk-2fa/jobs/${activeJob.id}/download?type=success`} target="_blank" rel="noreferrer">
-                    <Button variant="outline" size="sm" className="text-xs flex items-center gap-1">
-                      <Download className="h-3.5 w-3.5 text-green-600" />
-                      下载成功包
-                    </Button>
-                  </a>
-                  <a href={`/api/bulk-2fa/jobs/${activeJob.id}/download?type=failed`} target="_blank" rel="noreferrer">
-                    <Button variant="outline" size="sm" className="text-xs flex items-center gap-1">
-                      <Download className="h-3.5 w-3.5 text-red-600" />
-                      下载失败包
-                    </Button>
-                  </a>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-xs flex items-center gap-1"
+                    onClick={() => handleDownload("success")}
+                    disabled={downloading !== null}
+                  >
+                    <Download className="h-3.5 w-3.5 text-green-600" />
+                    {downloading === "success" ? "下载中..." : "下载成功包"}
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-xs flex items-center gap-1"
+                    onClick={() => handleDownload("failed")}
+                    disabled={downloading !== null}
+                  >
+                    <Download className="h-3.5 w-3.5 text-red-600" />
+                    {downloading === "failed" ? "下载中..." : "下载失败包"}
+                  </Button>
                 </div>
               </CardHeader>
               
@@ -358,7 +402,7 @@ export default function Bulk2faPage() {
                   <div className="flex gap-4">
                     <span>状态: <strong>{activeJob.status}</strong></span>
                     <span>总数: <strong>{activeJob.items.length}</strong></span>
-                    <span>成功: <strong className="text-green-600">{activeJob.items.filter(i => i.status === "SUCCESS").count || activeJob.items.filter(i => i.status === "SUCCESS").length}</strong></span>
+                    <span>成功: <strong className="text-green-600">{activeJob.items.filter(i => i.status === "SUCCESS").length}</strong></span>
                     <span>失败: <strong className="text-red-600">{activeJob.items.filter(i => i.status === "FAILED").length}</strong></span>
                   </div>
                   <Button 

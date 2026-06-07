@@ -225,10 +225,24 @@ export async function handleReAuth(
   // ── 3. Non-automatable challenge (sk/dp/ipp) — try "Try another way" link ──
   // MUST come before the generic signin/challenge password check, because URLs
   // like signin/challenge/sk contain "signin/challenge" but are NOT password pages.
+  const bodyTextLower = await page.evaluate(() => document.body?.innerText?.toLowerCase() ?? "");
+  const hasPhonePromptText = 
+    bodyTextLower.includes("google sent a notification") ||
+    bodyTextLower.includes("open the google app") ||
+    bodyTextLower.includes("check your phone") ||
+    bodyTextLower.includes("查看您的手机") ||
+    bodyTextLower.includes("查看您的手機") ||
+    bodyTextLower.includes("tap yes on the prompt") ||
+    bodyTextLower.includes("点击“是”") ||
+    bodyTextLower.includes("點擊“是”") ||
+    bodyTextLower.includes("打开 google 应用") ||
+    bodyTextLower.includes("打开 google app");
+
   if (
     currentUrl.includes("challenge/sk") ||
     currentUrl.includes("challenge/dp") ||
-    currentUrl.includes("challenge/ipp")
+    currentUrl.includes("challenge/ipp") ||
+    hasPhonePromptText
   ) {
     const tryAnotherWay = page.locator([
       // EN
@@ -267,9 +281,11 @@ export async function handleReAuth(
       await page.waitForTimeout(3000);
       await page.waitForLoadState("domcontentloaded").catch(() => {});
       return true;
+    } else {
+      const msg = `${logPrefix} Phone/push challenge page detected but "Try another way" link is not available. URL: ${currentUrl}`;
+      await logger.log("ERROR", msg);
+      throw new Error(msg);
     }
-    // Link not found after wait — fall through; step 4 won't false-match
-    // because we removed the broad "signin/challenge" condition from it.
   }
 
   // ── 4. Password challenge ──
