@@ -905,6 +905,28 @@ async function handleAgVerification(page: Page, logger: TaskLogger): Promise<voi
   await logger.log("INFO", "[gmail-login] Birthday submitted");
 }
 
+/** Safe breakout navigation to myaccount to handle redirects/interruptions robustly */
+async function safeGotoMyAccount(page: Page, logger: TaskLogger): Promise<void> {
+  try {
+    await page.goto("https://myaccount.google.com/?hl=en", {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000,
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    const finalUrl = page.url();
+    const isInterrupted = msg.toLowerCase().includes("interrupted") || msg.toLowerCase().includes("abort");
+    const isOnMyAccount = finalUrl.includes("myaccount.google.com") || finalUrl.includes("google.com");
+    if (isInterrupted || isOnMyAccount) {
+      await logger.log("INFO", `[gmail-login] safeGotoMyAccount: Navigation redirected/interrupted/aborted, but successfully landed on Google/myaccount: ${finalUrl}`);
+    } else {
+      await logger.log("WARN", `[gmail-login] safeGotoMyAccount: Navigation error: ${msg}`);
+      throw err;
+    }
+  }
+}
+
+
 /**
  * Handle Google's account recovery / device security pages.
  * Covers both gds.google.com/web/recoveryoptions and gds.google.com/web/landing.
@@ -1015,10 +1037,7 @@ async function handleRecoveryOptions(page: Page, logger: TaskLogger): Promise<bo
   const afterUrl = page.url();
   if (afterUrl.includes("gds.google.com")) {
     await logger.log("INFO", "[gmail-login] GDS flow still active — navigating directly to myaccount");
-    await page.goto("https://myaccount.google.com/?hl=en", {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
+    await safeGotoMyAccount(page, logger);
     await page.waitForTimeout(1000);
   }
 
@@ -1091,10 +1110,7 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
     } catch {
       // scrollIntoView or JS click failed — fall back to direct navigation
       await logger.log("WARN", "[gmail-login] Could not click speedbump dismiss button — navigating to myaccount");
-      await page.goto("https://myaccount.google.com/?hl=en", {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
+      await safeGotoMyAccount(page, logger);
       await page.waitForTimeout(1000);
       return;
     }
@@ -1107,10 +1123,7 @@ async function handleSpeedbump(page: Page, logger: TaskLogger): Promise<void> {
 
   // No dismiss button found — navigate directly to myaccount to break out
   await logger.log("WARN", "[gmail-login] No dismiss button found on speedbump — navigating to myaccount");
-  await page.goto("https://myaccount.google.com/?hl=en", {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  });
+  await safeGotoMyAccount(page, logger);
   await page.waitForTimeout(1000);
 }
 
