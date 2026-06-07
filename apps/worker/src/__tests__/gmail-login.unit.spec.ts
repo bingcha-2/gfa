@@ -350,3 +350,33 @@ describe("gmailLogin — recovery email challenge", () => {
     expect(recoveryFill).toHaveBeenCalledWith("recovery@gmail.com");
   });
 });
+
+describe("gmailLogin — recaptcha challenge with skipCaptchaManualWait", () => {
+  it("returns CAPTCHA immediately when skipCaptchaManualWait is true", async () => {
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com",
+        "https://accounts.google.com",
+        "https://accounts.google.com/v3/signin/challenge/recaptcha?TL=123",
+      ],
+      evaluateResult: "reCAPTCHA",
+      locatorOverrides: {
+        "email":    buildLocator({ count: 1 }),
+        "password": buildLocator({ count: 1 }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      { loginEmail: "u@gmail.com", loginPassword: "pw" },
+      buildMockLogger(),
+      { skipCaptchaManualWait: true }
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("CAPTCHA");
+      expect(result.detail).toContain("recaptcha");
+    }
+  });
+});

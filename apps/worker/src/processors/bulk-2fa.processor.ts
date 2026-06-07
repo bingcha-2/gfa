@@ -97,7 +97,8 @@ export async function processBulk2FA(
         totpSecret: item.oldSecret || null,
         recoveryEmail: item.recoveryEmail || null
       }, itemLogger, {
-        manualChallengeWaitMs: 300000 // 允许 5 分钟人工干预时间以防遇到滑块/手机验证码
+        manualChallengeWaitMs: 300000, // 允许 5 分钟人工干预时间以防遇到滑块/手机验证码
+        skipCaptchaManualWait: true
       });
       
       if (!loginResult.success) {

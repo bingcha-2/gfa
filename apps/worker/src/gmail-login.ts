@@ -134,6 +134,7 @@ export interface LoginCredentials {
 export interface GmailLoginOptions {
   manualChallengeWaitMs?: number;
   skipPhoneChallengeManualWait?: boolean;
+  skipCaptchaManualWait?: boolean;
 }
 
 export async function gmailLogin(
@@ -234,6 +235,10 @@ export async function gmailLogin(
       if (await isCaptchaPage(page, url)) {
         const detail = `CAPTCHA challenge before password step at ${url}`;
         await logger.log("WARN", `[gmail-login] Pre-password CAPTCHA: ${detail}`);
+        if (options.skipCaptchaManualWait) {
+          await logger.log("WARN", `[gmail-login] skipCaptchaManualWait is true — exiting immediately`);
+          return { success: false, reason: "CAPTCHA", detail };
+        }
         const resolved = await waitForManualChallengeResolution(page, logger, "CAPTCHA", url, manualChallengeWaitMs);
         if (!resolved) {
           return { success: false, reason: "CAPTCHA", detail };
@@ -570,6 +575,10 @@ export async function gmailLogin(
         const detail = `CAPTCHA challenge required at ${roundUrl}`;
         await captureStepScreenshot(page, logger, "gmail-login-captcha", "errorScreenshotPath");
         await logger.log("WARN", `[gmail-login] CAPTCHA detected: ${detail}`);
+        if (options.skipCaptchaManualWait) {
+          await logger.log("WARN", `[gmail-login] skipCaptchaManualWait is true — exiting immediately`);
+          return { success: false, reason: "CAPTCHA", detail };
+        }
         const resolved = await waitForManualChallengeResolution(page, logger, "CAPTCHA", roundUrl, manualChallengeWaitMs);
         if (resolved) {
           continue;
