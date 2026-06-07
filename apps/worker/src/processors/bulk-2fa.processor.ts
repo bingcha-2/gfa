@@ -64,17 +64,18 @@ export async function processBulk2FA(
   };
 
   const items = jobData.items;
-  const CONCURRENCY = 5; // 支持最多同时打开 5 个浏览器窗口（原 1 个 + 多开 4 个）
-
-  async function processItem(index: number): Promise<void> {
-    const item = items[index];
-    if (item.status === "SUCCESS") return;
-
+  
+  for (let i = 0; i < items.length; i++) {
+    const currentJobData = readJob();
+    const item = currentJobData.items[i];
+    
+    if (item.status === "SUCCESS") continue; // Skip already succeeded items
+    
     item.status = "RUNNING";
     item.updatedAt = new Date().toISOString();
-    jobData.status = "PROCESSING";
-    jobData.updatedAt = new Date().toISOString();
-    writeJob(jobData);
+    currentJobData.status = "PROCESSING";
+    currentJobData.updatedAt = new Date().toISOString();
+    writeJob(currentJobData);
 
     const itemLogger = mockLogger(item);
     const browser = new WorkerBrowser();
@@ -110,21 +111,23 @@ export async function processBulk2FA(
         totpSecret: item.oldSecret || null
       }, itemLogger);
 
+      const updatedJobData = readJob();
       if (result.success) {
-        items[index].status = "SUCCESS";
-        items[index].newSecret = result.newTotpSecret;
+        updatedJobData.items[i].status = "SUCCESS";
+        updatedJobData.items[i].newSecret = result.newTotpSecret;
       } else {
-        items[index].status = "FAILED";
-        items[index].error = `${result.reason}: ${result.detail}`;
+        updatedJobData.items[i].status = "FAILED";
+        updatedJobData.items[i].error = `${result.reason}: ${result.detail}`;
       }
-      items[index].updatedAt = new Date().toISOString();
-      writeJob(jobData);
+      updatedJobData.items[i].updatedAt = new Date().toISOString();
+      writeJob(updatedJobData);
 
     } catch (err: any) {
-      items[index].status = "FAILED";
-      items[index].error = err.message || String(err);
-      items[index].updatedAt = new Date().toISOString();
-      writeJob(jobData);
+      const updatedJobData = readJob();
+      updatedJobData.items[i].status = "FAILED";
+      updatedJobData.items[i].error = err.message || String(err);
+      updatedJobData.items[i].updatedAt = new Date().toISOString();
+      writeJob(updatedJobData);
     } finally {
       stopHeartbeat?.();
       await browser.disconnect().catch(() => {});
@@ -135,18 +138,6 @@ export async function processBulk2FA(
       await pool.releaseAccount(item.email, workerId).catch(() => {});
     }
   }
-
-  let nextIndex = 0;
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      await processItem(index);
-    }
-  }
-
-  const workersCount = Math.min(CONCURRENCY, items.length);
-  const workers = Array.from({ length: workersCount }, () => worker());
-  await Promise.all(workers);
 
   // Mark job as completed
   const finalJobData = readJob();
