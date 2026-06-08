@@ -64,82 +64,143 @@ export async function processBulk2FA(
   };
 
   const items = jobData.items;
-  
-  for (let i = 0; i < items.length; i++) {
-    const currentJobData = readJob();
-    const item = currentJobData.items[i];
-    
-    if (item.status === "SUCCESS") continue; // Skip already succeeded items
-    
-    item.status = "RUNNING";
-    item.updatedAt = new Date().toISOString();
-    currentJobData.status = "PROCESSING";
-    currentJobData.updatedAt = new Date().toISOString();
-    writeJob(currentJobData);
 
-    const itemLogger = mockLogger(item);
-    const browser = new WorkerBrowser();
-    let profileId: string | null = null;
-    let stopHeartbeat: (() => void) | null = null;
+  // Helper function to update bulk item status in the JSON file atomically
+  const updateItemInJobFile = (itemId: string, updater: (item: BulkJobItem) => void) => {
+    const data = readJob();
+    const item = data.items.find(it => it.id === itemId);
+    if (item) {
+      updater(item);
+    }
+    const allDone = data.items.every(it => it.status === "SUCCESS" || it.status === "FAILED");
+    data.status = allDone ? "COMPLETED" : "PROCESSING";
+    data.updatedAt = new Date().toISOString();
+    writeJob(data);
+  };
 
-    try {
-      // Acquire profile + open AdsPower browser (locks using the email as accountId)
-      const acquired = await pool.acquireAndOpen(workerId, item.email, adspower);
-      profileId = acquired.profileId;
-      stopHeartbeat = pool.startHeartbeat(profileId, item.email, workerId);
-      
-      const page = await browser.connect(acquired.debugUrl);
+  let nextIndex = 0;
 
-      // Attempt Gmail auto-login
-      const loginResult = await gmailLogin(page, {
-        loginEmail: item.email,
-        loginPassword: item.password,
-        totpSecret: item.oldSecret || null,
-        recoveryEmail: item.recoveryEmail || null
-      }, itemLogger, {
-        manualChallengeWaitMs: 300000, // 允许 5 分钟人工干预时间以防遇到其它情况
-        skipCaptchaManualWait: true,
-        skipPhoneChallengeManualWait: true
+  async function worker() {
+    while (true) {
+      let currentIndex = -1;
+      let item: BulkJobItem | undefined;
+
+      // Select next item synchronously to avoid race conditions
+      if (nextIndex < items.length) {
+        currentIndex = nextIndex++;
+        const currentJob = readJob();
+        item = currentJob.items[currentIndex];
+      }
+
+      if (!item) break; // Finished all items
+      if (item.status === "SUCCESS" || item.status === "FAILED") continue;
+
+      // Update item state to RUNNING atomically
+      updateItemInJobFile(item.id, (it) => {
+        it.status = "RUNNING";
+        it.updatedAt = new Date().toISOString();
       });
-      
-      if (!loginResult.success) {
-        throw new Error(`Gmail login failed: ${loginResult.reason} - ${loginResult.detail}`);
-      }
 
-      // Perform the 2FA change
-      const result = await change2FA(page, {
-        loginEmail: item.email,
-        loginPassword: item.password,
-        totpSecret: item.oldSecret || null
-      }, itemLogger);
+      const itemLogger = mockLogger(item);
+      const maxItemAttempts = 2;
+      let success = false;
 
-      const updatedJobData = readJob();
-      if (result.success) {
-        updatedJobData.items[i].status = "SUCCESS";
-        updatedJobData.items[i].newSecret = result.newTotpSecret;
-      } else {
-        updatedJobData.items[i].status = "FAILED";
-        updatedJobData.items[i].error = `${result.reason}: ${result.detail}`;
-      }
-      updatedJobData.items[i].updatedAt = new Date().toISOString();
-      writeJob(updatedJobData);
+      for (let attempt = 1; attempt <= maxItemAttempts; attempt++) {
+        if (attempt > 1) {
+          await itemLogger.log("INFO", `Retrying account task (attempt ${attempt}/${maxItemAttempts}) after closing browser...`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
 
-    } catch (err: any) {
-      const updatedJobData = readJob();
-      updatedJobData.items[i].status = "FAILED";
-      updatedJobData.items[i].error = err.message || String(err);
-      updatedJobData.items[i].updatedAt = new Date().toISOString();
-      writeJob(updatedJobData);
-    } finally {
-      stopHeartbeat?.();
-      await browser.disconnect().catch(() => {});
-      if (profileId) {
-        await adspower.closeProfile(profileId).catch(() => {});
-        await pool.release(profileId, workerId).catch(() => {});
+        const browser = new WorkerBrowser();
+        let profileId: string | null = null;
+        let stopHeartbeat: (() => void) | null = null;
+
+        try {
+          // Acquire profile + open AdsPower browser (locks using the email as accountId)
+          const acquired = await pool.acquireAndOpen(workerId, item.email, adspower);
+          profileId = acquired.profileId;
+          stopHeartbeat = pool.startHeartbeat(profileId, item.email, workerId);
+          
+          const page = await browser.connect(acquired.debugUrl);
+
+          // Attempt Gmail auto-login
+          const loginResult = await gmailLogin(page, {
+            loginEmail: item.email,
+            loginPassword: item.password,
+            totpSecret: item.oldSecret || null,
+            recoveryEmail: item.recoveryEmail || null
+          }, itemLogger, {
+            manualChallengeWaitMs: 300000, // 允许 5 分钟人工干预时间以防遇到其它情况
+            skipCaptchaManualWait: true,
+            skipPhoneChallengeManualWait: true
+          });
+          
+          if (!loginResult.success) {
+            if (loginResult.reason === "TRANSIENT") {
+              throw new Error(`Gmail login failed: TRANSIENT - ${loginResult.detail}`);
+            } else {
+              // Hard error (e.g. wrong password, locked) — record and do not retry
+              updateItemInJobFile(item.id, (it) => {
+                it.status = "FAILED";
+                it.error = `${loginResult.reason}: ${loginResult.detail}`;
+                it.updatedAt = new Date().toISOString();
+              });
+              break;
+            }
+          }
+
+          // Perform the 2FA change
+          const result = await change2FA(page, {
+            loginEmail: item.email,
+            loginPassword: item.password,
+            totpSecret: item.oldSecret || null
+          }, itemLogger);
+
+          if (result.success) {
+            updateItemInJobFile(item.id, (it) => {
+              it.status = "SUCCESS";
+              it.newSecret = result.newTotpSecret;
+              it.updatedAt = new Date().toISOString();
+            });
+            success = true;
+          } else {
+            // Hard error in change2FA — record and do not retry
+            updateItemInJobFile(item.id, (it) => {
+              it.status = "FAILED";
+              it.error = `${result.reason}: ${result.detail}`;
+              it.updatedAt = new Date().toISOString();
+            });
+          }
+          break;
+
+        } catch (err: any) {
+          const errMsg = err.message || String(err);
+          await itemLogger.log("WARN", `Attempt ${attempt}/${maxItemAttempts} failed: ${errMsg}`);
+          
+          if (attempt === maxItemAttempts) {
+            updateItemInJobFile(item.id, (it) => {
+              it.status = "FAILED";
+              it.error = errMsg;
+              it.updatedAt = new Date().toISOString();
+            });
+          }
+        } finally {
+          stopHeartbeat?.();
+          await browser.disconnect().catch(() => {});
+          if (profileId) {
+            await adspower.closeProfile(profileId).catch(() => {});
+            await pool.release(profileId, workerId).catch(() => {});
+          }
+          await pool.releaseAccount(item.email, workerId).catch(() => {});
+        }
+
+        if (success) break;
       }
-      await pool.releaseAccount(item.email, workerId).catch(() => {});
     }
   }
+
+  // Run 2 worker loops concurrently
+  await Promise.all([worker(), worker()]);
 
   // Mark job as completed
   const finalJobData = readJob();
