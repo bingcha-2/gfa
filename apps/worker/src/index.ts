@@ -195,7 +195,7 @@ const bulk2faWorker = new Worker<{ jobId: string }>(
   (job) => processBulk2FA(job, deps),
   {
     connection,
-    concurrency: 1,
+    concurrency: 2,
     lockDuration: 1800_000,
     stalledInterval: 120_000,
   }
