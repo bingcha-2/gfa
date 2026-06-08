@@ -23,6 +23,9 @@ import {
   generateTOTP,
   totpSecondsRemaining,
   sanitiseBase32,
+  currentTotpWindow,
+  lastUsedTotpWindow,
+  markTotpUsed,
 } from "./totp";
 import { handleReAuthLoop, isReAuthPage } from "./handle-reauth";
 import { captureStepScreenshot } from "./screenshot-capture";
@@ -244,9 +247,10 @@ async function extractSecretFromPage(
  */
 async function waitForFreshTotp(logger: TaskLogger): Promise<void> {
   const remaining = totpSecondsRemaining();
-  if (remaining < 5) {
+  const alreadyUsed = lastUsedTotpWindow() === currentTotpWindow();
+  if (alreadyUsed || remaining < 8) {
     const waitMs = (remaining + 2) * 1000;
-    await logger.log("INFO", `${LOG_PREFIX} TOTP window expires in ${remaining}s, waiting ${waitMs}ms for fresh code`);
+    await logger.log("INFO", `${LOG_PREFIX} Waiting ${waitMs}ms for fresh TOTP window (${alreadyUsed ? "used for re-auth" : "expiring"})`);
     await sleep(waitMs);
   }
 }
@@ -544,6 +548,9 @@ export async function change2FA(
     };
   }
 
+  // Wait 4 seconds for the verification input page to fully settle and Google's backend state to register
+  await page.waitForTimeout(4000);
+
   // Generate TOTP with the NEW secret
   await waitForFreshTotp(logger);
   const totpCode = generateTOTP(newSecret, account.loginEmail);
@@ -551,8 +558,7 @@ export async function change2FA(
 
   // Fill in the code
   const visibleInput = codeInput.first();
-  await visibleInput.fill("");
-  await visibleInput.type(totpCode, { delay: 50 });
+  await visibleInput.fill(totpCode);
 
   // ── Step 8: Click Verify ──
   await logger.log("INFO", `${LOG_PREFIX} Submitting verification code`);
@@ -622,8 +628,7 @@ export async function change2FA(
     const retryCode = generateTOTP(newSecret, account.loginEmail);
     await logger.log("INFO", `${LOG_PREFIX} Retry TOTP: ${retryCode.slice(0, 2)}****`);
 
-    await visibleInput.fill("");
-    await visibleInput.type(retryCode, { delay: 50 });
+    await visibleInput.fill(retryCode);
 
     // Click verify again
     if (verifyClicked) {
@@ -673,6 +678,7 @@ export async function change2FA(
   await logger.log("INFO", `${LOG_PREFIX} 2FA change completed successfully. New secret: ${newSecret.slice(0, 4)}****`);
   await captureStepScreenshot(page, logger, "change2fa-success");
 
+  markTotpUsed();
   return { success: true, newTotpSecret: newSecret };
 }
 
