@@ -30,25 +30,15 @@ import {
   FileTextIcon
 } from "lucide-react";
 
-interface AgentAccount {
-  id: string;
-  loginEmail: string;
-  loginPassword: string;
-  totpSecret: string | null;
-  recoveryEmail: string | null;
-  status: "REGISTERED" | "PHONE_VERIFIED" | "IN_GROUP" | "UPLOADED" | "REMOVED";
-  refreshToken: string | null;
-  tokenObtainedAt: string | null;
-  familyGroupId: string | null;
-  uploadedAt: string | null;
-  removedAt: string | null;
-  lastTaskId: string | null;
-  notes: string | null;
-  pool: "pending" | "no_ban" | "ban_risk";
-  banned: boolean;
-  uploadedToPool: string | null;
-  createdAt: string;
-  updatedAt: string;
+interface RosettaAccount {
+  id: number;
+  email: string;
+  enabled: boolean;
+  poolEnabled: boolean;
+  alias: string;
+  projectId: string;
+  planType: string;
+  hasToken: boolean;
 }
 
 interface CLIProxyStatus {
@@ -64,17 +54,15 @@ export default function RosettaCliProxyPage() {
   const [statusLoading, setStatusLoading] = useState(true);
 
   // Accounts List
-  const [accounts, setAccounts] = useState<AgentAccount[]>([]);
+  const [accounts, setAccounts] = useState<RosettaAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(30);
-  const [totalAccounts, setTotalAccounts] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
 
   // Batch Selection
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // Credentials Configuration
   const [presetType, setPresetType] = useState<"google_sdk" | "wails_client" | "custom">("google_sdk");
@@ -105,7 +93,7 @@ export default function RosettaCliProxyPage() {
   const loadProxyStatus = useCallback(async () => {
     setStatusLoading(true);
     try {
-      const data = await apiRequest<CLIProxyStatus>("agent-accounts/cliproxy-status");
+      const data = await apiRequest<CLIProxyStatus>("rosetta/cliproxy-status");
       setProxyStatus(data);
     } catch (err) {
       toast.error(`获取 CLIProxy 状态失败: ${getErrorMessage(err)}`);
@@ -114,55 +102,67 @@ export default function RosettaCliProxyPage() {
     }
   }, []);
 
-  // Load child accounts from local GFA database
+  // Load child accounts from local Rosetta accounts.json
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const search: any = { page, pageSize };
-      if (statusFilter !== "all") {
-        search.status = statusFilter;
-      }
-      const data = await apiRequest<{ items: AgentAccount[]; total: number; totalPages: number }>(
-        "agent-accounts",
-        { search }
-      );
-      setAccounts(data.items);
-      setTotalAccounts(data.total);
-      setTotalPages(data.totalPages);
+      const data = await apiRequest<{ accounts: RosettaAccount[] }>("rosetta/accounts");
+      setAccounts(data.accounts || []);
     } catch (err) {
-      toast.error(`加载子号列表失败: ${getErrorMessage(err)}`);
+      toast.error(`加载 Rosetta 账号列表失败: ${getErrorMessage(err)}`);
     } finally {
       setAccountsLoading(false);
     }
-  }, [page, pageSize, statusFilter]);
+  }, []);
 
   // Initial load
   useEffect(() => {
     loadProxyStatus();
-  }, [loadProxyStatus]);
-
-  // Load accounts when pagination or filter changes
-  useEffect(() => {
     loadAccounts();
-    setSelectedIds(new Set()); // Reset selections when page/filter changes
-  }, [loadAccounts]);
+  }, [loadProxyStatus, loadAccounts]);
 
-  // Filter accounts list locally by search query
+  // Reset selectedIds when filter changes
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [statusFilter]);
+
+  // Check if account is uploaded to CLIProxy (email present in files list, case-insensitive)
+  const isUploaded = useCallback((email: string) => {
+    if (!proxyStatus?.files) return false;
+    const lowerEmail = email.toLowerCase();
+    return proxyStatus.files.some(file => file.toLowerCase().includes(lowerEmail));
+  }, [proxyStatus]);
+
+  // Filter accounts list locally by search query and tabs
   const filteredAccounts = useMemo(() => {
-    if (!searchQuery.trim()) return accounts;
-    const q = searchQuery.toLowerCase().trim();
-    return accounts.filter(
-      (acc) =>
-        acc.loginEmail.toLowerCase().includes(q) ||
-        (acc.notes && acc.notes.toLowerCase().includes(q))
-    );
-  }, [accounts, searchQuery]);
+    let result = accounts;
+    if (statusFilter === "enabled") {
+      result = result.filter((acc) => acc.enabled !== false);
+    } else if (statusFilter === "uploaded") {
+      result = result.filter((acc) => isUploaded(acc.email));
+    } else if (statusFilter === "not_uploaded") {
+      result = result.filter((acc) => acc.enabled && acc.hasToken && !isUploaded(acc.email));
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(
+        (acc) =>
+          acc.email.toLowerCase().includes(q) ||
+          (acc.alias && acc.alias.toLowerCase().includes(q)) ||
+          (acc.projectId && acc.projectId.toLowerCase().includes(q))
+      );
+    }
+
+    // Client-side sorting: sort by id ascending
+    return [...result].sort((a, b) => a.id - b.id);
+  }, [accounts, statusFilter, searchQuery, isUploaded]);
 
   // Selection handlers
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       const uploadableIds = filteredAccounts
-        .filter((acc) => acc.refreshToken && !acc.banned)
+        .filter((acc) => acc.hasToken)
         .map((acc) => acc.id);
       setSelectedIds(new Set(uploadableIds));
     } else {
@@ -170,7 +170,7 @@ export default function RosettaCliProxyPage() {
     }
   };
 
-  const handleSelectOne = (id: string, checked: boolean) => {
+  const handleSelectOne = (id: number, checked: boolean) => {
     const next = new Set(selectedIds);
     if (checked) {
       next.add(id);
@@ -188,7 +188,7 @@ export default function RosettaCliProxyPage() {
     }
 
     setUploading(true);
-    const body: { ids: string[]; clientId?: string; clientSecret?: string } = {
+    const body: { ids: number[]; clientId?: string; clientSecret?: string } = {
       ids: Array.from(selectedIds),
     };
 
@@ -209,7 +209,7 @@ export default function RosettaCliProxyPage() {
         updated: number;
         failed: number;
         errors: Array<{ email: string; error: string }>;
-      }>("agent-accounts/upload-cliproxy", {
+      }>("rosetta/upload-cliproxy", {
         method: "POST",
         body,
       });
@@ -235,19 +235,17 @@ export default function RosettaCliProxyPage() {
     }
   };
 
-  const getStatusBadge = (status: AgentAccount["status"]) => {
-    switch (status) {
-      case "UPLOADED":
-        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white border-none">已上号 (UPLOADED)</Badge>;
-      case "IN_GROUP":
-        return <Badge className="bg-blue-600 hover:bg-blue-700 text-white border-none">已进组 (IN_GROUP)</Badge>;
-      case "PHONE_VERIFIED":
-        return <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white border-none">已手机验证 (PHONE_VERIFIED)</Badge>;
-      case "REGISTERED":
-        return <Badge variant="secondary">已注册 (REGISTERED)</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
+  const getStatusBadge = (acc: RosettaAccount) => {
+    if (!acc.enabled) {
+      return <Badge variant="secondary">已停用</Badge>;
     }
+    if (isUploaded(acc.email)) {
+      return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white border-none">已上号 (UPLOADED)</Badge>;
+    }
+    if (acc.hasToken) {
+      return <Badge className="bg-blue-600 hover:bg-blue-700 text-white border-none">未上号</Badge>;
+    }
+    return <Badge variant="destructive">无 Token</Badge>;
   };
 
   return (
@@ -461,9 +459,12 @@ export default function RosettaCliProxyPage() {
           </div>
           <div className="flex items-center gap-3">
             <Input
-              placeholder="搜索账号邮箱..."
+              placeholder="搜索账号邮箱/别名/Project..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
               className="w-56 h-9 text-xs"
             />
             <Button
@@ -485,9 +486,9 @@ export default function RosettaCliProxyPage() {
           <div className="flex border-b border-border gap-2">
             {[
               { id: "all", label: "全部" },
-              { id: "PHONE_VERIFIED", label: "已手机验证" },
-              { id: "IN_GROUP", label: "已进组" },
-              { id: "UPLOADED", label: "已上号" },
+              { id: "enabled", label: "已启用" },
+              { id: "uploaded", label: "已上号" },
+              { id: "not_uploaded", label: "未上号" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -524,32 +525,30 @@ export default function RosettaCliProxyPage() {
                         type="checkbox"
                         className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer size-3.5"
                         checked={
-                          filteredAccounts.length > 0 &&
-                          filteredAccounts
-                            .filter((a) => a.refreshToken && !a.banned)
+                          paginatedAccounts.length > 0 &&
+                          paginatedAccounts
+                            .filter((a) => a.hasToken)
                             .every((a) => selectedIds.has(a.id))
                         }
                         onChange={(e) => handleSelectAll(e.target.checked)}
                       />
                     </TableHead>
                     <TableHead>子号邮箱</TableHead>
+                    <TableHead>别名</TableHead>
                     <TableHead>状态</TableHead>
                     <TableHead>凭证状态</TableHead>
-                    <TableHead>上号池</TableHead>
-                    <TableHead>防封池</TableHead>
-                    <TableHead>备注</TableHead>
-                    <TableHead>创建时间</TableHead>
+                    <TableHead>Project ID</TableHead>
+                    <TableHead>套餐</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredAccounts.map((acc) => {
-                    const hasToken = !!acc.refreshToken;
-                    const isSelectable = hasToken && !acc.banned;
+                  {paginatedAccounts.map((acc) => {
+                    const isSelectable = acc.hasToken;
                     return (
                       <TableRow
                         key={acc.id}
                         className={`hover:bg-muted/40 ${
-                          acc.banned ? "opacity-60 bg-red-50/20 dark:bg-red-950/5" : ""
+                          !acc.enabled ? "opacity-60 bg-muted/20" : ""
                         }`}
                       >
                         <TableCell className="text-center">
@@ -562,18 +561,14 @@ export default function RosettaCliProxyPage() {
                           />
                         </TableCell>
                         <TableCell className="font-mono text-xs font-medium">
-                          <div className="flex flex-col">
-                            <span>{acc.loginEmail}</span>
-                            {acc.banned && (
-                              <span className="text-[10px] text-red-500 font-semibold mt-0.5">
-                                [已标记封号]
-                              </span>
-                            )}
-                          </div>
+                          <span>{acc.email}</span>
                         </TableCell>
-                        <TableCell>{getStatusBadge(acc.status)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {acc.alias || "-"}
+                        </TableCell>
+                        <TableCell>{getStatusBadge(acc)}</TableCell>
                         <TableCell>
-                          {hasToken ? (
+                          {acc.hasToken ? (
                             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/30">
                               含有 Refresh Token
                             </span>
@@ -583,31 +578,11 @@ export default function RosettaCliProxyPage() {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="font-mono text-xs">
-                            {acc.uploadedToPool || "-"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {acc.pool === "no_ban" ? (
-                            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border-none font-normal">
-                              no_ban
-                            </Badge>
-                          ) : acc.pool === "ban_risk" ? (
-                            <Badge className="bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300 border-none font-normal">
-                              ban_risk
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="font-normal">
-                              pending
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate">
-                          {acc.notes || "-"}
+                        <TableCell className="text-xs font-mono text-muted-foreground">
+                          {acc.projectId || "-"}
                         </TableCell>
                         <TableCell className="text-xs font-mono text-muted-foreground">
-                          {acc.createdAt ? new Date(acc.createdAt).toLocaleString() : "-"}
+                          {acc.planType || "-"}
                         </TableCell>
                       </TableRow>
                     );
