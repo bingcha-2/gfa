@@ -239,6 +239,85 @@ describe('AccessKeyStore', () => {
       const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
       expect(raw.keys[0].totalRequests).toBe(1);
     });
+
+    it('does NOT persist per-window event arrays to disk — they are in-memory only', () => {
+      const store = makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        totalRequests: 0, windowStartedAt: Date.now(), weeklyWindowStartedAt: Date.now(),
+      }]);
+      store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50, rawTotalTokens: 150 }, 'claude-opus-4', '', 'anthropic');
+      store.flush();
+
+      // On disk: counters persisted, but the three event arrays are omitted so the
+      // file stays small and JSON.stringify never hits V8's max-string-length.
+      const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
+      expect(raw.keys[0].totalRequests).toBe(1);
+      expect(raw.keys[0].usageEvents).toBeUndefined();
+      expect(raw.keys[0].tokenUsageEvents).toBeUndefined();
+      expect(raw.keys[0].weeklyTokenUsageEvents).toBeUndefined();
+
+      // In memory: events remain — they are the authoritative rate-limit window.
+      const inMem = store.findById('k1')!;
+      expect((inMem.tokenUsageEvents || []).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('reload', () => {
+    it('preserves the in-memory rate-limit window across reload (disk no longer stores events)', () => {
+      const store = makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        windowStartedAt: Date.now(), weeklyWindowStartedAt: Date.now(),
+      }]);
+      store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50, rawTotalTokens: 150 }, 'claude-opus-4', '', 'anthropic');
+      store.flush(); // disk now holds NO events
+
+      const before = store.publicStatus(store.findById('k1')!).recentWindowTokens;
+      expect(before).toBeGreaterThan(0);
+
+      // reload happens on every admin card edit; it must not reset usage windows.
+      store.reload();
+
+      const after = store.publicStatus(store.findById('k1')!).recentWindowTokens;
+      expect(after).toBe(before);
+    });
+  });
+
+  describe('hydrateWindowsFromUsageLog (boot replay)', () => {
+    it('rebuilds the in-memory window from persisted usage rows after a cold start', () => {
+      const now = Date.now();
+      const store = makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        windowStartedAt: now - 1000, weeklyWindowStartedAt: now - 1000,
+        bucketLimits: { 'anthropic-claude': 500_000 },
+      }]);
+      // Cold start: cache from disk has no events.
+      expect(store.publicStatus(store.findById('k1')!).recentWindowTokens).toBe(0);
+
+      // Replay the durable CardTokenUsage log (rows already scoped to the window).
+      store.hydrateWindowsFromUsageLog([
+        {
+          accessKeyId: 'k1', at: now - 500, status: 200,
+          modelKey: 'claude-opus-4', bucket: 'anthropic-claude',
+          inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
+          rawTotalTokens: 150, totalTokens: 150,
+        },
+      ]);
+
+      const status = store.publicStatus(store.findById('k1')!);
+      expect(status.recentWindowTokens).toBe(150);
+      const bucket = status.buckets.find((b: any) => b.bucket === 'anthropic-claude');
+      expect(bucket.used).toBe(150);
+    });
+
+    it('ignores rows for cards not present in the cache', () => {
+      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active', windowStartedAt: Date.now() }]);
+      expect(() =>
+        store.hydrateWindowsFromUsageLog([
+          { accessKeyId: 'ghost', at: Date.now(), modelKey: 'claude-opus-4', bucket: 'anthropic-claude', totalTokens: 99, rawTotalTokens: 99 },
+        ]),
+      ).not.toThrow();
+      expect(store.findById('k1')!.tokenUsageEvents || []).toHaveLength(0);
+    });
   });
 
   // ── Token limit enforcement ─────────────────────────────────────────────

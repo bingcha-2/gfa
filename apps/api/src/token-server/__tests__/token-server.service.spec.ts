@@ -69,6 +69,32 @@ describe("TokenServerService", () => {
     });
   }
 
+  it("onModuleInit replays per-card windows from the CardTokenUsage log (restart-safe)", async () => {
+    const now = Date.now();
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        accessKeyId: "card-1", accessKeyName: "", accountId: 1,
+        modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", status: 200,
+        inputTokens: 100, outputTokens: 20, cachedInputTokens: 0,
+        rawTotalTokens: 120, totalTokens: 120, timestamp: new Date(now - 1000),
+      },
+    ]);
+    const service = new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => now, randomId: () => "lease-fixed", minClientVersion: "",
+      prisma: { cardTokenUsage: { findMany } },
+    });
+
+    const store = (service as any).accessKeyStore;
+    // Cold start: window empty before replay.
+    expect(store.publicStatus(store.findById("card-1")).recentWindowTokens).toBe(0);
+
+    await service.onModuleInit();
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(store.publicStatus(store.findById("card-1")).recentWindowTokens).toBe(120);
+  });
+
   it("returns status with access-key and account summaries", () => {
     const status = makeService().getStatus();
 

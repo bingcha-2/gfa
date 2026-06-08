@@ -46,7 +46,12 @@ export class AccessKeyService {
         // 仅列已绑产品对应的桶;used 来自当前窗口的 recentBucketUsage;limit 来自
         // bucketLimits 覆盖(0 = 无限/未设)。在 record 的浅拷贝上算,避免 resetWindowIfExpired
         // 改动 accessKeysFile 缓存里的对象。
-        const usageRecord = { ...key };
+        // Per-card window usage comes from the authoritative in-memory store when
+        // available (events no longer live in the JSON file); fall back to the
+        // file record otherwise (e.g. tests / store not wired). Shallow-copy so
+        // resetWindowIfExpired inside the read can't mutate the cached object.
+        const authRecord = this.ctx.accessKeyStore?.findById(String(key.id || "")) || key;
+        const usageRecord = { ...authRecord };
         const now = Date.now();
         const bucketUsage = recentBucketUsage(usageRecord, now);
         const customLimits = (key.bucketLimits && typeof key.bucketLimits === "object" ? key.bucketLimits : {}) as Record<string, number>;
@@ -77,7 +82,7 @@ export class AccessKeyService {
           status: String(key.status || "active"),
           totalRequests: Number(key.totalRequests || 0),
           totalTokensUsed: Number(key.totalTokensUsed || 0),
-          recentWindowTokens: recentTokenUsage(key),
+          recentWindowTokens: recentTokenUsage(authRecord),
           windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
           weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
           durationMs: Number(key.durationMs || 0),
@@ -268,8 +273,12 @@ export class AccessKeyService {
 
     const now = Date.now();
 
-    resetWindowIfExpired(record, now);
-    const bucketUsage: Map<string, number> = recentBucketUsage(record, now);
+    // Usage from the authoritative in-memory store (events no longer in the file);
+    // config (limits/bindings) still from the file record. Shallow-copy so the
+    // window reset can't mutate the cached/store object.
+    const usageRecord = { ...(this.ctx.accessKeyStore?.findById(id) || record) };
+    resetWindowIfExpired(usageRecord, now);
+    const bucketUsage: Map<string, number> = recentBucketUsage(usageRecord, now);
     const customLimits = (record.bucketLimits && typeof record.bucketLimits === "object") ? record.bucketLimits : {};
 
     const products = record.bindings && typeof record.bindings === "object"

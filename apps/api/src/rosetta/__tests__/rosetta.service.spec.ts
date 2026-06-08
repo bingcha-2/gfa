@@ -5,6 +5,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RosettaService, migrateClaudeProductToAnthropic } from "../rosetta.service";
+import { AccessKeyStore } from "../../token-server/access-key-store";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -68,6 +69,19 @@ describe("RosettaService", () => {
       totalRequests: 2,
       totalTokensUsed: 500,
     });
+  });
+
+  it("reads window usage from the injected shared store (authoritative in-memory), not file events", () => {
+    // Stage 1: events live in memory only — the file no longer carries them.
+    writeJson(path.join(tempDir, "access-keys.json"), {
+      keys: [{ id: "card-1", key: "bcai_x", name: "VIP", status: "active" }],
+    });
+    const store = new AccessKeyStore(path.join(tempDir, "access-keys.json"));
+    store.recordUsage("card-1", 200, { inputTokens: 100, outputTokens: 20, rawTotalTokens: 120 }, "gemini-2.5-pro", "", "antigravity");
+
+    const result = new RosettaService({ dataDir: tempDir, accessKeyStore: store }).listAccessKeys({});
+
+    expect(result.keys[0].recentWindowTokens).toBe(120);
   });
 
   it("create no longer sets a global token limit; per-model caps go through bucketLimits", () => {

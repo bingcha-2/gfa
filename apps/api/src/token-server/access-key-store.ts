@@ -132,6 +132,14 @@ export class AccessKeyStore {
   // only un-deduped case is a duplicate report arriving after a restart for a
   // report counted before it — negligible (leases are in-memory and also reset).
   private reportDedup = new Map<string, Map<string, number>>();
+  // O(1) lookup indexes over cache.keys, rebuilt whenever the cache is (re)loaded.
+  // Card membership only changes via (re)load — recordUsage/session updates mutate
+  // records in place, so these stay valid without per-write maintenance.
+  // byKey is keyed by sha256(key), not the raw key: an O(1) hash lookup preserves
+  // the timing-attack resistance the previous constantTimeEqual scan gave (no
+  // early-exit byte comparison against the stored secret).
+  private byId = new Map<string, AccessKeyRecord>();
+  private byKey = new Map<string, AccessKeyRecord>();
 
   constructor(
     private readonly filePath: string,
@@ -147,14 +155,111 @@ export class AccessKeyStore {
         keys: Array.isArray(parsed.keys) ? parsed.keys : [],
         updatedAt: parsed.updatedAt || '',
       };
+      this.rebuildIndex();
     }
     return this.cache;
   }
 
-  /** Reload cache from disk (e.g., after external changes). */
+  /** sha256 hex of a key value — the byKey index key (see field comment). */
+  private keyHash(value: string): string {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+  }
+
+  /** Rebuild byId/byKey from the current cache. Called after every (re)load. */
+  private rebuildIndex(): void {
+    this.byId.clear();
+    this.byKey.clear();
+    if (!this.cache) return;
+    for (const k of this.cache.keys) {
+      if (!k) continue;
+      if (k.id) this.byId.set(k.id, k);
+      if (k.key) this.byKey.set(this.keyHash(k.key), k);
+    }
+  }
+
+  /**
+   * Reload cache from disk (e.g., after an admin card edit writes the file).
+   * The per-request window events are no longer persisted (see serializable()),
+   * so they are carried over in memory for cards that still exist by id —
+   * otherwise every admin edit (which triggers reload) would reset all rate-limit
+   * windows. A full process restart still starts cold and rehydrates from the
+   * CardTokenUsage log instead.
+   */
   reload(): void {
+    const carry = new Map<string, Pick<AccessKeyRecord,
+      'usageEvents' | 'tokenUsageEvents' | 'weeklyTokenUsageEvents'>>();
+    if (this.cache) {
+      for (const k of this.cache.keys) {
+        if (!k?.id) continue;
+        carry.set(k.id, {
+          usageEvents: k.usageEvents,
+          tokenUsageEvents: k.tokenUsageEvents,
+          weeklyTokenUsageEvents: k.weeklyTokenUsageEvents,
+        });
+      }
+    }
     this.cache = null;
     this.readAll();
+    for (const k of this.cache!.keys) {
+      const prev = k?.id ? carry.get(k.id) : undefined;
+      if (!prev) continue;
+      if (prev.usageEvents) k.usageEvents = prev.usageEvents;
+      if (prev.tokenUsageEvents) k.tokenUsageEvents = prev.tokenUsageEvents;
+      if (prev.weeklyTokenUsageEvents) k.weeklyTokenUsageEvents = prev.weeklyTokenUsageEvents;
+    }
+  }
+
+  /**
+   * Rebuild in-memory rate-limit windows from the durable CardTokenUsage log.
+   * Called ONCE on boot: window events are not persisted to access-keys.json
+   * (see serializable()), so without this a restart would reset every card's
+   * usage window and hand out fresh quota. Rows should be pre-scoped to the
+   * relevant window by the caller; over-supplied rows are harmless since the
+   * window reads filter by timestamp anyway. Only cards present in the cache are
+   * hydrated. The reconstructed events carry `product` (derived from the row's
+   * bucket when absent) and `modelKey` so the bucket read re-derives the same
+   * billing bucket the row was recorded under.
+   */
+  hydrateWindowsFromUsageLog(
+    rows: Array<{
+      accessKeyId: string;
+      at: number;
+      status?: number;
+      modelKey?: string;
+      bucket?: string;
+      product?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cachedInputTokens?: number;
+      rawTotalTokens?: number;
+      totalTokens?: number;
+    }>,
+  ): void {
+    this.readAll();
+    for (const row of rows) {
+      if (!row?.accessKeyId) continue;
+      const record = this.byId.get(row.accessKeyId);
+      if (!record) continue;
+      const bucket = String(row.bucket || '');
+      const product = row.product != null
+        ? String(row.product)
+        : (bucket.includes('-') ? bucket.slice(0, bucket.indexOf('-')) : '');
+      const ev = {
+        at: Number(row.at || 0),
+        status: Number(row.status || 0),
+        inputTokens: Number(row.inputTokens || 0),
+        outputTokens: Number(row.outputTokens || 0),
+        cachedInputTokens: Number(row.cachedInputTokens || 0),
+        rawTotalTokens: Number(row.rawTotalTokens || 0),
+        totalTokens: Number(row.totalTokens || 0),
+        modelKey: row.modelKey || '',
+        product,
+      };
+      if (!record.tokenUsageEvents) record.tokenUsageEvents = [];
+      record.tokenUsageEvents.push(ev);
+      if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
+      record.weeklyTokenUsageEvents.push(ev);
+    }
   }
 
   private markDirty(): void {
@@ -202,23 +307,44 @@ export class AccessKeyStore {
           key.weeklyTokenUsageEvents = key.weeklyTokenUsageEvents.filter((e: any) => e.at >= weeklyStart);
         }
       }
-      writeJsonFile(this.filePath, this.cache);
+      writeJsonFile(this.filePath, this.serializable());
     } catch (err: any) {
       this.dirty = true;
       console.error(`[access-key-store] flush failed: ${err.message}`);
     }
   }
 
+  /**
+   * Disk view of the cache: card metadata + counters, WITHOUT the per-request
+   * window event arrays. Those are live rate-limit state kept only in memory —
+   * preserved across reload() and rebuilt from the CardTokenUsage log on boot.
+   * Omitting them keeps access-keys.json small and, critically, avoids
+   * JSON.stringify hitting V8's max-string-length on busy cards.
+   */
+  private serializable(): AccessKeysData {
+    if (!this.cache) return { keys: [], updatedAt: '' };
+    return {
+      updatedAt: this.cache.updatedAt,
+      keys: this.cache.keys.map((k) => {
+        if (!k) return k;
+        const { usageEvents, tokenUsageEvents, weeklyTokenUsageEvents, ...rest } = k as any;
+        return rest as AccessKeyRecord;
+      }),
+    };
+  }
+
   // ── Lookup ───────────────────────────────────────────────────────────────
 
   findById(cardId: string): AccessKeyRecord | null {
     if (!cardId) return null;
-    return this.readAll().keys.find((k) => k.id === cardId) || null;
+    this.readAll();
+    return this.byId.get(cardId) || null;
   }
 
   findByKey(keyValue: string): AccessKeyRecord | null {
     if (!keyValue) return null;
-    return this.readAll().keys.find((k) => constantTimeEqual(k.key, keyValue)) || null;
+    this.readAll();
+    return this.byKey.get(this.keyHash(keyValue)) || null;
   }
 
   /**
@@ -290,7 +416,7 @@ export class AccessKeyStore {
     if (!keyValue) return { key: keyValue, record: null, error: 'Missing access key' };
 
     const data = this.readAll();
-    const record = data.keys.find((k) => constantTimeEqual(k.key, keyValue));
+    const record = this.byKey.get(this.keyHash(keyValue)) || null;
     if (!record) return { key: keyValue, record: null, error: 'Invalid access key' };
     if (record.status && record.status !== 'active') {
       return { key: keyValue, record: null, error: 'Access key disabled' };
