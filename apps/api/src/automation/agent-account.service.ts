@@ -1097,6 +1097,192 @@ export class AgentAccountService {
     };
   }
 
+  // ── Upload to remote CLIProxyAPI ──
+
+  /**
+   * Upload agent accounts to a remote CLIProxyAPI server via its management API.
+   * For each account: discover projectId → build credential JSON → POST to management API.
+   */
+  async uploadToCliProxy(ids: string[], customClientId?: string, customClientSecret?: string) {
+    if (!ids.length) throw new BadRequestException("ids is required");
+
+    const baseUrl = process.env.CLIPROXY_BASE_URL;
+    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
+    if (!baseUrl || !managementKey) {
+      throw new BadRequestException(
+        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
+      );
+    }
+
+    const accounts = await this.prisma.agentAccount.findMany({
+      where: { id: { in: ids } },
+    });
+
+    const OAUTH_CLIENT_ID =
+      customClientId || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+    const OAUTH_CLIENT_SECRET = customClientSecret || "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";
+
+    const added: Array<{ id: string; email: string; projectId: string }> = [];
+    const updated: Array<{ id: string; email: string; projectId: string }> = [];
+    const errors: Array<{ id: string; email: string; error: string }> = [];
+
+    for (const acc of accounts) {
+      if (!acc.refreshToken) {
+        errors.push({ id: acc.id, email: acc.loginEmail, error: "没有 Token" });
+        continue;
+      }
+
+      // 1. Discover projectId
+      let projectId = "";
+      try {
+        projectId = await this.discoverProjectId(acc.refreshToken, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
+        if (projectId) {
+          this.logger.log(`[uploadToCliProxy] ${acc.loginEmail} projectId=${projectId}`);
+        } else {
+          this.logger.warn(`[uploadToCliProxy] ${acc.loginEmail} 未拿到 projectId`);
+          errors.push({ id: acc.id, email: acc.loginEmail, error: "无法获取 projectId" });
+          continue;
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `[uploadToCliProxy] ${acc.loginEmail} projectId discovery failed: ${err.message}`,
+        );
+        errors.push({ id: acc.id, email: acc.loginEmail, error: `projectId 获取失败: ${err.message}` });
+        continue;
+      }
+
+      // 2. Build CLIProxyAPI credential JSON (matching existing format on server)
+      const credentialJson = {
+        auto: false,
+        checked: true,
+        disabled: false,
+        email: acc.loginEmail,
+        project_id: projectId,
+        token: {
+          client_id: OAUTH_CLIENT_ID,
+          client_secret: OAUTH_CLIENT_SECRET,
+          refresh_token: acc.refreshToken,
+          token_uri: "https://oauth2.googleapis.com/token",
+          token_type: "Bearer",
+          scopes: [
+            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+          ],
+          universe_domain: "googleapis.com",
+        },
+        type: "gemini",
+      };
+
+      // 3. Upload via management API
+      const fileName = `gemini-${acc.loginEmail}-${projectId}.json`;
+      try {
+        const resp = await fetch(
+          `${baseUrl}/v0/management/auth-files?name=${encodeURIComponent(fileName)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${managementKey}`,
+            },
+            body: JSON.stringify(credentialJson),
+            signal: AbortSignal.timeout(15000),
+          },
+        );
+
+        if (resp.ok) {
+          this.logger.log(`[uploadToCliProxy] ${acc.loginEmail} uploaded as ${fileName}`);
+          added.push({ id: acc.id, email: acc.loginEmail, projectId });
+
+          // Mark as UPLOADED
+          await this.onUploaded(acc.loginEmail);
+        } else {
+          const errorText = await resp.text().catch(() => "");
+          this.logger.warn(
+            `[uploadToCliProxy] ${acc.loginEmail} upload failed: ${resp.status} ${errorText}`,
+          );
+          // If 409 or similar, treat as update
+          if (resp.status === 409) {
+            updated.push({ id: acc.id, email: acc.loginEmail, projectId });
+            await this.onUploaded(acc.loginEmail);
+          } else {
+            errors.push({
+              id: acc.id,
+              email: acc.loginEmail,
+              error: `上传失败 (HTTP ${resp.status}): ${errorText.substring(0, 100)}`,
+            });
+          }
+        }
+      } catch (err: any) {
+        this.logger.error(`[uploadToCliProxy] ${acc.loginEmail} upload error: ${err.message}`);
+        errors.push({ id: acc.id, email: acc.loginEmail, error: `网络错误: ${err.message}` });
+      }
+    }
+
+    // Check for IDs not found in DB
+    const foundIds = new Set(accounts.map((a) => a.id));
+    for (const id of ids) {
+      if (!foundIds.has(id)) {
+        errors.push({ id, email: "", error: "未找到该子号" });
+      }
+    }
+
+    this.logger.log(
+      `uploadToCliProxy: added=${added.length}, updated=${updated.length}, errors=${errors.length}`,
+    );
+
+    return {
+      total: ids.length,
+      added: added.length,
+      updated: updated.length,
+      failed: errors.length,
+      addedAccounts: added,
+      updatedAccounts: updated,
+      errors,
+    };
+  }
+
+  /**
+   * Query remote CLIProxyAPI for currently loaded credential files.
+   */
+  async getCliProxyStatus() {
+    const baseUrl = process.env.CLIPROXY_BASE_URL;
+    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
+    if (!baseUrl || !managementKey) {
+      throw new BadRequestException(
+        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
+      );
+    }
+
+    try {
+      const resp = await fetch(`${baseUrl}/v0/management/auth-files`, {
+        headers: {
+          "Authorization": `Bearer ${managementKey}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text().catch(() => "");
+        throw new Error(`HTTP ${resp.status}: ${errorText.substring(0, 200)}`);
+      }
+
+      const data = await resp.json();
+      return {
+        connected: true,
+        baseUrl,
+        files: data,
+      };
+    } catch (err: any) {
+      return {
+        connected: false,
+        baseUrl,
+        error: err.message,
+        files: [],
+      };
+    }
+  }
+
   private getProxyPort(): number {
     try {
       const dataDir = this.getRosettaDataDir();
@@ -1113,9 +1299,11 @@ export class AgentAccountService {
    * Exchange refreshToken for access_token, then call Google's loadCodeAssist
    * API to discover the cloudaicompanionProject (projectId).
    */
-  private async discoverProjectId(refreshToken: string): Promise<string> {
-    const clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-    const clientSecret = "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";
+  private async discoverProjectId(
+    refreshToken: string,
+    clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    clientSecret = "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",
+  ): Promise<string> {
 
     // 1. Exchange refreshToken for access_token
     const tokenResp = await fetch("https://oauth2.googleapis.com/token", {

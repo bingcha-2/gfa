@@ -154,4 +154,19 @@ export class AgentAccountController {
     }
     return this.agentAccountService.uploadToRosetta(body.ids);
   }
+
+  /** Upload accounts to remote CLIProxyAPI via management API. */
+  @Post("upload-cliproxy")
+  uploadToCliProxy(@Body() body: { ids: string[]; clientId?: string; clientSecret?: string }) {
+    if (!body.ids || body.ids.length === 0) {
+      throw new Error("ids array is required");
+    }
+    return this.agentAccountService.uploadToCliProxy(body.ids, body.clientId, body.clientSecret);
+  }
+
+  /** Query remote CLIProxyAPI status and loaded credentials. */
+  @Get("cliproxy-status")
+  getCliProxyStatus() {
+    return this.agentAccountService.getCliProxyStatus();
+  }
 }

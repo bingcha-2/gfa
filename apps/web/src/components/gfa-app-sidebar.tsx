@@ -252,6 +252,14 @@ export function GfaAppSidebar({
       permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
+    {
+      id: "rosetta-cliproxy",
+      title: "CLIProxy 管理",
+      url: `/${prefix}/rosetta-cliproxy`,
+      icon: <BotIcon />,
+      permKey: "agent_service",
+      roleGuard: () => isAdminOrOps,
+    },
   ];
 
   // Codex (OpenAI) — 看板 + 账号管理
