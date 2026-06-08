@@ -201,7 +201,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "8.6.0";
+    this.minClientVersion = options.minClientVersion ?? "8.7.0";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.tokenUsageTracker = options.tokenUsageTracker || null;
