@@ -207,6 +207,9 @@ export class AdsPowerClient {
         err instanceof Error ? err.message : err
       );
     }
+
+    // Cooldown sleep to ensure the OS/AdsPower completely releases the browser port and socket
+    await sleep(1500);
   }
 
   /**

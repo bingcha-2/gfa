@@ -21,16 +21,19 @@ export function getPrisma(): PrismaClient {
 
 export async function cleanDb() {
   const db = getPrisma();
-  await db.taskLog.deleteMany();
-  await db.auditLog.deleteMany();
-  await db.task.deleteMany();
-  await db.order.deleteMany();
-  await db.redeemCode.deleteMany();
-  await db.familyInvite.deleteMany();
-  await db.familyMember.deleteMany();
-  await db.familyGroup.deleteMany();
-  await db.account.deleteMany();
-  await db.user.deleteMany();
+  await db.taskLog.deleteMany().catch(() => {});
+  await db.auditLog.deleteMany().catch(() => {});
+  await db.task.deleteMany().catch(() => {});
+  await db.swapRecord.deleteMany().catch(() => {});
+  await db.order.deleteMany().catch(() => {});
+  await db.redeemCode.deleteMany().catch(() => {});
+  await db.familyInvite.deleteMany().catch(() => {});
+  await db.familyMember.deleteMany().catch(() => {});
+  await db.transferBatch.deleteMany().catch(() => {});
+  await db.agentAccount.deleteMany().catch(() => {});
+  await db.familyGroup.deleteMany().catch(() => {});
+  await db.account.deleteMany().catch(() => {});
+  await db.user.deleteMany().catch(() => {});
 }
 
 export async function disconnectDb() {

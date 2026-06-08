@@ -35,6 +35,7 @@ function buildLocator(opts: {
     press: vi.fn().mockResolvedValue(undefined),
     selectOption: opts.selectOption ?? vi.fn().mockResolvedValue(undefined),
     textContent: vi.fn().mockResolvedValue(opts.textContent ?? ""),
+    innerText: vi.fn().mockResolvedValue(opts.textContent ?? ""),
     waitFor: vi.fn().mockResolvedValue(undefined),
     isVisible: vi.fn().mockResolvedValue((opts.count ?? 0) > 0),
     evaluate: vi.fn().mockResolvedValue(undefined),
@@ -407,6 +408,58 @@ describe("gmailLogin — phone challenge with skipPhoneChallengeManualWait", () 
     if (!result.success) {
       expect(result.reason).toBe("PHONE_CHALLENGE");
       expect(result.detail).toContain("Phone/SMS verification required");
+    }
+  });
+});
+
+describe("gmailLogin — immediate identifier error detection", () => {
+  it("exits early with VERIFICATION_REQUIRED when a Google account error is visible on the identifier step", async () => {
+    const errorText = "Couldn't find your Google Account";
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com/signin/v2/identifier",
+      ],
+      locatorOverrides: {
+        "email": buildLocator({ count: 1 }),
+        "B376fe": buildLocator({ count: 1, textContent: errorText }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      { loginEmail: "wrong-email@gmail.com", loginPassword: "pw" },
+      buildMockLogger()
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("VERIFICATION_REQUIRED");
+      expect(result.detail).toContain(errorText);
+    }
+  });
+
+  it("exits early with ACCOUNT_LOCKED when a suspended/disabled error is visible on the identifier step", async () => {
+    const errorText = "This account has been disabled";
+    const page = buildMockPage({
+      urlSequence: [
+        "https://accounts.google.com/signin/v2/identifier",
+      ],
+      locatorOverrides: {
+        "email": buildLocator({ count: 1 }),
+        "B376fe": buildLocator({ count: 1, textContent: errorText }),
+      },
+    });
+
+    const result = await gmailLogin(
+      page,
+      { loginEmail: "disabled-email@gmail.com", loginPassword: "pw" },
+      buildMockLogger()
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("ACCOUNT_LOCKED");
+      expect(result.detail).toContain(errorText);
     }
   });
 });

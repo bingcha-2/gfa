@@ -970,7 +970,7 @@ async function handleReAuth(
       await page.waitForTimeout((remaining + 1) * 1000);
     } else {
       const remaining = totpSecondsRemaining();
-      if (remaining < 5) {
+      if (remaining < 8) {
         await page.waitForTimeout((remaining + 1) * 1000);
       }
     }
@@ -1202,7 +1202,7 @@ export async function handleAcceptInvite(
               await page.waitForTimeout((remaining + 1) * 1000);
             } else {
               const remaining = totpSecondsRemaining();
-              if (remaining < 5) {
+              if (remaining < 8) {
                 await page.waitForTimeout((remaining + 1) * 1000);
               }
             }

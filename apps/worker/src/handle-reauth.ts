@@ -242,6 +242,7 @@ export async function handleReAuth(
     currentUrl.includes("challenge/sk") ||
     currentUrl.includes("challenge/dp") ||
     currentUrl.includes("challenge/ipp") ||
+    currentUrl.includes("challenge/bc") ||
     hasPhonePromptText
   ) {
     const tryAnotherWay = page.locator([
@@ -454,8 +455,19 @@ async function _handleChallengeSelection(
   // Priority 1: data-challengetype="6" (TOTP / Google Authenticator)
   const totpOption = page.locator(CHALLENGE_TOTP_DATA);
   if ((await totpOption.count()) > 0) {
-    await totpOption.first().click();
-    await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (data-challengetype)`);
+    const option = totpOption.first();
+    try {
+      await option.click({ timeout: 3000 });
+      await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (data-challengetype)`);
+    } catch (clickErr: any) {
+      await logger.log("WARN", `${logPrefix} Click failed (${clickErr.message}), trying JS click`);
+      await option.evaluate((el: HTMLElement) => {
+        const target =
+          el.closest('[role="link"], [role="button"], li, button, a, div[data-challengetype]') as HTMLElement | null;
+        (target ?? el).click();
+      });
+      await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (data-challengetype) via JS click`);
+    }
     await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     return true;
@@ -464,8 +476,19 @@ async function _handleChallengeSelection(
   // Priority 2: text-based TOTP option
   const totpTextOption = page.locator(CHALLENGE_TOTP_TEXT);
   if ((await totpTextOption.count()) > 0) {
-    await totpTextOption.first().click();
-    await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (text match)`);
+    const option = totpTextOption.first();
+    try {
+      await option.click({ timeout: 3000 });
+      await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (text match)`);
+    } catch (clickErr: any) {
+      await logger.log("WARN", `${logPrefix} Click failed (${clickErr.message}), trying JS click`);
+      await option.evaluate((el: HTMLElement) => {
+        const target =
+          el.closest('[role="link"], [role="button"], li, button, a, div[data-challengetype]') as HTMLElement | null;
+        (target ?? el).click();
+      });
+      await logger.log("INFO", `${logPrefix} Selected TOTP from challenge selection (text match) via JS click`);
+    }
     await page.waitForTimeout(3000);
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     return true;
@@ -504,7 +527,7 @@ async function _handleTotp(
   // (Google rejects reuse of the same code within the same 30s period)
   const remaining = totpSecondsRemaining();
   const secret = credentials.totpSecret!;
-  if (lastUsedTotpWindow() === currentTotpWindow() || remaining < 5) {
+  if (lastUsedTotpWindow() === currentTotpWindow() || remaining < 8) {
     const waitSecs = remaining + 1;
     await logger.log(
       "INFO",

@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Spinner } from "@/components/ui/spinner";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiRequest, getErrorMessage } from "@/lib/client-api";
 import { 
@@ -76,11 +77,26 @@ export default function RosettaCliProxyPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Credentials Configuration
+  const [presetType, setPresetType] = useState<"google_sdk" | "wails_client" | "custom">("google_sdk");
   const [useCustomCreds, setUseCustomCreds] = useState(false);
   const [clientId, setClientId] = useState(
     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
   );
   const [clientSecret, setClientSecret] = useState("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");
+
+  useEffect(() => {
+    if (presetType === "google_sdk") {
+      setUseCustomCreds(false);
+      setClientId("1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com");
+      setClientSecret("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");
+    } else if (presetType === "wails_client") {
+      setUseCustomCreds(true);
+      setClientId("681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com");
+      setClientSecret("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");
+    } else if (presetType === "custom") {
+      setUseCustomCreds(true);
+    }
+  }, [presetType]);
 
   // Actions
   const [uploading, setUploading] = useState(false);
@@ -343,67 +359,92 @@ export default function RosettaCliProxyPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">使用自定义客户端凭证</span>
-                  <span className="text-xs text-muted-foreground">
-                    若关闭，将默认使用内置的谷歌 Cloud SDK 官方凭证
-                  </span>
-                </div>
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="custom-creds-toggle"
-                    className="size-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    checked={useCustomCreds}
-                    onChange={(e) => setUseCustomCreds(e.target.checked)}
+            <div className="flex flex-col gap-4 rounded-lg border border-border bg-muted/20 p-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-semibold text-foreground">选择凭证预设</label>
+                <Select
+                  value={presetType}
+                  onValueChange={(value) => setPresetType(value as "google_sdk" | "wails_client" | "custom")}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择凭证类型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="google_sdk">谷歌 SDK 官方客户端凭证 (内置默认)</SelectItem>
+                    <SelectItem value="wails_client">BingchaAI Wails 客户端凭证 (推荐)</SelectItem>
+                    <SelectItem value="custom">自定义凭证输入</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-3 pt-3 border-t border-border mt-1">
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-muted-foreground">Client ID</label>
+                    {presetType !== "custom" && (
+                      <span className="text-[10px] text-indigo-500 font-medium bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded">
+                        只读预设
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    placeholder="谷歌 OAuth Client ID"
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    disabled={presetType !== "custom"}
+                    className="font-mono text-xs disabled:opacity-85 disabled:bg-muted/50 disabled:text-muted-foreground"
                   />
-                  <label htmlFor="custom-creds-toggle" className="ml-2 text-sm font-medium cursor-pointer select-none">
-                    自定义
-                  </label>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-muted-foreground">Client Secret</label>
+                    {presetType !== "custom" && (
+                      <span className="text-[10px] text-indigo-500 font-medium bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded">
+                        只读预设
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    type="password"
+                    placeholder="谷歌 OAuth Client Secret"
+                    value={clientSecret}
+                    onChange={(e) => setClientSecret(e.target.value)}
+                    disabled={presetType !== "custom"}
+                    className="font-mono text-xs disabled:opacity-85 disabled:bg-muted/50 disabled:text-muted-foreground"
+                  />
                 </div>
               </div>
 
-              {useCustomCreds && (
-                <div className="grid gap-3 pt-3 border-t border-border mt-2 animate-in fade-in duration-200">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-muted-foreground">Client ID</label>
-                    <Input
-                      placeholder="输入谷歌 OAuth Client ID"
-                      value={clientId}
-                      onChange={(e) => setClientId(e.target.value)}
-                      className="font-mono text-xs"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-muted-foreground">Client Secret</label>
-                    <Input
-                      type="password"
-                      placeholder="输入谷歌 OAuth Client Secret"
-                      value={clientSecret}
-                      onChange={(e) => setClientSecret(e.target.value)}
-                      className="font-mono text-xs"
-                    />
-                  </div>
-                  <div className="text-[11px] text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/20 p-2.5 rounded border border-amber-200 dark:border-amber-900/50 flex items-start gap-1.5 mt-1 leading-normal">
-                    <ShieldAlertIcon className="size-4 shrink-0 text-amber-500 mt-0.5" />
-                    <span>
-                      注意：项目 ID 探测接口（discoverProjectId）会使用该凭证获取 Access Token。请确保您填写的凭证拥有对该子号进行授权的权限范围（Scopes）。
-                    </span>
+              {presetType === "google_sdk" && (
+                <div className="text-xs text-muted-foreground bg-emerald-50/30 dark:bg-emerald-950/10 p-3 rounded-md border border-emerald-500/20 flex items-start gap-2 leading-relaxed mt-1">
+                  <ShieldCheckIcon className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-foreground">模式：谷歌 Cloud SDK 官方凭证</span>
+                    <p className="mt-1 text-[11px]">
+                      将使用内置的官方 Google SDK Client ID 进行项目名探测。适用于直接通过官方 Google Cloud CLI 流程获取 token 的子号。
+                    </p>
                   </div>
                 </div>
               )}
 
-              {!useCustomCreds && (
-                <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-md border border-border/50 flex items-start gap-2 leading-relaxed">
-                  <ShieldCheckIcon className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+              {presetType === "wails_client" && (
+                <div className="text-xs text-muted-foreground bg-indigo-50/30 dark:bg-indigo-950/10 p-3 rounded-md border border-indigo-500/20 flex items-start gap-2 leading-relaxed mt-1">
+                  <ShieldCheckIcon className="size-4 text-indigo-500 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-semibold text-foreground">当前运行模式：系统默认官方凭证</span>
-                    <p className="mt-1">
-                      将使用内置的官方 Google SDK Client ID 进行凭证配置和项目名探测。此模式无需手动填写，通常能最高效兼容大部分录入子号。
+                    <span className="font-semibold text-foreground">模式：BingchaAI Wails 客户端凭证</span>
+                    <p className="mt-1 text-[11px]">
+                      已自动填充 BingchaAI 专用的 Client ID 与 Secret。如果您的大部分子号是通过 BingchaAI Wails 客户端等自定义客户端抓取的 Refresh Token，请务必选用此项，以避免 Google OAuth 400 (unauthorized_client) 报错。
                     </p>
                   </div>
+                </div>
+              )}
+
+              {presetType === "custom" && (
+                <div className="text-[11px] text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/20 p-2.5 rounded border border-amber-200 dark:border-amber-900/50 flex items-start gap-1.5 mt-1 leading-normal">
+                  <ShieldAlertIcon className="size-4 shrink-0 text-amber-500 mt-0.5" />
+                  <span>
+                    提示：项目 ID 探测接口（discoverProjectId）会使用您填写的自定义 Client ID 与 Secret 换取 Access Token。请确保该子号的 Refresh Token 确实是由对应的 Client ID 申请而来的。
+                  </span>
                 </div>
               )}
             </div>

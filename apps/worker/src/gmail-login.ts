@@ -137,6 +137,73 @@ export interface GmailLoginOptions {
   skipCaptchaManualWait?: boolean;
 }
 
+/**
+ * Detect visible input errors on Google's email/identifier page.
+ */
+async function checkIdentifierError(page: Page, logger: TaskLogger): Promise<GmailLoginResult | null> {
+  const errorSelectors = [
+    'div[jsname="B376fe"]',
+    '#error',
+    '[aria-live="assertive"]'
+  ];
+  for (const selector of errorSelectors) {
+    const errorEl = page.locator(selector);
+    if ((await errorEl.count()) > 0) {
+      const firstEl = errorEl.first();
+      const isVisible = typeof firstEl.isVisible === "function" ? await firstEl.isVisible().catch(() => false) : false;
+      if (isVisible) {
+        const errorText = (typeof firstEl.innerText === "function" ? await firstEl.innerText().catch(() => "") : "") ||
+                          (typeof firstEl.textContent === "function" ? await firstEl.textContent().catch(() => "") : "");
+        if (errorText && errorText.trim().length > 0) {
+          const cleanText = errorText.trim().replace(/\n/g, " ");
+          await logger.log("WARN", `[gmail-login] Identifier page error detected: "${cleanText}"`);
+          const isLocked = cleanText.includes("disabled") || cleanText.includes("停用") || cleanText.includes("暂停") || cleanText.includes("suspended");
+          return {
+            success: false,
+            reason: isLocked ? "ACCOUNT_LOCKED" : "VERIFICATION_REQUIRED",
+            detail: `Identifier step error: ${cleanText}`
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Detect visible input errors on Google's password page.
+ */
+async function checkPasswordError(page: Page, logger: TaskLogger): Promise<GmailLoginResult | null> {
+  const errorSelectors = [
+    'div[jsname="B376fe"]',
+    '#error',
+    '[aria-live="assertive"]'
+  ];
+  for (const selector of errorSelectors) {
+    const errorEl = page.locator(selector);
+    if ((await errorEl.count()) > 0) {
+      const firstEl = errorEl.first();
+      const isVisible = typeof firstEl.isVisible === "function" ? await firstEl.isVisible().catch(() => false) : false;
+      if (isVisible) {
+        const errorText = (typeof firstEl.innerText === "function" ? await firstEl.innerText().catch(() => "") : "") ||
+                          (typeof firstEl.textContent === "function" ? await firstEl.textContent().catch(() => "") : "");
+        if (errorText && errorText.trim().length > 0) {
+          const cleanText = errorText.trim().replace(/\n/g, " ");
+          await logger.log("WARN", `[gmail-login] Password page error detected: "${cleanText}"`);
+          const isLocked = cleanText.includes("disabled") || cleanText.includes("停用") || cleanText.includes("暂停") || cleanText.includes("suspended");
+          const isWrongPassword = cleanText.includes("Wrong password") || cleanText.includes("密码错误") || cleanText.includes("密碼錯誤") || cleanText.includes("Wrong") || cleanText.includes("错误") || cleanText.includes("錯誤");
+          return {
+            success: false,
+            reason: isLocked ? "ACCOUNT_LOCKED" : "VERIFICATION_REQUIRED",
+            detail: isWrongPassword ? `Wrong password: ${cleanText}` : `Password step error: ${cleanText}`
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export async function gmailLogin(
   page: Page,
   credentials: LoginCredentials,
@@ -175,9 +242,13 @@ export async function gmailLogin(
     // Event-driven: wait for page to leave /identifier OR password/challenge to appear
     await waitForNextState(page, 5000);
 
+    // Run the error check probe immediately
+    const initialErr = await checkIdentifierError(page, logger);
+    if (initialErr) return initialErr;
+
     // Verify the page actually advanced past the email step.
     // If still on identifier page, retry with escalating click methods.
-    for (let nextRetry = 0; nextRetry < 4; nextRetry++) {
+    for (let nextRetry = 0; nextRetry < 2; nextRetry++) {
       if (!page.url().includes("/identifier")) break;
 
       // Before re-clicking, detect if the page is already transitioning.
@@ -187,10 +258,12 @@ export async function gmailLogin(
 
       if (isPageTransitioning) {
         await logger.log("INFO", `[gmail-login] Page is transitioning — waiting for navigation to complete...`);
-        await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 15_000 }).catch(() => {});
-        await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+        await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 5000 }).catch(() => {});
+        await page.waitForLoadState("domcontentloaded", { timeout: 2000 }).catch(() => {});
         if (!page.url().includes("/identifier")) break;
-        // If still on identifier after patient wait, fall through to retry click
+        // If still on identifier after patient wait, check for error again
+        const loopErr = await checkIdentifierError(page, logger);
+        if (loopErr) return loopErr;
       }
 
       await logger.log("WARN", `[gmail-login] Still on identifier page after Next click — retry ${nextRetry + 1}`);
@@ -198,10 +271,14 @@ export async function gmailLogin(
       if ((await retryEmailInput.count()) > 0) {
         await retryEmailInput.first().fill(loginEmail);
       }
-      // Escalate: retry 0 = Enter, retry 1 = JS click, retry 2 = button click
+      // Escalate: retry 0 = Enter, retry 1 = JS click, retry 2 = button click (nextRetry max is 2)
       await clickNext(page, logger, nextRetry + 1, "identifier");
-      await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 8_000 }).catch(() => { });
-      await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => { });
+      await page.waitForURL((url) => !url.toString().includes("/identifier"), { timeout: 3000 }).catch(() => { });
+      await page.waitForLoadState("domcontentloaded", { timeout: 2000 }).catch(() => { });
+
+      // Check for error after retry click
+      const postClickErr = await checkIdentifierError(page, logger);
+      if (postClickErr) return postClickErr;
     }
 
     // Handle "Something went wrong" error popup (up to 2 rounds).
@@ -367,6 +444,10 @@ export async function gmailLogin(
     await page.waitForURL((url) => url.toString() !== pwdUrl, { timeout: 8000 }).catch(() => {});
     await page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
 
+    // Check if password submission resulted in an input error (e.g. wrong password)
+    const postSubmitPwdErr = await checkPasswordError(page, logger);
+    if (postSubmitPwdErr) return postSubmitPwdErr;
+
     // Step 4: Handle post-login challenges (up to 8 rounds)
     let totpSubmitted = false;
     for (let round = 0; round < 8; round++) {
@@ -398,6 +479,9 @@ export async function gmailLogin(
       // Password page still showing (e.g. Google needed extra time to process)
       // Re-click Next to submit and avoid wasting a round
       if (roundUrl.includes("/challenge/pwd")) {
+        const pwdErr = await checkPasswordError(page, logger);
+        if (pwdErr) return pwdErr;
+
         const pwdInput = page.locator(
           'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])'
         );
@@ -443,6 +527,17 @@ export async function gmailLogin(
           continue;
         }
         return { success: false, reason: "PHONE_CHALLENGE", detail };
+      }
+
+      if (roundUrl.includes("/challenge/bc")) {
+        const detail = `Backup Code verification required at ${roundUrl}`;
+        await logger.log("WARN", `[gmail-login] Backup Code challenge detected: ${detail}`);
+        const waitMs = options.skipPhoneChallengeManualWait ? 0 : manualChallengeWaitMs;
+        const resolved = await waitForManualChallengeResolution(page, logger, "VERIFICATION_REQUIRED", roundUrl, waitMs);
+        if (resolved) {
+          continue;
+        }
+        return { success: false, reason: "VERIFICATION_REQUIRED", detail };
       }
 
       // Recovery email challenge detection
@@ -624,7 +719,8 @@ export async function gmailLogin(
         if (!handled) {
           const detail = `Challenge selection page with no automated option at ${roundUrl}`;
           await logger.log("WARN", `[gmail-login] Cannot auto-select challenge: ${detail}`);
-          const resolved = await waitForManualChallengeResolution(page, logger, "VERIFICATION_REQUIRED", roundUrl, manualChallengeWaitMs);
+          const waitMs = options.skipPhoneChallengeManualWait ? 0 : manualChallengeWaitMs;
+          const resolved = await waitForManualChallengeResolution(page, logger, "VERIFICATION_REQUIRED", roundUrl, waitMs);
           if (resolved) {
             continue;
           }
@@ -753,8 +849,10 @@ async function clickNext(
     // Find the first VISIBLE button to avoid clicking hidden step buttons
     let btn = nextButton.first();
     for (let i = 0; i < await nextButton.count(); i++) {
-      if (await nextButton.nth(i).isVisible().catch(() => false)) {
-        btn = nextButton.nth(i);
+      const nthBtn = nextButton.nth(i);
+      const isVisible = typeof nthBtn.isVisible === "function" ? await nthBtn.isVisible().catch(() => false) : true;
+      if (isVisible) {
+        btn = nthBtn;
         break;
       }
     }
@@ -828,7 +926,7 @@ async function handleTotp(
   //  - forceNewCode=true (retry): always wait for next 30s window
   //  - forceNewCode=false (first): only wait if about to expire (<5s)
   const remaining = totpSecondsRemaining();
-  if (forceNewCode || remaining < 5) {
+  if (forceNewCode || remaining < 8) {
     const waitSecs = remaining + 1;
     await logger.log("INFO", `[gmail-login] Waiting ${waitSecs}s for fresh TOTP`);
     await page.waitForTimeout(waitSecs * 1000);
@@ -1211,21 +1309,51 @@ async function handleChallengeSelection(
     // Fallback: look for text-based TOTP option
     await logger.log("INFO", "[gmail-login] No data-challengetype=6, trying text-based TOTP selectors...");
     const totpTextOption = page.locator([
+      // EN
       'li:has-text("Google Authenticator")',
       'li:has-text("Authenticator")',
-      'li:has-text("authenticator")',
+      'li:has-text("verification code")',
+      // 简中
       'li:has-text("身份验证器")',
+      'li:has-text("验证器")',
+      'li:has-text("验证码")',
+      // 繁中
       'li:has-text("驗證器")',
+      'li:has-text("驗證碼")',
+      // 日本語
+      'li:has-text("認証システム")',
+      'li:has-text("確認コード")',
+      // 한국어
+      'li:has-text("Google OTP")',
+      'li:has-text("인증 앱")',
+      'li:has-text("인증기")',
+      'li:has-text("인증 코드")',
+      // Tiếng Việt
+      'li:has-text("Trình xác thực")',
+      'li:has-text("Mã xác minh")',
+      // div[role="link"] variants (same keywords)
       'div[role="link"]:has-text("Google Authenticator")',
       'div[role="link"]:has-text("Authenticator")',
       'div[role="link"]:has-text("身份验证器")',
+      'div[role="link"]:has-text("驗證器")',
+      'div[role="link"]:has-text("認証システム")',
+      'div[role="link"]:has-text("Google OTP")',
+      'div[role="link"]:has-text("Trình xác thực")',
+      // <a> variants
       'a:has-text("Google Authenticator")',
       'a:has-text("Authenticator")',
-      'div:has-text("Google Authenticator")',
-      'span:has-text("Google Authenticator")',
-      'li:has-text("verification code")',
-      'li:has-text("验证码")',
-      'li:has-text("驗證碼")',
+      'a:has-text("認証システム")',
+      'a:has-text("Google OTP")',
+      // Plain div variants (Google sometimes renders options as plain divs with jscontroller)
+      'div[jscontroller]:has-text("Google Authenticator")',
+      'div[jscontroller]:has-text("Authenticator")',
+      'div[jscontroller]:has-text("身份验证器")',
+      'div[jscontroller]:has-text("验证器")',
+      'div[jscontroller]:has-text("驗證器")',
+      'div[jscontroller]:has-text("認証システム")',
+      'div[jscontroller]:has-text("Google OTP")',
+      'div[jscontroller]:has-text("인증 앱")',
+      'div[jscontroller]:has-text("Trình xác thực")',
     ].join(", "));
     const textCount = await totpTextOption.count();
     await logger.log("INFO", `[gmail-login] Text-based TOTP option count: ${textCount}`);

@@ -538,7 +538,7 @@ export async function removeMemberOnPage(
           await page.waitForTimeout((remaining + 1) * 1000);
         } else {
           const remaining = totpSecondsRemaining();
-          if (remaining < 5) {
+          if (remaining < 8) {
             await logger.log("INFO", `[remove] Waiting ${remaining + 1}s for fresh TOTP code`);
             await page.waitForTimeout((remaining + 1) * 1000);
           }

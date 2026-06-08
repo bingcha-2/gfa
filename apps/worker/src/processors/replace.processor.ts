@@ -1153,7 +1153,7 @@ async function removeMemberOnPage(
       } else {
         // Different window, but still check if code is about to expire
         const remaining = totpSecondsRemaining();
-        if (remaining < 5) {
+        if (remaining < 8) {
           await logger.log("INFO", `Waiting ${remaining + 1}s for fresh TOTP code`);
           await page.waitForTimeout((remaining + 1) * 1000);
         }

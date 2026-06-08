@@ -24,7 +24,29 @@ export class WorkerBrowser {
    * @param cdpUrl  Chromium CDP debug websocket URL from AdsPower
    */
   async connect(cdpUrl: string): Promise<Page> {
-    this.browser = await chromium.connectOverCDP(cdpUrl);
+    let lastError: any = null;
+    const maxAttempts = 5;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        this.browser = await chromium.connectOverCDP(cdpUrl);
+        lastError = null;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[browser] CDP connection attempt ${attempt}/${maxAttempts} failed: ${errMsg}.`
+        );
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    }
+
+    if (lastError || !this.browser) {
+      throw new Error(`[browser] Failed to connect to AdsPower browser over CDP after ${maxAttempts} attempts. Last error: ${lastError ? (lastError.message || lastError) : "No browser instance created"}`);
+    }
 
     // AdsPower always has at least one context with one page
     const contexts = this.browser.contexts();
