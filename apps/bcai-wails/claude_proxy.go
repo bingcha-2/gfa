@@ -216,6 +216,10 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "lease 失败:" + err.Error()
+		// 卡额度用完 → 给 IDE 标准 429 + Retry-After(让它退避/停),而非 502(会被当临时故障狂试)。
+		if writeQuotaExhausted(w, err) {
+			return
+		}
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Claude token lease failed: %v", err))
 		return
 	}
@@ -292,8 +296,12 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		// 解析 5h/周额度窗口(从这次真实 200 响应头),随上报回服务端 → 血条。零额外请求。
 		fillClaudeWindows(&details, resp.Header)
 		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
-		// 喂本地 dashboard 统计(今日输入/输出 Token);对齐 codex_proxy。漏了它 claude 的 token 永远显示 0。
-		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens)
+		audit.cachedTokens = details.CachedInputTokens
+		audit.billableTokens = claudeDisplayBillable(details.RawTotalTokens, details.CachedInputTokens)
+		// 喂本地 dashboard 统计(今日输入/输出 Token + 成功请求数);对齐 codex_proxy。
+		// 此前漏了 AddGeneration → claude 成功不计入"今日请求(成功)",面板恒显 0。
+		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+		GetUsageStats().AddGeneration()
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 		return
 	}
@@ -314,7 +322,10 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		fillClaudeWindows(&details, resp.Header)
 		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
-		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens)
+		audit.cachedTokens = details.CachedInputTokens
+		audit.billableTokens = claudeDisplayBillable(details.RawTotalTokens, details.CachedInputTokens)
+		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+		GetUsageStats().AddGeneration() // 计入"今日请求(成功)",对齐流式分支
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 	} else {
 		audit.note = "上游错误"
@@ -339,6 +350,9 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 	lease, err := p.lease()(card, deviceId, false, nil, upstreamProxy)
 	if err != nil {
 		audit.note = "lease 失败:" + err.Error()
+		if writeQuotaExhausted(w, err) {
+			return
+		}
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Claude token lease failed: %v", err))
 		return
 	}

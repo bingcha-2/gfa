@@ -53,6 +53,26 @@ func isCodexModel(modelKey string) bool {
 	return strings.HasPrefix(k, "gpt") || strings.Contains(k, "codex")
 }
 
+// formatTokens 把 token 数格式化为 K/M/B 阶梯(最小单位 K,<1K 也显示 0.xxK)。
+// 整数不带小数,非整数保留两位小数;0 → "0"。与前端 lib/utils.ts 口径一致。
+// 例:842→"0.84K" · 1200→"1.20K" · 12000→"12K" · 1.50M · 3.45B
+func formatTokens(n int64) string {
+	if n <= 0 {
+		return "0"
+	}
+	v, unit := float64(n)/1000, "K"
+	switch {
+	case n >= 1_000_000_000:
+		v, unit = float64(n)/1e9, "B"
+	case n >= 1_000_000:
+		v, unit = float64(n)/1e6, "M"
+	}
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d%s", int64(v), unit)
+	}
+	return fmt.Sprintf("%.2f%s", v, unit)
+}
+
 // CheckLocalQuota 在 lease 之前调用，检查本地额度是否充足
 // 返回 (ok, waitMs, reason)
 func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
@@ -92,14 +112,14 @@ func (l *Leaser) CheckLocalQuota(modelKey string) (bool, int64, string) {
 	if isGeminiModel(modelKey) {
 		if q.GeminiTokenLimit > 0 && q.GeminiTokensUsed >= q.GeminiTokenLimit {
 			return false, resetMs, fmt.Sprintf(
-				"Gemini 额度已用尽 (%d/%d tokens)，%d分钟后恢复",
-				q.GeminiTokensUsed, q.GeminiTokenLimit, resetMs/60000)
+				"Gemini 额度已用尽 (%s/%s)，%d分钟后恢复",
+				formatTokens(q.GeminiTokensUsed), formatTokens(q.GeminiTokenLimit), resetMs/60000)
 		}
 	} else {
 		if q.OpusTokenLimit > 0 && q.OpusTokensUsed >= q.OpusTokenLimit {
 			return false, resetMs, fmt.Sprintf(
-				"Opus 额度已用尽 (%d/%d tokens)，%d分钟后恢复",
-				q.OpusTokensUsed, q.OpusTokenLimit, resetMs/60000)
+				"Opus 额度已用尽 (%s/%s)，%d分钟后恢复",
+				formatTokens(q.OpusTokensUsed), formatTokens(q.OpusTokenLimit), resetMs/60000)
 		}
 	}
 	return true, 0, ""
@@ -179,7 +199,7 @@ func recordAccountBuckets(body []byte) {
 		return
 	}
 	for bucket, q := range resp.AccountBuckets {
-		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
+		recordAccountBucketFraction(bucket, q.Fraction, q.ResetAt)
 	}
 }
 
@@ -197,7 +217,7 @@ func recordFairShareQuota(body []byte) {
 		return
 	}
 	for bucket, q := range resp.FairShareQuota {
-		recordBoundFractionForBucket(bucket, q.Fraction, q.ResetAt)
+		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt)
 	}
 }
 

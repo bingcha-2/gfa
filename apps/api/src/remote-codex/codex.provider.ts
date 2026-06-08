@@ -1,8 +1,8 @@
 import * as path from "path";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
-import type { CreditDelta, Provider } from "../lease-core/provider";
-import { UNIVERSAL_BILLING } from "../token-server/token-billing";
+import type { Provider } from "../lease-core/provider";
+import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-billing";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { CodexAccount, refreshCodexAccessToken } from "./auth/codex-token-provider";
 import { CodexModelCatalog } from "./codex-model-catalog";
@@ -115,15 +115,30 @@ export class CodexProvider implements Provider<CodexAccount> {
     };
   }
 
+  /** 统一水位提取:codex 一个账号级 5h+周窗口,modelKey="codex"。 */
+  quotaSnapshotInputs(account: CodexAccount) {
+    const a = account as Record<string, unknown>;
+    if (typeof a.codexHourlyPercent !== "number" && typeof a.codexWeeklyPercent !== "number") return [];
+    return [
+      {
+        modelKey: "codex",
+        hourlyPercent: typeof a.codexHourlyPercent === "number" ? a.codexHourlyPercent : null,
+        weeklyPercent: typeof a.codexWeeklyPercent === "number" ? a.codexWeeklyPercent : null,
+        hourlyResetAt: parseSnapshotDate(a.codexHourlyResetTime),
+        weeklyResetAt: parseSnapshotDate(a.codexWeeklyResetTime),
+      },
+    ];
+  }
+
   /**
    * Apply a client-reported Codex quota snapshot (from chatgpt.com
    * /backend-api/wham/accounts/check): hourly(5h) + weekly remaining percentages.
    * Codex has no per-model quota upstream, so the binding (more restrictive)
    * window maps to a single synthetic "codex" model-quota fraction — fuzzy-matched
    * by every codex model key in scoreAccount/cooldown. Raw percentages are kept
-   * for console display. No credits concept → creditDelta is always null.
+   * for console display. No credits concept.
    */
-  applyQuotaSnapshot(account: CodexAccount, quota: any): { account: CodexAccount; creditDelta: CreditDelta | null } {
+  applyQuotaSnapshot(account: CodexAccount, quota: any): { account: CodexAccount } {
     const acc = account as Record<string, unknown>;
     if (quota?.planType && typeof quota.planType === "string") {
       account.planType = quota.planType;
@@ -156,6 +171,6 @@ export class CodexProvider implements Provider<CodexAccount> {
       acc.codexHourlyResetTime = hourlyReset;
       acc.codexWeeklyResetTime = weeklyReset;
     }
-    return { account, creditDelta: null };
+    return { account };
   }
 }

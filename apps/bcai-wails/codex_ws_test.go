@@ -59,23 +59,24 @@ func TestSkipCodexWSHeader(t *testing.T) {
 
 func TestParseCodexWSUsage(t *testing.T) {
 	cases := []struct {
-		name           string
-		body           string
-		in, out, total int64
-		ok             bool
+		name                   string
+		body                   string
+		in, out, cached, total int64
+		ok                     bool
 	}{
-		{"顶层 usage", `{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, 10, 5, 15, true},
-		{"嵌套 response.usage", `{"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}`, 7, 3, 10, true},
-		{"total 缺失靠 in+out 推导", `{"usage":{"input_tokens":4,"output_tokens":6}}`, 4, 6, 10, true},
-		{"无 usage", `{"type":"response.output_text.delta","delta":"hi"}`, 0, 0, 0, false},
-		{"非 JSON", `not json`, 0, 0, 0, false},
+		{"顶层 usage", `{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, 10, 5, 0, 15, true},
+		{"嵌套 response.usage", `{"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}`, 7, 3, 0, 10, true},
+		{"total 缺失靠 in+out 推导", `{"usage":{"input_tokens":4,"output_tokens":6}}`, 4, 6, 0, 10, true},
+		{"缓存 cached_tokens", `{"usage":{"input_tokens":900,"input_tokens_details":{"cached_tokens":700},"output_tokens":10,"total_tokens":910}}`, 900, 10, 700, 910, true},
+		{"无 usage", `{"type":"response.output_text.delta","delta":"hi"}`, 0, 0, 0, 0, false},
+		{"非 JSON", `not json`, 0, 0, 0, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			in, out, total, ok := parseCodexWSUsage([]byte(c.body))
-			if ok != c.ok || in != c.in || out != c.out || total != c.total {
-				t.Fatalf("got in=%d out=%d total=%d ok=%v, want in=%d out=%d total=%d ok=%v",
-					in, out, total, ok, c.in, c.out, c.total, c.ok)
+			in, out, cached, total, ok := parseCodexWSUsage([]byte(c.body))
+			if ok != c.ok || in != c.in || out != c.out || cached != c.cached || total != c.total {
+				t.Fatalf("got in=%d out=%d cached=%d total=%d ok=%v, want in=%d out=%d cached=%d total=%d ok=%v",
+					in, out, cached, total, ok, c.in, c.out, c.cached, c.total, c.ok)
 			}
 		})
 	}

@@ -60,6 +60,8 @@ export type LeaseHttpErrorClass = new (statusCode: number, message: string, body
 
 export type LeaseServiceOptions = {
   accessKeysFilePath?: string;
+  /** Shared AccessKeyStore injected so all product pools share one usage cache. */
+  accessKeyStore?: AccessKeyStore;
   now?: () => number;
   randomId?: () => string;
   minClientVersion?: string;
@@ -190,7 +192,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const dataDir = defaultRemoteAccessDataDir();
     this.provider = provider;
     this.accountsFilePath = provider.accountsFilePath;
-    this.accessKeyStore = new AccessKeyStore(
+    // A single shared AccessKeyStore can be injected so all product pools record
+    // a universal card's usage into one cache/file — separate per-pool stores
+    // blind-overwrite each other's usage events, so per-card limits never trip.
+    this.accessKeyStore = options.accessKeyStore || new AccessKeyStore(
       options.accessKeysFilePath || `${dataDir}/access-keys.json`,
       provider.billing,
     );
@@ -384,6 +389,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // product 必传:用量事件按复合桶 `<product>-<family>` 记录(recordUsage 用 provider.id),
       // bucketLimits 也按复合桶配置;不传则 enforce 退化成 bare family,与两者都对不上。
       product: this.provider.id,
+      // 绑定卡:限额窗口对齐绑定账号的上游刷新窗口(每桶);号池卡返回 0 → 走固定周期。
+      alignedResetAt: (record: any) => this.boundAccountResetAt(record, modelKey),
     });
     // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
     if (auth.limitExceeded) {
@@ -446,6 +453,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let lastError: Error | null = null;
     let account: TAccount | null = null;
     let accessToken = "";
+    let rotated = false;
 
     this.cleanupExpiredLeases();
     const leaseIndex = this.buildActiveLeaseIndex();
@@ -469,7 +477,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       if (!account) break;
 
       try {
+        const refreshBefore = (account as any).refreshToken;
         accessToken = await this.provider.refreshToken(account);
+        rotated = refreshBefore !== (account as any).refreshToken;
         const runtime = this.ensureRuntime(account.id);
         runtime.consecutiveErrors = 0;
         lastError = null;
@@ -491,6 +501,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
+    // A rotated refresh_token is the one field we can't afford to lose to the
+    // debounce window — persist it now so a crash can't strand it in memory.
+    if (rotated) this.flushAccounts();
+    // A successful lease means the account is alive again — clear any persisted
+    // dead verdict so it doesn't get re-marked on the next restart.
+    this.clearPersistedAccountError(account.id);
     const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, boundAccountId, accessToken);
     this.leases.set(lease.leaseId, lease);
     this.rememberAffinity(clientId, modelKey, account.id);
@@ -523,7 +539,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accessKeySessionId,
       sessionId: accessKeySessionId,
       sessionExpiresAt: auth.record.sessionExpiresAt || "",
-      accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+      // 绑定卡:把账号对齐的窗口 reset 下发,客户端本地额度窗口据此与服务端对齐(号池卡为 0,不改)。
+      accessKeyStatus: this.accessKeyStore.publicStatus(auth.record, this.boundAccountResetAt(auth.record, modelKey)),
       accountId: account.id,
       emailHint: maskEmail(account.email),
       // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
@@ -558,6 +575,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * a missing/disabled/auth-broken account gets a distinct message so the user
    * doesn't wait forever for a recovery that will never come.
    */
+  /**
+   * For a BOUND card, the upstream reset time of its bound account for this
+   * model — the boundary the card's limit window aligns to. Pool cards (no
+   * binding) return 0 so the store falls back to a fixed-period window; a bound
+   * account with no learned reset yet also returns 0 (fixed-period until known).
+   */
+  private boundAccountResetAt(record: any, modelKey: string): number {
+    const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
+    if (!boundId) return 0;
+    const account = this.readAccounts().find((a) => a.id === boundId);
+    if (!account) return 0;
+    return getModelQuotaResetAt(account as any, modelKey);
+  }
+
   private boundUnavailableMessage(boundAccountId: number): string {
     const acct = this.readAccounts().find((a) => a.id === boundAccountId);
     if (!acct || (acct as any).enabled === false) {
@@ -928,37 +959,97 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.markAccountsDirty();
   }
 
-  /** Flush dirty accounts to disk. Discards buffer if external modification detected. */
+  /**
+   * Flush dirty accounts to disk. If an external writer (e.g. the admin panel)
+   * modified the file after we cached it, MERGE rather than discard: the disk
+   * version is the base (keeps the panel's edits), and our authoritative volatile
+   * token fields are layered back on top. Discarding would drop a freshly-rotated
+   * refresh_token and kill the account a few days later (invalid_grant).
+   */
   flushAccounts(): void {
     if (this._accountsSaveTimer) {
       clearTimeout(this._accountsSaveTimer);
       this._accountsSaveTimer = null;
     }
     if (!this._accountsDirty || !this._cachedAccounts) return;
-
-    try {
-      const currentMtime = fs.statSync(this.accountsFilePath).mtimeMs;
-      if (currentMtime !== this._cachedMtimeMs) {
-        this._cachedAccounts = null;
-        this._accountsDirty = false;
-        this.readAccounts();
-        return;
-      }
-    } catch { /* file deleted, proceed with write to recreate */ }
-
     this._accountsDirty = false;
+
     const previous = readJsonFile(this.accountsFilePath);
-    const value = Array.isArray(previous) ? this._cachedAccounts : { ...previous, accounts: this._cachedAccounts };
+    let externallyChanged = false;
+    try {
+      externallyChanged = fs.statSync(this.accountsFilePath).mtimeMs !== this._cachedMtimeMs;
+    } catch { /* file deleted → recreate from our buffer */ }
+
+    let accounts: unknown[] = this._cachedAccounts;
+    if (externallyChanged) {
+      const diskAccounts = Array.isArray(previous)
+        ? previous
+        : Array.isArray(previous.accounts) ? previous.accounts : [];
+      accounts = this.mergeAccountTokenFields(diskAccounts, this._cachedAccounts);
+    }
+
+    const value = Array.isArray(previous) ? accounts : { ...previous, accounts };
     writeJsonFile(this.accountsFilePath, value);
-    try { this._cachedMtimeMs = fs.statSync(this.accountsFilePath).mtimeMs; } catch { /* noop */ }
+
+    // Re-sync the cache from what we just wrote (normalized) and record its mtime,
+    // so cache == disk and the next external-change check is accurate.
+    this._cachedAccounts = null;
+    this.readAccounts();
+  }
+
+  /**
+   * Overlay each in-memory account's volatile token fields onto the external
+   * (disk) version. Disk is the base so the panel's non-token edits survive;
+   * token fields come from memory so a just-rotated refresh_token is never lost.
+   * Accounts present only in memory (added in-process) are appended.
+   */
+  private mergeAccountTokenFields(diskAccounts: unknown[], memAccounts: TAccount[]): unknown[] {
+    const TOKEN_FIELDS = ["accessToken", "accessTokenExpiresAt", "refreshToken"];
+    const memById = new Map<number, any>();
+    for (const a of memAccounts as any[]) memById.set(Number(a.id), a);
+    const seen = new Set<number>();
+    const merged: unknown[] = [];
+    for (const disk of diskAccounts as any[]) {
+      const id = Number(disk?.id);
+      seen.add(id);
+      const mem = memById.get(id);
+      if (!mem) { merged.push(disk); continue; }
+      const out: any = { ...disk };
+      for (const f of TOKEN_FIELDS) {
+        if (mem[f] !== undefined) out[f] = mem[f];
+      }
+      merged.push(out);
+    }
+    for (const mem of memAccounts as any[]) {
+      if (!seen.has(Number(mem.id))) merged.push(mem);
+    }
+    return merged;
   }
 
   /** Restore persisted tracker state (quota profiles, fair-share windows) before
    * the app starts serving. Nest awaits this, so first requests see real budgets
    * and cross-restart "remaining" instead of defaults. */
   async onModuleInit(): Promise<void> {
+    this.rehydrateAccountStatus();
     try { await this.quotaProfileTracker?.load(); } catch (err) { console.error("[lease-service] quotaProfileTracker load failed:", err); }
     try { await this.fairShareTracker?.load(); } catch (err) { console.error("[lease-service] fairShareTracker load failed:", err); }
+  }
+
+  /**
+   * Restore persisted dead-account verdicts (quotaStatus=error) into runtime on
+   * boot. Without this, a restart wipes the in-memory Map and silently revives
+   * invalid_grant / repeatedly-failing accounts back into the pool — and the
+   * bound-card user is told "额度恢复中" forever instead of "鉴权失效".
+   */
+  private rehydrateAccountStatus(): void {
+    for (const account of this.readAccounts()) {
+      const a = account as any;
+      if (a.quotaStatus !== "error") continue;
+      const state = this.ensureRuntime(account.id);
+      state.quotaStatus = "error";
+      state.quotaStatusReason = String(a.quotaStatusReason || "");
+      state.exhaustedUntil = Number(a.blockedUntil || 0);
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -1189,10 +1280,51 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       state.quotaStatus = "error";
       state.quotaStatusReason = "invalid_grant";
       state.exhaustedUntil = this.now() + TOKEN_REFRESH_FAILURE_COOLDOWN_MS;
+      this.persistQuotaStatus(accountId, state);
     } else if (state.consecutiveErrors >= REMOTE_ACCOUNT_ERROR_THRESHOLD) {
       state.quotaStatus = "error";
       state.quotaStatusReason = "consecutive_errors";
+      this.persistQuotaStatus(accountId, state);
     }
+  }
+
+  /**
+   * Clear a persisted dead verdict after the account leases successfully again
+   * (e.g. a cooled-down account re-auth'd, or the panel re-imported credentials).
+   * Without this, the stale quotaStatus=error on disk would re-mark the (now
+   * healthy) account dead on the next restart. No-op on the common healthy path.
+   */
+  private clearPersistedAccountError(accountId: number) {
+    const acct = this.readAccounts().find((a) => a.id === accountId) as any;
+    if (!acct || acct.quotaStatus !== "error") return;
+    const state = this.ensureRuntime(accountId);
+    state.quotaStatus = "ok";
+    state.quotaStatusReason = "";
+    state.exhaustedUntil = 0;
+    this.mutateAccount(accountId, (a) => {
+      const next: any = { ...a };
+      delete next.quotaStatus;
+      delete next.quotaStatusReason;
+      delete next.blockedUntil;
+      return next as TAccount;
+    });
+    this.flushAccounts();
+  }
+
+  /**
+   * Persist a dead-account verdict (quotaStatus/reason/blockedUntil) to the
+   * accounts file. Runtime state alone is wiped on restart, which silently
+   * revives dead accounts into the pool and leaves the console showing them as
+   * healthy. The status fields ride along on the account record (normalizeAccount
+   * preserves them) and are re-hydrated into runtime on the next boot.
+   */
+  private persistQuotaStatus(accountId: number, state: AccountRuntimeState) {
+    this.mutateAccount(accountId, (a) => ({
+      ...a,
+      quotaStatus: state.quotaStatus,
+      quotaStatusReason: state.quotaStatusReason,
+      blockedUntil: state.exhaustedUntil || 0,
+    } as TAccount));
   }
 
   private cooldownForExhaustion(

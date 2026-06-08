@@ -11,15 +11,17 @@ import (
 
 // DailyRecord 单日用量记录
 type DailyRecord struct {
-	Date          string  `json:"date"` // "2026-05-22"
-	InputTokens   int64   `json:"inputTokens"`
-	OutputTokens  int64   `json:"outputTokens"`
-	CachedTokens  int64   `json:"cachedTokens"`
-	Requests      int64   `json:"requests"`
-	Errors        int64   `json:"errors"`
-	Retries       int64   `json:"retries"`
-	Generations   int64   `json:"generations"`
-	SavedMoneyUSD float64 `json:"savedMoneyUSD"`
+	Date             string  `json:"date"` // "2026-05-22"
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	CachedTokens     int64   `json:"cachedTokens"`     // 缓存读 cache_read
+	CacheWriteTokens int64   `json:"cacheWriteTokens"` // 缓存写 cache_creation(全价计费)
+	BillableTokens   int64   `json:"billableTokens"`   // 计费口径,与服务端 billableTokenUsageTotal 同(缓存读 1/10 折)
+	Requests         int64   `json:"requests"`
+	Errors           int64   `json:"errors"`
+	Retries          int64   `json:"retries"`
+	Generations      int64   `json:"generations"`
+	SavedMoneyUSD    float64 `json:"savedMoneyUSD"`
 }
 
 // HourlyRecord 每小时用量记录
@@ -136,13 +138,29 @@ func (s *UsageStatsStore) getHour() *HourlyRecord {
 
 // AddTokens 添加 token 用量。family(claude/gemini/gpt)决定省钱折算价,
 // 省钱金额按本次增量 in/out * 家族单价累加(不再整段重算单一价)。
-func (s *UsageStatsStore) AddTokens(family string, input, output, cached int64) {
+// cacheRead=缓存读(cache_read);rawTotal=本次 gross 总量(净输入+输出+缓存写+缓存读)。
+// billable 与服务端 billableTokenUsageTotal 同口径(缓存读 1/10 折);
+// 缓存写(cache_creation)= rawTotal − 净输入 − 输出 − 缓存读,gemini/gpt 无此项→0。
+func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, rawTotal int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	billable := rawTotal
+	if cacheRead > 0 {
+		billable = rawTotal - cacheRead + discountedCachedTokens(cacheRead)
+		if billable < 0 {
+			billable = 0
+		}
+	}
+	cacheWrite := rawTotal - input - output - cacheRead
+	if cacheWrite < 0 {
+		cacheWrite = 0
+	}
 	rec := s.getToday()
 	rec.InputTokens += input
 	rec.OutputTokens += output
-	rec.CachedTokens += cached
+	rec.CachedTokens += cacheRead
+	rec.CacheWriteTokens += cacheWrite
+	rec.BillableTokens += billable
 	inP, outP := priceFor(family)
 	rec.SavedMoneyUSD += float64(input)/1_000_000.0*inP + float64(output)/1_000_000.0*outP
 	// 小时记录

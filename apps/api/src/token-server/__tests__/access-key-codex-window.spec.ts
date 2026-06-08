@@ -25,9 +25,9 @@ afterEach(() => {
 const DAY = 24 * 60 * 60 * 1000;
 
 describe("AccessKeyStore — codex billing bucket", () => {
-  function codexStore(tokenWindowLimit: number) {
+  function codexStore(codexLimit: number) {
     fs.writeFileSync(accessKeysPath, JSON.stringify({
-      keys: [{ id: "c", key: "cs", status: "active", provider: "codex", durationMs: 365 * DAY, tokenWindowLimit }],
+      keys: [{ id: "c", key: "cs", status: "active", provider: "codex", durationMs: 365 * DAY, bucketLimits: { "codex-gpt": codexLimit } }],
       updatedAt: "",
     }));
     return new AccessKeyStore(accessKeysPath, CODEX_BILLING);

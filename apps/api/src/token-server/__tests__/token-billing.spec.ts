@@ -5,9 +5,9 @@ import {
   isGeminiModel,
   discountedCachedTokens,
   billableTokenUsageTotal,
+  normalizeUsageToGross,
   resetWindowIfExpired,
   tokenWindowMs,
-  tokenWindowLimit,
   recentTokenUsage,
   tokenWindowResetMs,
   keyExpiresAt,
@@ -104,6 +104,64 @@ describe('billableTokenUsageTotal', () => {
   });
 });
 
+// ── normalizeUsageToGross ────────────────────────────────────────────────────
+// 统一口径:inputTokens 一律 gross(含 cache),cachedInputTokens ⊆ input,
+// rawTotalTokens = inputTokens + outputTokens。按模型家族(claude/gemini/gpt)归一,
+// 不看客户端版本。Claude 上游 input 是 net(不含 cache),需补成 gross。
+
+describe('normalizeUsageToGross', () => {
+  it('claude: net input → gross via rawTotal-output (含 cache_creation)', () => {
+    // Anthropic: input_tokens=100(net), cache_read=80, cache_creation=50, output=10
+    // 客户端上报 rawTotal=240 (=100+10+50+80), inputTokens=100(net), cached=80(cache_read)
+    const out = normalizeUsageToGross(
+      { inputTokens: 100, outputTokens: 10, cachedInputTokens: 80, rawTotalTokens: 240 },
+      'claude-opus-4',
+    );
+    expect(out.inputTokens).toBe(230); // gross = rawTotal - output = 240-10 (含 cache_creation 50)
+    expect(out.cachedInputTokens).toBe(80); // cache_read 不变
+    expect(out.outputTokens).toBe(10);
+    expect(out.rawTotalTokens).toBe(240); // 不变
+  });
+
+  it('claude: rawTotal 缺失时回退 input+cached', () => {
+    const out = normalizeUsageToGross(
+      { inputTokens: 100, outputTokens: 10, cachedInputTokens: 80 },
+      'claude-sonnet-4',
+    );
+    expect(out.inputTokens).toBe(180); // 100 + 80
+    expect(out.rawTotalTokens).toBe(190); // gross + output
+  });
+
+  it('gemini: 已是 gross,clamp cached≤input,rawTotal=input+output', () => {
+    const out = normalizeUsageToGross(
+      { inputTokens: 180, outputTokens: 20, cachedInputTokens: 80 },
+      'gemini-2.5-pro',
+    );
+    expect(out.inputTokens).toBe(180);
+    expect(out.cachedInputTokens).toBe(80);
+    expect(out.rawTotalTokens).toBe(200);
+  });
+
+  it('gpt/codex: cached=0(老客户端)保持不变', () => {
+    const out = normalizeUsageToGross(
+      { inputTokens: 17056, outputTokens: 28, cachedInputTokens: 0 },
+      'gpt-5.5',
+    );
+    expect(out.inputTokens).toBe(17056);
+    expect(out.cachedInputTokens).toBe(0);
+    expect(out.rawTotalTokens).toBe(17084);
+  });
+
+  it('归一后喂 billableTokenUsageTotal:claude cache_read 打 1/10', () => {
+    const claude = normalizeUsageToGross(
+      { inputTokens: 100, outputTokens: 10, cachedInputTokens: 80, rawTotalTokens: 240 },
+      'claude-opus-4',
+    );
+    // 240 - 80 + ceil(80/10) = 168
+    expect(billableTokenUsageTotal(claude, 'claude-opus-4')).toBe(168);
+  });
+});
+
 // ── resetWindowIfExpired ─────────────────────────────────────────────────────
 
 describe('resetWindowIfExpired', () => {
@@ -144,7 +202,7 @@ describe('resetWindowIfExpired', () => {
   });
 });
 
-// ── tokenWindowMs / tokenWindowLimit ─────────────────────────────────────────
+// ── tokenWindowMs ────────────────────────────────────────────────────────────
 
 describe('tokenWindowMs', () => {
   it('should return configured tokenWindowMs', () => {
@@ -157,21 +215,6 @@ describe('tokenWindowMs', () => {
 
   it('should fall back to default', () => {
     expect(tokenWindowMs({})).toBe(DEFAULT_KEY_WINDOW_MS);
-  });
-});
-
-describe('tokenWindowLimit', () => {
-  it('should return explicit tokenWindowLimit', () => {
-    expect(tokenWindowLimit({ tokenWindowLimit: 500000 })).toBe(500000);
-  });
-
-  it('should compute from windowLimit * tokensPerRequest', () => {
-    // windowLimit=300, tokensPerRequest=100_000 → 30_000_000
-    expect(tokenWindowLimit({ windowLimit: 300 })).toBe(30_000_000);
-  });
-
-  it('should return 0 when no limits set', () => {
-    expect(tokenWindowLimit({})).toBe(0);
   });
 });
 

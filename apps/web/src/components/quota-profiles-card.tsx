@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BarChart3Icon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatTokens } from "@/lib/format";
 
 type QuotaProfile = {
   window5h: number;
@@ -12,12 +13,6 @@ type QuotaProfile = {
   samplesWeekly: number;
   lastUpdatedAt: number;
 };
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(Math.round(n));
-}
 
 function timeAgo(ms: number): string {
   if (!ms) return "从未";

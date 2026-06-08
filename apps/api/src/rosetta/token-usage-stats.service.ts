@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 
 import { PrismaService } from "../prisma/prisma.service";
-import { beijingDayKey, beijingDayKeysSince, beijingDayStart } from "../common/beijing-time";
+import { beijingDayKey, beijingDayKeysSince, beijingDayStart, beijingHourOfDay } from "../common/beijing-time";
 import { productOfBucket } from "../lease-core/product-bucket";
 
 /** Product a usage row's bucket belongs to. Composite `<product>-<family>` →
@@ -81,7 +81,7 @@ export class TokenUsageStatsService {
 
   // ── Aggregated view for one card: by day + by model ─────────────────────
 
-  async getCardUsageSummary(opts: { accessKeyId: string; days?: number }) {
+  async getCardUsageSummary(opts: { accessKeyId: string; accountId?: number; days?: number }) {
     const accessKeyId = String(opts.accessKeyId || "").trim();
     const days = Math.max(1, opts.days || 30);
     if (!accessKeyId) {
@@ -90,8 +90,11 @@ export class TokenUsageStatsService {
 
     const since = beijingDayStart(days);
 
+    // accountId scopes to one provider-binding: a card bound across 御三家 has one
+    // account per provider, so usage must be split by account or every provider's
+    // view shows the card's global total (identical-looking charts).
     const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { accessKeyId, timestamp: { gte: since } },
+      where: { accessKeyId, ...(opts.accountId ? { accountId: opts.accountId } : {}), timestamp: { gte: since } },
       select: {
         modelKey: true,
         bucket: true,
@@ -164,28 +167,53 @@ export class TokenUsageStatsService {
     const start = beijingDayStart(0);
     const rows = await this.prisma.cardTokenUsage.findMany({
       where: { timestamp: { gte: start } },
-      select: { bucket: true, totalTokens: true },
+      select: {
+        bucket: true,
+        inputTokens: true,
+        outputTokens: true,
+        cachedInputTokens: true,
+        rawTotalTokens: true,
+        totalTokens: true,
+      },
     });
 
-    let totalTokens = 0;
-    let requests = 0;
+    // `tokens` 是计费口径(billable,缓存读已 1/10 折);拆分出净输入 / 输出 /
+    // 缓存写入(cache_creation,= rawTotal − 净输入 − 输出 − 缓存读,无此项的家族 clamp 到 0) /
+    // 缓存读,让前端能解释"为什么计费 token 比净对话大"。
+    const empty = () => ({
+      tokens: 0,
+      requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+    });
+    const totals = empty();
     const byProvider = {
-      antigravity: { tokens: 0, requests: 0 },
-      codex: { tokens: 0, requests: 0 },
-      anthropic: { tokens: 0, requests: 0 },
+      antigravity: empty(),
+      codex: empty(),
+      anthropic: empty(),
     };
     for (const r of rows) {
-      totalTokens += r.totalTokens;
-      requests += 1;
-      const target = byProvider[bucketProduct(r.bucket)];
-      target.tokens += r.totalTokens;
-      target.requests += 1;
+      const cacheWrite = Math.max(0, r.rawTotalTokens - r.inputTokens - r.outputTokens - r.cachedInputTokens);
+      for (const t of [totals, byProvider[bucketProduct(r.bucket)]]) {
+        t.tokens += r.totalTokens;
+        t.requests += 1;
+        t.inputTokens += r.inputTokens;
+        t.outputTokens += r.outputTokens;
+        t.cacheWriteTokens += cacheWrite;
+        t.cacheReadTokens += r.cachedInputTokens;
+      }
     }
 
     return {
       date: beijingDayKey(new Date()),
-      totalTokens,
-      requests,
+      totalTokens: totals.tokens,
+      requests: totals.requests,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
+      cacheReadTokens: totals.cacheReadTokens,
       byProvider,
     };
   }
@@ -230,6 +258,79 @@ export class TokenUsageStatsService {
     );
 
     return { days, daily, totals };
+  }
+
+  // ── Per-card call frequency by Beijing hour-of-day ──────────────────────
+
+  /**
+   * How often a card is called across the 24 Beijing hours of the day, over the
+   * last N days. Powers a per-card "调用频率" mini-histogram on the dashboard.
+   * Always returns 24 buckets (zero-filled) so the chart axis is stable.
+   */
+  async getHourlyFrequency(opts: { accessKeyId: string; accountId?: number; days?: number }) {
+    const accessKeyId = String(opts.accessKeyId || "").trim();
+    if (!accessKeyId) return { days: 0, byHour: [], totalRequests: 0 };
+
+    const days = Math.max(1, Math.min(90, opts.days || 7));
+    const since = beijingDayStart(days);
+
+    // accountId scopes to one provider-binding (see getCardUsageSummary).
+    const rows = await this.prisma.cardTokenUsage.findMany({
+      where: { accessKeyId, ...(opts.accountId ? { accountId: opts.accountId } : {}), timestamp: { gte: since } },
+      select: { totalTokens: true, timestamp: true },
+    });
+
+    const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, requests: 0, totalTokens: 0 }));
+    for (const r of rows) {
+      const h = beijingHourOfDay(r.timestamp);
+      byHour[h].requests += 1;
+      byHour[h].totalTokens += r.totalTokens;
+    }
+
+    return { days, byHour, totalRequests: rows.length };
+  }
+
+  // ── Per-account daily token trend (all of an account's cards) ───────────
+
+  /**
+   * Daily billable-token trend for a single upstream account over the last N
+   * Beijing days. Reuses the [accountId, timestamp] index. Powers per-account
+   * sparklines on the usage dashboard. Continuous (zero days filled).
+   */
+  async getAccountUsageTrend(opts: { accountId: number; days?: number }) {
+    const accountId = Number(opts.accountId);
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      return { accountId: 0, days: 0, daily: [], totals: { totalTokens: 0, requests: 0 } };
+    }
+
+    const days = Math.max(1, Math.min(90, opts.days || 7));
+    const since = beijingDayStart(days);
+
+    const rows = await this.prisma.cardTokenUsage.findMany({
+      where: { accountId, timestamp: { gte: since } },
+      select: { totalTokens: true, timestamp: true },
+    });
+
+    const map = new Map<string, { totalTokens: number; requests: number }>();
+    for (const r of rows) {
+      const key = beijingDayKey(r.timestamp);
+      const d = map.get(key) || { totalTokens: 0, requests: 0 };
+      d.totalTokens += r.totalTokens;
+      d.requests += 1;
+      map.set(key, d);
+    }
+
+    const daily = beijingDayKeysSince(days).map((date) => {
+      const d = map.get(date) || { totalTokens: 0, requests: 0 };
+      return { date, totalTokens: d.totalTokens, requests: d.requests };
+    });
+
+    const totals = daily.reduce(
+      (a, d) => ({ totalTokens: a.totalTokens + d.totalTokens, requests: a.requests + d.requests }),
+      { totalTokens: 0, requests: 0 },
+    );
+
+    return { accountId, days, daily, totals };
   }
 
   // ── Delete all usage rows for a card (called on card deletion) ──────────

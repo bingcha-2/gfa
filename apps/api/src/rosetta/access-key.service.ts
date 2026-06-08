@@ -1,14 +1,13 @@
 // Access-key (卡密) domain: card CRUD, share/weight accounting, account bindings,
-// auto-seat assignment, throttle config. Extracted from RosettaService —
+// auto-seat assignment. Extracted from RosettaService —
 // behavior-preserving (method bodies verbatim, this.dataDir/this.accessKeysFile
 // rebound to the shared RosettaContext). boundCardCounts + clearBindingsForAccount
 // are public because the account domain services call them.
 
 import * as crypto from "crypto";
-import * as fs from "fs";
 import * as path from "path";
 
-import { bucketsForProducts } from "../lease-core/product-bucket";
+import { bucketsForProducts, isValidBucket } from "../lease-core/product-bucket";
 import { getModelQuotaFraction } from "../token-server/lease-scheduler";
 import {
   ACCOUNT_SHARE_CAPACITY,
@@ -16,7 +15,6 @@ import {
   UNIVERSAL_BILLING,
   recentBucketUsage,
   resetWindowIfExpired,
-  tokenWindowLimit,
 } from "../token-server/token-billing";
 import { accessKeyExpiresAt, cardWeight, maskKey, newAccessKeyValue, recentTokenUsage } from "./lib/access-key-util";
 import type { RosettaContext } from "./lib/context";
@@ -28,38 +26,100 @@ export class AccessKeyService {
   listAccessKeys(query: { search?: string }) {
     const data = this.ctx.accessKeysFile.read();
     const term = String(query.search || "").trim().toLowerCase();
+    // accountId → email 解析缓存:绑定卡需 join 三个账号池文件,逐卡逐产品读会重复
+    // 打开同一个 json,这里按 provider 缓存「id→email」表,整次 list 只读一遍每个池。
+    const emailCache = new Map<string, Map<number, string>>();
     const keys = (Array.isArray(data.keys) ? data.keys : [])
       .filter((key: any) => {
         if (!term) return true;
         return [key.id, key.key, key.name, key.status, key.sessionClientId]
           .some((value) => String(value || "").toLowerCase().includes(term));
       })
-      .map((key: any) => ({
-        id: String(key.id || ""),
-        name: String(key.name || ""),
-        fullKey: String(key.key || ""),
-        key: maskKey(key.key),
-        status: String(key.status || "active"),
-        totalRequests: Number(key.totalRequests || 0),
-        totalTokensUsed: Number(key.totalTokensUsed || 0),
-        recentWindowTokens: recentTokenUsage(key),
-        tokenWindowLimit: tokenWindowLimit(key),
-        windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
-        weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
-        durationMs: Number(key.durationMs || 0),
-        provider: String(key.provider || ""),
-        boundAccountId: Number(key.boundAccountId || 0),
-        bindings: (key.bindings && typeof key.bindings === "object" ? key.bindings : {}) as Record<string, number>,
-        bucketLimits: (key.bucketLimits && typeof key.bucketLimits === "object" ? key.bucketLimits : {}) as Record<string, number>,
-        weight: cardWeight(key),
-        createdAt: String(key.createdAt || ""),
-        lastUsedAt: String(key.lastUsedAt || ""),
-        expiresAt: accessKeyExpiresAt(key),
-        sessionClientId: String(key.sessionClientId || ""),
-        sessionExpiresAt: String(key.sessionExpiresAt || ""),
-      }));
+      .map((key: any) => {
+        // 绑定映射:只保留 accountId>0 的项,推导卡类型与可用产品。
+        const bindings = (key.bindings && typeof key.bindings === "object" ? key.bindings : {}) as Record<string, number>;
+        const boundProducts = Object.keys(bindings).filter((p) => Number(bindings[p]) > 0);
+        // 卡类型:绑定非空 = 绑定卡(bound);否则 = 万能卡(pool,自动开放全部产品)。
+        const cardType: "pool" | "bound" = boundProducts.length > 0 ? "bound" : "pool";
+
+        // 「额度」列数据:复用 getAccessKeyLimits 的算法 —— 万能卡列全部产品桶,绑定卡
+        // 仅列已绑产品对应的桶;used 来自当前窗口的 recentBucketUsage;limit 来自
+        // bucketLimits 覆盖(0 = 无限/未设)。在 record 的浅拷贝上算,避免 resetWindowIfExpired
+        // 改动 accessKeysFile 缓存里的对象。
+        const usageRecord = { ...key };
+        const now = Date.now();
+        const bucketUsage = recentBucketUsage(usageRecord, now);
+        const customLimits = (key.bucketLimits && typeof key.bucketLimits === "object" ? key.bucketLimits : {}) as Record<string, number>;
+        const buckets = bucketsForProducts(boundProducts).map((bucket: string) => {
+          const custom = Number(customLimits[bucket] || 0);
+          return {
+            bucket,
+            label: UNIVERSAL_BILLING.bucketLabel(bucket),
+            used: bucketUsage.get(bucket) || 0,
+            limit: custom > 0 ? custom : 0, // 0 = 无限/未设
+          };
+        });
+
+        // 绑定卡明细:每个绑定产品 → { product, accountId, accountEmail }(email join 账号池文件)。
+        const bindingsDetail =
+          cardType === "bound"
+            ? boundProducts.map((product) => {
+                const accountId = Number(bindings[product]);
+                return { product, accountId, accountEmail: this.resolveAccountEmail(product, accountId, emailCache) };
+              })
+            : [];
+
+        return {
+          id: String(key.id || ""),
+          name: String(key.name || ""),
+          fullKey: String(key.key || ""),
+          key: maskKey(key.key),
+          status: String(key.status || "active"),
+          totalRequests: Number(key.totalRequests || 0),
+          totalTokensUsed: Number(key.totalTokensUsed || 0),
+          recentWindowTokens: recentTokenUsage(key),
+          windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
+          weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
+          durationMs: Number(key.durationMs || 0),
+          provider: String(key.provider || ""),
+          boundAccountId: Number(key.boundAccountId || 0),
+          bindings,
+          bucketLimits: customLimits,
+          weight: cardWeight(key),
+          // ── 重设计新增字段(供卡密页「类型」「额度」列与绑定明细)──
+          cardType,
+          buckets,
+          bindingsDetail,
+          // 账号份额容量(全局常量,绑定卡「份额 n/N」的 N)——避免前端硬编码。
+          shareCapacity: ACCOUNT_SHARE_CAPACITY,
+          createdAt: String(key.createdAt || ""),
+          lastUsedAt: String(key.lastUsedAt || ""),
+          expiresAt: accessKeyExpiresAt(key),
+          sessionClientId: String(key.sessionClientId || ""),
+          sessionExpiresAt: String(key.sessionExpiresAt || ""),
+        };
+      });
 
     return { ok: true, keys };
+  }
+
+  /** Resolve an account's email within a provider pool, memoized per list call. */
+  private resolveAccountEmail(
+    provider: string,
+    accountId: number,
+    cache: Map<string, Map<number, string>>,
+  ): string {
+    if (!(accountId > 0)) return "";
+    let byId = cache.get(provider);
+    if (!byId) {
+      byId = new Map<number, string>();
+      const pool = readJson(this.poolFileFor(provider), { accounts: [] });
+      for (const account of Array.isArray(pool.accounts) ? pool.accounts : []) {
+        byId.set(Number(account.id), String(account.email || ""));
+      }
+      cache.set(provider, byId);
+    }
+    return byId.get(accountId) || "";
   }
 
   createAccessKey(payload: any) {
@@ -135,8 +195,8 @@ export class AccessKeyService {
         name: String(payload?.name || ""),
         status: String(payload?.status || "active"),
         durationMs: Number(payload?.durationMs || 60 * 60 * 1000),
-        windowLimit: Number(payload?.windowLimit || 0),
-        tokenWindowLimit: Number(payload?.tokenWindowLimit || 0),
+        // 每卡上限改为按模型设(bucketLimits,经「模型限额」弹窗配置),不再有全局
+        // tokenWindowLimit/windowLimit。新卡留空即无封顶(万能卡=无限)。
         // Per-card rate-limit window duration (configurable hours/days, set at
         // creation). Drives the fixed-period reset in resetWindowIfExpired().
         windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
@@ -166,17 +226,22 @@ export class AccessKeyService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
-    for (const field of ["name", "status", "durationMs", "windowLimit", "tokenWindowLimit", "windowMs", "weeklyTokenLimit"]) {
+    for (const field of ["name", "status", "durationMs", "windowMs", "weeklyTokenLimit"]) {
       if (payload[field] !== undefined) record[field] = field.endsWith("Ms") || field.endsWith("Limit")
         ? Number(payload[field])
         : String(payload[field]);
     }
+    // 份额(weight):支持编辑改份额;clamp 1..ACCOUNT_SHARE_CAPACITY(=8),复用 cardWeight。
+    if (payload.weight !== undefined) record.weight = cardWeight({ weight: payload.weight });
     // Per-bucket custom limits: merge provided values, delete keys set to 0/null.
+    // Keys must be real composite <product>-<family> buckets — a bare-family key
+    // ("claude") would set a cap that the enforce lookup (composite) never sees,
+    // so it silently never trips. Drop any invalid key instead of persisting it.
     if (payload.bucketLimits !== undefined && typeof payload.bucketLimits === "object") {
       const existing = (record.bucketLimits && typeof record.bucketLimits === "object") ? { ...record.bucketLimits } : {};
       for (const [bucket, value] of Object.entries(payload.bucketLimits)) {
         const num = Number(value);
-        if (Number.isFinite(num) && num > 0) {
+        if (isValidBucket(bucket) && Number.isFinite(num) && num > 0) {
           existing[bucket] = num;
         } else {
           delete existing[bucket];
@@ -204,22 +269,21 @@ export class AccessKeyService {
     const now = Date.now();
 
     resetWindowIfExpired(record, now);
-    const baseLimit = tokenWindowLimit(record);
     const bucketUsage: Map<string, number> = recentBucketUsage(record, now);
     const customLimits = (record.bucketLimits && typeof record.bucketLimits === "object") ? record.bucketLimits : {};
 
     const products = record.bindings && typeof record.bindings === "object"
       ? Object.keys(record.bindings).filter((p) => Number(record.bindings[p]) > 0)
       : [];
+    // 每模型上限只来自 bucketLimits;未设 = 无限(无全局基准、无 ×系数)。
     const buckets = bucketsForProducts(products).map((bucket: string) => {
       const customValue = Number(customLimits[bucket] || 0);
-      const effectiveLimit = customValue > 0 ? customValue : UNIVERSAL_BILLING.bucketLimit(baseLimit, bucket);
       return {
         bucket,
         label: UNIVERSAL_BILLING.bucketLabel(bucket),
         customLimit: customValue > 0 ? customValue : null,
-        defaultLimit: UNIVERSAL_BILLING.bucketLimit(baseLimit, bucket, {}), // without record override
-        effectiveLimit,
+        defaultLimit: 0, // 无全局基准:未设 = 无限
+        effectiveLimit: customValue > 0 ? customValue : 0,
         used: bucketUsage.get(bucket) || 0,
       };
     });
@@ -228,7 +292,6 @@ export class AccessKeyService {
       ok: true,
       id,
       name: String(record.name || ""),
-      tokenWindowLimit: baseLimit,
       bucketLimits: customLimits,
       buckets,
     };
@@ -529,23 +592,6 @@ export class AccessKeyService {
       writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
     }
     return { ok: true, deleted };
-  }
-
-  getThrottleConfig() {
-    const filePath = path.join(this.ctx.dataDir, "throttle-config.json");
-    if (!fs.existsSync(filePath)) return { ok: true, config: null, path: filePath };
-    return { ok: true, config: readJson(filePath, null), path: filePath };
-  }
-
-  saveThrottleConfig(payload: any) {
-    const filePath = path.join(this.ctx.dataDir, "throttle-config.json");
-    if (payload?.delete) {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      return { ok: true, deleted: true };
-    }
-    if (!payload?.config || typeof payload.config !== "object") return { ok: false, error: "config object is required" };
-    writeJson(filePath, payload.config);
-    return { ok: true, saved: true, path: filePath };
   }
 
   publicAccessKey(key: any) {

@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { RefreshCw, Search, ShieldOff, SlidersHorizontal } from "lucide-react";
+import { accountHealthSummary } from "@/lib/account-status";
 
 import type { StatusData, EnrichedAccount } from "./types";
 import {
@@ -43,10 +44,8 @@ import {
   DEFAULT_VISIBLE_MODEL_QUOTAS,
   migrateVisibleColumns,
 } from "./constants";
-import { CreditQuotaDashboard } from "./credit-quota-dashboard";
 import { ServerOverviewPanel } from "./server-overview-panel";
 import { AccountsTable } from "./accounts-table";
-import { ThrottleConfigPanel } from "./throttle-config-panel";
 
 // ── Component ──
 
@@ -251,19 +250,9 @@ export default function RosettaLoadPage() {
     });
   }, [quotaAccounts, accountStatsMap, leaseCounts, scheduler.modelGates]);
 
-  const summaryReasons = useMemo(() => {
-    const reasons: Record<string, number> = {};
-    let okCount = 0;
-    for (const a of allAccounts) {
-      if (a.quotaStatus === "exhausted") {
-        const r = a.quotaStatusReason || "unknown";
-        reasons[r] = (reasons[r] || 0) + 1;
-      } else {
-        okCount++;
-      }
-    }
-    return { okCount, reasons };
-  }, [allAccounts]);
+  // Count every non-"ok" status (error/exhausted/cooling) as not-ok — dead (error)
+  // accounts were previously tallied as healthy, hiding them from the summary.
+  const summaryReasons = useMemo(() => accountHealthSummary(allAccounts), [allAccounts]);
 
   const filteredAccounts = useMemo(() => {
     if (!search.trim()) return allAccounts;
@@ -409,11 +398,6 @@ export default function RosettaLoadPage() {
           />
         )}
 
-        {/* ── 1b. Credit & Quota Dashboard ── */}
-        {allAccounts.length > 0 && (
-          <CreditQuotaDashboard accounts={allAccounts} />
-        )}
-
         {/* ── 2. Action Bar ── */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Left: search + count */}
@@ -552,10 +536,6 @@ export default function RosettaLoadPage() {
           onToggleSelect={toggleSelect}
           onToggleAccount={handleToggleAccount}
         />
-
-        {/* ── 5. Throttle Config ── */}
-        <Separator />
-        <ThrottleConfigPanel />
       </div>
     </TooltipProvider>
   );

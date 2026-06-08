@@ -26,23 +26,14 @@ type TokenLease struct {
 	AccountId      int                    `json:"accountId"`
 	LeaseId        string                 `json:"leaseId"`
 	EmailHint      string                 `json:"emailHint"`
-	PlanType       string                 `json:"planType"` // 账号会员等级(ultra/premium/...),供前端展示
+	PlanType       string                 `json:"planType"`  // 账号会员等级(ultra/premium/...),供前端展示
 	ExpiresAt      int64                  `json:"expiresAt"` // millisecond unix timestamp
 	LeasedAt       int64                  `json:"leasedAt"`
-	RetryPolicy    *RemoteRetryPolicy     `json:"-"` // P1④: server-controlled retry policy
 	CandidateStats map[string]interface{} `json:"-"` // server-reported candidate stats
 	Probation      bool                   `json:"-"`
 	// Bound: 绑定卡(无其它号可换)。代理据此跳过"换到别的号"的轮转,
 	// 但仍允许对同一个号做瞬时错误(503 容量/短 429)的等待重试。
 	Bound bool `json:"-"`
-}
-
-// RemoteRetryPolicy mirrors the extension's normalizeRemoteRetryPolicy
-// (token-proxy.js L66-96). Sent by the server in lease responses.
-type RemoteRetryPolicy struct {
-	MaxAttempts       int         `json:"maxAttempts"`
-	RetryableStatuses []int       `json:"retryableStatuses"`
-	StatusMaxAttempts map[int]int `json:"statusMaxAttempts"`
 }
 
 // LocalQuota 本地额度跟踪，镜像服务端的 5h 滑动窗口
@@ -484,6 +475,11 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		l.lastError = errMsg
 		l.mu.Unlock()
 		Log("[token-leaser] Lease token failed: %s - %s", leaseResp.Code, errMsg)
+		// 硬额度(卡级 token 上限超限)→ 结构化 QuotaExhaustedError,让 proxy 转 429 + Retry-After。
+		// antigravity 走 success=false,可能不带 retryAfterMs,靠文案识别;恢复时间未知则显示「稍后」。
+		if rms, _ := parseQuota429(body); isHardQuotaLimit(rms, errMsg) {
+			return nil, &QuotaExhaustedError{RetryAfterMs: rms, Reason: errMsg}
+		}
 		return nil, errors.New(errMsg)
 	}
 
@@ -545,7 +541,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		Probation:   leaseResp.Probation,
 	}
 
-	// P1④: Parse retryPolicy from lease response (server-controlled retry)
+	// Parse extra fields from lease response (bound flag, candidate stats)
 	var healthyForModel float64 // 候选池健康数,稳态下并入 "Token obtained" 一行
 	var rawResp2 map[string]json.RawMessage
 	if json.Unmarshal(body, &rawResp2) == nil {
@@ -553,14 +549,6 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 			var b bool
 			if json.Unmarshal(bRaw, &b) == nil {
 				lease.Bound = b
-			}
-		}
-		if rpRaw, ok := rawResp2["retryPolicy"]; ok {
-			var rp RemoteRetryPolicy
-			if json.Unmarshal(rpRaw, &rp) == nil && rp.MaxAttempts > 0 {
-				lease.RetryPolicy = &rp
-				Log("[token-leaser] Server retryPolicy: maxAttempts=%d retryableStatuses=%v",
-					rp.MaxAttempts, rp.RetryableStatuses)
 			}
 		}
 		if csRaw, ok := rawResp2["candidateStats"]; ok {
@@ -671,24 +659,22 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 		// force=true:激活是用户主动操作,绕过 5min 节流,立刻拉 gemini/claude/codex。
 		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
 
-		// 绑定模式额度刷新节流:每 boundRefreshEveryTicks 个 tick(15s)刷一次。
-		const boundRefreshEveryTicks = 20 // 20×15s = 5min
-		ticks := 0
-
+		// 额度刷新改为「按需」:不再定时轮询(消除闲置时的 5min 心跳 + codex usage 401 刷屏)。
+		// 额度改为搭真实用量上报的车 —— antigravity 走 leaser_report.go(ConsumeQuotaSnapshot
+		// 随 report attach + 上报后 fetchAccountQuotaAsync 节流缓存),codex 走 codex_leaser.go
+		// reportResult 同理,claude 本就解析响应头。激活时上面已 force 刷一次。
+		// 本 ticker 只保留 token 续租(临到期 60s 前续),不再碰额度。
 		for {
 			select {
 			case <-ctx.Done():
 				Log("[token-leaser] Auto-lease worker stopped")
 				return
 			case <-ticker.C:
-				ticks++
 				l.mu.RLock()
 				needLease := false
-				bound := false
 				if l.cachedToken == nil {
 					needLease = true
 				} else {
-					bound = l.cachedToken.Bound
 					nowMs := time.Now().UnixNano() / int64(time.Millisecond)
 					// Near expiry (60s early)
 					if nowMs > (l.cachedToken.ExpiresAt - 60*1000) {
@@ -709,11 +695,6 @@ func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
 						l.markCardUnusable(err)
 						return
 					}
-				} else if bound && ticks%boundRefreshEveryTicks == 0 {
-					// 绑定模式定时查卡密状态:重新租号(=查状态,返回模式+账号额度),
-					// 刷新血条到绑定号最新余量。不上报用量,不轮换账号(绑定号唯一)。
-					// force=false:定时刷新走 5min 节流,避免高频打上游。
-					l.refreshBoundQuota(card, deviceId, upstreamProxy, false)
 				}
 			}
 		}

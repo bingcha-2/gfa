@@ -67,6 +67,11 @@ export class ClaudeAccountService {
       claudeWeeklyPercent: Number(account.claudeWeeklyPercent ?? -1),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
       proxyUrl: String(account.proxyUrl || ""),
+      // Persisted dead-account verdict (written by lease-service) so the console
+      // can surface invalid_grant / repeatedly-failing accounts as dead.
+      quotaStatus: String(account.quotaStatus || "ok"),
+      quotaStatusReason: String(account.quotaStatusReason || ""),
+      blockedUntil: Number(account.blockedUntil || 0),
     }));
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }

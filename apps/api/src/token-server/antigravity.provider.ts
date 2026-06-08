@@ -1,10 +1,11 @@
 import * as path from "path";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
-import type { CreditDelta, Provider } from "../lease-core/provider";
+import type { Provider } from "../lease-core/provider";
 import { refreshGoogleAccessToken, TokenAccount } from "./account-token-provider";
 import { AntigravityModelCatalog } from "./antigravity-model-catalog";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "./lease-scheduler";
+import { parseSnapshotDate } from "./token-billing";
 // Billing is universal (one card spans all providers) — see UNIVERSAL_BILLING.
 // Providers no longer override it; the AccessKeyStore default applies.
 
@@ -60,26 +61,10 @@ export class AntigravityProvider implements Provider<TokenAccount> {
   }
 
   /**
-   * Apply a client-reported Google account-quota snapshot: credits state,
-   * planType, per-model quota fractions + reset times. Pure latest-wins state
-   * sync (idempotent). Returns the credit delta so the caller can emit a
-   * once-only consumption event, or null if no credits in the snapshot.
+   * Apply a client-reported Google account-quota snapshot: planType + per-model
+   * quota fractions + reset times. Pure latest-wins state sync (idempotent).
    */
-  applyQuotaSnapshot(account: TokenAccount, quota: any): { account: TokenAccount; creditDelta: CreditDelta | null } {
-    let delta: CreditDelta | null = null;
-    if (quota.credits && typeof quota.credits === "object") {
-      const oldAmount = Number(account.credits?.creditAmount || 0);
-      const newAmount = Number(quota.credits.creditAmount || 0);
-      delta = { oldAmount, newAmount, available: quota.credits.available !== false, email: account.email };
-      account.credits = {
-        known: Boolean(quota.credits.known),
-        available: Boolean(quota.credits.available),
-        creditAmount: newAmount,
-        minCreditAmount: Number(quota.credits.minCreditAmount || 0),
-        paidTierID: String(quota.credits.paidTierID || ""),
-        creditsRefreshedAt: new Date().toISOString(),
-      };
-    }
+  applyQuotaSnapshot(account: TokenAccount, quota: any): { account: TokenAccount } {
     if (quota.planType && typeof quota.planType === "string") {
       account.planType = quota.planType;
     }
@@ -101,6 +86,19 @@ export class AntigravityProvider implements Provider<TokenAccount> {
       account.modelQuotaRefreshedAt = Date.now();
       this.models.observe(Object.keys(quota.modelQuota));
     }
-    return { account, creditDelta: delta };
+    return { account };
+  }
+
+  /** 统一水位提取:antigravity 逐模型一条(只有 5h 水位,无周窗口)。 */
+  quotaSnapshotInputs(account: TokenAccount) {
+    const fractions = (account.modelQuotaFractions || {}) as Record<string, number>;
+    const resets = (account.modelQuotaResetTimes || {}) as Record<string, string>;
+    return Object.entries(fractions).map(([modelKey, frac]) => ({
+      modelKey,
+      hourlyPercent: Number(frac) * 100,
+      weeklyPercent: null,
+      hourlyResetAt: parseSnapshotDate(resets[modelKey]),
+      weeklyResetAt: null,
+    }));
   }
 }

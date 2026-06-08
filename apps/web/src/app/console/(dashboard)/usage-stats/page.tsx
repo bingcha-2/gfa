@@ -7,6 +7,7 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatTokens } from "@/lib/format";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -18,7 +19,6 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Spinner } from "@/components/ui/spinner";
 import { ProviderSupplyOverview } from "./ProviderSupplyOverview";
-import { ModelDistributionChart } from "./ModelDistributionChart";
 import { BoundCardAccordion } from "./BoundCardAccordion";
 
 type ModelStat = {
@@ -65,12 +65,25 @@ type TrendDay = {
   requests: number;
 };
 
-type ProviderUsage = { tokens: number; requests: number };
+// `tokens`/`totalTokens` 是计费口径(billable,缓存读已 1/10 折);其余字段是拆分,
+// 解释"为什么计费 token 比净对话大"(cacheWrite = prompt-cache 写入,按全价计入)。
+type ProviderUsage = {
+  tokens: number;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+};
 
 type TodayUsage = {
   date: string;
   totalTokens: number;
   requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
   byProvider: Record<string, ProviderUsage>;
 };
 
@@ -101,6 +114,10 @@ type DashboardAccount = {
   planType: string;
   quotaStatus: string;
   activeLeases: number;
+  hourlyPercent: number | null;
+  weeklyPercent: number | null;
+  hourlyResetAt: string | null;
+  weeklyResetAt: string | null;
   water: WaterPoint[];
   waterHistory: { timestamp: string; modelKey: string; hourlyPercent: number | null; weeklyPercent: number | null }[];
   boundCards: DashboardCard[];
@@ -219,15 +236,15 @@ export default function UsageStatsPage() {
         <KpiTile icon={<DatabaseIcon className="size-4" />} label="启用账号" value={`${totals.accountsEnabled}/${totals.accountsTotal}`} sub={`健康 ${totals.accountsOk}`} />
         <KpiTile
           icon={<GaugeIcon className="size-4" />}
-          label="当前并发"
+          label="在租租约"
           value={String(totals.activeLeases)}
-          sub="实时取号 · 重启清零"
+          sub="未过期租约 · 非实时在飞"
         />
         <KpiTile
           icon={<ActivityIcon className="size-4" />}
-          label="今日 Token"
-          value={(today?.totalTokens ?? totals.dailyTokens).toLocaleString()}
-          sub={today ? `北京时间 ${today.date} · ${today.requests.toLocaleString()} 次` : undefined}
+          label="今日计费 Token"
+          value={formatTokens(today?.totalTokens ?? totals.dailyTokens)}
+          sub={today ? `北京时间 ${today.date} · ${today.requests.toLocaleString()} 次 · 缓写 ${formatTokens(today.cacheWriteTokens ?? 0)}` : undefined}
         />
         <KpiTile icon={<BotIcon className="size-4" />} label="Provider" value={String(providers.length)} sub={providers.map((p) => PROVIDER_LABEL[p.id] || p.id).join(" · ")} />
       </div>
@@ -273,7 +290,7 @@ function UsageTrendCard({
       <CardHeader>
         <CardTitle>Token 用量趋势</CardTitle>
         <CardDescription>
-          全部卡密 · 北京时间 · 近 {days} 天合计 {total.toLocaleString()} token
+          全部卡密 · 北京时间 · 近 {days} 天合计 {formatTokens(total)} token
         </CardDescription>
         <CardAction>
           <ToggleGroup
@@ -326,7 +343,7 @@ function UsageTrendCard({
               />
               <ChartTooltip
                 cursor={false}
-                content={<ChartTooltipContent labelFormatter={(v) => formatDayLabel(String(v))} indicator="dot" />}
+                content={<ChartTooltipContent labelFormatter={(v) => formatDayLabel(String(v))} formatter={(v) => formatTokens(Number(v))} indicator="dot" />}
               />
               <Area
                 dataKey="antigravity"
@@ -393,9 +410,6 @@ function ProviderBoard({
       }),
     [p.models],
   );
-  // Inline distribution histogram for the model the user picks (defaults to most-constrained).
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const selected = models.find((m) => m.key === selectedKey) ?? models[0] ?? null;
 
   return (
     <Card>
@@ -415,32 +429,19 @@ function ProviderBoard({
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="grid gap-3 sm:grid-cols-3">
-          <MiniStat label="今日 Token" value={(today?.tokens ?? 0).toLocaleString()} />
-          <MiniStat label="今日请求" value={(today?.requests ?? 0).toLocaleString()} />
-          <MiniStat label="当前并发" value={String(p.usage.activeLeases)} hint="实时·重启清零" />
+          <MiniStat
+            label="今日计费 Token"
+            value={formatTokens(today?.tokens ?? 0)}
+            hint={`净入 ${formatTokens(today?.inputTokens ?? 0)} · 出 ${formatTokens(today?.outputTokens ?? 0)} · 缓写 ${formatTokens(today?.cacheWriteTokens ?? 0)} · 缓读 ${formatTokens(today?.cacheReadTokens ?? 0)}`}
+          />
+          <MiniStat label="今日请求" value={(today?.requests ?? 0).toLocaleString()} hint="产生用量的成功调用" />
+          <MiniStat label="在租租约" value={String(p.usage.activeLeases)} hint="未过期租约 · 非实时在飞" />
         </div>
 
         {models.length === 0 ? (
           <div className="py-6 text-center text-sm text-muted-foreground">暂无模型数据</div>
         ) : (
-          <div className="space-y-3">
-            <ProviderSupplyOverview models={models} />
-            <div className="flex flex-wrap gap-2">
-              {models.map((m) => (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => setSelectedKey(m.key)}
-                  className={`cursor-pointer rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                    selected?.key === m.key ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {m.displayName}
-                </button>
-              ))}
-            </div>
-            {selected ? <ModelDistributionChart title={selected.displayName} distribution={selected.distribution} /> : null}
-          </div>
+          <ProviderSupplyOverview models={models} />
         )}
 
         {accounts.length > 0 ? (

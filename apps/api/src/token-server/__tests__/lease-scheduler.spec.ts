@@ -4,7 +4,6 @@ import {
   EnterpriseProbeManager,
   accountWeight,
   scoreAccount,
-  buildRetryPolicy,
   getModelQuotaFraction,
   hasModelQuotaRemaining,
 } from '../lease-scheduler';
@@ -234,40 +233,6 @@ describe('getModelQuotaFraction — stale-after-reset guard', () => {
     // Stale-0 + not-yet-reset → Tier 3 (200k, last resort).
     // Stale-0 + reset passed → treated as refilled → Tier 1 → must score much better.
     expect(scoreAccount(exhaustedButReset, opts)).toBeLessThan(scoreAccount(exhaustedNotReset, opts));
-  });
-});
-
-// ── buildRetryPolicy ─────────────────────────────────────────────────────────
-
-describe('buildRetryPolicy', () => {
-  it('should return massive_pool policy for 50+ healthy', () => {
-    const policy = buildRetryPolicy({ healthyForModel: 50, total: 60 }, {});
-    expect(policy.reason).toBe('massive_pool');
-    expect(policy.maxAttempts).toBe(99);
-  });
-
-  it('should return degraded_pool policy for 0 healthy', () => {
-    const policy = buildRetryPolicy({ healthyForModel: 0, total: 5 }, {});
-    expect(policy.reason).toBe('degraded_pool');
-    expect(policy.maxAttempts).toBe(3);
-  });
-
-  it('should apply pressure reason', () => {
-    const policy = buildRetryPolicy(
-      { healthyForModel: 10, total: 20 },
-      { pressure: { blockedUntil: Date.now() + 60000 } },
-    );
-    expect(policy.reason).toBe('model_pressure');
-  });
-
-  it('should apply emergency override from throttle config', () => {
-    const policy = buildRetryPolicy(
-      { healthyForModel: 50, total: 100 },
-      {},
-      { emergency: { enabled: true, maxAttempts: 2, baseDelayMs: 5000 } },
-    );
-    expect(policy.reason).toBe('emergency');
-    expect(policy.maxAttempts).toBe(2);
   });
 });
 

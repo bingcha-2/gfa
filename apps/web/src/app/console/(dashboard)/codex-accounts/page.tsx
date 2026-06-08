@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
+import { AccountStatusCell } from "@/components/account-status-cell";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,8 @@ type CodexAccount = {
   codexHourlyPercent: number;
   codexWeeklyPercent: number;
   modelQuotaRefreshedAt: number;
+  quotaStatus?: string;
+  quotaStatusReason?: string;
 };
 
 function pct(value: number) {
@@ -521,6 +524,7 @@ export default function CodexAccountsPage() {
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
+                  <TableHead>状态</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead>入池</TableHead>
@@ -540,6 +544,9 @@ export default function CodexAccountsPage() {
                     <TableCell className="text-sm">{pct(a.codexWeeklyPercent)}</TableCell>
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <AccountStatusCell account={a} />
                     </TableCell>
                     <TableCell>
                       <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>

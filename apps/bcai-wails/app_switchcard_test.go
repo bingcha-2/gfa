@@ -35,8 +35,8 @@ func TestSwitchCardConfigClearsStaleStatsOnChange(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
-	recordBoundFractionForBucket("anthropic-claude", 0.3, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0, 79_000)
+	recordAccountBucketFraction("anthropic-claude", 0.3, 0)
 	if GetUsageStats().GetTodayRecord().InputTokens == 0 {
 		t.Fatal("前置失败:today 应有数据")
 	}
@@ -52,7 +52,7 @@ func TestSwitchCardConfigClearsStaleStatsOnChange(t *testing.T) {
 	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 0 || got.OutputTokens != 0 {
 		t.Fatalf("换卡后 today token 应清零, 得到 %+v", got)
 	}
-	if n := len(snapshotBoundFractions()); n != 0 {
+	if n := len(snapshotAccountFractions()); n != 0 {
 		t.Fatalf("换卡后血条应清零, 仍残留 %d 个 bucket", n)
 	}
 }
@@ -66,7 +66,7 @@ func TestSwitchCardConfigKeepsStatsOnSameCard(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardB"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens("claude", 100, 200, 0)
+	GetUsageStats().AddTokens("claude", 100, 200, 0, 300)
 
 	_, switched := switchCardConfig("cardB")
 	if switched {
@@ -88,7 +88,7 @@ func TestActivateCardSameCardPreservesStats(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0, 79_000)
 
 	app := &App{}
 	_, _ = app.ActivateCard("cardA") // 同卡再点激活(Activate 失败不影响断言)
@@ -111,8 +111,8 @@ func TestActivateCardDifferentCardClearsStats(t *testing.T) {
 	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
 		t.Fatalf("前置 SaveConfig 失败: %v", err)
 	}
-	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0)
-	recordBoundFractionForBucket("anthropic-claude", 0.3, 0)
+	GetUsageStats().AddTokens("claude", 31_700, 47_300, 0, 79_000)
+	recordAccountBucketFraction("anthropic-claude", 0.3, 0)
 
 	app := &App{}
 	_, _ = app.ActivateCard("cardB") // 换不同卡
@@ -120,10 +120,40 @@ func TestActivateCardDifferentCardClearsStats(t *testing.T) {
 	if got := GetUsageStats().GetTodayRecord(); got.InputTokens != 0 || got.OutputTokens != 0 {
 		t.Fatalf("换不同卡应清空统计, 得到 %+v", got)
 	}
-	if n := len(snapshotBoundFractions()); n != 0 {
+	if n := len(snapshotAccountFractions()); n != 0 {
 		t.Fatalf("换不同卡应清空血条, 仍残留 %d 个 bucket", n)
 	}
 	if LoadConfig().AccountCard != "cardB" {
 		t.Fatal("配置应已写入 cardB")
+	}
+}
+
+// 换卡必须清掉【三家】leaser 的 lastError —— 否则旧卡的「卡额度已用完」红 banner 会一直挂着
+// (换了新卡 / 后台加了额度也不消失)。三家逻辑一致。
+func TestSwitchCardClearsAllLeaserErrors(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	GetUsageStats().Reset()
+	resetBoundFractions()
+
+	if err := SaveConfig(Config{AccountCard: "cardA"}); err != nil {
+		t.Fatalf("前置 SaveConfig 失败: %v", err)
+	}
+	// 三家都攒下「额度已用完」错误(就是那个红 banner 的来源)。
+	GetLeaser().setLastError("卡额度已用完:antigravity ...")
+	GetClaudeLeaser().setLastError("卡额度已用完:claude ...")
+	GetCodexLeaser().setLastError("卡额度已用完:codex ...")
+
+	// 换到不同卡 → 必须把三家错误一起清空。
+	if _, switched := switchCardConfig("cardB"); !switched {
+		t.Fatal("换到不同卡应判定为 switched")
+	}
+	if e := GetLeaser().LastError(); e != "" {
+		t.Fatalf("antigravity lastError 应清空, got %q", e)
+	}
+	if e := GetClaudeLeaser().LastError(); e != "" {
+		t.Fatalf("claude lastError 应清空, got %q", e)
+	}
+	if e := GetCodexLeaser().LastError(); e != "" {
+		t.Fatalf("codex lastError 应清空, got %q", e)
 	}
 }

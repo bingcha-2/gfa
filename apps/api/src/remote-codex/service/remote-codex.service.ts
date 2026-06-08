@@ -1,26 +1,30 @@
-import * as path from "path";
 import { Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import { LeaseService, type TokenUsageTracker } from "../../lease-core/lease-service";
+import { LeaseService, type TokenUsageTracker, type AccountQuotaSnapshotRecorder } from "../../lease-core/lease-service";
 import { QuotaProfileTracker } from "../../lease-core/quota-profile-tracker";
 import { bucketFamily } from "../../lease-core/product-bucket";
 import { FairShareTracker } from "../../token-server/fair-share-tracker";
 import { RemoteAccessHttpError } from "../../remote-access/http-error";
-import { defaultRemoteAccessDataDir } from "../../remote-access/data-dir";
 import { CodexAccount } from "../auth/codex-token-provider";
 import { CodexProvider } from "../codex.provider";
 import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
+import type { AccessKeyStore } from "../../token-server/access-key-store";
 
 type ServiceOptions = {
   accountsFilePath?: string;
   accessKeysFilePath?: string;
+  /** Shared AccessKeyStore so all product pools share one usage cache. */
+  accessKeyStore?: AccessKeyStore;
   tokenProvider?: (account: CodexAccount) => Promise<string>;
   now?: () => number;
   randomId?: () => string;
   minClientVersion?: string;
   leaseTtlMs?: number;
   tokenUsageTracker?: TokenUsageTracker;
+  accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  /** PrismaService — persists QuotaProfile/FairShareWindow (omit in unit tests). */
+  prisma?: any;
 };
 
 /** HTTP error thrown by the codex lease server. Subclass so RemoteCodexController
@@ -40,9 +44,7 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
       accountsFilePath: options.accountsFilePath,
       tokenProvider: options.tokenProvider,
     });
-    const quotaProfileTracker = new QuotaProfileTracker(
-      path.join(defaultRemoteAccessDataDir(), "quota-profiles.json"),
-    );
+    const quotaProfileTracker = new QuotaProfileTracker(options.prisma, { now: options.now });
     let service: RemoteCodexService;
     const fairShareTracker = new FairShareTracker({
       getAccountPlanType: (accountId: number) => {
@@ -70,16 +72,21 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
           provider.id, planType, bucketFamily(bucket),
         );
       },
+      prisma: options.prisma,
+      provider: provider.id,
+      now: options.now,
     });
     super(
       provider,
       {
         accessKeysFilePath: options.accessKeysFilePath,
+        accessKeyStore: options.accessKeyStore,
         now: options.now,
         randomId: options.randomId,
         minClientVersion: options.minClientVersion,
         leaseTtlMs: options.leaseTtlMs,
         tokenUsageTracker: options.tokenUsageTracker,
+        accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
         fairShareTracker,
         quotaProfileTracker,
         mode: "remote-codex-server",

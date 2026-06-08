@@ -234,6 +234,12 @@ func (l *Leaser) queueFailedReport(payload map[string]interface{}, card string, 
 }
 
 // flushPendingReports 补发队列中的失败 report
+func (l *Leaser) pendingCount() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.pendingReports)
+}
+
 func (l *Leaser) flushPendingReports(card string, upstreamProxy string) {
 	l.mu.Lock()
 	pending := l.pendingReports

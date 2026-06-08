@@ -14,6 +14,11 @@ export function beijingDayKey(d: Date): string {
   return new Date(d.getTime() + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Beijing wall-clock hour (0–23) for an instant. */
+export function beijingHourOfDay(d: Date): number {
+  return new Date(d.getTime() + BEIJING_OFFSET_MS).getUTCHours();
+}
+
 /**
  * Real UTC instant of Beijing 00:00 on (today - daysAgo). Use as a Prisma
  * `gte` bound so "last N days" means N full Beijing days plus today.

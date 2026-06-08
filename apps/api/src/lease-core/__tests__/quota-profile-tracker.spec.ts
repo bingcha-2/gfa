@@ -1,89 +1,127 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import * as fs from "fs";
-import * as path from "path";
-import * as os from "os";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { QuotaProfileTracker } from "../quota-profile-tracker";
 
-describe("QuotaProfileTracker", () => {
-  let tempFilePath: string;
-
-  beforeEach(() => {
-    tempFilePath = path.join(os.tmpdir(), `quota-profiles-test-${Date.now()}-${Math.random().toString(36).substring(2)}.json`);
+// In-memory stand-in for prisma.quotaProfile (composite id provider+planType+family).
+function makePrisma() {
+  const store = new Map<string, any>();
+  const upsert = vi.fn(async ({ where, create, update }: any) => {
+    const id = where.provider_planType_family;
+    const k = `${id.provider}:${id.planType}:${id.family}`;
+    const existing = store.get(k);
+    store.set(k, existing ? { ...existing, ...update } : { ...create });
+    return store.get(k);
   });
+  const findMany = vi.fn(async () => [...store.values()]);
+  return { prisma: { quotaProfile: { upsert, findMany } }, store, upsert, findMany };
+}
 
-  afterEach(() => {
-    try {
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-      }
-    } catch {
-      // ignore
-    }
-  });
+let active: QuotaProfileTracker | null = null;
+afterEach(() => {
+  active?.destroy();
+  active = null;
+});
 
-  it("should record 429 exhaustion events and calculate median correctly", () => {
-    const tracker = new QuotaProfileTracker(tempFilePath);
+describe("QuotaProfileTracker (SQL-backed)", () => {
+  it("records 429 exhaustion events and computes the median budget", () => {
+    const { prisma } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    active = tracker;
 
-    // Record some 5h samples
     // (product, planType, family, totalUsedWeighted, lastFraction, isWeekly)
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 200000, 0.2, false); // estimated = 200000 / 0.8 = 250000
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 300000, 0.1, false); // estimated = 300000 / 0.9 = 333333
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 180000, 0.4, false); // estimated = 180000 / 0.6 = 300000
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 200000, 0.2, false); // 200000/0.8 = 250000
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 300000, 0.1, false); // 300000/0.9 = 333333
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 180000, 0.4, false); // 180000/0.6 = 300000
 
     const profile = tracker.getProfile("antigravity", "ultra", "claude");
-    expect(profile).toBeDefined();
     expect(profile?.samples5h).toBe(3);
-    // Median of [250000, 333333, 300000] is 300000
-    expect(profile?.window5h).toBe(300000);
-
-    // Retrieve learned budget directly
-    const learned = tracker.getLearnedBudget5h("antigravity", "ultra", "claude");
-    expect(learned).toBe(300000);
+    expect(profile?.window5h).toBe(300000); // median of [250000, 333333, 300000]
+    expect(tracker.getLearnedBudget5h("antigravity", "ultra", "claude")).toBe(300000);
   });
 
-  it("should handle fraction close to 1 by falling back to totalUsed as floor", () => {
-    const tracker = new QuotaProfileTracker(tempFilePath);
-    
-    // fraction = 0.95 -> consumed = 0.05 (<= 0.1), should use totalUsed directly
+  it("falls back to totalUsed when fraction is close to 1", () => {
+    const { prisma } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    active = tracker;
     tracker.recordExhaustion("antigravity", "ultra", "claude", 150000, 0.95, false);
-
-    const profile = tracker.getProfile("antigravity", "ultra", "claude");
-    expect(profile?.window5h).toBe(150000);
+    expect(tracker.getProfile("antigravity", "ultra", "claude")?.window5h).toBe(150000);
   });
 
-  it("should filter out low totalUsed samples below MIN_SAMPLE_THRESHOLD (10_000)", () => {
-    const tracker = new QuotaProfileTracker(tempFilePath);
-    
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 5000, 0.5, false); // < 10000
-    const profile = tracker.getProfile("antigravity", "ultra", "claude");
-    expect(profile).toBeNull();
+  it("ignores samples below MIN_SAMPLE_THRESHOLD (10_000)", () => {
+    const { prisma } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    active = tracker;
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 5000, 0.5, false);
+    expect(tracker.getProfile("antigravity", "ultra", "claude")).toBeNull();
   });
 
-  it("should handle weekly samples separately", () => {
-    const tracker = new QuotaProfileTracker(tempFilePath);
-
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 200000, 0.2, true); // Weekly
-    tracker.recordExhaustion("antigravity", "ultra", "claude", 300000, 0.2, false); // 5h
-
+  it("tracks weekly and 5h samples independently", () => {
+    const { prisma } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    active = tracker;
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 200000, 0.2, true);
+    tracker.recordExhaustion("antigravity", "ultra", "claude", 300000, 0.2, false);
     const profile = tracker.getProfile("antigravity", "ultra", "claude");
     expect(profile?.samplesWeekly).toBe(1);
     expect(profile?.samples5h).toBe(1);
-    expect(profile?.weekly).toBe(250000); // 200000 / 0.8
-    expect(profile?.window5h).toBe(375000); // 300000 / 0.8
+    expect(profile?.weekly).toBe(250000); // 200000/0.8
+    expect(profile?.window5h).toBe(375000); // 300000/0.8
   });
 
-  it("should persist and load profiles correctly", () => {
-    const tracker1 = new QuotaProfileTracker(tempFilePath);
-    tracker1.recordExhaustion("antigravity", "ultra", "claude", 240000, 0.2, false); // 240k / 0.8 = 300k
-    
-    // Force write to disk
-    tracker1.flush();
+  it("flush() upserts only dirty profiles, then is a no-op until changed again", async () => {
+    const { prisma, upsert } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    active = tracker;
+    tracker.recordExhaustion("codex", "pro", "gpt", 240000, 0.2, false);
+    await tracker.flush();
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const call = upsert.mock.calls[0]![0];
+    expect(call.where.provider_planType_family).toEqual({ provider: "codex", planType: "pro", family: "gpt" });
+    expect(call.create.window5h).toBe(300000); // 240000/0.8
 
-    expect(fs.existsSync(tempFilePath)).toBe(true);
+    // Nothing changed → no further upserts.
+    await tracker.flush();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
 
-    // Load in a new tracker
-    const tracker2 = new QuotaProfileTracker(tempFilePath);
-    const learned = tracker2.getLearnedBudget5h("antigravity", "ultra", "claude");
-    expect(learned).toBe(300000);
+  it("round-trips through prisma: flush then load into a fresh tracker", async () => {
+    const { prisma, store } = makePrisma();
+    const t1 = new QuotaProfileTracker(prisma);
+    t1.recordExhaustion("anthropic", "max", "claude", 240000, 0.2, false); // 240000/0.8 = 300000
+    t1.recordExhaustion("anthropic", "max", "claude", 400000, 0.5, true); // 400000/0.5 = 800000 weekly
+    await t1.flush();
+    t1.destroy();
+
+    expect(store.size).toBe(1); // one composite row
+
+    const t2 = new QuotaProfileTracker(prisma);
+    active = t2;
+    await t2.load();
+    expect(t2.getLearnedBudget5h("anthropic", "max", "claude")).toBe(300000);
+    const profile = t2.getProfile("anthropic", "max", "claude");
+    expect(profile?.weekly).toBe(800000);
+    expect(profile?.history5h).toEqual([300000]);
+    expect(profile?.historyWeekly).toEqual([800000]);
+    expect(profile?.samples5h).toBe(1);
+    expect(profile?.samplesWeekly).toBe(1);
+  });
+
+  it("destroy() stops the flush timer", () => {
+    const { prisma } = makePrisma();
+    const tracker = new QuotaProfileTracker(prisma);
+    const spy = vi.spyOn(globalThis, "clearInterval");
+    tracker.destroy();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("no-ops gracefully without a prisma client (unit/test wiring)", async () => {
+    const tracker = new QuotaProfileTracker();
+    active = tracker;
+    tracker.recordExhaustion("codex", "pro", "gpt", 240000, 0.2, false);
+    await expect(tracker.flush()).resolves.toBeUndefined();
+    await expect(tracker.load()).resolves.toBeUndefined();
+    // In-memory learning still works even without persistence.
+    expect(tracker.getLearnedBudget5h("codex", "pro", "gpt")).toBe(300000);
   });
 });

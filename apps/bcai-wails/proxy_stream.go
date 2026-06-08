@@ -10,12 +10,22 @@ import (
 	"time"
 )
 
-func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64) TokenUsageResult {
+// alreadyForwarded 表示调用方在进入本函数前是否已向 IDE 写过正常内容
+// （例如 handleGenerationRequest 先写出的 firstChunk）。一旦转发过
+// content/tool_use，中途即便匹配到 quota 字样也绝不掐流——见 forwardedContent。
+func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqId int64, alreadyForwarded bool) TokenUsageResult {
 	buffer := make([]byte, 32768) // 32KB read buffer（减少系统调用，提升流式吞吐）
 	// 尾部缓冲：仅保留流的最后 16KB 用于解析 token 用量（usageMetadata 只出现在末尾）
 	var tailBuffer bytes.Buffer
 	const tailBufferMax = 16384
 	streamQuotaDetected := false
+
+	// 是否已向 IDE 转发过正常内容。一旦转发过 content/tool_use，中途再匹配到
+	// quota 字样也只当软信号、绝不掐流:硬掐会截断进行中的工具调用（IDE 表现为
+	// "说要调用工具却没反应"），且此时响应头已提交、无法换号，掐了只剩残缺响应。
+	// 还能避免裸子串误判命中模型正文时丢弃合法内容。
+	forwardedContent := alreadyForwarded
+	streamQuotaSoft := false
 
 	// 滑动窗口缓冲：防止 quota 错误 JSON 被 chunk 边界切断（timo 使用 Rust async stream 无此问题）
 	var recentWindow bytes.Buffer
@@ -25,6 +35,8 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	var streamErrorReason, streamErrorModel string
 	var streamRetryAfterMs int64
 	var totalStreamBytes atomic.Int64
+	// 上游/代理在 body 阶段异常掐断时记录原因（用于诊断"长文输出断"）
+	var streamAbortErr error
 
 	flusher, ok := w.(http.Flusher)
 
@@ -45,7 +57,8 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	}
 
 	// P1⑦: Stream inactivity timer with keepalive
-	const streamFirstByteTimeout = 180 * time.Second // 3 min for initial thinking
+	// 与 upstream_net.go 的 ResponseHeaderTimeout 配对，二者取短板，必须同步调整
+	const streamFirstByteTimeout = 300 * time.Second // 5 min for long-context thinking
 	streamMidCheckInterval := 60 * time.Second       // 60s between health checks
 	streamMaxIdle := 5 * time.Minute                 // default max idle
 
@@ -153,19 +166,27 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 					streamErrorModel = modelKey
 					streamRetryAfterMs = retryAfterMs
 
-					// 1. 中断上游连接（停止从 Google 读取更多数据）
-					if closer, ok := body.(io.Closer); ok {
-						closer.Close()
+					if forwardedContent {
+						// 已向 IDE 转发过正常内容 → 软信号:不掐流、不注入 [DONE]，
+						// 把剩余流（含这一块）原样转发完。既不截断进行中的工具调用，
+						// 也不会在裸子串误判命中模型正文时丢弃合法内容。
+						streamQuotaSoft = true
+					} else {
+						// 还没向 IDE 发过任何正常内容 → 纯错误开头，掐掉不截断任何东西。
+						// 1. 中断上游连接（停止从 Google 读取更多数据）
+						if closer, ok := body.(io.Closer); ok {
+							closer.Close()
+						}
+						// 2. 向 IDE 发送 SSE 结束标记，避免 IDE 侧无限等待
+						if ok {
+							_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
+						}
+						break // 退出读取循环
 					}
-					// 2. 向 IDE 发送 SSE 结束标记，避免 IDE 侧无限等待
-					if ok {
-						_ = writeAndFlush([]byte("\ndata: [DONE]\n\n"))
-					}
-					break // 退出读取循环
 				}
 			}
 
-			// 只有在非 quota 中断的情况下才转发数据给 IDE
+			// 转发数据给 IDE（软信号下也照常转发，保持流完整）
 			writeErr := writeAndFlush(buffer[:n])
 			// 下游断开（broken pipe）→ 停止从上游读取，节省 API 配额
 			if writeErr != nil {
@@ -174,8 +195,15 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 				}
 				break
 			}
+			// 成功转发过一块真实 body 数据 → 此后任何 quota 匹配都只当软信号。
+			forwardedContent = true
 		}
 		if err != nil {
+			// 区分正常结束 / 本地主动超时关闭 / 上游·代理异常掐断
+			// 只有最后一种才是需要排查的"长文输出中途断"
+			if err != io.EOF && !streamTimedOut.Load() {
+				streamAbortErr = err
+			}
 			break
 		}
 	}
@@ -186,13 +214,38 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 	p.mu.Unlock()
 	result := p.parseAndAddTokenUsage(tailBuffer.Bytes(), "", modelKey)
 
+	// 始终回报已收字节数 + 中断诊断（供调用方写入审计日志）
+	result.StreamBytes = totalStreamBytes.Load()
+	result.StreamTimedOut = streamTimedOut.Load()
+	if streamAbortErr != nil {
+		result.StreamAbortErr = streamAbortErr.Error()
+	}
+
 	// 附加流式错误信息，通知调用方上报
 	if streamQuotaDetected {
-		result.StreamError = true
+		if streamQuotaSoft {
+			// 已完整转发 → 软信号:本次按成功处理，仅供日志，不计错误、不惩罚账号。
+			result.StreamQuotaSoft = true
+		} else {
+			result.StreamError = true
+		}
 		result.StreamErrorReason = streamErrorReason
 		result.StreamErrorModel = streamErrorModel
 		result.StreamRetryAfterMs = streamRetryAfterMs
-		result.StreamBytes = totalStreamBytes.Load()
 	}
 	return result
+}
+
+// noteStreamAbort 把流式 body 阶段的中断诊断追加到审计备注，
+// 让日志能区分"长文输出断"到底是上游/代理掐断还是本地超时主动关闭。
+func noteStreamAbort(audit *proxyAudit, r TokenUsageResult) {
+	if r.StreamAbortErr != "" {
+		audit.note += fmt.Sprintf("; 流中途断开:%s(已收%d字节)", r.StreamAbortErr, r.StreamBytes)
+	} else if r.StreamTimedOut {
+		kind := "空闲超时"
+		if r.StreamBytes == 0 {
+			kind = "首字节超时"
+		}
+		audit.note += fmt.Sprintf("; 流%s主动关闭(已收%d字节)", kind, r.StreamBytes)
+	}
 }

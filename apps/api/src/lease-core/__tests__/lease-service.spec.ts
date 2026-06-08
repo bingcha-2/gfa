@@ -119,6 +119,22 @@ describe("LeaseService (generic core)", () => {
     expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
   });
 
+  it("不再用请求体大小估算:0-token 生成上报记 0,绝不把整段请求体当一次用量", async () => {
+    refreshToken.mockResolvedValue("access-token-1");
+    const service = makeService();
+
+    const lease = await service.leaseToken(REQ, {
+      clientId: "c1", modelKey: "gpt-5-codex", bodyBytes: 8000,
+    });
+    // 生成请求成功但 usage 未解析到(无 token 字段)→ 旧逻辑会按 requestBodyBytes/4=2000 凭空计费
+    const report = await service.reportResult(REQ, {
+      leaseId: lease.leaseId, status: 200, modelKey: "gpt-5-codex",
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.accessKeyStatus.totalTokensUsed).toBe(0);
+  });
+
   // ── Static account binding (no fallback) ─────────────────────────────────
 
   function makeBoundService(busyMessage?: string) {
@@ -391,15 +407,35 @@ describe("LeaseService (generic core)", () => {
     expect(r.boundAccount).toEqual({ id: 2, fraction: 0.42, resetAt: 1_900_000_000_000 });
   });
 
-  it("does not enforce the GFA per-card token cap — usage over the old limit still leases", async () => {
+  it("enforces the per-card token cap at lease — usage over the cap is rejected with 429", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
       keys: [{
         id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000,
         provider: "fake", boundAccountId: 1,
-        tokenWindowLimit: 1000, windowStartedAt: Date.now(),
+        bucketLimits: { "fake-gpt": 1000 }, windowStartedAt: Date.now(),
         tokenUsageEvents: [
-          { at: Date.now(), inputTokens: 5_000_000, outputTokens: 5_000_000, modelKey: "gpt-5-codex" },
+          { at: Date.now(), inputTokens: 5_000_000, outputTokens: 5_000_000, modelKey: "gpt-5-codex", product: "fake" },
+        ],
+      }],
+    });
+    const service = makeBoundService();
+
+    // Server-side backup enforcement: over-cap usage → 429 (not 401, not a silent lease).
+    await expect(
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({ statusCode: 429 });
+  });
+
+  it("leases normally for a bound card under its cap (cap set but not exceeded)", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000,
+        provider: "fake", boundAccountId: 1,
+        bucketLimits: { "fake-gpt": 5_000_000 }, windowStartedAt: Date.now(),
+        tokenUsageEvents: [
+          { at: Date.now(), inputTokens: 100, outputTokens: 50, modelKey: "gpt-5-codex", product: "fake" },
         ],
       }],
     });

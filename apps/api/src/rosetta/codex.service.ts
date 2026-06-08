@@ -67,6 +67,11 @@ export class CodexService {
       codexHourlyPercent: Number(account.codexHourlyPercent ?? -1),
       codexWeeklyPercent: Number(account.codexWeeklyPercent ?? -1),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
+      // Persisted dead-account verdict (written by lease-service) so the console
+      // can surface invalid_grant / repeatedly-failing accounts as dead.
+      quotaStatus: String(account.quotaStatus || "ok"),
+      quotaStatusReason: String(account.quotaStatusReason || ""),
+      blockedUntil: Number(account.blockedUntil || 0),
     }));
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }

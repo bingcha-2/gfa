@@ -1,14 +1,13 @@
-import * as path from "path";
 import { Injectable, Optional, OnModuleDestroy } from "@nestjs/common";
 
-import { LeaseService, LeaseServiceHttpError, type CreditTracker, type TokenUsageTracker } from "../lease-core/lease-service";
+import { LeaseService, LeaseServiceHttpError, type TokenUsageTracker, type AccountQuotaSnapshotRecorder } from "../lease-core/lease-service";
 import { QuotaProfileTracker } from "../lease-core/quota-profile-tracker";
 import { bucketFamily } from "../lease-core/product-bucket";
 import { FairShareTracker } from "./fair-share-tracker";
 import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
-import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
+import type { AccessKeyStore } from "./access-key-store";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -19,8 +18,12 @@ type ServiceOptions = {
   minClientVersion?: string;
   leaseTtlMs?: number;
   affinityTtlMs?: number;
-  creditTracker?: CreditTracker;
   tokenUsageTracker?: TokenUsageTracker;
+  accountQuotaSnapshotTracker?: AccountQuotaSnapshotRecorder;
+  /** Shared AccessKeyStore so all product pools share one usage cache. */
+  accessKeyStore?: AccessKeyStore;
+  /** PrismaService — persists QuotaProfile/FairShareWindow (omit in unit tests). */
+  prisma?: any;
 };
 
 /** HTTP error thrown by the antigravity token server. Subclass of the generic
@@ -40,9 +43,7 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       tokenProvider: options.tokenProvider,
     });
     // Quota profile tracker: learns real upstream budgets from 429 events.
-    const quotaProfileTracker = new QuotaProfileTracker(
-      path.join(defaultRemoteAccessDataDir(), "quota-profiles.json"),
-    );
+    const quotaProfileTracker = new QuotaProfileTracker(options.prisma, { now: options.now });
     // Auto-create fair-share tracker wired to this service's own accessKeyStore.
     // Uses a deferred pattern: the tracker's callbacks reference `service` which
     // is assigned after super() returns.
@@ -73,18 +74,22 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
           provider.id, planType, bucketFamily(bucket),
         );
       },
+      prisma: options.prisma,
+      provider: provider.id,
+      now: options.now,
     });
     super(
       provider,
       {
         accessKeysFilePath: options.accessKeysFilePath,
+        accessKeyStore: options.accessKeyStore,
         now: options.now,
         randomId: options.randomId,
         minClientVersion: options.minClientVersion,
         leaseTtlMs: options.leaseTtlMs,
         affinityTtlMs: options.affinityTtlMs,
-        creditTracker: options.creditTracker,
         tokenUsageTracker: options.tokenUsageTracker,
+        accountQuotaSnapshotTracker: options.accountQuotaSnapshotTracker,
         fairShareTracker,
         quotaProfileTracker,
         errorClass: TokenServerHttpError,

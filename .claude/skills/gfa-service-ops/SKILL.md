@@ -40,15 +40,27 @@ Use `git pull origin master` only if `git branch --show-current` prints `master`
 
 `pnpm start:stop` sends `SIGTERM` to the PID in `gfa.pid`. `pnpm start:daemon` rebuilds, clears stale Web/API port owners, starts API/Worker/Web, then polls `http://127.0.0.1:3001/api/health`.
 
-Schema-sensitive update:
+Schema-sensitive update (Prisma Migrate):
+
+The DB now uses **Prisma Migrate** — versioned migrations under `prisma\migrations\` applied in order (not the old `db push` / diff-apply). After pulling code that changed the Prisma schema:
+
+```powershell
+cd C:\Users\Administrator\Desktop\GFA
+pnpm start:stop
+git pull origin main
+New-Item -ItemType Directory -Force backups | Out-Null
+Copy-Item prisma\dev.db "backups\dev-$(Get-Date -Format yyyyMMdd-HHmmss).db"   # always back up first
+pnpm db:migrate            # = prisma migrate deploy (applies pending migrations in order; non-destructive)
+pnpm start:daemon
+```
+
+⚠ **One-time baseline before `migrate deploy` works on an existing server.** The production DB was previously managed by `db push`, so its tables exist outside Prisma's migration history. Run the one-time baseline documented in `prisma\MIGRATIONS.md` once (back up → sync schema → clear `_prisma_migrations` metadata → `prisma migrate resolve --applied 0_init`). **Until that baseline is done**, use the legacy diff-apply instead — it also backs up `prisma\dev.db` into `backups\`:
 
 ```powershell
 cd C:\Users\Administrator\Desktop\GFA
 git pull origin main
 powershell -ExecutionPolicy Bypass -File scripts\deploy-update.ps1
 ```
-
-Use this when Prisma schema may have changed; it backs up `prisma\dev.db` into `backups\`.
 
 Restart only:
 
@@ -106,7 +118,7 @@ Steps:
 3. Commit + push to `main`, then dispatch the build:
 
 ```bash
-gh workflow run build-wails.yml --ref main -f version=8.2.0 -f changelog="桌面端体验优化与稳定性修复"
+gh workflow run build-wails.yml --ref main -f version=8.6.0 -f changelog="桌面端体验优化与稳定性修复"
 gh run list --workflow build-wails.yml --limit 1      # grab run id
 gh run watch <run-id>
 ```
@@ -130,10 +142,11 @@ The Wails build output `apps\bcai-wails\build\bin\` is not the public update dir
 
 ### Server minimum client version
 
-`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `8.2.0`) is the
+`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `8.6.0`) is the
 single floor for ALL lease paths — `RemoteAnthropicService` / `RemoteCodexService` / `TokenServerService`
-all extend `LeaseService` and none override it (their modules call `new XxxService({ tokenUsageTracker })`
-with no `minClientVersion`). Clients below the floor get 426 "upgrade required" at lease time. Bump it
+all extend `LeaseService` and none override it (their modules call
+`new XxxService({ tokenUsageTracker, accountQuotaSnapshotTracker })` with no `minClientVersion`).
+Clients below the floor get 426 "upgrade required" at lease time. Bump it
 alongside a release you want mandatory. `lease-core/__tests__/lease-service.spec.ts` pins this floor —
 update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
 
@@ -141,8 +154,8 @@ update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
 
 ```powershell
 cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
-wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.2.0"
-# then upload the .exe to a bingcha135-sys-bcai-releases Release (tag wails-v8.2.0)
+wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.6.0"
+# then upload the .exe to a bingcha135-sys-bcai-releases Release (tag wails-v8.6.0)
 # and hand-edit apps\web\public\updates\latest-wails.json (url/sha256/size/version/minVersion).
 ```
 

@@ -50,17 +50,6 @@ export class CreditsQuotaService {
         );
         const health = await fetchAccountHealth(token, acc.projectId, acc.email);
 
-        // Update credits even when GOOGLE_ONE_AI is absent, so stale "exhausted"
-        // values do not survive a successful refresh with unknown credit data.
-        acc.credits = {
-          known: health.credits.known,
-          available: health.credits.available,
-          creditAmount: health.credits.creditAmount,
-          minCreditAmount: health.credits.minCreditAmount,
-          paidTierID: health.credits.paidTierID,
-          creditsRefreshedAt: new Date().toISOString(),
-        };
-
         // Update planType (detect upgrades)
         if (health.planType) {
           const oldPlan = acc.planType || "";
@@ -84,7 +73,6 @@ export class CreditsQuotaService {
           id: acc.id,
           email: acc.email,
           planType: acc.planType || "",
-          credits: health.credits,
         });
       } catch (err: any) {
         errors++;
@@ -106,7 +94,6 @@ export class CreditsQuotaService {
    */
   async refreshQuota() {
     const accountsFile = path.join(this.ctx.dataDir, "accounts.json");
-    const quotaFile = path.join(this.ctx.dataDir, "quota-data.json");
     const data = readJson(accountsFile, { accounts: [] });
     const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
     const enabled = accounts.filter((a) => a.enabled !== false && a.refreshToken);
@@ -124,25 +111,14 @@ export class CreditsQuotaService {
     let refreshed = 0;
     let errors = 0;
 
-    // Load existing quota-data.json
-    const quotaData: Record<string, any> = readJson(quotaFile, {});
-
     await runConcurrent(ready, 5, async (acc) => {
       try {
         const token = await getAccessToken(
           Number(acc.id), acc.refreshToken, this.ctx.tokenCache,
         );
 
-        // Phase 2: Credits + planType via loadCodeAssist
+        // Phase 2: planType via loadCodeAssist
         const health = await fetchAccountHealth(token, acc.projectId, acc.email);
-        acc.credits = {
-          known: health.credits.known,
-          available: health.credits.available,
-          creditAmount: health.credits.creditAmount,
-          minCreditAmount: health.credits.minCreditAmount,
-          paidTierID: health.credits.paidTierID,
-          creditsRefreshedAt: new Date().toISOString(),
-        };
         if (health.planType && health.planType !== acc.planType) {
           acc.planType = health.planType;
         }
@@ -186,14 +162,6 @@ export class CreditsQuotaService {
             }
           }
 
-          // Persist to quota-data.json
-          quotaData[acc.email] = {
-            modelsJson: modelsResult.rawJson,
-            refreshedAt: nowIso(),
-            alias: acc.alias || "",
-            planType: acc.planType || "",
-          };
-
           refreshed++;
         } else {
           // fetchAvailableModels failed but credits may have succeeded
@@ -205,9 +173,7 @@ export class CreditsQuotaService {
       }
     });
 
-    // Persist both files
     writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
-    writeJson(quotaFile, quotaData);
 
     return { ok: true, refreshed, errors, total: ready.length };
   }

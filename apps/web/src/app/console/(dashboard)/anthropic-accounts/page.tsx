@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
+import { AccountStatusCell } from "@/components/account-status-cell";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,8 @@ type ClaudeAccount = {
   claudeWeeklyPercent: number;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
+  quotaStatus?: string;
+  quotaStatusReason?: string;
 };
 
 function pct(value: number) {
@@ -386,6 +389,7 @@ export default function ClaudeAccountsPage() {
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
+                  <TableHead>状态</TableHead>
                   <TableHead>出口代理</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
@@ -405,6 +409,9 @@ export default function ClaudeAccountsPage() {
                     <TableCell className="text-sm">{pct(a.claudeWeeklyPercent)}</TableCell>
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <AccountStatusCell account={a} />
                     </TableCell>
                     <TableCell className="max-w-[240px]">
                       {proxyEditId === a.id ? (

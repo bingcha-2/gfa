@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Post, Query } from "@nestjs/common";
 
 import { RosettaService } from "./rosetta.service";
-import { CreditStatsService } from "./credit-stats.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
@@ -17,7 +16,6 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 export class RosettaController {
   constructor(
     private readonly rosetta: RosettaService,
-    private readonly creditStats: CreditStatsService,
     private readonly tokenUsageStats: TokenUsageStatsService,
     private readonly tokenServer: TokenServerService,
     private readonly remoteCodex: RemoteCodexService,
@@ -280,16 +278,6 @@ export class RosettaController {
     return result;
   }
 
-  @Get("throttle-config")
-  getThrottleConfig() {
-    return this.rosetta.getThrottleConfig();
-  }
-
-  @Post("throttle-config")
-  saveThrottleConfig(@Body() body: any) {
-    return this.rosetta.saveThrottleConfig(body);
-  }
-
   @Post("captcha-unblock")
   createCaptchaUnblock(@Body() body: any) {
     return this.rosetta.createCaptchaUnblock(body);
@@ -333,31 +321,6 @@ export class RosettaController {
   @Get("adspower-import-history")
   adspowerImportHistory() {
     return this.rosetta.adspowerImportHistory();
-  }
-
-  @Get("credit-stats")
-  getCreditStats(@Query("days") days?: string) {
-    return this.creditStats.getCreditStats(Number(days) || 7);
-  }
-
-  @Get("credit-snapshots")
-  getCreditSnapshots(@Query("days") days?: string) {
-    return this.creditStats.getCreditSnapshots(Number(days) || 7);
-  }
-
-  @Get("credit-consumption")
-  getCreditConsumption(
-    @Query("page") page?: string,
-    @Query("pageSize") pageSize?: string,
-    @Query("search") search?: string,
-    @Query("days") days?: string,
-  ) {
-    return this.creditStats.getConsumptionRecords({
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 30,
-      search,
-      days: Number(days) || 7,
-    });
   }
 
   // ── Per-card token usage log ────────────────────────────────────────────

@@ -24,6 +24,7 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
+import { formatTokens } from "@/lib/format";
 
 type UsageRecord = {
   id: string;
@@ -180,10 +181,10 @@ export function CardUsageDialog({
           <>
             {/* Totals */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <Stat label="计费 Token" value={fmt(totals?.totalTokens)} />
+              <Stat label="计费 Token" value={formatTokens(totals?.totalTokens)} />
               <Stat label="请求数" value={fmt(totals?.requests)} />
-              <Stat label="输入 Token" value={fmt(totals?.inputTokens)} />
-              <Stat label="输出 Token" value={fmt(totals?.outputTokens)} />
+              <Stat label="输入 Token" value={formatTokens(totals?.inputTokens)} />
+              <Stat label="输出 Token" value={formatTokens(totals?.outputTokens)} />
             </div>
 
             {/* Daily mini bar chart */}
@@ -196,7 +197,7 @@ export function CardUsageDialog({
                       key={d.date}
                       className="flex-1 rounded-sm bg-primary/70 transition-colors hover:bg-primary"
                       style={{ height: `${Math.max(2, (d.totalTokens / maxDaily) * 100)}%` }}
-                      title={`${d.date}: ${fmt(d.totalTokens)} token / ${d.requests} 次`}
+                      title={`${d.date}: ${formatTokens(d.totalTokens)} token / ${d.requests} 次`}
                     />
                   ))}
                 </div>
@@ -235,10 +236,10 @@ export function CardUsageDialog({
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right text-sm">{fmt(m.requests)}</TableCell>
-                          <TableCell className="text-right text-sm">{fmt(m.inputTokens)}</TableCell>
-                          <TableCell className="text-right text-sm">{fmt(m.outputTokens)}</TableCell>
+                          <TableCell className="text-right text-sm">{formatTokens(m.inputTokens)}</TableCell>
+                          <TableCell className="text-right text-sm">{formatTokens(m.outputTokens)}</TableCell>
                           <TableCell className="text-right text-sm font-medium">
-                            {fmt(m.totalTokens)}
+                            {formatTokens(m.totalTokens)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -289,13 +290,13 @@ export function CardUsageDialog({
                             <TableCell className="max-w-[160px] truncate font-mono text-xs">
                               {r.modelKey || "-"}
                             </TableCell>
-                            <TableCell className="text-right text-sm">{fmt(r.inputTokens)}</TableCell>
-                            <TableCell className="text-right text-sm">{fmt(r.outputTokens)}</TableCell>
+                            <TableCell className="text-right text-sm">{formatTokens(r.inputTokens)}</TableCell>
+                            <TableCell className="text-right text-sm">{formatTokens(r.outputTokens)}</TableCell>
                             <TableCell className="text-right text-sm text-muted-foreground">
-                              {fmt(r.cachedInputTokens)}
+                              {formatTokens(r.cachedInputTokens)}
                             </TableCell>
                             <TableCell className="text-right text-sm font-medium">
-                              {fmt(r.totalTokens)}
+                              {formatTokens(r.totalTokens)}
                             </TableCell>
                             <TableCell className="text-right text-xs">
                               <span className={r.status >= 200 && r.status < 400 ? "text-muted-foreground" : "text-destructive"}>

@@ -18,7 +18,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Lock, Unlock, ChevronLeft, ChevronRight } from "lucide-react";
 
-import type { Credits, EnrichedAccount } from "./types";
+import type { EnrichedAccount } from "./types";
 import { formatMs, formatTokenCount, formatDateTime, successRateColor } from "./helpers";
 import { REASON_LABELS, getQuotaDisplayItem, PAGE_SIZE } from "./constants";
 import type { CanonicalModel } from "./types";
@@ -105,7 +105,6 @@ export function AccountsTable({
                       </TableHead>
                       {show("account") && <TableHead>账号</TableHead>}
                       {show("plan") && <TableHead>套餐</TableHead>}
-                      {show("credits") && <TableHead>AI积分</TableHead>}
                       {show("modelQuota") &&
                         visibleModelQuotaOptions.map((model) => (
                           <TableHead key={model.id}>{model.displayName}</TableHead>
@@ -154,8 +153,6 @@ export function AccountsTable({
                           : quotaStatus === "exhausted" || quotaStatus === "cooling"
                             ? "bg-yellow-500"
                             : "bg-green-500";
-                      const credits = account.credits || ({} as Credits);
-                      const creditsDotClass = credits.available ? "bg-green-500" : "bg-red-500";
                       const modelQuotaFractions = account.modelQuotaFractions || {};
 
                       return (
@@ -178,51 +175,6 @@ export function AccountsTable({
                           )}
                           {show("plan") && (
                             <TableCell className="text-xs">{account.planType || "-"}</TableCell>
-                          )}
-                          {show("credits") && (
-                            <TableCell className="text-xs">
-                              {credits.known ? (
-                                <Tooltip>
-                                  <TooltipTrigger className="inline-flex items-center gap-1">
-                                    <span
-                                      className={`inline-block size-1.5 rounded-full ${creditsDotClass}`}
-                                    />
-                                    <span className={credits.available ? "" : "text-red-500"}>
-                                      {Number(credits.creditAmount || 0).toLocaleString(
-                                        undefined,
-                                        { maximumFractionDigits: 0 },
-                                      )}
-                                      <span className="text-muted-foreground">/{credits.minCreditAmount || 0}</span>
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    余额: {credits.creditAmount} / 最低:{" "}
-                                    {credits.minCreditAmount || 0}
-                                    {!credits.available && <><br />低于最低使用门槛</>}
-                                    <br />
-                                    刷新:{" "}
-                                    {credits.creditsRefreshedAt
-                                      ? new Date(credits.creditsRefreshedAt).toLocaleString()
-                                      : "未刷新"}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : (
-                                <Tooltip>
-                                  <TooltipTrigger className="inline-flex items-center gap-1 text-muted-foreground">
-                                    <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
-                                    未知
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    Google 未返回 AI 积分数据
-                                    <br />
-                                    刷新:{" "}
-                                    {credits.creditsRefreshedAt
-                                      ? new Date(credits.creditsRefreshedAt).toLocaleString()
-                                      : "未刷新"}
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </TableCell>
                           )}
                           {show("modelQuota") &&
                             visibleModelQuotaOptions.map((model) => (

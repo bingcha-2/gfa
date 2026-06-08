@@ -28,9 +28,9 @@ func newAuditTee(w http.ResponseWriter) *auditTee {
 	return &auditTee{w: w}
 }
 
-func (t *auditTee) Header() http.Header          { return t.w.Header() }
-func (t *auditTee) WriteHeader(status int)        { t.w.WriteHeader(status) }
-func (t *auditTee) Write(p []byte) (int, error)  { return t.w.Write(p) }
+func (t *auditTee) Header() http.Header         { return t.w.Header() }
+func (t *auditTee) WriteHeader(status int)      { t.w.WriteHeader(status) }
+func (t *auditTee) Write(p []byte) (int, error) { return t.w.Write(p) }
 func (t *auditTee) Flush() {
 	if f, ok := t.w.(http.Flusher); ok {
 		f.Flush()
@@ -52,10 +52,14 @@ type proxyAudit struct {
 	status    int
 	inTokens  int64
 	outTokens int64
-	reqBody   []byte
-	respBody  []byte
-	note      string // 错误/补充说明(被拒/流中断/lease 失败 …)
-	emitted   bool
+	// cachedTokens/billableTokens 仅用于日志显示真实口径(尤其 claude 命中缓存时,
+	// in 只是 net 新增、计费按缓存 1/10 折后)。0 时不显示,不影响上报。
+	cachedTokens   int64
+	billableTokens int64
+	reqBody        []byte
+	respBody       []byte
+	note           string // 错误/补充说明(被拒/流中断/lease 失败 …)
+	emitted        bool
 }
 
 func newProxyAudit(product string, reqID int64, kind, method, path string) *proxyAudit {
@@ -89,12 +93,27 @@ func (a *proxyAudit) emit() {
 	if a.status > 0 {
 		fmt.Fprintf(&b, " 码=%d", a.status)
 	}
-	if a.inTokens > 0 || a.outTokens > 0 {
-		fmt.Fprintf(&b, " tokens(in=%d out=%d)", a.inTokens, a.outTokens)
+	if a.inTokens > 0 || a.outTokens > 0 || a.cachedTokens > 0 {
+		fmt.Fprintf(&b, " tokens(in=%d", a.inTokens)
+		if a.cachedTokens > 0 {
+			fmt.Fprintf(&b, " cache=%d", a.cachedTokens)
+		}
+		fmt.Fprintf(&b, " out=%d", a.outTokens)
+		if a.billableTokens > 0 {
+			fmt.Fprintf(&b, " 计费=%d", a.billableTokens)
+		}
+		b.WriteString(")")
 	}
 	if a.note != "" {
 		fmt.Fprintf(&b, " 备注=%s", a.note)
 	}
-	// 只输出一行元信息(请求地址/model/账号/状态/tokens 等);请求/响应正文省略不打印。
+	// 正常请求只记一行元信息,正文省略;但出错(>=400)时附带上游错误正文(截断),便于定位 400/403/5xx 原因。
+	if a.status >= 400 && len(a.respBody) > 0 {
+		snippet := strings.ReplaceAll(string(a.respBody), "\n", " ")
+		if rs := []rune(snippet); len(rs) > 500 {
+			snippet = string(rs[:500]) + "…(截断)"
+		}
+		fmt.Fprintf(&b, " 错误正文=%s", snippet)
+	}
 	Log("%s", b.String())
 }

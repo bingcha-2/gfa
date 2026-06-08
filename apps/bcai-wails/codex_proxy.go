@@ -268,6 +268,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.note = "lease 失败:" + err.Error()
+		// 卡额度用完 → 标准 429 + Retry-After(让 IDE 退避/停),而非 502(会被当临时故障狂试)。
+		if writeQuotaExhausted(w, err) {
+			return
+		}
 		p.sendJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex token lease failed: %v", err))
 		return
 	}
@@ -347,16 +351,9 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
 		tr := &ttftReader{r: resp.Body, start: reqStart}
-		input, output, total, copyErr := copyStreamingCodexResponse(tee, tr)
+		input, output, cached, total, copyErr := copyStreamingCodexResponse(tee, tr)
 		audit.respBody = tee.captured()
-		details := ReportDetails{
-			StatusCode:          resp.StatusCode,
-			ModelKey:            modelKey,
-			InputTokens:         input,
-			OutputTokens:        output,
-			RawTotalTokens:      total,
-			BillableTotalTokens: total,
-		}
+		details := codexDetailsFrom(resp.StatusCode, modelKey, input, output, cached, total)
 		audit.inTokens, audit.outTokens = input, output
 		if copyErr != nil {
 			details.StatusCode = 502
@@ -480,7 +477,7 @@ func (p *CodexProxy) serveRelayGeneration(w http.ResponseWriter, r *http.Request
 		p.writeResponseHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		tee := newAuditTee(w)
-		if _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
+		if _, _, _, _, copyErr := copyStreamingCodexResponse(tee, resp.Body); copyErr != nil {
 			audit.note = "流中断:" + copyErr.Error()
 		}
 		audit.respBody = tee.captured()
@@ -732,7 +729,7 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	}
 	// 再计入仪表盘统计(输入/输出 Token + 累计已节省)。与 antigravity 路径
 	// (proxy_tokens.go)共用 UsageStatsStore;节省金额在 AddTokens 内按 in/out 价格算。
-	GetUsageStats().AddTokens("gpt", details.InputTokens, details.OutputTokens, 0)
+	GetUsageStats().AddTokens("gpt", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
 	GetUsageStats().AddGeneration()
 }
 
@@ -787,11 +784,11 @@ func isCodexStreamingResponse(resp *http.Response) bool {
 // copyStreamingCodexResponse 边转发 SSE 边解析最终的 usage(input/output/total)。
 // codex 流式响应的用量在 response.completed/response.done 事件的 response.usage 里,
 // 之前只逐字节转发、不解析,导致流式用量上报为 0(完全不计费)。
-func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, int64, int64, error) {
+func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, int64, int64, int64, error) {
 	flusher, _ := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
 	var pending []byte
-	var input, output, total int64
+	var input, output, cached, total int64
 
 	scan := func(chunk []byte, flushTail bool) {
 		pending = append(pending, chunk...)
@@ -801,8 +798,8 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, i
 				break
 			}
 			line := pending[:idx]
-			if i, o, t, ok := codexUsageFromSSELine(line); ok {
-				input, output, total = i, o, t
+			if i, o, c, t, ok := codexUsageFromSSELine(line); ok {
+				input, output, cached, total = i, o, c, t
 			} else if codexDebugUsage && bytes.Contains(line, []byte("usage")) {
 				// 调试:解析不到但含 usage 的行,打出真实格式以便对齐字段路径。
 				dbg := line
@@ -814,8 +811,8 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, i
 			pending = pending[idx+1:]
 		}
 		if flushTail && len(pending) > 0 {
-			if i, o, t, ok := codexUsageFromSSELine(pending); ok {
-				input, output, total = i, o, t
+			if i, o, c, t, ok := codexUsageFromSSELine(pending); ok {
+				input, output, cached, total = i, o, c, t
 			}
 			pending = nil
 		}
@@ -826,7 +823,7 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, i
 		if n > 0 {
 			chunk := buffer[:n]
 			if _, writeErr := w.Write(chunk); writeErr != nil {
-				return input, output, total, writeErr
+				return input, output, cached, total, writeErr
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -835,20 +832,20 @@ func copyStreamingCodexResponse(w http.ResponseWriter, body io.Reader) (int64, i
 		}
 		if err == io.EOF {
 			scan(nil, true)
-			return input, output, total, nil
+			return input, output, cached, total, nil
 		}
 		if err != nil {
-			return input, output, total, err
+			return input, output, cached, total, err
 		}
 	}
 }
 
 // codexUsageFromSSELine 从一行 SSE(`data: {...}`)中解析 usage。
-func codexUsageFromSSELine(line []byte) (int64, int64, int64, bool) {
+func codexUsageFromSSELine(line []byte) (input, output, cached, total int64, ok bool) {
 	trimmed := bytes.TrimSpace(line)
 	trimmed = bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	return codexUsageFromJSON(trimmed)
 }
@@ -865,28 +862,49 @@ func extractCodexModelKey(body []byte) string {
 }
 
 func codexReportDetails(status int, modelKey string, body []byte) ReportDetails {
-	input, output, total := extractCodexUsage(body)
+	input, output, cached, total := extractCodexUsage(body)
+	return codexDetailsFrom(status, modelKey, input, output, cached, total)
+}
+
+// codexDetailsFrom 组装上报明细,并按缓存命中打 1/10 折扣(与 Gemini/Claude 同口径)。
+// input 为 gross(含 cached);billable = raw - cached + ceil(cached/10)。
+func codexDetailsFrom(status int, modelKey string, input, output, cached, total int64) ReportDetails {
+	raw := total
+	if raw == 0 {
+		raw = input + output
+	}
+	if cached > input {
+		cached = input
+	}
+	billable := raw
+	if cached > 0 {
+		billable = raw - cached + discountedCachedTokens(cached)
+		if billable < 0 {
+			billable = 0
+		}
+	}
 	return ReportDetails{
 		StatusCode:          status,
 		ModelKey:            modelKey,
 		InputTokens:         input,
 		OutputTokens:        output,
-		RawTotalTokens:      total,
-		BillableTotalTokens: total,
+		CachedInputTokens:   cached,
+		RawTotalTokens:      raw,
+		BillableTotalTokens: billable,
 	}
 }
 
-func extractCodexUsage(body []byte) (int64, int64, int64) {
-	i, o, t, _ := codexUsageFromJSON(body)
-	return i, o, t
+func extractCodexUsage(body []byte) (int64, int64, int64, int64) {
+	i, o, c, t, _ := codexUsageFromJSON(body)
+	return i, o, c, t
 }
 
 // codexUsageFromJSON 从事件 JSON 中提取 usage,支持顶层 .usage 与 .response.usage
 // (responses API 的 response.completed 事件把 usage 放在 response 下)。
-func codexUsageFromJSON(data []byte) (int64, int64, int64, bool) {
+func codexUsageFromJSON(data []byte) (input, output, cached, total int64, ok bool) {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	usage, _ := payload["usage"].(map[string]interface{})
 	if usage == nil {
@@ -895,18 +913,25 @@ func codexUsageFromJSON(data []byte) (int64, int64, int64, bool) {
 		}
 	}
 	if usage == nil {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
-	input := jsonNumberAsInt64(usage["input_tokens"])
-	output := jsonNumberAsInt64(usage["output_tokens"])
-	total := jsonNumberAsInt64(usage["total_tokens"])
+	input = jsonNumberAsInt64(usage["input_tokens"])
+	output = jsonNumberAsInt64(usage["output_tokens"])
+	total = jsonNumberAsInt64(usage["total_tokens"])
+	// 缓存命中:Responses API 把 cached_tokens 放在 input_tokens_details(已含于 input_tokens)。
+	if det, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+		cached = jsonNumberAsInt64(det["cached_tokens"])
+	}
+	if cached > input {
+		cached = input
+	}
 	if total == 0 {
 		total = input + output
 	}
 	if input == 0 && output == 0 && total == 0 {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
-	return input, output, total, true
+	return input, output, cached, total, true
 }
 
 func jsonNumberAsInt64(value interface{}) int64 {

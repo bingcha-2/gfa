@@ -7,11 +7,12 @@
  * collecting samples from many 429s lets us converge on accurate per-plan
  * quota estimates — replacing the hardcoded DEFAULT_BUDGETS table.
  *
- * Profiles are persisted to `quota-profiles.json` so they survive restarts.
+ * Profiles are persisted to the `QuotaProfile` table (one row per
+ * provider+planType+family). Following the "memory aggregate + periodic batch
+ * write" pattern (no-WAL): recordExhaustion only mutates memory + marks the key
+ * dirty; a timer flushes dirty profiles via upsert. load() restores the table
+ * into memory at startup.
  */
-
-import * as fs from "fs";
-import * as path from "path";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -37,8 +38,8 @@ export interface QuotaProfile {
 /** Maximum number of recent samples to retain per profile. */
 const MAX_HISTORY = 20;
 
-/** Debounce interval for disk writes (ms). */
-const SAVE_DEBOUNCE_MS = 30_000;
+/** Periodic batch-write interval (ms). 429s are rare, so 30s is plenty. */
+const FLUSH_INTERVAL_MS = 30_000;
 
 /** Minimum totalUsed to consider a sample valid (avoid noise from empty windows). */
 const MIN_SAMPLE_THRESHOLD = 10_000;
@@ -47,13 +48,23 @@ const MIN_SAMPLE_THRESHOLD = 10_000;
 
 export class QuotaProfileTracker {
   private profiles = new Map<string, QuotaProfile>();
-  private readonly filePath: string;
-  private dirty = false;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private dirty = new Set<string>();
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly prisma: any;
+  private readonly nowFn: () => number;
 
-  constructor(filePath: string) {
-    this.filePath = filePath;
-    this.load();
+  /**
+   * @param prisma  PrismaService (or compatible). Omit in unit tests that only
+   *                exercise the in-memory learning logic — persistence no-ops.
+   */
+  constructor(prisma?: any, opts?: { now?: () => number }) {
+    this.prisma = prisma ?? null;
+    this.nowFn = opts?.now || Date.now;
+    if (this.prisma) {
+      this.flushTimer = setInterval(() => {
+        void this.flush();
+      }, FLUSH_INTERVAL_MS);
+    }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
@@ -100,8 +111,8 @@ export class QuotaProfileTracker {
       profile.samples5h++;
     }
 
-    profile.lastUpdatedAt = Date.now();
-    this.scheduleSave();
+    profile.lastUpdatedAt = this.nowFn();
+    this.dirty.add(key);
   }
 
   /** Retrieve a learned profile. Returns null if no data exists. */
@@ -124,14 +135,65 @@ export class QuotaProfileTracker {
     return profile?.window5h || 0;
   }
 
-  /** Force-write to disk. Called on shutdown. */
-  flush(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
+  /** Restore persisted profiles into memory. Call once at startup. */
+  async load(): Promise<void> {
+    if (!this.prisma) return;
+    try {
+      const rows = await this.prisma.quotaProfile.findMany();
+      for (const r of rows) {
+        const key = profileKey(String(r.provider), String(r.planType), String(r.family));
+        this.profiles.set(key, {
+          window5h: Number(r.window5h) || 0,
+          weekly: Number(r.weekly) || 0,
+          samples5h: Number(r.samples5h) || 0,
+          samplesWeekly: Number(r.samplesWeekly) || 0,
+          history5h: parseNumArray(r.history5h),
+          historyWeekly: parseNumArray(r.historyWeekly),
+          lastUpdatedAt: Number(r.lastUpdatedAt) || 0,
+        });
+      }
+    } catch (err) {
+      console.error("[quota-profile-tracker] load failed:", err);
     }
-    if (!this.dirty) return;
-    this.save();
+  }
+
+  /** Upsert all dirty profiles. Runs on a timer and on shutdown. */
+  async flush(): Promise<void> {
+    if (!this.prisma || this.dirty.size === 0) return;
+    const keys = [...this.dirty];
+    this.dirty.clear();
+    for (const key of keys) {
+      const profile = this.profiles.get(key);
+      if (!profile) continue;
+      const { provider, planType, family } = splitKey(key);
+      const data = {
+        window5h: profile.window5h,
+        weekly: profile.weekly,
+        samples5h: profile.samples5h,
+        samplesWeekly: profile.samplesWeekly,
+        history5h: JSON.stringify(profile.history5h),
+        historyWeekly: JSON.stringify(profile.historyWeekly),
+        lastUpdatedAt: BigInt(Math.trunc(profile.lastUpdatedAt)),
+      };
+      try {
+        await this.prisma.quotaProfile.upsert({
+          where: { provider_planType_family: { provider, planType, family } },
+          create: { provider, planType, family, ...data },
+          update: data,
+        });
+      } catch (err) {
+        console.error("[quota-profile-tracker] flush failed:", err);
+        this.dirty.add(key); // retry on the next tick
+      }
+    }
+  }
+
+  /** Stop the periodic flush timer. */
+  destroy(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
@@ -152,57 +214,29 @@ export class QuotaProfileTracker {
     }
     return profile;
   }
-
-  private scheduleSave(): void {
-    this.dirty = true;
-    if (!this.saveTimer) {
-      this.saveTimer = setTimeout(() => {
-        this.saveTimer = null;
-        this.save();
-      }, SAVE_DEBOUNCE_MS);
-    }
-  }
-
-  private load(): void {
-    try {
-      if (!fs.existsSync(this.filePath)) return;
-      const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
-      if (raw && typeof raw === "object") {
-        for (const [key, value] of Object.entries(raw)) {
-          const v = value as any;
-          this.profiles.set(key, {
-            window5h: Number(v.window5h) || 0,
-            weekly: Number(v.weekly) || 0,
-            samples5h: Number(v.samples5h) || 0,
-            samplesWeekly: Number(v.samplesWeekly) || 0,
-            history5h: Array.isArray(v.history5h) ? v.history5h.map(Number).filter(Number.isFinite) : [],
-            historyWeekly: Array.isArray(v.historyWeekly) ? v.historyWeekly.map(Number).filter(Number.isFinite) : [],
-            lastUpdatedAt: Number(v.lastUpdatedAt) || 0,
-          });
-        }
-      }
-    } catch {
-      // File missing or corrupt — start fresh.
-    }
-  }
-
-  private save(): void {
-    this.dirty = false;
-    try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const data = this.getAllProfiles();
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-    } catch {
-      // Best-effort persistence.
-    }
-  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function profileKey(product: string, planType: string, family: string): string {
   return `${product}:${(planType || "free").toLowerCase()}:${family}`;
+}
+
+/** Inverse of profileKey. product/planType/family never contain ':'. */
+function splitKey(key: string): { provider: string; planType: string; family: string } {
+  const [provider = "", planType = "", family = ""] = key.split(":");
+  return { provider, planType, family };
+}
+
+function parseNumArray(raw: unknown): number[] {
+  if (Array.isArray(raw)) return raw.map(Number).filter(Number.isFinite);
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+  } catch {
+    return [];
+  }
 }
 
 function median(values: number[]): number {

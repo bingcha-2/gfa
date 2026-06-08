@@ -11,7 +11,7 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
   }
 
   it("stores hourly/weekly percentages and a binding codex quota fraction", () => {
-    const { account, creditDelta } = snap({
+    const { account } = snap({
       planType: "pro",
       codexQuota: {
         hourlyPercent: 80,
@@ -21,7 +21,6 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
       },
     });
 
-    expect(creditDelta).toBeNull(); // codex has no credits concept
     expect(account.planType).toBe("pro");
     // Binding fraction = the more restrictive window = min(80, 30)/100 = 0.3
     expect((account as any).modelQuotaFractions.codex).toBeCloseTo(0.3, 5);
@@ -57,9 +56,29 @@ describe("CodexProvider.applyQuotaSnapshot", () => {
     expect(provider.quotaFractionFor({ id: 1, email: "a@b.c", refreshToken: "r" } as any, "gpt-5.2")).toBeNull();
   });
 
+  it("quotaSnapshotInputs returns one codex 5h/weekly window row", () => {
+    const provider = new CodexProvider();
+    const { account } = provider.applyQuotaSnapshot(
+      { id: 1, email: "a@b.c", refreshToken: "r" } as any,
+      {
+        codexQuota: {
+          hourlyPercent: 80, weeklyPercent: 30,
+          hourlyResetTime: "2036-06-01T10:00:00Z", weeklyResetTime: "2036-06-05T00:00:00Z",
+        },
+      },
+    );
+    const rows = provider.quotaSnapshotInputs!(account);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ modelKey: "codex", hourlyPercent: 80, weeklyPercent: 30 });
+    expect(rows[0].hourlyResetAt).toEqual(new Date("2036-06-01T10:00:00Z"));
+  });
+
+  it("quotaSnapshotInputs returns [] with no codex window data", () => {
+    expect(new CodexProvider().quotaSnapshotInputs!({ id: 1, email: "a@b.c" } as any)).toEqual([]);
+  });
+
   it("is a safe no-op when no codexQuota is present", () => {
-    const { account, creditDelta } = snap({ planType: "plus" });
-    expect(creditDelta).toBeNull();
+    const { account } = snap({ planType: "plus" });
     expect(account.planType).toBe("plus");
     expect((account as any).modelQuotaFractions).toBeUndefined();
   });

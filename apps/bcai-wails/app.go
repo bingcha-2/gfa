@@ -169,6 +169,11 @@ func clearLocalCardState() {
 	GetLeaser().ResetLocalQuota()
 	GetLeaser().ClearAccessKeyStatus()
 	resetBoundFractions()
+	// 三家 leaser 的额度/租号错误(如「卡额度已用完」红 banner)属旧卡,一并清掉 —— 否则
+	// 换新卡 / 后台加额度后,旧卡的 block 提示会一直挂着。三家逻辑保持一致。
+	GetLeaser().setLastError("")
+	GetClaudeLeaser().setLastError("")
+	GetCodexLeaser().setLastError("")
 }
 
 // switchCardConfig 把配置切到 newCard 并持久化;仅当卡确实变化时清空本地状态,
@@ -218,9 +223,13 @@ func (a *App) ActivateCard(card string) (string, error) {
 func (a *App) GetStats() map[string]interface{} {
 	proxyStats := GetProxy().GetStats()
 	leaserStatus := GetLeaser().GetStatus()
-	// 绑定号各 bucket 的真实上游剩余分数 + 各自恢复倒计时(跨两个 leaser 汇总)。
-	leaserStatus["bucketFractions"] = snapshotBoundFractions()
-	leaserStatus["bucketResetMs"] = snapshotBoundResets(time.Now().UnixMilli())
+	// 血条两维度:整号上游余量(号余量条)+ 我的 fair-share 份额(我的卡条),各带恢复倒计时。
+	// static 卡的"我的卡"额度来自 localQuota(见下方 accessKeyStatus/localQuota),不在这里。
+	nowMs := time.Now().UnixMilli()
+	leaserStatus["accountFractions"] = snapshotAccountFractions()
+	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
+	leaserStatus["myFractions"] = snapshotMyFractions()
+	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
 	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
 	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["codexQuota"] = cq
@@ -230,8 +239,24 @@ func (a *App) GetStats() map[string]interface{} {
 	}
 	// 绑定卡各产品当前租到的账号信息 + token,供前端「绑定账号信息」面板显示。
 	leaserStatus["boundAccounts"] = collectBoundAccounts()
+
 	httpProxyStatus := GetHTTPProxy().GetStatus()
 	usageStats := GetUsageStats()
+
+	// 统一错误归口:三套 leaser 的 lastError + 派生健康信号(代理未起/上报积压)
+	// 汇成一个 notifications 列表(去重+分类),让 Claude/Codex 的租号错误也能进界面
+	// (此前它们的 LastError() 无人读)。
+	unifiedErr, _ := leaserStatus["lastError"].(string)
+	notifications := buildNotifications([]errorSource{
+		{Source: "antigravity", Msg: unifiedErr},
+		{Source: "claude", Msg: GetClaudeLeaser().LastError()},
+		{Source: "codex", Msg: GetCodexLeaser().LastError()},
+	})
+	notifications = append(notifications, derivedNotifications(clientHealth{
+		CardConfigured: a.GetConfig().AccountCard != "",
+		ProxyRunning:   httpProxyStatus.Running,
+		PendingReports: GetLeaser().pendingCount() + GetClaudeLeaser().pendingCount() + GetCodexLeaser().pendingCount(),
+	})...)
 
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
 	chartMode := "daily"
@@ -244,9 +269,10 @@ func (a *App) GetStats() map[string]interface{} {
 		"proxyPort":        httpProxyStatus.ListenPort,
 		"stats":            proxyStats,
 		"leaser":           leaserStatus,
+		"notifications":    notifications,
 		"httpProxy":        httpProxyStatus,
 		"today":            usageStats.GetTodayRecord(),
-		"dailyHistory":     usageStats.GetDailyRecords(7),
+		"dailyHistory":     usageStats.GetDailyRecords(30), // 下发 30 天,前端按 3日/周/月 切片
 		"hourlyHistory":    usageStats.GetTodayHourlyRecords(),
 		"chartMode":        chartMode,
 		"cumulativeSaving": usageStats.GetCumulativeSavings(),

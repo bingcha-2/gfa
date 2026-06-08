@@ -10,10 +10,10 @@ import { readJsonFile, writeJsonFile, constantTimeEqual } from './data-store';
 import {
   readTokenCount,
   billableTokenUsageTotal,
+  normalizeUsageToGross,
   resetWindowIfExpired,
   resetWeeklyWindowIfExpired,
   tokenWindowMs,
-  tokenWindowLimit,
   weeklyTokenLimit,
   weeklyWindowMs as weeklyWindowMsFn,
   weeklyWindowResetMs,
@@ -21,12 +21,15 @@ import {
   recentBucketUsage,
   recentWeeklyBucketUsage,
   tokenWindowResetMs,
+  formatWindowLabel,
+  bucketWindowStart,
   UNIVERSAL_BILLING,
   ProviderBilling,
   keyExpiresAt,
   accessKeySessionTtlMs,
   isAccessKeySessionExpired,
   ACCESS_KEY_BINDING_GRACE_MS,
+  ACCOUNT_SHARE_CAPACITY,
 } from './token-billing';
 import {
   bucketKey,
@@ -51,8 +54,8 @@ export interface AccessKeyRecord {
   firstUsedAt?: string;
   durationMs?: number;
   windowMs?: number;
-  windowLimit?: number;
-  tokenWindowLimit?: number;
+  /** 每模型(复合桶 `<产品>-<家族>`)token 上限。每卡封顶的唯一来源。 */
+  bucketLimits?: Record<string, number>;
   windowStartedAt?: number;
   usageEvents?: any[];
   tokenUsageEvents?: any[];
@@ -94,6 +97,10 @@ export interface ResolveResult {
   record: AccessKeyRecord | null;
   data?: AccessKeysData;
   error?: string;
+  /** 超额(模型/周配额用尽)时为 true,调用方应回 429 而非 401。 */
+  limitExceeded?: boolean;
+  /** 配额用尽时距窗口重置的毫秒数,用于 Retry-After。 */
+  resetMs?: number;
 }
 
 export interface SessionValidation {
@@ -277,7 +284,7 @@ export class AccessKeyStore {
   resolveFromRequest(
     req: any,
     payload: any,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
   ): ResolveResult {
     const keyValue = AccessKeyStore.extractKeyFromRequest(req, payload);
     if (!keyValue) return { key: keyValue, record: null, error: 'Missing access key' };
@@ -300,43 +307,46 @@ export class AccessKeyStore {
       return { key: keyValue, record: null, error: 'Access key expired' };
     }
 
-    resetWindowIfExpired(record, now);
-    const baseLimit = tokenWindowLimit(record);
+    // Bound cards align each bucket to its account window (alignedResetAt); the
+    // global tumbling reset must be skipped for them, or it would wipe events the
+    // aligned per-bucket window still needs.
+    const aligned = typeof options.alignedResetAt === 'function'
+      ? (Number(options.alignedResetAt(record)) || 0)
+      : (Number(options.alignedResetAt) || 0);
+    if (aligned <= 0) resetWindowIfExpired(record, now);
 
-    if (options.enforceLimit && baseLimit > 0) {
+    // 每卡封顶的唯一来源:bucketLimits(按复合桶 `<产品>-<家族>` 设的每模型上限)。
+    const hasBucketCaps =
+      !!record.bucketLimits &&
+      typeof record.bucketLimits === 'object' &&
+      Object.values(record.bucketLimits).some((v) => Number(v) > 0);
+
+    if (options.enforceLimit && hasBucketCaps) {
       const modelKeyStr = String(options.modelKey || '').trim();
-      const bucketUsage = recentBucketUsage(record, now);
 
       if (modelKeyStr) {
         const bucket = requestBucket(options.product, modelKeyStr);
-        const used = bucketUsage.get(bucket) || 0;
-        const limit = this.billing.bucketLimit(baseLimit, bucket, record);
+        const limit = this.billing.bucketLimit(0, bucket, record);
+        // Bound (aligned) cards count usage within the account-aligned window;
+        // pool cards use the global fixed-period window.
+        const used = aligned > 0
+          ? this.bucketUsageInWindow(record, bucket, now, aligned)
+          : (recentBucketUsage(record, now).get(bucket) || 0);
         if (limit > 0 && used >= limit) {
           this.writeCache();
+          const windowLabel = aligned > 0 ? '账号窗口' : formatWindowLabel(record.windowMs);
+          const resetMs = aligned > 0 ? Math.max(0, aligned - now) : tokenWindowResetMs(record, now);
           return {
             key: keyValue, record: null,
-            error: `Access key ${this.billing.bucketLabel(bucket)} token limit exceeded (${used}/${limit} tokens/5h)`,
-          };
-        }
-      } else {
-        // No modelKey → reject when every bucket the card has ACTUALLY used is
-        // exhausted. Buckets with zero usage are excluded: otherwise a bucket the
-        // card never serves (e.g. codex on an antigravity-only card) has usage 0 <
-        // limit forever, so `every` is never true and an exhausted card is never
-        // rejected. Enumerate only the buckets actually used (the keys present in
-        // the usage map) so this stays correct under composite product-family keys.
-        const usedBuckets = [...bucketUsage.keys()].filter((b) => (bucketUsage.get(b) || 0) > 0);
-        const allExhausted =
-          usedBuckets.length > 0 &&
-          usedBuckets.every((b) => (bucketUsage.get(b) || 0) >= this.billing.bucketLimit(baseLimit, b, record));
-        if (allExhausted) {
-          this.writeCache();
-          return {
-            key: keyValue, record: null,
-            error: `Access key token limit exceeded`,
+            limitExceeded: true, resetMs,
+            error: `Access key ${this.billing.bucketLabel(bucket)} token limit exceeded (${used}/${limit} tokens/${windowLabel})`,
           };
         }
       }
+      // 无 modelKey(预热 / 探活)不消费任何具体桶 → 不做额度拦截。真实消费都带 modelKey,走上面
+      // 的精确单桶检查:某个产品的桶爆了只拦那个产品(anthropic-claude 爆只拦 claude),绝不连累
+      // 其他满额产品(antigravity-gemini 0/10000)或没设限的产品。这彻底消除「用过的桶爆 → 判整
+      // 卡死 → 锁住整张卡(含满额产品)的预热」这种跨产品污染。
     }
 
     // ── Weekly window check (second tier) ──────────────────────────────────
@@ -354,22 +364,12 @@ export class AccessKeyStore {
           this.writeCache();
           return {
             key: keyValue, record: null,
+            limitExceeded: true, resetMs: weeklyWindowResetMs(record, now),
             error: `Access key ${this.billing.bucketLabel(bucket)} weekly token limit exceeded (${used}/${limit} tokens/week)`,
           };
         }
-      } else {
-        const usedBuckets = [...weeklyUsage.keys()].filter((b) => (weeklyUsage.get(b) || 0) > 0);
-        const allExhausted =
-          usedBuckets.length > 0 &&
-          usedBuckets.every((b) => (weeklyUsage.get(b) || 0) >= this.billing.bucketLimit(wLimit, b, record));
-        if (allExhausted) {
-          this.writeCache();
-          return {
-            key: keyValue, record: null,
-            error: `Access key weekly token limit exceeded`,
-          };
-        }
       }
+      // 无 modelKey:weekly 窗口同理不做拦截(理由同 token 窗口 —— 预热不消费具体桶)。
     }
 
     if (options.activate) this.writeCache();
@@ -384,12 +384,14 @@ export class AccessKeyStore {
    * token-usage tracker) record EXACTLY the same numbers as the card counters.
    */
   computeUsageDetail(usage: any = {}, modelKey = '', product = '') {
-    const inputTokens = readTokenCount(usage.inputTokens);
-    const outputTokens = readTokenCount(usage.outputTokens);
-    const cachedInputTokens = readTokenCount(usage.cachedInputTokens);
-    const rawTotalTokens = readTokenCount(usage.rawTotalTokens) || inputTokens + outputTokens;
+    // 单点收口:先按模型家族把上报归一成 gross input 口径,计费与拼车两条链共享同一份。
+    const norm = normalizeUsageToGross(usage, modelKey);
+    const inputTokens = readTokenCount(norm.inputTokens);
+    const outputTokens = readTokenCount(norm.outputTokens);
+    const cachedInputTokens = readTokenCount(norm.cachedInputTokens);
+    const rawTotalTokens = readTokenCount(norm.rawTotalTokens) || inputTokens + outputTokens;
     const totalTokens = billableTokenUsageTotal(
-      { ...usage, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
+      { ...norm, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
       modelKey,
     );
     return {
@@ -413,6 +415,20 @@ export class AccessKeyStore {
    * (legacy clients) cannot be deduped here; the caller handles their
    * once-per-success semantics via lease.successfulReportSeen.
    */
+  /** Token usage for ONE bucket within its current window. Bound cards align the
+   *  window to the account's upstream reset (alignedResetAt); alignedResetAt<=0 →
+   *  fixed-period (pool). Sums the bucket's events with `at >= window start`. */
+  private bucketUsageInWindow(record: any, bucket: string, now: number, alignedResetAt: number): number {
+    const windowStart = bucketWindowStart(record, bucket, now, alignedResetAt, Number(record.windowMs) || undefined);
+    let used = 0;
+    for (const item of record.tokenUsageEvents || []) {
+      if (Number(item?.at || 0) < windowStart) continue;
+      if (requestBucket(String(item?.product || ''), String(item?.modelKey || '')) !== bucket) continue;
+      used += billableTokenUsageTotal(item, String(item?.modelKey || ''));
+    }
+    return used;
+  }
+
   recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = ''): boolean {
     if (!cardId) return false;
     const record = this.findById(cardId);
@@ -565,14 +581,16 @@ export class AccessKeyStore {
   }
 
   /** Get public-safe status for an access key. */
-  publicStatus(record: AccessKeyRecord): any {
+  publicStatus(record: AccessKeyRecord, alignedResetAt = 0): any {
     if (!record) return null;
     const now = Date.now();
     resetWindowIfExpired(record, now);
     const recentTokens = recentTokenUsage(record, now);
     const bucketUsage = recentBucketUsage(record, now);
-    const tLimit = tokenWindowLimit(record);
-    const resetMs = tokenWindowResetMs(record, now);
+    // Bound cards align their window to the account's upstream reset; the client
+    // back-derives its local-quota window end from this, so it must match the
+    // server's aligned window rather than the global fixed-period one.
+    const resetMs = alignedResetAt > 0 ? Math.max(0, alignedResetAt - now) : tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
     // Weekly window
@@ -581,7 +599,11 @@ export class AccessKeyStore {
     const wkBucketUsage = wkLimit > 0 ? recentWeeklyBucketUsage(record, now) : new Map<string, number>();
     const wkResetMs = wkLimit > 0 ? weeklyWindowResetMs(record, now) : 0;
 
-    const windowLimit = Number(record.windowLimit || 0);
+    // 是否设了每模型上限(bucketLimits 中有任何 >0 的桶)。
+    const hasBucketCaps =
+      !!record.bucketLimits &&
+      typeof record.bucketLimits === 'object' &&
+      Object.values(record.bucketLimits).some((v) => Number(v) > 0);
 
     // Products the card is sold for (bindings keys with a real account id,
     // or explicit products array for universal cards). Empty = pool card / all products.
@@ -590,10 +612,10 @@ export class AccessKeyStore {
       : (Array.isArray((record as any).products) ? (record as any).products : []);
 
     // quotaMode tells the client which quota system to use:
-    //   static    — card has its own tokenWindowLimit, use localQuota
-    //   dynamic   — bound card, fair-share + upstream controls quota
-    //   unlimited — no limit, no binding
-    const quotaMode = tLimit > 0 ? 'static' : (this.hasAnyBinding(record) ? 'dynamic' : 'unlimited');
+    //   static    — card has per-model caps (bucketLimits), use localQuota
+    //   dynamic   — bound card without caps, fair-share + upstream controls quota
+    //   unlimited — no caps, no binding
+    const quotaMode = hasBucketCaps ? 'static' : (this.hasAnyBinding(record) ? 'dynamic' : 'unlimited');
 
     // Composite product-family buckets this card can use. Sum usage by family for
     // the legacy flat fields below (kept until clients consume `buckets` directly).
@@ -603,8 +625,17 @@ export class AccessKeyStore {
       for (const [k, v] of bucketUsage) if (bucketFamily(k) === family) sum += v;
       return sum;
     };
-    const familyLimitX1 = this.billing.bucketLimit(tLimit, 'anthropic-claude', record);
-    const familyLimitGemini = this.billing.bucketLimit(tLimit, 'antigravity-gemini', record);
+    // 每家族的扁平上限(下发客户端):取 bucketLimits 中该家族各复合桶的最大值。
+    // 服务端按复合桶精确兜底,扁平字段仅供客户端 localQuota 快速本地拦截。
+    const familyLimit = (family: string): number => {
+      let max = 0;
+      const bl = (record.bucketLimits && typeof record.bucketLimits === 'object')
+        ? (record.bucketLimits as Record<string, number>) : {};
+      for (const [k, v] of Object.entries(bl)) {
+        if (bucketFamily(k) === family) max = Math.max(max, Number(v) || 0);
+      }
+      return max;
+    };
 
     return {
       id: record.id,
@@ -626,20 +657,18 @@ export class AccessKeyStore {
       // composite buckets of that family — kept until clients read `buckets`
       // directly. opus≈claude family, gemini, codex≈gpt family.
       opusTokensUsed: familyUsed('claude'),
-      opusTokenLimit: familyLimitX1 || (windowLimit > 0 ? windowLimit * 100_000 : 0),
+      opusTokenLimit: familyLimit('claude'),
       geminiTokensUsed: familyUsed('gemini'),
-      geminiTokenLimit: familyLimitGemini || (windowLimit > 0 ? windowLimit * 500_000 : 0),
+      geminiTokenLimit: familyLimit('gemini'),
       codexTokensUsed: familyUsed('gpt'),
-      codexTokenLimit: familyLimitX1,
+      codexTokenLimit: familyLimit('gpt'),
       // Composite product-family per-bucket view (the authoritative shape).
       buckets: enumBuckets.map((bucket) => ({
         bucket,
         used: bucketUsage.get(bucket) || 0,
-        limit: this.billing.bucketLimit(tLimit, bucket, record),
+        limit: this.billing.bucketLimit(0, bucket, record),
       })),
-      tokenWindowLimit: tLimit,
       tokenWindowMs: tokenWindowMs(record),
-      tokenWindowRemaining: tLimit > 0 ? Math.max(0, tLimit - recentTokens.totalTokens) : 0,
       tokenWindowResetMs: resetMs,
       tokenWindowResetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',
       // Weekly window status — only present when weeklyTokenLimit > 0.
@@ -658,6 +687,10 @@ export class AccessKeyStore {
         record.activeSessionId && !isAccessKeySessionExpired(record, now),
       ),
       lastUsedAt: record.lastUsedAt || '',
+      // 卡级 fair-share 份额:weight = 这张卡占的份数,shareCapacity = 号总份数(默认 8)。
+      // 客户端「我的卡 · 份额」条展开显示「份额 weight/shareCapacity」。
+      weight: Math.max(1, Math.floor(Number((record as any).weight) || 1)),
+      shareCapacity: ACCOUNT_SHARE_CAPACITY,
     };
   }
 }

@@ -17,14 +17,6 @@
 import type { ProviderBilling } from "../token-server/token-billing";
 import type { ModelCatalog } from "./model-catalog";
 
-/** Result of applying a client-reported account-quota snapshot. */
-export interface CreditDelta {
-  oldAmount: number;
-  newAmount: number;
-  available: boolean;
-  email: string;
-}
-
 export interface Provider<TAccount> {
   /** Stable id, e.g. "antigravity" | "codex". */
   id: string;
@@ -45,12 +37,25 @@ export interface Provider<TAccount> {
   isAccountEligible(account: TAccount): boolean;
 
   /**
-   * Apply a client-reported account-quota snapshot (credits / per-model quota
-   * fractions for antigravity; no-op for codex). Pure latest-wins state sync.
-   * Returns the (possibly mutated) account and a credit delta for once-only
-   * consumption events, or null when there is no credit change.
+   * Apply a client-reported account-quota snapshot (per-model quota fractions +
+   * planType for antigravity; 5h/weekly windows for codex/claude; no-op otherwise).
+   * Pure latest-wins state sync. Returns the (possibly mutated) account.
    */
-  applyQuotaSnapshot(account: TAccount, quota: any): { account: TAccount; creditDelta: CreditDelta | null };
+  applyQuotaSnapshot(account: TAccount, quota: any): { account: TAccount };
+
+  /**
+   * 统一的水位时序提取(御三家归一):返回该账号当前每个 modelQuotaFractions key 的
+   * 5h/周水位 + reset,供 AccountQuotaSnapshotTracker 记录历史。三家同一种结构:
+   * codex/anthropic 返回 1 条(modelKey="codex"/"claude",带 5h+周);
+   * antigravity 每模型 1 条(modelKey=真实模型,只有 5h)。无数据时返回 []。
+   */
+  quotaSnapshotInputs?(account: TAccount): Array<{
+    modelKey: string;
+    hourlyPercent?: number | null;
+    weeklyPercent?: number | null;
+    hourlyResetAt?: Date | null;
+    weeklyResetAt?: Date | null;
+  }>;
 
   /** Extra fields merged into the lease-token response (antigravity: projectId). */
   leaseResponseExtras(account: TAccount): Record<string, unknown>;

@@ -146,7 +146,6 @@ export function formatQuotaRefreshedAt(ts: number | undefined | null): string {
 export const COLUMN_CONFIG: { key: string; label: string }[] = [
   { key: "account", label: "账号" },
   { key: "plan", label: "套餐" },
-  { key: "credits", label: "AI积分" },
   { key: "modelQuota", label: "模型额度" },
   { key: "quotaStatus", label: "额度状态" },
   { key: "reason", label: "封禁原因" },

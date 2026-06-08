@@ -42,6 +42,17 @@ export const DEFAULT_AFFINITY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
 export const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000;
 export const DEFAULT_WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Human label for a card's rolling window (per-card windowMs, default 5h) —
+ *  e.g. "5h", "1d". Used in the over-limit message so it reflects the card's
+ *  actual window instead of a hardcoded "5h". */
+export function formatWindowLabel(windowMs?: number): string {
+  const ms = Number(windowMs) || DEFAULT_KEY_WINDOW_MS;
+  const hours = ms / 3_600_000;
+  if (hours % 24 === 0) return `${hours / 24}d`;
+  if (Number.isInteger(hours)) return `${hours}h`;
+  return `${Math.round(hours * 10) / 10}h`;
+}
 export const DEFAULT_KEY_WINDOW_LIMIT = 300;
 /** Total shares per upstream account. A card consumes `weight` shares:
  * 1 = shared, 4 = exclusive (capacity=4), up to 8 (capacity=8). Configurable via env. */
@@ -192,11 +203,12 @@ export function recentBucketUsage(record: any, now = Date.now()): Map<string, nu
   return out;
 }
 
-/** Check if an account has available credits or unknown status. */
-export function accountHasCreditsOrUnknown(account: any): boolean {
-  const credits = account?.credits;
-  if (!credits || !credits.known) return true;
-  return Boolean(credits.available);
+/** Parse a reset-time string to a Date, or null when absent/invalid. Shared by
+ *  the providers' quotaSnapshotInputs (water-level time-series extraction). */
+export function parseSnapshotDate(v: unknown): Date | null {
+  if (!v) return null;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? new Date(t) : null;
 }
 
 /** Discounted cached tokens = ceil(count / 10). */
@@ -231,6 +243,47 @@ export function billableTokenUsageTotal(usage: any = {}, modelKey = ''): number 
   return billable;
 }
 
+/**
+ * 统一用量口径(CANON):把客户端上报的 usage 归一为 "gross input" 约定 ——
+ *   inputTokens       = gross 输入(含全部缓存 cache_read + cache_creation)
+ *   cachedInputTokens = 可折扣的缓存读(cache_read),且 ⊆ inputTokens
+ *   rawTotalTokens    = inputTokens + outputTokens
+ * 按**模型家族**(modelFamily: claude / gemini / gpt)分支,只看模型属于哪家、
+ * 不看客户端版本,故新老客户端走同一条路径(零兼容分支)。
+ *  - claude:上游 input_tokens 是 net(不含 cache)。gross = rawTotal - output
+ *    (rawTotal 已含 net+output+cache_creation+cache_read);rawTotal 缺失时退回 input+cached。
+ *  - gemini/gpt:上游 input 已是 gross;仅 clamp cached≤input,rawTotal=input+output。
+ * 计费(billableTokenUsageTotal)与拼车(weightedCost)都先经此归一,口径自洽。
+ */
+export function normalizeUsageToGross(usage: any = {}, modelKey = ''): any {
+  const inputTokens = readTokenCount(usage.inputTokens);
+  const outputTokens = readTokenCount(usage.outputTokens);
+  const cachedInputTokens =
+    readTokenCount(usage.cachedInputTokens) || readTokenCount(usage.cachedTokens);
+
+  if (modelFamily(modelKey) === 'claude') {
+    const reportedRaw = readTokenCount(usage.rawTotalTokens);
+    const grossInput =
+      reportedRaw > 0 ? Math.max(0, reportedRaw - outputTokens) : inputTokens + cachedInputTokens;
+    return {
+      ...usage,
+      inputTokens: grossInput,
+      outputTokens,
+      cachedInputTokens: Math.min(cachedInputTokens, grossInput),
+      rawTotalTokens: grossInput + outputTokens,
+    };
+  }
+
+  // gemini / gpt:input 本就是 gross(含 cached)
+  return {
+    ...usage,
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: Math.min(cachedInputTokens, inputTokens),
+    rawTotalTokens: inputTokens + outputTokens,
+  };
+}
+
 // ── Window management ────────────────────────────────────────────────────────
 
 /**
@@ -249,21 +302,52 @@ export function resetWindowIfExpired(record: any, now = Date.now()): boolean {
   return false;
 }
 
+/**
+ * Window start for ONE bucket. A bound card aligns each bucket's limit window to
+ * its bound account's upstream reset time (`alignedResetAt`); a pool card (or a
+ * bucket whose account window isn't known yet, alignedResetAt<=0) falls back to
+ * a fixed-period tumbling window of `defaultWindowMs`.
+ *
+ * Aligned rolling only advances when a NOT-yet-consumed reset boundary passes —
+ * crucially, after rolling to `resetAt` we must NOT roll again on every later
+ * call while the snapshot still reports that same (now-past) `resetAt`; the next
+ * roll waits for the account to publish a later reset. Returns the window start;
+ * usage in-window = the bucket's events with `at >= start`.
+ */
+export function bucketWindowStart(
+  record: any,
+  bucket: string,
+  now: number,
+  alignedResetAt: number,
+  defaultWindowMs: number = DEFAULT_KEY_WINDOW_MS,
+): number {
+  if (!record.bucketWindowStartedAt || typeof record.bucketWindowStartedAt !== "object") {
+    record.bucketWindowStartedAt = {};
+  }
+  const starts = record.bucketWindowStartedAt as Record<string, number>;
+  let start = Number(starts[bucket] || 0);
+  const resetAt = Number(alignedResetAt) || 0;
+
+  if (resetAt > 0) {
+    if (start === 0) {
+      start = now; // first use anchors the window; it runs until resetAt
+    } else if (resetAt > start && now >= resetAt) {
+      start = resetAt; // a new account window opened — roll to that boundary
+    }
+  } else if (start === 0 || now - start >= defaultWindowMs) {
+    start = now; // fixed-period tumbling
+  }
+
+  starts[bucket] = start;
+  return start;
+}
+
 /** Get the token window duration in ms. */
 export function tokenWindowMs(record: any): number {
   const configured = Number(record?.tokenWindowMs || 0);
   return configured > 0 ? configured : Number(record?.windowMs || DEFAULT_KEY_WINDOW_MS);
 }
 
-/** Get the token window limit. */
-export function tokenWindowLimit(record: any): number {
-  const explicit = Number(
-    record?.tokenWindowLimit ?? record?.windowTokenLimit ?? record?.tokenLimit ?? 0,
-  );
-  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
-  const requestLimit = Number(record?.windowLimit || 0);
-  return requestLimit > 0 ? Math.floor(requestLimit * DEFAULT_KEY_TOKENS_PER_REQUEST) : 0;
-}
 
 /** Aggregate recent token usage within the current window. */
 export function recentTokenUsage(record: any, now = Date.now()) {

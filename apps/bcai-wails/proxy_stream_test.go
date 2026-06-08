@@ -116,7 +116,7 @@ func TestStreamResponse_NormalFlow(t *testing.T) {
 	reader := newSlowReader(chunks, nil)
 
 	rec := httptest.NewRecorder()
-	result := p.streamResponse(rec, reader, 1)
+	result := p.streamResponse(rec, reader, 1, false)
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "Hello") {
@@ -130,7 +130,36 @@ func TestStreamResponse_NormalFlow(t *testing.T) {
 	}
 }
 
+// quota 错误出现在流最开头（还没向 IDE 转发任何正常内容）→ 硬掐流 + 注入 [DONE]，
+// 由调用方据 StreamError 换号上报。
 func TestStreamResponse_DetectsQuotaError(t *testing.T) {
+	p := &ProxyServer{}
+
+	chunks := []string{
+		`{"error":{"message":"RESOURCE_EXHAUSTED: baseline model quota reached"}}`,
+	}
+	reader := newSlowReader(chunks, nil)
+
+	rec := httptest.NewRecorder()
+	result := p.streamResponse(rec, reader, 2, false)
+
+	if !result.StreamError {
+		t.Error("expected StreamError=true for quota error at stream start")
+	}
+	if result.StreamQuotaSoft {
+		t.Error("开头就报错不应是软信号")
+	}
+	if result.StreamErrorReason != "quota" {
+		t.Errorf("StreamErrorReason = %q, want quota", result.StreamErrorReason)
+	}
+	if !strings.Contains(rec.Body.String(), "[DONE]") {
+		t.Error("硬掐流应向 IDE 注入 [DONE] 收尾")
+	}
+}
+
+// 已经向 IDE 转发过正常内容之后才出现 quota 字样 → 软信号:绝不掐流截断
+// （否则会切断进行中的工具调用），剩余流照常转发完，本次按成功处理。
+func TestStreamResponse_QuotaAfterContent_NoTruncate(t *testing.T) {
 	p := &ProxyServer{}
 
 	chunks := []string{
@@ -140,13 +169,22 @@ func TestStreamResponse_DetectsQuotaError(t *testing.T) {
 	reader := newSlowReader(chunks, nil)
 
 	rec := httptest.NewRecorder()
-	result := p.streamResponse(rec, reader, 2)
+	result := p.streamResponse(rec, reader, 2, false)
 
-	if !result.StreamError {
-		t.Error("expected StreamError=true for mid-stream quota error")
+	if result.StreamError {
+		t.Error("已转发正常内容后不应硬截断（StreamError 应为 false）")
+	}
+	if !result.StreamQuotaSoft {
+		t.Error("expected StreamQuotaSoft=true for post-content quota signal")
 	}
 	if result.StreamErrorReason != "quota" {
 		t.Errorf("StreamErrorReason = %q, want quota", result.StreamErrorReason)
+	}
+	if !strings.Contains(rec.Body.String(), "Hello") {
+		t.Error("已转发的正常内容不应丢失")
+	}
+	if strings.Contains(rec.Body.String(), "[DONE]") {
+		t.Error("软信号不应注入提前的 [DONE]")
 	}
 }
 
@@ -163,7 +201,7 @@ func TestStreamResponse_DownstreamDisconnect(t *testing.T) {
 	rec := httptest.NewRecorder()
 	bw := &brokenWriter{ResponseWriter: rec, breakAfter: 100}
 
-	result := p.streamResponse(bw, reader, 3)
+	result := p.streamResponse(bw, reader, 3, false)
 
 	// Should not have processed all chunks (downstream broke)
 	if result.StreamBytes > 10000 {
@@ -192,7 +230,7 @@ func TestStreamResponse_FirstByteTimeout(t *testing.T) {
 
 	done := make(chan TokenUsageResult, 1)
 	go func() {
-		result := p.streamResponse(rec, reader, 4)
+		result := p.streamResponse(rec, reader, 4, false)
 		done <- result
 	}()
 
@@ -240,7 +278,7 @@ func TestStreamResponse_IdleTimeout_NoDoneSent(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		p.streamResponse(rec, reader, 5)
+		p.streamResponse(rec, reader, 5, false)
 		close(done)
 	}()
 
@@ -302,7 +340,7 @@ func TestStreamResponse_DynamicIdleExpansion(t *testing.T) {
 
 	doneCh := make(chan struct{})
 	go func() {
-		p.streamResponse(rec, reader, 100)
+		p.streamResponse(rec, reader, 100, false)
 		close(doneCh)
 	}()
 
@@ -380,7 +418,7 @@ func TestStreamResponse_KeepaliveDetectsDownstreamDisconnect(t *testing.T) {
 
 	doneCh := make(chan struct{})
 	go func() {
-		p.streamResponse(bw, reader, 200)
+		p.streamResponse(bw, reader, 200, false)
 		close(doneCh)
 	}()
 

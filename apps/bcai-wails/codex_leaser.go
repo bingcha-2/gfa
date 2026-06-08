@@ -87,6 +87,12 @@ func (l *CodexLeaser) LastError() string {
 	return l.lastError
 }
 
+func (l *CodexLeaser) pendingCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.pendingReports)
+}
+
 func postCodexBcai(path string, payload interface{}, secret string, upstreamProxy string) ([]byte, int, error) {
 	respBody, status, err := postBcaiBaseWithFallback(CODEX_API_BASE, path, payload, secret, upstreamProxy)
 	if err != nil {
@@ -139,8 +145,17 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		payload[k] = v
 	}
 
-	body, _, err := postCodexBcai("/lease-token", payload, card, upstreamProxy)
+	body, status, err := postCodexBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
+		// 不熔断、不重试:额度超限如实返回。硬额度(token limit exceeded)→ 结构化
+		// QuotaExhaustedError,让 proxy 转 429 + Retry-After 给 IDE(而非 502 让它狂试)。
+		if status == 429 {
+			if retryAfterMs, reason := parseQuota429(body); isHardQuotaLimit(retryAfterMs, reason) {
+				qe := &QuotaExhaustedError{RetryAfterMs: retryAfterMs, Reason: reason}
+				l.setLastError(qe.Error())
+				return nil, qe
+			}
+		}
 		l.setLastError(err.Error())
 		return nil, err
 	}

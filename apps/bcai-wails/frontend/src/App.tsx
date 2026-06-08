@@ -5,6 +5,7 @@ import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { FaqPage } from '@/pages/FaqPage'
 import { Modal } from '@/components/Modal'
+import { ToastHost } from '@/components/ToastHost'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { usePolling } from '@/hooks/usePolling'
@@ -42,8 +43,11 @@ export default function App() {
   }
 
   return (
-    <AppShell currentPage={currentPage} onPageChange={setCurrentPage}>
-      {renderPage()}
-    </AppShell>
+    <>
+      <AppShell currentPage={currentPage} onPageChange={setCurrentPage}>
+        {renderPage()}
+      </AppShell>
+      <ToastHost />
+    </>
   )
 }

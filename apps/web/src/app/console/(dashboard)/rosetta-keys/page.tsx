@@ -1,35 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { Separator } from "@/components/ui/separator";
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+// 卡密管理页(rosetta-keys)—— 瘦容器(对应设计 §7 的拆分目标:取代旧 1425 行大文件)。
+// 职责仅限「取数 + UI 状态编排 + 行操作回调」,具体渲染全部委托给子组件:
+//   - 取数:use-access-keys(列表 + 刷新)、use-lease-accounts(选号下拉 + 份额校验)。
+//   - 渲染:toolbar(工具栏)+ key-table(精简 5 列表格 + 行展开)。
+//   - 弹窗:create-wizard(新增向导)、card-edit-dialog(编辑)、card-usage-dialog(用量)。
+// 行操作回调:编辑(开 edit dialog)/ 用量(开 usage dialog)/ 启停(直接切 status 调
+//   access-key-update,乐观更新 + 失败回滚)/ 删除(AlertDialog 二次确认)/ 复制。
+// 搜索:输入受控 + 提交时透传给后端做服务端过滤;类型/状态筛选、排序、分页在本地内存做。
+// 清理(过期 / 未绑定):用 AlertDialog 二次确认后调对应清理接口。
+
+import { useCallback, useMemo, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,492 +21,187 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
+import { useAccessKeys } from "./use-access-keys";
+import { useLeaseAccounts } from "./use-lease-accounts";
 import {
-  CopyIcon,
-  SearchIcon,
-  XIcon,
-  PauseIcon,
-  PlayIcon,
-  Trash2Icon,
-  ArrowUpDownIcon,
-  ArrowDownIcon,
-  ArrowUpIcon,
-  KeyIcon,
-  AlertTriangleIcon,
-  Loader2Icon,
-  UnplugIcon,
-  BarChart3Icon,
-  SlidersHorizontalIcon,
-} from "lucide-react";
+  Toolbar,
+  type OverviewCounts,
+  type SortDir,
+  type SortField,
+  type StatusFilter,
+  type TypeFilter,
+} from "./toolbar";
+import { KeyTable } from "./key-table";
+import { CreateWizard } from "./create-wizard";
+import { CardEditDialog } from "./card-edit-dialog";
 import { CardUsageDialog } from "./card-usage-dialog";
-import { CardLimitsDialog } from "./card-limits-dialog";
-import { BindAccountControl, type BindableAccount } from "@/components/BindAccountControl";
-import { toBindableAccounts } from "@/lib/bindable-accounts";
+import type { AccessKeyListItem } from "./types";
 
-type AccessKey = {
-  id: string;
-  name: string;
-  fullKey: string;
-  key: string;
-  status: string;
-  totalRequests: number;
-  totalTokensUsed: number;
-  recentWindowTokens: number;
-  tokenWindowLimit: number;
-  windowMs?: number;
-  bindings?: Record<string, number>;
-  weight?: number;
-  durationMs?: number;
-  createdAt: string;
-  lastUsedAt: string;
-  expiresAt: string;
-  sessionClientId: string;
-  sessionExpiresAt: string;
-  anomalyCount?: number;
-  bucketLimits?: Record<string, number>;
-};
-
+// 本地分页每页条数(与旧实现一致)。
 const PAGE_SIZE = 20;
+// 「7 天内到期」阈值(毫秒)。
+const SEVEN_DAYS_MS = 7 * 86_400_000;
 
-// base-ui Select 需要 items(否则关闭时 SelectValue 显示原始 value 而非标签)。
-const MODE_ITEMS = [
-  { label: "绑定模式（开通指定产品）", value: "bound" },
-  { label: "池子模式（万能卡 · 不绑号）", value: "pool" },
-];
-const UNIT_ITEMS = [
-  { label: "小时", value: "h" },
-  { label: "天", value: "d" },
-];
-const WEIGHT_ITEMS = [
-  { label: "拼车 · 1份(8人/号)", value: "1" },
-  { label: "2份(4人/号)", value: "2" },
-  { label: "4份(2人/号)", value: "4" },
-  { label: "独享 · 8份(独占一个号)", value: "8" },
-];
-const ACCOUNT_AUTO = "__auto";
-
-type SortField =
-  | "totalTokensUsed"
-  | "recentWindowTokens"
-  | "totalRequests"
-  | "anomalyCount"
-  | "createdAt"
-  | null;
-
-function formatDuration(ms: number | undefined | null): string {
-  if (!ms || ms <= 0) return "永久";
-  const hours = ms / 3600000;
-  if (hours < 24) return `${Math.round(hours)}小时`;
-  return `${Math.round(hours / 24)}天`;
+/** 判断一张卡是否「已过期」(有 expiresAt 且已过当前时刻)。 */
+function isExpired(key: AccessKeyListItem): boolean {
+  if (!key.expiresAt) return false;
+  return new Date(key.expiresAt).getTime() <= Date.now();
 }
 
-function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "-";
-  return new Date(iso).toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+/** 判断一张卡是否「7 天内到期」(有 expiresAt 且剩余 0..7d)。 */
+function isExpiringSoon(key: AccessKeyListItem): boolean {
+  if (!key.expiresAt) return false;
+  const remaining = new Date(key.expiresAt).getTime() - Date.now();
+  return remaining > 0 && remaining <= SEVEN_DAYS_MS;
+}
+
+/** 状态筛选匹配:expired 需把「status=expired」与「已超期的非禁用卡」都算进去。 */
+function matchStatus(key: AccessKeyListItem, filter: StatusFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "expired") return key.status === "expired" || isExpired(key);
+  if (filter === "disabled") return key.status === "disabled";
+  // active:状态为 active 且未超期。
+  return key.status === "active" && !isExpired(key);
 }
 
 export default function RosettaKeysPage() {
-  const [keys, setKeys] = useState<AccessKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [totalAll, setTotalAll] = useState(0);
-  const [totalActive, setTotalActive] = useState(0);
+  // ── 取数 ──
+  // 已提交的搜索词(透传后端);输入框的即时值单独存,Enter/按钮时才提交。
+  const [submittedSearch, setSubmittedSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const { keys, loading, error, refresh } = useAccessKeys(submittedSearch);
+  const { accounts, refresh: refreshAccounts } = useLeaseAccounts();
 
+  // ── 筛选 / 排序 / 分页(本地内存)──
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortField, setSortField] = useState<SortField>("createdAt");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(1);
 
-  // Create form state
-  const [createName, setCreateName] = useState("");
-  const [createDurationValue, setCreateDurationValue] = useState("1");
-  const [createDurationUnit, setCreateDurationUnit] = useState("d");
-  const [createLimit, setCreateLimit] = useState("");
-  const [createTokenLimit, setCreateTokenLimit] = useState("");
-  const [createWindowValue, setCreateWindowValue] = useState("5");
-  const [createWindowUnit, setCreateWindowUnit] = useState("h");
-  const [createCount, setCreateCount] = useState("1");
-  // 顶层模式:池子卡(无绑定、万能、走动态池)或 绑定卡(开通指定产品 + 绑号,只有开通
-  // 的产品能用)。默认绑定模式(主要业务)。
-  const [createMode, setCreateMode] = useState<"pool" | "bound">("bound");
-  // Products the bound card is sold for. 绑定模式下至少选一个;只有选中的产品能用,
-  // 其余请求会被 409 拒(此卡未开通该服务)。
-  const [createCodex, setCreateCodex] = useState(false);
-  const [createAnti, setCreateAnti] = useState(false);
-  const [createClaude, setCreateClaude] = useState(false);
-  // 会员等级(planType):每个开通的产品必选一个等级,只绑定该等级且可用的账号。
-  const [createCodexLevel, setCreateCodexLevel] = useState("");
-  const [createAntiLevel, setCreateAntiLevel] = useState("");
-  const [createClaudeLevel, setCreateClaudeLevel] = useState("");
-  // 可选:手动指定要绑定的账号("" = 自动分配)。选了就整批绑到该号。
-  const [createCodexAccountId, setCreateCodexAccountId] = useState("");
-  const [createAntiAccountId, setCreateAntiAccountId] = useState("");
-  const [createClaudeAccountId, setCreateClaudeAccountId] = useState("");
-  // 各号池里存在的等级选项(去重),用于上面的下拉。
-  const [codexLevels, setCodexLevels] = useState<string[]>([]);
-  const [antiLevels, setAntiLevels] = useState<string[]>([]);
-  const [claudeLevels, setClaudeLevels] = useState<string[]>([]);
-  // 份额(weight):1 拼车(8人共享一个号)… 8 独享(一张卡占满一个号,capacity=8)。
-  const [createWeight, setCreateWeight] = useState("1");
-  const [creating, setCreating] = useState(false);
-
-  // Key reveal dialog
-  const [revealKeys, setRevealKeys] = useState<string[]>([]);
-  const [revealOpen, setRevealOpen] = useState(false);
-
-  // Delete dialog
-  const [deleteTarget, setDeleteTarget] = useState<AccessKey | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
-  // Token usage detail dialog
-  const [usageTarget, setUsageTarget] = useState<AccessKey | null>(null);
-  const [usageOpen, setUsageOpen] = useState(false);
-
-  // Card limits dialog
-  const [limitsTarget, setLimitsTarget] = useState<AccessKey | null>(null);
-  const [limitsOpen, setLimitsOpen] = useState(false);
-
-  // Cleanup states
-  const [cleaningExpired, setCleaningExpired] = useState(false);
-  const [cleanExpiredOpen, setCleanExpiredOpen] = useState(false);
-  const [cleaningUnbound, setCleaningUnbound] = useState(false);
-  const [cleanUnboundOpen, setCleanUnboundOpen] = useState(false);
-
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const fetchKeys = useCallback(
-    async (searchTerm?: string) => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams();
-        const term = (searchTerm ?? search).trim();
-        if (term) params.set("search", term);
-        const res = await fetch(
-          `/api/rosetta/access-keys${params.toString() ? `?${params}` : ""}`
-        );
-        const data = await res.json();
-        if (data.ok) {
-          const allKeys: AccessKey[] = data.keys || [];
-          setKeys(allKeys);
-          setTotalAll(data.totalAll ?? allKeys.length);
-          setTotalActive(
-            data.totalActive ??
-              allKeys.filter((k) => k.status === "active").length
-          );
-        }
-      } catch {
-        toast.error("加载卡密失败");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [search]
+  // ── 弹窗 / 操作状态 ──
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editCard, setEditCard] = useState<AccessKeyListItem | null>(null);
+  const [usageCard, setUsageCard] = useState<AccessKeyListItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AccessKeyListItem | null>(
+    null,
   );
+  const [deleting, setDeleting] = useState(false);
+  // 清理二次确认:null = 关闭;否则记录清理类型。
+  const [cleanupKind, setCleanupKind] = useState<"expired" | "unbound" | null>(
+    null,
+  );
+  const [cleaning, setCleaning] = useState(false);
 
-  useEffect(() => {
-    fetchKeys();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // 操作后统一刷新:列表 + 账号份额(换绑/删卡都可能改变账号 usedShares)。
+  const refreshAll = useCallback(() => {
+    void refresh();
+    void refreshAccounts();
+  }, [refresh, refreshAccounts]);
 
-  // Bindable accounts across both pools (for the static card→account binding UI).
-  const [bindableAccounts, setBindableAccounts] = useState<BindableAccount[]>([]);
-
-  const fetchBindableAccounts = useCallback(async () => {
-    try {
-      const [codexRes, antiRes, claudeRes] = await Promise.all([
-        fetch("/api/rosetta/codex-accounts"),
-        fetch("/api/rosetta/accounts"),
-        fetch("/api/rosetta/anthropic-accounts"),
-      ]);
-      const codex = await codexRes.json();
-      const anti = await antiRes.json();
-      const claude = await claudeRes.json();
-      setBindableAccounts(toBindableAccounts(codex.accounts, anti.accounts, claude.accounts));
-      // Distinct, non-empty membership levels present in each pool (for the
-      // create form's per-product level picker).
-      const levelsOf = (list: Array<{ planType?: string }> | undefined) =>
-        [...new Set((list || []).map((a) => String(a.planType || "").trim()).filter(Boolean))].sort();
-      setCodexLevels(levelsOf(codex.accounts));
-      setAntiLevels(levelsOf(anti.accounts));
-      setClaudeLevels(levelsOf(claude.accounts));
-    } catch {
-      // Non-fatal: the binding picker just shows no accounts.
+  // ── 概览 chips 计数(基于完整列表,不受筛选影响)──
+  const counts: OverviewCounts = useMemo(() => {
+    let active = 0;
+    let expiringSoon = 0;
+    let inactive = 0;
+    for (const k of keys) {
+      const expired = isExpired(k);
+      if (k.status === "active" && !expired) active += 1;
+      if (isExpiringSoon(k)) expiringSoon += 1;
+      if (k.status === "disabled" || k.status === "expired" || expired)
+        inactive += 1;
     }
-  }, []);
+    return { total: keys.length, active, expiringSoon, inactive };
+  }, [keys]);
 
-  useEffect(() => {
-    fetchBindableAccounts();
-  }, [fetchBindableAccounts]);
-
-  // Level is required per checked product: default to the first available level
-  // when a product is enabled (or its current pick is no longer valid), and
-  // clear it when the product is unchecked.
-  useEffect(() => {
-    if (!createCodex) return setCreateCodexLevel("");
-    if (codexLevels.length && !codexLevels.includes(createCodexLevel)) {
-      setCreateCodexLevel(codexLevels[0]);
-    }
-  }, [createCodex, codexLevels, createCodexLevel]);
-  useEffect(() => {
-    if (!createAnti) return setCreateAntiLevel("");
-    if (antiLevels.length && !antiLevels.includes(createAntiLevel)) {
-      setCreateAntiLevel(antiLevels[0]);
-    }
-  }, [createAnti, antiLevels, createAntiLevel]);
-  useEffect(() => {
-    if (!createClaude) return setCreateClaudeLevel("");
-    if (claudeLevels.length && !claudeLevels.includes(createClaudeLevel)) {
-      setCreateClaudeLevel(claudeLevels[0]);
-    }
-  }, [createClaude, claudeLevels, createClaudeLevel]);
-
-  // 切到池子模式时,清掉产品选择(对应的等级/账号字段随之隐藏)。
-  useEffect(() => {
-    if (createMode === "pool") {
-      setCreateCodex(false);
-      setCreateAnti(false);
-      setCreateClaude(false);
-    }
-  }, [createMode]);
-
-  // 产品关闭或等级变化时,清掉手动选的账号(避免把别的等级的旧选择带出去)。
-  useEffect(() => {
-    setCreateCodexAccountId("");
-  }, [createCodex, createCodexLevel]);
-  useEffect(() => {
-    setCreateAntiAccountId("");
-  }, [createAnti, createAntiLevel]);
-  useEffect(() => {
-    setCreateClaudeAccountId("");
-  }, [createClaude, createClaudeLevel]);
-
-  // 一次性提交一张卡的最终绑定映射(绑定弹窗"保存")。失败时抛错,让弹窗保持打开。
-  const handleSetBindings = async (cardId: string, bindings: Record<string, number>) => {
-    try {
-      const res = await fetch("/api/rosetta/access-key-set-bindings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: cardId, bindings }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "保存失败");
-      toast.success("绑定已更新");
-      await Promise.all([fetchKeys(), fetchBindableAccounts()]);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "保存失败");
-      throw err;
-    }
-  };
-
-  const handleSearchInput = (value: string) => {
-    setSearch(value);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      setPage(1);
-      fetchKeys(value);
-    }, 300);
-  };
-
-  const handleSearchClear = () => {
-    setSearch("");
-    setPage(1);
-    fetchKeys("");
-  };
-
-  const handleSearchSubmit = () => {
-    setPage(1);
-    fetchKeys();
-  };
-
-  // Sorting & pagination
-  const sortedKeys = useMemo(() => {
-    if (!sortField) return keys;
+  // ── 筛选 + 排序后的完整结果(分页前)──
+  const filtered = useMemo(() => {
+    const result = keys.filter((k) => {
+      if (typeFilter !== "all" && k.cardType !== typeFilter) return false;
+      if (!matchStatus(k, statusFilter)) return false;
+      return true;
+    });
+    // 排序:时间字段按时间戳,其余按数值;空到期时间排末尾。
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...keys].sort((a, b) => {
-      if (sortField === "createdAt") {
-        const av = new Date(a.createdAt || 0).getTime();
-        const bv = new Date(b.createdAt || 0).getTime();
-        return (av - bv) * dir;
+    result.sort((a, b) => {
+      let av: number;
+      let bv: number;
+      if (sortField === "createdAt" || sortField === "expiresAt") {
+        av = a[sortField] ? new Date(a[sortField]).getTime() : 0;
+        bv = b[sortField] ? new Date(b[sortField]).getTime() : 0;
+      } else {
+        av = Number(a[sortField] || 0);
+        bv = Number(b[sortField] || 0);
       }
-      const av = Number((a as Record<string, unknown>)[sortField] || 0);
-      const bv = Number((b as Record<string, unknown>)[sortField] || 0);
       return (av - bv) * dir;
     });
-  }, [keys, sortField, sortDir]);
+    return result;
+  }, [keys, typeFilter, statusFilter, sortField, sortDir]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedKeys.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageKeys = sortedKeys.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
+  // ── 分页(夹取页码 + 切出当前页)──
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = useMemo(
+    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filtered, safePage],
   );
 
-  const toggleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
-    } else {
-      setSortField(field);
-      setSortDir("desc");
-    }
-    setPage(1);
+  // 是否处于「有筛选/搜索」状态(空态文案区分用)。
+  const hasActiveFilter =
+    Boolean(submittedSearch) || typeFilter !== "all" || statusFilter !== "all";
+
+  // 任一筛选/排序变更后回到第一页。
+  const resetToFirstPage = () => setPage(1);
+
+  // ── 搜索 ──
+  const submitSearch = () => {
+    setSubmittedSearch(searchInput.trim());
+    resetToFirstPage();
+  };
+  const clearSearch = () => {
+    setSearchInput("");
+    setSubmittedSearch("");
+    resetToFirstPage();
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field)
-      return <ArrowUpDownIcon data-icon className="size-3 opacity-40" />;
-    return sortDir === "desc" ? (
-      <ArrowDownIcon data-icon className="size-3" />
-    ) : (
-      <ArrowUpIcon data-icon className="size-3" />
-    );
-  };
-
-  // Create access key
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      const durationValue = Math.max(
-        1,
-        Math.floor(Number(createDurationValue) || 1)
-      );
-      const durationMs =
-        durationValue *
-        (createDurationUnit === "d" ? 86400000 : 3600000);
-      const windowValue = Math.max(1, Math.floor(Number(createWindowValue) || 1));
-      const windowMs =
-        windowValue * (createWindowUnit === "d" ? 86400000 : 3600000);
-      const count = Math.max(1, Math.min(200, Number(createCount) || 1));
-
-      const payload: Record<string, unknown> = {
-        name: createName.trim() || undefined,
-        durationMs,
-        windowMs,
-        count,
-      };
-      if (createLimit.trim()) {
-        payload.windowLimit = Number(createLimit);
-      }
-      if (createTokenLimit.trim()) {
-        payload.tokenWindowLimit = Number(createTokenLimit);
-      }
-      // 池子模式:不传 products → 服务端建为无绑定的万能池子卡。
-      // 绑定模式:至少选一个产品,只有开通的产品能用。
-      if (createMode === "bound") {
-        const products = [
-          ...(createCodex ? ["codex"] : []),
-          ...(createAnti ? ["antigravity"] : []),
-          ...(createClaude ? ["anthropic"] : []),
-        ];
-        if (!products.length) throw new Error("绑定模式请至少选择一个产品");
-        // Level is required for every selected product.
-        if (createCodex && !createCodexLevel) throw new Error("请选择 Codex 会员等级");
-        if (createAnti && !createAntiLevel) throw new Error("请选择 Antigravity 会员等级");
-        if (createClaude && !createClaudeLevel) throw new Error("请选择 Anthropic 会员等级");
-        payload.products = products;
-        payload.levels = {
-          ...(createCodex ? { codex: createCodexLevel } : {}),
-          ...(createAnti ? { antigravity: createAntiLevel } : {}),
-          ...(createClaude ? { anthropic: createClaudeLevel } : {}),
-        };
-        // 可选:手动指定账号("" = 自动分配,不传该 product)。
-        const accountIds: Record<string, number> = {
-          ...(createCodex && createCodexAccountId ? { codex: Number(createCodexAccountId) } : {}),
-          ...(createAnti && createAntiAccountId ? { antigravity: Number(createAntiAccountId) } : {}),
-          ...(createClaude && createClaudeAccountId ? { anthropic: Number(createClaudeAccountId) } : {}),
-        };
-        if (Object.keys(accountIds).length) payload.accountIds = accountIds;
-        payload.weight = Math.max(1, Math.min(8, Number(createWeight) || 1));
-      }
-
-      const res = await fetch("/api/rosetta/access-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "创建失败");
-
-      const created: AccessKey[] = Array.isArray(data.keys)
-        ? data.keys
-        : data.key
-          ? [data.key]
-          : [];
-      const fullKeys = created
-        .map((k) => k.fullKey || "")
-        .filter(Boolean);
-
-      toast.success(`已生成 ${created.length || 1} 张卡密`);
-      setCreateName("");
-
-      if (fullKeys.length > 0) {
-        setRevealKeys(fullKeys);
-        setRevealOpen(true);
-        await navigator.clipboard
-          ?.writeText(fullKeys.join("\n"))
-          .catch(() => {});
-      }
-      fetchKeys();
-    } catch (err: unknown) {
-      toast.error(
-        err instanceof Error ? err.message : "创建失败"
-      );
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // Toggle status
-  const handleToggle = async (key: AccessKey) => {
-    const newStatus = key.status === "active" ? "disabled" : "active";
-    try {
-      const res = await fetch("/api/rosetta/access-key-update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: key.id, status: newStatus }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "操作失败");
-      toast.success(newStatus === "active" ? "卡密已启用" : "卡密已禁用");
-      fetchKeys();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "操作失败");
-    }
-  };
-
-  // Copy key
-  const handleCopy = async (value: string) => {
+  // ── 行操作:复制 ──
+  const handleCopy = useCallback(async (value: string) => {
     if (!value) {
       toast.error("卡密为空");
       return;
     }
     await navigator.clipboard?.writeText(value).catch(() => {});
     toast.success("卡密已复制");
-  };
+  }, []);
 
-  // Delete
-  const handleDelete = async () => {
+  // ── 行操作:启停(直接切换 status,失败 refetch 回滚)──
+  const handleToggle = useCallback(
+    async (key: AccessKeyListItem) => {
+      const next = key.status === "active" ? "disabled" : "active";
+      try {
+        const res = await fetch("/api/rosetta/access-key-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: key.id, status: next }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "操作失败");
+        toast.success(next === "active" ? "卡密已启用" : "卡密已禁用");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "操作失败");
+      } finally {
+        // 无论成败都刷新:成功落地新状态;失败则回滚到服务端真值。
+        void refresh();
+      }
+    },
+    [refresh],
+  );
+
+  // ── 行操作:删除(AlertDialog 确认后执行)──
+  const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
@@ -537,81 +213,45 @@ export default function RosettaKeysPage() {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "删除失败");
       toast.success("卡密已删除");
-      setDeleteOpen(false);
       setDeleteTarget(null);
-      fetchKeys();
-    } catch (err: unknown) {
+      refreshAll();
+    } catch (err) {
       toast.error(err instanceof Error ? err.message : "删除失败");
     } finally {
       setDeleting(false);
     }
-  };
+  }, [deleteTarget, refreshAll]);
 
-  // Cleanup expired keys
-  const handleCleanupExpired = async () => {
-    setCleaningExpired(true);
+  // ── 清理(过期 / 未绑定):AlertDialog 确认后执行 ──
+  const handleCleanupConfirm = useCallback(async () => {
+    if (!cleanupKind) return;
+    setCleaning(true);
+    const path =
+      cleanupKind === "expired"
+        ? "/api/rosetta/cleanup-expired-keys"
+        : "/api/rosetta/cleanup-unbound-keys";
+    const label = cleanupKind === "expired" ? "过期" : "未绑定设备的";
     try {
-      const res = await fetch("/api/rosetta/cleanup-expired-keys", { method: "POST" });
+      const res = await fetch(path, { method: "POST" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "清理失败");
-      toast.success(data.deleted > 0 ? `已清理 ${data.deleted} 条过期卡密` : "没有需要清理的过期卡密");
-      setCleanExpiredOpen(false);
-      fetchKeys();
-    } catch (err: unknown) {
+      toast.success(
+        Number(data.deleted) > 0
+          ? `已清理 ${data.deleted} 条${label}卡密`
+          : `没有需要清理的${label}卡密`,
+      );
+      setCleanupKind(null);
+      refreshAll();
+    } catch (err) {
       toast.error(err instanceof Error ? err.message : "清理失败");
     } finally {
-      setCleaningExpired(false);
+      setCleaning(false);
     }
-  };
-
-  // Cleanup unbound keys
-  const handleCleanupUnbound = async () => {
-    setCleaningUnbound(true);
-    try {
-      const res = await fetch("/api/rosetta/cleanup-unbound-keys", { method: "POST" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "清理失败");
-      toast.success(data.deleted > 0 ? `已清理 ${data.deleted} 条未绑定设备的卡密` : "没有需要清理的未绑定卡密");
-      setCleanUnboundOpen(false);
-      fetchKeys();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "清理失败");
-    } finally {
-      setCleaningUnbound(false);
-    }
-  };
-
-  const statusVariant = (status: string) => {
-    switch (status) {
-      case "active":
-        return "default" as const;
-      case "disabled":
-        return "secondary" as const;
-      case "revoked":
-        return "destructive" as const;
-      default:
-        return "secondary" as const;
-    }
-  };
-
-  // 整批卡需要的份额 = 份额 × 张数;用于手动选号下拉的"份额不足"判断。
-  const numWeight = Math.max(1, Math.min(8, Number(createWeight) || 1));
-  const numCount = Math.max(1, Math.min(200, Number(createCount) || 1));
-  const accountPickerOptions = (provider: string, level: string) =>
-    bindableAccounts.filter((a) => a.provider === provider && a.planType === level);
-  // base-ui Select items(含标签解析用的占位/自动项)。
-  const levelItems = (levels: string[]) =>
-    levels.length ? levels.map((lv) => ({ label: lv, value: lv })) : [{ label: "无可用等级", value: null }];
-  const accountItems = (provider: string, level: string) => [
-    { label: "自动分配", value: ACCOUNT_AUTO },
-    ...accountPickerOptions(provider, level).map((a) => ({
-      label: `${a.email} (${a.usedShares}/${a.shareCapacity}份)`,
-      value: String(a.id),
-    })),
-  ];
+  }, [cleanupKind, refreshAll]);
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 页头 */}
       <div>
         <h1 className="text-2xl font-semibold">卡密管理</h1>
         <p className="text-sm text-muted-foreground">
@@ -619,827 +259,187 @@ export default function RosettaKeysPage() {
         </p>
       </div>
 
-      {/* Create Form */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">生成卡密</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-end gap-3">
-            <Field className="min-w-[140px] flex-1">
-              <FieldLabel>备注/用户名</FieldLabel>
-              <Input
-                placeholder="可选"
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-              />
-            </Field>
-            <Field className="min-w-[150px]">
-              <FieldLabel>模式</FieldLabel>
-              <Select
-                items={MODE_ITEMS}
-                value={createMode}
-                onValueChange={(v) => setCreateMode(v as "pool" | "bound")}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {MODE_ITEMS.map((it) => (
-                      <SelectItem key={it.value} value={it.value}>
-                        {it.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            {createMode === "bound" && (
-              <FieldSet className="min-w-[180px]">
-                <FieldLegend variant="label">开通产品（只开的能用）</FieldLegend>
-                <FieldGroup className="gap-3">
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id="create-codex"
-                      checked={createCodex}
-                      onCheckedChange={(c) => setCreateCodex(c === true)}
-                    />
-                    <FieldLabel htmlFor="create-codex" className="font-normal">
-                      Codex
-                    </FieldLabel>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id="create-anti"
-                      checked={createAnti}
-                      onCheckedChange={(c) => setCreateAnti(c === true)}
-                    />
-                    <FieldLabel htmlFor="create-anti" className="font-normal">
-                      Antigravity
-                    </FieldLabel>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id="create-claude"
-                      checked={createClaude}
-                      onCheckedChange={(c) => setCreateClaude(c === true)}
-                    />
-                    <FieldLabel htmlFor="create-claude" className="font-normal">
-                      Anthropic
-                    </FieldLabel>
-                  </Field>
-                </FieldGroup>
-              </FieldSet>
-            )}
-            {createCodex && (
-              <Field className="min-w-[140px]">
-                <FieldLabel>Codex 会员等级</FieldLabel>
-                <Select
-                  items={levelItems(codexLevels)}
-                  value={createCodexLevel || null}
-                  onValueChange={setCreateCodexLevel}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {codexLevels.map((lv) => (
-                        <SelectItem key={lv} value={lv}>
-                          {lv}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createCodex && (
-              <Field className="min-w-[200px]">
-                <FieldLabel>Codex 账号(可选,默认自动)</FieldLabel>
-                <Select
-                  items={accountItems("codex", createCodexLevel)}
-                  value={createCodexAccountId || ACCOUNT_AUTO}
-                  onValueChange={(v) => setCreateCodexAccountId(v === ACCOUNT_AUTO ? "" : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
-                      {accountPickerOptions("codex", createCodexLevel).map((a) => {
-                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
-                        return (
-                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createAnti && (
-              <Field className="min-w-[140px]">
-                <FieldLabel>Antigravity 会员等级</FieldLabel>
-                <Select
-                  items={levelItems(antiLevels)}
-                  value={createAntiLevel || null}
-                  onValueChange={setCreateAntiLevel}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {antiLevels.map((lv) => (
-                        <SelectItem key={lv} value={lv}>
-                          {lv}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createAnti && (
-              <Field className="min-w-[200px]">
-                <FieldLabel>Antigravity 账号(可选,默认自动)</FieldLabel>
-                <Select
-                  items={accountItems("antigravity", createAntiLevel)}
-                  value={createAntiAccountId || ACCOUNT_AUTO}
-                  onValueChange={(v) => setCreateAntiAccountId(v === ACCOUNT_AUTO ? "" : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
-                      {accountPickerOptions("antigravity", createAntiLevel).map((a) => {
-                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
-                        return (
-                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createMode === "bound" && (
-              <Field className="min-w-[130px]">
-                <FieldLabel>份额(几人享用)</FieldLabel>
-                <Select items={WEIGHT_ITEMS} value={createWeight} onValueChange={setCreateWeight}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {WEIGHT_ITEMS.map((it) => (
-                        <SelectItem key={it.value} value={it.value}>
-                          {it.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createClaude && (
-              <Field className="min-w-[140px]">
-                <FieldLabel>Anthropic 会员等级</FieldLabel>
-                <Select
-                  items={levelItems(claudeLevels)}
-                  value={createClaudeLevel || null}
-                  onValueChange={setCreateClaudeLevel}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {claudeLevels.map((lv) => (
-                        <SelectItem key={lv} value={lv}>
-                          {lv}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            {createClaude && (
-              <Field className="min-w-[200px]">
-                <FieldLabel>Anthropic 账号(可选,默认自动)</FieldLabel>
-                <Select
-                  items={accountItems("anthropic", createClaudeLevel)}
-                  value={createClaudeAccountId || ACCOUNT_AUTO}
-                  onValueChange={(v) => setCreateClaudeAccountId(v === ACCOUNT_AUTO ? "" : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value={ACCOUNT_AUTO}>自动分配</SelectItem>
-                      {accountPickerOptions("anthropic", createClaudeLevel).map((a) => {
-                        const full = a.usedShares + numWeight * numCount > a.shareCapacity;
-                        return (
-                          <SelectItem key={a.id} value={String(a.id)} disabled={full}>
-                            {a.email} ({a.usedShares}/{a.shareCapacity}份){full ? " · 份额不足" : ""}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            <Field className="min-w-[180px]">
-              <FieldLabel>有效期</FieldLabel>
-              <div className="flex items-center gap-1">
-                <Input
-                  type="number"
-                  min={1}
-                  className="w-20"
-                  value={createDurationValue}
-                  onChange={(e) => setCreateDurationValue(e.target.value)}
-                />
-                <Select
-                  items={UNIT_ITEMS}
-                  value={createDurationUnit}
-                  onValueChange={setCreateDurationUnit}
-                >
-                  <SelectTrigger className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {UNIT_ITEMS.map((it) => (
-                        <SelectItem key={it.value} value={it.value}>
-                          {it.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-            </Field>
-            <Field className="min-w-[130px]">
-              <FieldLabel>请求数限制</FieldLabel>
-              <Input
-                type="number"
-                min={1}
-                max={5000}
-                placeholder="留空不限"
-                value={createLimit}
-                onChange={(e) => setCreateLimit(e.target.value)}
-              />
-            </Field>
-            <Field className="min-w-[150px]">
-              <FieldLabel>Token限制</FieldLabel>
-              <Input
-                type="number"
-                min={1}
-                placeholder="留空按请求数换算"
-                value={createTokenLimit}
-                onChange={(e) => setCreateTokenLimit(e.target.value)}
-              />
-            </Field>
-            <Field className="min-w-[160px]">
-              <FieldLabel>限流窗口</FieldLabel>
-              <div className="flex items-center gap-1">
-                <Input
-                  type="number"
-                  min={1}
-                  className="w-20"
-                  value={createWindowValue}
-                  onChange={(e) => setCreateWindowValue(e.target.value)}
-                />
-                <Select
-                  items={UNIT_ITEMS}
-                  value={createWindowUnit}
-                  onValueChange={setCreateWindowUnit}
-                >
-                  <SelectTrigger className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {UNIT_ITEMS.map((it) => (
-                        <SelectItem key={it.value} value={it.value}>
-                          {it.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-            </Field>
-            <Field className="min-w-[100px] w-24">
-              <FieldLabel>生成数量</FieldLabel>
-              <Input
-                type="number"
-                min={1}
-                max={200}
-                value={createCount}
-                onChange={(e) => setCreateCount(e.target.value)}
-              />
-            </Field>
-            <Button onClick={handleCreate} disabled={creating}>
-              {creating ? (
-                <Spinner data-icon className="size-4" />
-              ) : (
-                <KeyIcon data-icon className="size-4" />
-              )}
-              生成卡密
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {/* 工具栏:搜索 / 筛选 / 排序 / 概览 / 清理 / 生成 */}
+      <Toolbar
+        search={searchInput}
+        onSearchChange={setSearchInput}
+        onSearchSubmit={submitSearch}
+        onSearchClear={clearSearch}
+        typeFilter={typeFilter}
+        onTypeFilterChange={(v) => {
+          setTypeFilter(v);
+          resetToFirstPage();
+        }}
+        statusFilter={statusFilter}
+        onStatusFilterChange={(v) => {
+          setStatusFilter(v);
+          resetToFirstPage();
+        }}
+        sortField={sortField}
+        sortDir={sortDir}
+        onSortFieldChange={(v) => {
+          setSortField(v);
+          resetToFirstPage();
+        }}
+        onSortDirToggle={() =>
+          setSortDir((d) => (d === "desc" ? "asc" : "desc"))
+        }
+        counts={counts}
+        onCleanupExpired={() => setCleanupKind("expired")}
+        onCleanupUnbound={() => setCleanupKind("unbound")}
+        cleaning={cleaning}
+        onCreate={() => setCreateOpen(true)}
+      />
 
-      {/* Search Bar & Table */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-base">卡密列表</CardTitle>
-          <div className="flex items-center gap-2">
-            <Input
-              className="w-64"
-              placeholder="搜索卡密 / 备注 / 状态 / 设备"
-              value={search}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSearchSubmit();
-                }
-              }}
-            />
-            <Button variant="outline" size="sm" onClick={handleSearchSubmit}>
-              <SearchIcon data-icon className="size-4" />
-              搜索
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleSearchClear}>
-              <XIcon data-icon className="size-4" />
-              清空
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <AlertDialog open={cleanExpiredOpen} onOpenChange={setCleanExpiredOpen}>
-              <Button variant="outline" size="sm" disabled={cleaningExpired} onClick={() => setCleanExpiredOpen(true)}>
-                {cleaningExpired ? <Loader2Icon data-icon className="size-4 animate-spin" /> : <Trash2Icon data-icon className="size-4" />}
-                清理过期
-              </Button>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>清理过期卡密？</AlertDialogTitle>
-                  <AlertDialogDescription>将删除状态为 expired 或已超过有效期的卡密记录，不可恢复。</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleCleanupExpired} disabled={cleaningExpired}>
-                    {cleaningExpired && <Loader2Icon data-icon className="size-4 animate-spin" />}
-                    确认清理
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            <AlertDialog open={cleanUnboundOpen} onOpenChange={setCleanUnboundOpen}>
-              <Button variant="outline" size="sm" disabled={cleaningUnbound} onClick={() => setCleanUnboundOpen(true)}>
-                {cleaningUnbound ? <Loader2Icon data-icon className="size-4 animate-spin" /> : <UnplugIcon data-icon className="size-4" />}
-                清理未绑定
-              </Button>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>清理未绑定设备的卡密？</AlertDialogTitle>
-                  <AlertDialogDescription>将删除所有没有绑定客户端ID的卡密记录，不可恢复。</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleCleanupUnbound} disabled={cleaningUnbound}>
-                    {cleaningUnbound && <Loader2Icon data-icon className="size-4 animate-spin" />}
-                    确认清理
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="mb-3 text-xs text-muted-foreground">
-            共 {totalAll.toLocaleString()} 张卡密，
-            {totalActive.toLocaleString()} 张有效
-          </p>
+      {/* 错误条:toast 之外再给一个内联重试入口 */}
+      {error && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <span>{error}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refresh()}
+          >
+            重试
+          </Button>
+        </div>
+      )}
 
-          <Separator className="mb-3" />
+      {/* 列表:加载中显示 spinner,否则渲染表格 */}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+          <Spinner />
+          加载中...
+        </div>
+      ) : (
+        <>
+          <KeyTable
+            keys={pageItems}
+            hasActiveFilter={hasActiveFilter}
+            onCopy={handleCopy}
+            onEdit={setEditCard}
+            onUsage={setUsageCard}
+            onToggle={handleToggle}
+            onDelete={setDeleteTarget}
+          />
 
-          {/* Sort buttons */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">排序:</span>
-            {(
-              [
-                ["recentWindowTokens", "窗口Token"],
-                ["totalTokensUsed", "总Token"],
-                ["totalRequests", "请求数"],
-                ["anomalyCount", "异常"],
-                ["createdAt", "创建时间"],
-              ] as [SortField, string][]
-            ).map(([field, label]) => (
+          {/* 分页 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2">
               <Button
-                key={field}
-                variant={sortField === field ? "default" : "outline"}
+                variant="outline"
                 size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => toggleSort(field)}
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
               >
-                {label}
-                <SortIcon field={field} />
+                上一页
               </Button>
-            ))}
-          </div>
-
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-              <Spinner />
-              加载中...
+              <span className="text-sm text-muted-foreground">
+                {safePage} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                下一页
+              </Button>
             </div>
-          ) : keys.length === 0 ? (
-            <Empty className="py-12">
-              <EmptyHeader>
-                <EmptyTitle>
-                  {search ? "没有匹配的卡密" : "暂无卡密"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {search
-                    ? "尝试修改搜索条件"
-                    : "点击上方「生成卡密」创建第一张"}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>卡密</TableHead>
-                      <TableHead>备注</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead>绑定账号</TableHead>
-                      <TableHead>有效期</TableHead>
-                      <TableHead
-                        className="cursor-pointer select-none"
-                        onClick={() => toggleSort("recentWindowTokens")}
-                      >
-                        <div className="flex items-center gap-1">
-                          Token窗口
-                          <SortIcon field="recentWindowTokens" />
-                        </div>
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer select-none"
-                        onClick={() => toggleSort("totalTokensUsed")}
-                      >
-                        <div className="flex items-center gap-1">
-                          总Token
-                          <SortIcon field="totalTokensUsed" />
-                        </div>
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer select-none"
-                        onClick={() => toggleSort("totalRequests")}
-                      >
-                        <div className="flex items-center gap-1">
-                          请求数
-                          <SortIcon field="totalRequests" />
-                        </div>
-                      </TableHead>
-                      <TableHead
-                        className="cursor-pointer select-none"
-                        onClick={() => toggleSort("anomalyCount")}
-                      >
-                        <div className="flex items-center gap-1">
-                          异常
-                          <SortIcon field="anomalyCount" />
-                        </div>
-                      </TableHead>
-                      <TableHead>客户端ID</TableHead>
-                      <TableHead>最后使用</TableHead>
-                      <TableHead className="text-right">操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pageKeys.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <code className="text-xs font-mono">
-                              {item.key}
-                            </code>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-6"
-                                      onClick={() =>
-                                        handleCopy(item.fullKey || item.key)
-                                      }
-                                    />
-                                  }
-                                >
-                                  <CopyIcon
-                                    data-icon
-                                    className="size-3"
-                                  />
-                                </TooltipTrigger>
-                                <TooltipContent>复制卡密</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                        </TableCell>
-                        <TableCell className="max-w-[120px] truncate text-sm">
-                          {item.name || "-"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(item.status)}>
-                            {item.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <BindAccountControl
-                            card={{ id: item.id, bindings: item.bindings, weight: item.weight }}
-                            accounts={bindableAccounts}
-                            onApply={(bindings) => handleSetBindings(item.id, bindings)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
-                          <div className="flex flex-col">
-                            <span>{formatDuration(item.durationMs)}</span>
-                            {item.expiresAt && (() => {
-                              const remaining = new Date(item.expiresAt).getTime() - Date.now();
-                              if (remaining <= 0) return <span className="text-xs text-destructive">已过期</span>;
-                              const remainHours = remaining / 3600000;
-                              const remainText = remainHours < 24
-                                ? `剩余 ${Math.ceil(remainHours)}h`
-                                : `剩余 ${Math.ceil(remainHours / 24)}d`;
-                              return <span className="text-xs text-muted-foreground">{remainText}</span>;
-                            })()}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
-                          <div>
-                            {item.recentWindowTokens.toLocaleString()} /{" "}
-                            {item.tokenWindowLimit > 0
-                              ? item.tokenWindowLimit.toLocaleString()
-                              : "∞"}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            每 {formatDuration(item.windowMs)}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.totalTokensUsed.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.totalRequests}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {(() => {
-                            const ac = Number(item.anomalyCount || 0);
-                            if (ac === 0)
-                              return (
-                                <span className="text-muted-foreground">
-                                  -
-                                </span>
-                              );
-                            return (
-                              <span className="flex items-center gap-1 text-destructive">
-                                <AlertTriangleIcon className="size-3" />
-                                {ac}
-                              </span>
-                            );
-                          })()}
-                        </TableCell>
-                        <TableCell className="max-w-[100px] truncate text-xs font-mono text-muted-foreground">
-                          {item.sessionClientId || "-"}
-                        </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
-                          {formatDateTime(item.lastUsedAt)}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center justify-end gap-1">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-7"
-                                      onClick={() => {
-                                        setLimitsTarget(item);
-                                        setLimitsOpen(true);
-                                      }}
-                                    />
-                                  }
-                                >
-                                  <SlidersHorizontalIcon data-icon className="size-3.5" />
-                                </TooltipTrigger>
-                                <TooltipContent>模型限额</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-7"
-                                      onClick={() => {
-                                        setUsageTarget(item);
-                                        setUsageOpen(true);
-                                      }}
-                                    />
-                                  }
-                                >
-                                  <BarChart3Icon data-icon className="size-3.5" />
-                                </TooltipTrigger>
-                                <TooltipContent>Token 使用记录</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-7"
-                                      onClick={() => handleToggle(item)}
-                                    />
-                                  }
-                                >
-                                  {item.status === "active" ? (
-                                    <PauseIcon
-                                      data-icon
-                                      className="size-3.5"
-                                    />
-                                  ) : (
-                                    <PlayIcon
-                                      data-icon
-                                      className="size-3.5"
-                                    />
-                                  )}
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  {item.status === "active"
-                                    ? "禁用"
-                                    : "启用"}
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-7"
-                                      onClick={() => {
-                                        setDeleteTarget(item);
-                                        setDeleteOpen(true);
-                                      }}
-                                    />
-                                  }
-                                >
-                                  <Trash2Icon
-                                    data-icon
-                                    className="size-3.5 text-destructive"
-                                  />
-                                </TooltipTrigger>
-                                <TooltipContent>删除</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={currentPage <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    上一页
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    {currentPage} / {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={currentPage >= totalPages}
-                    onClick={() =>
-                      setPage((p) => Math.min(totalPages, p + 1))
-                    }
-                  >
-                    下一页
-                  </Button>
-                </div>
-              )}
-            </>
           )}
-        </CardContent>
-      </Card>
+        </>
+      )}
 
-      {/* Key Reveal Dialog */}
-      <Dialog open={revealOpen} onOpenChange={setRevealOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>卡密已生成</DialogTitle>
-            <DialogDescription>
-              {revealKeys.length > 1
-                ? `共生成 ${revealKeys.length} 张卡密，已自动复制到剪贴板。`
-                : "请立即复制此卡密，关闭后将无法再次查看完整卡密。"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-60 overflow-y-auto rounded-lg border bg-muted/50 p-3">
-            <code className="block break-all text-sm font-mono whitespace-pre-wrap">
-              {revealKeys.join("\n")}
-            </code>
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={async () => {
-                await navigator.clipboard
-                  ?.writeText(revealKeys.join("\n"))
-                  .catch(() => {});
-                toast.success("已复制到剪贴板");
-              }}
-            >
-              <CopyIcon data-icon className="size-3.5" />
-              复制卡密
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── 新增向导 ── */}
+      <CreateWizard
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        accounts={accounts}
+        onCreated={refreshAll}
+      />
 
-      {/* Token Usage Detail */}
+      {/* ── 编辑面板 ── */}
+      <CardEditDialog
+        card={editCard}
+        open={Boolean(editCard)}
+        onOpenChange={(o) => {
+          if (!o) setEditCard(null);
+        }}
+        accounts={accounts}
+        onSaved={refreshAll}
+      />
+
+      {/* ── 用量弹窗 ── */}
       <CardUsageDialog
-        card={usageTarget}
-        open={usageOpen}
-        onOpenChange={setUsageOpen}
+        card={
+          usageCard
+            ? { id: usageCard.id, key: usageCard.key, name: usageCard.name }
+            : null
+        }
+        open={Boolean(usageCard)}
+        onOpenChange={(o) => {
+          if (!o) setUsageCard(null);
+        }}
       />
 
-      {/* Card Limits Dialog */}
-      <CardLimitsDialog
-        card={limitsTarget}
-        open={limitsOpen}
-        onOpenChange={setLimitsOpen}
-        onSaved={() => fetchKeys()}
-      />
-
-      {/* Delete Confirmation */}
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      {/* ── 删除二次确认 ── */}
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(o) => {
+          if (!o && !deleting) setDeleteTarget(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogTitle>删除卡密?</AlertDialogTitle>
             <AlertDialogDescription>
-              确定删除该卡密？删除后不可恢复。
-              {deleteTarget && (
-                <code className="mt-1 block text-xs font-mono">
-                  {deleteTarget.key}
-                  {deleteTarget.name ? ` (${deleteTarget.name})` : ""}
-                </code>
-              )}
+              将永久删除卡密{" "}
+              <code className="font-mono">{deleteTarget?.key}</code>
+              {deleteTarget?.name ? ` · ${deleteTarget.name}` : ""}
+              ,此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
+              onClick={handleDeleteConfirm}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90"
             >
-              {deleting && <Spinner data-icon className="size-4" />}
+              {deleting ? <Spinner data-icon className="size-3.5" /> : null}
               删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── 清理二次确认(过期 / 未绑定共用)── */}
+      <AlertDialog
+        open={Boolean(cleanupKind)}
+        onOpenChange={(o) => {
+          if (!o && !cleaning) setCleanupKind(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {cleanupKind === "expired" ? "清理过期卡密?" : "清理未绑定卡密?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {cleanupKind === "expired"
+                ? "将批量删除所有已过期的卡密,此操作不可撤销。"
+                : "将批量删除所有从未绑定过设备的卡密,此操作不可撤销。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cleaning}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCleanupConfirm}
+              disabled={cleaning}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {cleaning ? <Spinner data-icon className="size-3.5" /> : null}
+              清理
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

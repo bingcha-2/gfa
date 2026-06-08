@@ -23,6 +23,13 @@ type TokenUsageResult struct {
 	StreamErrorModel   string
 	StreamRetryAfterMs int64
 	StreamBytes        int64 // bytes received before error
+	// 已向 IDE 转发过正常内容之后才匹配到的 quota/capacity 信号。
+	// 此时绝不掐流（掐流会截断进行中的工具调用），流照常走完，仅作软信号:
+	// 本次按成功处理，不计错误、不据此惩罚账号（裸子串可能误判）。
+	StreamQuotaSoft bool
+	// 流式 body 阶段中途断开诊断（非 quota，用于定位"长文输出断"）
+	StreamAbortErr string // 上游/代理异常掐断（非 EOF、非本地超时主动关闭）
+	StreamTimedOut bool   // 因本地首字节/空闲超时主动关闭连接
 }
 
 // discountedCachedTokens returns the billable portion of cached tokens.
@@ -33,6 +40,32 @@ func discountedCachedTokens(cached int64) int64 {
 		return 0
 	}
 	return (cached + 9) / 10 // ceil(cached / 10)
+}
+
+// claudeDisplayBillable 按缓存读 1/10 折扣算真实计费,仅供本地日志显示
+// (与服务端 billableTokenUsageTotal 口径一致;上报 payload 字段不受影响)。
+func claudeDisplayBillable(rawTotal, cacheRead int64) int64 {
+	if rawTotal > 0 && cacheRead > 0 {
+		b := rawTotal - cacheRead + discountedCachedTokens(cacheRead)
+		if b < 0 {
+			return 0
+		}
+		return b
+	}
+	return rawTotal
+}
+
+// payloadInt64 从上报 payload(map[string]interface{})里安全取整型 token 计数。
+func payloadInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	}
+	return 0
 }
 
 // classifyModel 将模型名分类为厂商族(gemini/claude/gpt),复用唯一分类真源
@@ -127,7 +160,7 @@ func (p *ProxyServer) parseAndAddTokenUsage(data []byte, contentEncoding string,
 	// 持久化到每日统计。家族复用上面已算的 category(classifyModel→modelFamily,
 	// 唯一分类入口),不另起一套模型→家族判断,避免口径漂移。
 	if inputTokens > 0 || outputTokens > 0 || cachedTokens > 0 {
-		GetUsageStats().AddTokens(category, inputTokens, outputTokens, cachedTokens)
+		GetUsageStats().AddTokens(category, inputTokens, outputTokens, cachedTokens, rawTotal)
 	}
 
 	return TokenUsageResult{

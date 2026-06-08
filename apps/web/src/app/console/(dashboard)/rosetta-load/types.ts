@@ -1,13 +1,5 @@
 // ── Types for rosetta-load dashboard ──
 
-export type Credits = {
-  known?: boolean;
-  available?: boolean;
-  creditAmount?: number;
-  minCreditAmount?: number;
-  creditsRefreshedAt?: string;
-};
-
 export type BlockedModel = {
   modelKey: string;
   reason: string;
@@ -30,7 +22,6 @@ export type QuotaAccount = {
   quotaStatus?: string;
   quotaStatusReason?: string;
   blockedUntil?: number;
-  credits?: Credits;
   requestStats?: RequestStats;
   successRate?: number | null;
   lastConversationOkAt?: string;
@@ -97,42 +88,6 @@ export type StatusData = {
   quota?: { accounts?: QuotaAccount[] };
   scheduler?: Scheduler;
   enterpriseProbe?: Record<string, EnterpriseProbeGroup>;
-};
-
-export type ThrottleEmergency = {
-  enabled: boolean;
-  maxAttempts: number;
-  baseDelayMs: number;
-  message: string;
-};
-
-export type ThrottleGlobal = {
-  maxAttempts?: number;
-  baseDelayMs?: number;
-  capacityWaitMs?: number;
-  backoffMultiplier?: number;
-};
-
-export type ThrottleModelOverride = {
-  baseDelayMs?: number;
-  capacityWaitMs?: number;
-  maxAttempts?: number;
-  backoffMultiplier?: number;
-};
-
-export type ThrottleEscalationThreshold = {
-  rate503: number;
-  addDelayMs: number;
-};
-
-export type ThrottleConfig = {
-  emergency?: ThrottleEmergency;
-  global?: ThrottleGlobal;
-  models?: Record<string, ThrottleModelOverride>;
-  autoEscalation?: {
-    enabled: boolean;
-    thresholds: ThrottleEscalationThreshold[];
-  };
 };
 
 export type ModelRow = {

@@ -22,6 +22,35 @@ function makeStore(keys: any[] = []) {
   return new AccessKeyStore(accessKeysPath);
 }
 
+// ── computeUsageDetail 口径归一 ───────────────────────────────────────────────
+
+describe('AccessKeyStore.computeUsageDetail (normalizeUsageToGross 收口)', () => {
+  it('claude: net input 归一为 gross,billable 折扣 cache_read', () => {
+    const store = makeStore([{ id: 'k1', key: 's', status: 'active' }]);
+    // Anthropic 上报 net input=100, cache_read=80, cache_creation=50(含于 rawTotal), output=10
+    const d = store.computeUsageDetail(
+      { inputTokens: 100, outputTokens: 10, cachedInputTokens: 80, rawTotalTokens: 240 },
+      'claude-opus-4',
+      'anthropic',
+    );
+    expect(d.inputTokens).toBe(230); // gross,供 fairShare 的 netInput 用
+    expect(d.cachedInputTokens).toBe(80);
+    expect(d.rawTotalTokens).toBe(240);
+    expect(d.totalTokens).toBe(168); // 240-80+ceil(80/10)
+  });
+
+  it('gemini: 已 gross,detail 不变', () => {
+    const store = makeStore([{ id: 'k1', key: 's', status: 'active' }]);
+    const d = store.computeUsageDetail(
+      { inputTokens: 180, outputTokens: 20, cachedInputTokens: 80 },
+      'gemini-2.5-pro',
+      'antigravity',
+    );
+    expect(d.inputTokens).toBe(180);
+    expect(d.totalTokens).toBe(128); // 200-80+8
+  });
+});
+
 // ── Basic CRUD ───────────────────────────────────────────────────────────────
 
 describe('AccessKeyStore', () => {
@@ -215,10 +244,17 @@ describe('AccessKeyStore', () => {
   // ── Token limit enforcement ─────────────────────────────────────────────
 
   describe('resolveFromRequest — enforceLimit', () => {
+    // Per-model caps (bucketLimits). Both composite (`<product>-<family>`, used by
+    // product-scoped requests) and bare-family keys (used by legacy/no-product events
+    // and the no-modelKey path) are set so every case below resolves to a real cap.
     function makeKeyWithUsage(tokenEvents: any[]) {
       return makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
-        tokenWindowLimit: 500_000,
+        bucketLimits: {
+          'anthropic-claude': 500_000, 'claude': 500_000,
+          'antigravity-gemini': 2_500_000, 'gemini': 2_500_000,
+          'codex-gpt': 500_000, 'gpt': 500_000,
+        },
         windowStartedAt: Date.now(),
         usageEvents: [],
         tokenUsageEvents: tokenEvents,
@@ -237,6 +273,27 @@ describe('AccessKeyStore', () => {
       expect(result.record).toBeNull();
       // Composite bucket anthropic-claude → label "Anthropic · Claude".
       expect(result.error).toContain('Claude token limit exceeded');
+    });
+
+    it('reports the over-limit window per the card windowMs, not a hardcoded 5h', () => {
+      const store = makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        windowMs: 24 * 60 * 60 * 1000, // 1-day window, not the default 5h
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        windowStartedAt: Date.now(),
+        usageEvents: [],
+        tokenUsageEvents: [
+          { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+        ],
+      }]);
+      const result = store.resolveFromRequest(
+        { headers: { 'x-access-key': 'secret1' } } as any,
+        {},
+        { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+      );
+      expect(result.record).toBeNull();
+      expect(result.error).toContain('tokens/1d');
+      expect(result.error).not.toContain('tokens/5h');
     });
 
     it('should reject when Gemini tokens exceed limit (5x multiplier)', () => {
@@ -266,37 +323,73 @@ describe('AccessKeyStore', () => {
       expect(result.record?.id).toBe('k1');
     });
 
-    it('should reject only when ALL buckets (gemini/opus/codex) exceed limit (no modelKey)', () => {
+    // 无 modelKey 的预热 / 探活不消费任何具体桶 → 不做额度拦截(不管桶怎么设、用没用爆)。
+    // 真实消费都带 modelKey,走精确单桶检查。下面用你这张卡的真实配置(四个产品都设了上限,
+    // 只有 anthropic-claude 用爆 130973/100000)验证跨产品不连累。
+    function makeFourBucketCard() {
+      return makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        bucketLimits: {
+          'anthropic-claude': 100_000,
+          'antigravity-gemini': 10_000,
+          'antigravity-claude': 10_000,
+          'codex-gpt': 1_000,
+        },
+        windowStartedAt: Date.now(),
+        usageEvents: [],
+        // 只有 anthropic-claude 用爆;antigravity / codex 一个 token 都没用(满额)。
+        tokenUsageEvents: [
+          { at: Date.now(), inputTokens: 80_000, outputTokens: 50_973, modelKey: 'claude-opus-4-8', product: 'anthropic' },
+        ],
+      }]);
+    }
+
+    it('warm-lease (no modelKey) is NOT blocked even though anthropic-claude is exhausted', () => {
+      // 核心回归:antigravity-gemini 是 0/10000 满额,预热绝不能被 anthropic 的耗尽连累。
+      const store = makeFourBucketCard();
+      const result = store.resolveFromRequest(
+        { headers: { 'x-access-key': 'secret1' } } as any,
+        {},
+        { enforceLimit: true }, // 无 modelKey(预热)
+      );
+      expect(result.record).not.toBeNull();
+      expect(result.record?.id).toBe('k1');
+    });
+
+    it('claude request (with modelKey) is still precisely rejected — only the exhausted bucket', () => {
+      const store = makeFourBucketCard();
+      const result = store.resolveFromRequest(
+        { headers: { 'x-access-key': 'secret1' } } as any,
+        {},
+        { enforceLimit: true, modelKey: 'claude-opus-4-8', product: 'anthropic' },
+      );
+      expect(result.record).toBeNull();
+      expect(result.error).toContain('Claude token limit exceeded');
+    });
+
+    it('antigravity gemini (with modelKey) is allowed — its own bucket has headroom (0/10000)', () => {
+      const store = makeFourBucketCard();
+      const result = store.resolveFromRequest(
+        { headers: { 'x-access-key': 'secret1' } } as any,
+        {},
+        { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
+      );
+      expect(result.record).not.toBeNull();
+    });
+
+    it('no-modelKey is not blocked even when EVERY bucket is exhausted (preheat consumes nothing)', () => {
+      // 即便所有桶都爆,无 modelKey 的预热仍放行 —— 它不消费;真实请求各自带 modelKey 被精确拦。
       const store = makeKeyWithUsage([
         { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-opus' },
         { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro' },
         { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'gpt-5-codex' },
       ]);
-      // No modelKey → requires every bucket to be exceeded
       const result = store.resolveFromRequest(
         { headers: { 'x-access-key': 'secret1' } } as any,
         {},
         { enforceLimit: true },
       );
-      expect(result.record).toBeNull();
-      expect(result.error).toContain('token limit exceeded');
-    });
-
-    it('should reject when all USED buckets exhausted even if an unused bucket has headroom (no modelKey)', () => {
-      // Regression: opus + gemini fully used and exhausted, codex never used.
-      // The codex bucket's 0 usage must NOT keep the card alive — an exhausted
-      // card with no modelKey has to be rejected.
-      const store = makeKeyWithUsage([
-        { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-opus' },
-        { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro' },
-      ]);
-      const result = store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
-        {},
-        { enforceLimit: true },
-      );
-      expect(result.record).toBeNull();
-      expect(result.error).toContain('token limit exceeded');
+      expect(result.record).not.toBeNull();
     });
 
     it('should allow when only one category exceeds limit (no modelKey)', () => {
@@ -311,6 +404,72 @@ describe('AccessKeyStore', () => {
         { enforceLimit: true },
       );
       expect(result.record).not.toBeNull();
+    });
+  });
+
+  // ── Per-model caps via bucketLimits (no global tokenWindowLimit) ──────────
+
+  describe('resolveFromRequest — bucketLimits (per-model caps)', () => {
+    function makeCard(extra: any) {
+      return makeStore([{
+        id: 'k1', key: 'secret1', status: 'active',
+        windowStartedAt: Date.now(), usageEvents: [], ...extra,
+      }]);
+    }
+    const claudeReq = { headers: { 'x-access-key': 'secret1' } } as any;
+    const opts = { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' };
+
+    it('enforces a bucketLimits cap even without a global tokenWindowLimit', () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        tokenUsageEvents: [{ at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6', product: 'anthropic' }],
+      });
+      const result = store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).toBeNull();
+      expect(result.limitExceeded).toBe(true);
+      expect(Number(result.resetMs)).toBeGreaterThan(0);
+      expect(result.error).toContain('token limit exceeded');
+    });
+
+    it('allows a request under the bucketLimits cap', () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        tokenUsageEvents: [{ at: Date.now(), inputTokens: 100, outputTokens: 50, modelKey: 'claude-sonnet-4-6', product: 'anthropic' }],
+      });
+      const result = store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).not.toBeNull();
+      expect(result.limitExceeded).toBeFalsy();
+    });
+
+    it('leaves buckets without a cap unlimited', () => {
+      // Only anthropic-claude capped; a heavily-used antigravity-gemini bucket is uncapped → allowed.
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        tokenUsageEvents: [{ at: Date.now(), inputTokens: 5_000_000, outputTokens: 5_000_000, modelKey: 'gemini-2.5-pro', product: 'antigravity' }],
+      });
+      const result = store.resolveFromRequest(claudeReq, {}, { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' });
+      expect(result.record).not.toBeNull();
+    });
+
+    it('does not enforce when neither tokenWindowLimit nor bucketLimits is set (unlimited)', () => {
+      const store = makeCard({
+        tokenUsageEvents: [{ at: Date.now(), inputTokens: 9_000_000, outputTokens: 9_000_000, modelKey: 'claude-sonnet-4-6', product: 'anthropic' }],
+      });
+      const result = store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).not.toBeNull();
+      expect(result.limitExceeded).toBeFalsy();
+    });
+
+    it('publicStatus reports quotaMode=static + flat family limit from bucketLimits', () => {
+      const store = makeCard({ bucketLimits: { 'anthropic-claude': 500_000 } });
+      const status = store.publicStatus(store.findById('k1')!);
+      expect(status.quotaMode).toBe('static');
+      expect(status.opusTokenLimit).toBe(500_000);
+    });
+
+    it('publicStatus quotaMode=unlimited when no caps and no binding', () => {
+      const store = makeCard({});
+      expect(store.publicStatus(store.findById('k1')!).quotaMode).toBe('unlimited');
     });
   });
 
@@ -602,7 +761,7 @@ describe('AccessKeyStore', () => {
         name: 'Test Key',
         firstUsedAt: new Date(now - 1000).toISOString(),
         durationMs: 3600_000,
-        tokenWindowLimit: 100_000,
+        bucketLimits: { 'anthropic-claude': 100_000 },
         windowStartedAt: now,
         totalRequests: 5,
         totalTokensUsed: 1234,
@@ -617,7 +776,8 @@ describe('AccessKeyStore', () => {
       expect(status.status).toBe('active');
       expect(status.totalRequests).toBe(5);
       expect(status.totalTokensUsed).toBe(1234);
-      expect(status.tokenWindowLimit).toBe(100_000);
+      expect(status.quotaMode).toBe('static');
+      expect(status.opusTokenLimit).toBe(100_000);
       expect(status.tokenWindowMs).toBe(5 * 60 * 60 * 1000);
       expect(status.remainingMs).toBeGreaterThan(0);
       expect(status.expiresAt).toBeTruthy();

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { UsageBar } from './UsageBar'
@@ -50,5 +50,24 @@ describe('UsageBar (blood bar)', () => {
     render(<UsageBar label="Gemini" used={null} limit={null} color="bg-blue-500" fraction={1} resetMs={2 * 60 * 60 * 1000} />)
     expect(screen.getByText(/充足/)).toBeInTheDocument()
     expect(screen.getByText(/后恢复/)).toBeInTheDocument()
+  })
+
+  it('keeps token numbers hidden until the 我的卡 bar is expanded', () => {
+    render(
+      <UsageBar label="我的卡" used={30_000_000} limit={50_000_000} color="bg-amber-500"
+        fraction={0.4} expandable detail="已用 30M / 上限 50M" />,
+    )
+    // 默认只给 %,不露 token 数。
+    expect(screen.getByText(/40%/)).toBeInTheDocument()
+    expect(screen.queryByText(/已用 30M/)).toBeNull()
+    // 点击 label 行展开 → 数字出现。
+    fireEvent.click(screen.getByText(/我的卡/))
+    expect(screen.getByText(/已用 30M \/ 上限 50M/)).toBeInTheDocument()
+  })
+
+  it('is not expandable without a detail line (号余量 bar stays %-only)', () => {
+    render(<UsageBar label="号余量" used={null} limit={null} color="bg-purple-500" fraction={0.9} expandable />)
+    fireEvent.click(screen.getByText(/号余量/))
+    expect(screen.queryByText(/已用/)).toBeNull()
   })
 })

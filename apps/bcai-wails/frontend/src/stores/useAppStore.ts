@@ -10,6 +10,15 @@ import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo } from '@/types
 /** Fallback rate-limit window when the server hasn't reported one yet (5h). */
 const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
 
+export type AppNotification = {
+  level: string // "block" (needs user action) | "transient" (self-heals)
+  category: string
+  message: string
+  recoverable: boolean
+  dedupKey: string
+  source: string
+}
+
 interface AppState {
   // ===== Data =====
   config: Config | null
@@ -23,18 +32,27 @@ interface AppState {
   cardUnusable: boolean
   cardProducts: string[]
   quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
-  bucketFractions: Record<string, number>
-  bucketResetMs: Record<string, number>
+  accountFractions: Record<string, number>  // 整号上游余量(号余量条)
+  accountResetMs: Record<string, number>
+  myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条)
+  myResetMs: Record<string, number>
+  cardWeight: number                        // 本卡 fair-share 份额权重(份额 X/Y 的 X)
+  cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
+  cardBuckets: Record<string, { used: number; limit: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源)
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   boundAccounts: BoundAccountInfo[]
   activationExpiresAt: string
+  notifications: AppNotification[]
 
   // Today stats
   todayRequests: number
   todayErrors: number
   todayInputTokens: number
   todayOutputTokens: number
+  todayCachedTokens: number
+  todayCacheWriteTokens: number
+  todayBillableTokens: number
   cumulativeSaving: number
 
   // Usage trend (history)
@@ -80,14 +98,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   proxyPort: 48800,
   leaserState: 'unconfigured',
   leaserError: '',
+  notifications: [],
   accountId: 0,
   hasToken: false,
   autoLeaseRunning: false,
   cardUnusable: false,
   cardProducts: [],
   quotaMode: '',
-  bucketFractions: {},
-  bucketResetMs: {},
+  accountFractions: {},
+  accountResetMs: {},
+  myFractions: {},
+  myResetMs: {},
+  cardWeight: 1,
+  cardShareCapacity: 8,
+  cardBuckets: {},
   codexQuota: null,
   claudeQuota: null,
   boundAccounts: [],
@@ -96,6 +120,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   todayErrors: 0,
   todayInputTokens: 0,
   todayOutputTokens: 0,
+  todayCachedTokens: 0,
+  todayCacheWriteTokens: 0,
+  todayBillableTokens: 0,
   cumulativeSaving: 0,
   dailyHistory: [],
   hourlyHistory: [],
@@ -117,7 +144,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchStats: async () => {
     try {
       const data = await api.getStats()
-      const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, generations: 0, retries: 0 }
+      const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0 }
       const lq = data.leaser?.localQuota
 
       set({
@@ -125,22 +152,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         proxyPort: data.proxyPort,
         leaserState: data.leaser?.serviceState || 'unconfigured',
         leaserError: data.leaser?.lastError || '',
+        notifications: ((data as any).notifications as AppNotification[]) || [],
         accountId: data.leaser?.accountId || 0,
         hasToken: data.leaser?.hasToken || false,
         autoLeaseRunning: data.leaser?.autoLeaseRunning || false,
         cardUnusable: data.leaser?.cardUnusable || false,
         cardProducts: data.leaser?.accessKeyStatus?.products || [],
         quotaMode: (data.leaser as any)?.quotaMode || (data.leaser?.accessKeyStatus as any)?.quotaMode || '',
-        bucketFractions: data.leaser?.bucketFractions || {},
-        bucketResetMs: data.leaser?.bucketResetMs || {},
+        accountFractions: data.leaser?.accountFractions || {},
+        accountResetMs: data.leaser?.accountResetMs || {},
+        myFractions: data.leaser?.myFractions || {},
+        myResetMs: data.leaser?.myResetMs || {},
+        cardWeight: data.leaser?.accessKeyStatus?.weight || 1,
+        cardShareCapacity: data.leaser?.accessKeyStatus?.shareCapacity || 8,
+        cardBuckets: Object.fromEntries(
+          (data.leaser?.accessKeyStatus?.buckets || []).map((b) => [b.bucket, { used: b.used, limit: b.limit }]),
+        ),
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
         claudeQuota: (data.leaser?.claudeQuota as AppState['claudeQuota']) || null,
         boundAccounts: data.leaser?.boundAccounts || [],
         activationExpiresAt: data.leaser?.activationExpiresAt || '',
-        todayRequests: today.requests || 0,
+        // 今日请求 = 成功生成数(对齐服务端"计费调用"口径,排除探活/重试/错误)
+        todayRequests: today.generations || 0,
         todayErrors: today.errors || 0,
         todayInputTokens: today.inputTokens || 0,
         todayOutputTokens: today.outputTokens || 0,
+        todayCachedTokens: today.cachedTokens || 0,
+        todayCacheWriteTokens: today.cacheWriteTokens || 0,
+        todayBillableTokens: today.billableTokens || 0,
         cumulativeSaving: data.cumulativeSaving || 0,
         dailyHistory: data.dailyHistory || [],
         hourlyHistory: data.hourlyHistory || [],

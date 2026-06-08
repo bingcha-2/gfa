@@ -1,8 +1,8 @@
 import * as path from "path";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
-import type { CreditDelta, Provider } from "../lease-core/provider";
-import { UNIVERSAL_BILLING } from "../token-server/token-billing";
+import type { Provider } from "../lease-core/provider";
+import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-billing";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import { ClaudeAccount, refreshClaudeAccessToken } from "./auth/claude-token-provider";
 import { ClaudeModelCatalog } from "./claude-model-catalog";
@@ -117,16 +117,30 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
     };
   }
 
+  /** 统一水位提取:claude 一个账号级 5h+周窗口,modelKey="claude"。 */
+  quotaSnapshotInputs(account: ClaudeAccount) {
+    const a = account as Record<string, unknown>;
+    if (typeof a.claudeHourlyPercent !== "number" && typeof a.claudeWeeklyPercent !== "number") return [];
+    return [
+      {
+        modelKey: "claude",
+        hourlyPercent: typeof a.claudeHourlyPercent === "number" ? a.claudeHourlyPercent : null,
+        weeklyPercent: typeof a.claudeWeeklyPercent === "number" ? a.claudeWeeklyPercent : null,
+        hourlyResetAt: parseSnapshotDate(a.claudeHourlyResetTime),
+        weeklyResetAt: parseSnapshotDate(a.claudeWeeklyResetTime),
+      },
+    ];
+  }
+
   /**
    * Apply a Claude quota snapshot: hourly(5h) + weekly remaining percentages,
    * parsed by the client from the anthropic-ratelimit-unified-* / retry-after
    * headers. Claude has no per-model quota upstream, so the binding (more
    * restrictive) window maps to a single synthetic "claude" model-quota fraction
    * — fuzzy-matched by every claude model key in scoreAccount/cooldown. Raw
-   * percentages are kept for console display. No credits concept → creditDelta
-   * is always null.
+   * percentages are kept for console display. No credits concept.
    */
-  applyQuotaSnapshot(account: ClaudeAccount, quota: any): { account: ClaudeAccount; creditDelta: CreditDelta | null } {
+  applyQuotaSnapshot(account: ClaudeAccount, quota: any): { account: ClaudeAccount } {
     const acc = account as Record<string, unknown>;
     if (quota?.planType && typeof quota.planType === "string") {
       account.planType = quota.planType;
@@ -158,6 +172,6 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
       acc.claudeHourlyResetTime = hourlyReset;
       acc.claudeWeeklyResetTime = weeklyReset;
     }
-    return { account, creditDelta: null };
+    return { account };
   }
 }

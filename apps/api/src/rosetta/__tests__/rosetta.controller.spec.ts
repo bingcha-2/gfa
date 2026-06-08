@@ -13,8 +13,7 @@ function makeController() {
   const remoteAnthropic = { reloadAccessKeys: vi.fn() };
   const controller = new RosettaController(
     rosetta as any,
-    {} as any,
-    {} as any,
+    {} as any, // tokenUsageStats
     tokenServer as any,
     remoteCodex as any,
     remoteAnthropic as any,

@@ -184,8 +184,6 @@ export class RosettaService {
   setAccessKeyBindings(payload: any) { return this.accessKeySvc.setAccessKeyBindings(payload); }
   cleanupExpiredKeys() { return this.accessKeySvc.cleanupExpiredKeys(); }
   cleanupUnboundKeys() { return this.accessKeySvc.cleanupUnboundKeys(); }
-  getThrottleConfig() { return this.accessKeySvc.getThrottleConfig(); }
-  saveThrottleConfig(payload: any) { return this.accessKeySvc.saveThrottleConfig(payload); }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────
   createCaptchaUnblock(payload: any) { return this.captchaSvc.createCaptchaUnblock(payload); }

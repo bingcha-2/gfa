@@ -28,7 +28,7 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
   }
 
   it("stores hourly/weekly percentages and a binding claude quota fraction", () => {
-    const { account, creditDelta } = snap({
+    const { account } = snap({
       planType: "max",
       claudeQuota: {
         hourlyPercent: 80,
@@ -38,7 +38,6 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
       },
     });
 
-    expect(creditDelta).toBeNull(); // claude has no credits concept
     expect(account.planType).toBe("max");
     // Binding fraction = the more restrictive window = min(80, 30)/100 = 0.3
     expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0.3, 5);
@@ -74,8 +73,7 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
   });
 
   it("is a safe no-op when no claudeQuota is present", () => {
-    const { account, creditDelta } = snap({ planType: "pro" });
-    expect(creditDelta).toBeNull();
+    const { account } = snap({ planType: "pro" });
     expect(account.planType).toBe("pro");
     expect((account as any).modelQuotaFractions).toBeUndefined();
   });

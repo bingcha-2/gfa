@@ -40,7 +40,6 @@ import {
   ActivityIcon,
   DatabaseIcon,
   MonitorSmartphoneIcon,
-  CoinsIcon,
 } from "lucide-react";
 
 type NavItem = {
@@ -221,15 +220,7 @@ export function GfaAppSidebar({
       permKey: "agent_service",
       roleGuard: () => isAdminOrOps,
     },
-    // Antigravity-only services (Codex has no AI credits / captcha / AdsPower / employees).
-    {
-      id: "rosetta-credits",
-      title: "积分消耗",
-      url: `/${prefix}/rosetta-credits`,
-      icon: <CoinsIcon />,
-      permKey: "agent_service",
-      roleGuard: () => isAdminOrOps,
-    },
+    // Antigravity-only services (captcha / AdsPower / employees).
     {
       id: "rosetta-captcha",
       title: "人机解封",

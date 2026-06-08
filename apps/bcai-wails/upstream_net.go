@@ -237,7 +237,8 @@ func createStreamingHttpClient(upstreamProxy string) *http.Client {
 
 	transport := newTransport()
 	// 设置更长的 ResponseHeaderTimeout，等待服务端开始返回 header
-	transport.ResponseHeaderTimeout = 180 * time.Second // 3 min for thinking
+	// 与 proxy_stream.go 的 streamFirstByteTimeout 配对，二者取短板，必须同步调整
+	transport.ResponseHeaderTimeout = 300 * time.Second // 5 min for long-context thinking
 
 	if upstreamProxy != "" && !isDirectProxyMode(upstreamProxy) {
 		proxyURL, err := url.Parse(upstreamProxy)

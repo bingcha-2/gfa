@@ -11,20 +11,6 @@ import (
 // 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
 var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://bcai.lol/api/remote-anthropic")
 
-// 429「公平限额已用完」熔断参数：拿到 429 即按卡开闸，冷却期内本地直接快速失败，
-// 不再逐条把请求打到租号上游（避免 #98→#112 那种一秒几十条 429 的重试风暴）。
-// 冷却时长随连续命中指数翻倍：base, 2·base, 4·base … 封顶 max。
-var (
-	claudeBreakerBase = getEnvDurationOrDefault("BCAI_CLAUDE_BREAKER_BASE", 15*time.Second)
-	claudeBreakerMax  = getEnvDurationOrDefault("BCAI_CLAUDE_BREAKER_MAX", 5*time.Minute)
-)
-
-// leaseBreaker 记录单张卡的 429 熔断状态。
-type leaseBreaker struct {
-	until  time.Time // 冷却截止；此刻之前 LeaseToken 直接快速失败
-	streak int       // 连续 429 次数，用于指数退避
-}
-
 // ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
 // 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。
 type ClaudeQuotaWindow struct {
@@ -80,7 +66,6 @@ type ClaudeLeaser struct {
 	lastQuota      *ClaudeQuotaWindow       // 持久副本(供前端显示 claude 血条)
 	lastLease      *ClaudeTokenLease        // 最近一次成功租到的号(供前端"绑定账号信息"显示)
 	pendingReports []pendingReport          // 失败上报队列(防丢用量)
-	breakers       map[string]*leaseBreaker // 429 熔断状态,按卡(card)独立——一张卡限额爆了不连累别的卡
 
 	// nowFn 可注入时钟(测试用);为 nil 时回落到 time.Now。
 	nowFn func() time.Time
@@ -92,49 +77,6 @@ func (l *ClaudeLeaser) now() time.Time {
 		return l.nowFn()
 	}
 	return time.Now()
-}
-
-// breakerRetryAfter 若该卡正处于 429 熔断冷却中,返回(剩余时长, true);否则(0, false)。
-func (l *ClaudeLeaser) breakerRetryAfter(card string) (time.Duration, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.breakers[card]
-	if b == nil {
-		return 0, false
-	}
-	now := l.now()
-	if !now.Before(b.until) {
-		return 0, false
-	}
-	return b.until.Sub(now), true
-}
-
-// breakerTrip 在该卡命中 429 时开闸/续期,按连续次数指数退避,返回本次冷却时长。
-func (l *ClaudeLeaser) breakerTrip(card string) time.Duration {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.breakers == nil {
-		l.breakers = make(map[string]*leaseBreaker)
-	}
-	b := l.breakers[card]
-	if b == nil {
-		b = &leaseBreaker{}
-		l.breakers[card] = b
-	}
-	b.streak++
-	cool := claudeBreakerBase << (b.streak - 1) // base, 2·base, 4·base …
-	if cool <= 0 || cool > claudeBreakerMax {   // 溢出或超封顶 → 取 max
-		cool = claudeBreakerMax
-	}
-	b.until = l.now().Add(cool)
-	return cool
-}
-
-// breakerReset 在该卡成功租到号后清除熔断状态。
-func (l *ClaudeLeaser) breakerReset(card string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.breakers, card)
 }
 
 var globalClaudeLeaser = &ClaudeLeaser{}
@@ -218,18 +160,19 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 		payload[k] = v
 	}
 
-	// 熔断:该卡仍在 429 冷却期内 → 本地直接快速失败,不再打租号上游。
-	if wait, open := l.breakerRetryAfter(card); open {
-		err := fmt.Errorf("公平限额已用完,熔断冷却中(约 %ds 后自动重试)", int(wait.Seconds()+0.5))
-		l.setLastError(err.Error())
-		return nil, err
-	}
-
 	body, status, err := postClaudeBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
-		if status == 429 { // 公平限额已用完 → 开闸冷却,后续请求本地快速失败
-			cool := l.breakerTrip(card)
-			Log("[claude-leaser] ⛔ 公平限额 429,熔断该卡 %ds 内不再请求上游(避免重试风暴)", int(cool.Seconds()+0.5))
+		// 不熔断、不重试:额度超限就如实返回,允许用户/IDE 自己再调(每次都真 lease,
+		// accessKeyStatus 也随之刷新)。硬额度(token limit exceeded,retryAfter 达数小时)→
+		// 返回结构化 QuotaExhaustedError,让 proxy 转成 429 + Retry-After 给 IDE,IDE 据此
+		// 退避(而非把 502 当临时故障狂试)。临时限额/网络错误 → 原样返回。
+		if status == 429 {
+			if retryAfterMs, reason := parseQuota429(body); isHardQuotaLimit(retryAfterMs, reason) {
+				qe := &QuotaExhaustedError{RetryAfterMs: retryAfterMs, Reason: reason}
+				l.setLastError(qe.Error())
+				Log("[claude-leaser] 🛑 硬额度超限:%s(约 %s 后恢复,不重试)", reason, humanizeMs(retryAfterMs))
+				return nil, qe
+			}
 		}
 		l.setLastError(err.Error())
 		return nil, err
@@ -285,7 +228,6 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	l.mu.Lock()
 	l.lastLease = lease
 	l.mu.Unlock()
-	l.breakerReset(card) // 成功租到号 → 清除该卡熔断状态
 	l.setLastError("")
 	return lease, nil
 }
@@ -363,7 +305,8 @@ func (l *ClaudeLeaser) doClaudeReportWithRetry(payload map[string]interface{}, c
 		l.queueClaudeReport(payload, card, upstreamProxy)
 		return
 	}
-	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v tokens=%v)→ 服务端额度应已更新", payload["leaseId"], payload["totalTokens"])
+	billable := claudeDisplayBillable(payloadInt64(payload["rawTotalTokens"]), payloadInt64(payload["cachedInputTokens"]))
+	Log("[claude-leaser] ✓ 用量上报成功(leaseId=%v 计费=%d 原始=%v)→ 服务端额度应已更新", payload["leaseId"], billable, payload["totalTokens"])
 	l.flushClaudePending(card, upstreamProxy)
 }
 

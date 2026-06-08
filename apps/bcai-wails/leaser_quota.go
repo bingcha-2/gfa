@@ -109,3 +109,18 @@ func (l *Leaser) ResetLocalQuota() {
 	l.mu.Unlock()
 	Log("[token-leaser] Local quota reset (card changed)")
 }
+
+// setLastError 设置/清空 token-leaser 的最近错误。换卡时清掉旧卡残留的额度 block 提示
+// (与 claude/codex leaser 的 setLastError 同接口,三家一致)。
+func (l *Leaser) setLastError(msg string) {
+	l.mu.Lock()
+	l.lastError = msg
+	l.mu.Unlock()
+}
+
+// LastError 返回 token-leaser 的最近错误(与 claude/codex leaser 同接口,供测试与通知读取)。
+func (l *Leaser) LastError() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastError
+}

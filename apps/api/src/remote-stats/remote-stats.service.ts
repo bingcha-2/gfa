@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 
-import { getModelQuotaFraction, hasModelQuotaRemaining } from "../token-server/lease-scheduler";
-import { normalizeModelKey } from "../token-server/token-billing";
+import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
+import { bucketsForProduct, bucketFamily, bucketLabel, modelFamily } from "../lease-core/product-bucket";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
@@ -42,23 +42,56 @@ export interface ProviderStats {
   models: ProviderModelStat[];
 }
 
-/** Whether a model is currently blocked for an account (per-model cooldown still active). */
-function isModelBlocked(acc: any, modelKey: string, now: number): boolean {
-  const blocked = acc?.blockedModels;
-  if (!Array.isArray(blocked) || blocked.length === 0) return false;
-  const target = normalizeModelKey(modelKey);
-  return blocked.some(
-    (b: any) => normalizeModelKey(b?.modelKey) === target && Number(b?.blockedUntil || 0) > now,
-  );
+/** An account's remaining fraction for a whole model *family* (gemini/claude/gpt),
+ *  taken as the worst (min) across that account's reported model keys of that family.
+ *  Returns null when the account reports no data for the family. This mirrors the
+ *  client blood-bar grouping: per product→family bucket, not per individual model
+ *  (codex/anthropic collapse to one account-level key; antigravity has per-model). */
+function accountFamilyFraction(acc: any, family: string, now: number): number | null {
+  const fractions = acc?.modelQuotaFractions;
+  if (!fractions || typeof fractions !== "object") return null;
+  let min: number | null = null;
+  for (const key of Object.keys(fractions)) {
+    if (modelFamily(key) !== family) continue;
+    const f = getModelQuotaFraction(acc, key, now);
+    if (f === null || f < 0) continue;
+    min = min === null ? f : Math.min(min, f);
+  }
+  return min;
 }
 
-/** Whether an account can serve `modelKey` right now. */
-function canServeModel(acc: any, modelKey: string, now: number): boolean {
-  if (acc?.enabled === false) return false;
-  const s = String(acc?.quotaStatus || "ok");
-  if (s !== "ok") return false; // cooling / exhausted / error
-  if (isModelBlocked(acc, modelKey, now)) return false;
-  return hasModelQuotaRemaining(acc, modelKey);
+/** An account's real upstream 5h + weekly remaining (the shared pool its cards
+ *  draw from). 5h prefers the live status fraction (worst family), falling back
+ *  to the latest snapshot; weekly + reset times come from the snapshot when present. */
+function accountQuotaSummary(
+  acc: any,
+  snap: AccountSnapshots | undefined,
+  families: string[],
+  now: number,
+): { hourlyPercent: number | null; weeklyPercent: number | null; hourlyResetAt: string | null; weeklyResetAt: string | null } {
+  let liveHourly: number | null = null;
+  let liveReset = 0;
+  for (const fam of families) {
+    const f = accountFamilyFraction(acc, fam, now);
+    if (f !== null) liveHourly = liveHourly === null ? f * 100 : Math.min(liveHourly, f * 100);
+    const r = getModelQuotaResetAt(acc, fam);
+    if (r > 0) liveReset = liveReset === 0 ? r : Math.min(liveReset, r);
+  }
+  const cur = snap?.current || [];
+  const minNum = (vals: (number | null)[]): number | null => {
+    const nums = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    return nums.length ? Math.min(...nums) : null;
+  };
+  const isoMin = (vals: (string | null)[]): string | null => {
+    const ts = vals.filter((v): v is string => !!v).map((v) => Date.parse(v)).filter((t) => Number.isFinite(t));
+    return ts.length ? new Date(Math.min(...ts)).toISOString() : null;
+  };
+  return {
+    hourlyPercent: liveHourly ?? minNum(cur.map((w) => w.hourlyPercent)),
+    weeklyPercent: minNum(cur.map((w) => w.weeklyPercent)),
+    hourlyResetAt: isoMin(cur.map((w) => w.hourlyResetAt)) ?? (liveReset > 0 ? new Date(liveReset).toISOString() : null),
+    weeklyResetAt: isoMin(cur.map((w) => w.weeklyResetAt)),
+  };
 }
 
 function median(values: number[]): number | null {
@@ -81,7 +114,12 @@ export function rollupProviderStats(id: string, status: any, now = Date.now()): 
   }
 
   const enabledAccounts = quotaAccounts.filter((a) => a?.enabled !== false);
-  const models: ProviderModelStat[] = (status?.models || []).map((m: any) => {
+  // One entry per product→family bucket this provider serves (mirrors the client
+  // blood bars / usageBars.ts): antigravity→[gemini,claude], codex→[gpt],
+  // anthropic→[claude]. NOT per seed-catalog model — those listed stale models
+  // (Gemini 3 Pro, Opus 4.6 Thinking, gpt-5.x…) that no account actually serves.
+  const models: ProviderModelStat[] = bucketsForProduct(id).map((bucket) => {
+    const family = bucketFamily(bucket);
     const fractions: number[] = [];
     let best: number | null = null;
     let lowest: number | null = null;
@@ -90,25 +128,27 @@ export function rollupProviderStats(id: string, status: any, now = Date.now()): 
 
     const distribution = { exhausted: 0, warn: 0, low: 0, healthy: 0, noData: 0 };
     for (const acc of enabledAccounts) {
-      if (canServeModel(acc, m.key, now)) available++;
-      const f = getModelQuotaFraction(acc, m.key);
-      if (f !== null && f >= 0) {
-        fractions.push(f);
-        best = best === null ? f : Math.max(best, f);
-        lowest = lowest === null ? f : Math.min(lowest, f);
-        if (f < LOW_REMAINING) lowCount++;
+      const f = accountFamilyFraction(acc, family, now);
+      // "Available" = account is ok and this family isn't exhausted (unknown counts as available).
+      if (String(acc?.quotaStatus || "ok") === "ok" && f !== 0) available++;
+      if (f === null) {
+        distribution.noData++;
+        continue;
       }
-      if (f === null || f < 0) distribution.noData++;
-      else if (f < 0.05) distribution.exhausted++;
+      fractions.push(f);
+      best = best === null ? f : Math.max(best, f);
+      lowest = lowest === null ? f : Math.min(lowest, f);
+      if (f < LOW_REMAINING) lowCount++;
+      if (f < 0.05) distribution.exhausted++;
       else if (f < 0.20) distribution.warn++;
       else if (f < 0.50) distribution.low++;
       else distribution.healthy++;
     }
 
     return {
-      key: m.key,
-      displayName: m.displayName,
-      bucket: m.bucket,
+      key: bucket,
+      displayName: bucketLabel(bucket),
+      bucket,
       poolSize: enabledAccounts.length,
       available,
       withData: fractions.length,
@@ -207,10 +247,12 @@ export class RemoteStatsService {
   }
 
   private async buildProduct(id: string, service: DashboardProvider, days: number) {
+    const now = Date.now();
     const status = service.getStatus();
     const health = rollupProviderStats(id, status);
     const snapshots = await this.loadAccountSnapshots(id, days);
     const statusAccounts: any[] = status?.quota?.accounts || [];
+    const families = bucketsForProduct(id).map((b) => bucketFamily(b));
 
     // Only accounts with something to show: bound cards or water-level history.
     // Pool accounts with neither (often the bulk) would just be empty clutter.
@@ -220,13 +262,21 @@ export class RemoteStatsService {
 
     const accounts = await Promise.all(
       candidates.map(async ({ acc, snap, boundBase }) => {
-        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days)));
+        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days, acc.id)));
+        const quota = accountQuotaSummary(acc, snap, families, now);
         return {
           id: acc.id,
           email: acc.email || "",
           planType: acc.planType || "",
           quotaStatus: acc.quotaStatus || "ok",
           activeLeases: Number(acc.activeLeases || 0),
+          // Real upstream 5h / weekly remaining for this account (the shared pool
+          // its cards draw from). 5h is live (status fraction); weekly + resets
+          // come from the latest snapshot when present.
+          hourlyPercent: quota.hourlyPercent,
+          weeklyPercent: quota.weeklyPercent,
+          hourlyResetAt: quota.hourlyResetAt,
+          weeklyResetAt: quota.weeklyResetAt,
           water: snap?.current || [],
           waterHistory: snap?.history || [],
           boundCards,
@@ -240,10 +290,14 @@ export class RemoteStatsService {
   private async decorateCard(
     card: ReturnType<DashboardProvider["getBoundCardsForAccount"]>[number],
     days: number,
+    accountId: number,
   ) {
+    // Scope usage to this account: a card bound across 御三家 has one account per
+    // provider, so without accountId every provider's view shows the card's global
+    // total → identical-looking trend/frequency charts across products.
     const [summary, freq] = await Promise.all([
-      this.tokenUsageStats.getCardUsageSummary({ accessKeyId: card.id, days }),
-      this.tokenUsageStats.getHourlyFrequency({ accessKeyId: card.id, days }),
+      this.tokenUsageStats.getCardUsageSummary({ accessKeyId: card.id, accountId, days }),
+      this.tokenUsageStats.getHourlyFrequency({ accessKeyId: card.id, accountId, days }),
     ]);
     return {
       ...card,

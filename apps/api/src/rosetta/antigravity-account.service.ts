@@ -170,7 +170,6 @@ export class AntigravityAccountService {
   async refreshAccountQuota(payload: any) {
     const accountId = Number(payload?.accountId);
     const accountsFile = path.join(this.ctx.dataDir, "accounts.json");
-    const quotaFile = path.join(this.ctx.dataDir, "quota-data.json");
     const data = readJson(accountsFile, { accounts: [] });
     const accounts: any[] = Array.isArray(data.accounts) ? data.accounts : [];
     const acc = accounts.find((a: any) => Number(a.id) === accountId);
@@ -182,14 +181,6 @@ export class AntigravityAccountService {
       this.ctx.tokenCache.delete(accountId); // 清缓存 → 强制真正刷一次 token
       const token = await getAccessToken(accountId, acc.refreshToken, this.ctx.tokenCache);
       const health = await fetchAccountHealth(token, acc.projectId, acc.email);
-      acc.credits = {
-        known: health.credits.known,
-        available: health.credits.available,
-        creditAmount: health.credits.creditAmount,
-        minCreditAmount: health.credits.minCreditAmount,
-        paidTierID: health.credits.paidTierID,
-        creditsRefreshedAt: new Date().toISOString(),
-      };
       if (health.planType && health.planType !== acc.planType) acc.planType = health.planType;
 
       const modelsResult = await fetchAvailableModels(token, acc.projectId);
@@ -203,14 +194,6 @@ export class AntigravityAccountService {
           if (info.remainingFraction != null) acc.modelQuotaFractions[modelKey] = info.remainingFraction;
           if (info.resetTime) acc.modelQuotaResetTimes[modelKey] = info.resetTime;
         }
-        const quotaData: Record<string, any> = readJson(quotaFile, {});
-        quotaData[acc.email] = {
-          modelsJson: modelsResult.rawJson,
-          refreshedAt: nowIso(),
-          alias: acc.alias || "",
-          planType: acc.planType || "",
-        };
-        writeJson(quotaFile, quotaData);
       }
       writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
       return {
@@ -218,7 +201,6 @@ export class AntigravityAccountService {
         email: acc.email,
         tokenValid: true,
         planType: acc.planType || "",
-        credits: acc.credits,
         modelQuotaFractions: acc.modelQuotaFractions || {},
       };
     } catch (err: any) {

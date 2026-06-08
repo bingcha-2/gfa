@@ -50,6 +50,7 @@ const nextConfig: NextConfig = {
       "phone-pool",
       "remote-token",
       "remote-codex",
+      "remote-anthropic",
       "remote-stats",
       "rosetta",
     ];

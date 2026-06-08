@@ -163,15 +163,8 @@ func (p *CodexProxy) serveCodexWebSocket(w http.ResponseWriter, r *http.Request,
 
 	usage := p.bridgeCodexWS(reqID, down, up, time.Now())
 
-	// 6. 计量上报。
-	details := ReportDetails{
-		StatusCode:          200,
-		ModelKey:            modelKey,
-		InputTokens:         usage.input,
-		OutputTokens:        usage.output,
-		RawTotalTokens:      usage.total,
-		BillableTotalTokens: usage.total,
-	}
+	// 6. 计量上报(缓存命中按 1/10 折扣,与 HTTP 路径同口径)。
+	details := codexDetailsFrom(200, modelKey, usage.input, usage.output, usage.cached, usage.total)
 	if usage.total > 0 {
 		Log("[codex-proxy] #%d [WS][生成] ✓ TTFT=%dms tokens(in=%d out=%d total=%d) → 已提交用量上报",
 			reqID, usage.ttftMs, usage.input, usage.output, usage.total)
@@ -277,6 +270,7 @@ func codexWSProxyFunc(upstreamProxy string) func(*http.Request) (*url.URL, error
 type codexWSUsage struct {
 	input  int64
 	output int64
+	cached int64
 	total  int64
 	ttftMs int64 // 首个下行(上游→Codex)数据帧时延;未收到则为 -1
 }
@@ -290,10 +284,10 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 	closeOnce := func() { once.Do(func() { close(done) }) }
 
 	scan := func(data []byte) {
-		if in, out, total, ok := parseCodexWSUsage(data); ok {
+		if in, out, cached, total, ok := parseCodexWSUsage(data); ok {
 			usageMu.Lock()
 			if total > usage.total {
-				usage.input, usage.output, usage.total = in, out, total
+				usage.input, usage.output, usage.cached, usage.total = in, out, cached, total
 			}
 			usageMu.Unlock()
 		}
@@ -350,23 +344,30 @@ func (p *CodexProxy) bridgeCodexWS(reqID int64, down, up *websocket.Conn, start 
 
 // parseCodexWSUsage 从一条 ws 帧(JSON)里尽力解析 token 用量。
 // Codex 的 responses 事件里 usage 可能在顶层、或 response.usage、或 payload.usage。
-func parseCodexWSUsage(data []byte) (input, output, total int64, ok bool) {
+func parseCodexWSUsage(data []byte) (input, output, cached, total int64, ok bool) {
 	var m map[string]interface{}
 	if json.Unmarshal(data, &m) != nil {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	if u := findUsageMap(m, 0); u != nil {
 		input = jsonInt(u["input_tokens"])
 		output = jsonInt(u["output_tokens"])
 		total = jsonInt(u["total_tokens"])
+		// 缓存命中:cached_tokens 在 input_tokens_details(已含于 input_tokens)。
+		if det, ok := u["input_tokens_details"].(map[string]interface{}); ok {
+			cached = jsonInt(det["cached_tokens"])
+		}
+		if cached > input {
+			cached = input
+		}
 		if total == 0 {
 			total = input + output
 		}
 		if total > 0 {
-			return input, output, total, true
+			return input, output, cached, total, true
 		}
 	}
-	return 0, 0, 0, false
+	return 0, 0, 0, 0, false
 }
 
 // findUsageMap 在 JSON 树里递归找名为 "usage" 的对象(限制深度避免极端嵌套)。

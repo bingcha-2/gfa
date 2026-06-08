@@ -94,6 +94,15 @@ export function bucketsForProducts(products: string[] | undefined): string[] {
   return out;
 }
 
+/** Whether a string is a real composite bucket key some pool actually serves.
+ *  Guards against the common misconfig of setting a per-card limit under a bare
+ *  family ("claude") instead of a composite ("antigravity-claude") — the former
+ *  sets hasBucketCaps but the enforce lookup (composite) never matches, so the
+ *  limit silently never trips. */
+export function isValidBucket(bucket: string): boolean {
+  return typeof bucket === "string" && bucketsForProducts(undefined).includes(bucket);
+}
+
 const PRODUCT_LABELS: Record<string, string> = {
   antigravity: "Antigravity",
   codex: "Codex",

@@ -57,8 +57,10 @@ export interface StatsResponse {
     autoLeaseRunning: boolean
     cardUnusable?: boolean
     boundResetMs?: number
-    bucketFractions?: Record<string, number>
-    bucketResetMs?: Record<string, number>
+    accountFractions?: Record<string, number>
+    accountResetMs?: Record<string, number>
+    myFractions?: Record<string, number>
+    myResetMs?: Record<string, number>
     codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     boundAccounts?: BoundAccountInfo[]
@@ -73,6 +75,9 @@ export interface StatsResponse {
       geminiTokenLimit?: number
       tokenWindowResetMs?: number
       tokenWindowResetAt?: string
+      weight?: number          // 本卡 fair-share 份额权重(份额 X/Y 的 X)
+      shareCapacity?: number   // 号总份数(份额 X/Y 的 Y)
+      buckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶服务端真实用量/上限(static「我的卡」真相源)
     }
     localQuota?: {
       opusTokensUsed?: number
@@ -90,6 +95,9 @@ export interface StatsResponse {
     errors: number
     inputTokens: number
     outputTokens: number
+    cachedTokens: number
+    cacheWriteTokens: number
+    billableTokens: number
     generations: number
     retries: number
   }

@@ -8,9 +8,9 @@ import { FairShareTracker } from "../fair-share-tracker";
 // 权重:gemini {in 1.0, out 4.0, cache 0.25} / claude {1.0, 5.0, 0.10} / gpt {1.0, 3.0, 0.0}
 describe("FairShareTracker.weightedCost (netInput)", () => {
   it("gemini: 缓存不再被 input+cache 双算(取真实定价比值)", () => {
-    // gross input 180(含 80 cached), output 20, cached 80;权重 {in1,out8,cache0.25}
-    // netInput=100 → 100*1 + 20*8 + 80*0.25 = 280
-    expect(FairShareTracker.weightedCost("antigravity-gemini", 180, 20, 80)).toBeCloseTo(280, 5);
+    // gross input 180(含 80 cached), output 20, cached 80;权重 {in1,out6,cache0.25}(Gemini 真实 $2/$12)
+    // netInput=100 → 100*1 + 20*6 + 80*0.25 = 240
+    expect(FairShareTracker.weightedCost("antigravity-gemini", 180, 20, 80)).toBeCloseTo(240, 5);
   });
 
   it("gpt/codex: 输出 8×、缓存 0.10(真实定价比值)", () => {
@@ -27,6 +27,16 @@ describe("FairShareTracker.weightedCost (netInput)", () => {
   it("cached>input 防御:netInput 夹到 0", () => {
     // 50*? 不应为负;netInput=max(0,50-80)=0 → 0 + 0 + 80*0.25 = 20
     expect(FairShareTracker.weightedCost("antigravity-gemini", 50, 0, 80)).toBe(20);
+  });
+
+  it("加权用量可大于原始 token:输出按权重放大(by design,非 bug)", () => {
+    // 卡表「本窗口已用(加权)」可能 > 「近期 Token(原始)」,因为输出 token 贵、
+    // 被乘了权重。固化这个反直觉但正确的行为(用户曾困惑「累计怎么小于已用」)。
+    // 真实样本 card_mq3kzlwb:input=42136(gross,无 cache)/ output=264 / cache=0。
+    const weighted = FairShareTracker.weightedCost("anthropic-claude", 42136, 264, 0);
+    const rawBillable = 42136 + 264; // 原始计费 token(无缓存)= 42400
+    expect(weighted).toBeCloseTo(43456, 5); // 42136×1 + 264×5
+    expect(weighted).toBeGreaterThan(rawBillable); // 43.46K(加权) > 42.40K(原始)
   });
 });
 
@@ -161,10 +171,10 @@ describe("FairShareTracker.getCardWindowUsed", () => {
 });
 
 describe("QUOTA_WEIGHTS 派生自定价源", () => {
-  it("claude 5/0.10、gemini 8/0.25、gpt 8/0.10", () => {
+  it("claude 5/0.10、gemini 6/0.25、gpt 8/0.10(真实当代定价派生)", () => {
     expect(SHARED_WEIGHTS.claude.output).toBe(5);
     expect(SHARED_WEIGHTS.claude.cache).toBeCloseTo(0.1, 5);
-    expect(SHARED_WEIGHTS.gemini.output).toBe(8);
+    expect(SHARED_WEIGHTS.gemini.output).toBe(6);
     expect(SHARED_WEIGHTS.gemini.cache).toBeCloseTo(0.25, 5);
     expect(SHARED_WEIGHTS.gpt.output).toBe(8);
     expect(SHARED_WEIGHTS.gpt.cache).toBeCloseTo(0.1, 5);

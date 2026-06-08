@@ -453,36 +453,6 @@ model SiteSetting {
   updatedAt DateTime @updatedAt
 }
 
-/// 30-minute balance snapshot: total AI credits across all Rosetta accounts.
-model CreditSnapshot {
-  id            String   @id @default(cuid())
-  timestamp     DateTime @default(now())
-  totalCredits  Float                  // Sum of creditAmount across all accounts
-  accountCount  Int                    // Number of accounts with credits > 0
-  totalAccounts Int                    // Total number of accounts at snapshot time
-  details       String                 // JSON: [{accountId, email, creditAmount}]
-  createdAt     DateTime @default(now())
-
-  @@index([timestamp])
-}
-
-/// Per-event credit consumption: recorded in reportResult() when creditAmount decreases.
-model CreditConsumption {
-  id            String   @id @default(cuid())
-  accountId     Int                        // Rosetta account ID
-  email         String                     // Account email
-  oldAmount     Float                      // Credit balance before change
-  newAmount     Float                      // Credit balance after change
-  consumed      Float                      // oldAmount - newAmount
-  accessKeyId   String?                    // Access key that triggered this consumption
-  accessKeyName String?                    // Access key display name (snapshot at record time)
-  timestamp     DateTime @default(now())
-
-  @@index([timestamp])
-  @@index([accountId, timestamp])
-  @@index([accessKeyId, timestamp])
-}
-
 /// Per-event token usage: recorded in reportResult() for each billed usage report.
 /// One row per successful (deduped, exactly-once) report from a card (access key).
 model CardTokenUsage {
@@ -503,4 +473,60 @@ model CardTokenUsage {
   @@index([timestamp])
   @@index([accessKeyId, timestamp])
   @@index([accessKeyId, modelKey])
+  @@index([accountId, timestamp])
+}
+
+/// 账号 5h/周额度水位时序:on-change 去重后由 AccountQuotaSnapshotTracker 批量写入。
+/// 三家(antigravity/codex/anthropic)统一处理:读账号 modelQuotaFractions,每个 key 记一笔。
+/// modelKey = 该账号 fractions 的 key(codex→"codex" / anthropic→"claude" / antigravity→真实模型名),
+/// 始终有值。codex/anthropic 一个 key 带 5h+周;antigravity 每模型一行(无周窗口)。
+model AccountQuotaSnapshot {
+  id            String   @id @default(cuid())
+  provider      String                     // antigravity | codex | anthropic
+  accountId     Int
+  email         String?
+  modelKey      String                     // 账号 modelQuotaFractions 的 key(三家统一)
+  hourlyPercent Float?                     // 5h 剩余 %(0-100)
+  weeklyPercent Float?                     // 周剩余 %(antigravity 无周窗口 → null)
+  hourlyResetAt DateTime?
+  weeklyResetAt DateTime?
+  timestamp     DateTime @default(now())
+
+  @@index([provider, accountId, timestamp])
+  @@index([timestamp])
+}
+
+/// 学习出的 5h/周预算(从 quota-profiles.json 迁入)。一行一个 provider+planType+family。
+/// 由 QuotaProfileTracker 内存聚合 + 定时批量 upsert。history* 存 JSON 数组(最近 20 个样本)。
+model QuotaProfile {
+  provider      String
+  planType      String
+  family        String                     // gemini | claude | gpt
+  window5h      Float    @default(0)        // 学习的 5h 加权 token 预算(0=未知)
+  weekly        Float    @default(0)        // 学习的周预算
+  samples5h     Int      @default(0)
+  samplesWeekly Int      @default(0)
+  history5h     String   @default("[]")     // JSON: number[] 最近 5h 样本
+  historyWeekly String   @default("[]")     // JSON: number[] 最近周样本
+  lastUpdatedAt BigInt   @default(0)        // epoch ms
+
+  @@id([provider, planType, family])
+}
+
+/// 拼车每卡 5h 已用量(决定"剩余"),跨重启持久化。FairShareTracker 内存聚合 + 定时批量 upsert。
+/// 恢复后按 windowStart 判过期(跨 5h 边界丢弃)。
+model FairShareWindow {
+  provider        String
+  accountId       Int
+  bucket          String                   // 复合桶 product-family
+  cardId          String
+  windowStart     BigInt                   // epoch ms,5h 窗口起点
+  weightedUsed    Float    @default(0)      // 本窗口该卡已用加权 token
+  estimatedBudget Float    @default(0)
+  confidence      String   @default("default")
+  lastFraction    Float    @default(1)
+  updatedAt       DateTime @default(now())
+
+  @@id([provider, accountId, bucket, cardId])
+  @@index([provider, accountId, bucket])
 }

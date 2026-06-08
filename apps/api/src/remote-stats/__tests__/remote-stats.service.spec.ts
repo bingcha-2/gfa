@@ -23,31 +23,32 @@ const antigravityStatus = {
 };
 
 describe("rollupProviderStats", () => {
-  it("rolls up account health, usage totals, and per-model supply metrics", () => {
+  it("rolls up per product→family bucket (mirrors client blood bars), not per seed model", () => {
     const r = rollupProviderStats("antigravity", antigravityStatus);
 
     expect(r.id).toBe("antigravity");
     expect(r.accounts).toMatchObject({ total: 3, enabled: 2, ok: 1, cooling: 1, error: 1, exhausted: 0 });
     expect(r.usage).toMatchObject({ dailyTokensUsed: 1500, activeLeases: 2, totalLeases: 10 });
 
-    const gemini = r.models.find((m) => m.key === "gemini-2.5-pro")!;
+    // antigravity serves two families → exactly two buckets, named like the client.
+    expect(r.models.map((m) => m.key)).toEqual(["antigravity-gemini", "antigravity-claude"]);
+
+    const gemini = r.models.find((m) => m.key === "antigravity-gemini")!;
+    expect(gemini.displayName).toBe("Antigravity · Gemini");
     // Enabled accounts: #1 (ok, 0.4) and #2 (cooling, 0.9). #3 is disabled.
     expect(gemini.poolSize).toBe(2);
-    // Only #1 can serve right now: #2 is cooling (quotaStatus !== ok).
-    expect(gemini.available).toBe(1);
+    expect(gemini.available).toBe(1); // #1 ok; #2 cooling (quotaStatus !== ok)
     expect(gemini.withData).toBe(2);
     expect(gemini.lowestRemaining).toBeCloseTo(0.4, 5); // water level = min, not max
     expect(gemini.medianRemaining).toBeCloseTo(0.65, 5);
-    expect(gemini.bestRemaining).toBeCloseTo(0.9, 5); // kept as secondary
-    expect(gemini.lowCount).toBe(0); // none below 20%
+    expect(gemini.lowCount).toBe(0);
 
-    const opus = r.models.find((m) => m.key === "claude-opus-4-6-thinking")!;
-    // No account has opus quota data → fractions unknown, but #1 (ok) can still serve.
-    expect(opus.withData).toBe(0);
-    expect(opus.lowestRemaining).toBeNull();
-    expect(opus.medianRemaining).toBeNull();
-    expect(opus.bestRemaining).toBeNull();
-    expect(opus.available).toBe(1);
+    // No account reports a claude-family key → the claude bucket is all noData
+    // (but still shown, because the client shows an Antigravity · Claude bar).
+    const claude = r.models.find((m) => m.key === "antigravity-claude")!;
+    expect(claude.displayName).toBe("Antigravity · Claude");
+    expect(claude.withData).toBe(0);
+    expect(claude.distribution.noData).toBe(2);
   });
 
   it("flags near-exhausted accounts via lowCount", () => {
@@ -60,13 +61,13 @@ describe("rollupProviderStats", () => {
         ],
       },
     });
-    const gemini = r.models.find((m) => m.key === "gemini-2.5-pro")!;
+    const gemini = r.models.find((m) => m.key === "antigravity-gemini")!;
     expect(gemini.available).toBe(2);
     expect(gemini.lowCount).toBe(1); // 0.05 < 0.2
     expect(gemini.lowestRemaining).toBeCloseTo(0.05, 5);
   });
 
-  it("emits per-model account distribution by water band", () => {
+  it("buckets account fractions into water bands per family", () => {
     const r = rollupProviderStats("antigravity", {
       ...antigravityStatus,
       quota: { accounts: [
@@ -77,8 +78,29 @@ describe("rollupProviderStats", () => {
         { id: 5, enabled: true, quotaStatus: "ok", modelQuotaFractions: {} },
       ] },
     });
-    const g = r.models.find((m) => m.key === "gemini-2.5-pro")!;
+    const g = r.models.find((m) => m.key === "antigravity-gemini")!;
     expect(g.distribution).toEqual({ exhausted: 1, warn: 1, low: 1, healthy: 1, noData: 1 });
+  });
+
+  it("codex collapses to one gpt bucket; anthropic to one claude bucket", () => {
+    const codexStatus = {
+      mode: "remote-codex-server",
+      quota: { accounts: [{ id: 1, enabled: true, quotaStatus: "ok", modelQuotaFractions: { codex: 0.3 } }] },
+    };
+    const rc = rollupProviderStats("codex", codexStatus);
+    expect(rc.models.map((m) => m.key)).toEqual(["codex-gpt"]);
+    expect(rc.models[0].displayName).toBe("Codex · GPT");
+    expect(rc.models[0].withData).toBe(1);
+    expect(rc.models[0].lowestRemaining).toBeCloseTo(0.3, 5);
+
+    const claudeStatus = {
+      mode: "remote-anthropic-server",
+      quota: { accounts: [{ id: 1, enabled: true, quotaStatus: "ok", modelQuotaFractions: { claude: 0.6 } }] },
+    };
+    const ra = rollupProviderStats("anthropic", claudeStatus);
+    expect(ra.models.map((m) => m.key)).toEqual(["anthropic-claude"]);
+    expect(ra.models[0].displayName).toBe("Anthropic · Claude");
+    expect(ra.models[0].withData).toBe(1);
   });
 });
 

@@ -1069,7 +1069,7 @@ describe("TokenServerService — accountQuota in report-result", () => {
     });
   }
 
-  it("report-result with accountQuota updates account credits and modelQuotaFractions", async () => {
+  it("report-result with accountQuota updates planType and modelQuotaFractions", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();
 
@@ -1085,13 +1085,6 @@ describe("TokenServerService — accountQuota in report-result", () => {
       accountQuota: {
         accountId: 1,
         planType: "ultra",
-        credits: {
-          known: true,
-          available: true,
-          creditAmount: 2380,
-          minCreditAmount: 100,
-          paidTierID: "AI_ULTRA",
-        },
         modelQuota: {
           "gemini-2.5-pro": { remainingFraction: 0.85 },
           "claude-sonnet-4": { remainingFraction: 0.42 },
@@ -1106,53 +1099,34 @@ describe("TokenServerService — accountQuota in report-result", () => {
     const account = stored.accounts[0];
 
     expect(account.planType).toBe("ultra");
-    expect(account.credits.creditAmount).toBe(2380);
-    expect(account.credits.available).toBe(true);
-    expect(account.credits.known).toBe(true);
-    expect(account.credits.paidTierID).toBe("AI_ULTRA");
-    expect(account.credits.creditsRefreshedAt).toBeTruthy();
     expect(account.modelQuotaFractions["gemini-2.5-pro"]).toBe(0.85);
     expect(account.modelQuotaFractions["claude-sonnet-4"]).toBe(0.42);
     expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
   });
 
-  it("report-result without accountQuota does not touch existing credits", async () => {
-    // 先写入已有 credits 数据
-    writeJson(accountsFilePath, {
-      accounts: [{
-        id: 1,
-        email: "alpha@example.com",
-        refreshToken: "rt-alpha",
-        projectId: "proj-alpha",
-        enabled: true,
-        credits: {
-          known: true,
-          available: true,
-          creditAmount: 9999,
-          paidTierID: "AI_ULTRA",
-        },
-        planType: "ultra",
-      }],
-    });
-
+  it("report-result with accountQuota records per-model water-level snapshots", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService();
+    const recorded: any[] = [];
+    const service = new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "",
+      accountQuotaSnapshotTracker: { record: (i: any) => recorded.push(i) },
+    });
 
     const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-
-    // 不带 accountQuota 的上报
     await service.reportResult(REQ, {
-      leaseId: result.leaseId,
-      status: 200,
-      modelKey: "gemini",
-      totalTokens: 50,
+      leaseId: result.leaseId, status: 200, modelKey: "gemini", totalTokens: 150,
+      accountQuota: {
+        accountId: 1, planType: "ultra",
+        modelQuota: { "gemini-2.5-pro": { remainingFraction: 0.85 }, "gemini-2.5-flash": { remainingFraction: 0.42 } },
+        fetchedAt: Date.now(),
+      },
     });
 
-    // 已有数据不应被清空
-    const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
-    const account = stored.accounts[0];
-    expect(account.credits.creditAmount).toBe(9999);
-    expect(account.planType).toBe("ultra");
+    // antigravity 逐模型记一条水位(统一管线),5h 水位 = fraction*100,无周窗口。
+    expect(recorded).toHaveLength(2);
+    const pro = recorded.find((r) => r.modelKey === "gemini-2.5-pro");
+    expect(pro).toMatchObject({ provider: "antigravity", accountId: 1, hourlyPercent: 85, weeklyPercent: null });
   });
 
   it("accountQuota with invalid format is silently ignored", async () => {
@@ -1173,169 +1147,6 @@ describe("TokenServerService — accountQuota in report-result", () => {
     // 不应 crash，数据不变
     const stored = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
     expect(stored.accounts[0].email).toBe("alpha@example.com");
-  });
-});
-
-// ── CreditTracker integration ────────────────────────────────────────────────
-
-describe("TokenServerService — CreditTracker integration", () => {
-  let tempDir: string;
-  let accountsFilePath: string;
-  let accessKeysFilePath: string;
-  const tokenProvider = vi.fn();
-  let leaseCounter: number;
-
-  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
-
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-credit-int-"));
-    accountsFilePath = path.join(tempDir, "accounts.json");
-    accessKeysFilePath = path.join(tempDir, "access-keys.json");
-    tokenProvider.mockReset();
-    leaseCounter = 0;
-
-    writeJson(accountsFilePath, {
-      accounts: [
-        {
-          id: 1,
-          email: "alpha@example.com",
-          refreshToken: "rt-alpha",
-          projectId: "proj-alpha",
-          enabled: true,
-          credits: { known: true, available: true, creditAmount: 500, minCreditAmount: 100 },
-        },
-      ],
-    });
-    writeJson(accessKeysFilePath, {
-      keys: [{
-        id: "card-1",
-        key: "secret-card",
-        status: "active",
-        durationMs: 24 * 60 * 60 * 1000,
-        windowLimit: 100,
-      }],
-    });
-  });
-
-  afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  function makeService(creditTracker?: any) {
-    return new TokenServerService({
-      accountsFilePath,
-      accessKeysFilePath,
-      tokenProvider,
-      now: () => Date.now(),
-      randomId: () => `lease-${++leaseCounter}`,
-      minClientVersion: "",
-      creditTracker,
-    });
-  }
-
-  it("calls creditTracker.record when credits decrease in accountQuota", async () => {
-    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
-    tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService(mockTracker);
-
-    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-
-    await service.reportResult(REQ, {
-      leaseId: result.leaseId,
-      status: 200,
-      modelKey: "gemini",
-      totalTokens: 50,
-      accountQuota: {
-        credits: { known: true, available: true, creditAmount: 450, minCreditAmount: 100 },
-      },
-    });
-
-    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450, "card-1", undefined);
-  });
-
-  it("calls creditTracker.record when credits increase (tracker handles filtering)", async () => {
-    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
-    tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService(mockTracker);
-
-    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-
-    await service.reportResult(REQ, {
-      leaseId: result.leaseId,
-      status: 200,
-      modelKey: "gemini",
-      totalTokens: 50,
-      accountQuota: {
-        credits: { known: true, available: true, creditAmount: 800, minCreditAmount: 100 },
-      },
-    });
-
-    // record() is called with both values; the tracker itself decides whether to queue
-    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 800, "card-1", undefined);
-  });
-
-  it("does NOT call creditTracker.record when no accountQuota in report", async () => {
-    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
-    tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService(mockTracker);
-
-    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-
-    await service.reportResult(REQ, {
-      leaseId: result.leaseId,
-      status: 200,
-      modelKey: "gemini",
-      totalTokens: 50,
-    });
-
-    expect(mockTracker.record).not.toHaveBeenCalled();
-  });
-
-  it("works without a creditTracker (backwards compatible)", async () => {
-    tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService(); // no creditTracker
-
-    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-
-    // Should not throw
-    await expect(service.reportResult(REQ, {
-      leaseId: result.leaseId,
-      status: 200,
-      modelKey: "gemini",
-      totalTokens: 50,
-      accountQuota: {
-        credits: { known: true, available: true, creditAmount: 450, minCreditAmount: 100 },
-      },
-    })).resolves.toMatchObject({ ok: true });
-  });
-
-  // ── dedup boundary: duplicate refreshes state (B) but counts once (A) ──────
-  it("duplicate reportId refreshes accountQuota state but counts usage + credit event only once", async () => {
-    const mockTracker = { record: vi.fn(), flush: vi.fn(), destroy: vi.fn() };
-    tokenProvider.mockResolvedValue("access-token-ok");
-    const service = makeService(mockTracker);
-
-    const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
-    const report = (creditAmount: number) => service.reportResult(REQ, {
-      leaseId: r.leaseId, reportId: "rep-1", status: 200, modelKey: "gemini", totalTokens: 50,
-      accountQuota: { credits: { known: true, available: true, creditAmount, minCreditAmount: 100 } },
-    });
-
-    await report(450);              // first: counts + credit event (500→450)
-    const dup = await report(420);  // same reportId → duplicate
-    expect(dup.ignored).toBe(true);
-    expect(dup.reason).toBe("already_reported");
-
-    // A (gated by dedup): credit event + usage counted exactly once
-    expect(mockTracker.record).toHaveBeenCalledTimes(1);
-    expect(mockTracker.record).toHaveBeenCalledWith(1, "alpha@example.com", 500, 450, "card-1", undefined);
-    service.flushAccessKeys();
-    expect(JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8")).keys[0].totalRequests).toBe(1);
-
-    // B (always): accountQuota state refreshed to the LATEST snapshot (420), even
-    // though the second report was a duplicate.
-    service.flushAccounts();
-    expect(JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts[0].credits.creditAmount).toBe(420);
   });
 });
 

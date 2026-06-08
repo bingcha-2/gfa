@@ -7,12 +7,20 @@ import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import type { ParsedLog } from '@/types'
 
-/** 格式化 token 数字：1234567 → "1.2M" */
+/**
+ * 格式化 token：阶梯 K → M → B,最小单位 K(小于 1K 也显示为 0.xxK)。
+ * 整数不带小数,非整数保留两位小数;0 → "0"。
+ * 例:842→"0.84K" · 1200→"1.20K" · 12000→"12K" · 1.50M · 3.45B
+ */
 export function formatTokens(n: number): string {
-  n = Number(n || 0)
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-  return String(n)
+  n = Math.max(0, Math.floor(Number(n) || 0))
+  if (n === 0) return '0'
+  let v: number, unit: string
+  if (n >= 1_000_000_000) { v = n / 1_000_000_000; unit = 'B' }
+  else if (n >= 1_000_000) { v = n / 1_000_000; unit = 'M' }
+  else { v = n / 1_000; unit = 'K' }
+  const s = Number.isInteger(v) ? String(v) : v.toFixed(2)
+  return s + unit
 }
 
 /** 遮罩卡号：AI-XXXXXXXX → AI-XXX***XXXX */

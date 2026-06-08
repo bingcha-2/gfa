@@ -48,7 +48,6 @@ describe("RosettaService", () => {
           key: "bcai_1234567890",
           name: "VIP",
           status: "active",
-          tokenWindowLimit: 1000,
           tokenUsageEvents: [{ at: Date.now(), totalTokens: 120, modelKey: "gemini" }],
           totalRequests: 2,
           totalTokensUsed: 500,
@@ -66,25 +65,27 @@ describe("RosettaService", () => {
       key: "bc***90",
       status: "active",
       recentWindowTokens: 120,
-      tokenWindowLimit: 1000,
       totalRequests: 2,
       totalTokensUsed: 500,
     });
   });
 
-  it("mints a universal card with the token-window limit persisted", () => {
+  it("create no longer sets a global token limit; per-model caps go through bucketLimits", () => {
     const svc = new RosettaService({ dataDir: tempDir });
-    svc.createAccessKey({ name: "VIP", tokenWindowLimit: 100000 });
+    const created: any = svc.createAccessKey({ name: "VIP" });
 
-    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
-    const rec = stored.keys[0];
-    expect(rec.tokenWindowLimit).toBe(100000);
+    let stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+    expect(stored.keys[0].tokenWindowLimit).toBeUndefined();
+
+    svc.updateAccessKey({ id: created.key.id, bucketLimits: { "antigravity-claude": 100000 } });
+    stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+    expect(stored.keys[0].bucketLimits).toMatchObject({ "antigravity-claude": 100000 });
   });
 
   it("persists a configurable rate-limit window (windowMs), defaulting to 5h", () => {
     const svc = new RosettaService({ dataDir: tempDir });
     // Explicit window (e.g. 3 days from the UI's hours/days selector).
-    svc.createAccessKey({ name: "3d", tokenWindowLimit: 100000, windowMs: 3 * 24 * 60 * 60 * 1000 });
+    svc.createAccessKey({ name: "3d", windowMs: 3 * 24 * 60 * 60 * 1000 });
     // Omitted → defaults to the 5h window.
     svc.createAccessKey({ name: "default" });
 
@@ -607,7 +608,7 @@ describe("RosettaService", () => {
 
   it("mints multiple cards when count > 1", () => {
     const svc = new RosettaService({ dataDir: tempDir });
-    const result: any = svc.createAccessKey({ count: 3, tokenWindowLimit: 1000 });
+    const result: any = svc.createAccessKey({ count: 3 });
 
     expect(result.ok).toBe(true);
     expect(Array.isArray(result.keys)).toBe(true);
@@ -620,13 +621,17 @@ describe("RosettaService", () => {
     expect(stored.keys).toHaveLength(3);
   });
 
-  it("updates tokenWindowLimit on an existing card", () => {
+  it("updates per-model caps (bucketLimits) on a card; setting 0 removes the override", () => {
     const svc = new RosettaService({ dataDir: tempDir });
-    svc.createAccessKey({ id: "c1", name: "x", tokenWindowLimit: 1 });
-    svc.updateAccessKey({ id: "c1", tokenWindowLimit: 777 });
+    svc.createAccessKey({ id: "c1", name: "x" });
+    svc.updateAccessKey({ id: "c1", bucketLimits: { "codex-gpt": 777 } });
 
-    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
-    expect(stored.keys[0].tokenWindowLimit).toBe(777);
+    let stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+    expect(stored.keys[0].bucketLimits).toMatchObject({ "codex-gpt": 777 });
+
+    svc.updateAccessKey({ id: "c1", bucketLimits: { "codex-gpt": 0 } });
+    stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+    expect(stored.keys[0].bucketLimits).toBeUndefined();
   });
 
   it("filters access keys by search term", () => {
@@ -697,8 +702,6 @@ describe("RosettaService", () => {
     const created = service.createAccessKey({
       name: "Ops",
       durationMs: 3600000,
-      windowLimit: 10,
-      tokenWindowLimit: 2000,
     });
 
     expect(created.ok).toBe(true);
@@ -710,16 +713,6 @@ describe("RosettaService", () => {
       key: { name: "VIP", status: "disabled" },
     });
     expect(service.deleteAccessKey({ id: created.key.id })).toMatchObject({ ok: true, totalKeys: 0 });
-  });
-
-  it("reads, saves, and deletes throttle config", () => {
-    const service = new RosettaService({ dataDir: tempDir });
-
-    expect(service.getThrottleConfig()).toMatchObject({ ok: true, config: null });
-    expect(service.saveThrottleConfig({ config: { maxConcurrent: 2 } })).toMatchObject({ ok: true, saved: true });
-    expect(service.getThrottleConfig()).toMatchObject({ ok: true, config: { maxConcurrent: 2 } });
-    expect(service.saveThrottleConfig({ delete: true })).toMatchObject({ ok: true, deleted: true });
-    expect(service.getThrottleConfig()).toMatchObject({ ok: true, config: null });
   });
 
   it("cleanupExpiredKeys removes expired keys and keeps active ones", () => {
@@ -958,6 +951,135 @@ describe("RosettaService", () => {
       svc.deleteCodexAccount({ accountId: id });
       const key = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
       expect(key.bindings?.codex).toBeFalsy();
+    });
+  });
+
+  describe("listAccessKeys redesign summary (cardType + buckets + bindingsDetail)", () => {
+    it("marks an unbound card as a pool card and lists EVERY product bucket", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "pool-1", name: "万能" });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "pool-1") as any;
+      expect(key.cardType).toBe("pool");
+      expect(key.bindingsDetail).toEqual([]);
+      // 万能卡列全部产品桶:antigravity-gemini / antigravity-claude / codex-gpt / anthropic-claude。
+      expect(key.buckets.map((b: any) => b.bucket).sort()).toEqual(
+        ["antigravity-claude", "antigravity-gemini", "anthropic-claude", "codex-gpt"].sort(),
+      );
+      // 未设上限 → limit 0(无限);未用 → used 0。
+      for (const b of key.buckets) {
+        expect(b.limit).toBe(0);
+        expect(b.used).toBe(0);
+        expect(typeof b.label).toBe("string");
+      }
+    });
+
+    it("marks a bound card as a bound card and lists ONLY the bound product's buckets", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "bound-1" });
+      svc.bindAccessKey({ id: "bound-1", provider: "codex", accountId: 7 });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "bound-1") as any;
+      expect(key.cardType).toBe("bound");
+      // 绑定卡只列已绑产品(codex)的桶。
+      expect(key.buckets.map((b: any) => b.bucket)).toEqual(["codex-gpt"]);
+    });
+
+    it("reports per-bucket used (current window) and limit (bucketLimits override, 0 = unlimited)", () => {
+      const now = Date.now();
+      writeJson(path.join(tempDir, "access-keys.json"), {
+        keys: [
+          {
+            id: "u1",
+            key: "k",
+            status: "active",
+            windowMs: 5 * 60 * 60 * 1000,
+            windowStartedAt: now,
+            bucketLimits: { "codex-gpt": 50000 },
+            tokenUsageEvents: [
+              // 事件带 product → 复合桶 antigravity-gemini(eventBucket: product ? bucketKey : 家族)。
+              { at: now, product: "antigravity", inputTokens: 100, outputTokens: 20, modelKey: "gemini-2.0" },
+            ],
+          },
+        ],
+      });
+      const key = new RosettaService({ dataDir: tempDir })
+        .listAccessKeys({})
+        .keys.find((k) => k.id === "u1") as any;
+      const gpt = key.buckets.find((b: any) => b.bucket === "codex-gpt");
+      const gemini = key.buckets.find((b: any) => b.bucket === "antigravity-gemini");
+      expect(gpt.limit).toBe(50000); // 来自 bucketLimits 覆盖
+      expect(gemini.limit).toBe(0); // 未设 → 无限
+      expect(gemini.used).toBeGreaterThan(0); // 当前窗口已用 > 0
+    });
+
+    it("does not mutate the cached record when computing window usage in a list", () => {
+      const stale = Date.now() - 24 * 60 * 60 * 1000; // 远超 5h 窗口 → 计算时会触发 reset
+      writeJson(path.join(tempDir, "access-keys.json"), {
+        keys: [
+          {
+            id: "m1",
+            key: "k",
+            status: "active",
+            windowMs: 5 * 60 * 60 * 1000,
+            windowStartedAt: stale,
+            tokenUsageEvents: [{ at: stale, inputTokens: 100, outputTokens: 20, modelKey: "gemini-2.0" }],
+          },
+        ],
+      });
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.listAccessKeys({}); // 不应把 reset 写回 access-keys.json
+      const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "access-keys.json"), "utf8"));
+      // 磁盘上的事件与窗口起点保持不变(list 是只读的)。
+      expect(stored.keys[0].tokenUsageEvents).toHaveLength(1);
+      expect(stored.keys[0].windowStartedAt).toBe(stale);
+    });
+
+    it("joins accountId → email into bindingsDetail for bound cards", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "codex@x.com", refreshToken: "rt", planType: "pro" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      svc.createAccessKey({ id: "b1" });
+      svc.bindAccessKey({ id: "b1", provider: "codex", accountId: id });
+      const key = svc.listAccessKeys({}).keys.find((k) => k.id === "b1") as any;
+      expect(key.bindingsDetail).toEqual([{ product: "codex", accountId: id, accountEmail: "codex@x.com" }]);
+    });
+
+    it("surfaces weight on every card (default 1)", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "w1" });
+      svc.createAccessKey({ id: "w2", weight: 4 });
+      const keys = svc.listAccessKeys({}).keys;
+      expect((keys.find((k) => k.id === "w1") as any).weight).toBe(1);
+      expect((keys.find((k) => k.id === "w2") as any).weight).toBe(4);
+    });
+  });
+
+  describe("updateAccessKey weight (改份额, clamp 1..8)", () => {
+    it("edits the share weight on an existing card", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      expect((svc.listAccessKeys({}).keys[0] as any).weight).toBe(1);
+      svc.updateAccessKey({ id: "c1", weight: 4 });
+      expect((svc.listAccessKeys({}).keys[0] as any).weight).toBe(4);
+    });
+
+    it("clamps weight below 1 up to 1 and above capacity down to ACCOUNT_SHARE_CAPACITY", () => {
+      // 测试环境 vitest.config.ts 把容量设为 4;cardWeight 会按当前容量上限 clamp。
+      const cap = Math.max(4, Math.min(8, Number(process.env.BCAI_ACCOUNT_SHARE_CAPACITY || 8)));
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1" });
+      svc.updateAccessKey({ id: "c1", weight: 0 });
+      expect((svc.listAccessKeys({}).keys[0] as any).weight).toBe(1);
+      svc.updateAccessKey({ id: "c1", weight: 99 });
+      expect((svc.listAccessKeys({}).keys[0] as any).weight).toBe(cap);
+    });
+
+    it("leaves weight untouched when the field is omitted", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.createAccessKey({ id: "c1", weight: 3 });
+      svc.updateAccessKey({ id: "c1", name: "renamed" });
+      const key = svc.listAccessKeys({}).keys[0] as any;
+      expect(key.weight).toBe(3);
+      expect(key.name).toBe("renamed");
     });
   });
 

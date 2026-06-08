@@ -49,7 +49,7 @@ describe("refreshCredits", () => {
 
     expect(r).toMatchObject({ ok: true, refreshed: 1, errors: 0, total: 1 });
     const acc = readAccounts().find((a: any) => a.id === 1);
-    expect(acc.credits).toMatchObject({ creditAmount: 100, paidTierID: "tier-x" });
+    expect(acc.credits).toBeUndefined(); // credit 跟踪已整套移除,只保留 planType
     expect(acc.planType).toBe("pro"); // upgraded from "free"
   });
 
@@ -90,7 +90,7 @@ describe("refreshCredits", () => {
 });
 
 describe("refreshQuota", () => {
-  it("writes per-model fractions + reset times and persists quota-data.json", async () => {
+  it("writes per-model fractions + reset times (no quota-data.json)", async () => {
     writeAccounts([{ id: 1, email: "a@x.com", refreshToken: "rt", projectId: "p1", planType: "pro", alias: "Org" }]);
     vi.mocked(fetchAccountHealth).mockResolvedValue(health("pro") as any);
     vi.mocked(fetchAvailableModels).mockResolvedValue({
@@ -104,8 +104,8 @@ describe("refreshQuota", () => {
     const acc = readAccounts()[0];
     expect(acc.modelQuotaFractions).toEqual({ "gemini-2.5-pro": 0.5 });
     expect(acc.modelQuotaResetTimes).toEqual({ "gemini-2.5-pro": "2030-01-01T00:00:00Z" });
-    const quota = readJson(path.join(dir, "quota-data.json"), {});
-    expect(quota["a@x.com"]).toMatchObject({ alias: "Org", planType: "pro" });
+    // quota-data.json 已废弃:refreshQuota 不再写它。
+    expect(fs.existsSync(path.join(dir, "quota-data.json"))).toBe(false);
   });
 
   it("auto-unblocks a quota-blocked model that now has quota and flips status to ok", async () => {

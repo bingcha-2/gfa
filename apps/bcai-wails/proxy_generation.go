@@ -62,7 +62,6 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
 	}
-	// P1④: Dynamic max attempts — start with default, update from server retryPolicy
 	remoteMaxAttempts := MaxCloudCodeGenerationAttempts
 	accumulatedCapacityWaitMs := int64(0)
 	const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
@@ -80,16 +79,14 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 		if err != nil {
 			audit.note += fmt.Sprintf("; 租号失败:%v", err)
+			// 卡额度用完 → 标准 429 + Retry-After(让 IDE 退避/停),而非 503(会被当临时故障狂试)。
+			if writeQuotaExhausted(w, err) {
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
-		}
-		// P1④: Update maxAttempts from server retryPolicy
-		if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
-			remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
-			if remoteMaxAttempts > 99 {
-				remoteMaxAttempts = 99
-			}
 		}
 		audit.accountID = lease.AccountId
 		audit.token = lease.AccessToken
@@ -225,32 +222,10 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		// P1④: Check if this status is retryable per server retryPolicy
-		// #5: Use statusMaxAttempts to expand retry limit for specific status codes
 		effectiveMaxAttempts := remoteMaxAttempts
-		if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
-			if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
-				effectiveMaxAttempts = statusLimit
-				if effectiveMaxAttempts > 99 {
-					effectiveMaxAttempts = 99
-				}
-			}
-		}
 		// 绑定卡没有别的号可换 → 禁掉"换到别的号"的轮转。同一个号的瞬时错误等待重试
 		// (上面的 503 容量 / 短 429 路径)不受影响,绑定卡仍会适当重试。
 		canRetry := attempt < effectiveMaxAttempts && !lease.Bound
-		if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
-			statusRetryable := false
-			for _, s := range lease.RetryPolicy.RetryableStatuses {
-				if s == resp.StatusCode {
-					statusRetryable = true
-					break
-				}
-			}
-			if !statusRetryable {
-				canRetry = false
-			}
-		}
 
 		// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
 		// (mirrors token-proxy.js L1744-L1752)
@@ -373,12 +348,20 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			tee.Flush()
 		}
 		// Streaming response: parse remaining chunks on the fly
-		tokenResult = p.streamResponse(tee, resp.Body, reqId)
-		audit.respBody = tee.captured()
+		// 首 chunk 已写出 → streamResponse 进入时即视为"已转发过正常内容"，
+		// 此后中途的 quota 匹配只当软信号、不掐流（避免截断工具调用）。
+		tokenResult = p.streamResponse(tee, resp.Body, reqId, len(firstChunk) > 0)
+		// auditTee 不缓存流式正文(captured()==nil);出错时用首 chunk 兜底,便于日志记录错误正文
+		if captured := tee.captured(); len(captured) > 0 {
+			audit.respBody = captured
+		} else if audit.status >= 400 {
+			audit.respBody = firstChunk
+		}
 		// 将首 chunk 的 bytes 也计入 token 解析
 		if len(firstChunk) > 0 {
 			tokenResult.StreamBytes += int64(len(firstChunk))
 		}
+		noteStreamAbort(audit, tokenResult)
 	} else {
 		// Single response: read all and parse
 		respBytes, err := io.ReadAll(resp.Body)
@@ -409,6 +392,12 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}, upstream, lease)
 		}
 		return
+	}
+
+	// 流末才出现的 quota/capacity 信号:本次已完整转发，不当错误处理。
+	// 仅记日志（裸子串可能误判，不据此惩罚账号；真耗尽会在下次请求首 chunk 体现）。
+	if tokenResult.StreamQuotaSoft {
+		audit.note += fmt.Sprintf("; 流末额度信号(%s model=%s,已完整转发未掐流)", tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -505,15 +494,14 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		lease, err = leaser.LeaseToken(card, deviceId, attempt > 1, leaseOptions, upstream)
 		if err != nil {
 			audit.note += fmt.Sprintf("; 租号失败:%v", err)
+			// 卡额度用完 → 标准 429 + Retry-After(让 IDE 退避/停),而非 503(会被当临时故障狂试)。
+			if writeQuotaExhausted(w, err) {
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 			p.sendJsonError(w, 503, fmt.Sprintf("租号服务暂时不可用，请稍后重试: %v", err))
 			atomic.AddInt64(&p.stats.TotalErrors, 1)
 			return
-		}
-		if lease.RetryPolicy != nil && lease.RetryPolicy.MaxAttempts > 0 {
-			remoteMaxAttempts = lease.RetryPolicy.MaxAttempts
-			if remoteMaxAttempts > 99 {
-				remoteMaxAttempts = 99
-			}
 		}
 		audit.accountID = lease.AccountId
 		audit.token = lease.AccessToken
@@ -608,32 +596,10 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			return
 		}
 
-		// Check retryability from server policy
-		// #5: Use statusMaxAttempts to expand retry limit for specific status codes
 		effectiveMaxAttempts := remoteMaxAttempts
-		if lease.RetryPolicy != nil && lease.RetryPolicy.StatusMaxAttempts != nil {
-			if statusLimit, ok := lease.RetryPolicy.StatusMaxAttempts[resp.StatusCode]; ok && statusLimit > effectiveMaxAttempts {
-				effectiveMaxAttempts = statusLimit
-				if effectiveMaxAttempts > 99 {
-					effectiveMaxAttempts = 99
-				}
-			}
-		}
 		// 绑定卡没有别的号可换 → 禁掉"换到别的号"的轮转。同一个号的瞬时错误等待重试
 		// (上面的 503 容量 / 短 429 路径)不受影响,绑定卡仍会适当重试。
 		canRetry := attempt < effectiveMaxAttempts && !lease.Bound
-		if lease.RetryPolicy != nil && len(lease.RetryPolicy.RetryableStatuses) > 0 {
-			statusRetryable := false
-			for _, s := range lease.RetryPolicy.RetryableStatuses {
-				if s == resp.StatusCode {
-					statusRetryable = true
-					break
-				}
-			}
-			if !statusRetryable {
-				canRetry = false
-			}
-		}
 
 		// #3: Short rate-limit (<5s RATE_LIMIT_EXCEEDED) — wait and retry SAME account
 		if resp.StatusCode == http.StatusTooManyRequests &&
@@ -744,11 +710,19 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			_, _ = tee.Write(firstChunk)
 			tee.Flush()
 		}
-		tokenResult = p.streamResponse(tee, resp.Body, reqId)
-		audit.respBody = tee.captured()
+		// 首 chunk 已写出 → streamResponse 进入时即视为"已转发过正常内容"，
+		// 此后中途的 quota 匹配只当软信号、不掐流（避免截断工具调用）。
+		tokenResult = p.streamResponse(tee, resp.Body, reqId, len(firstChunk) > 0)
+		// auditTee 不缓存流式正文(captured()==nil);出错时用首 chunk 兜底,便于日志记录错误正文
+		if captured := tee.captured(); len(captured) > 0 {
+			audit.respBody = captured
+		} else if audit.status >= 400 {
+			audit.respBody = firstChunk
+		}
 		if len(firstChunk) > 0 {
 			tokenResult.StreamBytes += int64(len(firstChunk))
 		}
+		noteStreamAbort(audit, tokenResult)
 	} else {
 		respBytes, err := io.ReadAll(resp.Body)
 		if err == nil {
@@ -778,6 +752,12 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			}, upstream, lease)
 		}
 		return
+	}
+
+	// 流末才出现的 quota/capacity 信号:本次已完整转发，不当错误处理。
+	// 仅记日志（裸子串可能误判，不据此惩罚账号；真耗尽会在下次请求首 chunk 体现）。
+	if tokenResult.StreamQuotaSoft {
+		audit.note += fmt.Sprintf("; 流末额度信号(%s model=%s,已完整转发未掐流)", tokenResult.StreamErrorReason, tokenResult.StreamErrorModel)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
