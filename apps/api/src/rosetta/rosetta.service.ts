@@ -1,6 +1,6 @@
 import * as path from "path";
 
-import { Injectable, Logger, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { AgentAccountService } from "../automation/agent-account.service";
 import { AutomationService } from "../automation/automation.service";
@@ -16,7 +16,7 @@ import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import type { RosettaContext } from "./lib/context";
 import { migrateClaudeProductToAnthropic } from "./lib/migrate";
-import { CachedJsonFile, defaultDataDir, readJson } from "./lib/store";
+import { CachedJsonFile, defaultDataDir, readJson, writeJson } from "./lib/store";
 
 // migrate re-exported so existing importers (tests, bootstrap) keep importing it
 // from this module unchanged.
@@ -199,4 +199,290 @@ export class RosettaService {
   adspowerImport(payload: any) { return this.adspowerSvc.adspowerImport(payload); }
   adspowerImportStatus(batchId: string) { return this.adspowerSvc.adspowerImportStatus(batchId); }
   adspowerImportHistory() { return this.adspowerSvc.adspowerImportHistory(); }
+
+  // ── CLIProxy management ──
+
+  async getCliProxyStatus() {
+    const baseUrl = process.env.CLIPROXY_BASE_URL;
+    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
+    if (!baseUrl || !managementKey) {
+      throw new BadRequestException(
+        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
+      );
+    }
+
+    try {
+      const resp = await fetch(`${baseUrl}/v0/management/auth-files`, {
+        headers: {
+          "Authorization": `Bearer ${managementKey}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text().catch(() => "");
+        throw new Error(`HTTP ${resp.status}: ${errorText.substring(0, 200)}`);
+      }
+
+      const data = await resp.json();
+      return {
+        connected: true,
+        baseUrl,
+        files: data,
+      };
+    } catch (err: any) {
+      return {
+        connected: false,
+        baseUrl,
+        error: err.message,
+        files: [],
+      };
+    }
+  }
+
+  async uploadToCliProxy(ids: number[], customClientId?: string, customClientSecret?: string) {
+    if (!ids.length) throw new BadRequestException("ids is required");
+
+    const baseUrl = process.env.CLIPROXY_BASE_URL;
+    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
+    if (!baseUrl || !managementKey) {
+      throw new BadRequestException(
+        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
+      );
+    }
+
+    const numericIds = ids.map(id => Number(id));
+    const data = this.accountsFile.read();
+    const allAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const accounts = allAccounts.filter((acc: any) => numericIds.includes(Number(acc.id)));
+
+    const OAUTH_CLIENT_ID =
+      customClientId || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+    const OAUTH_CLIENT_SECRET = customClientSecret || "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";
+
+    const added: Array<{ id: number; email: string; projectId: string }> = [];
+    const updated: Array<{ id: number; email: string; projectId: string }> = [];
+    const errors: Array<{ id: number; email: string; error: string }> = [];
+
+    let hasUpdates = false;
+
+    for (const acc of accounts) {
+      if (!acc.refreshToken) {
+        errors.push({ id: Number(acc.id), email: acc.email, error: "没有 Token" });
+        continue;
+      }
+
+      // 1. Discover projectId
+      let projectId = "";
+      try {
+        projectId = await this.discoverProjectId(acc.refreshToken, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
+        if (projectId) {
+          this.logger.log(`[uploadToCliProxy] ${acc.email} projectId=${projectId}`);
+          if (acc.projectId !== projectId) {
+            acc.projectId = projectId;
+            hasUpdates = true;
+          }
+        } else {
+          this.logger.warn(`[uploadToCliProxy] ${acc.email} 未拿到 projectId`);
+          errors.push({ id: Number(acc.id), email: acc.email, error: "无法获取 projectId" });
+          continue;
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `[uploadToCliProxy] ${acc.email} projectId discovery failed: ${err.message}`,
+        );
+        errors.push({ id: Number(acc.id), email: acc.email, error: `projectId 获取失败: ${err.message}` });
+        continue;
+      }
+
+      // 2. Build CLIProxyAPI credential JSON (matching existing format on server)
+      const credentialJson = {
+        auto: false,
+        checked: true,
+        disabled: false,
+        email: acc.email,
+        project_id: projectId,
+        token: {
+          client_id: OAUTH_CLIENT_ID,
+          client_secret: OAUTH_CLIENT_SECRET,
+          refresh_token: acc.refreshToken,
+          token_uri: "https://oauth2.googleapis.com/token",
+          token_type: "Bearer",
+          scopes: [
+            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+          ],
+          universe_domain: "googleapis.com",
+        },
+        type: "gemini",
+      };
+
+      // 3. Upload via management API
+      const fileName = `gemini-${acc.email}-${projectId}.json`;
+      try {
+        const resp = await fetch(
+          `${baseUrl}/v0/management/auth-files?name=${encodeURIComponent(fileName)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${managementKey}`,
+            },
+            body: JSON.stringify(credentialJson),
+            signal: AbortSignal.timeout(15000),
+          },
+        );
+
+        if (resp.ok) {
+          this.logger.log(`[uploadToCliProxy] ${acc.email} uploaded as ${fileName}`);
+          added.push({ id: Number(acc.id), email: acc.email, projectId });
+        } else {
+          const errorText = await resp.text().catch(() => "");
+          this.logger.warn(
+            `[uploadToCliProxy] ${acc.email} upload failed: ${resp.status} ${errorText}`,
+          );
+          // If 409 or similar, treat as update
+          if (resp.status === 409) {
+            updated.push({ id: Number(acc.id), email: acc.email, projectId });
+          } else {
+            errors.push({
+              id: Number(acc.id),
+              email: acc.email,
+              error: `上传失败 (HTTP ${resp.status}): ${errorText.substring(0, 100)}`,
+            });
+          }
+        }
+      } catch (err: any) {
+        this.logger.error(`[uploadToCliProxy] ${acc.email} upload error: ${err.message}`);
+        errors.push({ id: Number(acc.id), email: acc.email, error: `网络错误: ${err.message}` });
+      }
+    }
+
+    if (hasUpdates) {
+      writeJson(path.join(this.dataDir, "accounts.json"), data);
+      this.accountsFile.invalidate();
+    }
+
+    // Check for IDs not found in DB/JSON
+    const foundIds = new Set(accounts.map((a: any) => Number(a.id)));
+    for (const id of ids) {
+      if (!foundIds.has(Number(id))) {
+        errors.push({ id: Number(id), email: "", error: "未找到该账号" });
+      }
+    }
+
+    this.logger.log(
+      `uploadToCliProxy: added=${added.length}, updated=${updated.length}, errors=${errors.length}`,
+    );
+
+    return {
+      total: ids.length,
+      added: added.length,
+      updated: updated.length,
+      failed: errors.length,
+      addedAccounts: added,
+      updatedAccounts: updated,
+      errors,
+    };
+  }
+
+  private async discoverProjectId(
+    refreshToken: string,
+    clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    clientSecret = "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",
+  ): Promise<string> {
+    // 1. Exchange refreshToken for access_token
+    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }).toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const tokenData = await tokenResp.json() as Record<string, unknown>;
+    const accessToken = String(tokenData.access_token || "");
+    if (!accessToken) {
+      throw new Error(String(tokenData.error_description || tokenData.error || "No access_token"));
+    }
+
+    // 2. Call loadCodeAssist to discover projectId
+    const METADATA = {
+      ideName: "antigravity",
+      ideType: "ANTIGRAVITY",
+      ideVersion: "1.21.6",
+      pluginVersion: "1.21.6",
+      platform: "WINDOWS_AMD64",
+      updateChannel: "stable",
+      pluginType: "GEMINI",
+    };
+    const hosts = [
+      "daily-cloudcode-pa.sandbox.googleapis.com",
+      "daily-cloudcode-pa.googleapis.com",
+      "cloudcode-pa.googleapis.com",
+    ];
+    for (const host of hosts) {
+      try {
+        const r = await fetch(`https://${host}/v1internal:loadCodeAssist`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ metadata: METADATA }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (r.ok) {
+          const d = await r.json() as Record<string, unknown>;
+          const p = d.cloudaicompanionProject as any;
+          if (typeof p === "string" && p) return p;
+          if (p?.id) return String(p.id);
+
+          // No project yet — try onboardUser to provision
+          const allowedTiers = (d.allowedTiers as any[]) ?? [];
+          const currentTier = d.currentTier as any;
+          const tierId =
+            allowedTiers.find((t: any) => t.isDefault)?.id ||
+            allowedTiers.find((t: any) => t.id)?.id ||
+            (d.paidTier as any)?.id || currentTier?.id;
+
+          if (tierId) {
+            try {
+              let onboardResult = await fetch(`https://${host}/v1internal:onboardUser`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ tierId, metadata: METADATA }),
+                signal: AbortSignal.timeout(15000),
+              }).then(res => res.json() as Promise<Record<string, any>>);
+
+              // Poll until done
+              let polls = 0;
+              while (!onboardResult?.done && polls < 10) {
+                const opName = String(onboardResult?.name || "").trim();
+                if (!opName) break;
+                await new Promise(resolve => setTimeout(resolve, 500));
+                onboardResult = await fetch(`https://${host}/v1internal/${opName}`, {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                  signal: AbortSignal.timeout(10000),
+                }).then(res => res.json() as Promise<Record<string, any>>);
+                polls++;
+              }
+
+              const onboardProject = onboardResult?.response?.cloudaicompanionProject;
+              if (typeof onboardProject === "string" && onboardProject) return onboardProject;
+              if (onboardProject?.id) return String(onboardProject.id);
+            } catch { /* try next host */ }
+          }
+        }
+      } catch { /* try next host */ }
+    }
+    return "";
+  }
 }

@@ -1418,4 +1418,64 @@ describe("RosettaService", () => {
       expect(status.items[0].error).toContain("入池失败");
     });
   });
+
+  describe("CLIProxy management in RosettaService", () => {
+    it("should retrieve cliproxy status correctly", async () => {
+      // Mock fetch response for cliproxy status
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(["gemini-user@example.com-proj.json"]), { status: 200 })));
+      process.env.CLIPROXY_BASE_URL = "http://127.0.0.1:8317";
+      process.env.CLIPROXY_MANAGEMENT_KEY = "mock-key";
+
+      const service = new RosettaService({ dataDir: tempDir });
+      const status = await service.getCliProxyStatus();
+      expect(status).toMatchObject({
+        connected: true,
+        baseUrl: "http://127.0.0.1:8317",
+        files: ["gemini-user@example.com-proj.json"],
+      });
+    });
+
+    it("should upload Rosetta accounts to CLIProxy", async () => {
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [
+          {
+            id: 1,
+            email: "upload@example.com",
+            refreshToken: "rt-1",
+            enabled: true,
+            projectId: "proj-1",
+          },
+        ],
+      });
+
+      // Mock fetch: first is token exchange, second is discover project (loadCodeAssist), third is upload
+      let fetchCount = 0;
+      vi.stubGlobal("fetch", vi.fn(async (url) => {
+        fetchCount++;
+        const u = String(url);
+        if (u.includes("/token")) {
+          return new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 });
+        }
+        if (u.includes("/v1internal:loadCodeAssist")) {
+          return new Response(JSON.stringify({ cloudaicompanionProject: "proj-1" }), { status: 200 });
+        }
+        if (u.includes("/v0/management/auth-files")) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response("", { status: 404 });
+      }));
+
+      process.env.CLIPROXY_BASE_URL = "http://127.0.0.1:8317";
+      process.env.CLIPROXY_MANAGEMENT_KEY = "mock-key";
+
+      const service = new RosettaService({ dataDir: tempDir });
+      const result = await service.uploadToCliProxy([1]);
+      expect(result).toMatchObject({
+        total: 1,
+        added: 1,
+        updated: 0,
+        failed: 0,
+      });
+    });
+  });
 });

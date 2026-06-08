@@ -361,4 +361,15 @@ export class RosettaController {
   getTokenUsageTrend(@Query("days") days?: string) {
     return this.tokenUsageStats.getUsageTrend({ days: Number(days) || 7 });
   }
+
+  @Get("cliproxy-status")
+  getCliProxyStatus() {
+    return this.rosetta.getCliProxyStatus();
+  }
+
+  @Post("upload-cliproxy")
+  uploadToCliProxy(@Body() body: any) {
+    const ids = Array.isArray(body?.ids) ? body.ids : [];
+    return this.rosetta.uploadToCliProxy(ids, body?.clientId, body?.clientSecret);
+  }
 }
