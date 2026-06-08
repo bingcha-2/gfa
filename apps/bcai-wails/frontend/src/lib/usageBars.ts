@@ -10,7 +10,6 @@ export interface BarSpec {
   bucket: string
   family: Family
   label: string
-  color: string
 }
 
 const FAMILIES_BY_PRODUCT: Record<string, Family[]> = {
@@ -25,11 +24,12 @@ const PRODUCT_LABEL: Record<string, string> = {
   anthropic: 'Anthropic',
 }
 
-// 模型(family)显示名。血条统一用「产品名 · 模型」格式,这里只放模型部分。
-const FAMILY_META: Record<Family, { label: string; color: string }> = {
-  gemini: { label: 'Gemini', color: 'bg-[var(--accent)]' },
-  claude: { label: 'Claude', color: 'bg-purple-500' },
-  gpt: { label: 'GPT', color: 'bg-emerald-500' },
+// 模型(family)显示名。血条颜色不在这里定 —— 一律由健康度(充足/一般/紧张/已用尽)
+// 决定(见 UsageBar),不靠每个模型一种彩色区分,区分交给「产品名 · 模型」标签文字。
+const FAMILY_META: Record<Family, { label: string }> = {
+  gemini: { label: 'Gemini' },
+  claude: { label: 'Claude' },
+  gpt: { label: 'GPT' },
 }
 
 const ALL_PRODUCTS = ['antigravity', 'codex', 'anthropic']
@@ -53,7 +53,7 @@ export function usageBarsForProducts(products: string[] | undefined): BarSpec[] 
       if (seenBucket.has(bucket)) continue
       seenBucket.add(bucket)
       const label = `${PRODUCT_LABEL[p] || p} · ${FAMILY_META[family].label}`
-      specs.push({ bucket, family, label, color: FAMILY_META[family].color })
+      specs.push({ bucket, family, label })
     }
   }
   return specs

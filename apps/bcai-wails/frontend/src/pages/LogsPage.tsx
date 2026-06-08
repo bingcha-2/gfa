@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { ScrollText, Trash2, Copy, Search } from 'lucide-react'
+import { Trash2, Copy, Search } from 'lucide-react'
 
 const filters: { id: LogFilter; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -33,23 +33,8 @@ export function LogsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[18px] font-bold text-[var(--text-primary)] flex items-center gap-2">
-          <ScrollText size={20} /> 实时日志
-        </h2>
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="ghost" onClick={clearLogs}>
-            <Trash2 size={13} /> 清空
-          </Button>
-          <Button size="sm" variant="ghost" onClick={handleCopyLogs}>
-            <Copy size={13} /> 复制
-          </Button>
-        </div>
-      </div>
-
-      {/* Filter bar */}
+    <div className="flex flex-col h-full pt-1">
+      {/* Toolbar: filters · search · actions */}
       <div className="flex items-center gap-3 mb-3">
         <div className="flex items-center gap-0.5 bg-[var(--bg-tertiary)] rounded-[8px] p-1">
           {filters.map((f) => (
@@ -57,9 +42,9 @@ export function LogsPage() {
               key={f.id}
               onClick={() => setFilter(f.id)}
               className={cn(
-                'px-2.5 py-1 rounded-[6px] text-[11px] font-semibold transition-all',
+                'px-2.5 py-1 rounded-[6px] text-[11px] font-semibold transition-colors',
                 filter === f.id
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               )}
             >
@@ -75,6 +60,14 @@ export function LogsPage() {
             placeholder="搜索日志..."
             className="pl-8 h-8 text-[12px]"
           />
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={clearLogs}>
+            <Trash2 size={13} /> 清空
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleCopyLogs}>
+            <Copy size={13} /> 复制
+          </Button>
         </div>
       </div>
 

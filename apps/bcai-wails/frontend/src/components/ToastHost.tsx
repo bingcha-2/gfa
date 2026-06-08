@@ -28,13 +28,14 @@ export function ToastHost() {
 
   if (toasts.length === 0) return null
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+    <div className="fixed bottom-4 right-4 z-[var(--z-toast)] flex flex-col gap-2">
       {toasts.map((t) => (
         <div
           key={t.key}
-          className="max-w-[320px] rounded-[10px] border border-amber-300 bg-amber-50/95 px-4 py-2.5 text-[13px] text-amber-800 shadow-md"
+          className="max-w-[320px] rounded-[12px] border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 text-[13px] text-[var(--text-secondary)] shadow-[var(--shadow-md)] flex items-start gap-2"
         >
-          {t.message}
+          <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--warning)]" />
+          <span>{t.message}</span>
         </div>
       ))}
     </div>

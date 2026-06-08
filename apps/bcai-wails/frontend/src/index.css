@@ -3,54 +3,119 @@
 @tailwind utilities;
 
 /* ============================================
-   冰茶AI - Design System
-   Cloned from cockpit-tools base.css
+   冰茶AI 客户端 — Design System
+   品牌色:琥珀橙 #ea580c(沿用官网)。
+   浅色:干净近白(中性,非奶油);深色:深靛蓝夜色,琥珀在暗处发光。
+   颜色目标由 OKLCH 设计,这里落地为 hex/rgb 以兼容各版本系统 webview。
+   单一高彩色 = 琥珀;绿/黄/红仅作状态语义;一处琥珀光晕作记忆点,无渐变、无玻璃拟态。
    ============================================ */
 
 :root {
-  --font-sans: 'Inter', 'Segoe UI', -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SFMono-Regular', monospace;
+  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
 
-  --primary: #1d4ed8;
-  --primary-hover: #1e40af;
-  --primary-light: rgba(29, 78, 216, 0.12);
-  --accent: #0ea5a5;
+  /* ── Brand (amber) ── */
+  --primary: #ea580c;          /* 品牌琥珀,用于强调/链接/选中/数据高亮 */
+  --primary-strong: #c2410c;   /* 浅底上的小号琥珀文字 + 按钮/悬停(对白 ≥4.5:1) */
+  --primary-hover: #9a3412;    /* 按钮按下/深一档 */
+  --primary-light: rgba(234, 88, 12, 0.12); /* 选中/软填充底 */
+  --primary-ink: #ffffff;      /* 琥珀按钮上的文字 */
+  --glow: rgba(234, 88, 12, 0.10);          /* 唯一的琥珀光晕 */
 
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --warning-strong: #f97316;
-  --danger: #ef4444;
+  /* ── Secondary data hue:中性石板灰,不与琥珀争彩(图表第二序列/弱区分用) ── */
+  --accent: #64748b;
 
-  --bg-primary: #f6f5f2;
-  --bg-secondary: #ffffff;
+  /* ── State semantics ── */
+  --success: #16a34a;
+  --warning: #d97706;
+  --warning-strong: #ea580c;
+  --danger: #dc2626;
+
+  /* ── Surfaces(浅色:中性近白,chroma≈0,非奶油米色) ── */
+  --bg-primary: #f6f7f9;       /* 应用画布 */
+  --bg-secondary: #ffffff;     /* 卡片/面板 */
   --bg-surface: var(--bg-secondary);
-  --bg-tertiary: #eef2f7;
-  --bg-card: rgba(255, 255, 255, 0.75);
-  --bg-hover: rgba(15, 23, 42, 0.06);
+  --bg-tertiary: #eceff3;      /* 内嵌/进度槽/输入底 */
+  --bg-card: var(--bg-secondary);   /* 不透明,无玻璃 */
+  --bg-hover: rgba(15, 23, 42, 0.05);
+  --sidebar-bg: #f1f3f6;       /* 第二中性层:侧栏比内容略冷一档 */
 
-  /* Sidebar — same family as content, just slightly different */
-  --sidebar-bg: rgba(255, 255, 255, 0.55);
+  /* ── Text(全部达 WCAG AA) ── */
+  --text-primary: #182231;
+  --text-secondary: #51596b;
+  --text-muted: #6b7280;       /* 对白底 ≈4.8:1 —— 不再用 #94a3b8 那种浅灰 */
 
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  /* ── Lines ── */
+  --border: rgba(15, 23, 42, 0.11);
+  --border-light: rgba(15, 23, 42, 0.07);
 
-  --border: rgba(15, 23, 42, 0.12);
-  --border-light: rgba(15, 23, 42, 0.06);
+  /* ── Shadows(克制) ── */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.14);
 
-  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.08);
-  --shadow-md: 0 12px 24px rgba(15, 23, 42, 0.12);
-  --shadow-lg: 0 20px 40px rgba(15, 23, 42, 0.18);
-
-  --gradient-primary: linear-gradient(135deg, #1d4ed8 0%, #0ea5a5 100%);
-  --gradient-success: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  /* ── Chart series ── */
+  --chart-1: #ea580c;          /* 输出(主,琥珀) */
+  --chart-2: #94a3b8;          /* 输入(次,中性石板) */
 
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 18px;
+  --radius-lg: 16px;
   --radius-full: 9999px;
 
+  /* ── Semantic z-index scale ── */
+  --z-dropdown: 30;
+  --z-sticky: 40;
+  --z-modal-backdrop: 50;
+  --z-modal: 60;
+  --z-overlay: 70;
+  --z-toast: 80;
+  --z-tooltip: 90;
+
   --sidebar-width: 200px;
+  color-scheme: light;
+}
+
+.dark {
+  /* ── Brand on dark:提亮一档,暗处发光 ── */
+  --primary: #f97316;
+  --primary-strong: #fb923c;
+  --primary-hover: #fdba74;
+  --primary-light: rgba(249, 115, 22, 0.16);
+  --primary-ink: #1a1206;      /* 亮琥珀底上的深字 */
+  --glow: rgba(249, 115, 22, 0.16);
+
+  --accent: #8b93a5;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --warning-strong: #fb923c;
+  --danger: #f87171;
+
+  /* ── Surfaces:深靛蓝夜色(呼应官网深色模式) ── */
+  --bg-primary: #14151d;
+  --bg-secondary: #1b1d28;
+  --bg-surface: var(--bg-secondary);
+  --bg-tertiary: #262a39;
+  --bg-card: var(--bg-secondary);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-bg: #111219;
+
+  --text-primary: #f1f2f6;
+  --text-secondary: #aab1c2;
+  --text-muted: #868da3;       /* 对深面 ≥4.5:1 */
+
+  --border: rgba(255, 255, 255, 0.10);
+  --border-light: rgba(255, 255, 255, 0.06);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+
+  --chart-1: #fb923c;
+  --chart-2: #8b93a5;
+
+  color-scheme: dark;
 }
 
 * {
@@ -67,42 +132,49 @@ html, body, #root {
 
 body {
   font-family: var(--font-sans);
-  /* Subtle gradient — same tones for both sidebar and content */
-  background:
-    radial-gradient(circle at 20% 20%, rgba(29, 78, 216, 0.06), transparent 50%),
-    radial-gradient(circle at 80% 10%, rgba(14, 165, 165, 0.05), transparent 45%),
-    linear-gradient(180deg, #f4f3f0 0%, #ebeef3 100%);
+  background-color: var(--bg-primary);
+  /* 单一琥珀光晕(右上),取代旧的蓝绿渐变满屏 */
+  background-image: radial-gradient(60rem 40rem at 100% -10%, var(--glow), transparent 60%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: var(--text-primary);
   line-height: 1.6;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* ===== Scrollbar ===== */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.12); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
 /* ===== Selection ===== */
-::selection { background: rgba(29, 78, 216, 0.15); color: inherit; }
+::selection { background: var(--primary-light); color: inherit; }
+
+/* ===== Focus visible(键盘可达) ===== */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 /* ===== Status Dot Pulse ===== */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(1.2); }
+  50% { opacity: 0.55; transform: scale(1.25); }
 }
 .dot-pulse { animation: pulse-dot 2s ease-in-out infinite; }
 
-/* ===== Font Mono ===== */
+/* ===== Font Mono(数据等宽) ===== */
 .font-mono-data {
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-/* ===== Marquee (classic: right → left single pass) ===== */
+/* ===== Marquee(右→左单向循环) ===== */
 @keyframes marquee {
   0%   { transform: translateX(0); }
   100% { transform: translateX(-100%); }
@@ -110,20 +182,28 @@ body {
 .animate-marquee {
   display: inline-block;
   padding-left: 100%;
-  animation: marquee 15s linear infinite;
+  animation: marquee 18s linear infinite;
 }
-.animate-marquee:hover {
-  animation-play-state: paused;
-}
+.animate-marquee:hover { animation-play-state: paused; }
 
 /* ===== FAQ answer HTML ===== */
 .faq-answer p { margin-bottom: 6px; }
 .faq-answer p:last-child { margin-bottom: 0; }
 .faq-answer ul, .faq-answer ol { padding-left: 18px; margin-bottom: 6px; }
 .faq-answer li { margin-bottom: 2px; }
-.faq-answer a { color: var(--primary); text-decoration: none; }
+.faq-answer a { color: var(--primary-strong); text-decoration: none; }
 .faq-answer a:hover { text-decoration: underline; }
 .faq-answer code { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; }
 .faq-answer strong { color: var(--text-primary); font-weight: 600; }
 .faq-answer img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
 
+/* ===== Reduced motion:所有动效降级 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-marquee { padding-left: 0; }
+}

@@ -8,8 +8,8 @@ import { Loader2 } from 'lucide-react'
 export function LoadingOverlay({ show, label }: { show: boolean; label?: string }) {
   if (!show) return null
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
-      <div className="flex flex-col items-center gap-3 rounded-[12px] bg-[var(--bg-secondary)] px-8 py-6 shadow-xl border border-[var(--border-light)]">
+    <div className="fixed inset-0 z-[var(--z-overlay)] flex items-center justify-center bg-black/40">
+      <div className="flex flex-col items-center gap-3 rounded-[16px] bg-[var(--bg-secondary)] px-8 py-6 shadow-[var(--shadow-lg)] border border-[var(--border)]">
         <Loader2 size={28} className="animate-spin text-[var(--primary)]" />
         <span className="text-[13px] font-medium text-[var(--text-primary)]">{label || '处理中...'}</span>
       </div>

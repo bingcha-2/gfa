@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Modal, useModal } from '@/components/Modal'
 import { LoadingOverlay } from '@/components/LoadingOverlay'
+import { ProviderLogo } from '@/components/ProviderLogo'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
 import { isMacPlatform } from '@/lib/platform'
@@ -157,8 +158,8 @@ export function TokenSourceControl() {
     return (
       <div
         className={cn(
-          'flex items-center justify-between px-3 h-[44px] rounded-[8px] border',
-          detected ? 'border-[var(--border-light)]' : 'opacity-40 border-transparent',
+          'flex items-center justify-between h-[40px]',
+          !detected && 'opacity-40',
         )}
       >
         <div>
@@ -169,7 +170,7 @@ export function TokenSourceControl() {
         </div>
         <Button
           size="sm"
-          variant={injected ? 'danger' : 'default'}
+          variant={injected ? 'secondary' : 'default'}
           disabled={!detected || busy === target}
           onClick={onToggle}
           className="shrink-0 cursor-pointer min-w-[68px]"
@@ -180,16 +181,36 @@ export function TokenSourceControl() {
     )
   }
 
+  // 生态分组块:头(生态名 + 官方透传说明)+ 产品行 + 可选脚注。
+  // 块在 CardContent 里按 auto-fit 自适应分列 —— 加一个生态 = 加一个块,而非一味变长。
+  const Block = ({ title, provider, note, children, footnote }: {
+    title: string; provider?: string; note?: string; children: ReactNode; footnote?: ReactNode
+  }) => (
+    <div className="rounded-[12px] border border-[var(--border-light)] p-3.5 flex flex-col gap-1">
+      <div className="flex items-center gap-2 mb-1.5">
+        {provider && <ProviderLogo provider={provider} />}
+        <div className="min-w-0">
+          <div className="text-[12px] font-semibold text-[var(--text-primary)] leading-tight">{title}</div>
+          {note && <div className="text-[10px] text-[var(--text-muted)] mt-0.5 leading-tight">{note}</div>}
+        </div>
+      </div>
+      <div className="flex flex-col divide-y divide-[var(--border-light)]">{children}</div>
+      {footnote && <div className="text-[10px] text-[var(--text-muted)] leading-relaxed mt-2 pt-2 border-t border-[var(--border-light)]">{footnote}</div>}
+    </div>
+  )
+
   return (
-    <Card className="flex flex-col">
+    <Card>
       <CardHeader><CardTitle><Zap size={15} /> 接管</CardTitle></CardHeader>
-      <CardContent className="flex-1 flex flex-col gap-4">
-        {/* ── Antigravity ── */}
-        <div>
-          <div className="text-[11px] font-semibold text-[var(--text-secondary)] mb-1.5">Antigravity</div>
-          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程服务器自动获取 Token</div>
-          <div className="flex flex-col gap-1.5">
-            {agApps.map((p) =>
+      <CardContent className="flex flex-col gap-4">
+        {/* 生态自适应网格:加生态 = 加块,横向铺开,不挤压 */}
+        <div
+          className="grid gap-3 items-start"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}
+        >
+          {/* ── Antigravity ── */}
+          <Block title="Antigravity" provider="antigravity" note="官方透传 · 从远程服务器自动获取 Token">
+            {agApps.map((p) => (
               <div key={p.id}>
                 {takeoverRow({
                   target: idToTarget(p.id),
@@ -198,72 +219,64 @@ export function TokenSourceControl() {
                   detected: p.detected,
                   onToggle: () => handleAGToggle(p),
                 })}
-              </div>,
-            )}
-          </div>
-        </div>
+              </div>
+            ))}
+          </Block>
 
-        <div className="border-t border-[var(--border-light)]" />
-
-        {/* ── Codex ── */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Codex</span>
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程服务器租用 ChatGPT 账号</div>
-          {takeoverRow({
-            target: 'codex',
-            name: 'Codex',
-            injected: codexInjected,
-            detected: !!codexApp?.detected,
-            onToggle: handleCodexToggle,
-          })}
-        </div>
-
-        <div className="border-t border-[var(--border-light)]" />
-
-        {/* ── Anthropic · Claude Code(CLI + VSCode 扩展) ── */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic</span>
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] mb-2">官方透传 · 从远程租用 Claude 订阅</div>
-          {takeoverRow({
-            target: 'claude',
-            name: 'Claude Code (CLI + VSCode)',
-            injected: claudeInjected,
-            detected: !!claudeApp?.detected,
-            undetectedText: '未检测到 ~/.claude',
-            onToggle: handleClaudeToggle,
-          })}
-          <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-            接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。
-          </div>
-        </div>
-
-        {/* ── Claude Desktop(Code/Cowork,MITM 接管;macOS/Windows、检测到才显示) ── */}
-        {claudeDesktopApp?.detected && (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Anthropic · 桌面端</span>
-            </div>
+          {/* ── Codex ── */}
+          <Block title="Codex" provider="codex" note="官方透传 · 从远程服务器租用 ChatGPT 账号">
             {takeoverRow({
-              target: 'claude_desktop',
-              name: 'Claude Desktop (Code/Cowork)',
-              injected: claudeDesktopInjected,
-              detected: true,
-              onToggle: handleClaudeDesktopToggle,
+              target: 'codex',
+              name: 'Codex',
+              injected: codexInjected,
+              detected: !!codexApp?.detected,
+              onToggle: handleCodexToggle,
             })}
-            <div className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-              <span className="text-[var(--text-secondary)]">免费号即可</span>,接管后 Code/Cowork 自动走号池,无需付费账号。
-              <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。
-            </div>
-          </div>
-        )}
+          </Block>
 
-        {/* macOS 权限引导 */}
+          {/* ── Anthropic · Claude Code(CLI + VSCode 扩展) ── */}
+          <Block
+            title="Anthropic"
+            provider="anthropic"
+            note="官方透传 · 从远程租用 Claude 订阅"
+            footnote="接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。"
+          >
+            {takeoverRow({
+              target: 'claude',
+              name: 'Claude Code (CLI + VSCode)',
+              injected: claudeInjected,
+              detected: !!claudeApp?.detected,
+              undetectedText: '未检测到 ~/.claude',
+              onToggle: handleClaudeToggle,
+            })}
+          </Block>
+
+          {/* ── Claude Desktop(Code/Cowork,MITM 接管;检测到才显示) ── */}
+          {claudeDesktopApp?.detected && (
+            <Block
+              title="Anthropic · 桌面端"
+              provider="anthropic"
+              note="官方透传 · Code/Cowork 走号池,免费号即可"
+              footnote={
+                <>
+                  <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。
+                </>
+              }
+            >
+              {takeoverRow({
+                target: 'claude_desktop',
+                name: 'Claude Desktop (Code/Cowork)',
+                injected: claudeDesktopInjected,
+                detected: true,
+                onToggle: handleClaudeDesktopToggle,
+              })}
+            </Block>
+          )}
+        </div>
+
+        {/* macOS 权限引导(整宽) */}
         {isMac && agApps.some((p) => p.id === 'antigravity_hub' && p.detected && !p.injected) && (
-          <div className="flex items-start justify-between gap-2 px-1">
+          <div className="flex items-center justify-between gap-2 rounded-[8px] border border-[var(--border-light)] px-3 py-2">
             <div className="text-[10px] text-[var(--text-muted)] leading-relaxed">
               接管 Hub 需修改应用文件,需授予 <span className="text-[var(--text-secondary)] font-medium">App 管理</span> 权限。
             </div>
@@ -273,20 +286,16 @@ export function TokenSourceControl() {
           </div>
         )}
 
-        {/* 本地代理状态 */}
-        <div className="mt-auto pt-1">
-          <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)]">
-            <div className="flex items-center gap-2">
-              <span className={cn('w-2 h-2 rounded-full', proxyRunning ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
-              <span className="text-[12px] text-[var(--text-secondary)]">本地代理</span>
-            </div>
-            <span className="text-[12px] font-mono-data text-[var(--text-muted)]">
-              {proxyRunning ? `运行中 · 127.0.0.1:${proxyPort}` : '未运行'}
-            </span>
+        {/* 本地代理状态(整宽页脚) */}
+        <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)]">
+          <div className="flex items-center gap-2">
+            <span className={cn('w-2 h-2 rounded-full', proxyRunning ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
+            <span className="text-[12px] text-[var(--text-secondary)]">本地代理</span>
+            <span className="text-[10px] text-[var(--text-muted)]">· 接管后请求经此自动注入令牌,「停止」即恢复原状</span>
           </div>
-          <div className="mt-2 text-[10px] text-[var(--text-muted)] leading-relaxed px-1">
-            接管后对应 app 的请求经本地代理自动注入令牌;选「停止」即恢复原状。
-          </div>
+          <span className="text-[12px] font-mono-data text-[var(--text-muted)] shrink-0">
+            {proxyRunning ? `运行中 · 127.0.0.1:${proxyPort}` : '未运行'}
+          </span>
         </div>
       </CardContent>
       <Modal {...modalProps} />

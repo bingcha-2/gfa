@@ -31,7 +31,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
   return (
     <>
       <nav
-        className="relative flex flex-col h-full bg-[var(--sidebar-bg)] backdrop-blur-xl border-r border-[var(--border-light)]"
+        className="relative flex flex-col h-full bg-[var(--sidebar-bg)] border-r border-[var(--border-light)]"
         style={{
           width: `${width}px`,
           transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -76,7 +76,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                   'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
                   collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
                   isActive
-                    ? 'bg-[rgba(37,99,235,0.12)] text-[var(--primary)] font-semibold'
+                    ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
                 )}
               >
@@ -100,7 +100,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                 'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
                 collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
                 currentPage === 'settings'
-                  ? 'bg-[rgba(37,99,235,0.12)] text-[var(--primary)] font-semibold'
+                  ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
               )}
             >
@@ -116,8 +116,8 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                 className={cn(
                   'flex items-center rounded-[10px] text-[12px] font-semibold transition-all duration-200',
                   collapsed
-                    ? 'justify-center w-[48px] h-[48px] bg-[var(--primary-light)] text-[var(--primary)]'
-                    : 'gap-2.5 px-3 h-[36px] w-full bg-[var(--primary-light)] text-[var(--primary)] hover:bg-[rgba(37,99,235,0.18)]'
+                    ? 'justify-center w-[48px] h-[48px] bg-[var(--primary-light)] text-[var(--primary-strong)]'
+                    : 'gap-2.5 px-3 h-[36px] w-full bg-[var(--primary-light)] text-[var(--primary-strong)] hover:brightness-95'
                 )}
               >
                 <Download size={15} className="flex-shrink-0" />

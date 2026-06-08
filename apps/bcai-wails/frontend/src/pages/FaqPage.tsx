@@ -113,12 +113,8 @@ export function FaqPage() {
   }, [search, grouped, items])
 
   return (
-    <div className="max-w-[680px] flex flex-col gap-4">
-      {/* Header */}
-      <div>
-        <h2 className="text-[18px] font-bold text-[var(--text-primary)] tracking-tight">使用指南</h2>
-        <p className="text-[12px] text-[var(--text-muted)] mt-0.5">常见问题解答，帮你快速上手</p>
-      </div>
+    <div className="max-w-[680px] flex flex-col gap-4 pt-1">
+      <p className="text-[12px] text-[var(--text-muted)]">常见问题解答，帮你快速上手</p>
 
       {/* Search */}
       <div className="relative">
@@ -229,7 +225,7 @@ export function FaqPage() {
               href="https://bcai.lol/faq"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[11px] text-[var(--primary)] hover:underline shrink-0"
+              className="flex items-center gap-1 text-[11px] text-[var(--primary-strong)] hover:underline shrink-0"
             >
               查看完整版 <ExternalLink size={11} />
             </a>

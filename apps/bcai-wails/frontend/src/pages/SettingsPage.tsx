@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
 import { PromoSection } from '@/components/PromoSection'
-import { Settings as SettingsIcon, Globe, FolderOpen, Info } from 'lucide-react'
+import { Globe, FolderOpen, Info } from 'lucide-react'
 
 export function SettingsPage() {
   const { config, appVersion } = useAppStore()
@@ -79,11 +79,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="max-w-[620px]">
-      <h2 className="text-[18px] font-bold text-[var(--text-primary)] mb-4 flex items-center gap-2">
-        <SettingsIcon size={20} /> 设置
-      </h2>
-
+    <div className="max-w-[620px] pt-1">
       {/* Upstream Proxy */}
       <Card className="mb-4">
         <CardHeader>

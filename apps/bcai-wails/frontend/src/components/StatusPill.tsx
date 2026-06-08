@@ -30,10 +30,10 @@ export function StatusPill({ compact = false }: StatusPillProps) {
 
   return (
     <div className={cn(
-      'flex items-center border border-[var(--border-light)] bg-[var(--bg-card)] backdrop-blur-sm',
+      'flex items-center border border-[var(--border-light)] bg-[var(--bg-card)]',
       compact
-        ? 'gap-1.5 px-2.5 py-1.5 rounded-[6px] mt-2'
-        : 'gap-2.5 px-4 py-2.5 rounded-[12px] shadow-sm mb-4',
+        ? 'gap-1.5 px-2.5 py-1.5 rounded-[8px] mt-2'
+        : 'gap-2.5 px-4 py-2.5 rounded-[12px] shadow-[var(--shadow-sm)] mb-1',
     )}>
       <div className={cn(
         'rounded-full flex-shrink-0',

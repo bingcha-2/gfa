@@ -1,149 +1,307 @@
-"use client";
+import { MarketingShell } from "./_marketing/shell";
+import { ClientMock } from "./_marketing/client-mock";
 
-import { PublicShell } from "@/components/public-shell";
-
-const hov = (e: React.MouseEvent, on: boolean) => {
-  const el = e.currentTarget as HTMLElement;
-  el.style.transform = on ? "translateY(-2px)" : "translateY(0)";
-  el.style.boxShadow = on ? "0 8px 24px rgba(0,0,0,.06)" : "0 1px 2px rgba(0,0,0,.03)";
+/* ───────── 图标 ───────── */
+const I = {
+  download: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </svg>
+  ),
+  check: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  ),
+  shield: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  ),
+  rotate: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5" />
+    </svg>
+  ),
+  chart: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3v18h18M7 15l3-4 3 2 4-6" />
+    </svg>
+  ),
+  zap: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z" />
+    </svg>
+  ),
+  lock: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  ),
+  sliders: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+    </svg>
+  ),
+  users: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  ),
+  globe: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  ),
 };
+
+const ECOSYSTEMS = [
+  {
+    name: "Antigravity",
+    tag: "IDE · Hub",
+    logo: "/logos/antigravity.svg",
+    desc: "Google 旗下 AI 编程 IDE。接管后 Gemini / Claude 模型请求自动走冰茶号池，编辑器无感。",
+  },
+  {
+    name: "OpenAI Codex",
+    tag: "CLI",
+    logo: "/logos/codex.svg",
+    desc: "OpenAI 的 AI 编程代理。自动获取 ChatGPT Plus / Pro 令牌，codex 命令直接用，不碰 API Key。",
+  },
+  {
+    name: "Claude Code",
+    tag: "CLI · VSCode · Desktop",
+    logo: "/logos/claude.svg",
+    desc: "Claude Code CLI、VS Code 扩展与 macOS 桌面端，直连 Max / Pro 订阅，额度耗尽自动续杯。",
+  },
+];
+
+/* 工作原理：真实技术机制（本地注入 → 官方直连），是一条有序链路 */
+const HOW = [
+  { t: "本地起一个代理", d: "在本地起一个轻量代理，按各工具的标准方式接管，不动代码、可一键还原。" },
+  { t: "按需租用官方账号", d: "工具一发请求，实时从号池租一个真实官方令牌，几乎不增加延迟。" },
+  { t: "替换令牌，直连官方", d: "把占位令牌换成真令牌，直发官方端点，代码不经过冰茶。" },
+  { t: "实时统计，自动换号", d: "边响应边统计用量；额度耗尽或遇风控时，自动切到备用账号。" },
+];
+
+/* 快速上手：用户视角的三步使用流程 */
+const QUICKSTART = ["下载客户端", "输入卡密", "点击接管"];
+
+const CAPS = [
+  { icon: I.sliders, t: "智能号池调度", d: "不是随机发号。按账号亲和度、负载均衡、套餐等级和各模型剩余额度综合打分，每次都挑当下最优的账号。" },
+  { icon: I.users, t: "共享 / 独享额度，自由选", d: "号池卡多人共享账号、更划算；绑定卡独享账号、额度更稳。多人共享同一账号时有公平限额算法，保证每人拿到应得的一份，不被别人占满。" },
+  { icon: I.shield, t: "固定出口，风险隔离", d: "可选住宅级固定出口 IP，连接更稳、不易因 IP 触发风控；单个账号出问题只隔离它自己，自动换号补号，不波及其他用户。" },
+  { icon: I.chart, t: "实时额度血条", d: "流式边响应边统计 Token，本地镜像服务端 5 小时滑动窗口，各模型按真实重置时间显示剩余额度，用量与已省费用一目了然。" },
+  { icon: I.zap, t: "一键接管，零配置", d: "打开客户端 → 输入卡密 → 点接管，不配 API Key、不换工具、不学新东西，随时可一键还原。" },
+];
+
+const COMPARE: Array<[string, string, string, string]> = [
+  ["使用官方订阅账号", "是", "是", "否（API Key）"],
+  ["原生速度", "是", "是", "可能限速"],
+  ["多产品覆盖", "三大生态", "需逐个订", "看中转商"],
+  ["自动换号 / 封号兜底", "自动", "自负", "自负"],
+  ["配置复杂度", "零配置", "需手动", "填 Key + 改配置"],
+  ["可视化用量", "仪表盘", "无", "看中转商"],
+];
+
+const TRUST_POINTS = [
+  { b: "不发 API Key", s: "客户端只注入授权令牌，不向第三方暴露任何密钥。" },
+  { b: "不改 IDE 配置", s: "你的编辑器、插件、工作流维持原样，随时可一键停用。" },
+  { b: "不收集代码", s: "代码数据直发官方服务器，冰茶不做中间人代理、不留存。" },
+];
 
 export default function HomePage() {
   return (
-    <PublicShell>
-      <div style={{ maxWidth: 740, padding: "52px 44px 96px", fontSize: 15, lineHeight: 1.85, color: "#57534e" }}>
-
+    <MarketingShell>
         {/* ════ Hero ════ */}
-        <section style={{ marginBottom: 48 }}>
-          <h1 style={{ fontSize: 34, fontWeight: 800, color: "#1c1917", letterSpacing: "-0.03em", lineHeight: 1.2, margin: "0 0 10px" }}>
-            冰茶AI
-          </h1>
-          <p style={{ fontSize: 24, fontWeight: 700, color: "#ea580c", letterSpacing: "-0.015em", lineHeight: 1.35, margin: "0 0 16px" }}>
-            主流 AI 编程软件的官方账号接管工具
-          </p>
-          <p style={{ fontSize: 15, color: "#78716c", lineHeight: 1.75, margin: "0 0 28px", maxWidth: 540 }}>
-            为你分配真实的官方订阅账号，让 Antigravity、Claude Code、Codex CLI 像往常一样直连官方。不用配 API Key、不用换工具、不用关心账号被风控。
-          </p>
-          <div style={{ display: "flex", gap: 10 }}>
-            <a
-              href="/download"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 22px", borderRadius: 9, background: "#ea580c", color: "#fff", fontWeight: 600, fontSize: 14, textDecoration: "none", boxShadow: "0 1px 3px rgba(234,88,12,.25)", transition: "all .15s" }}
-              onMouseOver={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "#dc4e09"; el.style.boxShadow = "0 4px 12px rgba(234,88,12,.3)"; el.style.transform = "translateY(-1px)"; }}
-              onMouseOut={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "#ea580c"; el.style.boxShadow = "0 1px 3px rgba(234,88,12,.25)"; el.style.transform = "translateY(0)"; }}
-            >
-              ⬇ 下载客户端
-            </a>
-            <a
-              href="/quickstart"
-              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "10px 20px", borderRadius: 9, border: "1px solid rgba(234,88,12,.2)", background: "rgba(234,88,12,.04)", color: "#ea580c", fontWeight: 600, fontSize: 14, textDecoration: "none", transition: "all .15s" }}
-              onMouseOver={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(234,88,12,.08)"; el.style.borderColor = "rgba(234,88,12,.35)"; el.style.transform = "translateY(-1px)"; }}
-              onMouseOut={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(234,88,12,.04)"; el.style.borderColor = "rgba(234,88,12,.2)"; el.style.transform = "translateY(0)"; }}
-            >
-              快速开始 →
-            </a>
-            <a
-              href="https://bcai.store"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "10px 20px", borderRadius: 9, border: "1px solid rgba(0,0,0,.08)", background: "rgba(0,0,0,.02)", color: "#57534e", fontWeight: 600, fontSize: 14, textDecoration: "none", transition: "all .15s" }}
-              onMouseOver={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(0,0,0,.05)"; el.style.borderColor = "rgba(0,0,0,.15)"; el.style.color = "#1c1917"; el.style.transform = "translateY(-1px)"; }}
-              onMouseOut={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(0,0,0,.02)"; el.style.borderColor = "rgba(0,0,0,.08)"; el.style.color = "#57534e"; el.style.transform = "translateY(0)"; }}
-            >
-              💳 购买卡密 ↗
-            </a>
+        <section className="mkt-hero">
+          <div className="mkt-hero__glow" />
+          <div className="mkt-wrap mkt-hero__grid">
+            <div className="mkt-hero__copy">
+              <span className="mkt-eyebrow mkt-reveal" data-d="1">/ 官方账号接管，一键续杯</span>
+              <h1 className="mkt-h1">
+                <span className="mkt-h1__line"><span className="mkt-h1__in">让 AI 编程工具</span></span>
+                <span className="mkt-h1__line"><span className="mkt-h1__in">直连<span className="accent">官方账号</span></span></span>
+              </h1>
+              <p className="mkt-hero__sub mkt-reveal" data-d="2">
+                冰茶AI 为你分配真实的官方订阅账号，让 Antigravity、Claude Code、Codex CLI
+                像往常一样直连官方。不配 API Key、不换工具、不用自己扛风控。
+              </p>
+              <div className="mkt-hero__cta mkt-reveal" data-d="3">
+                <a href="/download" className="mkt-btn mkt-btn--primary">
+                  {I.download}
+                  下载客户端
+                </a>
+                <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--ghost">
+                  购买卡密 ↗
+                </a>
+              </div>
+              <div className="mkt-hero__trust mkt-reveal" data-d="4">
+                <span>{I.check}官方直连</span>
+                <span>{I.check}不做中间人</span>
+                <span>{I.check}代码不经过我们</span>
+              </div>
+            </div>
+            <div className="mkt-hero__mock">
+              <ClientMock />
+            </div>
           </div>
         </section>
 
-        <div style={{ height: 1, background: "rgba(0,0,0,.06)", marginBottom: 48 }} />
-
-        {/* ════ 支持的产品 ════ */}
-        <h2 style={sH2}>支持的产品</h2>
-        <p style={{ margin: "0 0 16px" }}>一个客户端，三个生态，开箱即用。</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, margin: "0 0 8px" }}>
-          {[
-            { emoji: "🔮", name: "Antigravity", sub: "IDE · Hub", color: "#6366f1", desc: "Google 旗下 AI 编程 IDE，接管后 Gemini / Claude 模型请求自动走冰茶号池。" },
-            { emoji: "🧬", name: "OpenAI Codex", sub: "CLI", color: "#059669", desc: "OpenAI 的 AI 编程代理，自动获取 ChatGPT Plus/Pro 令牌，codex 命令直接用。" },
-            { emoji: "🟣", name: "Claude Code", sub: "Code · Desktop", color: "#9333ea", desc: "Claude Code CLI、VSCode 扩展及 macOS 桌面端，直连 Max/Pro 订阅。" },
-          ].map((p) => (
-            <div
-              key={p.name}
-              style={{ padding: "20px 18px", borderRadius: 12, border: "1px solid rgba(0,0,0,.06)", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.03)", transition: "all .15s" }}
-              onMouseOver={(e) => hov(e, true)} onMouseOut={(e) => hov(e, false)}
-            >
-              <div style={{ fontSize: 26, marginBottom: 12 }}>{p.emoji}</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: p.color, marginBottom: 2 }}>{p.name}</div>
-              <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 10, fontWeight: 500 }}>{p.sub}</div>
-              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.6 }}>{p.desc}</div>
+        {/* ════ 支持的工具 ════ */}
+        <section className="mkt-section mkt-section--alt" id="products">
+          <div className="mkt-wrap">
+            <div className="mkt-section-head">
+              <h2 className="mkt-h2">一个客户端，三个生态</h2>
+              <p className="mkt-lead">主流 AI 编程工具开箱即用，接管后照常使用，模型请求自动走冰茶号池。</p>
             </div>
-          ))}
-        </div>
+            <div className="mkt-grid-3">
+              {ECOSYSTEMS.map((e) => (
+                <article className="mkt-eco" key={e.name}>
+                  <span className="mkt-eco__logo">
+                    <img src={e.logo} alt={`${e.name} 标识`} width={28} height={28} loading="lazy" />
+                  </span>
+                  <div>
+                    <div className="mkt-eco__name">{e.name}</div>
+                    <div className="mkt-eco__tag">{e.tag}</div>
+                  </div>
+                  <p className="mkt-eco__desc">{e.desc}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ════ 工作原理 ════ */}
+        <section className="mkt-section" id="how">
+          <div className="mkt-wrap">
+            <div className="mkt-section-head">
+              <h2 className="mkt-h2">本地注入令牌，官方直连</h2>
+              <p className="mkt-lead">
+                把真实官方令牌注入到你本地的工具里，代码直发官方端点。冰茶只在本地代理层做令牌替换，不做中间人。
+              </p>
+            </div>
+            <div className="mkt-steps">
+              {HOW.map((s, i) => (
+                <div className="mkt-step" key={s.t}>
+                  <span className="mkt-step__n">{i + 1}</span>
+                  <div className="mkt-step__t">{s.t}</div>
+                  <p className="mkt-step__d">{s.d}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mkt-quickstart">
+              <span className="mkt-quickstart__label">快速上手</span>
+              {QUICKSTART.map((q, i) => (
+                <span className="mkt-qs" key={q}>
+                  <span className="mkt-qs__n">{i + 1}</span>
+                  <span className="mkt-qs__t">{q}</span>
+                  {i < QUICKSTART.length - 1 && <span className="mkt-qs__arrow" aria-hidden>→</span>}
+                </span>
+              ))}
+              <span className="mkt-quickstart__note">不到 30 秒，照常写代码</span>
+            </div>
+          </div>
+        </section>
 
         {/* ════ 核心能力 ════ */}
-        <h2 style={sH2}>核心能力</h2>
-        <div style={{ display: "grid", gap: 0, margin: "0 0 8px" }}>
-          {[
-            { icon: "⚡", title: "智能号池轮换", desc: "账号额度耗尽或风控时，自动无缝切换备用账号，编程工作流不中断" },
-            { icon: "🛡️", title: "封号风险隔离", desc: "单个账号风控不影响其他用户，冰茶自动移除受影响账号并补充新号" },
-            { icon: "📊", title: "实时用量仪表盘", desc: "请求次数、Token 消耗、模型额度血条、已节省费用——所有数据一目了然" },
-            { icon: "🔌", title: "一键接管，零配置", desc: "打开客户端 → 输入卡密 → 点击「接管」，整个过程不到 30 秒" },
-          ].map((f) => (
-            <div
-              key={f.title}
-              style={{ display: "flex", gap: 14, padding: "14px 0", borderBottom: "1px solid rgba(0,0,0,.04)", transition: "background .1s" }}
-              onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,.01)"; }}
-              onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-            >
-              <span style={{ fontSize: 20, lineHeight: 1, paddingTop: 2, flexShrink: 0 }}>{f.icon}</span>
-              <div>
-                <div style={{ fontWeight: 650, fontSize: 14, color: "#1c1917", marginBottom: 2 }}>{f.title}</div>
-                <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.55 }}>{f.desc}</div>
-              </div>
+        <section className="mkt-section mkt-section--alt" id="capabilities">
+          <div className="mkt-wrap">
+            <div className="mkt-section-head">
+              <h2 className="mkt-h2">把号池的复杂，挡在你和官方之间</h2>
+              <p className="mkt-lead">单账号会耗尽、会风控、会被占满。智能调度、固定出口、风险隔离，让你只管写代码。</p>
             </div>
-          ))}
-        </div>
+            <div className="mkt-caps">
+              {CAPS.map((c) => (
+                <div className="mkt-cap" key={c.t}>
+                  <span className="mkt-cap__icon">{c.icon}</span>
+                  <div>
+                    <div className="mkt-cap__t">{c.t}</div>
+                    <p className="mkt-cap__d">{c.d}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ════ 对比 ════ */}
+        <section className="mkt-section">
+          <div className="mkt-wrap">
+            <div className="mkt-section-head">
+              <h2 className="mkt-h2">为什么选择冰茶AI</h2>
+              <p className="mkt-lead">对比自行订阅和 API 中转，冰茶在覆盖、稳定和省心上都更划算。</p>
+            </div>
+            <div className="mkt-compare">
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th className="col-us">冰茶AI</th>
+                    <th>自行订阅</th>
+                    <th>API 中转</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {COMPARE.map(([label, us, own, relay]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td className="col-us">{us}</td>
+                      <td className="col-other">{own}</td>
+                      <td className="col-other">{relay}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
 
         {/* ════ 安全承诺 ════ */}
-        <h2 style={sH2}>安全承诺</h2>
-        <div style={{ padding: "18px 22px", borderRadius: 12, background: "#f0fdf4", borderLeft: "3px solid #16a34a", margin: "0 0 8px" }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: "#166534", marginBottom: 8 }}>🔒 你的代码不经过我们</div>
-          <div style={{ fontSize: 13, color: "#166534", lineHeight: 1.7, opacity: 0.85 }}>
-            <strong>不发 API Key</strong> · <strong>不修改 IDE 配置</strong> · <strong>不收集代码</strong>
-            <br />
-            冰茶AI 客户端运行在你的本地电脑，仅注入授权令牌。代码数据直接发送至官方服务器，我们不做中间人代理。
+        <section className="mkt-section mkt-section--alt" id="trust">
+          <div className="mkt-wrap">
+            <div className="mkt-trust">
+              <div className="mkt-trust__head">
+                <span className="mkt-trust__badge">{I.lock}</span>
+                <div>
+                  <h2 className="mkt-h2" style={{ fontSize: "clamp(1.5rem, 2.4vw, 2rem)" }}>你的代码不经过我们</h2>
+                  <p className="mkt-lead" style={{ marginTop: "0.35rem" }}>
+                    冰茶AI 客户端运行在你本地电脑，只做一件事：把授权令牌注入到你的工具里。
+                  </p>
+                </div>
+              </div>
+              <div className="mkt-trust__points">
+                {TRUST_POINTS.map((p) => (
+                  <div className="mkt-trust__point" key={p.b}>
+                    <b>{I.check}{p.b}</b>
+                    <span>{p.s}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
 
         {/* ════ 底部 CTA ════ */}
-        <div
-          style={{
-            marginTop: 56,
-            padding: "32px 28px",
-            borderRadius: 14,
-            background: "linear-gradient(135deg, rgba(234,88,12,.04), rgba(234,88,12,.08))",
-            border: "1px solid rgba(234,88,12,.1)",
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#1c1917", marginBottom: 6 }}>准备开始？</div>
-          <div style={{ fontSize: 14, color: "#78716c", marginBottom: 18 }}>
-            下载冰茶AI 客户端，输入卡密即可使用
+        <section className="mkt-section mkt-section--tight">
+          <div className="mkt-wrap">
+            <div className="mkt-cta">
+              <div className="mkt-hero__glow" />
+              <h2>准备好续杯了？</h2>
+              <p>下载冰茶AI 客户端，或先到商店买一张卡密，30 秒后就能照常写代码。</p>
+              <div className="mkt-cta__btns">
+                <a href="/download" className="mkt-btn mkt-btn--primary">{I.download}下载客户端</a>
+                <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--ghost">购买卡密 ↗</a>
+              </div>
+            </div>
           </div>
-          <a
-            href="/download"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 8, background: "#ea580c", color: "#fff", fontWeight: 600, fontSize: 14, textDecoration: "none", transition: "opacity .12s" }}
-            onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.9"; }}
-            onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-          >
-            ⬇ 下载客户端
-          </a>
-        </div>
+        </section>
 
-      </div>
-    </PublicShell>
+    </MarketingShell>
   );
 }
-
-const sH2: React.CSSProperties = {
-  fontSize: 20, fontWeight: 700, color: "#1c1917", letterSpacing: "-0.015em",
-  margin: "48px 0 16px", lineHeight: 1.35, paddingBottom: 12, borderBottom: "1px solid rgba(0,0,0,.06)",
-};

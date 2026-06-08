@@ -25,8 +25,8 @@ function TrendTooltip({ active, payload, label }: any) {
   return (
     <div className="rounded-[6px] border border-[var(--border)] bg-[var(--bg-card)] px-2.5 py-1.5 text-[11px] shadow-md">
       <div className="mb-0.5 font-semibold text-[var(--text-primary)]">{label}</div>
-      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: '#60a5fa' }} />输入 {formatTokens(val('input'))}</div>
-      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: '#a78bfa' }} />输出 {formatTokens(val('output'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />输入 {formatTokens(val('input'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />输出 {formatTokens(val('output'))}</div>
     </div>
   )
 }
@@ -55,8 +55,8 @@ export function UsageTrendChart() {
               onClick={() => setRange(r.key)}
               className={`rounded-[6px] px-2 py-0.5 text-[11px] font-semibold transition-colors ${
                 range === r.key
-                  ? 'bg-[var(--primary)] text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
               }`}
             >
               {r.label}
@@ -70,17 +70,17 @@ export function UsageTrendChart() {
             <BarChart data={rows} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
               <CartesianGrid vertical={false} stroke="var(--border-light)" strokeOpacity={0.6} />
               <XAxis dataKey="label" interval={interval} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
-              <Tooltip cursor={{ fill: 'rgba(99,102,241,0.06)' }} content={<TrendTooltip />} />
-              <Bar dataKey="input" stackId="t" fill="#60a5fa" maxBarSize={28} />
-              <Bar dataKey="output" stackId="t" fill="#a78bfa" maxBarSize={28} radius={[2, 2, 0, 0]} />
+              <Tooltip cursor={{ fill: 'var(--bg-hover)' }} content={<TrendTooltip />} />
+              <Bar dataKey="input" stackId="t" fill="var(--chart-2)" maxBarSize={28} />
+              <Bar dataKey="output" stackId="t" fill="var(--chart-1)" maxBarSize={28} radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
           <div className="flex h-[132px] items-center justify-center text-[12px] text-[var(--text-muted)]">近期无用量</div>
         )}
         <div className="mt-2 flex gap-4 text-[11px] text-[var(--text-muted)]">
-          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: '#60a5fa' }} />输入</span>
-          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: '#a78bfa' }} />输出</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />输入</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />输出</span>
         </div>
       </CardContent>
     </Card>

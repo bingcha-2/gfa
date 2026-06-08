@@ -10,9 +10,9 @@ import type { BoundAccountInfo } from '@/types'
 // 产品展示元信息(顺序即展示顺序)。后端 product 用 antigravity/codex/anthropic,
 // 与卡 products 轴一致;旧卡可能仍带 'claude',归一到 anthropic。
 const PRODUCT_META: Record<string, { label: string; dot: string }> = {
-  antigravity: { label: 'Antigravity', dot: 'bg-[var(--accent)]' },
-  codex: { label: 'Codex', dot: 'bg-emerald-500' },
-  anthropic: { label: 'Anthropic', dot: 'bg-purple-500' },
+  antigravity: { label: 'Antigravity', dot: 'bg-[var(--primary)]' },
+  codex: { label: 'Codex', dot: 'bg-[var(--primary)]' },
+  anthropic: { label: 'Anthropic', dot: 'bg-[var(--primary)]' },
 }
 const PRODUCT_ORDER = ['antigravity', 'codex', 'anthropic']
 
@@ -69,7 +69,7 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
   const expiry = formatExpiry(acc.expiresAt)
 
   return (
-    <div className="rounded-[8px] border border-[var(--border-light)] bg-[var(--bg-card)] p-3 flex flex-col gap-2">
+    <div className="rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)] p-3 flex flex-col gap-2">
       {/* 产品 + 状态 */}
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-primary)]">
@@ -150,7 +150,10 @@ export function BoundAccountsCard() {
     <Card>
       <CardHeader><CardTitle><Users size={15} /> 绑定账号信息</CardTitle></CardHeader>
       <CardContent>
-        <div className="flex flex-col gap-2.5">
+        <div
+          className="grid gap-2.5 items-start"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}
+        >
           {rows.map((acc) => (
             <AccountRow key={normalizeProduct(acc.product)} acc={acc} />
           ))}

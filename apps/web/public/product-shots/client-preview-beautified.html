@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>冰茶AI 客户端官网展示图</title>
+  <style>
+    :root {
+      --bg: #eef3f7;
+      --shell: #f8fafc;
+      --panel: #ffffff;
+      --panel-2: #f2f6fa;
+      --ink: #172033;
+      --muted: #66758d;
+      --soft: #94a3b8;
+      --line: #dbe4ee;
+      --blue: #2558d7;
+      --blue-soft: #e7efff;
+      --amber: #ea580c;
+      --amber-2: #f59e0b;
+      --green: #16a34a;
+      --teal: #0ea5a5;
+      --purple: #8b5cf6;
+      --red: #ef4444;
+      --shadow: 0 24px 70px rgba(36, 48, 71, 0.18), 0 8px 22px rgba(36, 48, 71, 0.10);
+      font-family: "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; }
+    body {
+      display: grid;
+      place-items: center;
+      padding: 40px;
+      background:
+        radial-gradient(circle at 22% 10%, rgba(234, 88, 12, 0.16), transparent 32%),
+        radial-gradient(circle at 82% 18%, rgba(37, 88, 215, 0.14), transparent 34%),
+        linear-gradient(135deg, #f8fafc 0%, #e9f0f7 52%, #f5f7fb 100%);
+      color: var(--ink);
+    }
+
+    .shot {
+      width: 1600px;
+      height: 1000px;
+      position: relative;
+      border-radius: 30px;
+      padding: 52px;
+      overflow: hidden;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,0.92), rgba(238,244,250,0.84)),
+        radial-gradient(circle at 18% 12%, rgba(245,158,11,0.18), transparent 28%),
+        radial-gradient(circle at 78% 22%, rgba(37,88,215,0.12), transparent 32%);
+    }
+
+    .shot::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(37,88,215,0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37,88,215,0.055) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(120deg, rgba(0,0,0,0.42), transparent 70%);
+      pointer-events: none;
+    }
+
+    .window {
+      position: relative;
+      height: 100%;
+      display: grid;
+      grid-template-columns: 252px 1fr;
+      overflow: hidden;
+      border: 1px solid rgba(145, 158, 178, 0.42);
+      border-radius: 24px;
+      background: var(--shell);
+      box-shadow: var(--shadow);
+    }
+
+    .window::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+      pointer-events: none;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      padding: 26px 20px;
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, #f7faff 0%, #f3f6fb 100%);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 42px;
+      margin-bottom: 34px;
+      font-weight: 760;
+      letter-spacing: 0;
+      color: #111827;
+    }
+
+    .brand img {
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      box-shadow: 0 6px 18px rgba(234, 88, 12, 0.22);
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 46px;
+      padding: 0 14px;
+      border-radius: 12px;
+      color: #506079;
+      font-size: 15px;
+      font-weight: 620;
+    }
+
+    .nav-item.active {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .nav svg, .section-title svg, .tool-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .side-footer {
+      margin-top: auto;
+      display: grid;
+      gap: 14px;
+      color: #738198;
+      font-size: 13px;
+    }
+
+    .proxy-mini {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 13px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 99px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(22,163,74,0.12);
+      flex: 0 0 auto;
+    }
+
+    .content {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-width: 0;
+      background: linear-gradient(180deg, #fbfdff 0%, #f2f6fa 100%);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 82px;
+      padding: 0 34px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.68);
+    }
+
+    .title-block h1 {
+      margin: 0;
+      color: #111827;
+      font-size: 24px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .title-block p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .license {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 12px 10px 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+      box-shadow: 0 4px 10px rgba(15,23,42,0.04);
+    }
+
+    .license b {
+      color: #1f2937;
+      font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+      letter-spacing: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: #dcfce7;
+      color: #15803d;
+      font-weight: 740;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .badge.warn {
+      background: #fff7ed;
+      color: #c2410c;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.9fr);
+      gap: 22px;
+      padding: 28px 34px 34px;
+      min-height: 0;
+    }
+
+    .left, .right {
+      display: grid;
+      gap: 20px;
+      align-content: start;
+      min-width: 0;
+    }
+
+    .right { gap: 16px; }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+      overflow: hidden;
+    }
+
+    .card-inner { padding: 22px; }
+    .right .card-inner { padding: 18px; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      min-height: 118px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 8px 18px rgba(15,23,42,0.045);
+    }
+
+    .metric .k {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .metric .v {
+      font-size: 28px;
+      line-height: 1;
+      letter-spacing: 0;
+      font-weight: 780;
+      color: #111827;
+    }
+
+    .metric .s {
+      margin-top: 8px;
+      color: #8794a8;
+      font-size: 12px;
+    }
+
+    .hero-row {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 16px;
+    }
+
+    .promo {
+      min-height: 104px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 22px;
+      border-radius: 18px;
+      color: #fff;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .promo::after {
+      content: "";
+      position: absolute;
+      width: 210px;
+      height: 210px;
+      right: -82px;
+      top: -76px;
+      border-radius: 99px;
+      background: rgba(255,255,255,0.16);
+    }
+
+    .promo.store { background: linear-gradient(135deg, #5b4be8, #7c3aed); }
+    .promo.api { background: linear-gradient(135deg, #ef4444, #f97316); }
+
+    .promo h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .promo p {
+      margin: 0;
+      font-size: 13px;
+      color: rgba(255,255,255,0.78);
+    }
+
+    .promo .mark {
+      position: relative;
+      z-index: 1;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.16);
+      font-size: 22px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+      color: #111827;
+      font-size: 17px;
+      font-weight: 760;
+    }
+
+    .section-title span:first-child {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .tabs {
+      display: flex;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tabs span {
+      padding: 5px 10px;
+      border-radius: 8px;
+    }
+
+    .tabs .on {
+      color: #fff;
+      background: var(--blue);
+    }
+
+    .chart {
+      height: 178px;
+      position: relative;
+      display: flex;
+      align-items: end;
+      gap: 22px;
+      padding: 28px 12px 30px;
+      border-top: 1px solid #eef2f7;
+      background:
+        linear-gradient(#eef2f7 1px, transparent 1px) 0 32px / 100% 48px,
+        linear-gradient(180deg, #fff, #fbfdff);
+    }
+
+    .bar {
+      width: 20px;
+      border-radius: 8px 8px 0 0;
+      background: #60a5fa;
+      box-shadow: 0 8px 16px rgba(37,99,235,0.18);
+    }
+
+    .bar.out { background: #a78bfa; box-shadow: 0 8px 16px rgba(139,92,246,0.18); }
+    .bar.a { height: 42px; }
+    .bar.b { height: 88px; }
+    .bar.c { height: 136px; }
+    .bar.d { height: 64px; }
+    .bar.e { height: 108px; }
+    .bar.f { height: 76px; }
+    .chart-labels {
+      display: flex;
+      justify-content: space-between;
+      padding: 0 20px 18px;
+      color: #9aa7ba;
+      font-size: 12px;
+      font-family: "SF Mono", ui-monospace, monospace;
+    }
+
+    .takeover-list { display: grid; gap: 11px; }
+
+    .tool {
+      display: grid;
+      grid-template-columns: 38px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid #e6edf5;
+      background: #fff;
+    }
+
+    .tool-icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .tool:nth-child(2) .tool-icon { color: var(--teal); background: #dffafa; }
+    .tool:nth-child(3) .tool-icon { color: var(--purple); background: #f0e9ff; }
+    .tool:nth-child(4) .tool-icon { color: var(--amber); background: #fff3df; }
+
+    .tool h4 {
+      margin: 0;
+      color: #162033;
+      font-size: 14px;
+      line-height: 1.3;
+    }
+
+    .tool p {
+      margin: 3px 0 0;
+      color: #8190a6;
+      font-size: 12px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 74px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 10px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 740;
+    }
+
+    .button.stop { background: #ef4444; }
+    .button.muted { background: #e8eef6; color: #6b7b93; }
+
+    .right .tool {
+      grid-template-columns: 32px minmax(0,1fr) auto;
+      gap: 10px;
+      padding: 8px;
+    }
+
+    .right .tool-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+    }
+
+    .right .tool-icon svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .right .button {
+      min-width: 64px;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 9px;
+      font-size: 12px;
+    }
+
+    .saving {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 94px;
+      padding: 20px 22px;
+    }
+
+    .saving-icon {
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      color: var(--green);
+      background: #dcfce7;
+      font-size: 28px;
+      font-weight: 760;
+    }
+
+    .saving .value {
+      color: var(--green);
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1;
+    }
+
+    .saving p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .account-card .line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid #eef2f7;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .account-card .line:first-of-type { border-top: 0; }
+    .account-card .line b { color: #152033; font-size: 14px; }
+
+    .keybox {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 10px 0 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid #d7e2ef;
+      background: #f3f8fd;
+      color: #1f2937;
+      font-family: "SF Mono", ui-monospace, monospace;
+      font-size: 15px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    .input {
+      min-height: 42px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid #dbe4ee;
+      background: #fff;
+      color: #8a98ad;
+      font-size: 13px;
+    }
+
+    .primary-wide {
+      display: grid;
+      place-items: center;
+      height: 42px;
+      margin-top: 10px;
+      border-radius: 13px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 760;
+      box-shadow: 0 10px 20px rgba(37,88,215,0.22);
+    }
+
+    .usage-list { display: grid; gap: 10px; }
+    .usage-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 680;
+    }
+
+    .usage-head span:last-child {
+      color: #8491a5;
+      font-weight: 620;
+    }
+
+    .usage-bar {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #edf2f7;
+    }
+
+    .usage-bar i {
+      display: block;
+      height: 100%;
+      width: var(--w);
+      border-radius: inherit;
+      background: var(--c);
+    }
+
+    .caption {
+      position: absolute;
+      right: 72px;
+      bottom: 28px;
+      color: rgba(71,85,105,0.66);
+      font-size: 12px;
+      font-family: "SF Mono", ui-monospace, monospace;
+    }
+  </style>
+</head>
+<body>
+  <main class="shot" aria-label="冰茶AI 客户端官网展示图">
+    <section class="window">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="../bcai-icon.png" alt="" />
+          <span>冰茶AI</span>
+        </div>
+        <nav class="nav" aria-label="客户端导航">
+          <div class="nav-item active">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            控制台
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>
+            使用指南
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+            请求日志
+          </div>
+        </nav>
+        <div class="side-footer">
+          <div class="proxy-mini">
+            <span style="display:flex;align-items:center;gap:10px"><i class="dot"></i>本地代理</span>
+            <span>运行中</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span>设置</span>
+            <span>v8.7.0</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div class="title-block">
+            <h1>控制台</h1>
+            <p>官方账号接管状态、Token 用量与模型额度一屏看清。</p>
+          </div>
+          <div class="license">
+            <span>当前卡密</span>
+            <b>BCAI-C***DD2C</b>
+            <span class="badge">已激活</span>
+          </div>
+        </header>
+
+        <div class="main">
+          <div class="left">
+            <section class="metrics">
+              <div class="metric">
+                <div class="k">今日请求</div>
+                <div class="v">1,247</div>
+                <div class="s">成功率 99.7%</div>
+              </div>
+              <div class="metric">
+                <div class="k">错误数</div>
+                <div class="v" style="color:var(--red)">3</div>
+                <div class="s">自动切换备用号</div>
+              </div>
+              <div class="metric">
+                <div class="k">输入 Token</div>
+                <div class="v" style="color:var(--teal)">2.28M</div>
+                <div class="s">含缓存读取</div>
+              </div>
+              <div class="metric">
+                <div class="k">输出 Token</div>
+                <div class="v" style="color:var(--purple)">918K</div>
+                <div class="s">实时累计</div>
+              </div>
+            </section>
+
+            <section class="hero-row">
+              <div class="promo store">
+                <div>
+                  <h3>冰茶商店</h3>
+                  <p>Codex Plus · Cursor · Windsurf 一键代理</p>
+                </div>
+                <div class="mark">🛒</div>
+              </div>
+              <div class="promo api">
+                <div>
+                  <h3>冰茶 API</h3>
+                  <p>Claude / Gemini / GPT 低价调用</p>
+                </div>
+                <div class="mark">⚡</div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-inner">
+                <div class="section-title">
+                  <span>
+                    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/></svg>
+                    用量趋势 · 今日
+                  </span>
+                  <span class="tabs"><span class="on">日</span><span>3日</span><span>周</span><span>月</span></span>
+                </div>
+              </div>
+              <div class="chart">
+                <i class="bar a"></i><i class="bar out b"></i><i class="bar c"></i><i class="bar out d"></i>
+                <i class="bar e"></i><i class="bar out a"></i><i class="bar b"></i><i class="bar out c"></i>
+                <i class="bar d"></i><i class="bar f"></i><i class="bar out b"></i><i class="bar e"></i>
+                <i class="bar out d"></i><i class="bar c"></i><i class="bar f"></i><i class="bar out a"></i>
+              </div>
+              <div class="chart-labels"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span></div>
+            </section>
+
+            <section class="card">
+              <div class="saving">
+                <div class="saving-icon">$</div>
+                <div>
+                  <div class="value">$128.40</div>
+                  <p>累计已节省，按官方订阅与 API 定价折算。</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="right">
+            <section class="card account-card">
+              <div class="card-inner">
+                <div class="section-title">
+                  <span>
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.6-4 14.4-4 16 0"/></svg>
+                    账号与卡密
+                  </span>
+                  <span class="badge">令牌正常</span>
+                </div>
+                <div class="keybox">
+                  <span>BCAI-C***DD2C</span>
+                  <span style="color:var(--blue);font-family:inherit;font-size:13px">复制</span>
+                </div>
+                <div class="line"><span>激活状态</span><b style="color:var(--green)">已激活 · 令牌正常</b></div>
+                <div class="line"><span>到期时间</span><b>2027年5月28日</b></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-inner">
+                <div class="section-title">
+                  <span>
+                    <svg viewBox="0 0 24 24"><path d="m4 17 6-6 4 4 6-8"/><path d="M14 7h6v6"/></svg>
+                    模型用量
+                  </span>
+                  <span class="badge warn">48m 后恢复</span>
+                </div>
+                <div class="usage-list">
+                  <div>
+                    <div class="usage-head"><span>Antigravity · Gemini</span><span>一般 20%</span></div>
+                    <div class="usage-bar"><i style="--w:20%;--c:#0ea5a5"></i></div>
+                  </div>
+                  <div>
+                    <div class="usage-head"><span>Antigravity · Claude</span><span>充足 100%</span></div>
+                    <div class="usage-bar"><i style="--w:100%;--c:#8b5cf6"></i></div>
+                  </div>
+                  <div>
+                    <div class="usage-head"><span>Codex · GPT</span><span>稳定 72%</span></div>
+                    <div class="usage-bar"><i style="--w:72%;--c:#16a34a"></i></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-inner">
+                <div class="section-title">
+                  <span>
+                    <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8z"/></svg>
+                    接管
+                  </span>
+                  <span class="badge">2 个运行中</span>
+                </div>
+                <div class="takeover-list">
+                  <div class="tool">
+                    <div class="tool-icon"><svg viewBox="0 0 24 24"><path d="M12 2 2 19h20z"/><path d="M12 9v5"/></svg></div>
+                    <div><h4>Antigravity IDE</h4><p>Gemini 与 Claude 请求已接管</p></div>
+                    <span class="button stop">停止</span>
+                  </div>
+                  <div class="tool">
+                    <div class="tool-icon"><svg viewBox="0 0 24 24"><path d="m7 8 4 4-4 4"/><path d="M13 16h4"/></svg></div>
+                    <div><h4>OpenAI Codex</h4><p>ChatGPT Plus 账号令牌接入</p></div>
+                    <span class="button">接管</span>
+                  </div>
+                  <div class="tool">
+                    <div class="tool-icon"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M3 12h18"/><path d="M6 6l12 12"/></svg></div>
+                    <div><h4>Claude Code</h4><p>CLI、VSCode 扩展与桌面端</p></div>
+                    <span class="button">接管</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </section>
+    <div class="caption">BingchaAI client dashboard · website product shot</div>
+  </main>
+</body>
+</html>

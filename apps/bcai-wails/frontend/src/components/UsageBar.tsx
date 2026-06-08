@@ -7,8 +7,8 @@ interface UsageBarProps {
   label: string
   used: number | null
   limit: number | null
-  /** Model accent color for a healthy bar (e.g. "bg-purple-500"). */
-  color: string
+  /** @deprecated 颜色现在一律由健康度(充足/一般/紧张/已用尽)决定,此参数已忽略。 */
+  color?: string
   subtitle?: string
   /** Bound account's real upstream remaining (0..1; -1 = 未知). When present the
    *  bar uses this instead of local used/limit (which is uncapped → always 满). */
@@ -39,19 +39,25 @@ function formatReset(ms: number): string {
  * Set `expandable` + `detail` to let the user tap the label and reveal the exact
  * numbers (used for the "我的卡" bar — default stays %, numbers on demand).
  */
-export function UsageBar({ label, used, limit, color, subtitle, fraction, resetMs, expandable, detail }: UsageBarProps) {
+export function UsageBar({ label, used, limit, subtitle, fraction, resetMs, expandable, detail }: UsageBarProps) {
   const [expanded, setExpanded] = useState(false)
   // Any non-null fraction (including -1 = 未知) is authoritative; only fall back to
   // local used/limit when no fraction was provided at all.
   const { remainingPct, label: statusLabel, tone } =
     fraction != null ? bloodBarFromFraction(fraction) : bloodBarStatus(used, limit)
+  // 颜色完全由健康度决定(一眼看出余量):充足=绿 → 一般=黄 → 紧张=橙 → 已用尽=红;
+  // 未知/等待=中性灰。全是状态语义色,不靠模型身份配色(那会变彩虹)。
+  const isUnknown = statusLabel === '未知' || statusLabel === '等待数据'
   const barColor =
-    tone === 'empty' ? 'bg-[var(--danger)]' : tone === 'low' ? 'bg-[var(--warning)]' : color
+    isUnknown ? 'bg-[var(--text-muted)]'
+      : tone === 'empty' ? 'bg-[var(--danger)]'
+      : tone === 'low' ? 'bg-[var(--warning-strong)]'
+      : tone === 'warn' ? 'bg-[var(--warning)]'
+      : 'bg-[var(--success)]'
   // Percentage shown only for a known fraction (not 未知 / 等待数据).
-  const statusText =
-    statusLabel === '等待数据' || statusLabel === '未知'
-      ? statusLabel
-      : `${statusLabel} ${Math.round(remainingPct)}%`
+  const statusText = isUnknown
+    ? statusLabel
+    : `${statusLabel} ${Math.round(remainingPct)}%`
   const showReset = typeof resetMs === 'number' && resetMs > 0
   const canExpand = !!expandable && !!detail
 
