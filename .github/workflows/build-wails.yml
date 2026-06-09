@@ -237,11 +237,11 @@ jobs:
             ${{ env.WAILS_DIR }}/build/bin/*.tar.gz
 
   # ──────────────── 阶段 2: 发布到公开 GitHub Release ────────────────
-  # 二进制文件发布到公开仓库 bcai-releases，客户端直接从 GitHub CDN 下载。
+  # 二进制文件发布到公开仓库 gfa-client，客户端直接从 GitHub CDN 下载。
   # 仅 latest-wails.json 提交到本仓库（供 bcai.lol / bcai.space 提供更新检查）。
   # 前提：
-  #   1. 在 GitHub 创建公开仓库: bingcha-2/bcai-releases
-  #   2. 创建 PAT (Fine-grained, contents:write 权限 on bcai-releases)
+  #   1. 在 GitHub 创建公开仓库: bingcha-2/gfa-client
+  #   2. 创建 PAT (Fine-grained, contents:write 权限 on gfa-client)
   #   3. 在本仓库 Settings → Secrets 添加 RELEASE_PAT
   publish:
     needs: build
@@ -250,8 +250,8 @@ jobs:
       contents: write
 
     env:
-      RELEASE_REPO: bingcha-2/bcai-releases
-      GH_DOWNLOAD_BASE: https://github.com/bingcha-2/bcai-releases/releases/download
+      RELEASE_REPO: bingcha-2/gfa-client
+      GH_DOWNLOAD_BASE: https://github.com/bingcha-2/gfa-client/releases/download
 
     steps:
       - name: Checkout repository

@@ -1,28 +1,28 @@
 {
   "version": "8.7.0",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v8.7.0/BingchaAI-8.7.0.exe",
+  "url": "https://github.com/bingcha-2/gfa-client/releases/download/wails-v8.7.0/BingchaAI-8.7.0.exe",
   "sha256": "10675223544ECEC3E31E466927D44AD836655AC8BEC7588A3F461B35A54E962E",
   "size": 20934656,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v8.7.0/BingchaAI-8.7.0-setup.exe",
+  "installerUrl": "https://github.com/bingcha-2/gfa-client/releases/download/wails-v8.7.0/BingchaAI-8.7.0-setup.exe",
   "installerSha256": "5210A6211EAF70513033B6DA202B3F4ABCEB313CA02BC022F12D20CE41716F37",
   "installerSize": 11091350,
   "changelog": "额度显示与稳定性优化",
   "minVersion": "8.7.0",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v8.7.0/BingchaAI-8.7.0-arm64.dmg",
+      "url": "https://github.com/bingcha-2/gfa-client/releases/download/wails-v8.7.0/BingchaAI-8.7.0-arm64.dmg",
       "sha256": "2D754DE694A729477129D113DD512FAAD60C1DD97E22CD5E83414BB8E9B5A4D0",
       "size": 10214085
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v8.7.0/BingchaAI-8.7.0-amd64.dmg",
+      "url": "https://github.com/bingcha-2/gfa-client/releases/download/wails-v8.7.0/BingchaAI-8.7.0-amd64.dmg",
       "sha256": "C90A996055F001942A8CD18D7F505F2EA5CE5D1D393B1828A260A6AA130EB4B7",
       "size": 10930984
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v8.7.0/BingchaAI-8.7.0-linux-amd64.tar.gz",
+      "url": "https://github.com/bingcha-2/gfa-client/releases/download/wails-v8.7.0/BingchaAI-8.7.0-linux-amd64.tar.gz",
       "sha256": "63C304AA51E1EE76B432BB8A0233F9E26ABEF5F2094E9804F6CE0C5CD68E6489",
       "size": 8651327
     }

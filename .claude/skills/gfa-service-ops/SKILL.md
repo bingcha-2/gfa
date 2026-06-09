@@ -126,7 +126,7 @@ gh run watch <run-id>
 `.github/workflows/build-wails.yml` then:
 
 - Builds windows/amd64, macOS arm64 + amd64, linux/amd64 with `AppVersion=<version>`.
-- Publishes Release `wails-v<version>` to the **public** repo `bingcha-2/bcai-releases`
+- Publishes Release `wails-v<version>` to the **public** repo `bingcha-2/gfa-client`
   (auth = secret `BCAIDOWNLOAD`); clients download binaries straight from GitHub CDN.
 - Auto-generates `apps\web\public\updates\latest-wails.json` (both `version` and `minVersion` = the
   input version) and **git-pushes it to `main`** → run `git pull` afterwards.
@@ -155,7 +155,7 @@ update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
 ```powershell
 cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
 wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.6.0"
-# then upload the .exe to a bcai-releases Release (tag wails-v8.6.0)
+# then upload the .exe to a gfa-client Release (tag wails-v8.6.0)
 # and hand-edit apps\web\public\updates\latest-wails.json (url/sha256/size/version/minVersion).
 ```
 
