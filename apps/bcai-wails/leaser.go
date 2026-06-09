@@ -34,6 +34,9 @@ type TokenLease struct {
 	// Bound: 绑定卡(无其它号可换)。代理据此跳过"换到别的号"的轮转,
 	// 但仍允许对同一个号做瞬时错误(503 容量/短 429)的等待重试。
 	Bound bool `json:"-"`
+	// EgressInfo 是服务端下发的出口策略。antigravity 为 optional:绑定代理则走它,
+	// 没绑定就本地直连;绑定代理传输失败则降级本地直连再切号。
+	EgressInfo
 }
 
 // LocalQuota 本地额度跟踪，镜像服务端的 5h 滑动窗口
@@ -301,6 +304,9 @@ type LeaseTokenResp struct {
 		Fraction float64 `json:"fraction"`
 		ResetAt  int64   `json:"resetAt"` // epoch ms,绑定号上游额度下次刷新
 	} `json:"boundAccount"`
+	// 通用出口策略:该账号绑定的粘性出口代理 + 是否强制经代理出站(antigravity 恒 false)。
+	AccountProxyUrl string `json:"accountProxyUrl"`
+	EgressRequired  bool   `json:"egressRequired"`
 }
 
 func parseAccountId(raw json.RawMessage) int {
@@ -539,6 +545,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixNano() / int64(time.Millisecond),
 		Probation:   leaseResp.Probation,
+		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
 
 	// Parse extra fields from lease response (bound flag, candidate stats)

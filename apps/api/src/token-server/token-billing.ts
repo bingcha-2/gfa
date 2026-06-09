@@ -100,7 +100,7 @@ export const PHONE_VERIFICATION_COOLDOWN_MS = Math.max(
 export const FIRST_QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
 export const SECOND_QUOTA_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 export const MAX_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-export const CAPACITY_COOLDOWN_MS = 10 * 1000;
+export const CAPACITY_COOLDOWN_MS = 60 * 1000;
 export const MAX_CAPACITY_COOLDOWN_MS = 2 * 60 * 1000;
 export const REMOTE_ACCOUNT_ERROR_THRESHOLD = Math.max(
   1,
@@ -141,6 +141,47 @@ export const AUTO_RECHECK_VERIFY_LIMIT = Math.max(
 export const MIN_HEALTHY_CANDIDATES = 2;
 export const AUTH_FAILURE_COOLDOWN_MS = 30 * 60 * 1000;
 export const TOKEN_REFRESH_FAILURE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+// ── 账号/项目级"永久死亡"分档 ──────────────────────────────────────────────
+// 某些 403/400 是【永久死亡】(项目被删/禁、账号被封/受限、地区不支持),但状态码
+// 跟"瞬时反滥用 / 用户可恢复的验证挑战"撞车,被统一压成 ≤60s 短冷却 → 死号每隔
+// 几十秒回到轮换、反复烧换号位。改成按 reason 细分 + 计数升级:
+//   首次命中 → 中档账号级冷却(容忍偶发误判 / 瞬时挑战);
+//   同号同类【再次】命中 → 升级为持久化死号(quotaStatus=error,跨重启、不被
+//   success 复活,等同 invalid_grant 的待遇)。
+export const PERMANENT_DEATH_STRIKE_THRESHOLD = Math.max(
+  1,
+  Number(process.env.BCAI_PERMANENT_DEATH_STRIKE_THRESHOLD || 2),
+);
+export const PERMANENT_DEATH_FIRST_COOLDOWN_MS = Math.max(
+  60 * 1000,
+  Number(process.env.BCAI_PERMANENT_DEATH_FIRST_COOLDOWN_MS || 5 * 60 * 1000),
+);
+export const PERMANENT_DEATH_COOLDOWN_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.BCAI_PERMANENT_DEATH_COOLDOWN_MS || 24 * 60 * 60 * 1000),
+);
+
+// reason 形如 http_403_service_disabled / http_400_location_unsupported
+// (Go 端 buildAccountProblemReason → http_<code>_<base>)。这些是账号/项目级、
+// 非自愈的死亡;明确【排除】用户可自行恢复的验证挑战(account_verification_required)。
+const PERMANENT_DEATH_REASON_MARKERS = [
+  "service_disabled",
+  "location_unsupported",
+  "account_restricted",
+  "servicerestricted",
+  "account_disabled",
+  "access_denied",
+  "permission_denied",
+  "suspended",
+];
+export function isPermanentDeathReason(reason: unknown): boolean {
+  const text = String(reason || "").toLowerCase();
+  if (!text) return false;
+  // 验证挑战是用户可恢复的,不算永久死亡(即便报文里也带 permission_denied 字样)。
+  if (text.includes("verification") || text.includes("validation")) return false;
+  return PERMANENT_DEATH_REASON_MARKERS.some((marker) => text.includes(marker));
+}
 export const RECENT_SUCCESS_GRACE_MS = Math.max(
   60 * 1000,
   Number(process.env.BCAI_RECENT_SUCCESS_GRACE_MS || 10 * 60 * 1000),

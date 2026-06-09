@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { ChevronRightIcon } from "lucide-react";
+import { ArrowDownUpIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { formatTokens } from "@/lib/format";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -30,6 +31,7 @@ type Account = {
   email: string;
   planType: string;
   quotaStatus: string;
+  quotaStatusReason?: string;
   hourlyPercent: number | null;
   weeklyPercent: number | null;
   hourlyResetAt: string | null;
@@ -40,6 +42,19 @@ type Account = {
 function minFraction(fs: FairShare): number | null {
   const v = Object.values(fs).map((f) => f.fraction);
   return v.length ? Math.min(...v) : null;
+}
+/** 账号最紧份额(0..1);无任何 fair-share 窗口视为 1(100% 剩余,与表头 worst 口径一致)。 */
+function accountWorstFraction(a: Account): number {
+  let min = 1;
+  for (const c of a.boundCards) {
+    const f = minFraction(c.fairShare);
+    if (f !== null && f < min) min = f;
+  }
+  return min;
+}
+/** 非正常状态(需验证/冷却/异常)排在最前 → 0 比正常号的 1 小。 */
+function statusRank(a: Account): number {
+  return (a.quotaStatus || "ok") === "ok" ? 1 : 0;
 }
 function barColor(pct: number) {
   return pct >= 50 ? "#22c55e" : pct >= 20 ? "#f59e0b" : "#ef4444";
@@ -53,6 +68,38 @@ function formatReset(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `重置 ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 账号当前可用性徽标:剩余%只是上次快照,被封禁的号要明确标出"现在用不了"。 */
+function StatusBadge({ a }: { a: Account }) {
+  const st = a.quotaStatus || "ok";
+  if (st === "ok") return null;
+  const reason = a.quotaStatusReason || "";
+  let label = st;
+  let variant: "destructive" | "secondary" = "secondary";
+  if (reason.includes("verification")) {
+    label = "需验证";
+    variant = "destructive";
+  } else if (st === "error") {
+    variant = "destructive";
+    if (reason.includes("invalid_grant")) label = "鉴权失效";
+    else if (
+      reason.includes("service_disabled") || reason.includes("forbidden") ||
+      reason.includes("suspended") || reason.includes("restricted") ||
+      reason.includes("permission_denied") || reason.includes("access_denied")
+    ) label = "账号异常";
+    else if (reason.includes("location")) label = "地区不支持";
+    else label = "不可用";
+  } else if (st === "cooling") {
+    label = "冷却中";
+  } else if (st === "exhausted") {
+    label = "额度耗尽";
+  }
+  return (
+    <Badge variant={variant} className="text-[10px]" title={reason || st}>
+      {label}
+    </Badge>
+  );
 }
 
 /** Real upstream remaining for the account: "5h XX% · 周 YY%". */
@@ -121,22 +168,56 @@ function AccountFrequency({ cards }: { cards: Card_[] }) {
   );
 }
 
+const PAGE_SIZE = 20;
+
 export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
   const [warnOnly, setWarnOnly] = useState(false);
-  const shown = accounts.filter(
-    (a) => !warnOnly || a.boundCards.some((c) => { const f = minFraction(c.fairShare); return f !== null && f < 0.2; }),
-  );
+  const [page, setPage] = useState(1);
+  // true = 最紧/最危险优先(默认),false = 最松优先。
+  const [tightFirst, setTightFirst] = useState(true);
+  const shown = useMemo(() => {
+    const filtered = accounts.filter(
+      (a) =>
+        !warnOnly ||
+        (a.quotaStatus || "ok") !== "ok" || // 需验证/冷却/异常的号也算告警
+        a.boundCards.some((c) => { const f = minFraction(c.fairShare); return f !== null && f < 0.2; }),
+    );
+    const dir = tightFirst ? 1 : -1;
+    return [...filtered].sort((x, y) => {
+      const s = statusRank(x) - statusRank(y); // 非正常状态优先
+      if (s !== 0) return dir * s;
+      return dir * (accountWorstFraction(x) - accountWorstFraction(y)); // 再按份额最紧
+    });
+  }, [accounts, warnOnly, tightFirst]);
+
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  // Clamp when the filtered set shrinks (e.g. toggling 只看告警 or data refresh).
+  useEffect(() => { setPage((p) => Math.min(p, pageCount)); }, [pageCount]);
+  const start = (page - 1) * PAGE_SIZE;
+  const pageItems = shown.slice(start, start + PAGE_SIZE);
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm">账号水位与绑定卡明细</CardTitle>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          只看告警账号 <Switch checked={warnOnly} onCheckedChange={setWarnOnly} />
-        </label>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+            title="按账号状态 + 份额最紧排序;点击切换最紧/最松优先"
+            onClick={() => { setTightFirst((v) => !v); setPage(1); }}
+          >
+            <ArrowDownUpIcon className="size-3.5" /> {tightFirst ? "最紧优先" : "最松优先"}
+          </Button>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            只看告警账号 <Switch checked={warnOnly} onCheckedChange={(v) => { setWarnOnly(v); setPage(1); }} />
+          </label>
+        </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {shown.length === 0 && <div className="py-4 text-center text-xs text-muted-foreground">无符合条件的账号</div>}
-        {shown.map((a) => {
+        {pageItems.map((a) => {
           const worst = Math.min(100, ...a.boundCards.map((c) => { const f = minFraction(c.fairShare); return f === null ? 100 : Math.round(f * 100); }));
           return (
             <Collapsible key={a.id} className="rounded-lg border">
@@ -144,6 +225,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                 <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground transition" />
                 <span className="truncate font-medium">{a.email || `账号 #${a.id}`}</span>
                 {a.planType && <Badge variant="secondary">{a.planType}</Badge>}
+                <StatusBadge a={a} />
                 <span className="ml-auto flex items-center gap-2">
                   <QuotaPills a={a} />
                   <span className="text-xs text-muted-foreground">{a.boundCards.length} 卡 · 份额最紧 {worst}%</span>
@@ -217,6 +299,22 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
             </Collapsible>
           );
         })}
+        {pageCount > 1 && (
+          <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground">
+            <span className="tabular-nums">
+              {start + 1}–{Math.min(start + PAGE_SIZE, shown.length)} / 共 {shown.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                <ChevronLeftIcon className="size-3.5" /> 上一页
+              </Button>
+              <span className="tabular-nums">{page} / {pageCount}</span>
+              <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))}>
+                下一页 <ChevronRightIcon className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

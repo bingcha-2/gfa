@@ -35,6 +35,7 @@ function makeFakeProvider(
     }),
     isAccountEligible: () => true, // no projectId requirement
     applyQuotaSnapshot: (account: any) => ({ account, creditDelta: null }),
+    egressPolicy: "optional" as const,
     leaseResponseExtras: () => ({}),
   };
 }
@@ -90,6 +91,44 @@ describe("LeaseService (generic core)", () => {
     expect(result.accessToken).toBe("access-token-1");
     // codex-like provider contributes no projectId
     expect((result as any).projectId).toBeUndefined();
+  });
+
+  it("下发账号绑定的出口代理 accountProxyUrl;optional provider 的 egressRequired=false", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, proxyUrl: "socks5://u:p@res.example:1080" },
+      ],
+    });
+    const result = await makeService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(result.ok).toBe(true);
+    expect((result as any).accountProxyUrl).toBe("socks5://u:p@res.example:1080");
+    // makeFakeProvider 的 egressPolicy="optional" → 没绑定也能本地直连,故 false。
+    expect((result as any).egressRequired).toBe(false);
+  });
+
+  it("账号未绑定代理时 accountProxyUrl 下发空串(不是 undefined)", async () => {
+    refreshToken.mockResolvedValue("tok"); // beforeEach 的账号都没有 proxyUrl
+    const result = await makeService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(result.ok).toBe(true);
+    expect((result as any).accountProxyUrl).toBe("");
+  });
+
+  it("egressRequired 跟随 provider.egressPolicy:required provider 下发 true(anthropic fail-closed)", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accountsFilePath, {
+      accounts: [{ id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, proxyUrl: "socks5://res:1080" }],
+    });
+    const provider = { ...makeFakeProvider(accountsFilePath, refreshToken), egressPolicy: "required" as const };
+    const service = new LeaseService(provider, {
+      accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "",
+    });
+    const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(result.ok).toBe(true);
+    expect((result as any).egressRequired).toBe(true);
   });
 
   it("retries the next account when the first token refresh fails", async () => {

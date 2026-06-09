@@ -15,9 +15,7 @@
 // onRequestStart method"). With NO proxy we use the global fetch: it's the common
 // path, the original behavior, and stays stubbable by tests (vi.stubGlobal).
 
-import { fetch as undiciFetch } from "undici";
-
-import { proxyDispatcherFor } from "./proxy-dispatcher";
+import { proxyAwareFetch } from "../../lease-core/egress";
 
 // Endpoint + client_id verified against the Claude Code 2.x binary (the current
 // client posts a refresh_token grant to platform.claude.com/v1/oauth/token).
@@ -53,27 +51,20 @@ export async function refreshClaudeAccessToken(account: ClaudeAccount): Promise<
   // Route through the account's exit proxy when one is set. A bad/unsupported
   // proxy URL is a hard error here — we never fall back to a direct connection,
   // which would leak the datacenter IP and defeat the whole point of pinning.
-  let dispatcher;
+  let response: Response;
   try {
-    dispatcher = proxyDispatcherFor(account.proxyUrl);
+    response = await proxyAwareFetch(account.proxyUrl, CLAUDE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: account.refreshToken,
+        client_id: CLAUDE_CLIENT_ID,
+      }),
+    });
   } catch (err) {
     throw new Error(`Claude token refresh failed for ${account.email}: ${(err as Error).message}`);
   }
-
-  const init: RequestInit & { dispatcher?: unknown } = {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      refresh_token: account.refreshToken,
-      client_id: CLAUDE_CLIENT_ID,
-    }),
-  };
-  // Proxy set → installed-undici fetch (carries the Dispatcher). No proxy → global
-  // fetch (common path; also keeps the tests' fetch stub effective).
-  if (dispatcher) init.dispatcher = dispatcher;
-  const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof fetch;
-  const response = await fetchImpl(CLAUDE_TOKEN_ENDPOINT, init);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Claude token refresh failed for ${account.email}: ${response.status} ${text}`);

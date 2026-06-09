@@ -16,7 +16,7 @@ import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import type { RosettaContext } from "./lib/context";
 import { migrateClaudeProductToAnthropic } from "./lib/migrate";
-import { CachedJsonFile, defaultDataDir, readJson, writeJson } from "./lib/store";
+import { CachedJsonFile, defaultDataDir, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
 
 // migrate re-exported so existing importers (tests, bootstrap) keep importing it
 // from this module unchanged.
@@ -171,6 +171,21 @@ export class RosettaService {
   toggleClaudeAccount(payload: any) { return this.claudeSvc.toggleClaudeAccount(payload); }
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }
   deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
+
+  // ── 通用出口代理(御三家共用) ───────────────────────────────────────────
+  // 给任意 provider 的某个号设/清粘性出口代理。客户端租到该号时随 lease 下发
+  // accountProxyUrl + egressRequired,据此固定出口 IP(anthropic 强制、codex/antigravity 可选)。
+  setAccountProxy(payload: any) {
+    const provider = String(payload?.provider || "").trim().toLowerCase();
+    const poolFile: Record<string, string> = {
+      anthropic: "anthropic-accounts.json",
+      codex: "codex-accounts.json",
+      antigravity: "accounts.json",
+    };
+    const fileName = poolFile[provider];
+    if (!fileName) return { ok: false, error: `未知 provider:${provider || "(空)"}(支持 anthropic/codex/antigravity)` };
+    return setAccountProxyInPool(path.join(this.dataDir, fileName), Number(payload?.accountId), payload?.proxyUrl);
+  }
   refreshClaudeAccountQuota(payload: any) { return this.claudeSvc.refreshClaudeAccountQuota(payload); }
 
   // ── Access keys / 卡密 (→ AccessKeyService) ──────────────────────────────

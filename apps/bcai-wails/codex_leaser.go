@@ -19,6 +19,9 @@ type CodexTokenLease struct {
 	PlanType    string `json:"planType"` // 账号会员等级(plus/pro/...),供前端展示
 	ExpiresAt   int64  `json:"expiresAt"`
 	LeasedAt    int64  `json:"leasedAt"`
+	// EgressInfo 是服务端下发的出口策略。codex 为 optional:绑定代理则走它,
+	// 没绑定就本地直连;绑定代理传输失败则降级本地直连再切号(见 doUpstreamWithFallback)。
+	EgressInfo
 }
 
 type codexLeaseTokenResp struct {
@@ -41,6 +44,9 @@ type codexLeaseTokenResp struct {
 	// 服务端把绑定/被租 codex 号的 5h+周窗口一并带回(来自共享号的最新已知用量),
 	// 客户端据此渲染两条 codex 血条,无需自己抓上游。
 	CodexWindows *CodexQuotaWindow `json:"codexWindows"`
+	// 通用出口策略:该账号绑定的粘性出口代理 + 是否强制经代理出站(codex 恒 false)。
+	AccountProxyUrl string `json:"accountProxyUrl"`
+	EgressRequired  bool   `json:"egressRequired"`
 }
 
 type CodexLeaser struct {
@@ -193,6 +199,7 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 		PlanType:    leaseResp.PlanType,
 		ExpiresAt:   expiresAt,
 		LeasedAt:    time.Now().UnixMilli(),
+		EgressInfo:  EgressInfo{ProxyURL: leaseResp.AccountProxyUrl, EgressRequired: leaseResp.EgressRequired},
 	}
 	// 记录 codex 绑定号的真实上游剩余(供 Codex 血条显示真实余量)。
 	if leaseResp.BoundAccount != nil {

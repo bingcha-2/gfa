@@ -32,6 +32,8 @@ export type ClaudeProviderOptions = {
 export class ClaudeProvider implements Provider<ClaudeAccount> {
   // 产品 key(= 卡 bindings 的 key)。产品=anthropic;模型仍是 claude。
   readonly id = "anthropic";
+  // 反封核心:绝不从用户本机 IP 直连官方,必须经账号绑定的住宅出口(fail-closed)。
+  readonly egressPolicy = "required" as const;
   readonly accountsFilePath: string;
   readonly models = new ClaudeModelCatalog();
   private readonly tokenProvider: (account: ClaudeAccount) => Promise<string>;
@@ -79,10 +81,7 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   leaseResponseExtras(account: ClaudeAccount): Record<string, unknown> {
     const a = account as Record<string, unknown>;
     const extras: Record<string, unknown> = {};
-    // 每号粘性出口代理(住宅 IP):客户端据此固定该号出口,规避多 IP 聚类/不可能旅行。
-    const proxyUrl = typeof a.proxyUrl === "string" ? a.proxyUrl.trim() : "";
-    if (proxyUrl) extras.claudeProxyUrl = proxyUrl;
-
+    // 出口代理(accountProxyUrl)与 egressRequired 由 LeaseService 通用下发,这里不再重复。
     const hourly = typeof a.claudeHourlyPercent === "number" ? a.claudeHourlyPercent : null;
     const weekly = typeof a.claudeWeeklyPercent === "number" ? a.claudeWeeklyPercent : null;
     if (hourly !== null || weekly !== null) {

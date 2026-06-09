@@ -14,7 +14,7 @@ import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import type { AccessKeyService } from "./access-key.service";
 import type { RosettaContext } from "./lib/context";
 import { base64Url, codeChallenge } from "./lib/pkce";
-import { nowIso, readJson, writeJson } from "./lib/store";
+import { normalizeProxyUrl, nowIso, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
 
 // Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
 // claude.com),全部可经 env 覆盖以便线上纠偏而不重新发版。手动流:授权后用户把
@@ -76,16 +76,9 @@ export class ClaudeAccountService {
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }
 
-  // 归一化代理:接受代理商常见的 host:port:user:pass / host:port 简写(默认按 http 代理),
-  // 或原样的 http(s):// / socks5:// URL。空→空。其它形态原样返回(交上层 scheme 校验报错)。
+  // 归一化代理委托给通用实现(lib/store),三家共用一套解析。
   private normalizeProxyUrl(raw: string): string {
-    const s = String(raw || "").trim();
-    if (!s) return "";
-    if (/^(https?|socks5h?):\/\//i.test(s)) return s;
-    const p = s.split(":");
-    if (p.length === 4) return `http://${p[2]}:${p[3]}@${p[0]}:${p[1]}`; // host:port:user:pass
-    if (p.length === 2) return `http://${p[0]}:${p[1]}`; // host:port(无鉴权)
-    return s;
+    return normalizeProxyUrl(raw);
   }
 
   addClaudeAccount(payload: any) {
@@ -292,23 +285,10 @@ export class ClaudeAccountService {
   }
 
   // 设置/清除某 anthropic 账号的出口代理(粘性住宅代理 URL)。空=清除。
-  // 客户端租到该号时随 lease 下发 claudeProxyUrl,该号的 anthropic 出口固定走它(一号一IP)。
+  // 客户端租到该号时随 lease 下发 accountProxyUrl,该号的 anthropic 出口固定走它(一号一IP)。
   setClaudeAccountProxy(payload: any) {
-    const accountId = Number(payload?.accountId);
-    // 接受 host:port:user:pass / host:port 简写,或 http(s):// / socks5:// URL。
-    const proxyUrl = this.normalizeProxyUrl(payload?.proxyUrl);
-    if (proxyUrl && !/^(https?|socks5h?):\/\//i.test(proxyUrl)) {
-      return { ok: false, error: "代理格式无效:用 host:port:user:pass(或 host:port),或 http(s):// / socks5:// URL" };
-    }
     const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
-    const data = readJson(filePath, { accounts: [] });
-    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-    const account = accounts.find((item: any) => Number(item.id) === accountId);
-    if (!account) return { ok: false, error: "账号不存在" };
-    if (proxyUrl) account.proxyUrl = proxyUrl;
-    else delete account.proxyUrl;
-    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email: account.email, proxyUrl };
+    return setAccountProxyInPool(filePath, Number(payload?.accountId), payload?.proxyUrl);
   }
 
   deleteClaudeAccount(payload: any) {

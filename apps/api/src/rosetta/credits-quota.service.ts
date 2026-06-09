@@ -84,7 +84,7 @@ export class CreditsQuotaService {
     // Persist
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
 
-    return { ok: true, refreshed, errors, total: enabled.length, accounts: results };
+    return { ok: errors === 0, refreshed, errors, total: enabled.length, accounts: results };
   }
 
   /**
@@ -105,13 +105,22 @@ export class CreditsQuotaService {
       await runConcurrent(needsDiscovery, 3, (acc) => tryDiscoverProject(this.ctx, acc));
     }
 
-    // Re-filter for accounts with projectId
-    const ready = enabled.filter((a) => a.projectId);
-
     let refreshed = 0;
     let errors = 0;
+    const results: any[] = [];
 
-    await runConcurrent(ready, 5, async (acc) => {
+    // Iterate over ALL enabled accounts (not just the projectId-ready ones) so a dead
+    // account — one that still has no projectId after discovery — is reported as a
+    // FAILURE instead of silently vanishing from the counts. Previously these were
+    // filtered out of `ready` and `total`, so the panel showed "刷新成功" while the
+    // account was actually dead.
+    await runConcurrent(enabled, 5, async (acc) => {
+      // Dead account: project discovery failed → cannot fetch quota at all.
+      if (!acc.projectId) {
+        errors++;
+        results.push({ id: acc.id, email: acc.email, error: "no projectId" });
+        return;
+      }
       try {
         const token = await getAccessToken(
           Number(acc.id), acc.refreshToken, this.ctx.tokenCache,
@@ -125,56 +134,63 @@ export class CreditsQuotaService {
 
         // Phase 3: Per-model quota via fetchAvailableModels
         const modelsResult = await fetchAvailableModels(token, acc.projectId);
-        if (modelsResult) {
-          // Detect tier from models response
-          const detectedTier = extractTierFromModelsJson(modelsResult.rawJson);
-          if (detectedTier && detectedTier !== acc.planType) {
-            this.ctx.logger.log(`${acc.email}: tier from models: ${acc.planType || "(empty)"} → ${detectedTier}`);
-            acc.planType = detectedTier;
-          }
-
-          // Store per-model quota fractions + reset times on the account
-          acc.modelQuotaFractions = {};
-          acc.modelQuotaResetTimes = {};
-          acc.modelQuotaRefreshedAt = Date.now();
-          for (const [modelKey, info] of Object.entries(modelsResult.models)) {
-            if (info.remainingFraction != null) {
-              acc.modelQuotaFractions[modelKey] = info.remainingFraction;
-            }
-            if (info.resetTime) {
-              acc.modelQuotaResetTimes[modelKey] = info.resetTime;
-            }
-          }
-
-          // Auto-unblock models that now have quota
-          if (Array.isArray(acc.blockedModels)) {
-            acc.blockedModels = acc.blockedModels.filter((bm: any) => {
-              if (bm.reason !== "quota") return true;
-              const modelInfo = modelsResult.models[bm.modelKey];
-              // Keep block if model still has 0 quota
-              return !(modelInfo && modelInfo.remainingFraction != null && modelInfo.remainingFraction > 0);
-            });
-            if (acc.blockedModels.length === 0 && acc.quotaStatus === "exhausted") {
-              acc.quotaStatus = "ok";
-              delete acc.quotaStatusReason;
-              delete acc.exhaustedAt;
-              delete acc.exhaustedUntil;
-            }
-          }
-
-          refreshed++;
-        } else {
-          // fetchAvailableModels failed but credits may have succeeded
+        if (!modelsResult) {
+          // Could not fetch quota → treat as a failure, surface it (don't hide).
           errors++;
+          results.push({ id: acc.id, email: acc.email, error: "quota fetch failed" });
+          return;
         }
+
+        // Detect tier from models response
+        const detectedTier = extractTierFromModelsJson(modelsResult.rawJson);
+        if (detectedTier && detectedTier !== acc.planType) {
+          this.ctx.logger.log(`${acc.email}: tier from models: ${acc.planType || "(empty)"} → ${detectedTier}`);
+          acc.planType = detectedTier;
+        }
+
+        // Store per-model quota fractions + reset times on the account
+        acc.modelQuotaFractions = {};
+        acc.modelQuotaResetTimes = {};
+        acc.modelQuotaRefreshedAt = Date.now();
+        for (const [modelKey, info] of Object.entries(modelsResult.models)) {
+          if (info.remainingFraction != null) {
+            acc.modelQuotaFractions[modelKey] = info.remainingFraction;
+          }
+          if (info.resetTime) {
+            acc.modelQuotaResetTimes[modelKey] = info.resetTime;
+          }
+        }
+
+        // Auto-unblock models that now have quota
+        if (Array.isArray(acc.blockedModels)) {
+          acc.blockedModels = acc.blockedModels.filter((bm: any) => {
+            if (bm.reason !== "quota") return true;
+            const modelInfo = modelsResult.models[bm.modelKey];
+            // Keep block if model still has 0 quota
+            return !(modelInfo && modelInfo.remainingFraction != null && modelInfo.remainingFraction > 0);
+          });
+          if (acc.blockedModels.length === 0 && acc.quotaStatus === "exhausted") {
+            acc.quotaStatus = "ok";
+            delete acc.quotaStatusReason;
+            delete acc.exhaustedAt;
+            delete acc.exhaustedUntil;
+          }
+        }
+
+        refreshed++;
+        results.push({ id: acc.id, email: acc.email, planType: acc.planType || "" });
       } catch (err: any) {
         errors++;
         this.ctx.logger.warn(`refreshQuota ${acc.email}: ${err.message}`);
+        results.push({ id: acc.id, email: acc.email, error: err.message });
       }
     });
 
     writeJson(accountsFile, { ...data, accounts, updatedAt: nowIso() });
 
-    return { ok: true, refreshed, errors, total: ready.length };
+    // ok reflects reality: a dead account (no projectId / quota fetch failed) makes the
+    // refresh NOT fully successful. total counts every enabled account attempted, and
+    // `accounts` lists per-account outcomes so the panel can show which ones died.
+    return { ok: errors === 0, refreshed, errors, total: enabled.length, accounts: results };
   }
 }

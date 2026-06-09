@@ -60,6 +60,7 @@ export class CodexService {
       poolEnabled: account.poolEnabled !== false,
       alias: String(account.alias || ""),
       planType: String(account.planType || ""),
+      proxyUrl: String(account.proxyUrl || ""),
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
       boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
       usedShares: shares.get(Number(account.id || 0)) || 0,

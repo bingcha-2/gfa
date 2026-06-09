@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Plus, Power, Trash2, RefreshCw, Copy, Search,
-  Download, FolderOpen, Users, UserCheck, UserX, KeyRound, Gauge,
+  Download, FolderOpen, Users, UserCheck, UserX, KeyRound, Gauge, BadgeCheck,
   SlidersHorizontal, ExternalLinkIcon, GitMerge,
 } from "lucide-react";
 import {
@@ -54,6 +54,7 @@ type RosettaAccount = {
   boundCardCount?: number;
   usedShares?: number;
   shareCapacity?: number;
+  proxyUrl?: string;
   familyRole?: string;
   familyStatus?: string;
   motherId?: string;
@@ -120,13 +121,14 @@ const ALL_COLUMNS = [
   { key: "familyStatus", label: "Family 状态" },
   { key: "token", label: "Token" },
   { key: "boundCard", label: "份额用量" },
+  { key: "proxy", label: "出口代理" },
   { key: "status", label: "状态" },
   { key: "motherId", label: "Mother ID" },
   { key: "seatId", label: "Seat ID" },
 ] as const;
 
 const DEFAULT_VISIBLE = new Set([
-  "email", "planType", "modelQuota", "token", "boundCard", "status",
+  "email", "planType", "modelQuota", "token", "boundCard", "proxy", "status",
 ]);
 
 const PAGE_SIZE = 20;
@@ -164,6 +166,10 @@ export default function RosettaAccountsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
   const [busyId, setBusyId] = useState<string | null>(null);
+  // 出口代理行内编辑:正在编辑的账号 id、输入值、保存中。
+  const [proxyEditId, setProxyEditId] = useState<string | null>(null);
+  const [proxyEditVal, setProxyEditVal] = useState("");
+  const [proxySaving, setProxySaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -450,6 +456,51 @@ export default function RosettaAccountsPage() {
     }
   }
 
+  // 「恢复」= 后台手动清掉 lease 池运行时封禁(需验证/冷却/计数),立即放回候选池。
+  async function handleReactivate(accountId: string) {
+    setBusyId(accountId);
+    try {
+      const res = await fetch("/api/rosetta/reactivate-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "恢复失败");
+      toast.success(`#${accountId} 已恢复（清除封禁，放回候选池）`);
+      loadAccounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "恢复失败");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function startEditProxy(account: RosettaAccount) {
+    setProxyEditId(account.id);
+    setProxyEditVal(account.proxyUrl || "");
+  }
+
+  async function handleSaveProxy(account: RosettaAccount) {
+    setProxySaving(true);
+    try {
+      const res = await fetch("/api/rosetta/account-set-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "antigravity", accountId: account.id, proxyUrl: proxyEditVal.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success(proxyEditVal.trim() ? `${account.email} 出口代理已设置` : `${account.email} 出口代理已清除`);
+      setProxyEditId(null);
+      loadAccounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setProxySaving(false);
+    }
+  }
+
   async function handleDelete(accountId: string) {
     try {
       const res = await fetch("/api/rosetta/delete-account", {
@@ -565,6 +616,41 @@ export default function RosettaAccountsPage() {
             {account.enabled ? "启用" : "禁用"}
           </Badge>
         );
+      case "proxy":
+        return proxyEditId === account.id ? (
+          <div className="flex items-center gap-1">
+            <Input
+              className="h-7 text-xs"
+              autoFocus
+              placeholder="host:port:user:pass 或 http(s)://"
+              value={proxyEditVal}
+              onChange={(e) => setProxyEditVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveProxy(account);
+                if (e.key === "Escape") setProxyEditId(null);
+              }}
+            />
+            <Button size="sm" className="h-7 px-2" disabled={proxySaving} onClick={() => handleSaveProxy(account)}>
+              {proxySaving ? <Spinner size={12} /> : "保存"}
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setProxyEditId(null)}>
+              取消
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="block max-w-[220px] truncate text-left text-xs underline-offset-2 hover:underline"
+            title={account.proxyUrl || "点此设置出口代理"}
+            onClick={() => startEditProxy(account)}
+          >
+            {account.proxyUrl ? (
+              <span className="text-muted-foreground">{account.proxyUrl}</span>
+            ) : (
+              <span className="text-destructive">未配置·点此设置</span>
+            )}
+          </button>
+        );
       case "motherId":
         return <span className="font-mono text-xs">{account.motherId || "-"}</span>;
       case "seatId":
@@ -578,6 +664,7 @@ export default function RosettaAccountsPage() {
     switch (colKey) {
       case "id": return "w-16";
       case "modelQuota": return "w-[110px]";
+      case "proxy": return "w-[240px]";
       case "token": return "text-center";
       case "status": return "text-center";
       default: return "";
@@ -592,6 +679,7 @@ export default function RosettaAccountsPage() {
       case "planType": return "text-xs";
       case "familyRole": return "text-xs";
       case "familyStatus": return "text-xs";
+      case "proxy": return "max-w-[240px]";
       case "token": return "text-center";
       case "status": return "text-center";
       default: return "";
@@ -908,6 +996,21 @@ export default function RosettaAccountsPage() {
                                   : <Gauge className="size-3.5" />}
                               </TooltipTrigger>
                               <TooltipContent>刷新 token + 获取额度</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={busyId === account.id}
+                                    onClick={() => void handleReactivate(account.id)}
+                                  />
+                                }
+                              >
+                                <BadgeCheck className="size-3.5 text-amber-500" />
+                              </TooltipTrigger>
+                              <TooltipContent>恢复（清除冷却/需验证封禁，放回候选池）</TooltipContent>
                             </Tooltip>
                             <Button
                               variant="ghost"

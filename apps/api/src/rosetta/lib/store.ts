@@ -61,3 +61,49 @@ export class CachedJsonFile {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/**
+ * Normalize a raw exit-proxy string into a canonical proxy URL.
+ * Accepts:
+ *   - full URLs: http(s):// , socks5(h):// (returned as-is)
+ *   - shorthand host:port:user:pass  -> http://user:pass@host:port
+ *   - shorthand host:port            -> http://host:port
+ * Empty/blank -> "" (caller treats as "clear the proxy").
+ *
+ * Mirrors the scheme set understood by lease-core/egress.ts (server-side token
+ * refresh) and the Wails client's egress dialer.
+ */
+export function normalizeProxyUrl(raw: unknown): string {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^(https?|socks5h?):\/\//i.test(s)) return s;
+  const p = s.split(":");
+  if (p.length === 4) return `http://${p[2]}:${p[3]}@${p[0]}:${p[1]}`; // host:port:user:pass
+  if (p.length === 2) return `http://${p[0]}:${p[1]}`; // host:port(无鉴权)
+  return s;
+}
+
+/**
+ * Set (or clear, when proxyUrl is blank) the sticky exit proxy on one account in
+ * a provider's `{accounts:[...]}` JSON pool. Generic across providers — the only
+ * difference is the pool file path. Returns the affected account's email + the
+ * normalized proxy that was stored (empty string when cleared).
+ */
+export function setAccountProxyInPool(
+  filePath: string,
+  accountId: number,
+  rawProxyUrl: unknown,
+): { ok: true; email: string; proxyUrl: string } | { ok: false; error: string } {
+  const proxyUrl = normalizeProxyUrl(rawProxyUrl);
+  if (proxyUrl && !/^(https?|socks5h?):\/\//i.test(proxyUrl)) {
+    return { ok: false, error: "代理格式无效:用 host:port:user:pass(或 host:port),或 http(s):// / socks5:// URL" };
+  }
+  const data = readJson(filePath, { accounts: [] });
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  const account = accounts.find((item: any) => Number(item.id) === accountId);
+  if (!account) return { ok: false, error: "账号不存在" };
+  if (proxyUrl) account.proxyUrl = proxyUrl;
+  else delete account.proxyUrl;
+  writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+  return { ok: true, email: String(account.email || ""), proxyUrl };
+}

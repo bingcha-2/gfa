@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
@@ -36,6 +36,7 @@ type CodexAccount = {
   codexHourlyPercent: number;
   codexWeeklyPercent: number;
   modelQuotaRefreshedAt: number;
+  proxyUrl: string;
   quotaStatus?: string;
   quotaStatusReason?: string;
 };
@@ -69,6 +70,10 @@ export default function CodexAccountsPage() {
   const [busyId, setBusyId] = useState<number | null>(null);
   // 「刷新无额度账号」批量进行中。
   const [refreshingMissing, setRefreshingMissing] = useState(false);
+  // 出口代理行内编辑:正在编辑的账号 id、输入值、保存中。
+  const [proxyEditId, setProxyEditId] = useState<number | null>(null);
+  const [proxyEditVal, setProxyEditVal] = useState("");
+  const [proxySaving, setProxySaving] = useState(false);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -351,6 +356,26 @@ export default function CodexAccountsPage() {
     }
   }
 
+  // 「恢复」= 后台手动清掉 lease 池运行时封禁(需验证/冷却/计数),立即放回候选池。
+  async function handleReactivate(account: CodexAccount) {
+    setBusyId(account.id);
+    try {
+      const res = await fetch("/api/rosetta/codex-reactivate-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "恢复失败");
+      toast.success(`#${account.id} 已恢复（清除封禁，放回候选池）`);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "恢复失败");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   // 批量刷新所有「额度缺失(列表显示 —)」的账号,逐个走 codex-refresh-quota。
   // 也可当诊断用:点完看 toast 的成功/失败数,就知道拉额度接口通不通。
   async function handleRefreshMissing() {
@@ -380,6 +405,31 @@ export default function CodexAccountsPage() {
     if (fail) toast.error(`刷新完成:成功 ${ok},失败 ${fail}(共 ${targets.length})`);
     else toast.success(`已刷新 ${ok} 个无额度账号`);
     fetchAccounts(true);
+  }
+
+  function startEditProxy(account: CodexAccount) {
+    setProxyEditId(account.id);
+    setProxyEditVal(account.proxyUrl || "");
+  }
+
+  async function handleSaveProxy(account: CodexAccount) {
+    setProxySaving(true);
+    try {
+      const res = await fetch("/api/rosetta/account-set-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "codex", accountId: account.id, proxyUrl: proxyEditVal.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success(proxyEditVal.trim() ? `#${account.id} 出口代理已设置` : `#${account.id} 出口代理已清除`);
+      setProxyEditId(null);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setProxySaving(false);
+    }
   }
 
   if (loading) {
@@ -525,6 +575,7 @@ export default function CodexAccountsPage() {
                   <TableHead>周剩余</TableHead>
                   <TableHead>Token</TableHead>
                   <TableHead>状态</TableHead>
+                  <TableHead>出口代理</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead>入池</TableHead>
@@ -548,6 +599,42 @@ export default function CodexAccountsPage() {
                     <TableCell>
                       <AccountStatusCell account={a} />
                     </TableCell>
+                    <TableCell className="max-w-[240px]">
+                      {proxyEditId === a.id ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            className="h-7 text-xs"
+                            autoFocus
+                            placeholder="host:port:user:pass 或 http(s)://"
+                            value={proxyEditVal}
+                            onChange={(e) => setProxyEditVal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveProxy(a);
+                              if (e.key === "Escape") setProxyEditId(null);
+                            }}
+                          />
+                          <Button size="sm" className="h-7 px-2" disabled={proxySaving} onClick={() => handleSaveProxy(a)}>
+                            {proxySaving ? <Spinner size={12} /> : "保存"}
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setProxyEditId(null)}>
+                            取消
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="block max-w-[220px] truncate text-left text-xs underline-offset-2 hover:underline"
+                          title={a.proxyUrl || "点此设置出口代理"}
+                          onClick={() => startEditProxy(a)}
+                        >
+                          {a.proxyUrl ? (
+                            <span className="text-muted-foreground">{a.proxyUrl}</span>
+                          ) : (
+                            <span className="text-destructive">未配置·点此设置</span>
+                          )}
+                        </button>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={Number(a.usedShares || 0) >= Number(a.shareCapacity || 4) ? "destructive" : "secondary"}>
                         {Number(a.usedShares || 0)}/{Number(a.shareCapacity || 4)} 份
@@ -570,6 +657,10 @@ export default function CodexAccountsPage() {
                       <Button variant="ghost" size="icon" title="刷新 token + 获取额度" disabled={busyId === a.id}
                         onClick={() => handleRefresh(a)}>
                         {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+                      </Button>
+                      <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
+                        onClick={() => handleReactivate(a)}>
+                        <BadgeCheckIcon className="size-4 text-amber-500" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
                         <Trash2Icon className="size-4 text-destructive" />

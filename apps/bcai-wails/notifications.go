@@ -51,7 +51,8 @@ type Notification struct {
 // actionableHints (lowercased) mark errors the user must DO something about —
 // these never self-heal, so they get a blocking banner with a clear next step.
 var actionableHints = []string{
-	"invalid_grant", "鉴权失效", "联系客服", "重新绑定", "重新授权",
+	"invalid_grant", "鉴权失效", "联系客服", "联系管理员", "重新绑定", "重新授权",
+	"需要验证", "需验证", // 验证挑战:号需人工验证,短重试无用 → 明确提示用户/管理员去验证
 	"代理未配置", "proxyurl",
 	"端口", "占用", "启动失败",
 	"不存在或已禁用",

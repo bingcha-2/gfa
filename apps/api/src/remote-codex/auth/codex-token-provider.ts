@@ -1,3 +1,5 @@
+import { proxyAwareFetch } from "../../lease-core/egress";
+
 const CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -10,6 +12,9 @@ export type CodexAccount = {
   accessTokenExpiresAt?: number;
   enabled?: boolean;
   planType?: string;
+  // Optional sticky per-account exit proxy (residential IP). When set, the token
+  // refresh is routed through it so refresh and inference share one egress IP.
+  proxyUrl?: string;
   [key: string]: unknown;
 };
 
@@ -28,11 +33,19 @@ export async function refreshCodexAccessToken(account: CodexAccount): Promise<st
     scope: "openid profile email",
   });
 
-  const response = await fetch(CODEX_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-  });
+  // Route through the account's exit proxy when one is set (same egress IP as
+  // inference). A bad/unsupported proxy URL throws rather than silently going
+  // direct from the datacenter IP.
+  let response: Response;
+  try {
+    response = await proxyAwareFetch(account.proxyUrl, CODEX_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  } catch (err) {
+    throw new Error(`Codex token refresh failed for ${account.email}: ${(err as Error).message}`);
+  }
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Codex token refresh failed for ${account.email}: ${response.status} ${text}`);

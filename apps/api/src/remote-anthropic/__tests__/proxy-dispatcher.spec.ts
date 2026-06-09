@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { proxyDispatcherFor } from "../auth/proxy-dispatcher";
+import { proxyDispatcherFor } from "../../lease-core/egress";
 
 describe("proxyDispatcherFor", () => {
   it("returns undefined for empty/blank proxy (direct connection)", () => {

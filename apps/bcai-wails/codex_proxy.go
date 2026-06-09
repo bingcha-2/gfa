@@ -318,9 +318,10 @@ func (p *CodexProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, dev
 	// not a hard total timeout).
 	// 发往 chatgpt.com 走 uTLS(Chrome 指纹)绕过 Cloudflare TLS 指纹拦截;
 	// fallback 内部对非受保护域名自动回退到标准 transport。
-	client := createCodexStreamingHttpClient(upstreamProxy)
+	// 出口:优先走所租账号绑定的住宅代理(egress);没绑定就本地直连(用户代理→系统→直连)。
+	// codex 为 optional:绑定代理传输失败时降级本地直连重试一次,再不行才落到下面切号上报。
 	reqStart := time.Now()
-	resp, err := client.Do(req)
+	resp, err := doUpstreamWithFallback(lease.EgressInfo, upstreamProxy, body, req, createCodexStreamingHttpClient)
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502

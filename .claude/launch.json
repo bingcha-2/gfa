@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gfa-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["-C", "GFA/apps/web", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "bcai-client-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["-C", "GFA/apps/bcai-wails/frontend", "dev", "--port", "5273", "--strictPort"],
+      "port": 5273
+    }
+  ]
+}

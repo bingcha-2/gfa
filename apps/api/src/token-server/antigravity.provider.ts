@@ -21,6 +21,8 @@ export type AntigravityProviderOptions = {
  */
 export class AntigravityProvider implements Provider<TokenAccount> {
   readonly id = "antigravity";
+  // 绑定代理则用,没绑定就本地直连(fail-open);代理传输失败先降级本地再切号。
+  readonly egressPolicy = "optional" as const;
   readonly accountsFilePath: string;
   readonly models = new AntigravityModelCatalog();
   private readonly tokenProvider: (account: TokenAccount) => Promise<string>;

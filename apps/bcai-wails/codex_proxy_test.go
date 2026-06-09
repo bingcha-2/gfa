@@ -377,3 +377,85 @@ func TestCodexProxyRelayCompactPath(t *testing.T) {
 		t.Fatalf("upstream path = %s, want /responses/compact", gotPath)
 	}
 }
+
+// codexUsageJSON 是一个最小的 codex 生成响应(带 usage),供测试上游/代理返回。
+func codexUsageJSON(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id": "resp_1", "object": "response",
+		"usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+	})
+}
+
+// 集成:租到的号带绑定出口代理时,生成请求必须经该代理出站(而非从本机直连上游)。
+// upstreamBase 指向一个不可达地址,只有真正走了绑定代理才能拿到 200。
+func TestCodexProxyRoutesGenerationThroughBoundEgressProxy(t *testing.T) {
+	proxyHit := make(chan struct{}, 1)
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case proxyHit <- struct{}{}:
+		default:
+		}
+		codexUsageJSON(w)
+	}))
+	defer proxySrv.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: "http://127.0.0.1:1", // 不可达:直连必失败,只有经代理才能成功
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{
+				AccessToken: "codex-access-token", AccountId: 7, LeaseId: "lease-7",
+				EgressInfo: EgressInfo{ProxyURL: proxySrv.URL, EgressRequired: false},
+			}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) {},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-proxyHit:
+	default:
+		t.Fatal("生成请求没有经过绑定出口代理")
+	}
+}
+
+// 集成:绑定出口代理在传输层挂掉时,codex(optional)必须降级本机直连重试并成功。
+func TestCodexProxyDegradesToLocalWhenBoundProxyFails(t *testing.T) {
+	upstreamHit := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case upstreamHit <- struct{}{}:
+		default:
+		}
+		codexUsageJSON(w)
+	}))
+	defer upstream.Close()
+
+	proxy := &CodexProxy{
+		upstreamBase: upstream.URL,
+		leaseToken: func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {
+			return &CodexTokenLease{
+				AccessToken: "codex-access-token", AccountId: 7, LeaseId: "lease-7",
+				EgressInfo: EgressInfo{ProxyURL: "http://127.0.0.1:1", EgressRequired: false}, // 死代理
+			}, nil
+		},
+		reportResult: func(card, deviceId string, d ReportDetails, up string, l *CodexTokenLease) {},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":"hi"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req, "codex-card", "device-a", "direct") // userProxy="direct" → 降级走本机直连
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("降级后应 200,got %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-upstreamHit:
+	default:
+		t.Fatal("降级后没有打到本机直连的上游")
+	}
+}

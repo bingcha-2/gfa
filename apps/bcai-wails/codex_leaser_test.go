@@ -46,3 +46,31 @@ func TestCodexHardLimitReturnsStructuredErrorAndDoesNotBlock(t *testing.T) {
 		t.Fatalf("codex must not block; want 2 upstream hits, got %d", hits)
 	}
 }
+
+// codex 同样从 lease 解析出口代理,但策略 optional(egressRequired=false):绑了就走、没绑本地直连。
+func TestCodexLeaseTokenParsesEgressInfo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":              true,
+			"accessToken":     "codex-leased",
+			"accountId":       9,
+			"leaseId":         "lease-2",
+			"accountProxyUrl": "http://res.codex:8080",
+			"egressRequired":  false,
+		})
+	}))
+	defer srv.Close()
+	withCodexAPIBase(t, srv.URL)
+
+	l := &CodexLeaser{}
+	lease, err := l.LeaseToken("card-1", "dev", true, nil, "")
+	if err != nil {
+		t.Fatalf("LeaseToken: %v", err)
+	}
+	if lease.ProxyURL != "http://res.codex:8080" {
+		t.Fatalf("lease.ProxyURL = %q, want bound proxy", lease.ProxyURL)
+	}
+	if lease.EgressRequired {
+		t.Fatalf("codex lease must be optional (EgressRequired=false)")
+	}
+}

@@ -122,25 +122,88 @@ func sanitizeAccountProblemReason(value string) string {
 // Streaming quota error detection
 // ═══════════════════════════════════════════════════════════════════════════
 
+// errorKeyNeedle 是 JSON 错误对象的键。热路径(每 chunk)用它做零分配的"是否可能含
+// 上游错误"预判 —— 包级变量,避免每次 []byte("...") 转换可能的分配。
+var errorKeyNeedle = []byte(`"error"`)
+
 // checkStreamingQuotaError detects quota/capacity exhaustion errors in
 // streaming response chunks. Mirrors the extension's getStreamingRotationDetails
 // (token-proxy.js L943-971).
+//
+// 结构化判定:只在【上游返回的顶层 error 对象】里匹配,绝不扫模型正文
+// (candidates / content / parts / functionCall / inlineData)。Google 的
+// cloudcode-pa 会用 HTTP 200 把配额错误塞进 SSE 流体,但永远是 {"error":{...}}
+// 结构;模型正常产出/工具调用里即使出现 "resource_exhausted" 等字样也只是内容,
+// 不是上游错误,绝不能据此掐流(否则截断生图/工具调用)。
 func checkStreamingQuotaError(chunk string) (reason, modelKey string, retryAfterMs int64) {
-	lower := strings.ToLower(chunk)
-	mk := extractCapacityModelKey(chunk)
+	// 快速路径(热路径性能):本函数对每个流 chunk 的 4KB 滑窗都会被调一次。绝大多数
+	// chunk 是正常模型内容,连 JSON 的 "error" 键都没有 —— 直接 substring 判一下就返回,
+	// 不做 split / json 解析。只有真出现 "error" 键时才走下面的结构化解析(此时才可能是
+	// Google 200-内嵌错误)。
+	if !strings.Contains(chunk, `"error"`) {
+		return "", "", 0
+	}
+	errDoc := extractGoogleErrorDoc(chunk)
+	if errDoc == "" {
+		return "", "", 0
+	}
+	lower := strings.ToLower(errDoc)
+	mk := extractCapacityModelKey(errDoc)
 
 	if strings.Contains(lower, "baseline model quota reached") ||
 		strings.Contains(lower, "quota reached") ||
 		strings.Contains(lower, "quota_exhausted") ||
 		strings.Contains(lower, "resource_exhausted") {
-		return "quota", mk, extractQuotaResetDelayMs(chunk)
+		return "quota", mk, extractQuotaResetDelayMs(errDoc)
 	}
 	if strings.Contains(lower, "model_capacity_exhausted") ||
 		strings.Contains(lower, "no capacity available") ||
 		strings.Contains(lower, "capacity available for model") {
-		return "capacity", mk, extractQuotaResetDelayMs(chunk)
+		return "capacity", mk, extractQuotaResetDelayMs(errDoc)
 	}
 	return "", "", 0
+}
+
+// extractGoogleErrorDoc 从一段(可能含多条 SSE 事件 / JSON 数组分片的)流文本里,
+// 找出第一个带【非空顶层 error 字段】的完整 JSON 文档并原样返回(形如
+// {"error":{...}});找不到返回 ""。用结构判定取代裸子串:模型正文里的
+// candidates/content 不带顶层 error,天然不会命中。
+func extractGoogleErrorDoc(chunk string) string {
+	for _, cand := range jsonObjectCandidates(chunk) {
+		var probe struct {
+			Error json.RawMessage `json:"error"`
+		}
+		if json.Unmarshal([]byte(cand), &probe) != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(probe.Error))
+		if trimmed != "" && trimmed != "null" {
+			return cand
+		}
+	}
+	return ""
+}
+
+// jsonObjectCandidates 从流文本里拆出"可能是完整 JSON 对象"的候选串:逐行
+// (去掉 SSE 的 data: 前缀)+ 整段兜底,剥掉数组流分片的包裹符 [ , ],只保留
+// 以 { 开头的串。错误事件通常自成一行,逐行解析比裸扫整段更稳、零误判。
+func jsonObjectCandidates(chunk string) []string {
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		s = strings.TrimPrefix(s, "data:")
+		s = strings.TrimSpace(s)
+		s = strings.Trim(s, "[],") // 数组流分片:剥掉首尾的 [ ] ,
+		s = strings.TrimSpace(s)
+		if strings.HasPrefix(s, "{") {
+			out = append(out, s)
+		}
+	}
+	for _, line := range strings.Split(chunk, "\n") {
+		add(line)
+	}
+	add(chunk) // 单行 / 无换行的 firstChunk 兜底
+	return out
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

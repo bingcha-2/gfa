@@ -1478,4 +1478,31 @@ describe("RosettaService", () => {
       });
     });
   });
+
+  describe("setAccountProxy (通用出口代理路由)", () => {
+    const readProxy = (dir: string, file: string) =>
+      JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).accounts[0].proxyUrl;
+
+    it("routes each provider to its own pool file and normalizes the proxy", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      // 写在构造之后,避免 claude→anthropic 迁移动到预置文件。
+      writeJson(path.join(tempDir, "anthropic-accounts.json"), { accounts: [{ id: 1, email: "a@x.com", refreshToken: "r" }] });
+      writeJson(path.join(tempDir, "codex-accounts.json"), { accounts: [{ id: 2, email: "c@x.com", refreshToken: "r" }] });
+      writeJson(path.join(tempDir, "accounts.json"), { accounts: [{ id: 3, email: "g@x.com", refreshToken: "r" }] });
+
+      expect(svc.setAccountProxy({ provider: "anthropic", accountId: 1, proxyUrl: "socks5://h:1" })).toMatchObject({ ok: true, proxyUrl: "socks5://h:1" });
+      expect(svc.setAccountProxy({ provider: "codex", accountId: 2, proxyUrl: "1.2.3.4:8000:u:p" })).toMatchObject({ ok: true, proxyUrl: "http://u:p@1.2.3.4:8000" });
+      expect(svc.setAccountProxy({ provider: "antigravity", accountId: 3, proxyUrl: "http://h:2" })).toMatchObject({ ok: true, proxyUrl: "http://h:2" });
+
+      expect(readProxy(tempDir, "anthropic-accounts.json")).toBe("socks5://h:1");
+      expect(readProxy(tempDir, "codex-accounts.json")).toBe("http://u:p@1.2.3.4:8000");
+      expect(readProxy(tempDir, "accounts.json")).toBe("http://h:2");
+    });
+
+    it("rejects an unknown provider without touching any pool", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      const res = svc.setAccountProxy({ provider: "bogus", accountId: 1, proxyUrl: "socks5://h:1" });
+      expect(res.ok).toBe(false);
+    });
+  });
 });

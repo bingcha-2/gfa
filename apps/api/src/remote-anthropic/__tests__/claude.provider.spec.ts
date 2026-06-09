@@ -135,18 +135,21 @@ describe("ClaudeProvider.leaseResponseExtras", () => {
     expect(provider.leaseResponseExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any)).toEqual({});
   });
 
-  it("surfaces the account's sticky proxy URL so the client pins that account's egress IP", () => {
+  // The sticky exit proxy is no longer a claude-specific lease extra — it is
+  // surfaced generically by LeaseService as `accountProxyUrl` for every provider,
+  // and anthropic declares egressPolicy "required" (fail-closed). leaseResponseExtras
+  // therefore carries no proxy field of its own.
+  it("does not put any proxy field in leaseResponseExtras (proxy is generic now)", () => {
     const provider = new ClaudeProvider();
     const extras = provider.leaseResponseExtras({
       id: 1, email: "a@b.c", refreshToken: "r", proxyUrl: "socks5://u:p@res.example:1080",
     } as any);
-    expect(extras.claudeProxyUrl).toBe("socks5://u:p@res.example:1080");
+    expect(extras.claudeProxyUrl).toBeUndefined();
+    expect(extras.accountProxyUrl).toBeUndefined();
   });
 
-  it("omits claudeProxyUrl when the account has no proxy configured", () => {
-    const provider = new ClaudeProvider();
-    const extras = provider.leaseResponseExtras({ id: 1, email: "a@b.c", refreshToken: "r" } as any);
-    expect(extras.claudeProxyUrl).toBeUndefined();
+  it("declares the required egress policy so the client fails closed without a bound proxy", () => {
+    expect(new ClaudeProvider().egressPolicy).toBe("required");
   });
 });
 

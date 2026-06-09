@@ -35,6 +35,7 @@ export class AntigravityAccountService {
       alias: String(account.alias || ""),
       projectId: String(account.projectId || ""),
       planType: String(account.planType || ""),
+      proxyUrl: String(account.proxyUrl || ""),
       hasToken: Boolean(account.refreshToken),
       boundCardCount: boundCounts.get(Number(account.id || 0)) || 0,
       usedShares: shares.get(Number(account.id || 0)) || 0,

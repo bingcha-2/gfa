@@ -24,6 +24,19 @@ export interface Provider<TAccount> {
   /** Absolute path to this provider's account-pool JSON. */
   accountsFilePath: string;
 
+  /**
+   * Exit-proxy (egress) policy, surfaced to the client as `egressRequired` on
+   * every lease so the client needs no per-provider branching:
+   *  - "required" (anthropic): the client MUST egress through the account's
+   *    bound proxy; with none configured it refuses to connect (never touches
+   *    the upstream from the user's local IP).
+   *  - "optional" (codex / antigravity): use the bound proxy when present, else
+   *    egress locally (user proxy → system proxy → direct). A bound proxy that
+   *    fails at the transport layer degrades to a local-direct retry before the
+   *    request is failed and the account rotated.
+   */
+  egressPolicy: "required" | "optional";
+
   /** Refresh (or return cached) upstream access token for an account. */
   refreshToken(account: TAccount): Promise<string>;
 

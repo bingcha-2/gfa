@@ -328,10 +328,13 @@ func TestExtractCapacityModelKey_Empty(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 func TestCheckStreamingQuotaError_Quota(t *testing.T) {
+	// 结构化判定:真·上游错误都带 {"error":{...}} 包裹。覆盖裸 JSON / SSE data 行 / 数组分片。
 	cases := []string{
-		`"status":"RESOURCE_EXHAUSTED"`,
-		`baseline model quota reached`,
-		`QUOTA_EXHAUSTED`,
+		`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"x"}}`,
+		`{"error":{"message":"baseline model quota reached"}}`,
+		`{"error":{"status":"QUOTA_EXHAUSTED"}}`,
+		"data: {\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n",
+		`[{"error":{"status":"RESOURCE_EXHAUSTED"}}]`,
 	}
 	for _, chunk := range cases {
 		reason, _, _ := checkStreamingQuotaError(chunk)
@@ -343,8 +346,8 @@ func TestCheckStreamingQuotaError_Quota(t *testing.T) {
 
 func TestCheckStreamingQuotaError_Capacity(t *testing.T) {
 	cases := []string{
-		`MODEL_CAPACITY_EXHAUSTED`,
-		`No capacity available for model gemini-2.5-pro`,
+		`{"error":{"status":"UNAVAILABLE","message":"MODEL_CAPACITY_EXHAUSTED"}}`,
+		`{"error":{"code":503,"message":"No capacity available for model gemini-2.5-pro"}}`,
 	}
 	for _, chunk := range cases {
 		reason, _, _ := checkStreamingQuotaError(chunk)

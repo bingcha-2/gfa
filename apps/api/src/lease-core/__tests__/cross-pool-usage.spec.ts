@@ -26,6 +26,7 @@ function makeProvider(id: string, accountsFilePath: string): Provider<any> {
     }),
     isAccountEligible: () => true,
     applyQuotaSnapshot: (account: any) => ({ account, creditDelta: null }),
+    egressPolicy: "optional" as const,
     leaseResponseExtras: () => ({}),
   } as unknown as Provider<any>;
 }

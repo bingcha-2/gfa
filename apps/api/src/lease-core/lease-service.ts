@@ -18,6 +18,10 @@ import {
   REMOTE_ACCOUNT_ERROR_THRESHOLD,
   REMOTE_TRANSIENT_ERROR_COOLDOWN_MS,
   TOKEN_REFRESH_FAILURE_COOLDOWN_MS,
+  PERMANENT_DEATH_STRIKE_THRESHOLD,
+  PERMANENT_DEATH_FIRST_COOLDOWN_MS,
+  PERMANENT_DEATH_COOLDOWN_MS,
+  isPermanentDeathReason,
   accessKeySessionTtlMs,
   affinityKey,
   normalizeModelKey,
@@ -112,6 +116,7 @@ type AccountRuntimeState = {
   exhaustedUntil: number;
   consecutiveErrors: number;
   transientErrors: number;
+  deathStrikes: number;
   lastUsedAt: number;
   blockedModels: Map<string, { modelKey: string; reason: string; blockedAt: number; blockedUntil: number }>;
 };
@@ -121,10 +126,16 @@ type ActiveLeaseIndex = Map<number, { total: number; perModel: Map<string, numbe
 
 const MAX_TOKEN_REFRESH_CANDIDATES = 5;
 const MAX_TOKEN_CANDIDATE_SCAN_CAP = 30;
-const QUOTA_EXHAUSTION_COOLDOWN_CAP_MS = 60 * 60 * 1000;
+// 429 配额耗尽:reset 时间【未知】时的保守默认冷却(谷歌主窗 5h)。
+const QUOTA_EXHAUSTION_COOLDOWN_DEFAULT_MS = 5 * 60 * 60 * 1000;
+// 已知 reset 时冷却到 reset 为止,但以谷歌最长的【周窗】为上限,防快照脏数据把号冷死几周/几月。
+const QUOTA_RESET_MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // 403 冷却的封顶(也是无 retry-after 时的默认)。短 —— 403 多为瞬时验证挑战/反滥用,
 // 绑定卡无备号,长冷却=该模型几小时不可用。瞬时挑战 ~60s 内自愈。
 const FORBIDDEN_COOLDOWN_MS = 60 * 1000;
+// 验证挑战(需人工去验证)自动复检间隔:300 分钟。号主/管理员验证好后,一次成功即提前解封;
+// 否则到点自动复检一次。也可由后台手动恢复立即清除(reactivateAccount)。
+const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
 const REPORT_GRACE_MS = 60 * 1000;
 const ACCOUNTS_FLUSH_MS = 60_000; // 1 minute debounce
 
@@ -497,7 +508,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // account is unavailable so the user isn't told "额度恢复中" forever when
       // the account is actually gone / disabled / auth-broken.
       if (boundAccountId) throw this.fail(503, this.boundUnavailableMessage(boundAccountId));
-      throw this.fail(503, lastError?.message || this.noAccountMessage);
+      // 没有候选号(整池都被冷却/耗尽)→ 若主因是 503 容量冷却,明说官方上游抽风,
+      // 而不是笼统的"额度恢复中"。lastError(token 刷新真错误)优先透出。
+      throw this.fail(503, lastError?.message || this.poolUnavailableMessage(modelKey));
     }
 
     this.mutateAccount(account.id, () => ({ ...(account as TAccount) }));
@@ -555,6 +568,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // leased). Empty {} when the account has no quota snapshots yet.
       accountBuckets: accountBucketsData,
       ...this.provider.leaseResponseExtras(account),
+      // 通用出口代理:该号绑定的粘性住宅出口(空=未绑定)。客户端据此固定出口 IP。
+      accountProxyUrl: String((account as any).proxyUrl || "").trim(),
+      // 出口策略下发为布尔,客户端无需写死 provider 名:
+      // required(anthropic)=无代理则拒连;optional(codex/antigravity)=无代理走本地直连。
+      egressRequired: this.provider.egressPolicy === "required",
       expiresAt: lease.expiresAt,
       accessTokenExpiresAt: lease.expiresAt,
       probation: false,
@@ -595,10 +613,99 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       return "此卡绑定的账号不可用（不存在或已禁用），请联系客服";
     }
     const runtime = this.accountRuntime.get(boundAccountId);
+    // 永久死亡(项目删/禁、封号、地区不支持):首次命中时 quotaStatus 还是 "exhausted"
+    // (尚未升级到 "error"),但它绝不会自愈 —— 别再显示"额度恢复中"误导用户白等首档
+    // 冷却,直接给可操作的 block 文案(含"联系客服" → 客户端红 banner)。
+    if (isPermanentDeathReason(runtime?.quotaStatusReason)) {
+      return "此卡绑定的账号不可用（账号或项目异常），请联系客服重新绑定/换号";
+    }
+    // 验证挑战:号需人工验证,绑定卡无法自助 → 提示联系管理员去验证。
+    if (runtime?.quotaStatusReason === "verification_required") {
+      return "此卡绑定的账号需要验证，请联系管理员完成账号验证后再用";
+    }
     if (runtime?.quotaStatus === "error") {
       return "此卡绑定的账号鉴权失效，请联系客服重新绑定/换号";
     }
     return this.busyMessage;
+  }
+
+  /** 用户可读的产品名(用于号池不可用文案)。 */
+  private productLabel(): string {
+    switch (this.provider.id) {
+      case "antigravity":
+        return "Gemini";
+      case "anthropic":
+        return "Claude";
+      case "codex":
+        return "Codex";
+      default:
+        return this.provider.id;
+    }
+  }
+
+  /**
+   * 整个号池都租不到时的文案(已被客户端的重试循环扫过一遍仍无可用号)。
+   * 若池子空主要是因为账号处于【容量/503 冷却(cooling)】,就直说是【官方上游抽风】、
+   * 不是用户额度问题 —— 而不是误导性的"额度恢复中"。antigravity(Gemini)单独加重语气,
+   * 因为谷歌官方 503 抽风是家常便饭。
+   */
+  private poolUnavailableMessage(modelKey: string): string {
+    const now = this.now();
+    const normalized = normalizeModelKey(modelKey);
+    let cooling = 0;
+    let exhausted = 0;
+    for (const account of this.readAccounts()) {
+      const a = account as any;
+      if (a.enabled === false || a.poolEnabled === false) continue;
+      if (!this.provider.isAccountEligible(account)) continue;
+      if (!(account.refreshToken || a.accessToken)) continue;
+      const state = this.accountRuntime.get(account.id);
+      if (!state) continue;
+      // 只数"对【当前 modelKey】仍在封禁窗口内"的号,按其真实封禁 reason 分类。
+      const cls = this.modelBlockClass(state, normalized, now);
+      if (cls === "cooling") cooling++;
+      else if (cls === "exhausted") exhausted++;
+    }
+    // 主因是容量/503(cooling)→ 明说官方上游抽风,别误导成"额度恢复中"。
+    if (cooling > 0 && cooling >= exhausted) {
+      const label = `${this.productLabel()}${modelKey ? `（${modelKey}）` : ""}`;
+      if (this.provider.id === "antigravity") {
+        return `antigravity 又抽风了：号池所有账号都试过了，全被挡了 503（服务过载），请跟我一起说：sb谷歌`;
+      }
+      return `${label} 官方上游暂不稳定（503 容量不足）：号池已全部重试仍失败，请稍后再试。`;
+    }
+    // 非 503 主因(额度耗尽/其它)→ 沿用原"无可用号"文案(各产品可定制),行为不变。
+    return this.noAccountMessage;
+  }
+
+  /**
+   * 判定某账号针对【指定 model】当前的封禁类别(只看仍生效的冷却,过期 stale 不算):
+   *   "cooling"   → 503/容量(谷歌官方抽风)
+   *   "exhausted" → 429/配额(号自身额度用尽)
+   *   ""          → 对该 model 未被封 / 已过期 / 死号(error)等,不计入 503-vs-429 票数
+   * 与 isAccountBlocked 的封禁判定同构:优先看 per-model 封禁,无 per-model 时看账号级冷却。
+   */
+  private modelBlockClass(
+    state: AccountRuntimeState,
+    normalizedModel: string,
+    now: number,
+  ): "cooling" | "exhausted" | "" {
+    const isCapacity = (reason: string) => reason.includes("capacity") || reason.includes("503");
+    if (normalizedModel) {
+      const b = state.blockedModels.get(normalizedModel);
+      if (b && b.blockedUntil > now) {
+        return isCapacity(String(b.reason)) ? "cooling" : "exhausted";
+      }
+    }
+    // 账号级冷却(无 per-model 封禁,如不带 modelKey 的冷却)且仍生效。
+    if (
+      state.blockedModels.size === 0 &&
+      state.exhaustedUntil > now &&
+      (state.quotaStatus === "cooling" || state.quotaStatus === "exhausted")
+    ) {
+      return state.quotaStatus;
+    }
+    return "";
   }
 
   /**
@@ -767,7 +874,17 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         this.clearAffinity(accountId, lease.clientId, modelKey);
       }
       if (accountId) {
-        if (status === 429 || status === 503) {
+        const reportedReason = String(payload?.reason || "");
+        if ((status === 403 || status === 400) && isPermanentDeathReason(reportedReason)) {
+          // 账号/项目级永久死亡(service_disabled / 封号 / 地区不支持):reason 细分 +
+          // 计数升级,别再当 60s/30s 瞬时(详见 markAccountPermanentDeath)。
+          this.markAccountPermanentDeath(accountId, reportedReason);
+        } else if (status === 403 && reportedReason.includes("verification")) {
+          // 验证挑战:号被 Google 风控,【要人去验证】才能用,不是 60s 能自愈的瞬时错误。
+          // 标成"需验证/不可用"状态(控制台红点 + "需验证"标签)+ 持久化,30min 后自动复检;
+          // 验证通过后一次成功(markAccountSuccess,verification 不在不复活名单)即解封。
+          this.markAccountVerificationRequired(accountId);
+        } else if (status === 429 || status === 503) {
           const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
           const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
@@ -1227,7 +1344,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!state) {
       state = {
         quotaStatus: "ok", quotaStatusReason: "", exhaustedAt: 0,
-        exhaustedUntil: 0, consecutiveErrors: 0, transientErrors: 0, lastUsedAt: 0,
+        exhaustedUntil: 0, consecutiveErrors: 0, transientErrors: 0, deathStrikes: 0, lastUsedAt: 0,
         blockedModels: new Map(),
       };
       this.accountRuntime.set(accountId, state);
@@ -1312,6 +1429,27 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   /**
+   * 后台「手动启用/恢复」:把该号的【运行时】封禁状态彻底清掉(quotaStatus/冷却/计数/
+   * per-model 封禁),并清除磁盘上的持久化死号标记 —— 立即放回候选池。
+   * 必须走这里而不是只改文件 enabled:运行时封禁存在内存 accountRuntime,只在进程启动时
+   * 从磁盘 rehydrate 一次,光改文件不会实时解封(尤其"需验证"是 quotaStatus=error)。
+   */
+  reactivateAccount(accountId: number): { ok: boolean; error?: string } {
+    if (!Number.isFinite(accountId) || accountId <= 0) return { ok: false, error: "无效 accountId" };
+    const state = this.ensureRuntime(accountId);
+    state.quotaStatus = "ok";
+    state.quotaStatusReason = "";
+    state.exhaustedAt = 0;
+    state.exhaustedUntil = 0;
+    state.consecutiveErrors = 0;
+    state.transientErrors = 0;
+    state.deathStrikes = 0;
+    state.blockedModels.clear();
+    this.clearPersistedAccountError(accountId);
+    return { ok: true };
+  }
+
+  /**
    * Persist a dead-account verdict (quotaStatus/reason/blockedUntil) to the
    * accounts file. Runtime state alone is wiped on restart, which silently
    * revives dead accounts into the pool and leaves the console showing them as
@@ -1340,8 +1478,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
     const account = this.readAccounts().find((a) => a.id === accountId);
     const resetAt = account ? getModelQuotaResetAt(account, modelKey) : 0;
-    const remaining = resetAt > this.now() ? resetAt - this.now() : QUOTA_EXHAUSTION_COOLDOWN_CAP_MS;
-    return Math.min(remaining, QUOTA_EXHAUSTION_COOLDOWN_CAP_MS);
+    // 已知配额 reset 时间 → 冷却到 reset 为止(信任快照),但以谷歌最长的【周窗】封顶防脏数据。
+    // 不在 reset 前提前重试(否则必然又 429、再冷却,白烧一个换号位)。
+    if (resetAt > this.now()) return Math.min(resetAt - this.now(), QUOTA_RESET_MAX_COOLDOWN_MS);
+    // 未知 reset → 回落到保守默认(谷歌主窗 5h)。
+    return QUOTA_EXHAUSTION_COOLDOWN_DEFAULT_MS;
   }
 
   private markAccountExhausted(accountId: number, modelKey: string, reason: string, cooldownMs: number) {
@@ -1390,12 +1531,60 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
   }
 
+  /**
+   * Account/project-level PERMANENT death (service_disabled, suspended/restricted,
+   * location_unsupported) — distinguished from transient 403/400 by reason. These
+   * never self-heal on their own, so a flat ≤60s cooldown just recycles the dead
+   * account every minute and re-burns a rotation slot. Strike-escalate instead:
+   *   1st strike → medium account-wide cooldown (tolerate a one-off misclassification
+   *                or a transient anti-abuse 403 that happens to match a marker);
+   *   ≥ threshold → persisted dead verdict (quotaStatus=error), like invalid_grant:
+   *                survives restart, not revived by a success report, re-probed only
+   *                after the long cooldown expires.
+   */
+  private markAccountPermanentDeath(accountId: number, reason: string) {
+    const state = this.ensureRuntime(accountId);
+    const now = this.now();
+    state.deathStrikes++;
+    // Account-wide: clear per-model blocks so isAccountBlocked sees an empty map and
+    // blocks every model (a dead project/account is not model-scoped).
+    state.blockedModels.clear();
+    state.exhaustedAt = now;
+    state.quotaStatusReason = reason;
+    if (state.deathStrikes >= PERMANENT_DEATH_STRIKE_THRESHOLD) {
+      state.quotaStatus = "error";
+      state.exhaustedUntil = now + PERMANENT_DEATH_COOLDOWN_MS;
+      this.persistQuotaStatus(accountId, state);
+    } else {
+      state.quotaStatus = "exhausted";
+      state.exhaustedUntil = now + PERMANENT_DEATH_FIRST_COOLDOWN_MS;
+    }
+  }
+
+  /**
+   * 验证挑战(403 account_verification_required):号被 Google 风控,需人工去验证才能用。
+   * 标成"需验证/不可用":quotaStatus=error(控制台红点、出池)+ quotaStatusReason=
+   * "verification_required"(控制台显示"需验证"标签)+ 持久化(跨重启)。30min 后自动复检;
+   * 验证通过后一次成功即由 markAccountSuccess 解封(verification 不在不复活名单)。
+   */
+  private markAccountVerificationRequired(accountId: number) {
+    const state = this.ensureRuntime(accountId);
+    const now = this.now();
+    state.blockedModels.clear(); // 账号级:整号不可用,非按 model
+    state.quotaStatus = "error";
+    state.quotaStatusReason = "verification_required";
+    state.exhaustedAt = now;
+    state.exhaustedUntil = now + VERIFICATION_RECHECK_COOLDOWN_MS; // 300min 自动复检
+    this.persistQuotaStatus(accountId, state);
+  }
+
   private markAccountSuccess(accountId: number, modelKey: string) {
     const state = this.accountRuntime.get(accountId);
     if (!state) return;
 
     state.consecutiveErrors = 0;
     state.transientErrors = 0;
+    state.deathStrikes = 0;
     state.lastUsedAt = this.now();
 
     const normalized = normalizeModelKey(modelKey);
@@ -1411,7 +1600,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // and every subsequent lease fails the token refresh. (consecutive_errors has no
     // cooldown and is intentionally still cleared here.)
     const permanentTokenError =
-      state.quotaStatus === "error" && state.quotaStatusReason === "invalid_grant";
+      state.quotaStatus === "error" &&
+      (state.quotaStatusReason === "invalid_grant" || isPermanentDeathReason(state.quotaStatusReason));
     if (state.blockedModels.size === 0 && !permanentTokenError) {
       state.quotaStatus = "ok";
       state.quotaStatusReason = "";

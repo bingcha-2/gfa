@@ -65,6 +65,23 @@ export class RosettaController {
     return this.rosetta.toggleAccountPool(body);
   }
 
+  // 后台手动恢复:清掉 lease 池【运行时】封禁(需验证/冷却/计数),立即放回候选池。
+  // 必须打到持有 LeaseService 的服务上(光改文件 enabled 不会清运行时封禁)。
+  @Post("reactivate-account")
+  reactivateAccount(@Body() body: any) {
+    return this.tokenServer.reactivateAccount(Number(body?.accountId));
+  }
+
+  @Post("codex-reactivate-account")
+  reactivateCodexAccount(@Body() body: any) {
+    return this.remoteCodex.reactivateAccount(Number(body?.accountId));
+  }
+
+  @Post("anthropic-reactivate-account")
+  reactivateClaudeAccount(@Body() body: any) {
+    return this.remoteAnthropic.reactivateAccount(Number(body?.accountId));
+  }
+
   @Post("delete-account")
   deleteAccount(@Body() body: any) {
     return this.rosetta.deleteAccount(body);
@@ -182,10 +199,16 @@ export class RosettaController {
     return this.rosetta.deleteClaudeAccount(body);
   }
 
-  // 设置该号的出口代理(粘性住宅代理 URL);空=清除。
+  // 设置该号的出口代理(粘性住宅代理 URL);空=清除。anthropic 专用别名,保留兼容。
   @Post("anthropic-set-proxy")
   setClaudeAccountProxy(@Body() body: any) {
     return this.rosetta.setClaudeAccountProxy(body);
+  }
+
+  // 通用出口代理设置(御三家共用):body = { provider, accountId, proxyUrl }。空 proxyUrl=清除。
+  @Post("account-set-proxy")
+  setAccountProxy(@Body() body: any) {
+    return this.rosetta.setAccountProxy(body);
   }
 
   @Post("anthropic-oauth-start")

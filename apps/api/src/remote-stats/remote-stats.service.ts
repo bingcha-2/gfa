@@ -269,6 +269,7 @@ export class RemoteStatsService {
           email: acc.email || "",
           planType: acc.planType || "",
           quotaStatus: acc.quotaStatus || "ok",
+          quotaStatusReason: acc.quotaStatusReason || "",
           activeLeases: Number(acc.activeLeases || 0),
           // Real upstream 5h / weekly remaining for this account (the shared pool
           // its cards draw from). 5h is live (status fraction); weekly + resets

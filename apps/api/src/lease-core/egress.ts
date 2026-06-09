@@ -1,13 +1,16 @@
-// Build an undici Dispatcher that routes an outbound request through a per-account
-// exit proxy (residential-IP pinning). Used by the server-side OAuth token refresh
-// so the refresh call leaves from the SAME IP the client uses for inference — if
-// refresh instead goes out from the datacenter IP, the IP/fingerprint mismatch is
-// itself an anti-abuse signal that can get the OAuth session revoked.
+// Generic per-account egress (exit-proxy) plumbing, shared by every provider.
 //
-// Supported schemes (mirrors rosetta.service.ts normalizeProxyUrl, which accepts
-// http(s) and socks5h and defaults bare host:port forms to http):
-//   http, https             -> ProxyAgent (HTTP CONNECT tunnel, like the Wails
-//                              client's leaser.go ConnectViaProxy)
+// An account may carry a sticky exit proxy (residential IP). When set, BOTH the
+// server-side OAuth token refresh AND the client-side inference must leave from
+// that one IP — if refresh goes out from the datacenter IP while inference goes
+// out from a residential IP, the mismatch is itself an anti-abuse signal that
+// can get the OAuth session revoked. proxyAwareFetch() is how the token-refresh
+// path pins its egress; the Wails client pins inference egress from the
+// `accountProxyUrl` field surfaced on the lease response.
+//
+// Supported schemes (mirrors normalizeProxyUrl in rosetta/lib/store.ts, which
+// accepts http(s) and socks and defaults bare host:port forms to http):
+//   http, https             -> ProxyAgent (HTTP CONNECT tunnel)
 //   socks, socks5, socks5h  -> socksDispatcher type 5
 //   socks4, socks4a         -> socksDispatcher type 4
 //
@@ -15,7 +18,7 @@
 // undefined: a proxy is configured for IP pinning, so we must NOT silently fall
 // back to a direct (datacenter-IP) connection.
 
-import { ProxyAgent, type Dispatcher } from "undici";
+import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { socksDispatcher } from "fetch-socks";
 
 // Cache dispatchers by proxy URL. Each ProxyAgent/socksDispatcher owns a
@@ -59,4 +62,27 @@ export function proxyDispatcherFor(rawProxyUrl: string | undefined | null): Disp
 
   dispatcherCache.set(proxyUrl, dispatcher);
   return dispatcher;
+}
+
+/**
+ * fetch() that routes through an account's exit proxy when one is configured.
+ *
+ * With a proxy we use the installed undici's fetch so it can carry that undici's
+ * Dispatcher — Node's bundled fetch rejects a dispatcher from a different undici
+ * major ("invalid onRequestStart method"). With NO proxy we use the global fetch:
+ * it's the common path, the original behavior, and stays stubbable by tests
+ * (vi.stubGlobal). A bad/unsupported proxy URL throws (never silent direct
+ * fallback) so a misconfigured exit proxy fails loudly instead of leaking the
+ * datacenter IP.
+ */
+export async function proxyAwareFetch(
+  proxyUrl: string | undefined | null,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const dispatcher = proxyDispatcherFor(proxyUrl);
+  const withDispatcher: RequestInit & { dispatcher?: unknown } = { ...init };
+  if (dispatcher) withDispatcher.dispatcher = dispatcher;
+  const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof fetch;
+  return fetchImpl(url, withDispatcher);
 }

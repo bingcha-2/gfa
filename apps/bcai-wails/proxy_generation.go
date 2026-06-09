@@ -12,6 +12,24 @@ import (
 	"time"
 )
 
+// peekEmbeddedStreamError 在 WriteHeader 之前预读 2xx 流式响应的首个 chunk(≤8KB),
+// 检测 Google "HTTP 200 + 流体内嵌配额/容量错误"的情况。返回读到的首块(干净则留作
+// 转发),以及若是内嵌错误时分类出的 reason/model/retry —— 调用方据此【像 HTTP 错误
+// 一样换号】,而不是直接给 IDE 回 429。非流式响应返回空。
+func peekEmbeddedStreamError(resp *http.Response, isStreaming bool) (firstChunk []byte, reason, modelKey string, retryAfterMs int64) {
+	if !isStreaming {
+		return nil, "", "", 0
+	}
+	buf := make([]byte, 8192)
+	n, _ := resp.Body.Read(buf)
+	if n > 0 {
+		firstChunk = make([]byte, n)
+		copy(firstChunk, buf[:n])
+		reason, modelKey, retryAfterMs = checkStreamingQuotaError(string(firstChunk))
+	}
+	return firstChunk, reason, modelKey, retryAfterMs
+}
+
 func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Request, body []byte, card, deviceId string, upstream string, reqId int64) {
 
 	// 一次代理只出一条日志:全程累积到 audit,defer 时统一输出(含元信息+完整正文+打码token)。
@@ -45,8 +63,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	// 按模型选上游:Claude/GPT 第三方模型走 daily-cloudcode-pa,Gemini 走 cloudcode-pa。
 	targetUrl, _ := url.Parse(cloudCodeEndpointForModel(requestModelKey) + r.URL.Path + "?" + r.URL.RawQuery)
 	audit.target = targetUrl.Host + targetUrl.Path
-	// 生成请求使用无全局超时的 streaming client，避免 120s 截断长响应
-	client := createStreamingHttpClient(upstream)
+	// 生成请求使用无全局超时的 streaming client（避免 120s 截断长响应）。
+	// 实际出口在每次 attempt 内按所租账号的绑定代理(egress)构建,见下方 resolveEgress。
+	var client *http.Client
 
 	var resp *http.Response
 	var lease *TokenLease
@@ -67,6 +86,9 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	const maxCapacityWaitMs = int64(60000) // P2⑩: Max 60s total capacity wait
 	// 记录本次请求中已失败的 accountId，防止 report-result 还没到服务端时又租到同一个号
 	var excludeAccountIds []int
+	// 首 chunk 在重试循环内预读(用于 200-内嵌错误换号);干净则带出循环供流式转发。
+	var firstChunk []byte
+	isStreaming := false
 	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
 		var err error
 		leaseOptions := map[string]interface{}{
@@ -148,12 +170,24 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		req.Header.Set("Host", targetUrl.Host)
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBodyBytes)))
 
+		// 出口:优先走所租账号绑定的住宅代理;没绑定则本地直连(用户代理→系统→直连)。
+		egress, _ := resolveEgress(lease.EgressInfo, upstream) // antigravity optional,从不 blocked
+		client = createStreamingHttpClient(egress)
 		resp, err = client.Do(req)
 		if err != nil {
-			audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
-			p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
+			// optional 策略:绑定代理传输失败 → 降级本地直连重试一次,再不行才 502。
+			if strings.TrimSpace(lease.EgressInfo.ProxyURL) != "" && !lease.EgressInfo.EgressRequired {
+				audit.note += fmt.Sprintf("; 绑定代理失败降级本地:%v", err)
+				retryReq, _ := http.NewRequest(req.Method, req.URL.String(), bytes.NewReader(newBodyBytes))
+				retryReq.Header = req.Header.Clone()
+				resp, err = createStreamingHttpClient(upstream).Do(retryReq)
+			}
+			if err != nil {
+				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
+				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 		}
 
 		problemReason := ""
@@ -169,6 +203,46 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
 		}
 		if problemReason == "" {
+			// HTTP 2xx。但 Google 有时回 200、把配额/容量错误塞进【首个流 chunk】里。
+			// 在循环内预读首块:若是内嵌错误 → 像 HTTP 错误一样换号(而不是循环外直接回
+			// 429,那样号池里还有好号用户却失败)。干净则带 firstChunk 出循环转发。
+			isStreaming = strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
+				strings.Contains(r.URL.Path, "streamGenerateContent")
+			fc, emReason, emModel, emRetry := peekEmbeddedStreamError(resp, isStreaming)
+			firstChunk = fc
+			if emReason != "" {
+				if emModel == "" {
+					emModel = requestModelKey
+				}
+				statusForReport := 429
+				if emReason == "capacity" {
+					statusForReport = 503
+				}
+				reportDetails := ReportDetails{
+					StatusCode: statusForReport, ModelKey: emModel, Reason: emReason,
+					RetryAfterMs: emRetry, ErrorText: string(firstChunk),
+				}
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				if attempt < remoteMaxAttempts && !lease.Bound {
+					audit.note += fmt.Sprintf("; 200内嵌%s换号#%d", emReason, lease.AccountId)
+					excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+					_ = resp.Body.Close()
+					resp = nil
+					firstChunk = nil
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, statusForReport))
+					continue
+				}
+				// 绑定卡无备号 / 已试满 → 回配额错误给 IDE(头未提交,可设正确状态码)。
+				audit.status = statusForReport
+				audit.respBody = firstChunk
+				audit.note += fmt.Sprintf("; 200内嵌%s终止#%d", emReason, lease.AccountId)
+				_ = resp.Body.Close()
+				p.sendJsonError(w, statusForReport, fmt.Sprintf("Account quota exhausted (%s), please retry", emReason))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 			break
 		}
 
@@ -290,43 +364,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	defer resp.Body.Close()
 	audit.status = resp.StatusCode
 
-	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
-	// 如果第一个 chunk 就是 quota/capacity 错误（Google 返回 200 但 body 是错误），
-	// 此时还没有向 IDE 发送任何数据，可以换号重试
-	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
-		strings.Contains(r.URL.Path, "streamGenerateContent")
-	var firstChunk []byte
-	if isStreaming {
-		buf := make([]byte, 8192) // 读大一点以覆盖完整的错误 JSON
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			firstChunk = make([]byte, n)
-			copy(firstChunk, buf[:n])
-			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
-				// 首 chunk 就是错误！关闭连接，上报，不向 IDE 发送任何数据
-				audit.note += fmt.Sprintf("; 首chunk错误(%s model=%s retry=%dms)", reason, mk, retryMs)
-				audit.respBody = firstChunk
-				_ = resp.Body.Close()
-				// 上报错误
-				if lease != nil {
-					statusCode := 429
-					if reason == "capacity" {
-						statusCode = 503
-					}
-					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
-						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
-					}, upstream, lease)
-				}
-				// 返回结构化错误给 IDE（此时还能设置正确的 status code）
-				p.sendJsonError(w, 429, fmt.Sprintf("Account quota exhausted (%s), please retry", reason))
-				atomic.AddInt64(&p.stats.TotalErrors, 1)
-				return
-			}
-		}
-		if readErr != nil && readErr != io.EOF {
-			audit.note += fmt.Sprintf("; 首chunk读错误:%v", readErr)
-		}
-	}
+	// 首 chunk 的 200-内嵌错误检测 + 换号已在上面的重试循环里完成(problemReason=="" 分支)。
+	// 走到这里:firstChunk 要么为空(非流式),要么是已确认【干净】的首块,直接转发。
 
 	// 首 chunk 正常 → 提交 HTTP 响应头（此后不可逆）
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
@@ -461,7 +500,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		query.Del("key")
 		targetUrl.RawQuery = query.Encode()
 	}
-	client := createStreamingHttpClient(upstream)
+	// 实际出口在每次 attempt 内按所租账号的绑定代理(egress)构建,见下方 resolveEgress。
+	var client *http.Client
 	attemptSessionId := fmt.Sprintf("%d-%d", time.Now().UnixMilli(), reqId)
 
 	var resp *http.Response
@@ -481,6 +521,9 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	accumulatedCapacityWaitMs := int64(0)
 	const maxCapacityWaitMs = int64(60000)
 	var excludeAccountIds []int
+	// 首 chunk 在重试循环内预读(用于 200-内嵌错误换号);干净则带出循环供流式转发。
+	var firstChunk []byte
+	isStreaming := false
 
 	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
 		leaseOptions := map[string]interface{}{
@@ -530,12 +573,24 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		req.Header.Set("Host", targetUrl.Host)
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 
+		// 出口:优先走所租账号绑定的住宅代理;没绑定则本地直连(用户代理→系统→直连)。
+		egress, _ := resolveEgress(lease.EgressInfo, upstream) // antigravity optional,从不 blocked
+		client = createStreamingHttpClient(egress)
 		resp, err = client.Do(req)
 		if err != nil {
-			audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
-			p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
-			atomic.AddInt64(&p.stats.TotalErrors, 1)
-			return
+			// optional 策略:绑定代理传输失败 → 降级本地直连重试一次,再不行才 502。
+			if strings.TrimSpace(lease.EgressInfo.ProxyURL) != "" && !lease.EgressInfo.EgressRequired {
+				audit.note += fmt.Sprintf("; 绑定代理失败降级本地:%v", err)
+				retryReq, _ := http.NewRequest(req.Method, req.URL.String(), bytes.NewReader(body))
+				retryReq.Header = req.Header.Clone()
+				resp, err = createStreamingHttpClient(upstream).Do(retryReq)
+			}
+			if err != nil {
+				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
+				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 		}
 
 		problemReason := ""
@@ -551,6 +606,44 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			problemReason = cloudCodeAccountProblemReason(resp.StatusCode, errorBody)
 		}
 		if problemReason == "" {
+			// HTTP 2xx 但 Google 可能在【首个流 chunk】里塞配额/容量错误。循环内预读首块:
+			// 内嵌错误 → 像 HTTP 错误一样换号(不再循环外直接回 429);干净则带出循环转发。
+			isStreaming = strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
+				strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent")
+			fc, emReason, emModel, emRetry := peekEmbeddedStreamError(resp, isStreaming)
+			firstChunk = fc
+			if emReason != "" {
+				if emModel == "" {
+					emModel = requestModelKey
+				}
+				statusForReport := 429
+				if emReason == "capacity" {
+					statusForReport = 503
+				}
+				reportDetails := ReportDetails{
+					StatusCode: statusForReport, ModelKey: emModel, Reason: emReason,
+					RetryAfterMs: emRetry, ErrorText: string(firstChunk),
+				}
+				leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
+				if attempt < remoteMaxAttempts && !lease.Bound {
+					audit.note += fmt.Sprintf("; 200内嵌%s换号#%d", emReason, lease.AccountId)
+					excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+					_ = resp.Body.Close()
+					resp = nil
+					firstChunk = nil
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, statusForReport))
+					continue
+				}
+				audit.status = statusForReport
+				audit.respBody = firstChunk
+				audit.note += fmt.Sprintf("; 200内嵌%s终止#%d", emReason, lease.AccountId)
+				_ = resp.Body.Close()
+				p.sendJsonError(w, statusForReport, fmt.Sprintf("Account quota exhausted (%s), please retry", emReason))
+				atomic.AddInt64(&p.stats.TotalErrors, 1)
+				return
+			}
 			break
 		}
 
@@ -661,38 +754,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	defer resp.Body.Close()
 	audit.status = resp.StatusCode
 
-	// [P3 TIMO-STYLE] 首 chunk 缓冲：在 WriteHeader 之前先读第一个 chunk
-	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") ||
-		strings.Contains(strings.ToLower(r.URL.Path), "streamgeneratecontent")
-	var firstChunk []byte
-	if isStreaming {
-		buf := make([]byte, 8192)
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			firstChunk = make([]byte, n)
-			copy(firstChunk, buf[:n])
-			if reason, mk, retryMs := checkStreamingQuotaError(string(firstChunk)); reason != "" {
-				audit.note += fmt.Sprintf("; 首chunk错误(%s model=%s retry=%dms)", reason, mk, retryMs)
-				audit.respBody = firstChunk
-				_ = resp.Body.Close()
-				if lease != nil {
-					statusCode := 429
-					if reason == "capacity" {
-						statusCode = 503
-					}
-					GetLeaser().ReportProblemWithDetails(card, deviceId, ReportDetails{
-						StatusCode: statusCode, ModelKey: mk, Reason: reason, RetryAfterMs: retryMs,
-					}, upstream, lease)
-				}
-				p.sendJsonError(w, 429, fmt.Sprintf("Account quota exhausted (%s), please retry", reason))
-				atomic.AddInt64(&p.stats.TotalErrors, 1)
-				return
-			}
-		}
-		if readErr != nil && readErr != io.EOF {
-			audit.note += fmt.Sprintf("; 首chunk读错误:%v", readErr)
-		}
-	}
+	// 首 chunk 的 200-内嵌错误检测 + 换号已在上面的重试循环里完成(problemReason=="" 分支)。
+	// 走到这里:firstChunk 要么为空(非流式),要么是已确认【干净】的首块,直接转发。
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")

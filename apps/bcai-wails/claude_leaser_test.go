@@ -213,3 +213,32 @@ func TestClaudeReportRetryQueuesThenFlushes(t *testing.T) {
 		t.Fatalf("server should have received 1 flushed report, got %d", received)
 	}
 }
+
+// 服务端把账号绑定的出口代理 + 出口策略随 lease 下发(accountProxyUrl/egressRequired),
+// 客户端必须解析进 lease.EgressInfo —— anthropic 恒为 required(fail-closed)。
+func TestClaudeLeaseTokenParsesEgressInfo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":              true,
+			"accessToken":     "sk-ant-leased",
+			"accountId":       7,
+			"leaseId":         "lease-1",
+			"accountProxyUrl": "socks5://u:p@res.example:1080",
+			"egressRequired":  true,
+		})
+	}))
+	defer srv.Close()
+	withClaudeAPIBase(t, srv.URL)
+
+	l := &ClaudeLeaser{}
+	lease, err := l.LeaseToken("card-1", "dev-1", true, nil, "")
+	if err != nil {
+		t.Fatalf("LeaseToken: %v", err)
+	}
+	if lease.ProxyURL != "socks5://u:p@res.example:1080" {
+		t.Fatalf("lease.ProxyURL = %q, want the bound residential proxy", lease.ProxyURL)
+	}
+	if !lease.EgressRequired {
+		t.Fatalf("anthropic lease must carry EgressRequired=true (fail-closed)")
+	}
+}

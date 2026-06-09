@@ -1,3 +1,5 @@
+import { proxyAwareFetch } from "../lease-core/egress";
+
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -25,6 +27,9 @@ export type TokenAccount = {
   modelQuotaFractions?: Record<string, number>;
   modelQuotaResetTimes?: Record<string, string>;
   modelQuotaRefreshedAt?: number;
+  // Optional sticky per-account exit proxy (residential IP). When set, the token
+  // refresh is routed through it so refresh and inference share one egress IP.
+  proxyUrl?: string;
   [key: string]: unknown;
 };
 
@@ -40,11 +45,19 @@ export async function refreshGoogleAccessToken(account: TokenAccount): Promise<s
     client_secret: ANTIGRAVITY_OAUTH.clientSecret,
   });
 
-  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-  });
+  // Route through the account's exit proxy when one is set (same egress IP as
+  // inference). A bad/unsupported proxy URL throws rather than silently going
+  // direct from the datacenter IP.
+  let response: Response;
+  try {
+    response = await proxyAwareFetch(account.proxyUrl, GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  } catch (err) {
+    throw new Error(`Token refresh failed for ${account.email}: ${(err as Error).message}`);
+  }
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Token refresh failed for ${account.email}: ${response.status} ${text}`);

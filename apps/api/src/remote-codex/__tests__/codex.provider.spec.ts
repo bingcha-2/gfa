@@ -169,3 +169,9 @@ describe("CodexProvider.statusAccountExtras", () => {
     });
   });
 });
+
+describe("CodexProvider.egressPolicy", () => {
+  it("is optional — codex uses a bound proxy when present, else local direct (fail-open)", () => {
+    expect(new CodexProvider().egressPolicy).toBe("optional");
+  });
+});

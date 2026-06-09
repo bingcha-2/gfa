@@ -49,7 +49,7 @@ func TestClaudeProxyStreamsAndMeters(t *testing.T) {
 	p := &ClaudeProxy{
 		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
 			// ProxyURL 非空才能过 fail-closed 出口闸;实际连接走下面注入的 client。
-			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth-leased", AccountId: 1, LeaseId: "lease-1", ProxyURL: "http://egress.test:8080"}, nil
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth-leased", AccountId: 1, LeaseId: "lease-1", EgressInfo: EgressInfo{ProxyURL: "http://egress.test:8080", EgressRequired: true}}, nil
 		},
 		reportUsage: func(card, deviceId string, d ReportDetails, up string, lease *ClaudeTokenLease) {
 			reported = d
@@ -106,7 +106,7 @@ func TestClaudeProxyEnsuresOAuthBetaHeader(t *testing.T) {
 
 	p := &ClaudeProxy{
 		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
-			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 1, LeaseId: "l1", ProxyURL: "http://egress.test:8080"}, nil
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 1, LeaseId: "l1", EgressInfo: EgressInfo{ProxyURL: "http://egress.test:8080", EgressRequired: true}}, nil
 		},
 		reportUsage:    func(string, string, ReportDetails, string, *ClaudeTokenLease) {},
 		upstreamClient: func(string) *http.Client { return upstream.Client() },

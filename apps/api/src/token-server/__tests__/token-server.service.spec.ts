@@ -811,9 +811,9 @@ describe("TokenServerService — account cooling and retry", () => {
     expect((report as any).status).toBeUndefined(); // big O(N+L) blob no longer sent
   });
 
-  // ── cooldown policy: 503→10s, 429→until 5h reset (cap 1h), 403→short (cap 60s) ──
+  // ── cooldown policy: 503→60s, 429→until real reset (cap weekly; 5h if reset unknown), 403→short (cap 60s) ──
 
-  it("503 unavailable without retryAfter cools ~10s, not the long quota cooldown", async () => {
+  it("503 unavailable without retryAfter cools ~60s, not the long quota cooldown", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();
     const r = await service.leaseToken(REQ, leasePayload());
@@ -826,7 +826,7 @@ describe("TokenServerService — account cooling and retry", () => {
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
     expect(acct.quotaStatus).toBe("cooling");
-    expect(acct.blockedUntil - currentTime).toBe(10_000);
+    expect(acct.blockedUntil - currentTime).toBe(60_000);
   });
 
   it("429 without retryAfter parks until the model's 5h quota reset", async () => {
@@ -849,7 +849,7 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(acct.blockedUntil - currentTime).toBe(20 * 60 * 1000);
   });
 
-  it("429 caps the quota cooldown at 1h when the reset is far out", async () => {
+  it("429 parks until the full reset even when it's far out (no 1h cap)", async () => {
     const resetIso = new Date(currentTime + 3 * 60 * 60 * 1000).toISOString();
     writeJson(accountsFilePath, {
       accounts: [{
@@ -865,10 +865,11 @@ describe("TokenServerService — account cooling and retry", () => {
       reason: "http_429_resource_exhausted", retryAfterMs: 0,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
-    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+    // 不封顶:冷却到真实 reset(3h)为止,而不是被截到 1h 后提前重试又 429。
+    expect(acct.blockedUntil - currentTime).toBe(3 * 60 * 60 * 1000);
   });
 
-  it("429 without retryAfter falls back to 1h when the reset time is unknown", async () => {
+  it("429 without retryAfter falls back to 5h (Google's main window) when the reset time is unknown", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService(); // default accounts have no modelQuotaResetTimes
     const r = await service.leaseToken(REQ, leasePayload());
@@ -878,17 +879,38 @@ describe("TokenServerService — account cooling and retry", () => {
       reason: "http_429_resource_exhausted", retryAfterMs: 0,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
-    expect(acct.blockedUntil - currentTime).toBe(60 * 60 * 1000);
+    expect(acct.blockedUntil - currentTime).toBe(5 * 60 * 60 * 1000);
   });
 
-  it("403 caps the cooldown to a short bench — a transient verification challenge must NOT brick the model for the upstream's bogus 2h (fatal for bound cards)", async () => {
+  it("429 caps the quota cooldown at the weekly window even if the reset snapshot is absurdly far out", async () => {
+    const resetIso = new Date(currentTime + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30d (脏数据)
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1, email: "a@example.com", refreshToken: "rt", projectId: "p", enabled: true,
+        modelQuotaResetTimes: { "claude-opus-4-6-thinking": resetIso },
+      }],
+    });
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 429, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_429_resource_exhausted", retryAfterMs: 0,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === 1);
+    expect(acct.blockedUntil - currentTime).toBe(7 * 24 * 60 * 60 * 1000); // 周窗封顶
+  });
+
+  it("403 (generic forbidden) caps the cooldown to a short 60s bench, not the bogus 2h retry hint", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();
     const r = await service.leaseToken(REQ, leasePayload());
     const id = r.accountId;
     await service.reportResult(REQ, {
       leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
-      reason: "http_403_service_disabled", retryAfterMs: 72 * 60 * 1000,
+      // 通用 403(非永久死亡、非验证挑战)→ 60s 短封顶,上游 72min retry-after 不可信被截断。
+      // service_disabled 走 markAccountPermanentDeath;verification 走 markAccountVerificationRequired。
+      reason: "http_403_forbidden", retryAfterMs: 72 * 60 * 1000,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
     expect(acct.quotaStatus).toBe("exhausted");
@@ -909,7 +931,7 @@ describe("TokenServerService — account cooling and retry", () => {
     const id = r.accountId;
     await service.reportResult(REQ, {
       leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
-      reason: "http_403_account_verification_required", retryAfterMs: 15 * 1000,
+      reason: "http_403_forbidden", retryAfterMs: 15 * 1000,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
     expect(acct.blockedUntil - currentTime).toBe(15 * 1000);
@@ -922,10 +944,48 @@ describe("TokenServerService — account cooling and retry", () => {
     const id = r.accountId;
     await service.reportResult(REQ, {
       leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
-      reason: "http_403_service_disabled", retryAfterMs: 0,
+      reason: "http_403_forbidden", retryAfterMs: 0,
     });
     const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
     expect(acct.blockedUntil - currentTime).toBe(60 * 1000);
+  });
+
+  it("403 verification → 标'需验证/不可用'(error + verification_required + 300min 复检 + 持久化)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_account_verification_required", retryAfterMs: 72 * 60 * 1000,
+    });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).toBe("error"); // 红点/不可用,出池
+    expect(acct.quotaStatusReason).toBe("verification_required"); // 控制台显示"需验证"
+    expect(acct.blockedUntil - currentTime).toBe(300 * 60 * 1000); // 300min 自动复检
+    // 持久化(跨重启)
+    service.flushAccounts();
+    const onDisk = JSON.parse(fs.readFileSync(accountsFilePath, "utf8"));
+    expect(onDisk.accounts.find((a: any) => a.id === id).quotaStatusReason).toBe("verification_required");
+  });
+
+  it("后台手动恢复 reactivateAccount:立即清掉'需验证'封禁状态(不用等 300min)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_account_verification_required", retryAfterMs: 0,
+    });
+    let acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).toBe("error"); // 被标"需验证/不可用"
+
+    // 管理员手动恢复 → 运行时封禁立即清空
+    expect(service.reactivateAccount(id)).toEqual({ ok: true });
+    acct = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).not.toBe("error");
+    expect(acct.quotaStatusReason || "").not.toBe("verification_required");
   });
 
   it("duplicate error report (same reportId) does not re-extend the cooldown", async () => {

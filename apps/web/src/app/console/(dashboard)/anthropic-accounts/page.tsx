@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
@@ -244,6 +244,26 @@ export default function ClaudeAccountsPage() {
     }
   }
 
+  // 「恢复」= 后台手动清掉 lease 池运行时封禁(需验证/冷却/计数),立即放回候选池。
+  async function handleReactivate(account: ClaudeAccount) {
+    setBusyId(account.id);
+    try {
+      const res = await fetch("/api/rosetta/anthropic-reactivate-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "恢复失败");
+      toast.success(`#${account.id} 已恢复（清除封禁，放回候选池）`);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "恢复失败");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function startEditProxy(account: ClaudeAccount) {
     setProxyEditId(account.id);
     setProxyEditVal(account.proxyUrl || "");
@@ -461,6 +481,10 @@ export default function ClaudeAccountsPage() {
                       <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}
                         onClick={() => handleRefresh(a)}>
                         {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+                      </Button>
+                      <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
+                        onClick={() => handleReactivate(a)}>
+                        <BadgeCheckIcon className="size-4 text-amber-500" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
                         <Trash2Icon className="size-4 text-destructive" />

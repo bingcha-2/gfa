@@ -13,9 +13,11 @@ import (
 	"time"
 )
 
-const DefaultCloudEndpoint = "https://cloudcode-pa.googleapis.com"
-const DailyCloudEndpoint = "https://daily-cloudcode-pa.googleapis.com" // returns Claude/GPT third-party models (aligned with cockpit)
-const DefaultGeminiEndpoint = "https://generativelanguage.googleapis.com"
+// 上游端点用 var(非 const)以便测试可改写指向本地 httptest(与 ANTHROPIC_API_BASE /
+// CodexProxy.upstreamBase 同款可覆盖模式);生产值不变。
+var DefaultCloudEndpoint = "https://cloudcode-pa.googleapis.com"
+var DailyCloudEndpoint = "https://daily-cloudcode-pa.googleapis.com" // returns Claude/GPT third-party models (aligned with cockpit)
+var DefaultGeminiEndpoint = "https://generativelanguage.googleapis.com"
 const MaxCloudCodeGenerationAttempts = 10
 
 type ProxyStats struct {

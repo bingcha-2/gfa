@@ -159,7 +159,9 @@ func (p *ProxyServer) streamResponse(w http.ResponseWriter, body io.Reader, reqI
 			// timo 检测到后：中断流 + toast 通知 + 换号重试
 			// 插件检测到后：proxyRes.destroy() + res.end() + reportRemoteResult
 			// 我们参照两者：中断上游 + 停止转发 + 通知调用方上报
-			if !streamQuotaDetected {
+			// 廉价预判:用 Bytes() 零拷贝 substring 判,绝大多数 chunk 没有 JSON 的 "error"
+			// 键 → 直接跳过,连 recentWindow.String() 的 4KB 拷贝都省掉(热路径每 chunk 都走)。
+			if !streamQuotaDetected && bytes.Contains(recentWindow.Bytes(), errorKeyNeedle) {
 				if reason, modelKey, retryAfterMs := checkStreamingQuotaError(recentWindow.String()); reason != "" {
 					streamQuotaDetected = true
 					streamErrorReason = reason
