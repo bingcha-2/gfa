@@ -20,7 +20,7 @@
 // lease-core/egress.ts). So every call here routes through proxyAwareFetch with
 // the account's proxyUrl — never a bare fetch.
 
-import { proxyAwareFetch } from "../../lease-core/egress";
+import { proxyRequiredFetch } from "../../lease-core/egress";
 
 const CLAUDE_USAGE_URL =
   process.env.BCAI_CLAUDE_USAGE_URL || "https://api.anthropic.com/api/oauth/usage";
@@ -99,7 +99,7 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
  */
 async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Promise<string> {
   try {
-    const res = await proxyAwareFetch(proxyUrl, CLAUDE_PROFILE_URL, {
+    const res = await proxyRequiredFetch(proxyUrl, CLAUDE_PROFILE_URL, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -139,7 +139,7 @@ export async function fetchClaudeQuotaUpstream(
 async function fetchUsageSnapshot(accessToken: string, proxyUrl?: string): Promise<ClaudeQuotaSnapshot> {
   let resp: Response;
   try {
-    resp = await proxyAwareFetch(proxyUrl, CLAUDE_USAGE_URL, {
+    resp = await proxyRequiredFetch(proxyUrl, CLAUDE_USAGE_URL, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,

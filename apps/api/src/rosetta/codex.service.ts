@@ -300,13 +300,15 @@ export class CodexService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { email: acc.email, refreshToken: acc.refreshToken } as any;
+      // Carry proxyUrl so both the token refresh and the usage probe egress
+      // through the account's exit proxy (same IP as inference) when one is set.
+      const probe = { email: acc.email, refreshToken: acc.refreshToken, proxyUrl: acc.proxyUrl } as any;
       const token = await refreshCodexAccessToken(probe);
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
 
-      const snap = await fetchCodexQuotaUpstream(token);
+      const snap = await fetchCodexQuotaUpstream(token, acc.proxyUrl);
       if (!snap) {
         // token 已刷新成功并落盘;仅额度接口失败 → 仍算成功,回带 quotaError 让前端提示。
         writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });

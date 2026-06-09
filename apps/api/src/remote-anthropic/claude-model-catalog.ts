@@ -1,4 +1,5 @@
-import { defaultDisplayName, ModelCatalog, ModelInfo } from "../lease-core/model-catalog";
+import { proxyRequiredFetch } from "../lease-core/egress";
+import { CatalogAuth, defaultDisplayName, ModelCatalog, ModelInfo } from "../lease-core/model-catalog";
 
 // Claude models bill to the universal "opus" bucket (see UNIVERSAL_BILLING):
 // neither gemini nor gpt/codex, so everything Claude falls through to opus.
@@ -17,9 +18,11 @@ const SEED: Record<string, string> = {
 
 // Default upstream model fetch: Anthropic /v1/models with the leased account
 // access token. Best-effort; the catalog falls back to the seed on any failure.
-async function defaultFetcher(accessToken: string): Promise<string[]> {
+// Fail-closed egress: this carries the account token, so it MUST leave from the
+// account's residential proxy — proxyRequiredFetch throws if none is configured.
+async function defaultFetcher(accessToken: string, proxyUrl?: string): Promise<string[]> {
   const url = process.env.BCAI_CLAUDE_MODELS_URL || "https://api.anthropic.com/v1/models";
-  const res = await fetch(url, {
+  const res = await proxyRequiredFetch(proxyUrl, url, {
     headers: {
       authorization: `Bearer ${accessToken}`,
       "anthropic-version": "2023-06-01",
@@ -35,12 +38,12 @@ async function defaultFetcher(accessToken: string): Promise<string[]> {
 }
 
 export type ClaudeModelCatalogOptions = {
-  fetcher?: (accessToken: string) => Promise<string[]>;
+  fetcher?: (accessToken: string, proxyUrl?: string) => Promise<string[]>;
 };
 
 export class ClaudeModelCatalog implements ModelCatalog {
   private models = new Map<string, ModelInfo>();
-  private readonly fetcher: (accessToken: string) => Promise<string[]>;
+  private readonly fetcher: (accessToken: string, proxyUrl?: string) => Promise<string[]>;
 
   constructor(options: ClaudeModelCatalogOptions = {}) {
     this.fetcher = options.fetcher || defaultFetcher;
@@ -57,11 +60,11 @@ export class ClaudeModelCatalog implements ModelCatalog {
     return CLAUDE_BUCKET;
   }
 
-  async refresh(getToken: () => Promise<string>): Promise<void> {
+  async refresh(getAuth: () => Promise<CatalogAuth>): Promise<void> {
     try {
-      const token = await getToken();
+      const { token, proxyUrl } = await getAuth();
       if (!token) return;
-      const keys = await this.fetcher(token);
+      const keys = await this.fetcher(token, proxyUrl);
       for (const key of keys) {
         if (!this.models.has(key)) {
           this.models.set(key, { key, displayName: SEED[key] || defaultDisplayName(key), bucket: CLAUDE_BUCKET });

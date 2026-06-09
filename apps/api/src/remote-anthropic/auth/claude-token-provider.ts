@@ -31,7 +31,7 @@
 // onRequestStart method"). With NO proxy we use the global fetch: it's the common
 // path, the original behavior, and stays stubbable by tests (vi.stubGlobal).
 
-import { proxyAwareFetch } from "../../lease-core/egress";
+import { proxyRequiredFetch } from "../../lease-core/egress";
 
 // Endpoint + client_id verified against the Claude Code 2.x binary (the current
 // client posts a refresh_token grant to platform.claude.com/v1/oauth/token).
@@ -183,12 +183,13 @@ async function runRefresh(account: ClaudeAccount, opts: RefreshOptions): Promise
 }
 
 async function grant(email: string, refreshToken: string, proxyUrl?: string): Promise<TokenResult> {
-  // Route through the account's exit proxy when one is set. A bad/unsupported
-  // proxy URL is a hard error in proxyAwareFetch — we never fall back to a direct
-  // connection, which would leak the datacenter IP and defeat the IP pinning.
+  // Anthropic egress is fail-closed: the refresh MUST leave from the account's
+  // sticky residential proxy. No proxy (or a bad/unsupported URL) is a hard error
+  // — never a direct datacenter-IP call, which would leak the IP and, mismatched
+  // against residential-IP inference, trip the OAuth session's anti-abuse revoke.
   let response: Response;
   try {
-    response = await proxyAwareFetch(proxyUrl, CLAUDE_TOKEN_ENDPOINT, {
+    response = await proxyRequiredFetch(proxyUrl, CLAUDE_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({

@@ -12,11 +12,16 @@ export interface ModelInfo {
   bucket: string;
 }
 
+/** Auth for an upstream catalog fetch: the leased access token plus the account's
+ * sticky exit proxy, so the fetch can pin its egress IP (required for anthropic,
+ * best-effort for the others) instead of leaking the datacenter IP. */
+export type CatalogAuth = { token: string; proxyUrl?: string };
+
 export interface ModelCatalog {
   list(): ModelInfo[];
   classify(modelKey: string): string;
   /** Best-effort upstream refresh; must not throw. */
-  refresh(getToken: () => Promise<string>): Promise<void>;
+  refresh(getAuth: () => Promise<CatalogAuth>): Promise<void>;
 }
 
 /** Title-case a model id into a reasonable display name fallback. */

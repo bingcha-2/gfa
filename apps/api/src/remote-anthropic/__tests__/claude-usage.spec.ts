@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// claude-usage now egresses through proxyRequiredFetch (fail-closed). These tests
+// drive the network via vi.stubGlobal("fetch"), so route the egress wrappers back
+// to the (stubbed) global fetch — the proxy/fail-closed layer is covered in
+// egress.spec.ts.
+vi.mock("../../lease-core/egress", async (orig) => ({
+  ...(await (orig as any)()),
+  proxyRequiredFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
+  proxyAwareFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
+}));
+
 import { fetchClaudeQuotaUpstream } from "../auth/claude-usage";
 
 function mockUsage(status: number, json: unknown) {

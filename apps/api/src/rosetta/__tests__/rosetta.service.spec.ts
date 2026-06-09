@@ -7,6 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RosettaService, migrateClaudeProductToAnthropic } from "../rosetta.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
 
+// The anthropic refresh/probe path is fail-closed (proxyRequiredFetch); codex/
+// gemini route through proxyAwareFetch. These tests drive the network via
+// vi.stubGlobal("fetch"), so send the egress wrappers back to the (stubbed)
+// global fetch. The proxy/fail-closed layer itself is covered in egress.spec.ts.
+vi.mock("../../lease-core/egress", async (orig) => ({
+  ...(await (orig as any)()),
+  proxyRequiredFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
+  proxyAwareFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
+}));
+
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");

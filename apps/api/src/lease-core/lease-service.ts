@@ -379,11 +379,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!catalog) return;
     await catalog.refresh(async () => {
       const account = this.availableAccounts({}, "").find(() => true);
-      if (!account) return "";
+      if (!account) return { token: "" };
       try {
-        return await this.provider.refreshToken(account);
+        // Carry the account's exit proxy so the catalog fetch pins the same
+        // egress IP as inference (fail-closed for anthropic).
+        const token = await this.provider.refreshToken(account);
+        return { token, proxyUrl: (account as any).proxyUrl };
       } catch {
-        return "";
+        return { token: "" };
       }
     });
   }

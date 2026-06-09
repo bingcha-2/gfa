@@ -86,3 +86,27 @@ export async function proxyAwareFetch(
   const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof fetch;
   return fetchImpl(url, withDispatcher);
 }
+
+/**
+ * Fail-closed variant of proxyAwareFetch: REFUSE to send when no proxy is
+ * configured, instead of falling back to a direct datacenter-IP connection.
+ *
+ * For an account whose egress policy is "required" (anthropic), every upstream
+ * request that carries the account's OAuth token — token refresh, usage/profile
+ * probe, model-catalog fetch — must leave from the account's sticky residential
+ * IP. A token-bearing request from the datacenter IP, while inference comes from
+ * a residential IP, is itself an anti-abuse signal that can get the OAuth session
+ * revoked. So a missing proxy is a hard error here, never a silent direct call.
+ */
+export async function proxyRequiredFetch(
+  proxyUrl: string | undefined | null,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  if (!String(proxyUrl || "").trim()) {
+    throw new Error(
+      "egress proxy required but none configured for this account — refusing to leave from the datacenter IP",
+    );
+  }
+  return proxyAwareFetch(proxyUrl, url, init);
+}
