@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException } from "@nestjs/common";
 
 import { RosettaService } from "./rosetta.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
@@ -399,5 +399,14 @@ export class RosettaController {
   uploadToCliProxy(@Body() body: any) {
     const ids = Array.isArray(body?.ids) ? body.ids : [];
     return this.rosetta.uploadToCliProxy(ids, body?.clientId, body?.clientSecret, body?.provider);
+  }
+
+  @Post("sync")
+  syncAccounts(@Headers("x-sync-token") syncToken: string, @Body() body: any) {
+    const expectedToken = process.env.ROSETTA_SYNC_TOKEN;
+    if (!expectedToken || syncToken !== expectedToken) {
+      throw new UnauthorizedException("Invalid sync token");
+    }
+    return this.rosetta.syncFromPayload(body);
   }
 }

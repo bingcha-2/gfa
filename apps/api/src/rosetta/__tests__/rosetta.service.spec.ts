@@ -12,6 +12,14 @@ function writeJson(filePath: string, value: unknown) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function readJson(filePath: string, fallback: any): any {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
 async function getFreePort() {
   return new Promise<number>((resolve, reject) => {
     const server = http.createServer();
@@ -1578,6 +1586,71 @@ describe("RosettaService", () => {
       const svc = new RosettaService({ dataDir: tempDir });
       const res = svc.setAccountProxy({ provider: "bogus", accountId: 1, proxyUrl: "socks5://h:1" });
       expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("syncFromPayload (Rosetta 号池 API 同步)", () => {
+    it("should successfully merge accounts and access keys", async () => {
+      // Setup B's initial pools
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [
+          { id: 1, email: "exist@gemini.com", refreshToken: "rt-old", enabled: true },
+          { id: 2, email: "other@gemini.com", refreshToken: "rt-other", enabled: true }
+        ]
+      });
+      writeJson(path.join(tempDir, "codex-accounts.json"), {
+        accounts: [
+          { id: 2, email: "exist@codex.com", refreshToken: "rt-codex-old", enabled: true }
+        ]
+      });
+      writeJson(path.join(tempDir, "access-keys.json"), {
+        keys: [
+          { id: "k-1", key: "key-1", name: "Card 1" }
+        ]
+      });
+
+      const service = new RosettaService({ dataDir: tempDir });
+
+      const res = await service.syncFromPayload({
+        accounts: [
+          { id: 1, email: "exist@gemini.com", refreshToken: "rt-new", enabled: false },
+          { id: 2, email: "new2@gemini.com", refreshToken: "rt-new-gemini", enabled: true } // ID 2 is occupied by other@gemini.com on B
+        ],
+        codex: [
+          { id: 2, email: "exist@codex.com", refreshToken: "rt-codex-new", enabled: true },
+          { id: 3, email: "new@codex.com", refreshToken: "rt-new-codex", enabled: true }
+        ],
+        keys: [
+          { id: "k-2", key: "key-2", name: "Card 2", bindings: { antigravity: 2, codex: 3 } }
+        ]
+      });
+
+      expect(res.success).toBe(true);
+
+      // Verify B's merged accounts.json
+      const bGemini = readJson(path.join(tempDir, "accounts.json"), { accounts: [] }).accounts;
+      expect(bGemini).toHaveLength(3);
+      const existAcc = bGemini.find((a: any) => a.email === "exist@gemini.com");
+      expect(existAcc.refreshToken).toBe("rt-new");
+      expect(existAcc.enabled).toBe(false); // updated
+      expect(existAcc.id).toBe(1); // kept remote ID
+
+      const new2Acc = bGemini.find((a: any) => a.email === "new2@gemini.com");
+      expect(new2Acc.refreshToken).toBe("rt-new-gemini");
+      expect(new2Acc.id).toBe(3); // collision resolved: max(1, 2) + 1 = 3
+
+      // Verify B's merged codex-accounts.json
+      const bCodex = readJson(path.join(tempDir, "codex-accounts.json"), { accounts: [] }).accounts;
+      expect(bCodex).toHaveLength(2);
+
+      // Verify B's merged access-keys.json
+      const bKeys = readJson(path.join(tempDir, "access-keys.json"), { keys: [] }).keys;
+      expect(bKeys).toHaveLength(2); // k-1 (old) + k-2 (new)
+      const k2 = bKeys.find((k: any) => k.id === "k-2");
+      expect(k2.bindings).toMatchObject({
+        antigravity: 3, // mapped: 2 -> new2@gemini.com -> 3
+        codex: 3 // mapped: 3 -> new@codex.com -> 3 (no collision)
+      });
     });
   });
 });

@@ -533,4 +533,167 @@ export class RosettaService {
     }
     return { projectId: "", accessToken };
   }
+
+  async syncFromPayload(payload: { accounts?: any[]; codex?: any[]; keys?: any[] }) {
+    this.logger.log(`[syncFromPayload] Started Rosetta sync request.`);
+
+    const mergeStats = {
+      antigravity: { added: 0, updated: 0, collisions: 0 },
+      codex: { added: 0, updated: 0, collisions: 0 },
+      keys: { added: 0, updated: 0 },
+    };
+
+    // ID mapping maps for card binding updates
+    // provider -> localId -> email
+    const localIdToEmail = {
+      antigravity: new Map<number, string>(),
+      codex: new Map<number, string>(),
+    };
+    // provider -> email -> remoteId
+    const remoteEmailToId = {
+      antigravity: new Map<string, number>(),
+      codex: new Map<string, number>(),
+    };
+
+    // 1. Map local IDs to emails (received in payload)
+    if (Array.isArray(payload.accounts)) {
+      for (const acc of payload.accounts) {
+        if (acc.id && acc.email) {
+          localIdToEmail.antigravity.set(Number(acc.id), String(acc.email).toLowerCase());
+        }
+      }
+    }
+    if (Array.isArray(payload.codex)) {
+      for (const acc of payload.codex) {
+        if (acc.id && acc.email) {
+          localIdToEmail.codex.set(Number(acc.id), String(acc.email).toLowerCase());
+        }
+      }
+    }
+
+    // Helper to merge a pool file
+    const mergePool = (
+      fileName: string,
+      localList: any[],
+      provider: "antigravity" | "codex"
+    ) => {
+      const filePath = path.join(this.dataDir, fileName);
+      const data = readJson(filePath, { accounts: [] });
+      const rAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+
+      const rEmailMap = new Map<string, any>();
+      const rIdSet = new Set<number>();
+      for (const acc of rAccounts) {
+        rEmailMap.set(String(acc.email).toLowerCase(), acc);
+        rIdSet.add(Number(acc.id));
+      }
+
+      for (const lAcc of localList) {
+        const emailLower = String(lAcc.email).toLowerCase();
+        const existingRemoteAcc = rEmailMap.get(emailLower);
+
+        if (existingRemoteAcc) {
+          // Merge credentials
+          Object.assign(existingRemoteAcc, {
+            ...lAcc,
+            id: existingRemoteAcc.id, // Keep remote ID
+            updatedAt: new Date().toISOString(),
+          });
+          mergeStats[provider].updated++;
+        } else {
+          let targetId = Number(lAcc.id);
+          if (rIdSet.has(targetId)) {
+            // Collision! Allocate new ID
+            mergeStats[provider].collisions++;
+            targetId = rAccounts.length > 0 ? Math.max(...rIdSet) + 1 : 1;
+          }
+          const newAcc = {
+            ...lAcc,
+            id: targetId,
+            updatedAt: new Date().toISOString(),
+          };
+          rAccounts.push(newAcc);
+          rIdSet.add(targetId);
+          rEmailMap.set(emailLower, newAcc);
+          mergeStats[provider].added++;
+        }
+      }
+
+      // Populate remote maps for card bindings
+      for (const acc of rAccounts) {
+        if (acc.id && acc.email) {
+          remoteEmailToId[provider].set(String(acc.email).toLowerCase(), Number(acc.id));
+        }
+      }
+
+      writeJson(filePath, { ...data, accounts: rAccounts, updatedAt: new Date().toISOString() });
+    };
+
+    // 2. Perform Account Merges
+    mergePool("accounts.json", payload.accounts || [], "antigravity");
+    this.accountsFile.invalidate(); // Clear NestJS cache
+
+    mergePool("codex-accounts.json", payload.codex || [], "codex");
+
+    // 3. Merge Card Keys
+    const keysFilePath = path.join(this.dataDir, "access-keys.json");
+    const keysData = readJson(keysFilePath, { keys: [] });
+    const rKeys = Array.isArray(keysData.keys) ? keysData.keys : [];
+
+    const rKeyMap = new Map<string, any>();
+    for (const key of rKeys) {
+      rKeyMap.set(String(key.id), key);
+      rKeyMap.set(String(key.key), key);
+    }
+
+    const localKeys = payload.keys || [];
+    for (const lKey of localKeys) {
+      const existingKey = rKeyMap.get(String(lKey.id)) || rKeyMap.get(String(lKey.key));
+      if (existingKey) {
+        // Card already exists, skip
+        continue;
+      }
+
+      const newKey = JSON.parse(JSON.stringify(lKey));
+
+      // Translate bindings if present
+      if (newKey.bindings && typeof newKey.bindings === "object") {
+        for (const provider of Object.keys(newKey.bindings)) {
+          if (provider === "antigravity" || provider === "codex") {
+            const localId = Number(newKey.bindings[provider]);
+            if (localId > 0) {
+              const email = localIdToEmail[provider].get(localId);
+              if (email) {
+                const remoteId = remoteEmailToId[provider].get(email);
+                if (remoteId && remoteId > 0) {
+                  newKey.bindings[provider] = remoteId;
+                } else {
+                  newKey.bindings[provider] = 0;
+                }
+              } else {
+                newKey.bindings[provider] = 0;
+              }
+            }
+          }
+        }
+      }
+
+      rKeys.push(newKey);
+      rKeyMap.set(String(newKey.id), newKey);
+      rKeyMap.set(String(newKey.key), newKey);
+      mergeStats.keys.added++;
+    }
+
+    writeJson(keysFilePath, { ...keysData, keys: rKeys, updatedAt: new Date().toISOString() });
+    this.accessKeysFile.invalidate(); // Clear NestJS cache
+
+    this.logger.log(
+      `[syncFromPayload] Complete. Antigravity: +${mergeStats.antigravity.added}/~${mergeStats.antigravity.updated} (c:${mergeStats.antigravity.collisions}). Codex: +${mergeStats.codex.added}/~${mergeStats.codex.updated} (c:${mergeStats.codex.collisions}). Keys: +${mergeStats.keys.added}`
+    );
+
+    return {
+      success: true,
+      stats: mergeStats,
+    };
+  }
 }
