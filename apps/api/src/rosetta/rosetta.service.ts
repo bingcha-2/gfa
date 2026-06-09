@@ -1,6 +1,6 @@
 import * as path from "path";
 
-import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { AgentAccountService } from "../automation/agent-account.service";
 import { AutomationService } from "../automation/automation.service";
@@ -15,6 +15,7 @@ import { CodexService } from "./codex.service";
 import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import type { RosettaContext } from "./lib/context";
+import type { AccessKeyStore } from "../token-server/access-key-store";
 import { migrateClaudeProductToAnthropic } from "./lib/migrate";
 import { CachedJsonFile, defaultDataDir, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
 
@@ -27,6 +28,10 @@ type RosettaServiceOptions = {
   codexOAuthPort?: number;
   codexOAuthFetch?: typeof fetch;
   claudeOAuthFetch?: typeof fetch;
+  /** Shared AccessKeyStore — the authoritative in-memory source of per-card
+   *  window usage. When set, the admin list reads usage from it instead of the
+   *  (event-free) JSON file. */
+  accessKeyStore?: AccessKeyStore;
 };
 
 const CODEX_OAUTH_DEFAULT_CALLBACK_PORT = 1455;
@@ -66,7 +71,10 @@ export class RosettaService {
     @Optional() options: RosettaServiceOptions = {},
     @Optional() private readonly automation?: AutomationService,
     @Optional() private readonly agentAccounts?: AgentAccountService,
+    @Optional() @Inject("SHARED_ACCESS_KEY_STORE") injectedAccessKeyStore?: AccessKeyStore,
   ) {
+    // Prefer an explicitly-passed store (tests); else the DI-shared one (prod).
+    options = { ...options, accessKeyStore: options.accessKeyStore || injectedAccessKeyStore };
     this.dataDir = options.dataDir || defaultDataDir();
     // 启动时一次性把产品 claude→anthropic 迁移到位(改文件名 + 卡绑定 key),必须在任何
     // 账号池/卡密读取之前;幂等,无旧数据时为 no-op。
@@ -88,6 +96,7 @@ export class RosettaService {
       codexOAuthPort: this.codexOAuthPort,
       automation: this.automation,
       agentAccounts: this.agentAccounts,
+      accessKeyStore: options.accessKeyStore,
     };
     this.accessKeySvc = new AccessKeyService(this.ctx);
     this.captchaSvc = new CaptchaService({ dataDir: this.dataDir, automation: this.automation, logger: this.logger });

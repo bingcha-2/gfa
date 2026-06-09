@@ -8,6 +8,7 @@ import type { AgentAccountService } from "../../automation/agent-account.service
 import type { AutomationService } from "../../automation/automation.service";
 import type { CachedToken } from "../google-api";
 import type { CachedJsonFile } from "./store";
+import type { AccessKeyStore } from "../../token-server/access-key-store";
 
 export type RosettaContext = {
   dataDir: string;
@@ -22,4 +23,7 @@ export type RosettaContext = {
   codexOAuthPort: number;
   automation?: AutomationService;
   agentAccounts?: AgentAccountService;
+  /** Authoritative in-memory per-card window usage. When present, the admin
+   *  list reads usage from here instead of the (event-free) access-keys.json. */
+  accessKeyStore?: AccessKeyStore;
 };

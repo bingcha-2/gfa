@@ -1,4 +1,4 @@
-import { Injectable, Optional, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Optional, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
 import { LeaseService, LeaseServiceHttpError, type TokenUsageTracker, type AccountQuotaSnapshotRecorder } from "../lease-core/lease-service";
 import { QuotaProfileTracker } from "../lease-core/quota-profile-tracker";
@@ -36,7 +36,10 @@ export class TokenServerHttpError extends LeaseServiceHttpError {}
  * in LeaseService and is shared with the codex provider.
  */
 @Injectable()
-export class TokenServerService extends LeaseService<TokenAccount> implements OnModuleDestroy {
+export class TokenServerService extends LeaseService<TokenAccount> implements OnModuleDestroy, OnModuleInit {
+  /** Prisma handle kept for the boot-time window replay (see onModuleInit). */
+  private readonly bootPrisma: any;
+
   constructor(@Optional() options: ServiceOptions = {}) {
     const provider = new AntigravityProvider({
       accountsFilePath: options.accountsFilePath,
@@ -96,5 +99,38 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       },
     );
     service = this;
+    this.bootPrisma = options.prisma;
+  }
+
+  /**
+   * On boot, rebuild each card's in-memory rate-limit window from the durable
+   * CardTokenUsage log. Window events are not persisted to access-keys.json
+   * (they live in memory only), so without this a restart would reset every
+   * card's usage window and hand out fresh quota. Runs once: this service owns
+   * the shared AccessKeyStore; the codex/anthropic pools reuse the same instance
+   * and must NOT replay again (hydrate appends — a second pass would double-count).
+   * Best-effort: a failure just means cold windows, it never blocks startup.
+   */
+  async onModuleInit(): Promise<void> {
+    const prisma = this.bootPrisma;
+    if (!prisma?.cardTokenUsage?.findMany) return;
+    try {
+      // The weekly window is the widest (≤7d); 5h windows are a subset. Pull the
+      // last 7 days once; each card's window read filters to its own period.
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const rows = await prisma.cardTokenUsage.findMany({
+        where: { timestamp: { gte: since } },
+        select: {
+          accessKeyId: true, modelKey: true, bucket: true, status: true,
+          inputTokens: true, outputTokens: true, cachedInputTokens: true,
+          rawTotalTokens: true, totalTokens: true, timestamp: true,
+        },
+      });
+      this.accessKeyStore.hydrateWindowsFromUsageLog(
+        rows.map((r: any) => ({ ...r, at: new Date(r.timestamp).getTime() })),
+      );
+    } catch (err: any) {
+      console.error(`[token-server] window replay from CardTokenUsage failed: ${err?.message || err}`);
+    }
   }
 }
