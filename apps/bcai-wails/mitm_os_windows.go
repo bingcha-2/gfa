@@ -71,6 +71,16 @@ func mitmIsCAInstalled() bool {
 	return certutilQueryShowsCA(out, err, mitmCACommonName)
 }
 
+// mitmCleanupLegacyUserCA 删除 9.2.2 及更早遗留在【当前用户】根存储的 CA(现已迁本机库)。
+// 找不到=本就没有=幂等成功;其它错误返回(调用方仅记日志,不阻塞接管)。无需管理员。
+func mitmCleanupLegacyUserCA() error {
+	out, err := hideCmd("certutil", certutilDelUserRootArgs(mitmCACommonName)...).CombinedOutput()
+	if err == nil || certutilDeleteErrBenign(out) {
+		return nil
+	}
+	return fmt.Errorf("certutil -user -delstore Root: %v: %s", err, strings.TrimSpace(string(out)))
+}
+
 // detectClaudeDesktopPathAuto 自动检测 Claude Desktop 安装路径。
 // 按优先级:文件系统(Squirrel 根 shim + app-* 子目录、MS Store、传统路径)→ 注册表
 // (HKCU/HKLM 自定义安装位置)→ 运行进程嗅探(兜底)。

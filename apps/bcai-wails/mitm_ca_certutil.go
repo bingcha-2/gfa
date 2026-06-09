@@ -22,6 +22,12 @@ func certutilDelRootArgs(commonName string) []string {
 	return []string{"-delstore", "Root", commonName}
 }
 
+// certutilDelUserRootArgs: 按 CN 从【当前用户】根存储删除证书 —— 仅用于清理 9.2.2 及更早
+// 遗留在用户库的孤儿 CA(已迁本机库)。删用户库无需管理员。
+func certutilDelUserRootArgs(commonName string) []string {
+	return []string{"-user", "-delstore", "Root", commonName}
+}
+
 // certutilQueryRootArgs: 查【本机】根存储里是否有该 CN 的证书(读本机库无需管理员)。
 func certutilQueryRootArgs(commonName string) []string {
 	return []string{"-store", "Root", commonName}

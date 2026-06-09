@@ -51,6 +51,15 @@ func TestCertutilQueryRootArgs(t *testing.T) {
 	}
 }
 
+// 遗留清理删的是【当前用户】库(必须带 -user),否则会去删本机库、删错对象。
+func TestCertutilDelUserRootArgs(t *testing.T) {
+	got := certutilDelUserRootArgs("BingchaAI Local Root")
+	want := []string{"-user", "-delstore", "Root", "BingchaAI Local Root"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy del(user) args = %v, want %v", got, want)
+	}
+}
+
 // 已安装 = 退出码 0 且输出含目标 CN。非 0 退出(找不到)或输出无 CN 都算"未装"。
 func TestCertutilQueryShowsCA(t *testing.T) {
 	const cn = "BingchaAI Local Root"

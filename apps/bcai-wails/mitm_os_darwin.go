@@ -42,6 +42,9 @@ func mitmUninstallCA() error {
 	return nil
 }
 
+// mitmCleanupLegacyUserCA 仅 Windows 有「当前用户库」迁移问题;macOS 走系统钥匙串,无需清理。
+func mitmCleanupLegacyUserCA() error { return nil }
+
 func mitmIsCAInstalled() bool {
 	// 必须是「受信任根」，不能只是「存在于钥匙串」——Chromium/Safari 只信任设置里的根，
 	// 仅存在但未设信任会导致 TLS 握手 "unknown certificate"。检查 admin 域信任设置里有无该 CN。

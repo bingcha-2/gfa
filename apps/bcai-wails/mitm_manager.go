@@ -203,6 +203,11 @@ func (m *mitmManager) RelaunchClaudeWithProxy() error {
 			Log("[mitm] 安装根 CA 失败(请以管理员运行或在 UAC 框点「是」;否则桌面端订阅等级不会显示 Max): %v", err)
 		}
 	}
+	// 迁移清理:9.2.2 及更早把 CA 装在【当前用户】根存储,现已改用本机库 → 删掉旧的孤儿根,
+	// 避免在用户信任库长期残留一张可签名自签根。幂等、不阻塞接管。
+	if err := mitmCleanupLegacyUserCA(); err != nil {
+		Log("[mitm] 清理遗留的当前用户根 CA 失败(不阻塞): %v", err)
+	}
 	// ⚠ 闸门:只有 CA【确实被信任】时才给 Chromium 加 --proxy-server。否则 claude.ai(UI 主站)
 	// 被 MITM 但叶证书不被信任 → 整页 ERR_CERT_AUTHORITY_INVALID → 桌面端白屏。CA 不可信时退回
 	// 「只设 env」:Code/Cowork 的 Node 推理照样走号池,Chromium 直连 claude.ai → UI 正常(仅订阅

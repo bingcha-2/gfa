@@ -17,6 +17,8 @@ func mitmUninstallCA() error {
 
 func mitmIsCAInstalled() bool { return false }
 
+func mitmCleanupLegacyUserCA() error { return nil }
+
 func detectClaudeDesktopPathAuto() string { return "" }
 
 func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy bool) error {
