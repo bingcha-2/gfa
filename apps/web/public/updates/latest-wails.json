@@ -1,30 +1,30 @@
 {
-  "version": "9.2.1",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.1/BingchaAI-9.2.1.exe",
-  "sha256": "697E829C5B382E952DB6B5BBEEE340CD28CDF0AA7212C50508B1809196ED8492",
-  "size": 20967936,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.1/BingchaAI-9.2.1-setup.exe",
-  "installerSha256": "1E661EC5FFE9574CC2DAAE51A40E3E8672AD1F72EDB7C3CF0A01F2E15E7C2471",
-  "installerSize": 11103991,
-  "changelog": "优化 Claude 桌面端接管的识别与稳定性;接管入口在已安装时始终可见,未识别时可在「设置 → 安装路径」手动指定。",
-  "minVersion": "9.2.1",
+  "version": "9.2.3",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.3/BingchaAI-9.2.3.exe",
+  "sha256": "ED4B98F1A6B324625A72519DAAADB9DF575D25B67979A3FF444EBDD7E0FF6BC5",
+  "size": 20971008,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.3/BingchaAI-9.2.3-setup.exe",
+  "installerSha256": "4FD498BA84F5A6D7BFA1A627F46B1CB4C001620E085EC1B83086721449AF694E",
+  "installerSize": 11105519,
+  "changelog": "修复部分 Windows 环境下接管 Claude 桌面端出现的显示异常;接管时如弹出系统授权请点「是」。优化接管识别与稳定性。",
+  "minVersion": "9.2.3",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.1/BingchaAI-9.2.1-arm64.dmg",
-      "sha256": "38C2BA0F9AE18C4C1BD8EC0522DF7D39ADF61FD76C98B7F55026C03FB0901F8E",
-      "size": 10222400
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.3/BingchaAI-9.2.3-arm64.dmg",
+      "sha256": "9C978692B4FD500519F8A6E456060F30EE50EB97C3EE6135DF49C39AF7EFC390",
+      "size": 10222364
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.1/BingchaAI-9.2.1-amd64.dmg",
-      "sha256": "8700EB21B2ABB692E3DA729C19D00EFDB70E323E0BD330B04AD668EC5E60CAEC",
-      "size": 10944886
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.3/BingchaAI-9.2.3-amd64.dmg",
+      "sha256": "3E0F9C8346DBC5C5DEF1C0C2C6DE455194DB0DE8B6B787950B0732D28FD67BD5",
+      "size": 10946852
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.1/BingchaAI-9.2.1-linux-amd64.tar.gz",
-      "sha256": "2E4D9F72A4F585461A732E28FE5EB3191949453109686EE4172D13F2D7214E69",
-      "size": 8666485
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.2.3/BingchaAI-9.2.3-linux-amd64.tar.gz",
+      "sha256": "1BB247F16FE755B786561DB54AA027A6D57273EAD8F9DC07064E1C25D331B92C",
+      "size": 8666546
     }
   }
 }
