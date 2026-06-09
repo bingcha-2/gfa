@@ -142,10 +142,18 @@ describe("RosettaService", () => {
     const listed = svc.listClaudeAccounts().accounts;
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ email: "cl@x.com", enabled: true, planType: "max", hasToken: true });
+    // 缺省字段即默认入池,与 codex/antigravity 一致。
+    expect(listed[0].poolEnabled).toBe(true);
 
     const id = listed[0].id;
     svc.toggleClaudeAccount({ accountId: id });
     expect(svc.listClaudeAccounts().accounts[0].enabled).toBe(false);
+
+    // 出池 → poolEnabled:false;再切回 → true。
+    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({ poolEnabled: false });
+    expect(svc.listClaudeAccounts().accounts[0].poolEnabled).toBe(false);
+    expect(svc.toggleClaudeAccountPool({ accountId: id })).toMatchObject({ poolEnabled: true });
+    expect(svc.listClaudeAccounts().accounts[0].poolEnabled).toBe(true);
 
     svc.deleteClaudeAccount({ accountId: id });
     expect(svc.listClaudeAccounts().accounts).toHaveLength(0);

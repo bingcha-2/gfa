@@ -57,6 +57,7 @@ export class ClaudeAccountService {
       id: Number(account.id || 0),
       email: String(account.email || ""),
       enabled: account.enabled !== false,
+      poolEnabled: account.poolEnabled !== false,
       alias: String(account.alias || ""),
       planType: String(account.planType || ""),
       hasToken: Boolean(account.refreshToken || account.accessToken || account.sessionToken),
@@ -282,6 +283,20 @@ export class ClaudeAccountService {
     account.enabled = !account.enabled;
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, email: account.email, enabled: account.enabled };
+  }
+
+  // 出池/入池:poolEnabled===false 的号退出动态池(只服务绑定它的卡),
+  // 与 codex/antigravity 同义。运行时过滤在 lease-service 用 poolEnabled!==false 把关。
+  toggleClaudeAccountPool(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    account.poolEnabled = account.poolEnabled === false ? true : false;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, poolEnabled: account.poolEnabled };
   }
 
   // 设置/清除某 anthropic 账号的出口代理(粘性住宅代理 URL)。空=清除。
