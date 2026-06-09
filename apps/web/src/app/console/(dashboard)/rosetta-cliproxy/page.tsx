@@ -52,6 +52,7 @@ export default function RosettaCliProxyPage() {
   // CLIProxy Connection Status
   const [proxyStatus, setProxyStatus] = useState<CLIProxyStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [uploadProvider, setUploadProvider] = useState<"gemini" | "antigravity">("gemini");
 
   // Accounts List
   const [accounts, setAccounts] = useState<RosettaAccount[]>([]);
@@ -131,15 +132,21 @@ export default function RosettaCliProxyPage() {
     setSelectedIds(new Set());
   }, [statusFilter]);
 
-  const isUploaded = useCallback((email: string) => {
+  const isUploaded = useCallback((email: string, provider?: "gemini" | "antigravity") => {
     if (!proxyStatus?.files || !email) return false;
     const lowerEmail = email.toLowerCase();
+    const targetProvider = provider || uploadProvider;
     return proxyStatus.files.some(file => {
       if (!file) return false;
-      const fileEmail = String(typeof file === "string" ? file : (file.email || file.name || ""));
-      return fileEmail.toLowerCase().includes(lowerEmail);
+      const fileName = String(typeof file === "string" ? file : (file.name || file.email || ""));
+      const lowerFile = fileName.toLowerCase();
+      if (targetProvider === "gemini") {
+        return lowerFile.startsWith("gemini-") && lowerFile.includes(lowerEmail);
+      } else {
+        return lowerFile.startsWith("antigravity-") && lowerFile.includes(lowerEmail);
+      }
     });
-  }, [proxyStatus]);
+  }, [proxyStatus, uploadProvider]);
 
   // Filter accounts list locally by search query and tabs
   const filteredAccounts = useMemo(() => {
@@ -205,8 +212,9 @@ export default function RosettaCliProxyPage() {
     }
 
     setUploading(true);
-    const body: { ids: number[]; clientId?: string; clientSecret?: string } = {
+    const body: { ids: number[]; clientId?: string; clientSecret?: string; provider: string } = {
       ids: Array.from(selectedIds),
+      provider: uploadProvider,
     };
 
     if (useCustomCreds) {
@@ -256,13 +264,20 @@ export default function RosettaCliProxyPage() {
     if (!acc.enabled) {
       return <Badge variant="secondary">已停用</Badge>;
     }
-    if (isUploaded(acc.email)) {
-      return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white border-none">已上号 (UPLOADED)</Badge>;
-    }
-    if (acc.hasToken) {
-      return <Badge className="bg-blue-600 hover:bg-blue-700 text-white border-none">未上号</Badge>;
-    }
-    return <Badge variant="destructive">无 Token</Badge>;
+    
+    const geminiUp = isUploaded(acc.email, "gemini");
+    const antiUp = isUploaded(acc.email, "antigravity");
+
+    return (
+      <div className="flex flex-col sm:flex-row gap-1.5">
+        <Badge className={`text-[10px] border-none font-normal shrink-0 ${geminiUp ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-muted text-muted-foreground"}`}>
+          Gemini: {geminiUp ? "已上号" : "未上号"}
+        </Badge>
+        <Badge className={`text-[10px] border-none font-normal shrink-0 ${antiUp ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-muted text-muted-foreground"}`}>
+          Antigravity: {antiUp ? "已上号" : "未上号"}
+        </Badge>
+      </div>
+    );
   };
 
   return (
@@ -377,6 +392,25 @@ export default function RosettaCliProxyPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 rounded-lg border border-border bg-muted/20 p-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-semibold text-foreground">目标上号通道 (Target Provider)</label>
+                <Select
+                  value={uploadProvider}
+                  onValueChange={(value) => {
+                    setUploadProvider(value as "gemini" | "antigravity");
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-full bg-background font-medium">
+                    <SelectValue placeholder="选择目标通道" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="gemini">Gemini CLI OAuth (gemini-cli)</SelectItem>
+                    <SelectItem value="antigravity">Antigravity OAuth (antigravity)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-semibold text-foreground">选择凭证预设</label>
                 <Select
