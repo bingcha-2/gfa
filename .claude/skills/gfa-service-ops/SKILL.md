@@ -13,6 +13,8 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 - Do not delete `.env`, `prisma/dev.db`, backups, logs, or `apps\web\public\updates\*` unless explicitly requested.
 - Check the deployed branch before pulling. This repo currently uses `main`; old servers may use `master`.
 - For GitHub operations, prefer `gh` CLI. If `gh` is not in PATH, search common install paths before falling back to GitHub API + `curl.exe`.
+- All workflows (`ci.yml`, `build-client.yml`, `build-wails.yml`) are **manual-dispatch only** — pushing to `main`, opening a PR, or pushing a tag triggers nothing. Run CI/builds yourself via `gh workflow run <file> --ref main` (or the Actions UI); don't expect push to auto-run tests.
+- Repos: source `bingcha-2/gfa` (private); client binaries publish to `bingcha-2/gfa-client` (public).
 
 ## Paths
 
