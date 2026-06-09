@@ -8,6 +8,7 @@ export namespace main {
 	    idePath: string;
 	    hubPath: string;
 	    codexAppPath: string;
+	    claudeDesktopPath: string;
 	    cardExpiry: string;
 	    codexMode: string;
 	    codexRelayBase: string;
@@ -28,6 +29,7 @@ export namespace main {
 	        this.idePath = source["idePath"];
 	        this.hubPath = source["hubPath"];
 	        this.codexAppPath = source["codexAppPath"];
+	        this.claudeDesktopPath = source["claudeDesktopPath"];
 	        this.cardExpiry = source["cardExpiry"];
 	        this.codexMode = source["codexMode"];
 	        this.codexRelayBase = source["codexRelayBase"];
@@ -40,6 +42,7 @@ export namespace main {
 	    idePath: string;
 	    hubPath: string;
 	    codexAppPath: string;
+	    claudeDesktopPath: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DetectedPaths(source);
@@ -50,6 +53,7 @@ export namespace main {
 	        this.idePath = source["idePath"];
 	        this.hubPath = source["hubPath"];
 	        this.codexAppPath = source["codexAppPath"];
+	        this.claudeDesktopPath = source["claudeDesktopPath"];
 	    }
 	}
 	export class IDEProduct {

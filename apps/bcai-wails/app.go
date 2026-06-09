@@ -361,17 +361,19 @@ func (a *App) GetIDEStatus() IDEStatus {
 
 // DetectedPaths 返回自动检测到的路径
 type DetectedPaths struct {
-	IDEPath      string `json:"idePath"`
-	HubPath      string `json:"hubPath"`
-	CodexAppPath string `json:"codexAppPath"`
+	IDEPath           string `json:"idePath"`
+	HubPath           string `json:"hubPath"`
+	CodexAppPath      string `json:"codexAppPath"`
+	ClaudeDesktopPath string `json:"claudeDesktopPath"`
 }
 
 // GetDetectedPaths 获取自动检测到的 IDE/Hub 安装路径
 func (a *App) GetDetectedPaths() DetectedPaths {
 	return DetectedPaths{
-		IDEPath:      detectAntigravityIDEPath(),
-		HubPath:      detectAntigravityHubPath(),
-		CodexAppPath: detectCodexAppPath(),
+		IDEPath:           detectAntigravityIDEPath(),
+		HubPath:           detectAntigravityHubPath(),
+		CodexAppPath:      detectCodexAppPath(),
+		ClaudeDesktopPath: detectClaudeDesktopPathAuto(),
 	}
 }
 

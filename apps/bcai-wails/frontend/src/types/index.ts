@@ -15,6 +15,7 @@ export interface Config {
   idePath: string
   hubPath: string
   codexAppPath: string
+  claudeDesktopPath: string
   cardExpiry: string
   codexMode: string
   codexRelayBase: string

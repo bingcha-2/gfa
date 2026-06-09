@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isMacFromPlatform } from './platform'
+import { isMacFromPlatform, isWindowsFromPlatform } from './platform'
 
 // 平台判定要在两种 webview 下都对:Windows 端 Wails = WebView2(Chromium,有 UA-CH),
 // macOS 端 Wails = WKWebView(Safari,无 UA-CH)。
@@ -25,5 +25,23 @@ describe('isMacFromPlatform — 跨 webview 的平台判定', () => {
 
   it('两者都缺失时安全判为非 mac(不误报)', () => {
     expect(isMacFromPlatform(undefined, undefined)).toBe(false)
+  })
+})
+
+describe('isWindowsFromPlatform — Claude 桌面端接管块在 Win 端常显示的依据', () => {
+  it('UA-CH 报 Windows 判为 win', () => {
+    expect(isWindowsFromPlatform('Windows', 'Win32')).toBe(true)
+  })
+
+  it('无 UA-CH 时回退 legacy Win32 仍判为 win', () => {
+    expect(isWindowsFromPlatform(undefined, 'Win32')).toBe(true)
+  })
+
+  it('macOS 判为非 win', () => {
+    expect(isWindowsFromPlatform('macOS', 'MacIntel')).toBe(false)
+  })
+
+  it('两者都缺失时安全判为非 win', () => {
+    expect(isWindowsFromPlatform(undefined, undefined)).toBe(false)
   })
 })

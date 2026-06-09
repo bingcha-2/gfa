@@ -16,7 +16,10 @@ type Config struct {
 	IDEPath       string `json:"idePath"` // 用户自定义 IDE 安装路径（留空则自动检测）
 	HubPath       string `json:"hubPath"` // 用户自定义 Hub 安装路径（留空则自动检测）
 	CodexAppPath  string `json:"codexAppPath"`
-	CardExpiry    string `json:"cardExpiry"` // 账号卡到期时间
+	// 用户自定义 Claude 桌面端可执行文件路径(留空则自动检测)。逃生口:自动检测漏掉
+	// 非标准安装/提权导致 %LOCALAPPDATA% 偏移时,用户可手动指定,无需 Claude 先开着。
+	ClaudeDesktopPath string `json:"claudeDesktopPath"`
+	CardExpiry        string `json:"cardExpiry"` // 账号卡到期时间
 
 	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
 	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。

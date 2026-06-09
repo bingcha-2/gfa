@@ -7,7 +7,7 @@ import { LoadingOverlay } from '@/components/LoadingOverlay'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
-import { isMacPlatform } from '@/lib/platform'
+import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
 import { Zap } from 'lucide-react'
 
 /**
@@ -46,6 +46,10 @@ export function TokenSourceControl() {
   const claudeApp = ideProducts.find((p) => p.id === 'claude_code')
   const claudeDesktopApp = ideProducts.find((p) => p.id === 'claude_desktop')
   const isMac = isMacPlatform()
+  // Claude 桌面端只在 macOS / Windows 存在(无官方 Linux 版)。在这两个平台上「常显示」
+  // 接管块——未检测到则灰显「未安装」,而不是整块隐藏。隐藏才是反馈里「Claude 开着才冒出来」
+  // 死循环的源头(详见后端 detectClaudeDesktopPathAuto 注释)。
+  const showClaudeDesktop = isMac || isWindowsPlatform()
 
   const [busy, setBusy] = useState<string | null>(null)
   const [busyLabel, setBusyLabel] = useState('')
@@ -251,23 +255,28 @@ export function TokenSourceControl() {
             })}
           </Block>
 
-          {/* ── Claude Desktop(Code/Cowork,MITM 接管;检测到才显示) ── */}
-          {claudeDesktopApp?.detected && (
+          {/* ── Claude Desktop(Code/Cowork,MITM 接管;macOS/Windows 常显示,未装则灰显) ── */}
+          {showClaudeDesktop && (
             <Block
               title="Anthropic · 桌面端"
               provider="anthropic"
               note="官方透传 · Code/Cowork 走号池,免费号即可"
               footnote={
-                <>
-                  <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。
-                </>
+                claudeDesktopApp?.detected ? (
+                  <>
+                    <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。<span className="text-[var(--text-secondary)]">Claude 更新或自行重启后需重新点接管</span>(代理随重启失效)。
+                  </>
+                ) : (
+                  <>未检测到 Claude 桌面端。若已安装但未识别,可在<span className="text-[var(--text-secondary)]">「设置 → 安装路径」</span>手动指定 Claude 程序路径(无需先打开 Claude)。</>
+                )
               }
             >
               {takeoverRow({
                 target: 'claude_desktop',
                 name: 'Claude Desktop (Code/Cowork)',
                 injected: claudeDesktopInjected,
-                detected: true,
+                detected: !!claudeDesktopApp?.detected,
+                undetectedText: '未安装 / 未检测到',
                 onToggle: handleClaudeDesktopToggle,
               })}
             </Block>

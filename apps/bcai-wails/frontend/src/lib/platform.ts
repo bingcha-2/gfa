@@ -22,3 +22,19 @@ export function isMacPlatform(): boolean {
   const legacyPlatform = (navigator as { platform?: string }).platform
   return isMacFromPlatform(uaPlatform, legacyPlatform)
 }
+
+// 纯判定逻辑:是否 Windows。/win/i 覆盖 "Windows"(UA-CH)与 "Win32"(legacy)。
+export function isWindowsFromPlatform(
+  uaPlatform: string | undefined,
+  legacyPlatform: string | undefined,
+): boolean {
+  return /win/i.test(uaPlatform || legacyPlatform || '')
+}
+
+// 读取当前运行环境的平台并判定是否 Windows。
+export function isWindowsPlatform(): boolean {
+  const uaPlatform = (navigator as Navigator & { userAgentData?: { platform?: string } })
+    .userAgentData?.platform
+  const legacyPlatform = (navigator as { platform?: string }).platform
+  return isWindowsFromPlatform(uaPlatform, legacyPlatform)
+}

@@ -53,62 +53,47 @@ func mitmIsCAInstalled() bool {
 	return certutilQueryShowsCA(out, err, mitmCACommonName)
 }
 
-// detectClaudeDesktopPath 检测 Claude Desktop 安装路径。
-// 按优先级依次尝试 5 种策略，覆盖 Squirrel 官方安装、注册表自定义路径、
-// Microsoft Store (MSIX)、传统安装器及运行进程嗅探。
-func detectClaudeDesktopPath() string {
+// detectClaudeDesktopPathAuto 自动检测 Claude Desktop 安装路径。
+// 按优先级:文件系统(Squirrel 根 shim + app-* 子目录、MS Store、传统路径)→ 注册表
+// (HKCU/HKLM 自定义安装位置)→ 运行进程嗅探(兜底)。
+//
+// 重要:前两类(文件系统 + 注册表)都「与运行状态无关」—— Claude 关着也能检测到。
+// 进程嗅探仅作最后兜底;若只能靠它,就会出现「Claude 开着才显示接管、关掉就消失」的
+// 死循环,所以前面的策略必须尽量把已安装(含版本化子目录)的情况覆盖全。
+func detectClaudeDesktopPathAuto() string {
 	la := os.Getenv("LOCALAPPDATA")
 	pf := os.Getenv("ProgramFiles")
 
-	// ── 策略 1: Squirrel 标准安装(官方安装器,最常见) ──
-	// 根目录 claude.exe 是 Squirrel 启动 shim,路径稳定不随版本变化。
-	if la != "" {
-		shim := filepath.Join(la, "AnthropicClaude", "claude.exe")
-		if _, err := os.Stat(shim); err == nil {
-			return shim
-		}
+	// ── 策略 1/3/4: 纯文件系统定位(跨平台可单测,见 claude_desktop_detect.go) ──
+	if p := claudeDesktopFromDirs(la, pf); p != "" {
+		return p
 	}
 
-	// ── 策略 2: 注册表查找(自定义安装路径/企业分发) ──
-	if loc := registryReadValue(
+	// ── 策略 2: 注册表 InstallLocation(自定义路径/企业分发);HKCU 优先,HKLM 兜底
+	// (per-machine 安装写在 HKLM,含 WOW6432Node 32 位视图)。 ──
+	for _, key := range []string{
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AnthropicClaude`,
-		"InstallLocation",
-	); loc != "" {
-		// InstallLocation 指向安装根目录,尝试找 exe
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AnthropicClaude`,
+		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\AnthropicClaude`,
+	} {
+		loc := registryReadValue(key, "InstallLocation")
+		if loc == "" {
+			continue
+		}
+		// InstallLocation 指向安装根目录;同样支持根 exe 与 app-* 版本子目录。
 		for _, name := range []string{"claude.exe", "Claude.exe"} {
-			exe := filepath.Join(loc, name)
-			if _, err := os.Stat(exe); err == nil {
+			if exe := filepath.Join(loc, name); statIsFile(exe) {
 				return exe
 			}
 		}
-		// 根目录无 exe, 尝试 Squirrel 版本子目录 app-*
-		if m, _ := filepath.Glob(filepath.Join(loc, "app-*", "claude.exe")); len(m) > 0 {
-			return m[len(m)-1] // 取最新版本
+		for _, name := range []string{"claude.exe", "Claude.exe"} {
+			if m, _ := filepath.Glob(filepath.Join(loc, "app-*", name)); len(m) > 0 {
+				return m[len(m)-1]
+			}
 		}
 	}
 
-	// ── 策略 3: Microsoft Store (MSIX/AppX) ──
-	if pf != "" {
-		if m, _ := filepath.Glob(filepath.Join(pf, "WindowsApps", "Claude_*", "app", "Claude.exe")); len(m) > 0 {
-			return m[len(m)-1]
-		}
-	}
-
-	// ── 策略 4: 传统安装器硬编码路径(含大小写变体) ──
-	for _, c := range []string{
-		filepath.Join(la, "Programs", "Claude", "Claude.exe"),
-		filepath.Join(la, "Programs", "Claude", "claude.exe"),
-		filepath.Join(la, "claude-desktop", "Claude.exe"),
-		filepath.Join(la, "claude-desktop", "claude.exe"),
-		filepath.Join(pf, "Claude", "Claude.exe"),
-		filepath.Join(pf, "Claude", "claude.exe"),
-	} {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-
-	// ── 策略 5: 运行进程嗅探(兜底,仅 Claude 正在运行时有效) ──
+	// ── 策略 5: 运行进程嗅探(最后兜底,仅 Claude 正在运行时有效) ──
 	if out, err := hideCmd("wmic", "process", "where",
 		"name='claude.exe'", "get", "ExecutablePath", "/value").Output(); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
@@ -137,8 +122,11 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 	}
 	mitmKillClaudeWindows()
 	// 启动 Claude.exe 用裸 exec.Command：它是 GUI 进程，不能用 hideCmd(HideWindow 会把
-	// 主窗口一起隐藏)。
-	cmd := exec.Command(bin)
+	// 主窗口一起隐藏)。Squirrel 根 stub 会把参数转发给真 Electron 进程,故直接用检测到的 bin。
+	// 两条通道缺一不可:① cmd.Env 给 Node 子进程(推理);② argv 里的 --proxy-server 给
+	// Chromium 渲染进程(登录态/订阅等级/付费墙)。早先 Windows 漏了 ② → Max 掀不翻。
+	argv := claudeMitmRelaunchArgv(bin, proxyAddr)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = mitmProxyEnv(os.Environ(), proxyAddr, caCertPath)
 	return cmd.Start()
 }

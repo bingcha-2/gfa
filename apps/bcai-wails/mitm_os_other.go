@@ -4,7 +4,7 @@ package main
 
 import "fmt"
 
-// Linux 及其它平台占位：Claude 桌面端无官方 Linux 版，detectClaudeDesktopPath 返回空，
+// Linux 及其它平台占位：Claude 桌面端无官方 Linux 版，detectClaudeDesktopPathAuto 返回空，
 // 故接管 target 在这些平台显示「未检测到」、永不触发重启；以下函数仅为跨平台可编译。
 
 func mitmInstallCA(certPath string) error {
@@ -17,7 +17,7 @@ func mitmUninstallCA() error {
 
 func mitmIsCAInstalled() bool { return false }
 
-func detectClaudeDesktopPath() string { return "" }
+func detectClaudeDesktopPathAuto() string { return "" }
 
 func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 	return fmt.Errorf("mitm: 带代理重启 Claude 暂未在该平台实现")

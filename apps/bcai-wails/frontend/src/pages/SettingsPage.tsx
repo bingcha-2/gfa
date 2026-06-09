@@ -17,9 +17,11 @@ export function SettingsPage() {
   const [idePath, setIdePath] = useState('')
   const [hubPath, setHubPath] = useState('')
   const [codexAppPath, setCodexAppPath] = useState('')
+  const [claudeDesktopPath, setClaudeDesktopPath] = useState('')
   const [detectedIde, setDetectedIde] = useState('')
   const [detectedHub, setDetectedHub] = useState('')
   const [detectedCodex, setDetectedCodex] = useState('')
+  const [detectedClaudeDesktop, setDetectedClaudeDesktop] = useState('')
 
   useEffect(() => {
     loadSettings()
@@ -32,9 +34,11 @@ export function SettingsPage() {
     setIdePath(config.idePath || paths.idePath || '')
     setHubPath(config.hubPath || paths.hubPath || '')
     setCodexAppPath(config.codexAppPath || paths.codexAppPath || '')
+    setClaudeDesktopPath(config.claudeDesktopPath || paths.claudeDesktopPath || '')
     setDetectedIde(config.idePath ? '自定义' : paths.idePath ? '已检测' : '未检测到')
     setDetectedHub(config.hubPath ? '自定义' : paths.hubPath ? '已检测' : '未检测到')
     setDetectedCodex(config.codexAppPath ? '自定义' : paths.codexAppPath ? '已检测' : '未检测到')
+    setDetectedClaudeDesktop(config.claudeDesktopPath ? '自定义' : paths.claudeDesktopPath ? '已检测' : '未检测到')
   }
 
   const handleSaveProxy = async () => {
@@ -62,6 +66,11 @@ export function SettingsPage() {
     if (path) setCodexAppPath(path)
   }
 
+  const handleBrowseClaudeDesktop = async () => {
+    const path = await api.browseForPath('选择 Claude 桌面端程序 (Claude.app / Claude.exe)')
+    if (path) setClaudeDesktopPath(path)
+  }
+
   const handleSavePaths = async () => {
     if (!config) return
     try {
@@ -70,6 +79,7 @@ export function SettingsPage() {
         idePath: idePath.trim(),
         hubPath: hubPath.trim(),
         codexAppPath: codexAppPath.trim(),
+        claudeDesktopPath: claudeDesktopPath.trim(),
       })
       await useAppStore.getState().fetchIDEStatus()
       await showAlert('保存成功', '安装路径已保存。')
@@ -136,6 +146,18 @@ export function SettingsPage() {
             <div className="flex gap-2">
               <Input value={codexAppPath} readOnly placeholder="未检测到" className="flex-1 text-[12px] font-mono" />
               <Button variant="secondary" onClick={handleBrowseCodex}>浏览</Button>
+            </div>
+          </div>
+
+          {/* Claude Desktop path —— 自动检测漏检/提权偏移时的逃生口,免「先开 Claude 才识别」 */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[12px] text-[var(--text-secondary)] font-medium">Claude 桌面端</span>
+              <span className={cn('text-[10px] font-semibold', detectedClaudeDesktop === '已检测' ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{detectedClaudeDesktop}</span>
+            </div>
+            <div className="flex gap-2">
+              <Input value={claudeDesktopPath} readOnly placeholder="未检测到(可手动指定,无需先打开 Claude)" className="flex-1 text-[12px] font-mono" />
+              <Button variant="secondary" onClick={handleBrowseClaudeDesktop}>浏览</Button>
             </div>
           </div>
 

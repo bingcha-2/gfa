@@ -149,7 +149,7 @@ export async function setClaudeDesktopMockLogin(on: boolean): Promise<boolean> {
   return _SetClaudeDesktopMockLogin(on)
 }
 
-export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string }> {
+export async function getDetectedPaths(): Promise<{ idePath: string; hubPath: string; codexAppPath: string; claudeDesktopPath: string }> {
   return GetDetectedPaths()
 }
 

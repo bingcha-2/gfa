@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // 隔离 wails 运行时:组件 `import * as api`,渲染期不会调用(仅点击 handler 才调),
@@ -57,12 +57,25 @@ describe('TokenSourceControl — Claude Desktop 接管入口跨平台', () => {
     expect(screen.getByText(DESKTOP_LABEL)).toBeInTheDocument()
   })
 
-  // detected 仍是真正的开关:没检测到桌面端就不显示(平台无关)。
-  it('未检测到 Claude Desktop 时不显示', () => {
+  // 未检测到也「常显示」——灰一行「未安装 / 未检测到」、接管按钮禁用,而不是整块隐藏。
+  // 隐藏才是反馈里「Claude 开着才冒出来」死循环的源头,故改为常显示 + 设置里可手动指定路径。
+  it('未检测到 Claude Desktop 时仍显示(灰显未安装,按钮禁用)', () => {
     setPlatform('Win32')
     store.state.ideProducts = [
       { id: 'claude_desktop', name: DESKTOP_LABEL, detected: false, injected: false },
     ]
+    render(<TokenSourceControl />)
+    expect(screen.getByText(DESKTOP_LABEL)).toBeInTheDocument()
+    // 「未安装 / 未检测到」是 claude_desktop 行独有的状态文案,用它定位本行(其它产品行文案不同)。
+    const status = screen.getByText('未安装 / 未检测到')
+    const row = status.parentElement!.parentElement!
+    // 接管按钮禁用:接管不存在的东西没意义。
+    expect(within(row).getByRole('button', { name: '接管' })).toBeDisabled()
+  })
+
+  // Claude 桌面端无官方 Linux 版 → 非 mac/win 平台不显示该入口。
+  it('Linux 上不显示(无官方桌面端)', () => {
+    setPlatform('Linux x86_64')
     render(<TokenSourceControl />)
     expect(screen.queryByText(DESKTOP_LABEL)).toBeNull()
   })
