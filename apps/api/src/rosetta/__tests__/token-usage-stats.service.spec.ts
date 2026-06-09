@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TokenUsageStatsService } from "../token-usage-stats.service";
 import { beijingDayKey } from "../../common/beijing-time";
@@ -37,6 +37,18 @@ function row(over: Partial<any>): any {
 }
 
 describe("TokenUsageStatsService.getHourlyFrequency", () => {
+  // These tests use fixed 2026-06-07 timestamps with a relative `days` window, so
+  // they must pin "now" to that day — otherwise the data ages out of the window
+  // and every query returns 0 (date-rot). Scoped to this describe; the other
+  // blocks use new Date() and stay on the real clock.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-07T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("buckets a card's calls into 24 Beijing hours of the day", async () => {
     // 2026-06-07T00:30:00Z = 08:30 Beijing; 2026-06-07T06:00:00Z = 14:00 Beijing
     const svc = makeService([
