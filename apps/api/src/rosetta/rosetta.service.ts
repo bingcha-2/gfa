@@ -265,7 +265,12 @@ export class RosettaService {
     }
   }
 
-  async uploadToCliProxy(ids: number[], customClientId?: string, customClientSecret?: string) {
+  async uploadToCliProxy(
+    ids: number[],
+    customClientId?: string,
+    customClientSecret?: string,
+    provider: "gemini" | "antigravity" = "gemini",
+  ) {
     if (!ids.length) throw new BadRequestException("ids is required");
 
     const baseUrl = process.env.CLIPROXY_BASE_URL;
@@ -299,8 +304,12 @@ export class RosettaService {
 
       // 1. Discover projectId
       let projectId = "";
+      let accessToken = "";
       try {
-        projectId = await this.discoverProjectId(acc.refreshToken, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
+        const discovery = await this.discoverProjectId(acc.refreshToken, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
+        projectId = discovery.projectId;
+        accessToken = discovery.accessToken;
+
         if (projectId) {
           this.logger.log(`[uploadToCliProxy] ${acc.email} projectId=${projectId}`);
           if (acc.projectId !== projectId) {
@@ -321,30 +330,44 @@ export class RosettaService {
       }
 
       // 2. Build CLIProxyAPI credential JSON (matching existing format on server)
-      const credentialJson = {
-        auto: false,
-        checked: true,
-        disabled: false,
-        email: acc.email,
-        project_id: projectId,
-        token: {
-          client_id: OAUTH_CLIENT_ID,
-          client_secret: OAUTH_CLIENT_SECRET,
+      let credentialJson: any;
+      let fileName = "";
+
+      if (provider === "antigravity") {
+        credentialJson = {
+          type: "antigravity",
+          email: acc.email,
+          project_id: projectId,
+          access_token: accessToken,
           refresh_token: acc.refreshToken,
-          token_uri: "https://oauth2.googleapis.com/token",
-          token_type: "Bearer",
-          scopes: [
-            "https://www.googleapis.com/auth/cloud-platform",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/userinfo.profile",
-          ],
-          universe_domain: "googleapis.com",
-        },
-        type: "gemini",
-      };
+        };
+        fileName = `antigravity-${acc.email}.json`;
+      } else {
+        credentialJson = {
+          auto: false,
+          checked: true,
+          disabled: false,
+          email: acc.email,
+          project_id: projectId,
+          token: {
+            client_id: OAUTH_CLIENT_ID,
+            client_secret: OAUTH_CLIENT_SECRET,
+            refresh_token: acc.refreshToken,
+            token_uri: "https://oauth2.googleapis.com/token",
+            token_type: "Bearer",
+            scopes: [
+              "https://www.googleapis.com/auth/cloud-platform",
+              "https://www.googleapis.com/auth/userinfo.email",
+              "https://www.googleapis.com/auth/userinfo.profile",
+            ],
+            universe_domain: "googleapis.com",
+          },
+          type: "gemini",
+        };
+        fileName = `gemini-${acc.email}-${projectId}.json`;
+      }
 
       // 3. Upload via management API
-      const fileName = `gemini-${acc.email}-${projectId}.json`;
       try {
         const resp = await fetch(
           `${baseUrl}/v0/management/auth-files?name=${encodeURIComponent(fileName)}`,
@@ -416,7 +439,7 @@ export class RosettaService {
     refreshToken: string,
     clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
     clientSecret = "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",
-  ): Promise<string> {
+  ): Promise<{ projectId: string; accessToken: string }> {
     // 1. Exchange refreshToken for access_token
     const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -464,8 +487,8 @@ export class RosettaService {
         if (r.ok) {
           const d = await r.json() as Record<string, unknown>;
           const p = d.cloudaicompanionProject as any;
-          if (typeof p === "string" && p) return p;
-          if (p?.id) return String(p.id);
+          if (typeof p === "string" && p) return { projectId: p, accessToken };
+          if (p?.id) return { projectId: String(p.id), accessToken };
 
           // No project yet — try onboardUser to provision
           const allowedTiers = (d.allowedTiers as any[]) ?? [];
@@ -501,13 +524,13 @@ export class RosettaService {
               }
 
               const onboardProject = onboardResult?.response?.cloudaicompanionProject;
-              if (typeof onboardProject === "string" && onboardProject) return onboardProject;
-              if (onboardProject?.id) return String(onboardProject.id);
+              if (typeof onboardProject === "string" && onboardProject) return { projectId: onboardProject, accessToken };
+              if (onboardProject?.id) return { projectId: String(onboardProject.id), accessToken };
             } catch { /* try next host */ }
           }
         }
       } catch { /* try next host */ }
     }
-    return "";
+    return { projectId: "", accessToken };
   }
 }

@@ -1499,6 +1499,59 @@ describe("RosettaService", () => {
         failed: 0,
       });
     });
+
+    it("should successfully upload to CLIProxy as antigravity provider", async () => {
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [
+          {
+            id: 1,
+            email: "upload@example.com",
+            refreshToken: "mock-refresh-token",
+            enabled: true,
+            projectId: "",
+          },
+        ],
+      });
+
+      let uploadedBody: any = null;
+      let uploadedFileName = "";
+
+      vi.stubGlobal("fetch", vi.fn(async (url, init) => {
+        const u = String(url);
+        if (u.includes("/token")) {
+          return new Response(JSON.stringify({ access_token: "at-antigravity", expires_in: 3600 }), { status: 200 });
+        }
+        if (u.includes("/v1internal:loadCodeAssist")) {
+          return new Response(JSON.stringify({ cloudaicompanionProject: "proj-antigravity" }), { status: 200 });
+        }
+        if (u.includes("/v0/management/auth-files")) {
+          uploadedFileName = decodeURIComponent(new URL(u).searchParams.get("name") || "");
+          uploadedBody = JSON.parse(init?.body as string);
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response("", { status: 404 });
+      }));
+
+      process.env.CLIPROXY_BASE_URL = "http://127.0.0.1:8317";
+      process.env.CLIPROXY_MANAGEMENT_KEY = "mock-key";
+
+      const service = new RosettaService({ dataDir: tempDir });
+      const result = await service.uploadToCliProxy([1], undefined, undefined, "antigravity");
+      expect(result).toMatchObject({
+        total: 1,
+        added: 1,
+        updated: 0,
+        failed: 0,
+      });
+      expect(uploadedFileName).toBe("antigravity-upload@example.com.json");
+      expect(uploadedBody).toMatchObject({
+        type: "antigravity",
+        email: "upload@example.com",
+        project_id: "proj-antigravity",
+        access_token: "at-antigravity",
+        refresh_token: "mock-refresh-token",
+      });
+    });
   });
 
   describe("setAccountProxy (通用出口代理路由)", () => {

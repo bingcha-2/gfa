@@ -398,6 +398,6 @@ export class RosettaController {
   @Post("upload-cliproxy")
   uploadToCliProxy(@Body() body: any) {
     const ids = Array.isArray(body?.ids) ? body.ids : [];
-    return this.rosetta.uploadToCliProxy(ids, body?.clientId, body?.clientSecret);
+    return this.rosetta.uploadToCliProxy(ids, body?.clientId, body?.clientSecret, body?.provider);
   }
 }
