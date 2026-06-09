@@ -20,8 +20,8 @@ export async function runConcurrent<T>(items: T[], concurrency: number, fn: (ite
 export async function tryDiscoverProject(ctx: RosettaContext, acc: any): Promise<void> {
   if (!acc.refreshToken) return;
   try {
-    const token = await getAccessToken(Number(acc.id), acc.refreshToken, ctx.tokenCache);
-    const result = await discoverProject(token);
+    const token = await getAccessToken(Number(acc.id), acc.refreshToken, ctx.tokenCache, acc.proxyUrl);
+    const result = await discoverProject(token, undefined, acc.proxyUrl);
     if (result?.projectId) {
       acc.projectId = result.projectId;
       acc.projectIdSource = "api";

@@ -49,11 +49,13 @@ describe("tryDiscoverProject", () => {
   it("writes projectId + planType on a successful discovery", async () => {
     vi.mocked(getAccessToken).mockResolvedValue("tok" as any);
     vi.mocked(discoverProject).mockResolvedValue({ projectId: "proj-1", planType: "pro" } as any);
-    const acc: any = { id: 7, email: "x@y.z", refreshToken: "rt" };
+    const acc: any = { id: 7, email: "x@y.z", refreshToken: "rt", proxyUrl: "http://p:1" };
 
     await tryDiscoverProject(ctx, acc);
 
-    expect(getAccessToken).toHaveBeenCalledWith(7, "rt", ctx.tokenCache);
+    // Both the token refresh and the discovery egress through the account proxy.
+    expect(getAccessToken).toHaveBeenCalledWith(7, "rt", ctx.tokenCache, "http://p:1");
+    expect(discoverProject).toHaveBeenCalledWith("tok", undefined, "http://p:1");
     expect(acc).toMatchObject({ projectId: "proj-1", projectIdSource: "api", planType: "pro" });
   });
 

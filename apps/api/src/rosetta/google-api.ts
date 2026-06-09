@@ -9,7 +9,16 @@
  *   - loadCodeAssist  → planType + AI credits (GOOGLE_ONE_AI)
  *   - fetchAvailableModels → per-model remainingFraction
  *   - onboardUser → projectId discovery
+ *
+ * EGRESS: every request here carries the account's OAuth token (refresh_token or
+ * Bearer accessToken). When the account has a sticky exit proxy it MUST egress
+ * through it — same residential IP as inference — so a token-bearing call never
+ * leaves from the datacenter IP (an anti-abuse signal). antigravity egress is
+ * best-effort, so each fn takes an optional proxyUrl and a proxy-less account
+ * still goes direct via proxyAwareFetch.
  */
+
+import { proxyAwareFetch } from "../lease-core/egress";
 
 // ── OAuth credentials ────────────────────────────────────────────────
 // Desktop-app client_secrets — NOT truly confidential (Google docs).
@@ -92,6 +101,7 @@ export function resolveOAuthCredentials(): OAuthCredentials {
  */
 export async function refreshAccessToken(
   refreshToken: string,
+  proxyUrl?: string,
 ): Promise<CachedToken> {
   const oauth = resolveOAuthCredentials();
   const body = new URLSearchParams({
@@ -101,7 +111,7 @@ export async function refreshAccessToken(
     client_secret: oauth.clientSecret,
   }).toString();
 
-  const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+  const res = await proxyAwareFetch(proxyUrl, GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -129,12 +139,13 @@ export async function getAccessToken(
   accountId: number,
   refreshToken: string,
   tokenCache: Map<number, CachedToken>,
+  proxyUrl?: string,
 ): Promise<string> {
   const cached = tokenCache.get(accountId);
   if (cached && cached.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
     return cached.accessToken;
   }
-  const fresh = await refreshAccessToken(refreshToken);
+  const fresh = await refreshAccessToken(refreshToken, proxyUrl);
   tokenCache.set(accountId, fresh);
   return fresh.accessToken;
 }
@@ -181,10 +192,11 @@ export async function fetchAccountHealth(
   projectId: string,
   email: string,
   endpoint = DEFAULT_CLOUD_ENDPOINT,
+  proxyUrl?: string,
 ): Promise<AccountHealth> {
   const emptyCredits: CreditsInfo = { known: false, available: false, creditAmount: 0, minCreditAmount: 0, paidTierID: "" };
   try {
-    const res = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
+    const res = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal:loadCodeAssist`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -259,9 +271,10 @@ export async function fetchAvailableModels(
   accessToken: string,
   projectId: string,
   endpoint = DEFAULT_CLOUD_ENDPOINT,
+  proxyUrl?: string,
 ): Promise<FetchModelsResult | null> {
   try {
-    const res = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
+    const res = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal:fetchAvailableModels`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -321,9 +334,10 @@ function extractProjectFromResponse(data: any): { projectId: string; planType: s
 export async function discoverProject(
   accessToken: string,
   endpoint = DEFAULT_CLOUD_ENDPOINT,
+  proxyUrl?: string,
 ): Promise<DiscoveredProject | null> {
   try {
-    const res = await fetch(`${endpoint}/v1internal:onboardUser`, {
+    const res = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal:onboardUser`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -352,7 +366,7 @@ export async function discoverProject(
 
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 500));
-      const pollRes = await fetch(`${endpoint}/v1internal/${opName}`, {
+      const pollRes = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal/${opName}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });

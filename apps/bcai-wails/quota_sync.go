@@ -63,12 +63,14 @@ type ModelQuotaEntry struct {
 
 // fetchHealthViaToken 用 access_token 调用 loadCodeAssist API
 // 返回 (credits, planType)。失败时 credits=nil, planType="free"。
-func fetchHealthViaToken(accessToken string) (*AccountCreditsInfo, string) {
-	return fetchHealthViaTokenWithEndpoint(DailyCloudEndpoint, accessToken)
+func fetchHealthViaToken(accessToken, proxyURL string) (*AccountCreditsInfo, string) {
+	return fetchHealthViaTokenWithEndpoint(DailyCloudEndpoint, accessToken, proxyURL)
 }
 
-// fetchHealthViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）
-func fetchHealthViaTokenWithEndpoint(endpoint, accessToken string) (*AccountCreditsInfo, string) {
+// fetchHealthViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）。
+// proxyURL = 账号绑定的出口代理：该请求带账号 token 打 Google，配了代理就走它
+// （与推理同一出口 IP），没配则系统代理/直连(antigravity 出口为 best-effort)。
+func fetchHealthViaTokenWithEndpoint(endpoint, accessToken, proxyURL string) (*AccountCreditsInfo, string) {
 	payload, _ := json.Marshal(map[string]interface{}{
 		"metadata": map[string]string{"ideType": "ANTIGRAVITY"},
 	})
@@ -82,7 +84,7 @@ func fetchHealthViaTokenWithEndpoint(endpoint, accessToken string) (*AccountCred
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "google-antigravity-ls/1.26.0")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := createHttpClient(proxyURL)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "free"
@@ -164,12 +166,13 @@ func fetchHealthViaTokenWithEndpoint(endpoint, accessToken string) (*AccountCred
 // fetchModelsViaToken 用 access_token + projectId 调用 fetchAvailableModels
 // 使用 DailyCloudEndpoint 以获取完整模型列表（包含 Claude/GPT 第三方模型）。
 // 返回 map[modelKey]ModelQuotaEntry，失败时返回 nil。
-func fetchModelsViaToken(accessToken, projectId string) map[string]ModelQuotaEntry {
-	return fetchModelsViaTokenWithEndpoint(DailyCloudEndpoint, accessToken, projectId)
+func fetchModelsViaToken(accessToken, projectId, proxyURL string) map[string]ModelQuotaEntry {
+	return fetchModelsViaTokenWithEndpoint(DailyCloudEndpoint, accessToken, projectId, proxyURL)
 }
 
-// fetchModelsViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）
-func fetchModelsViaTokenWithEndpoint(endpoint, accessToken, projectId string) map[string]ModelQuotaEntry {
+// fetchModelsViaTokenWithEndpoint 可注入 endpoint 的版本（方便测试）。proxyURL 见
+// fetchHealthViaTokenWithEndpoint:带账号 token,配了代理必走、没配走系统/直连。
+func fetchModelsViaTokenWithEndpoint(endpoint, accessToken, projectId, proxyURL string) map[string]ModelQuotaEntry {
 	reqBody, _ := json.Marshal(map[string]string{"project": projectId})
 	req, err := http.NewRequest("POST", endpoint+"/v1internal:fetchAvailableModels",
 		strings.NewReader(string(reqBody)))
@@ -180,7 +183,7 @@ func fetchModelsViaTokenWithEndpoint(endpoint, accessToken, projectId string) ma
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "google-antigravity-ls/1.26.0")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := createHttpClient(proxyURL)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil
@@ -274,13 +277,13 @@ func (l *Leaser) fetchAccountQuotaAsync() {
 		FetchedAt: time.Now().UnixMilli(),
 	}
 
-	// 1. loadCodeAssist → credits + planType
-	credits, planType := fetchHealthViaToken(token.AccessToken)
+	// 1. loadCodeAssist → credits + planType（带账号 token,走账号出口代理）
+	credits, planType := fetchHealthViaToken(token.AccessToken, token.ProxyURL)
 	snapshot.Credits = credits
 	snapshot.PlanType = planType
 
-	// 2. fetchAvailableModels → per-model quota
-	snapshot.ModelQuota = fetchModelsViaToken(token.AccessToken, token.ProjectId)
+	// 2. fetchAvailableModels → per-model quota（同上,走账号出口代理）
+	snapshot.ModelQuota = fetchModelsViaToken(token.AccessToken, token.ProjectId, token.ProxyURL)
 
 	l.mu.Lock()
 	l.cachedQuotaSnapshot = snapshot

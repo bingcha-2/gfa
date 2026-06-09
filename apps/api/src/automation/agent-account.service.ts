@@ -18,6 +18,7 @@ import { Queue } from "bullmq";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { proxyAwareFetch } from "../lease-core/egress";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   QUEUE_NAMES,
@@ -1021,6 +1022,8 @@ export class AgentAccountService {
       // Discover projectId via Google API
       let projectId = "";
       try {
+        // Agent accounts carry no per-account exit proxy (no proxyUrl field), so
+        // discovery egresses direct — best-effort, consistent with "no proxy → direct".
         projectId = await this.discoverProjectId(acc.refreshToken);
         if (projectId) {
           this.logger.log(`[uploadToRosetta] ${acc.loginEmail} projectId=${projectId}`);
@@ -1117,10 +1120,12 @@ export class AgentAccountService {
     refreshToken: string,
     clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
     clientSecret = "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",
+    proxyUrl?: string,
   ): Promise<string> {
 
-    // 1. Exchange refreshToken for access_token
-    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+    // 1. Exchange refreshToken for access_token (through the account's exit proxy
+    // when set — carries the account token, must not leak the datacenter IP).
+    const tokenResp = await proxyAwareFetch(proxyUrl, "https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -1154,7 +1159,7 @@ export class AgentAccountService {
     ];
     for (const host of hosts) {
       try {
-        const r = await fetch(`https://${host}/v1internal:loadCodeAssist`, {
+        const r = await proxyAwareFetch(proxyUrl, `https://${host}/v1internal:loadCodeAssist`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1179,7 +1184,7 @@ export class AgentAccountService {
 
           if (tierId) {
             try {
-              let onboardResult = await fetch(`https://${host}/v1internal:onboardUser`, {
+              let onboardResult = await proxyAwareFetch(proxyUrl, `https://${host}/v1internal:onboardUser`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
@@ -1195,7 +1200,7 @@ export class AgentAccountService {
                 const opName = String(onboardResult?.name || "").trim();
                 if (!opName) break;
                 await new Promise(resolve => setTimeout(resolve, 500));
-                onboardResult = await fetch(`https://${host}/v1internal/${opName}`, {
+                onboardResult = await proxyAwareFetch(proxyUrl, `https://${host}/v1internal/${opName}`, {
                   headers: { Authorization: `Bearer ${accessToken}` },
                   signal: AbortSignal.timeout(10000),
                 }).then(res => res.json() as Promise<Record<string, any>>);

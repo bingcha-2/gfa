@@ -46,9 +46,9 @@ export class CreditsQuotaService {
         }
 
         const token = await getAccessToken(
-          Number(acc.id), acc.refreshToken, this.ctx.tokenCache,
+          Number(acc.id), acc.refreshToken, this.ctx.tokenCache, acc.proxyUrl,
         );
-        const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+        const health = await fetchAccountHealth(token, acc.projectId, acc.email, undefined, acc.proxyUrl);
 
         // Update planType (detect upgrades)
         if (health.planType) {
@@ -123,17 +123,17 @@ export class CreditsQuotaService {
       }
       try {
         const token = await getAccessToken(
-          Number(acc.id), acc.refreshToken, this.ctx.tokenCache,
+          Number(acc.id), acc.refreshToken, this.ctx.tokenCache, acc.proxyUrl,
         );
 
         // Phase 2: planType via loadCodeAssist
-        const health = await fetchAccountHealth(token, acc.projectId, acc.email);
+        const health = await fetchAccountHealth(token, acc.projectId, acc.email, undefined, acc.proxyUrl);
         if (health.planType && health.planType !== acc.planType) {
           acc.planType = health.planType;
         }
 
         // Phase 3: Per-model quota via fetchAvailableModels
-        const modelsResult = await fetchAvailableModels(token, acc.projectId);
+        const modelsResult = await fetchAvailableModels(token, acc.projectId, undefined, acc.proxyUrl);
         if (!modelsResult) {
           // Could not fetch quota → treat as a failure, surface it (don't hide).
           errors++;

@@ -38,7 +38,7 @@ func TestFetchHealthViaToken_ParsesCreditsAndPlanType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token")
+	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token", "")
 
 	if planType != "ultra" {
 		t.Errorf("expected ultra, got %s", planType)
@@ -70,7 +70,7 @@ func TestFetchHealthViaToken_FreeTier(t *testing.T) {
 	}))
 	defer server.Close()
 
-	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token")
+	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token", "")
 
 	if planType != "free" {
 		t.Errorf("expected free, got %s", planType)
@@ -94,7 +94,7 @@ func TestFetchHealthViaToken_PremiumNoCreditField(t *testing.T) {
 	}))
 	defer server.Close()
 
-	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token")
+	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token", "")
 
 	if planType != "premium" {
 		t.Errorf("expected premium, got %s", planType)
@@ -116,7 +116,7 @@ func TestFetchHealthViaToken_HttpError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token")
+	credits, planType := fetchHealthViaTokenWithEndpoint(server.URL, "test-token", "")
 
 	if planType != "free" {
 		t.Errorf("expected free on error, got %s", planType)
@@ -158,7 +158,7 @@ func TestFetchModelsViaToken_ParsesModelQuota(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123")
+	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123", "")
 
 	if len(models) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(models))
@@ -177,7 +177,7 @@ func TestFetchModelsViaToken_EmptyModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123")
+	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123", "")
 	if models != nil {
 		t.Errorf("expected nil for empty response, got %v", models)
 	}
@@ -189,7 +189,7 @@ func TestFetchModelsViaToken_HttpError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123")
+	models := fetchModelsViaTokenWithEndpoint(server.URL, "test-token", "proj-123", "")
 	if models != nil {
 		t.Errorf("expected nil on HTTP error, got %v", models)
 	}
