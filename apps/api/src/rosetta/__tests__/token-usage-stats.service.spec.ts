@@ -50,11 +50,12 @@ describe("TokenUsageStatsService.getHourlyFrequency", () => {
   });
 
   it("buckets a card's calls into 24 Beijing hours of the day", async () => {
-    // 2026-06-07T00:30:00Z = 08:30 Beijing; 2026-06-07T06:00:00Z = 14:00 Beijing
+    // T00:30:00Z = 08:30 Beijing; T06:00:00Z = 14:00 Beijing
+    const todayStr = new Date().toISOString().split("T")[0];
     const svc = makeService([
-      row({ timestamp: new Date("2026-06-07T00:30:00Z"), totalTokens: 5 }),
-      row({ timestamp: new Date("2026-06-07T00:45:00Z"), totalTokens: 7 }),
-      row({ timestamp: new Date("2026-06-07T06:00:00Z"), totalTokens: 3 }),
+      row({ timestamp: new Date(`${todayStr}T00:30:00Z`), totalTokens: 5 }),
+      row({ timestamp: new Date(`${todayStr}T00:45:00Z`), totalTokens: 7 }),
+      row({ timestamp: new Date(`${todayStr}T06:00:00Z`), totalTokens: 3 }),
     ]);
     const out = await svc.getHourlyFrequency({ accessKeyId: "card-1", days: 1 });
 
@@ -70,9 +71,10 @@ describe("TokenUsageStatsService.getHourlyFrequency", () => {
   });
 
   it("only counts the requested card and returns empty for a blank id", async () => {
+    const todayStr = new Date().toISOString().split("T")[0];
     const svc = makeService([
-      row({ accessKeyId: "card-1", timestamp: new Date("2026-06-07T00:30:00Z") }),
-      row({ accessKeyId: "card-2", timestamp: new Date("2026-06-07T00:30:00Z") }),
+      row({ accessKeyId: "card-1", timestamp: new Date(`${todayStr}T00:30:00Z`) }),
+      row({ accessKeyId: "card-2", timestamp: new Date(`${todayStr}T00:30:00Z`) }),
     ]);
     const out = await svc.getHourlyFrequency({ accessKeyId: "card-1", days: 1 });
     expect(out.totalRequests).toBe(1);
@@ -82,9 +84,10 @@ describe("TokenUsageStatsService.getHourlyFrequency", () => {
   it("scopes a card's frequency to one account when accountId is given (multi-provider binding)", async () => {
     // Same card bound on two providers/accounts; each provider's view must only
     // see that account's calls, not the card's global total.
+    const todayStr = new Date().toISOString().split("T")[0];
     const svc = makeService([
-      row({ accessKeyId: "card-x", accountId: 1, timestamp: new Date("2026-06-07T00:30:00Z") }),
-      row({ accessKeyId: "card-x", accountId: 9, timestamp: new Date("2026-06-07T00:30:00Z") }),
+      row({ accessKeyId: "card-x", accountId: 1, timestamp: new Date(`${todayStr}T00:30:00Z`) }),
+      row({ accessKeyId: "card-x", accountId: 9, timestamp: new Date(`${todayStr}T00:30:00Z`) }),
     ]);
     expect((await svc.getHourlyFrequency({ accessKeyId: "card-x", accountId: 9, days: 1 })).totalRequests).toBe(1);
     expect((await svc.getHourlyFrequency({ accessKeyId: "card-x", accountId: 1, days: 1 })).totalRequests).toBe(1);
