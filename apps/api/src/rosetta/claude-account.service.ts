@@ -331,13 +331,34 @@ export class ClaudeAccountService {
     if (!acc) return { ok: false, error: "账号不存在" };
     if (!acc.refreshToken) return { ok: false, error: "该账号没有 refreshToken" };
     try {
-      const probe = { email: acc.email, refreshToken: acc.refreshToken } as any;
-      const token = await refreshClaudeAccessToken(probe);
+      // Carry id + proxyUrl so this probe shares the lease path's per-account
+      // single-flight lock (keyed by email) and refreshes through the same exit
+      // IP. reload re-reads the file so an invalid_grant can adopt a token the
+      // lease path just rotated instead of double-burning a single-use token.
+      const probe = {
+        id: acc.id,
+        email: acc.email,
+        refreshToken: acc.refreshToken,
+        proxyUrl: acc.proxyUrl,
+      } as any;
+      const token = await refreshClaudeAccessToken(probe, {
+        reload: () => {
+          try {
+            const latest = readJson(filePath, { accounts: [] });
+            const list: any[] = Array.isArray(latest.accounts) ? latest.accounts : [];
+            return list.find((a: any) => Number(a.id) === acc.id) || null;
+          } catch {
+            return null;
+          }
+        },
+      });
       acc.accessToken = token;
       acc.accessTokenExpiresAt = probe.accessTokenExpiresAt;
       if (probe.refreshToken && probe.refreshToken !== acc.refreshToken) acc.refreshToken = probe.refreshToken;
 
-      const snap = await fetchClaudeQuotaUpstream(token);
+      // Probe upstream through the account's sticky residential proxy — same IP
+      // that serves inference. A datacenter-IP probe is an anti-abuse signal.
+      const snap = await fetchClaudeQuotaUpstream(token, acc.proxyUrl);
       // 记录 /api/oauth/usage 原始返回,便于核对/排查。
       console.log(
         `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} usage=${JSON.stringify(snap.raw)}${snap.error ? ` error=${snap.error}` : ""}`,

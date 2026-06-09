@@ -105,8 +105,11 @@ describe("RemoteAnthropicService", () => {
     expect(result.accountId).toBe(21);
     expect(result.accessToken).toBe("claude-access-token-alpha");
     expect(result.accessKeySessionId).toBeTruthy();
+    // The provider now hands the refresher a disk re-reader (reload) so it can
+    // adopt a token another writer just rotated instead of double-burning one.
     expect(tokenProvider).toHaveBeenCalledWith(
       expect.objectContaining({ id: 21, refreshToken: "refresh-alpha" }),
+      expect.objectContaining({ reload: expect.any(Function) }),
     );
   });
 

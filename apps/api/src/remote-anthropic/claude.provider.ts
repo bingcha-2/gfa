@@ -1,10 +1,11 @@
+import * as fs from "fs";
 import * as path from "path";
 
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import type { Provider } from "../lease-core/provider";
 import { UNIVERSAL_BILLING, parseSnapshotDate } from "../token-server/token-billing";
 import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
-import { ClaudeAccount, refreshClaudeAccessToken } from "./auth/claude-token-provider";
+import { ClaudeAccount, RefreshOptions, refreshClaudeAccessToken } from "./auth/claude-token-provider";
 import { ClaudeModelCatalog } from "./claude-model-catalog";
 
 /** Clamp a 0..100 remaining-percentage to a finite number in range. */
@@ -20,7 +21,7 @@ export const CLAUDE_BILLING = UNIVERSAL_BILLING;
 
 export type ClaudeProviderOptions = {
   accountsFilePath?: string;
-  tokenProvider?: (account: ClaudeAccount) => Promise<string>;
+  tokenProvider?: (account: ClaudeAccount, opts?: RefreshOptions) => Promise<string>;
 };
 
 /**
@@ -36,7 +37,7 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   readonly egressPolicy = "required" as const;
   readonly accountsFilePath: string;
   readonly models = new ClaudeModelCatalog();
-  private readonly tokenProvider: (account: ClaudeAccount) => Promise<string>;
+  private readonly tokenProvider: (account: ClaudeAccount, opts?: RefreshOptions) => Promise<string>;
 
   constructor(options: ClaudeProviderOptions = {}) {
     this.accountsFilePath = options.accountsFilePath || path.join(defaultRemoteAccessDataDir(), "anthropic-accounts.json");
@@ -44,7 +45,23 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   }
 
   refreshToken(account: ClaudeAccount): Promise<string> {
-    return this.tokenProvider(account);
+    // Hand the refresher a disk re-reader so it can adopt a token another writer
+    // (the quota-refresh path, or a second process) just rotated — instead of
+    // burning a duplicate single-use refresh_token and tripping family revocation.
+    return this.tokenProvider(account, { reload: () => this.readAccountFromDisk(account.id) });
+  }
+
+  /** Latest persisted copy of one account, straight from disk. Best-effort: any
+   * read/parse error yields null so refresh just proceeds without the optimization. */
+  private readAccountFromDisk(accountId: number): ClaudeAccount | null {
+    try {
+      const data = JSON.parse(fs.readFileSync(this.accountsFilePath, "utf8"));
+      const accounts = Array.isArray(data) ? data : Array.isArray(data?.accounts) ? data.accounts : [];
+      const found = accounts.find((a: any) => Number(a?.id) === accountId);
+      return found ? this.normalizeAccount(found) : null;
+    } catch {
+      return null;
+    }
   }
 
   normalizeAccount(raw: any): ClaudeAccount {

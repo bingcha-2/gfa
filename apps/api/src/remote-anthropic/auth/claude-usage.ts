@@ -12,6 +12,15 @@
 // `utilization` is a USED fraction (Claude Code's StatusLine multiplies by 100),
 // `resets_at` is an ISO 8601 timestamp. We store REMAINING percent (higher =
 // healthier) to match codex/the blood bar: remaining = (1 - utilization) * 100.
+//
+// EGRESS: these probes carry the account's OAuth token, so they MUST leave from
+// the same sticky residential IP that serves inference. Refreshing/probing an
+// account from the server's datacenter IP while inference comes from a residential
+// IP is itself an anti-abuse signal that can get the OAuth session revoked (see
+// lease-core/egress.ts). So every call here routes through proxyAwareFetch with
+// the account's proxyUrl — never a bare fetch.
+
+import { proxyAwareFetch } from "../../lease-core/egress";
 
 const CLAUDE_USAGE_URL =
   process.env.BCAI_CLAUDE_USAGE_URL || "https://api.anthropic.com/api/oauth/usage";
@@ -88,9 +97,9 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
  * Read the account's 套餐 from GET /api/oauth/profile (no quota cost). Maps
  * organization.organization_type → max/pro/enterprise/team. "" on any failure.
  */
-async function fetchClaudePlanType(accessToken: string): Promise<string> {
+async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Promise<string> {
   try {
-    const res = await fetch(CLAUDE_PROFILE_URL, {
+    const res = await proxyAwareFetch(proxyUrl, CLAUDE_PROFILE_URL, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -115,21 +124,22 @@ async function fetchClaudePlanType(accessToken: string): Promise<string> {
  */
 export async function fetchClaudeQuotaUpstream(
   accessToken: string,
+  proxyUrl?: string,
 ): Promise<ClaudeQuotaSnapshot> {
   if (!accessToken) return { raw: null, httpStatus: 0, error: "missing access token" };
   const [snap, planType] = await Promise.all([
-    fetchUsageSnapshot(accessToken),
-    fetchClaudePlanType(accessToken),
+    fetchUsageSnapshot(accessToken, proxyUrl),
+    fetchClaudePlanType(accessToken, proxyUrl),
   ]);
   if (planType) snap.planType = planType;
   return snap;
 }
 
 /** GET /api/oauth/usage → 5h/weekly remaining windows. See fetchClaudeQuotaUpstream. */
-async function fetchUsageSnapshot(accessToken: string): Promise<ClaudeQuotaSnapshot> {
+async function fetchUsageSnapshot(accessToken: string, proxyUrl?: string): Promise<ClaudeQuotaSnapshot> {
   let resp: Response;
   try {
-    resp = await fetch(CLAUDE_USAGE_URL, {
+    resp = await proxyAwareFetch(proxyUrl, CLAUDE_USAGE_URL, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
