@@ -228,7 +228,7 @@ export class RosettaService {
       return {
         connected: true,
         baseUrl,
-        files: data,
+        files: Array.isArray(data) ? data : (data?.files || []),
       };
     } catch (err: any) {
       return {

@@ -44,7 +44,7 @@ interface RosettaAccount {
 interface CLIProxyStatus {
   connected: boolean;
   baseUrl: string;
-  files: string[];
+  files: any[];
   error?: string;
 }
 
@@ -94,6 +94,11 @@ export default function RosettaCliProxyPage() {
     setStatusLoading(true);
     try {
       const data = await apiRequest<CLIProxyStatus>("rosetta/cliproxy-status");
+      if (data && data.files) {
+        if (!Array.isArray(data.files) && typeof data.files === "object" && Array.isArray((data.files as any).files)) {
+          data.files = (data.files as any).files;
+        }
+      }
       setProxyStatus(data);
     } catch (err) {
       toast.error(`获取 CLIProxy 状态失败: ${getErrorMessage(err)}`);
@@ -107,7 +112,7 @@ export default function RosettaCliProxyPage() {
     setAccountsLoading(true);
     try {
       const data = await apiRequest<{ accounts: RosettaAccount[] }>("rosetta/accounts");
-      setAccounts(data.accounts || []);
+      setAccounts(data?.accounts || []);
     } catch (err) {
       toast.error(`加载 Rosetta 账号列表失败: ${getErrorMessage(err)}`);
     } finally {
@@ -126,11 +131,14 @@ export default function RosettaCliProxyPage() {
     setSelectedIds(new Set());
   }, [statusFilter]);
 
-  // Check if account is uploaded to CLIProxy (email present in files list, case-insensitive)
   const isUploaded = useCallback((email: string) => {
-    if (!proxyStatus?.files) return false;
+    if (!proxyStatus?.files || !email) return false;
     const lowerEmail = email.toLowerCase();
-    return proxyStatus.files.some(file => file.toLowerCase().includes(lowerEmail));
+    return proxyStatus.files.some(file => {
+      if (!file) return false;
+      const fileEmail = String(typeof file === "string" ? file : (file.email || file.name || ""));
+      return fileEmail.toLowerCase().includes(lowerEmail);
+    });
   }, [proxyStatus]);
 
   // Filter accounts list locally by search query and tabs
@@ -148,7 +156,7 @@ export default function RosettaCliProxyPage() {
       const q = searchQuery.toLowerCase().trim();
       result = result.filter(
         (acc) =>
-          acc.email.toLowerCase().includes(q) ||
+          (acc.email || "").toLowerCase().includes(q) ||
           (acc.alias && acc.alias.toLowerCase().includes(q)) ||
           (acc.projectId && acc.projectId.toLowerCase().includes(q))
       );
@@ -157,6 +165,15 @@ export default function RosettaCliProxyPage() {
     // Client-side sorting: sort by id ascending
     return [...result].sort((a, b) => a.id - b.id);
   }, [accounts, statusFilter, searchQuery, isUploaded]);
+
+  // Pagination calculations
+  const paginatedAccounts = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredAccounts.slice(start, start + pageSize);
+  }, [filteredAccounts, page, pageSize]);
+
+  const totalAccounts = filteredAccounts.length;
+  const totalPages = Math.max(1, Math.ceil(totalAccounts / pageSize));
 
   // Selection handlers
   const handleSelectAll = (checked: boolean) => {
@@ -316,7 +333,9 @@ export default function RosettaCliProxyPage() {
                       {proxyStatus.files.map((file, idx) => (
                         <div key={idx} className="flex items-center gap-1.5 p-2 font-mono text-[10px] truncate hover:bg-muted/30">
                           <FileTextIcon className="size-3 text-muted-foreground shrink-0" />
-                          <span className="truncate">{file}</span>
+                          <span className="truncate">
+                            {typeof file === "string" ? file : (file.name || file.email || "Unknown File")}
+                          </span>
                         </div>
                       ))}
                     </div>
