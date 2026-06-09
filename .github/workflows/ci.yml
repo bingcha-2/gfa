@@ -6,19 +6,7 @@ name: CI (bcai-wails)
 # *_darwin.go / *_other.go（靠 windows-latest / macos-latest 这两条腿覆盖）。
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/bcai-wails/**'
-      - 'packages/shared/**'
-      - 'scripts/sync-pricing.mjs'
-      - '.github/workflows/ci.yml'
-  pull_request:
-    paths:
-      - 'apps/bcai-wails/**'
-      - 'packages/shared/**'
-      - 'scripts/sync-pricing.mjs'
-      - '.github/workflows/ci.yml'
+  # 仅手动触发：不再随 push main / PR 自动跑，避免频繁触发。
   workflow_dispatch:
 
 permissions:

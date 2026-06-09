@@ -1,9 +1,7 @@
 name: Build & Release GFA Client
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # 仅手动触发：不再随 v* tag 自动打包，避免频繁触发。
   workflow_dispatch:
 
 permissions:
