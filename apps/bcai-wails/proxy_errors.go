@@ -29,7 +29,10 @@ func cloudCodeAccountProblemReason(statusCode int, body string) string {
 		}
 		return ""
 	case http.StatusTooManyRequests:
-		return buildAccountProblemReason(statusCode, firstNonEmpty(googleStatus, googleDetailReason, "too_many_requests"))
+		// 429 的具体 ErrorInfo.reason(如 INSUFFICIENT_G1_CREDITS_BALANCE / RATE_LIMIT_EXCEEDED)
+		// 优先于笼统的 status(永远是 RESOURCE_EXHAUSTED)。否则上层日志/控制台/冷却原因永远只看到
+		// resource_exhausted,分不清"信用耗尽(换号+长冷却)"和"瞬时限流"。
+		return buildAccountProblemReason(statusCode, firstNonEmpty(googleDetailReason, googleStatus, "too_many_requests"))
 	case http.StatusForbidden:
 		// 验证挑战(VALIDATION_REQUIRED / "Verify your account")必须先判 —— 它的报文里带
 		// "domain": "cloudcode-pa.googleapis.com",会被下面的 service_disabled 规则误吞。

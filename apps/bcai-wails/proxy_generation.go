@@ -12,6 +12,33 @@ import (
 	"time"
 )
 
+// shouldRotateOnTransportError 判断:当 client.Do 返回传输层错误(EOF / 连接重置,即
+// 根本没拿到任何 HTTP 响应)时,该不该像 429 一样换号重试,而不是一根死连接就整单 502。
+// 死的 keep-alive 连接、或上游边缘直接丢 socket,都不该在号池还有没试过的号时打死整个请求。
+// 绑定卡没有备号,无法换号。仅在还有 attempt 余量且非绑定卡时才轮换。
+func shouldRotateOnTransportError(attempt, maxAttempts int, bound bool) bool {
+	return attempt < maxAttempts && !bound
+}
+
+// poolExhaustionHint 把"轮换用尽后仍失败"的 problemReason 翻译成给 IDE/用户看的【显眼】
+// 中文提示 + 建议的 Retry-After 秒数。否则 IDE 只会收到上游那句没头没脑的英文
+// "Resource has been exhausted" 或裸 502。retryAfterSec 给 Retry-After 头,让 IDE 退避而不是
+// 立刻重试又烧一轮号池。hinted=false → 没有特别提示,走原样转发上游响应。
+func poolExhaustionHint(reason string) (msg string, retryAfterSec int, hinted bool) {
+	r := strings.ToLower(reason)
+	switch {
+	case strings.Contains(r, "credits_balance"): // INSUFFICIENT_G1_CREDITS_BALANCE
+		return "Claude 付费信用额度已耗尽(已尝试多个账号均无余额),请稍后重试,或切换到 Gemini 模型继续。", 1800, true
+	case strings.Contains(r, "resource_exhausted"),
+		strings.Contains(r, "quota"),
+		strings.Contains(r, "rate_limit"):
+		return "当前模型额度已用尽、号池暂无可用账号,请稍后重试或切换模型。", 600, true
+	case strings.Contains(r, "capacity"):
+		return "上游容量繁忙,号池暂时排不到空位,请稍后重试。", 60, true
+	}
+	return "", 0, false
+}
+
 // peekEmbeddedStreamError 在 WriteHeader 之前预读 2xx 流式响应的首个 chunk(≤8KB),
 // 检测 Google "HTTP 200 + 流体内嵌配额/容量错误"的情况。返回读到的首块(干净则留作
 // 转发),以及若是内嵌错误时分类出的 reason/model/retry —— 调用方据此【像 HTTP 错误
@@ -88,6 +115,8 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 	var excludeAccountIds []int
 	// 首 chunk 在重试循环内预读(用于 200-内嵌错误换号);干净则带出循环供流式转发。
 	var firstChunk []byte
+	// 轮换用尽时最后一次失败的原因,用于给 IDE 一个【显眼】的中文提示(见 poolExhaustionHint)。
+	var lastProblemReason string
 	isStreaming := false
 	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
 		var err error
@@ -184,6 +213,23 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 			}
 			if err != nil {
 				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
+				// 传输层错误(EOF/连接重置,根本没拿到 HTTP 响应)= 这个号的连接坏了/上游边缘丢了
+				// socket。号池还有没试过的号时,像 429 一样换号,而不是一根死连接就整单 502。
+				// 报为瞬时错误(服务端按阈值计数,单次不封号),并排除本号防本请求内又租到它。
+				if shouldRotateOnTransportError(attempt, remoteMaxAttempts, lease.Bound) {
+					audit.note += fmt.Sprintf("; 传输错误换号#%d", lease.AccountId)
+					leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+						StatusCode: http.StatusBadGateway,
+						ModelKey:   requestModelKey,
+						Reason:     "transport_error",
+						ErrorText:  err.Error(),
+					}, upstream, lease)
+					excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusBadGateway))
+					continue
+				}
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -352,6 +398,7 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		}
 
 		audit.note += fmt.Sprintf("; 终止%d(%d %s)", attempt, resp.StatusCode, problemReason)
+		lastProblemReason = problemReason
 		leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 		break
 	}
@@ -360,6 +407,19 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
+	}
+	// 轮换用尽仍是配额/信用/容量类失败 → 不把上游那句英文 "Resource has been exhausted" 原样
+	// 丢给 IDE,而是回一个【显眼】的中文提示 + Retry-After,让用户看懂、让 IDE 退避而非立刻又烧一轮号池。
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		if msg, retrySec, hinted := poolExhaustionHint(lastProblemReason); hinted {
+			audit.note += "; 池级耗尽提示"
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retrySec))
+			p.sendJsonError(w, resp.StatusCode, msg)
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
+			return
+		}
 	}
 	defer resp.Body.Close()
 	audit.status = resp.StatusCode
@@ -523,6 +583,8 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 	var excludeAccountIds []int
 	// 首 chunk 在重试循环内预读(用于 200-内嵌错误换号);干净则带出循环供流式转发。
 	var firstChunk []byte
+	// 轮换用尽时最后一次失败的原因,用于给 IDE 一个【显眼】的中文提示(见 poolExhaustionHint)。
+	var lastProblemReason string
 	isStreaming := false
 
 	for attempt := 1; attempt <= remoteMaxAttempts; attempt++ {
@@ -587,6 +649,23 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 			}
 			if err != nil {
 				audit.note += fmt.Sprintf("; 上游请求失败:%v", err)
+				// 传输层错误(EOF/连接重置,根本没拿到 HTTP 响应)= 这个号的连接坏了/上游边缘丢了
+				// socket。号池还有没试过的号时,像 429 一样换号,而不是一根死连接就整单 502。
+				// 报为瞬时错误(服务端按阈值计数,单次不封号),并排除本号防本请求内又租到它。
+				if shouldRotateOnTransportError(attempt, remoteMaxAttempts, lease.Bound) {
+					audit.note += fmt.Sprintf("; 传输错误换号#%d", lease.AccountId)
+					leaser.ReportProblemWithDetails(card, deviceId, ReportDetails{
+						StatusCode: http.StatusBadGateway,
+						ModelKey:   requestModelKey,
+						Reason:     "transport_error",
+						ErrorText:  err.Error(),
+					}, upstream, lease)
+					excludeAccountIds = append(excludeAccountIds, lease.AccountId)
+					atomic.AddInt64(&p.stats.TotalRetries, 1)
+					GetUsageStats().AddRetry()
+					time.Sleep(remoteRetryDelayForStatus(attempt, http.StatusBadGateway))
+					continue
+				}
 				p.sendJsonError(w, 502, fmt.Sprintf("Upstream gateway error: %v", err))
 				atomic.AddInt64(&p.stats.TotalErrors, 1)
 				return
@@ -741,6 +820,7 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		}
 
 		audit.note += fmt.Sprintf("; 终止%d(%d %s)", attempt, resp.StatusCode, problemReason)
+		lastProblemReason = problemReason
 		leaser.ReportProblemWithDetails(card, deviceId, reportDetails, upstream, lease)
 		break
 	}
@@ -750,6 +830,19 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		p.sendJsonError(w, 502, "Upstream gateway error: no response after retries")
 		atomic.AddInt64(&p.stats.TotalErrors, 1)
 		return
+	}
+	// 轮换用尽仍是配额/信用/容量类失败 → 不把上游那句英文 "Resource has been exhausted" 原样
+	// 丢给 IDE,而是回一个【显眼】的中文提示 + Retry-After,让用户看懂、让 IDE 退避而非立刻又烧一轮号池。
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		if msg, retrySec, hinted := poolExhaustionHint(lastProblemReason); hinted {
+			audit.note += "; 池级耗尽提示"
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retrySec))
+			p.sendJsonError(w, resp.StatusCode, msg)
+			atomic.AddInt64(&p.stats.TotalErrors, 1)
+			return
+		}
 	}
 	defer resp.Body.Close()
 	audit.status = resp.StatusCode

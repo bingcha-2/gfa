@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -233,12 +234,12 @@ func TestExtractModelKeyFromBody(t *testing.T) {
 func TestParseDurationToMs(t *testing.T) {
 	cases := map[string]int64{
 		"5h30m0s":  5*3600000 + 30*60000,
-		"1h":      3600000,
-		"30m":     30 * 60000,
-		"10s":     10000,
+		"1h":       3600000,
+		"30m":      30 * 60000,
+		"10s":      10000,
 		"4h59m35s": 4*3600000 + 59*60000 + 35000,
-		"":        0,
-		"no-time": 0,
+		"":         0,
+		"no-time":  0,
 	}
 	for input, want := range cases {
 		got := parseDurationToMs(input)
@@ -368,10 +369,85 @@ func TestCheckStreamingQuotaError_NoError(t *testing.T) {
 // cloudCodeAccountProblemReason
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 传输层错误(EOF)必须像 429 一样换号:还有 attempt 余量且非绑定卡 → 轮换;
+// 用尽 attempt 或绑定卡 → 不轮换(走 502 / 绑定卡退避)。
+func TestShouldRotateOnTransportError(t *testing.T) {
+	cases := []struct {
+		name              string
+		attempt, maxAtt   int
+		bound, wantRotate bool
+	}{
+		{"first attempt of 10, pool card", 1, 10, false, true},
+		{"mid attempt, pool card", 5, 10, false, true},
+		{"last attempt exhausted", 10, 10, false, false},
+		{"past last attempt", 11, 10, false, false},
+		{"bound card never rotates", 1, 10, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldRotateOnTransportError(c.attempt, c.maxAtt, c.bound); got != c.wantRotate {
+				t.Fatalf("shouldRotateOnTransportError(%d,%d,%v) = %v, want %v",
+					c.attempt, c.maxAtt, c.bound, got, c.wantRotate)
+			}
+		})
+	}
+}
+
+// 轮换用尽后,信用耗尽/配额类失败要给 IDE 一个显眼的中文提示 + Retry-After,
+// 而不是把上游英文报错或裸 502 丢给用户。
+func TestPoolExhaustionHint(t *testing.T) {
+	if msg, sec, hinted := poolExhaustionHint("http_429_insufficient_g1_credits_balance"); !hinted || sec != 1800 || !strings.Contains(msg, "信用额度已耗尽") {
+		t.Fatalf("credits hint wrong: msg=%q sec=%d hinted=%v", msg, sec, hinted)
+	}
+	if msg, sec, hinted := poolExhaustionHint("http_429_resource_exhausted"); !hinted || sec != 600 || !strings.Contains(msg, "额度已用尽") {
+		t.Fatalf("quota hint wrong: msg=%q sec=%d hinted=%v", msg, sec, hinted)
+	}
+	if _, _, hinted := poolExhaustionHint("http_429_rate_limit_exceeded"); !hinted {
+		t.Fatal("rate_limit should be hinted")
+	}
+	if _, _, hinted := poolExhaustionHint("capacity"); !hinted {
+		t.Fatal("capacity should be hinted")
+	}
+	// 无关原因 → 不特别提示,走原样转发。
+	if _, _, hinted := poolExhaustionHint("http_400_invalid_argument"); hinted {
+		t.Fatal("unrelated reason must not be hinted")
+	}
+}
+
 func TestCloudCodeAccountProblemReason_429(t *testing.T) {
 	reason := cloudCodeAccountProblemReason(429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`)
 	if reason == "" {
 		t.Error("expected non-empty reason for 429")
+	}
+}
+
+// A 429 carrying a specific ErrorInfo.reason (e.g. INSUFFICIENT_G1_CREDITS_BALANCE)
+// must surface that reason, NOT the generic RESOURCE_EXHAUSTED status. The detail
+// reason is what lets logs/console/cooldown distinguish "credit exhausted" (rotate
+// + long cool) from a plain "rate limited". Real upstream body shape from the field.
+func TestCloudCodeAccountProblemReason_429_DetailReasonWins(t *testing.T) {
+	body := `{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}}`
+	reason := cloudCodeAccountProblemReason(429, body)
+	if reason != "http_429_insufficient_g1_credits_balance" {
+		t.Fatalf("429 detail reason masked by status: got %q, want http_429_insufficient_g1_credits_balance", reason)
+	}
+}
+
+// A RATE_LIMIT_EXCEEDED 429 should likewise surface the specific reason, so a
+// transient rate-limit is distinguishable from credit exhaustion in the logs.
+func TestCloudCodeAccountProblemReason_429_RateLimit(t *testing.T) {
+	body := `{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"reason":"RATE_LIMIT_EXCEEDED"}]}}`
+	reason := cloudCodeAccountProblemReason(429, body)
+	if reason != "http_429_rate_limit_exceeded" {
+		t.Fatalf("got %q, want http_429_rate_limit_exceeded", reason)
+	}
+}
+
+// When a 429 has no ErrorInfo detail reason, fall back to the status string.
+func TestCloudCodeAccountProblemReason_429_FallbackToStatus(t *testing.T) {
+	reason := cloudCodeAccountProblemReason(429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`)
+	if reason != "http_429_resource_exhausted" {
+		t.Fatalf("got %q, want http_429_resource_exhausted (status fallback)", reason)
 	}
 }
 
@@ -466,12 +542,12 @@ func TestIsLocationUnsupportedError(t *testing.T) {
 func TestDiscountedCachedTokens(t *testing.T) {
 	cases := map[int64]int64{
 		0:    0,
-		1:    1,     // ceil(1/10) = 1
-		10:   1,     // ceil(10/10) = 1
-		100:  10,    // ceil(100/10) = 10
-		1000: 100,   // ceil(1000/10) = 100
-		15:   2,     // ceil(15/10) = 2
-		-5:   0,     // negative
+		1:    1,   // ceil(1/10) = 1
+		10:   1,   // ceil(10/10) = 1
+		100:  10,  // ceil(100/10) = 10
+		1000: 100, // ceil(1000/10) = 100
+		15:   2,   // ceil(15/10) = 2
+		-5:   0,   // negative
 	}
 	for input, want := range cases {
 		got := discountedCachedTokens(input)
