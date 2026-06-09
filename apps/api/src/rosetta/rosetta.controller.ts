@@ -194,6 +194,11 @@ export class RosettaController {
     return this.rosetta.toggleClaudeAccount(body);
   }
 
+  @Post("anthropic-toggle-account-pool")
+  toggleClaudeAccountPool(@Body() body: any) {
+    return this.rosetta.toggleClaudeAccountPool(body);
+  }
+
   @Post("anthropic-delete-account")
   deleteClaudeAccount(@Body() body: any) {
     return this.rosetta.deleteClaudeAccount(body);

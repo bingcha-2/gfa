@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
@@ -26,6 +26,7 @@ type ClaudeAccount = {
   id: number;
   email: string;
   enabled: boolean;
+  poolEnabled: boolean;
   alias: string;
   planType: string;
   hasToken: boolean;
@@ -194,6 +195,22 @@ export default function ClaudeAccountsPage() {
       fetchAccounts(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
+    }
+  }
+
+  async function handleTogglePool(account: ClaudeAccount) {
+    try {
+      const res = await fetch("/api/rosetta/anthropic-toggle-account-pool", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "操作失败");
+      toast.success(`${data.email} ${data.poolEnabled ? "已入池" : "已出池"}`);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "切换入池状态失败");
     }
   }
 
@@ -413,6 +430,7 @@ export default function ClaudeAccountsPage() {
                   <TableHead>出口代理</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
+                  <TableHead>入池</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -476,6 +494,16 @@ export default function ClaudeAccountsPage() {
                     </TableCell>
                     <TableCell>
                       <Switch checked={a.enabled} onCheckedChange={() => handleToggle(a)} />
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        title={a.poolEnabled ? "已入池（点击出池）" : "已出池（点击入池）"}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-muted transition-colors"
+                        onClick={() => handleTogglePool(a)}
+                      >
+                        <GitMergeIcon className={`size-4 ${a.poolEnabled ? "text-blue-500" : "text-muted-foreground"}`} />
+                      </button>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}

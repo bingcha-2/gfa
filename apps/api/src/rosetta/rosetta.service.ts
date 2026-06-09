@@ -178,6 +178,7 @@ export class RosettaService {
   cancelClaudeOAuthLogin(loginId: string) { return this.claudeSvc.cancelClaudeOAuthLogin(loginId); }
   submitClaudeOAuthCallback(loginId: string, rawInput: string) { return this.claudeSvc.submitClaudeOAuthCallback(loginId, rawInput); }
   toggleClaudeAccount(payload: any) { return this.claudeSvc.toggleClaudeAccount(payload); }
+  toggleClaudeAccountPool(payload: any) { return this.claudeSvc.toggleClaudeAccountPool(payload); }
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }
   deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
 
