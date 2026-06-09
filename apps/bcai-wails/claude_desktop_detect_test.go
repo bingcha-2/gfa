@@ -45,16 +45,33 @@ func TestClaudeDesktop_RootShim(t *testing.T) {
 // 那条「升级成 Max」永远不执行)。v9.1.0 只设了 env、漏了这条 flag。
 func TestClaudeDesktop_RelaunchArgvCarriesChromiumProxy(t *testing.T) {
 	const addr = "127.0.0.1:48801"
-	argv := claudeMitmRelaunchArgv(`C:\Users\dell\AppData\Local\AnthropicClaude\claude.exe`, addr)
+	const exe = `C:\Users\dell\AppData\Local\AnthropicClaude\claude.exe`
 
-	if len(argv) == 0 || argv[0] == "" {
-		t.Fatalf("argv[0] 必须是可执行文件路径")
+	// CA 可信(chromiumProxy=true):必须带 --proxy-server,否则订阅等级掀不翻 Max。
+	argv := claudeMitmRelaunchArgv(exe, addr, true)
+	if len(argv) == 0 || argv[0] != exe {
+		t.Fatalf("argv[0] 必须是可执行文件路径: %v", argv)
 	}
 	if !hasArg(argv, "--proxy-server="+addr) {
-		t.Fatalf("argv 缺少 Chromium 代理 flag --proxy-server=%s(登录订阅等级掀不翻 Max): %v", addr, argv)
+		t.Fatalf("CA 可信时 argv 缺少 --proxy-server=%s: %v", addr, argv)
 	}
 	if !hasArg(argv, "--proxy-bypass-list=127.0.0.1,localhost") {
 		t.Fatalf("argv 缺少 --proxy-bypass-list(本机回环应放行): %v", argv)
+	}
+}
+
+// 防白屏闸门:CA 不可信(chromiumProxy=false)时【绝不能】给 Chromium 加 --proxy-server,
+// 否则 claude.ai 被 MITM 却信不过证书 → 桌面端整页白屏。此时只启动 exe(env 由调用方设)。
+func TestClaudeDesktop_RelaunchArgvNoProxyWhenCAUntrusted(t *testing.T) {
+	const exe = `C:\Users\dell\AppData\Local\AnthropicClaude\claude.exe`
+	argv := claudeMitmRelaunchArgv(exe, "127.0.0.1:48801", false)
+	if len(argv) != 1 || argv[0] != exe {
+		t.Fatalf("CA 不可信时只应启动 exe、不带任何代理 flag(防白屏): %v", argv)
+	}
+	for _, a := range argv {
+		if a != exe && (a == "--proxy-server=127.0.0.1:48801" || a == "--proxy-bypass-list=127.0.0.1,localhost") {
+			t.Fatalf("CA 不可信仍带了 Chromium 代理 flag → 会白屏: %v", argv)
+		}
 	}
 }
 

@@ -115,7 +115,7 @@ func mitmKillClaudeWindows() {
 	time.Sleep(2 * time.Second)
 }
 
-func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
+func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy bool) error {
 	bin := detectClaudeDesktopPath()
 	if bin == "" {
 		return fmt.Errorf("未找到 Claude Desktop (Claude.exe)")
@@ -123,9 +123,9 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 	mitmKillClaudeWindows()
 	// 启动 Claude.exe 用裸 exec.Command：它是 GUI 进程，不能用 hideCmd(HideWindow 会把
 	// 主窗口一起隐藏)。Squirrel 根 stub 会把参数转发给真 Electron 进程,故直接用检测到的 bin。
-	// 两条通道缺一不可:① cmd.Env 给 Node 子进程(推理);② argv 里的 --proxy-server 给
-	// Chromium 渲染进程(登录态/订阅等级/付费墙)。早先 Windows 漏了 ② → Max 掀不翻。
-	argv := claudeMitmRelaunchArgv(bin, proxyAddr)
+	// ① cmd.Env 给 Node 子进程(推理),永远设;② --proxy-server 给 Chromium,仅 CA 可信时加
+	// (chromiumProxy)—— 否则 claude.ai 被 MITM 却信不过证书会白屏。
+	argv := claudeMitmRelaunchArgv(bin, proxyAddr, chromiumProxy)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = mitmProxyEnv(os.Environ(), proxyAddr, caCertPath)
 	return cmd.Start()

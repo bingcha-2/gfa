@@ -84,17 +84,22 @@ func statIsFile(p string) bool {
 // claudeMitmRelaunchArgv 构造「带代理重启 Claude 桌面端」的完整 argv(argv[0]=可执行文件)。
 // 抽成纯函数以便跨平台单测,且让 Windows/未来其它平台共用同一套参数,避免再漏掉某条通道。
 //
-// 两条通道缺一不可:
-//   - Node 子进程(Code/Cowork 推理):走 env(HTTPS_PROXY/NODE_EXTRA_CA_CERTS),在调用方设置。
+// 两条通道:
+//   - Node 子进程(Code/Cowork 推理):走 env(HTTPS_PROXY/NODE_EXTRA_CA_CERTS),在调用方设置,
+//     与本函数无关、永远生效。
 //   - Chromium 渲染进程(登录态/订阅等级/付费墙):不认 env,只认命令行 --proxy-server。
-//     v9.1.0 的 Windows 重启漏了这条 → 接管后登录订阅等级永远不变(Max 掀不翻)。
+//     仅当 chromiumProxy=true(根 CA 确被信任)才加;否则绝不能加 —— claude.ai 是 UI 主站,
+//     被 MITM 但证书不被信任会让整页 ERR_CERT_AUTHORITY_INVALID → 桌面端白屏。
 //
 // Claude 是 Squirrel 打包:根 claude.exe 是 stub,会把这些参数原样转发给真 Electron 进程,
 // 故无需自行解析版本化 exe;exe 传检测到的路径即可。
-func claudeMitmRelaunchArgv(exe, proxyAddr string) []string {
-	return []string{
-		exe,
-		"--proxy-server=" + proxyAddr,
-		"--proxy-bypass-list=127.0.0.1,localhost",
+func claudeMitmRelaunchArgv(exe, proxyAddr string, chromiumProxy bool) []string {
+	argv := []string{exe}
+	if chromiumProxy {
+		argv = append(argv,
+			"--proxy-server="+proxyAddr,
+			"--proxy-bypass-list=127.0.0.1,localhost",
+		)
 	}
+	return argv
 }

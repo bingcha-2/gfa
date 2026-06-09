@@ -19,7 +19,7 @@ func mitmIsCAInstalled() bool { return false }
 
 func detectClaudeDesktopPathAuto() string { return "" }
 
-func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
+func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy bool) error {
 	return fmt.Errorf("mitm: 带代理重启 Claude 暂未在该平台实现")
 }
 

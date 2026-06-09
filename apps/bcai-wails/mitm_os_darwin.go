@@ -89,7 +89,7 @@ func mitmQuitClaude() {
 //     Chromium 命令行 flag)。要掀翻 Chromium 侧的付费墙必须走这条；前提是根 CA 已装进
 //     系统钥匙串(由 RelaunchClaudeWithProxy 在调用本函数前确保)，否则 Chromium 不信 MITM 证书。
 //   - --proxy-bypass-list：放行 localhost，避免 Chromium 把本机回环也代理掉。
-func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
+func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy bool) error {
 	if _, err := os.Stat(mitmClaudeAppPath); err != nil {
 		return fmt.Errorf("Claude.app not found at %s", mitmClaudeAppPath)
 	}
@@ -99,10 +99,14 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string) error {
 		args = append(args, "--env", kv)
 	}
 	// --args 之后的都传给 App(Chromium 读取);务必排在所有 --env 之后。
-	args = append(args, "--args",
-		"--proxy-server="+proxyAddr,
-		"--proxy-bypass-list=127.0.0.1,localhost",
-	)
+	// 仅当根 CA 确被信任(chromiumProxy)才给 Chromium 加 --proxy-server;否则 claude.ai(UI 主站)
+	// 被 MITM 却信不过叶证书会整页报错白屏 —— 此时只走 env(Node 推理),Chromium 直连。
+	if chromiumProxy {
+		args = append(args, "--args",
+			"--proxy-server="+proxyAddr,
+			"--proxy-bypass-list=127.0.0.1,localhost",
+		)
+	}
 	return exec.Command("open", args...).Run()
 }
 

@@ -196,14 +196,22 @@ func (m *mitmManager) RelaunchClaudeWithProxy() error {
 	// Chromium 渲染进程(登录页/升级墙/主聊天)只信【系统信任库】里的 CA，不认 NODE_EXTRA_CA_CERTS。
 	// 要让 entitlement patch 够得着 Chromium 侧的付费墙(它走 --proxy-server 进 MITM)，必须先把根 CA
 	// 装进系统钥匙串，否则 Chromium 对 MITM 叶证书报 NET::ERR_CERT_AUTHORITY_INVALID、整个聊天打不开。
-	// 已装则跳过(避免每次接管都弹管理员授权框)。装失败不阻塞:仅 Code/Cowork 的 Node 侧仍可走 env 代理。
+	// 已装则跳过(避免每次接管都弹管理员授权框)。
 	if !mitmIsCAInstalled() {
-		Log("[mitm] 系统钥匙串未安装根 CA，安装中(将弹管理员授权框)…")
+		Log("[mitm] 系统信任库未安装根 CA，安装中(将弹授权/确认框)…")
 		if err := mitmInstallCA(mitmCACertPath()); err != nil {
-			Log("[mitm] 安装根 CA 失败(Chromium 侧付费墙将掀不翻，Code/Cowork 推理仍可走号池): %v", err)
+			Log("[mitm] 安装根 CA 失败: %v", err)
 		}
 	}
-	if err := mitmRelaunchClaudeWithProxy(m.proxyAddr(), mitmCACertPath()); err != nil {
+	// ⚠ 闸门:只有 CA【确实被信任】时才给 Chromium 加 --proxy-server。否则 claude.ai(UI 主站)
+	// 被 MITM 但叶证书不被信任 → 整页 ERR_CERT_AUTHORITY_INVALID → 桌面端白屏。CA 不可信时退回
+	// 「只设 env」:Code/Cowork 的 Node 推理照样走号池,Chromium 直连 claude.ai → UI 正常(仅订阅
+	// 等级不会改写成 Max)。这是「白屏」与「无 Max」之间的安全降级,绝不能为了 Max 把界面整白。
+	chromiumProxy := mitmIsCAInstalled()
+	if !chromiumProxy {
+		Log("[mitm] 根 CA 未被信任 → 退回 env-only 重启(Chromium 不走代理,避免白屏;订阅等级暂不会显示 Max,批准证书后重新接管即可)")
+	}
+	if err := mitmRelaunchClaudeWithProxy(m.proxyAddr(), mitmCACertPath(), chromiumProxy); err != nil {
 		return err
 	}
 	mitmSetTakeoverActive(true)
