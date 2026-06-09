@@ -13,7 +13,7 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bingcha135-sys/GFA-per.git"
+    "url": "https://github.com/bingcha-2/gfa.git"
   },
   "activationEvents": [
     "*"
