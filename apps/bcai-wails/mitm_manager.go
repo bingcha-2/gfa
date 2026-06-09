@@ -198,9 +198,9 @@ func (m *mitmManager) RelaunchClaudeWithProxy() error {
 	// 装进系统钥匙串，否则 Chromium 对 MITM 叶证书报 NET::ERR_CERT_AUTHORITY_INVALID、整个聊天打不开。
 	// 已装则跳过(避免每次接管都弹管理员授权框)。
 	if !mitmIsCAInstalled() {
-		Log("[mitm] 系统信任库未安装根 CA，安装中(将弹授权/确认框)…")
+		Log("[mitm] 本机信任库未安装根 CA，安装中(Windows 将弹 UAC 管理员授权框 / macOS 弹密码框)…")
 		if err := mitmInstallCA(mitmCACertPath()); err != nil {
-			Log("[mitm] 安装根 CA 失败: %v", err)
+			Log("[mitm] 安装根 CA 失败(请以管理员运行或在 UAC 框点「是」;否则桌面端订阅等级不会显示 Max): %v", err)
 		}
 	}
 	// ⚠ 闸门:只有 CA【确实被信任】时才给 Chromium 加 --proxy-server。否则 claude.ai(UI 主站)

@@ -9,17 +9,17 @@ import (
 // certutil argv 构造 + 输出判定的纯逻辑单测。真实 certutil 仅 Windows 有、且会改证书库,
 // 故把"命令长什么样""输出怎么解读"抽成纯函数,在任意平台(host/CI)都能锁住行为。
 
-// 全部子命令必须走 CurrentUser 根存储(-user):这是"免管理员/UAC"承诺的关键。
-// 漏掉 -user 会变成写 LocalMachine、要求提权 —— 在这台 Mac 上跑不到真机,只能靠该测试守住。
-func TestCertutilArgs_AllUseCurrentUserStore(t *testing.T) {
+// 全部子命令必须走【本机】根存储(不带 -user):CurrentUser 根在部分机器上不被 Claude 的
+// Chromium 信任 → claude.ai 白屏。带上 -user 会退回当前用户库 → 回归白屏,故用此测试守住。
+func TestCertutilArgs_AllUseLocalMachineStore(t *testing.T) {
 	cases := map[string][]string{
 		"add":   certutilAddRootArgs(`C:\ca.crt`),
 		"del":   certutilDelRootArgs("BingchaAI Local Root"),
 		"query": certutilQueryRootArgs("BingchaAI Local Root"),
 	}
 	for name, args := range cases {
-		if !containsArg(args, "-user") {
-			t.Errorf("%s args %v 缺少 -user(会退化为 LocalMachine、要求管理员)", name, args)
+		if containsArg(args, "-user") {
+			t.Errorf("%s args %v 不应带 -user(CurrentUser 根在部分机器上不被信任 → claude.ai 白屏)", name, args)
 		}
 		if !containsArg(args, "Root") {
 			t.Errorf("%s args %v 未指向 Root 存储", name, args)
@@ -29,7 +29,7 @@ func TestCertutilArgs_AllUseCurrentUserStore(t *testing.T) {
 
 func TestCertutilAddRootArgs(t *testing.T) {
 	got := certutilAddRootArgs(`C:\Users\me\.bcai\mitm\ca.crt`)
-	want := []string{"-user", "-f", "-addstore", "Root", `C:\Users\me\.bcai\mitm\ca.crt`}
+	want := []string{"-f", "-addstore", "Root", `C:\Users\me\.bcai\mitm\ca.crt`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("addstore args = %v, want %v", got, want)
 	}
@@ -37,7 +37,7 @@ func TestCertutilAddRootArgs(t *testing.T) {
 
 func TestCertutilDelRootArgs(t *testing.T) {
 	got := certutilDelRootArgs("BingchaAI Local Root")
-	want := []string{"-user", "-delstore", "Root", "BingchaAI Local Root"}
+	want := []string{"-delstore", "Root", "BingchaAI Local Root"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("delstore args = %v, want %v", got, want)
 	}
@@ -45,7 +45,7 @@ func TestCertutilDelRootArgs(t *testing.T) {
 
 func TestCertutilQueryRootArgs(t *testing.T) {
 	got := certutilQueryRootArgs("BingchaAI Local Root")
-	want := []string{"-user", "-store", "Root", "BingchaAI Local Root"}
+	want := []string{"-store", "Root", "BingchaAI Local Root"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("store args = %v, want %v", got, want)
 	}

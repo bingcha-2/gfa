@@ -33,11 +33,29 @@ func mitmInstallCA(certPath string) error {
 	if _, err := os.Stat(certPath); err != nil {
 		return fmt.Errorf("CA cert not found: %s", certPath)
 	}
+	// 先直接装本机库(bcai 已以管理员运行时成功,无额外弹窗)。
 	out, err := hideCmd("certutil", certutilAddRootArgs(certPath)...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("certutil -addstore Root: %v: %s", err, strings.TrimSpace(string(out)))
+	if err == nil {
+		return nil
+	}
+	directMsg := strings.TrimSpace(string(out))
+	// 未提权 → 通过 UAC 提权单独执行 certutil 写【本机】根存储(LocalMachine\Root)。
+	if out2, err2 := mitmInstallCAElevated(certPath); err2 != nil {
+		return fmt.Errorf("certutil -addstore Root(本机库): 直接=%v(%s); 提权=%v(%s)",
+			err, directMsg, err2, strings.TrimSpace(string(out2)))
 	}
 	return nil
+}
+
+// mitmInstallCAElevated 经 PowerShell Start-Process -Verb RunAs 提权运行 certutil,把根 CA
+// 写进【本机】根存储。弹一次 UAC;用户拒绝/失败则返回错误(上层闸门据此降级、不带 --proxy-server)。
+func mitmInstallCAElevated(certPath string) ([]byte, error) {
+	q := strings.ReplaceAll(certPath, "'", "''") // 路径放进 PS 单引号串,内部单引号按 PS 规则双写
+	ps := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'; $p = Start-Process -FilePath 'certutil.exe' -ArgumentList @('-f','-addstore','Root','%s') -Verb RunAs -PassThru -Wait -WindowStyle Hidden; exit $p.ExitCode`,
+		q,
+	)
+	return hideCmd("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
 }
 
 func mitmUninstallCA() error {
