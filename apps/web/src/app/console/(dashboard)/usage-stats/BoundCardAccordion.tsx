@@ -26,6 +26,13 @@ type Card_ = {
   usageTotals: { totalTokens: number; requests: number };
   hourlyFrequency: FreqPoint[];
 };
+type FamilyQuota = {
+  family: string; // gemini | claude | gpt
+  hourlyPercent: number | null;
+  weeklyPercent: number | null;
+  hourlyResetAt: string | null;
+  weeklyResetAt: string | null;
+};
 type Account = {
   id: number;
   email: string;
@@ -36,6 +43,11 @@ type Account = {
   weeklyPercent: number | null;
   hourlyResetAt: string | null;
   weeklyResetAt: string | null;
+  // 按模型族(gemini/claude/gpt)拆开的真实剩余 —— 用来回答"到底哪个模型耗尽"。
+  families?: FamilyQuota[];
+  activeLeases?: number;
+  // 水位快照是 on-change 写入的,最后一条时间戳≈账号最近一次被用(配额变动)。
+  waterHistory?: { timestamp: string }[];
   boundCards: Card_[];
 };
 
@@ -56,8 +68,54 @@ function accountWorstFraction(a: Account): number {
 function statusRank(a: Account): number {
   return (a.quotaStatus || "ok") === "ok" ? 1 : 0;
 }
+/** 账号"还有额度"的代表值:有 per-family 时取最好的那个族(只要一个模型能用就算有额度,
+ *  封禁是按模型族生效的);否则回落到账号级 5h。null = 额度未知。 */
+function bestFamilyPct(a: Account): number | null {
+  if (a.families && a.families.length) {
+    const vals = a.families
+      .map((f) => {
+        const w = [f.hourlyPercent, f.weeklyPercent].filter((v): v is number => typeof v === "number");
+        return w.length ? Math.min(...w) : null;
+      })
+      .filter((v): v is number => v !== null);
+    return vals.length ? Math.max(...vals) : null;
+  }
+  return a.hourlyPercent;
+}
+/** 现在能用吗:状态 ok 且至少一个模型族还有额度(未知额度视为可用)。 */
+function isUsable(a: Account): boolean {
+  if ((a.quotaStatus || "ok") !== "ok") return false;
+  const best = bestFamilyPct(a);
+  return best === null || best > 0;
+}
+/** 账号最近一次活动时间(ms):取水位快照最后一条;无则按绑定卡最近有用量的那天兜底,再无则 0。 */
+function lastActivityAt(a: Account): number {
+  let t = 0;
+  for (const h of a.waterHistory || []) {
+    const ms = Date.parse(h.timestamp);
+    if (Number.isFinite(ms) && ms > t) t = ms;
+  }
+  if (t === 0) {
+    for (const c of a.boundCards) {
+      for (const p of c.usageTrend || []) {
+        if (p.totalTokens > 0) { const ms = Date.parse(p.date); if (Number.isFinite(ms) && ms > t) t = ms; }
+      }
+    }
+  }
+  return t;
+}
 function barColor(pct: number) {
   return pct >= 50 ? "#22c55e" : pct >= 20 ? "#f59e0b" : "#ef4444";
+}
+const FAMILY_LABEL: Record<string, string> = { gemini: "Gemini", claude: "Claude", gpt: "GPT" };
+function familyLabel(f: string): string {
+  return FAMILY_LABEL[f] || f;
+}
+/** A family counts as exhausted when any of its windows reads exactly 0% remaining. */
+function exhaustedFamilies(a: Account): string[] {
+  return (a.families || [])
+    .filter((f) => f.hourlyPercent === 0 || f.weeklyPercent === 0)
+    .map((f) => familyLabel(f.family));
 }
 function formatDay(date: string): string {
   const [, m, d] = date.split("-");
@@ -93,7 +151,11 @@ function StatusBadge({ a }: { a: Account }) {
   } else if (st === "cooling") {
     label = "冷却中";
   } else if (st === "exhausted") {
-    label = "额度耗尽";
+    // 账号级 quotaStatus 只要任一模型族 429 就翻成 exhausted。有 per-family 数据时点名
+    // 到底哪个族耗尽(部分耗尽);全部耗尽或无 per-family 数据则沿用账号级"额度耗尽"。
+    const ex = exhaustedFamilies(a);
+    const famCount = a.families?.length ?? 0;
+    label = ex.length > 0 && ex.length < famCount ? `${ex.join("/")} 耗尽` : "额度耗尽";
   }
   return (
     <Badge variant={variant} className="text-[10px]" title={reason || st}>
@@ -115,6 +177,31 @@ function QuotaPills({ a }: { a: Account }) {
     <span className="flex items-center gap-1.5">
       {pill("5h", a.hourlyPercent, a.hourlyResetAt)}
       {pill("周", a.weeklyPercent, a.weeklyResetAt)}
+    </span>
+  );
+}
+
+/** Per-family upstream remaining: one pill per model family (Gemini / Claude / GPT),
+ *  so a half-exhausted account shows *which* side is dry instead of one blended %. */
+function FamilyPills({ families }: { families: FamilyQuota[] }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {families.map((f) => {
+        const windows = [f.hourlyPercent, f.weeklyPercent].filter((v): v is number => typeof v === "number");
+        const worst = windows.length ? Math.min(...windows) : null;
+        return (
+          <span
+            key={f.family}
+            className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px]"
+            title={formatReset(f.hourlyResetAt || f.weeklyResetAt)}
+          >
+            <span className="size-1.5 rounded-full" style={{ background: worst === null ? "#94a3b8" : barColor(worst) }} />
+            {familyLabel(f.family)}
+            {f.hourlyPercent !== null && ` 5h ${Math.round(f.hourlyPercent)}%`}
+            {f.weeklyPercent !== null && ` · 周 ${Math.round(f.weeklyPercent)}%`}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -173,8 +260,9 @@ const PAGE_SIZE = 20;
 export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
   const [warnOnly, setWarnOnly] = useState(false);
   const [page, setPage] = useState(1);
-  // true = 最紧/最危险优先(默认),false = 最松优先。
-  const [tightFirst, setTightFirst] = useState(true);
+  // "useful"(默认):可用号优先 + 最近使用在前(把能用、活跃的号顶上来)。
+  // "triage":老口径,告警/份额最紧优先(排障时找最危险的号)。
+  const [sortMode, setSortMode] = useState<"useful" | "triage">("useful");
   const shown = useMemo(() => {
     const filtered = accounts.filter(
       (a) =>
@@ -182,13 +270,24 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
         (a.quotaStatus || "ok") !== "ok" || // 需验证/冷却/异常的号也算告警
         a.boundCards.some((c) => { const f = minFraction(c.fairShare); return f !== null && f < 0.2; }),
     );
-    const dir = tightFirst ? 1 : -1;
+    if (sortMode === "triage") {
+      // 告警优先:非正常状态在前,再按份额最紧。
+      return [...filtered].sort((x, y) => {
+        const s = statusRank(x) - statusRank(y);
+        if (s !== 0) return s;
+        return accountWorstFraction(x) - accountWorstFraction(y);
+      });
+    }
+    // 可用优先:① 现在能用的(状态ok且5h>0)整体置顶;② 5h 剩余% 高的在前;
+    // ③ 同档按最近使用时间倒序(最近被用的在前)。
     return [...filtered].sort((x, y) => {
-      const s = statusRank(x) - statusRank(y); // 非正常状态优先
-      if (s !== 0) return dir * s;
-      return dir * (accountWorstFraction(x) - accountWorstFraction(y)); // 再按份额最紧
+      const u = Number(isUsable(y)) - Number(isUsable(x));
+      if (u !== 0) return u;
+      const px = bestFamilyPct(x) ?? 100, py = bestFamilyPct(y) ?? 100;
+      if (px !== py) return py - px;
+      return lastActivityAt(y) - lastActivityAt(x);
     });
-  }, [accounts, warnOnly, tightFirst]);
+  }, [accounts, warnOnly, sortMode]);
 
   const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   // Clamp when the filtered set shrinks (e.g. toggling 只看告警 or data refresh).
@@ -205,10 +304,10 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-            title="按账号状态 + 份额最紧排序;点击切换最紧/最松优先"
-            onClick={() => { setTightFirst((v) => !v); setPage(1); }}
+            title="可用优先:能用的号(状态ok且5h有额度)+最近使用的排在前;点击切到告警优先(排障:最危险的号在前)"
+            onClick={() => { setSortMode((v) => (v === "useful" ? "triage" : "useful")); setPage(1); }}
           >
-            <ArrowDownUpIcon className="size-3.5" /> {tightFirst ? "最紧优先" : "最松优先"}
+            <ArrowDownUpIcon className="size-3.5" /> {sortMode === "useful" ? "可用优先" : "告警优先"}
           </Button>
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             只看告警账号 <Switch checked={warnOnly} onCheckedChange={(v) => { setWarnOnly(v); setPage(1); }} />
@@ -227,7 +326,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                 {a.planType && <Badge variant="secondary">{a.planType}</Badge>}
                 <StatusBadge a={a} />
                 <span className="ml-auto flex items-center gap-2">
-                  <QuotaPills a={a} />
+                  {a.families && a.families.length > 0 ? <FamilyPills families={a.families} /> : <QuotaPills a={a} />}
                   <span className="text-xs text-muted-foreground">{a.boundCards.length} 卡 · 份额最紧 {worst}%</span>
                 </span>
               </CollapsibleTrigger>

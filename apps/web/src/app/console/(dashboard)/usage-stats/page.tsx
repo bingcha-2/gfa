@@ -118,6 +118,7 @@ type DashboardAccount = {
   weeklyPercent: number | null;
   hourlyResetAt: string | null;
   weeklyResetAt: string | null;
+  families?: { family: string; hourlyPercent: number | null; weeklyPercent: number | null; hourlyResetAt: string | null; weeklyResetAt: string | null }[];
   water: WaterPoint[];
   waterHistory: { timestamp: string; modelKey: string; hourlyPercent: number | null; weeklyPercent: number | null }[];
   boundCards: DashboardCard[];

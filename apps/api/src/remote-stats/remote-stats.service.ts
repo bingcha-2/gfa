@@ -94,6 +94,36 @@ function accountQuotaSummary(
   };
 }
 
+/** Per-family (gemini/claude/gpt) remaining for one account — the real answer to
+ *  "which model is exhausted". 5h prefers the live status fraction (this family's
+ *  worst model key), falling back to the snapshot; weekly + resets come from the
+ *  snapshot rows that belong to this family (grouped via modelFamily(modelKey)). */
+function accountFamilyQuota(
+  acc: any,
+  snap: AccountSnapshots | undefined,
+  family: string,
+  now: number,
+): { family: string; hourlyPercent: number | null; weeklyPercent: number | null; hourlyResetAt: string | null; weeklyResetAt: string | null } {
+  const cur = (snap?.current || []).filter((w) => modelFamily(w.modelKey) === family);
+  const minNum = (vals: (number | null)[]): number | null => {
+    const nums = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    return nums.length ? Math.min(...nums) : null;
+  };
+  const isoMin = (vals: (string | null)[]): string | null => {
+    const ts = vals.filter((v): v is string => !!v).map((v) => Date.parse(v)).filter((t) => Number.isFinite(t));
+    return ts.length ? new Date(Math.min(...ts)).toISOString() : null;
+  };
+  const live = accountFamilyFraction(acc, family, now); // 0..1 or null
+  const liveReset = getModelQuotaResetAt(acc, family);
+  return {
+    family,
+    hourlyPercent: live !== null ? live * 100 : minNum(cur.map((w) => w.hourlyPercent)),
+    weeklyPercent: minNum(cur.map((w) => w.weeklyPercent)),
+    hourlyResetAt: (liveReset > 0 ? new Date(liveReset).toISOString() : null) ?? isoMin(cur.map((w) => w.hourlyResetAt)),
+    weeklyResetAt: isoMin(cur.map((w) => w.weeklyResetAt)),
+  };
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -278,6 +308,12 @@ export class RemoteStatsService {
           weeklyPercent: quota.weeklyPercent,
           hourlyResetAt: quota.hourlyResetAt,
           weeklyResetAt: quota.weeklyResetAt,
+          // Per-family breakdown (gemini/claude/gpt): lets the UI say *which* model
+          // is exhausted instead of collapsing both into one account-level badge.
+          // Only families this account actually reports data for are kept.
+          families: families
+            .map((fam) => accountFamilyQuota(acc, snap, fam, now))
+            .filter((f) => f.hourlyPercent !== null || f.weeklyPercent !== null),
           water: snap?.current || [],
           waterHistory: snap?.history || [],
           boundCards,
