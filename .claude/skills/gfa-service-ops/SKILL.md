@@ -126,8 +126,9 @@ gh run watch <run-id>
 `.github/workflows/build-wails.yml` then:
 
 - Builds windows/amd64, macOS arm64 + amd64, linux/amd64 with `AppVersion=<version>`.
-- Publishes Release `wails-v<version>` to the **public** repo `bingcha135-sys/bingcha135-sys-bcai-releases`
-  (auth = secret `BCAIDOWNLOAD`); clients download binaries straight from GitHub CDN.
+- Publishes Release `wails-v<version>` (release name 「冰茶AI v<version>」) to the **public** repo
+  `bingcha-2/bcai-releases` (auth = secret `BCAIDOWNLOAD`); clients download binaries straight from GitHub CDN.
+  Verify with `gh release view wails-v<version> --repo bingcha-2/bcai-releases`.
 - Auto-generates `apps\web\public\updates\latest-wails.json` (both `version` and `minVersion` = the
   input version) and **git-pushes it to `main`** → run `git pull` afterwards.
 
@@ -142,7 +143,7 @@ The Wails build output `apps\bcai-wails\build\bin\` is not the public update dir
 
 ### Server minimum client version
 
-`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `8.6.0`) is the
+`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `9.1.0`) is the
 single floor for ALL lease paths — `RemoteAnthropicService` / `RemoteCodexService` / `TokenServerService`
 all extend `LeaseService` and none override it (their modules call
 `new XxxService({ tokenUsageTracker, accountQuotaSnapshotTracker })` with no `minClientVersion`).
@@ -155,7 +156,7 @@ update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
 ```powershell
 cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
 wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.6.0"
-# then upload the .exe to a bingcha135-sys-bcai-releases Release (tag wails-v8.6.0)
+# then upload the .exe to a bingcha-2/bcai-releases Release (tag wails-v8.6.0)
 # and hand-edit apps\web\public\updates\latest-wails.json (url/sha256/size/version/minVersion).
 ```
 
