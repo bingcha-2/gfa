@@ -768,7 +768,7 @@ function Start-Launcher {
     # Patch env context for services (absolute db path)
     $environmentContext.Map["DATABASE_URL"] = "file:$dbPath"
   } else {
-    Invoke-External $pnpmExe @("db:init:sqlite") $repoRoot $environmentContext.Map
+    Invoke-External $pnpmExe @("db:migrate") $repoRoot $environmentContext.Map
     Invoke-External $pnpmExe @("db:seed") $repoRoot $environmentContext.Map
   }
 
