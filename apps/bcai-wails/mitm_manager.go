@@ -58,8 +58,24 @@ func (m *mitmManager) SetMockLogin(on bool) {
 }
 
 // buildHandler 构造被拦截连接上的请求分派器。
+// userProxy 取「用户网络」出口:优先用户前置代理(m.upstream),空则系统代理。
+// 请求时实时求值(跟随 UpdateConfig)。用户凭证流量与 passthrough 隧道都经此出口,绝不碰静态 IP。
+func (m *mitmManager) userProxy() string {
+	m.mu.Lock()
+	up := m.upstream
+	m.mu.Unlock()
+	if up == "" {
+		up = getSystemProxy()
+	}
+	return up
+}
+
 func (m *mitmManager) buildHandler() http.Handler {
-	forward := mitmForwardHandler(ANTHROPIC_API_BASE, nil)
+	// forward/entitlement 按请求凭证选出口:号池 token → 该号静态 IP(无则 fail-closed),
+	// 用户自己凭证 → 用户网络。替换原先的 nil(=DefaultTransport 本机直连,会漏号池 token
+	// 从本机 IP 出去、与 /v1/messages 的静态 IP 形成同 token 双 IP 跳变)。见 egress_credential.go。
+	credTransport := newCredentialAwareTransport(m.userProxy)
+	forward := mitmForwardHandler(ANTHROPIC_API_BASE, credTransport)
 	claude := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		card, deviceId, upstream := m.card, m.deviceId, m.upstream
@@ -69,7 +85,7 @@ func (m *mitmManager) buildHandler() http.Handler {
 	})
 	// 资格端点：mock 开(默认)时转发真请求再把订阅改写成 pro(保留真身份)，关掉则纯透传。
 	// 运行时读 m.mockLogin。entitlement handler 内含 401/403 → canned 假 pro 的零账号兜底。
-	entitlement := mitmEntitlementHandler(ANTHROPIC_API_BASE, nil)
+	entitlement := mitmEntitlementHandler(ANTHROPIC_API_BASE, credTransport)
 	mockOrForward := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m.isMockLogin() {
 			entitlement.ServeHTTP(w, r)
@@ -133,7 +149,7 @@ func (m *mitmManager) StartProxy(port int, card, deviceId, upstream string) erro
 	m.card, m.deviceId, m.upstream = card, deviceId, upstream
 	m.port = port
 
-	p := newMitmProxy(mitmNewLeafCache(root), m.buildHandler())
+	p := newMitmProxy(mitmNewLeafCache(root), m.buildHandler(), m.userProxy)
 	if err := p.Start(fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
 		return fmt.Errorf("start mitm proxy: %w", err)
 	}

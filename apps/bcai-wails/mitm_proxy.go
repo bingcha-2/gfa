@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -24,6 +25,7 @@ import (
 type mitmProxy struct {
 	leafCache *mitmLeafCache
 	handler   http.Handler
+	userProxy func() string // 非拦截 host 隧道(passthrough)的用户网络出口;nil/空 → 直连兜底
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -32,8 +34,8 @@ type mitmProxy struct {
 	running  bool
 }
 
-func newMitmProxy(leafCache *mitmLeafCache, handler http.Handler) *mitmProxy {
-	return &mitmProxy{leafCache: leafCache, handler: handler}
+func newMitmProxy(leafCache *mitmLeafCache, handler http.Handler, userProxy func() string) *mitmProxy {
+	return &mitmProxy{leafCache: leafCache, handler: handler, userProxy: userProxy}
 }
 
 func (p *mitmProxy) Start(addr string) error {
@@ -132,9 +134,18 @@ func (p *mitmProxy) handleConn(c net.Conn) {
 	p.feed.push(tlsConn)
 }
 
-// passthrough 直连真实 upstream 并双向转发（不解密）。
+// passthrough 把非拦截 host 的连接经【用户网络】(优先用户梯子/系统代理)隧道转发,不解密。
+// 这些 host(claude.ai 子域 / 第三方 CDN)带的是用户自己的凭证或无凭证,绝不可能是号池 token
+// (号池 token 只走被解密的 api.anthropic.com)—— 故只走用户网络、永不碰静态 IP。
+// userProxy 为 nil/空则直连兜底(dialRawThroughProxy 内 proxyURL="" 即直连)。
 func (p *mitmProxy) passthrough(client net.Conn, hostPort string) {
-	upstream, err := net.DialTimeout("tcp", hostPort, 10*time.Second)
+	proxyURL := ""
+	if p.userProxy != nil {
+		proxyURL = p.userProxy()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	upstream, err := dialRawThroughProxy(ctx, hostPort, proxyURL)
 	if err != nil {
 		_ = client.Close()
 		return

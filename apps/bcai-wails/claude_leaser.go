@@ -231,6 +231,8 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 	l.lastLease = lease
 	l.mu.Unlock()
 	l.setLastError("")
+	// 登记号池 token → 静态出口,供凭证感知出口决策识别「这是我们发的」(见 egress_credential.go)。
+	registerPoolToken(lease.AccessToken, lease.ProxyURL)
 	return lease, nil
 }
 

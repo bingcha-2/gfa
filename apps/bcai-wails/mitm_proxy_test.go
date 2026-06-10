@@ -32,7 +32,7 @@ func TestMitmProxyInterceptsAndDispatches(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":"mitm"}`))
 	})
 
-	p := newMitmProxy(mitmNewLeafCache(root), handler)
+	p := newMitmProxy(mitmNewLeafCache(root), handler, nil)
 	if err := p.Start("127.0.0.1:0"); err != nil {
 		t.Fatalf("proxy start: %v", err)
 	}
