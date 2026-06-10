@@ -294,14 +294,6 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	if bin == "" {
 		return "Claude Desktop: 未检测到应用", nil
 	}
-	// Microsoft Store(MSIX)版跑在系统沙箱里,接管做不到(详见 isMicrosoftStoreClaude)。
-	// 这里提前拒绝并给出可操作指引,而不是进 goroutine 后硬 exec 撞 Access is denied、刷屏失败。
-	// STORE_CLAUDE: 前缀供前端识别 → 弹「去下载独立安装器」引导(与 EGRESS_BLOCKED: 同理),
-	// 不带 URL:下载链接由前端按钮承载,避免链接混进提示文案。
-	if isMicrosoftStoreClaude(bin) {
-		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop,无法接管 —— " +
-			"商店版跑在系统沙箱里,既不能带代理重启、也无法注入证书环境。请改装官方独立安装器版本后重试。")
-	}
 	m := GetMitmManager()
 	if !m.IsProxyRunning() {
 		return "", fmt.Errorf("MITM 代理未启动")
@@ -312,22 +304,50 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	if err := CleanClaudeModelConfig(); err != nil {
 		Log("[takeover] 清理 Claude 模型配置失败(不阻塞接管): %v", err)
 	}
-	// 重启会做两件事(见 RelaunchClaudeWithProxy)：
-	//   1. Node 侧(Code/Cowork 子进程)：注入 NODE_EXTRA_CA_CERTS + HTTPS_PROXY 即走 MITM。
-	//   2. Chromium 侧(登录页/升级墙/主聊天)：装根 CA 进系统钥匙串(弹管理员授权) + --proxy-server，
-	//      才能解密并掀翻 Chromium 画的付费墙。装 CA 失败不阻塞，Node 侧推理仍可走号池。
-	// 退出并带代理重启 Claude.app（异步：会杀掉当前 Cowork 会话）。
+
+	// ① 同步装根 CA(+伪凭证),先把证书装好再谈重启。同步执行是为了【在重启之前】拿到安装结局,
+	//    据此给前端分级提示:装进本机库=静默无提示;降级用户库=提示白屏排查;全失败=提示无 Max。
+	caResult := m.InstallTakeoverCA()
+
+	// ② Microsoft Store(MSIX)版:跑在 AppX 系统沙箱里,带代理重启从机制上做不到(CreateProcess
+	//    撞 Access denied、env/argv 进不去沙箱,详见 isMicrosoftStoreClaude)。把判定放在【装完 CA 之后】
+	//    而非接管入口 —— 满足「先尝试再说」,且【绝不进 relaunch】(否则会先杀掉用户正在跑的 Claude 再失败、
+	//    白白中断对话)。直接返回 STORE_CLAUDE: 引导换装独立安装器版。
+	if isMicrosoftStoreClaude(bin) {
+		Log("[takeover] 检测到 Microsoft Store 版 Claude Desktop,跳过重启(沙箱无法注入代理),引导换装。CA 安装结局=%d", caResult)
+		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop,无法接管 —— " +
+			"商店版跑在系统沙箱里,既不能带代理重启、也无法注入证书环境。请改装官方独立安装器版本后重试。")
+	}
+
+	// ③ 非 store 版:异步带代理重启 Claude.app(会杀掉当前 Cowork 会话)。异步是为了不阻塞 UI,
+	//    且与 mac/其它 target 行为一致。重启细节见 RelaunchClaudeProcess。
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				Log("[takeover] Claude Desktop 重启 goroutine panic: %v", r)
 			}
 		}()
-		if err := m.RelaunchClaudeWithProxy(); err != nil {
+		if err := m.RelaunchClaudeProcess(caResult); err != nil {
 			Log("[takeover] 带代理重启 Claude Desktop 失败: %v", err)
 		}
 	}()
-	return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)...", nil
+
+	// ④ 按 CA 安装结局给前端分级反馈(前缀供前端识别弹对应提示;接管本身已照常进行)。
+	switch caResult {
+	case caInstalledUser:
+		// 降级装进【当前用户】证书库:推理正常,但少数机器 Chromium 不信用户级证书 → 打开可能白屏。
+		return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
+			"但根证书因权限受限,已降级安装到「当前用户」证书库。若打开 Claude 出现【白屏】,说明当前系统不信任用户级证书,请按任一方式处理后重新接管:\n" +
+			"1. 临时关闭安全软件(火绒 / 360 等)的「主动防御」;\n" +
+			"2. 或右键以【管理员身份】重新运行本程序。", nil
+	case caInstallFailed:
+		// 本机库 + 用户库都失败(多为安全软件拦截):Node 侧推理照走号池,仅 Chromium 侧订阅等级不显示 Max。
+		return "CA_FAILED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
+			"但根证书安装被拦截(通常是安全软件的主动防御),订阅等级不会显示为 Max。如需完整体验,请在安全软件中放行后," +
+			"以【管理员身份】重新运行本程序并重新接管。", nil
+	default:
+		return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)...", nil
+	}
 }
 
 func (claudeDesktopTarget) Restore() (string, error) {

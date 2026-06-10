@@ -2,8 +2,11 @@ import { Loader2 } from 'lucide-react'
 
 /**
  * 全屏 loading 遮罩。用于接管/还原这类有数秒延迟(改文件 + 拉起 app)的操作,
- * 期间锁住交互并给出明确反馈。z-[60] 高于 Dialog(z-50);但操作结束后才会弹
- * 结果/错误弹窗,二者不会同时出现。
+ * 期间锁住交互并给出明确反馈。
+ *
+ * ⚠ z-index:本遮罩 z-overlay(70) 高于 Dialog 的 z-modal(60)。因此【弹任何结果/错误
+ * 弹窗之前,必须先把 show 置 false(调用方 setBusy(null))】,否则遮罩会盖住弹窗,用户只看到
+ * 转圈、看不到下面的提示与按钮。调用方(runTakeover)已在每个弹窗分支前先关遮罩。
  */
 export function LoadingOverlay({ show, label }: { show: boolean; label?: string }) {
   if (!show) return null

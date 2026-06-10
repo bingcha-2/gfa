@@ -28,6 +28,22 @@ const (
 	mitmCAOrg        = "BingchaAI"
 )
 
+// caInstallResult 区分根 CA 安装的三种结局,供上层决定前端提示策略(跨平台共享类型)。
+//   - caInstalledMachine: 装进【本机】根存储(LocalMachine),所有进程/用户上下文一律信任,
+//     Chromium 必认 —— 最优,接管完整(含订阅等级改写),无需任何提示。
+//   - caInstalledUser:    LocalMachine 失败后降级装进【当前用户】根存储(CurrentUser),免管理员、
+//     免 UAC。多数机器 Chromium 信任;少数精简版/企业组策略机器不信 → claude.ai 被 MITM 后白屏。
+//     故需提示用户:若打开后白屏,请关安全软件 / 以管理员身份运行后重新接管。
+//   - caInstallFailed:    本机库 + 用户库均失败(通常被安全软件主动防御拦截)。不阻塞接管 ——
+//     Node 侧推理靠 NODE_EXTRA_CA_CERTS 照走号池;仅 Chromium 侧订阅等级无法改写成 Max。
+type caInstallResult int
+
+const (
+	caInstalledMachine caInstallResult = iota
+	caInstalledUser
+	caInstallFailed
+)
+
 // mitmRoot 持有根 CA 证书与私钥。
 type mitmRoot struct {
 	Certificate *x509.Certificate

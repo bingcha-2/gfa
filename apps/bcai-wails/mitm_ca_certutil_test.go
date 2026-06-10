@@ -8,9 +8,11 @@ import (
 // certutil argv 构造 + 输出判定的纯逻辑单测。真实 certutil 仅 Windows 有、且会改证书库,
 // 故把"命令长什么样""输出怎么解读"抽成纯函数,在任意平台(host/CI)都能锁住行为。
 
-// 全部子命令必须走【本机】根存储(不带 -user):CurrentUser 根在部分机器上不被 Claude 的
-// Chromium 信任 → claude.ai 白屏。带上 -user 会退回当前用户库 → 回归白屏,故用此测试守住。
-func TestCertutilArgs_AllUseLocalMachineStore(t *testing.T) {
+// 主路径子命令必须走【本机】根存储(不带 -user):CurrentUser 根在部分机器上不被 Claude 的
+// Chromium 信任 → claude.ai 白屏,所以本机库永远是首选。带 -user 的 CurrentUser 命令是
+// mitmInstallCA 在本机库(直接 + UAC 提权)全部失败后的【显式降级兜底】(certutilAddUserRootArgs),
+// 不在本测试覆盖范围 —— 降级到用户库虽可能白屏,但「装上(可能白屏,有提示)」优于「装不上(必无 Max)」。
+func TestCertutilArgs_PrimaryPathUsesLocalMachineStore(t *testing.T) {
 	cases := map[string][]string{
 		"add":   certutilAddRootArgs(`C:\ca.crt`),
 		"del":   certutilDelRootArgs("BingchaAI Local Root"),
@@ -18,11 +20,25 @@ func TestCertutilArgs_AllUseLocalMachineStore(t *testing.T) {
 	}
 	for name, args := range cases {
 		if containsArg(args, "-user") {
-			t.Errorf("%s args %v 不应带 -user(CurrentUser 根在部分机器上不被信任 → claude.ai 白屏)", name, args)
+			t.Errorf("%s args %v 不应带 -user(主路径必须本机库;CurrentUser 仅作降级兜底)", name, args)
 		}
 		if !containsArg(args, "Root") {
 			t.Errorf("%s args %v 未指向 Root 存储", name, args)
 		}
+	}
+}
+
+// 降级兜底:CurrentUser 安装/查询命令必须带 -user(否则会去操作本机库、走错存储)。
+func TestCertutilUserRootArgs(t *testing.T) {
+	add := certutilAddUserRootArgs(`C:\Users\me\.bcai\mitm\ca.crt`)
+	wantAdd := []string{"-user", "-f", "-addstore", "Root", `C:\Users\me\.bcai\mitm\ca.crt`}
+	if !reflect.DeepEqual(add, wantAdd) {
+		t.Fatalf("add(user) args = %v, want %v", add, wantAdd)
+	}
+	query := certutilQueryUserRootArgs("BingchaAI Local Root")
+	wantQuery := []string{"-user", "-store", "Root", "BingchaAI Local Root"}
+	if !reflect.DeepEqual(query, wantQuery) {
+		t.Fatalf("query(user) args = %v, want %v", query, wantQuery)
 	}
 }
 

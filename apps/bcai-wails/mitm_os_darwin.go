@@ -16,9 +16,11 @@ import (
 
 const mitmClaudeAppBinary = "/Applications/Claude.app/Contents/MacOS/Claude"
 
-func mitmInstallCA(certPath string) error {
+// mitmInstallCA macOS 走系统钥匙串,无「当前用户库降级」概念:装成功 → caInstalledMachine
+// (系统域信任,全进程可见);装失败 → caInstallFailed。返回 caInstallResult 以对齐跨平台签名。
+func mitmInstallCA(certPath string) (caInstallResult, error) {
 	if _, err := os.Stat(certPath); err != nil {
-		return fmt.Errorf("CA cert not found: %s", certPath)
+		return caInstallFailed, fmt.Errorf("CA cert not found: %s", certPath)
 	}
 
 	// 往【系统钥匙串】写证书 + 设 admin 域信任都需要 root,只能经 osascript 提权(`security` 命令行
@@ -29,7 +31,7 @@ func mitmInstallCA(certPath string) error {
 	)
 	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
 	if err == nil {
-		return nil
+		return caInstalledMachine, nil
 	}
 
 	// ⚠ 已知坑(实测复现):add-trusted-cert 经 osascript 提权时,信任【可能已写入钥匙串】却仍返回非零
@@ -39,9 +41,9 @@ func mitmInstallCA(certPath string) error {
 	// 白白退回 env-only(订阅等级显示不出 Max)。复核真实信任态:确实装上了就按成功处理。
 	if mitmIsCAInstalled() {
 		Log("[mitm] add-trusted-cert 返回非零但信任已写入,按成功处理: %v: %s", err, string(out))
-		return nil
+		return caInstalledMachine, nil
 	}
-	return fmt.Errorf("add-trusted-cert: %v: %s", err, string(out))
+	return caInstallFailed, fmt.Errorf("add-trusted-cert: %v: %s", err, string(out))
 }
 
 func mitmUninstallCA() error {
@@ -57,6 +59,9 @@ func mitmUninstallCA() error {
 
 // mitmCleanupLegacyUserCA 仅 Windows 有「当前用户库」迁移问题;macOS 走系统钥匙串,无需清理。
 func mitmCleanupLegacyUserCA() error { return nil }
+
+// mitmCAInUserStore macOS 无「当前用户根存储」概念(走系统钥匙串),恒 false。
+func mitmCAInUserStore() bool { return false }
 
 func mitmIsCAInstalled() bool {
 	// 必须是「受信任根」，不能只是「存在于钥匙串」——Chromium/Safari 只信任设置里的根，
@@ -111,7 +116,7 @@ func mitmQuitClaude() {
 //   - --env HTTPS_PROXY 等：给 Code/Cowork 的 Node 子进程(它只认 env)。
 //   - --args --proxy-server：给 Chromium 渲染进程(登录页/升级墙/主聊天，它不认 env、只认
 //     Chromium 命令行 flag)。要掀翻 Chromium 侧的付费墙必须走这条；前提是根 CA 已装进
-//     系统钥匙串(由 RelaunchClaudeWithProxy 在调用本函数前确保)，否则 Chromium 不信 MITM 证书。
+//     系统钥匙串(由 InstallTakeoverCA 在调用本函数前确保)，否则 Chromium 不信 MITM 证书。
 //   - --proxy-bypass-list：放行 localhost，避免 Chromium 把本机回环也代理掉。
 func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy bool) error {
 	if _, err := os.Stat(mitmClaudeAppPath); err != nil {

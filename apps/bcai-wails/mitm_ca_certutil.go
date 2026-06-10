@@ -28,6 +28,20 @@ func certutilDelUserRootArgs(commonName string) []string {
 	return []string{"-user", "-delstore", "Root", commonName}
 }
 
+// certutilAddUserRootArgs: 把根 CA 装进【当前用户】「受信任的根证书颁发机构」。-f 已存在则覆盖。
+// 这是 mitmInstallCA 的 Level 3 降级路径:写 CurrentUser 完全免管理员、免 UAC 弹窗,
+// 在 LocalMachine(直接 + 提权)都失败(用户拒 UAC / 安全软件拦截)时静默兜底。
+// 代价是少数机器 Chromium 不信 CurrentUser 根 → claude.ai 白屏,故装成功后需提示用户。
+func certutilAddUserRootArgs(certPath string) []string {
+	return []string{"-user", "-f", "-addstore", "Root", certPath}
+}
+
+// certutilQueryUserRootArgs: 查【当前用户】根存储是否有该 CN 的证书(读用户库无需管理员)。
+// mitmIsCAInstalled 在本机库未命中时再查用户库,覆盖 Level 3 降级安装的情况。
+func certutilQueryUserRootArgs(commonName string) []string {
+	return []string{"-user", "-store", "Root", commonName}
+}
+
 // certutilQueryRootArgs: 查【本机】根存储里是否有该 CN 的证书(读本机库无需管理员)。
 func certutilQueryRootArgs(commonName string) []string {
 	return []string{"-store", "Root", commonName}

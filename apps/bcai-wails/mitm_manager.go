@@ -196,39 +196,57 @@ func (m *mitmManager) proxyAddr() string {
 }
 
 // InstallCA 把本地根 CA 装进系统信任库（OS 相关，需管理员授权）。
-func (m *mitmManager) InstallCA() error { return mitmInstallCA(mitmCACertPath()) }
+// 丢弃安装结局(caInstallResult):本入口只关心成败;分级提示走接管主路径 InstallTakeoverCA。
+func (m *mitmManager) InstallCA() error {
+	_, err := mitmInstallCA(mitmCACertPath())
+	return err
+}
 
 // UninstallCA 从系统信任库移除本地根 CA。
 func (m *mitmManager) UninstallCA() error { return mitmUninstallCA() }
 
-// RelaunchClaudeWithProxy 退出并带代理 env 重启 Claude.app（route A：子进程继承走 MITM）。
-// 前提：MITM 代理已 StartProxy。成功后落「接管中」标记。
-func (m *mitmManager) RelaunchClaudeWithProxy() error {
-	if !m.IsProxyRunning() {
-		return fmt.Errorf("mitm 代理未启动，无法接管")
-	}
+// InstallTakeoverCA 是接管的【同步】前半段:注入伪凭证 + 确保根 CA 装进信任库,返回安装结局
+// (caInstallResult)。拆出来单独同步执行,是为了让上层(takeover.go)能【在重启 Claude 之前】
+// 拿到 CA 结果,据此给前端分级提示(装好不提示 / 降级用户库提示白屏排查 / 全失败提示无 Max)。
+// 真正耗时的杀进程 + 重启留给 RelaunchClaudeProcess 异步做。
+//
+// Chromium 渲染进程(登录页/升级墙/主聊天)只信【系统信任库】里的 CA,不认 NODE_EXTRA_CA_CERTS。
+// 要让 entitlement patch 够得着 Chromium 侧付费墙(它走 --proxy-server 进 MITM),必须先把根 CA 装进
+// 信任库,否则 Chromium 对 MITM 叶证书报 NET::ERR_CERT_AUTHORITY_INVALID、整个聊天打不开。
+func (m *mitmManager) InstallTakeoverCA() caInstallResult {
 	// 伪 credentials.json 注入只对 Windows/Linux 有意义(那边登录态是文件式)。macOS 实测确认
 	// Claude 登录态走 safeStorage/钥匙串、根本不读该文件 → 注入是 no-op，跳过避免无谓 churn。
-	// mac 走的是 entitlement mock(保留真登录、改写付费资格)，不依赖伪凭证。
 	if m.isMockLogin() && runtime.GOOS != "darwin" {
 		if err := InjectFakeClaudeCredentials(); err != nil {
 			Log("[mitm] 注入伪 credentials.json 失败(不阻塞接管): %v", err)
 		}
 	}
-	// Chromium 渲染进程(登录页/升级墙/主聊天)只信【系统信任库】里的 CA，不认 NODE_EXTRA_CA_CERTS。
-	// 要让 entitlement patch 够得着 Chromium 侧的付费墙(它走 --proxy-server 进 MITM)，必须先把根 CA
-	// 装进系统钥匙串，否则 Chromium 对 MITM 叶证书报 NET::ERR_CERT_AUTHORITY_INVALID、整个聊天打不开。
-	// 已装则跳过(避免每次接管都弹管理员授权框)。
-	if !mitmIsCAInstalled() {
-		Log("[mitm] 本机信任库未安装根 CA，安装中(Windows 将弹 UAC 管理员授权框 / macOS 弹密码框)…")
-		if err := mitmInstallCA(mitmCACertPath()); err != nil {
-			Log("[mitm] 安装根 CA 失败(请以管理员运行或在 UAC 框点「是」;否则桌面端订阅等级不会显示 Max): %v", err)
-		}
+	// 已装(指纹匹配,本机库或用户库都算)→ 视作已就绪,不再重装、不弹框、不提示。
+	if mitmIsCAInstalled() {
+		return caInstalledMachine
 	}
-	// 迁移清理:9.2.2 及更早把 CA 装在【当前用户】根存储,现已改用本机库 → 删掉旧的孤儿根,
-	// 避免在用户信任库长期残留一张可签名自签根。幂等、不阻塞接管。
-	if err := mitmCleanupLegacyUserCA(); err != nil {
-		Log("[mitm] 清理遗留的当前用户根 CA 失败(不阻塞): %v", err)
+	Log("[mitm] 本机信任库未安装根 CA，安装中(Windows 可能弹 UAC 管理员授权框 / macOS 弹密码框)…")
+	result, err := mitmInstallCA(mitmCACertPath())
+	if err != nil {
+		Log("[mitm] 安装根 CA 失败(不阻塞接管;Node 侧推理照走号池,仅桌面端订阅等级不会显示 Max): %v", err)
+	}
+	return result
+}
+
+// RelaunchClaudeProcess 是接管的【异步】后半段:清理遗留孤儿根(带保护)→ 带代理 env 重启
+// Claude.app(route A:子进程继承走 MITM)。前提:MITM 代理已 StartProxy。成功后落「接管中」标记。
+// caResult 来自 InstallTakeoverCA,用于守护「降级装进用户库时不要把自己清掉」。
+func (m *mitmManager) RelaunchClaudeProcess(caResult caInstallResult) error {
+	if !m.IsProxyRunning() {
+		return fmt.Errorf("mitm 代理未启动，无法接管")
+	}
+	// 迁移清理:9.2.2 及更早把 CA 装在【当前用户】根存储,现默认本机库 → 删旧孤儿根。
+	// ⚠ 但若本轮 CA 正是降级装进用户库(caInstalledUser,或当前 CA 已在用户库),清理会按 CN 把
+	// 我们刚装的也删掉 → 绝不能执行。用 mitmCAInUserStore() 兜底守护,与 caResult 双重保险。
+	if caResult != caInstalledUser && !mitmCAInUserStore() {
+		if err := mitmCleanupLegacyUserCA(); err != nil {
+			Log("[mitm] 清理遗留的当前用户根 CA 失败(不阻塞): %v", err)
+		}
 	}
 	// ⚠ 闸门:只有 CA【确实被信任】时才给 Chromium 加 --proxy-server。否则 claude.ai(UI 主站)
 	// 被 MITM 但叶证书不被信任 → 整页 ERR_CERT_AUTHORITY_INVALID → 桌面端白屏。CA 不可信时退回

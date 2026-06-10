@@ -77,28 +77,55 @@ export function TokenSourceControl() {
   }
 
   // 统一的接管/还原执行:含 macOS 权限引导。loading 持续到状态真正翻转。
+  //
+  // ⚠ 关键:任何弹窗(showAlert/showConfirm)前都必须先 setBusy(null) 关掉 LoadingOverlay。
+  // LoadingOverlay 的 z-index(z-overlay=70) 高于 Dialog(z-modal=60),不先关就会把弹窗整个
+  // 盖住 —— 用户只看到转圈遮罩、看不到下面的提示/按钮。故每个分支都先关遮罩再弹。
   const runTakeover = async (target: string, inject: boolean): Promise<boolean> => {
     setBusy(target)
     setBusyLabel(`${inject ? '正在接管' : '正在停止接管'} ${targetName(target)}...`)
     try {
       const msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
-      // 失败(尤其 macOS 权限)直接走错误分支,不必等状态翻转。
-      if (/失败|权限|permission|not permitted|denied/i.test(msg) && isMac) {
-        await fetchIDEStatus()
-        await showAlert('需要系统权限', `${msg}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。`)
-        await api.openSystemPermissionSettings()
-        return false
+
+      // ── 根证书降级安装(CA_DEGRADED):接管已生效、推理正常,但证书降级到「当前用户」库,
+      //    少数机器 Chromium 不信任 → 打开可能白屏。alert 提示用户白屏时的排查办法(关安全软件 /
+      //    管理员运行后重新接管)。这是「软成功」,弹完仍等状态翻转、返回 true。
+      if (msg && msg.includes('CA_DEGRADED:')) {
+        setBusy(null) // 先关遮罩,否则弹窗被盖住
+        const detail = msg.split('CA_DEGRADED:').pop()?.trim() || msg
+        await showAlert('接管成功 · 证书已降级安装', detail)
+        await waitForInjected(target, inject)
+        return true
       }
-      // Windows 商店版 Claude Desktop 无法接管:后端用 STORE_CLAUDE: 前缀标记 → 弹专门引导,
-      // 「去下载独立安装器」按钮直接打开官网下载页,而不是泛化的「操作失败」死胡同。
+      // ── 根证书安装失败(CA_FAILED):接管已生效、推理正常,但证书装不上(多为安全软件拦截),
+      //    订阅等级不显示 Max。同为「软成功」,提示用户如何获得完整体验后返回 true。
+      if (msg && msg.includes('CA_FAILED:')) {
+        setBusy(null)
+        const detail = msg.split('CA_FAILED:').pop()?.trim() || msg
+        await showAlert('接管成功 · 证书未安装', detail)
+        await waitForInjected(target, inject)
+        return true
+      }
+      // ── Windows 商店版 Claude Desktop 无法接管:后端用 STORE_CLAUDE: 前缀标记 → 弹专门引导,
+      //    「去下载独立安装器」按钮直接打开官网下载页,而不是泛化的「操作失败」死胡同。
       if (msg && msg.includes('STORE_CLAUDE:')) {
+        setBusy(null)
         await fetchIDEStatus()
         const detail = msg.split('STORE_CLAUDE:').pop()?.replace(/\)\s*$/, '').trim() || msg
         const go = await showConfirm('⚠ 商店版无法接管', detail, { confirmLabel: '去下载独立安装器', cancelLabel: '稍后' })
         if (go) api.openURL('https://claude.ai/download')
         return false
       }
+      // ── 失败(尤其 macOS 权限)直接走错误分支,不必等状态翻转。
+      if (/失败|权限|permission|not permitted|denied/i.test(msg) && isMac) {
+        setBusy(null)
+        await fetchIDEStatus()
+        await showAlert('需要系统权限', `${msg}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。`)
+        await api.openSystemPermissionSettings()
+        return false
+      }
       if (msg && msg.trim() && /失败/.test(msg)) {
+        setBusy(null)
         await fetchIDEStatus()
         await showAlert('操作失败', msg)
         return false
@@ -108,6 +135,7 @@ export function TokenSourceControl() {
       await waitForInjected(target, inject)
       return true
     } catch (err) {
+      setBusy(null) // 先关遮罩再弹错误窗,否则被遮罩盖住
       await fetchIDEStatus()
       const raw = String(err)
       // 出口前置闸拦截:后端用 EGRESS_BLOCKED: 前缀标记「未通过出口检查、已拒绝接管」,
