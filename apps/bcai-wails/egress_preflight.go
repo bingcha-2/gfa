@@ -233,7 +233,7 @@ func enforceEgressGate(product string, cfg Config) error {
 	if product == "anthropic" {
 		if aerr := egressAnthropicReachable(proxyURL); aerr != nil {
 			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, proxyURL)
-			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n多半是当前代理节点对 anthropic 做了拦截/污染,请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n实在没有可用节点,请联系工作人员;若换了节点仍连不上,可能是当前机场已被列入黑名单,需更换机场。",
+			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n多半是当前代理节点对 anthropic 做了拦截/污染,请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n若换了节点仍连不上,可能是当前机场已被列入黑名单,需自行更换机场。",
 				egressGateMarker, aerr)
 		}
 		Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测通过", product)
