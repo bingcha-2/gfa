@@ -181,6 +181,12 @@ func mitmModifyClaudeAiResponse(resp *http.Response) error {
 		path = resp.Request.URL.Path
 	}
 
+	// ★ 顶层 HTML 文档:注入「隐藏 chat」守卫脚本(chat/code UI 都来自 claude.ai 网页)。
+	//   只认 text/html,不碰 JSON/API;文档不是资格端点,故放在资格判定之前。见 mitm_claudeai_inject.go。
+	if mitmIsClaudeAiHTMLDocument(resp) {
+		return mitmInjectHideChat(resp)
+	}
+
 	// ★ 非资格端点:直接 return nil,ReverseProxy 会把上游响应【字节级原样】流回客户端
 	//   (不读 body、不解 gzip、不重序列化),从而完全不触碰会话/bootstrap,保住登录态。
 	if !mitmClaudeAiIsGateEndpoint(path) {

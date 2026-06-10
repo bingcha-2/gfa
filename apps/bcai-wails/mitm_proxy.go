@@ -120,6 +120,7 @@ func (p *mitmProxy) handleConn(c net.Conn) {
 
 	leaf, err := p.leafCache.GetTLSCert(host)
 	if err != nil {
+		Log("[mitm-proxy] leaf cert error for %s: %v", host, err)
 		_ = c.Close()
 		return
 	}

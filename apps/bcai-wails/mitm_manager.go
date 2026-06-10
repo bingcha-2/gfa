@@ -83,7 +83,13 @@ func (m *mitmManager) buildHandler() http.Handler {
 	apiRouter := mitmRouter(claude, mockOrForward, mockOrForward)
 
 	// 按 host 分流：claude.ai → utls 解密+订阅改写(掀 UI 付费墙)；其余(api.anthropic.com)→ apiRouter。
-	claudeAi := mitmClaudeAiHandler(nil)
+	// 必须把出口代理传给 claude.ai handler，否则本机需要系统代理时直连会超时/失败、context canceled。
+	// 优先用用户配置的 upstream；没有则取系统代理(Clash/Mihomo 等)；都没有则直连。
+	claudeAiProxy := m.upstream
+	if claudeAiProxy == "" {
+		claudeAiProxy = getSystemProxy()
+	}
+	claudeAi := mitmClaudeAiHandler(newClaudeUpstreamTransport(claudeAiProxy))
 	// 伪造 Code OAuth(authorize/token):把免费号的 Code 授权换成号池 Pro token(方案 B)。
 	oauthFake := mitmOAuthFakeHandler(func() (string, error) {
 		m.mu.Lock()
