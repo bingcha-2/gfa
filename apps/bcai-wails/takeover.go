@@ -290,12 +290,27 @@ func (claudeDesktopTarget) DetectPath() string    { return detectClaudeDesktopPa
 func (claudeDesktopTarget) IsInjected(_ int) bool { return mitmIsTakeoverActive() }
 
 func (claudeDesktopTarget) Inject(_ int) (string, error) {
-	if detectClaudeDesktopPath() == "" {
+	bin := detectClaudeDesktopPath()
+	if bin == "" {
 		return "Claude Desktop: 未检测到应用", nil
+	}
+	// Microsoft Store(MSIX)版跑在系统沙箱里,接管做不到(详见 isMicrosoftStoreClaude)。
+	// 这里提前拒绝并给出可操作指引,而不是进 goroutine 后硬 exec 撞 Access is denied、刷屏失败。
+	// STORE_CLAUDE: 前缀供前端识别 → 弹「去下载独立安装器」引导(与 EGRESS_BLOCKED: 同理),
+	// 不带 URL:下载链接由前端按钮承载,避免链接混进提示文案。
+	if isMicrosoftStoreClaude(bin) {
+		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop,无法接管 —— " +
+			"商店版跑在系统沙箱里,既不能带代理重启、也无法注入证书环境。请改装官方独立安装器版本后重试。")
 	}
 	m := GetMitmManager()
 	if !m.IsProxyRunning() {
 		return "", fmt.Errorf("MITM 代理未启动")
+	}
+	// 清掉用户自定义模型配置(settings.json 顶层 model 字段 + 模型 env 键),让桌面端 spawn 的
+	// Code 子进程重启后回落到自带合法默认模型 id —— 否则 -thinking 等别名 / 号池不认的 id 会经
+	// MITM 原样打到公开 api.anthropic.com → 404。原值已备份,Restore 时还原。失败不阻塞接管。
+	if err := CleanClaudeModelConfig(); err != nil {
+		Log("[takeover] 清理 Claude 模型配置失败(不阻塞接管): %v", err)
 	}
 	// 重启会做两件事(见 RelaunchClaudeWithProxy)：
 	//   1. Node 侧(Code/Cowork 子进程)：注入 NODE_EXTRA_CA_CERTS + HTTPS_PROXY 即走 MITM。
@@ -316,6 +331,10 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 }
 
 func (claudeDesktopTarget) Restore() (string, error) {
+	// 还原接管时清掉的用户自定义模型配置(若 Claude Code 完整接管仍在用则跳过,保持清除态)。
+	if err := RestoreClaudeModelConfig(); err != nil {
+		Log("[takeover] 还原 Claude 模型配置失败: %v", err)
+	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

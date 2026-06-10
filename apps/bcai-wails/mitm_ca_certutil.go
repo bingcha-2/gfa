@@ -33,11 +33,6 @@ func certutilQueryRootArgs(commonName string) []string {
 	return []string{"-store", "Root", commonName}
 }
 
-// certutilQueryShowsCA: -store 结果判定——退出码 0(runErr==nil)且输出含目标 CN 才算已装。
-func certutilQueryShowsCA(out []byte, runErr error, commonName string) bool {
-	return runErr == nil && strings.Contains(string(out), commonName)
-}
-
 // certutilDeleteErrBenign: delstore 失败是否为"本就没装"(CRYPT_E_NOT_FOUND / 0x80092004)。
 // 是则卸载视作成功(幂等);其它失败(如拒绝访问)应照常报错。
 func certutilDeleteErrBenign(out []byte) bool {

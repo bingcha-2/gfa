@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -47,13 +46,21 @@ func mitmCleanupLegacyUserCA() error { return nil }
 
 func mitmIsCAInstalled() bool {
 	// 必须是「受信任根」，不能只是「存在于钥匙串」——Chromium/Safari 只信任设置里的根，
-	// 仅存在但未设信任会导致 TLS 握手 "unknown certificate"。检查 admin 域信任设置里有无该 CN。
-	// (dump-trust-settings -d 在无任何 admin 信任设置时返回非 0，正好当作"未装")。
-	out, err := exec.Command("security", "dump-trust-settings", "-d").CombinedOutput()
-	if err != nil {
+	// 仅存在但未设信任会导致 TLS 握手 "unknown certificate"。且必须比对【当前 ca.crt 的指纹】:
+	// 仅比 CN 会被同名孤儿根骗过(CA 重生成后旧根还在 → 误判已装 → 当前叶证书验不过 → 白屏)。
+	tp, err := mitmCASHA1FromFile(mitmCACertPath())
+	if err != nil || tp == "" {
 		return false
 	}
-	return strings.Contains(string(out), mitmCACommonName)
+	// ① CN 是否被设为受信根(dump-trust-settings -d 在无任何 admin 信任设置时返回非 0 = 未装)。
+	dump, derr := exec.Command("security", "dump-trust-settings", "-d").CombinedOutput()
+	if derr != nil {
+		return false
+	}
+	// ② 钥匙串里是否存在指纹 == 当前 ca.crt 的同名证书(-Z 打印 SHA-1)。
+	find, _ := exec.Command("security", "find-certificate", "-a", "-Z",
+		"-c", mitmCACommonName, "/Library/Keychains/System.keychain").CombinedOutput()
+	return mitmDarwinThumbprintInstalled(string(find), string(dump), tp, mitmCACommonName)
 }
 
 func mitmClaudeBinaryPath() string { return mitmClaudeAppBinary }

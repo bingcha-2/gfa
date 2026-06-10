@@ -411,8 +411,14 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		if t == nil {
 			continue
 		}
-		if required := targetRequiredProduct(t.ProductID()); !cardCoversProduct(products, required) {
+		required := targetRequiredProduct(t.ProductID())
+		if !cardCoversProduct(products, required) {
 			return "", fmt.Errorf("此卡未开通 %s,无法接管 %s(请使用对应产品的卡密,或改用池子卡)", productLabel(required), t.Name())
+		}
+		// 出口前置闸:配了静态出口代理的产品,接管前必须先探通出口(经代理能从代理 IP 出去),
+		// 否则硬拒接管 —— 防止从用户真实 IP 直连官方暴露被封号(见 egress_preflight.go)。
+		if err := enforceEgressGate(required, cfg); err != nil {
+			return "", err
 		}
 		msg, err := t.Inject(cfg.ProxyPort)
 		if err != nil {

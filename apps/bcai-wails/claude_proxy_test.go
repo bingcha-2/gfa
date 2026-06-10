@@ -145,3 +145,48 @@ func TestClaudeProxyRejectsNonPost(t *testing.T) {
 		t.Fatalf("GET /v1/messages should be 405, got %d", rw.Code)
 	}
 }
+
+// parseClaudeUnifiedWindows: 缺头的窗口必须如实上报 -1(未知),绝不退回 0 假装耗尽——
+// 否则上游 200 漏带 7d 头时会被服务端落库成 weekly=0,把健康号打到最后兜底。
+func TestParseClaudeUnifiedWindowsAbsentWindowIsUnknown(t *testing.T) {
+	h := http.Header{}
+	h.Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.2")
+	h.Set("Anthropic-Ratelimit-Unified-5h-Reset", "1700000000")
+	// 7d 头故意缺失
+	hp, wp, hr, wr, ok := parseClaudeUnifiedWindows(h)
+	if !ok {
+		t.Fatal("ok should be true when the 5h window is present")
+	}
+	if hp != 80 {
+		t.Errorf("hourly = %v, want 80", hp)
+	}
+	if wp != -1 {
+		t.Errorf("weekly = %v, want -1 (unknown), not a fabricated 0", wp)
+	}
+	if hr == "" {
+		t.Error("hourly reset should be set")
+	}
+	if wr != "" {
+		t.Errorf("weekly reset = %q, want empty", wr)
+	}
+}
+
+func TestParseClaudeUnifiedWindowsBothPresent(t *testing.T) {
+	h := http.Header{}
+	h.Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.1")
+	h.Set("Anthropic-Ratelimit-Unified-7d-Utilization", "0.4")
+	hp, wp, _, _, ok := parseClaudeUnifiedWindows(h)
+	if !ok || hp != 90 || wp != 60 {
+		t.Errorf("got ok=%v hourly=%v weekly=%v, want ok=true 90 60", ok, hp, wp)
+	}
+}
+
+func TestParseClaudeUnifiedWindowsNoneIsNotOk(t *testing.T) {
+	hp, wp, _, _, ok := parseClaudeUnifiedWindows(http.Header{})
+	if ok {
+		t.Error("ok should be false when no window headers are present")
+	}
+	if hp != -1 || wp != -1 {
+		t.Errorf("both should be -1 (unknown), got hourly=%v weekly=%v", hp, wp)
+	}
+}

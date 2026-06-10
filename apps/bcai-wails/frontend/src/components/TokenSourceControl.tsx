@@ -89,6 +89,15 @@ export function TokenSourceControl() {
         await api.openSystemPermissionSettings()
         return false
       }
+      // Windows 商店版 Claude Desktop 无法接管:后端用 STORE_CLAUDE: 前缀标记 → 弹专门引导,
+      // 「去下载独立安装器」按钮直接打开官网下载页,而不是泛化的「操作失败」死胡同。
+      if (msg && msg.includes('STORE_CLAUDE:')) {
+        await fetchIDEStatus()
+        const detail = msg.split('STORE_CLAUDE:').pop()?.replace(/\)\s*$/, '').trim() || msg
+        const go = await showConfirm('⚠ 商店版无法接管', detail, { confirmLabel: '去下载独立安装器', cancelLabel: '稍后' })
+        if (go) api.openURL('https://claude.ai/download')
+        return false
+      }
       if (msg && msg.trim() && /失败/.test(msg)) {
         await fetchIDEStatus()
         await showAlert('操作失败', msg)
@@ -100,7 +109,15 @@ export function TokenSourceControl() {
       return true
     } catch (err) {
       await fetchIDEStatus()
-      await showAlert('操作失败', String(err))
+      const raw = String(err)
+      // 出口前置闸拦截:后端用 EGRESS_BLOCKED: 前缀标记「未通过出口检查、已拒绝接管」,
+      // 弹专门的强提示(开 TUN 引导),而不是泛化的「操作失败」。
+      if (raw.includes('EGRESS_BLOCKED:')) {
+        const detail = raw.split('EGRESS_BLOCKED:').pop()?.trim() || raw
+        await showAlert('⚠ 接管已拦截 · 出口未通过', detail)
+        return false
+      }
+      await showAlert('操作失败', raw)
       return false
     } finally {
       setBusy(null)

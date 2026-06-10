@@ -181,3 +181,14 @@ func TestClaudeQuotaStatus(t *testing.T) {
 		t.Fatal("nil window 应返回 nil")
 	}
 }
+
+// quotaWindowStatus: 未知窗口(percent<0)→ fraction -1(既有"未知"约定),不能画成负血条。
+func TestQuotaWindowStatusUnknownWindowIsNegativeOne(t *testing.T) {
+	s := quotaWindowStatus(80, -1, "", "", 0)
+	if got := s["hourlyFraction"].(float64); got != 0.8 {
+		t.Errorf("hourlyFraction = %v, want 0.8", got)
+	}
+	if got := s["weeklyFraction"].(float64); got != -1 {
+		t.Errorf("weeklyFraction = %v, want -1 (unknown)", got)
+	}
+}

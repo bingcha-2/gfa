@@ -41,7 +41,9 @@ const ORG_TYPE_TO_PLAN: Record<string, string> = {
 const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.1.162";
 
 export interface ClaudeQuotaWindow {
+  /** Remaining 0–100, or -1 = window absent this probe (UNKNOWN → don't persist). */
   hourlyPercent: number;
+  /** Remaining 0–100, or -1 = window absent this probe (UNKNOWN → don't persist). */
   weeklyPercent: number;
   hourlyResetTime?: string;
   weeklyResetTime?: string;
@@ -171,19 +173,16 @@ async function fetchUsageSnapshot(accessToken: string, proxyUrl?: string): Promi
   }
 
   const hourly = remainingPercent(data?.five_hour);
-  // Weekly: prefer the account-level seven_day window; otherwise the most
-  // restrictive (lowest remaining) of the model-specific weekly variants.
-  let weekly = remainingPercent(data?.seven_day);
-  let weeklyWindow: RawRateLimit | null | undefined = data?.seven_day;
-  if (weekly < 0) {
-    for (const key of ["seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"]) {
-      const p = remainingPercent(data?.[key]);
-      if (p >= 0 && (weekly < 0 || p < weekly)) {
-        weekly = p;
-        weeklyWindow = data?.[key];
-      }
-    }
-  }
+  // Weekly = ONLY the account-level seven_day window. The model-specific sub-caps
+  // (seven_day_opus / seven_day_sonnet / seven_day_oauth_apps) are SEPARATE, much
+  // tighter limits — Max's Opus weekly drains fast — and must NEVER masquerade as
+  // the overall weekly. The old "fall back to the most restrictive sub-cap when
+  // seven_day is missing" logic reported a spurious 周剩余=0 every time the upstream
+  // response happened to omit seven_day, which then got persisted and benched a
+  // perfectly healthy account (5h fresh, real weekly fine) until the next probe.
+  // A missing seven_day is now UNKNOWN (-1), not 0 and not a sub-cap; the persist
+  // layer keeps the last good value so one partial probe can't corrupt state.
+  const weekly = remainingPercent(data?.seven_day);
 
   if (hourly < 0 && weekly < 0) {
     // Endpoint answered but carried no usable windows (e.g. non-subscriber).
@@ -193,10 +192,12 @@ async function fetchUsageSnapshot(accessToken: string, proxyUrl?: string): Promi
     raw: data,
     httpStatus: resp.status,
     claudeQuota: {
-      hourlyPercent: hourly < 0 ? 100 : hourly,
-      weeklyPercent: weekly < 0 ? 100 : weekly,
+      // -1 (window absent this probe) flows through as the UNKNOWN sentinel — the
+      // caller skips persisting it and keeps the prior value. Never fabricate 100/0.
+      hourlyPercent: hourly,
+      weeklyPercent: weekly,
       hourlyResetTime: resetToIso(data?.five_hour?.resets_at),
-      weeklyResetTime: resetToIso(weeklyWindow?.resets_at),
+      weeklyResetTime: resetToIso(data?.seven_day?.resets_at),
     },
   };
 }

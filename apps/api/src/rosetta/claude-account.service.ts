@@ -66,6 +66,8 @@ export class ClaudeAccountService {
       shareCapacity: ACCOUNT_SHARE_CAPACITY,
       claudeHourlyPercent: Number(account.claudeHourlyPercent ?? -1),
       claudeWeeklyPercent: Number(account.claudeWeeklyPercent ?? -1),
+      claudeHourlyResetTime: String(account.claudeHourlyResetTime || ""),
+      claudeWeeklyResetTime: String(account.claudeWeeklyResetTime || ""),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
       proxyUrl: String(account.proxyUrl || ""),
       // Persisted dead-account verdict (written by lease-service) so the console
@@ -379,26 +381,44 @@ export class ClaudeAccountService {
           raw: snap.raw,
         };
       }
-      const weeklyBinds = cq.weeklyPercent < cq.hourlyPercent;
-      const bindingPercent = weeklyBinds ? cq.weeklyPercent : cq.hourlyPercent;
-      const bindingReset = weeklyBinds ? cq.weeklyResetTime : cq.hourlyResetTime;
-      acc.modelQuotaFractions = { claude: bindingPercent / 100 };
+      // 本次探测可能只拿到部分窗口(上游偶发漏返 seven_day,曾把周误报成 0、把健康号
+      // 打到最后兜底)。已知窗口(>=0)才覆盖落盘,未知(-1)保留上一次的好值;绑定窗口
+      // 也只在已知窗口之间取更严的那个,绝不让一条残缺响应污染调度状态。
+      const prevHourly = Number(acc.claudeHourlyPercent ?? -1);
+      const prevWeekly = Number(acc.claudeWeeklyPercent ?? -1);
+      const hourly = cq.hourlyPercent >= 0 ? cq.hourlyPercent : prevHourly;
+      const weekly = cq.weeklyPercent >= 0 ? cq.weeklyPercent : prevWeekly;
+
+      let weeklyBinds: boolean;
+      if (hourly < 0) weeklyBinds = true;        // 只有周已知
+      else if (weekly < 0) weeklyBinds = false;  // 只有 5h 已知
+      else weeklyBinds = weekly < hourly;
+      const bindingPercent = weeklyBinds ? weekly : hourly;
+      const bindingReset = weeklyBinds
+        ? (cq.weeklyResetTime || String(acc.claudeWeeklyResetTime || ""))
+        : (cq.hourlyResetTime || String(acc.claudeHourlyResetTime || ""));
+
+      if (bindingPercent >= 0) acc.modelQuotaFractions = { claude: bindingPercent / 100 };
       if (bindingReset) acc.modelQuotaResetTimes = { claude: bindingReset };
       acc.modelQuotaRefreshedAt = Date.now();
-      acc.claudeHourlyPercent = cq.hourlyPercent;
-      acc.claudeWeeklyPercent = cq.weeklyPercent;
-      acc.claudeHourlyResetTime = cq.hourlyResetTime || "";
-      acc.claudeWeeklyResetTime = cq.weeklyResetTime || "";
+      if (cq.hourlyPercent >= 0) {
+        acc.claudeHourlyPercent = cq.hourlyPercent;
+        acc.claudeHourlyResetTime = cq.hourlyResetTime || "";
+      }
+      if (cq.weeklyPercent >= 0) {
+        acc.claudeWeeklyPercent = cq.weeklyPercent;
+        acc.claudeWeeklyResetTime = cq.weeklyResetTime || "";
+      }
       writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
       return {
         ok: true,
         email: acc.email,
         tokenValid: true,
         planType: acc.planType || "",
-        hourlyPercent: cq.hourlyPercent,
-        weeklyPercent: cq.weeklyPercent,
-        hourlyResetTime: cq.hourlyResetTime || "",
-        weeklyResetTime: cq.weeklyResetTime || "",
+        hourlyPercent: hourly,
+        weeklyPercent: weekly,
+        hourlyResetTime: acc.claudeHourlyResetTime || "",
+        weeklyResetTime: acc.claudeWeeklyResetTime || "",
       };
     } catch (err: any) {
       return { ok: false, email: acc.email, error: String(err?.message || err) };

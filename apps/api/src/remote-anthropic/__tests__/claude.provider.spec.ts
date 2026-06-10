@@ -49,6 +49,59 @@ describe("ClaudeProvider.applyQuotaSnapshot", () => {
     expect((account as any).modelQuotaRefreshedAt).toBeGreaterThan(0);
   });
 
+  it("keeps the prior weekly when the client reports it as -1 (7d header absent = unknown, not exhausted)", () => {
+    const provider = new ClaudeProvider();
+    // Account already carries a known-good weekly from an earlier full report.
+    const account: any = {
+      id: 1, email: "a@b.c", refreshToken: "r", enabled: true,
+      claudeHourlyPercent: 10, claudeWeeklyPercent: 98,
+      claudeWeeklyResetTime: "2099-06-16T14:00:00Z",
+    };
+    // Client parsed the 5h header but the upstream 200 omitted the 7d header →
+    // weekly reported as -1 (explicit unknown), never a fabricated 0.
+    provider.applyQuotaSnapshot(account, {
+      claudeQuota: {
+        hourlyPercent: 94,
+        weeklyPercent: -1,
+        hourlyResetTime: "2099-06-10T05:00:00Z",
+        weeklyResetTime: "",
+      },
+    });
+    // 5h updates; weekly stays 98 (NOT clobbered); binding = 5h (94 < 98) → 0.94.
+    expect(account.claudeHourlyPercent).toBe(94);
+    expect(account.claudeWeeklyPercent).toBe(98);
+    expect(account.claudeWeeklyResetTime).toBe("2099-06-16T14:00:00Z");
+    expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0.94, 5);
+  });
+
+  it("honors a genuine 0 (real exhaustion is a known value, not unknown)", () => {
+    const { account } = snap({
+      claudeQuota: {
+        hourlyPercent: 80,
+        weeklyPercent: 0,
+        weeklyResetTime: "2099-06-16T14:00:00Z",
+      },
+    });
+    // weekly 0 binds → fraction 0; the real exhaustion is persisted, not skipped.
+    expect((account as any).claudeWeeklyPercent).toBe(0);
+    expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0, 5);
+  });
+
+  it("does not touch persisted quota when both windows are unknown (-1)", () => {
+    const provider = new ClaudeProvider();
+    const account: any = {
+      id: 1, email: "a@b.c", refreshToken: "r",
+      claudeHourlyPercent: 50, claudeWeeklyPercent: 60,
+      modelQuotaFractions: { claude: 0.5 },
+    };
+    provider.applyQuotaSnapshot(account, {
+      claudeQuota: { hourlyPercent: -1, weeklyPercent: -1, hourlyResetTime: "", weeklyResetTime: "" },
+    });
+    expect(account.claudeHourlyPercent).toBe(50);
+    expect(account.claudeWeeklyPercent).toBe(60);
+    expect((account as any).modelQuotaFractions.claude).toBeCloseTo(0.5, 5);
+  });
+
   it("makes claude models quota-aware via fuzzy match on the 'claude' key", () => {
     const { account } = snap({ claudeQuota: { hourlyPercent: 50, weeklyPercent: 90 } });
     // Any claude model resolves to the 'claude' fraction (0.5 = min(50,90)/100).

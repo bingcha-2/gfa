@@ -67,8 +67,15 @@ func mitmUninstallCA() error {
 }
 
 func mitmIsCAInstalled() bool {
-	out, err := hideCmd("certutil", certutilQueryRootArgs(mitmCACommonName)...).CombinedOutput()
-	return certutilQueryShowsCA(out, err, mitmCACommonName)
+	// 按【当前 ca.crt 的指纹】核对,而非仅按 CN —— 否则同名孤儿根会误判已装、回归白屏
+	// (见 mitm_ca_fingerprint.go)。读不到当前 ca.crt 时当作未装(随后会生成 + 安装)。
+	tp, err := mitmCASHA1FromFile(mitmCACertPath())
+	if err != nil || tp == "" {
+		return false
+	}
+	// 仍按 CN 列出本机库里所有同名根,再在输出里核对是否含当前指纹(同名孤儿指纹不同 → 不命中)。
+	out, runErr := hideCmd("certutil", certutilQueryRootArgs(mitmCACommonName)...).CombinedOutput()
+	return certutilQueryShowsThumbprint(out, runErr, tp)
 }
 
 // mitmCleanupLegacyUserCA 删除 9.2.2 及更早遗留在【当前用户】根存储的 CA(现已迁本机库)。

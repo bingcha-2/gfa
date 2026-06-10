@@ -212,7 +212,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "9.2.0";
+    this.minClientVersion = options.minClientVersion ?? "9.2.4";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.tokenUsageTracker = options.tokenUsageTracker || null;
@@ -1209,7 +1209,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&
       !excluded.has(account.id) &&
-      !this.isAccountBlocked(account.id, modelKey || "", now),
+      // 绑定卡(boundAccountId>0):忽略可恢复冷却,无号可换时冷却只会害卡不可用。
+      !this.isAccountBlocked(account.id, modelKey || "", now, boundAccountId > 0),
     );
   }
 
@@ -1355,13 +1356,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return state;
   }
 
-  private isAccountBlocked(accountId: number, modelKey: string, now: number): boolean {
+  private isAccountBlocked(accountId: number, modelKey: string, now: number, ignoreCooldown = false): boolean {
     const state = this.accountRuntime.get(accountId);
     if (!state) return false;
 
     this.cleanupExpiredBlocks(accountId, now);
 
+    // 鉴权失效 / 封号 / 需验证(quotaStatus==="error"):号根本拿不到 token,绑定卡也救不了,
+    // 必须拦(并由 boundUnavailableMessage 给"联系客服"文案)。这不属于"冷却",不受 ignoreCooldown 影响。
     if (state.quotaStatus === "error") return true;
+
+    // 绑定卡(ignoreCooldown):只有这一个号、无号可换,429/503 这类【可恢复冷却】对它毫无意义 ——
+    // 预先拦只会让卡白白不可用。一律忽略冷却,直接放行去试真上游;真不行就由上游回错,
+    // 客户端自己重试/退避。冷却只对【池子卡】(有备用号可轮换)才有价值。
+    if (ignoreCooldown) return false;
 
     if ((state.quotaStatus === "exhausted" || state.quotaStatus === "cooling") && state.exhaustedUntil > now) {
       // Account-wide cooldown (failure recorded without a model key) blocks everything.

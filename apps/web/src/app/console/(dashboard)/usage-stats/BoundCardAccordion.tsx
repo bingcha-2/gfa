@@ -362,7 +362,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                         </TableHead>
                         <TableHead className="w-32">
                           份额剩余{" "}
-                          <Badge variant="outline" className="ml-1 text-[9px]" title="已用为实测;但账号总预算(分母)由上游 429 限流学习得来,非精确值,故标估算">
+                          <Badge variant="outline" className="ml-1 text-[9px]" title={"份额剩余% =(本卡配额 − 本卡已用)/ 本卡配额。\n本卡配额 = 账号总预算 ×(本卡权重 / 总份数8)。\n「本卡已用」是实测(每次上报累加加权 token);「账号总预算」是估算,故标“估算”。\n账号总预算三级推算(越往后越准):\n① 默认:按套餐档位查初值(max≈200万 / pro≈10万 / free≈2万 加权单元)。\n② 反推:总预算 = 已用 /(1 − 上游剩余%),只升不降。\n③ 锚定:撞 429 限流那一刻,总预算 = 当时已用(最准)。\n特例:上游剩余 ≥90% 时反推不可靠,直接显示上游剩余%、不按估算扣。"}>
                             估算
                           </Badge>
                         </TableHead>

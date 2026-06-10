@@ -45,14 +45,19 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     expect(snap.claudeQuota?.hourlyPercent).toBe(75);
   });
 
-  it("falls back to the most restrictive weekly variant when seven_day is absent", async () => {
+  it("treats a missing seven_day as UNKNOWN (-1) — model-specific sub-caps never define the weekly", async () => {
+    // seven_day_opus is Max's tight Opus weekly sub-cap; a drained one (util 1.0)
+    // used to be reported as the overall 周剩余=0, benching a healthy account. It
+    // must now be ignored: no seven_day → weekly unknown (-1, not persisted), so a
+    // partial upstream response can't corrupt the account's stored weekly.
     mockUsage(200, {
       five_hour: { utilization: 0.1, resets_at: null },
-      seven_day_opus: { utilization: 0.2, resets_at: null }, // 80% remaining
-      seven_day_sonnet: { utilization: 0.7, resets_at: null }, // 30% remaining (more restrictive)
+      seven_day_opus: { utilization: 1.0, resets_at: null }, // Opus weekly drained
+      seven_day_sonnet: { utilization: 0.7, resets_at: null },
     });
     const snap = await fetchClaudeQuotaUpstream("token");
-    expect(snap.claudeQuota?.weeklyPercent).toBe(30);
+    expect(snap.claudeQuota?.weeklyPercent).toBe(-1);
+    expect(snap.claudeQuota?.hourlyPercent).toBe(90);
   });
 
   it("returns raw payload but no quota when no windows are present", async () => {

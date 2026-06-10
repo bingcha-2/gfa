@@ -312,7 +312,9 @@ describe("LeaseService (generic core)", () => {
     expect(refreshToken).not.toHaveBeenCalled();
   });
 
-  it("a bound account out of quota stays bound — busy, never switches to another account", async () => {
+  it("a bound account on cooldown re-leases the SAME account (ignores cooldown, never switches)", async () => {
+    // 绑定卡只有这一个号、无号可换 → 429/503 冷却对它毫无意义,预先拦只会害卡白白不可用。
+    // 所以绑定卡一律忽略冷却,直接重租同一个号去试真上游;绝不切到 acct 2(无 failover)。
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
       keys: [{
@@ -324,17 +326,17 @@ describe("LeaseService (generic core)", () => {
 
     const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
     expect(lease.accountId).toBe(1);
-    // The bound account hits its quota (429).
+    // The bound account hits its quota (429) → would normally cool down.
     await service.reportResult(REQ, {
       leaseId: lease.leaseId, reportId: "r1", status: 429, modelKey: "gpt-5-codex", reason: "quota",
     });
     refreshToken.mockClear();
 
-    // Next lease → busy. Account 2 exists but is NEVER tried (no failover / no 切号).
-    await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
-    ).rejects.toThrow("额度用完");
-    expect(refreshToken).not.toHaveBeenCalled();
+    // Next lease → ignores the cooldown, re-leases acct 1. Account 2 is NEVER tried.
+    const second = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(second.accountId).toBe(1);
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(refreshToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
   });
 
   it("gives a bound card a much longer lease than a pool card (fewer re-leases)", async () => {
@@ -387,7 +389,7 @@ describe("LeaseService (generic core)", () => {
       accounts: [{
         id: 1, email: "a@example.com", refreshToken: "rt-1", enabled: true,
         modelQuotaFractions: { "claude-sonnet-4-6": 0.3, "gemini-2.5-pro": 0.9 },
-        modelQuotaResetTimes: { "claude-sonnet-4-6": "2026-06-10T00:00:00.000Z" },
+        modelQuotaResetTimes: { "claude-sonnet-4-6": "2099-06-10T00:00:00.000Z" },
       }],
     });
     writeJson(accessKeysFilePath, {
@@ -398,7 +400,7 @@ describe("LeaseService (generic core)", () => {
     const r: any = await makeBoundService().leaseToken(REQ, { clientId: "c1" });
     expect(r.accountBuckets["fake-claude"].fraction).toBeCloseTo(0.3, 5);
     expect(r.accountBuckets["fake-gemini"].fraction).toBeCloseTo(0.9, 5);
-    expect(r.accountBuckets["fake-claude"].resetAt).toBe(Date.parse("2026-06-10T00:00:00.000Z"));
+    expect(r.accountBuckets["fake-claude"].resetAt).toBe(Date.parse("2099-06-10T00:00:00.000Z"));
   });
 
   it("keys account buckets by product — anthropic-claude never collides with antigravity-claude (root cause B)", async () => {
@@ -498,13 +500,13 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     });
 
-    // Below the in-code floor (now 9.2.0) must be rejected (426 upgrade required) —
-    // even the previous floor 9.1.0 is now below the new minimum…
+    // Below the in-code floor (now 9.2.4) must be rejected (426 upgrade required) —
+    // even the previous floor 9.2.0 is now below the new minimum…
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.1.0" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.2.0" }),
     ).rejects.toThrow();
     // …while the floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.2.0" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.2.4" });
     expect(ok.ok).toBe(true);
   });
 

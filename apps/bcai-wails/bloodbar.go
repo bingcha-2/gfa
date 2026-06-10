@@ -21,9 +21,17 @@ func quotaWindowStatus(hourlyPercent, weeklyPercent float64, hourlyResetISO, wee
 		}
 		return 0
 	}
+	// 负百分比 = 该窗口未知(限流头本次缺失)→ 分数 -1,前端按既有 "-1=未知" 约定
+	// 退回/显示未知,而非画成一条负血条。
+	frac := func(pct float64) float64 {
+		if pct < 0 {
+			return -1
+		}
+		return pct / 100
+	}
 	return map[string]interface{}{
-		"hourlyFraction": hourlyPercent / 100,
-		"weeklyFraction": weeklyPercent / 100,
+		"hourlyFraction": frac(hourlyPercent),
+		"weeklyFraction": frac(weeklyPercent),
 		"hourlyResetMs":  remMs(hourlyResetISO),
 		"weeklyResetMs":  remMs(weeklyResetISO),
 	}

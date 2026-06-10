@@ -319,3 +319,115 @@ func writeSeedSettings(t *testing.T, dir string, settings map[string]interface{}
 		t.Fatalf("seed settings: %v", err)
 	}
 }
+
+// 完整注入(Claude Code)应连顶层 model 字段一起清掉,Restore 时原样写回。
+func TestInjectClearsTopLevelModelAndRestores(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"model": "claude-opus-4-6-thinking",
+		"env":   map[string]interface{}{"ANTHROPIC_MODEL": "claude-opus-4-6-thinking"},
+	})
+
+	if err := InjectClaudeSettings(9100); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	settings := readClaudeSettings(t)
+	if _, ok := settings["model"]; ok {
+		t.Fatalf("顶层 model 字段应被清掉,实际仍在: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_MODEL"] != nil {
+		t.Fatalf("ANTHROPIC_MODEL 应被删除,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if settings["model"] != "claude-opus-4-6-thinking" {
+		t.Fatalf("还原后 model 字段应写回原值,实际: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_MODEL"] != "claude-opus-4-6-thinking" {
+		t.Fatalf("还原后 ANTHROPIC_MODEL 应写回,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+}
+
+// 桌面端「只清模型」:删 model 字段 + 模型 env 键,但不注入 BASE_URL;保留无关 env;Restore 还原。
+func TestCleanClaudeModelConfigClearsAndRestores(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{
+		"model": "opus",
+		"env":   map[string]interface{}{"ANTHROPIC_MODEL": "x", "MY_VAR": "keep"},
+	})
+
+	if err := CleanClaudeModelConfig(); err != nil {
+		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	}
+	settings := readClaudeSettings(t)
+	if _, ok := settings["model"]; ok {
+		t.Fatalf("model 字段应被清掉,实际: %v", settings["model"])
+	}
+	env := claudeEnvBlock(t)
+	if env["ANTHROPIC_MODEL"] != nil {
+		t.Fatalf("ANTHROPIC_MODEL 应被删除,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+	if env["MY_VAR"] != "keep" {
+		t.Fatalf("无关 env 应保留,实际: %v", env["MY_VAR"])
+	}
+	if env["ANTHROPIC_BASE_URL"] != nil {
+		t.Fatalf("只清模型不应注入 BASE_URL,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+
+	if err := RestoreClaudeModelConfig(); err != nil {
+		t.Fatalf("RestoreClaudeModelConfig: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if settings["model"] != "opus" {
+		t.Fatalf("还原后 model 应写回,实际: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_MODEL"] != "x" {
+		t.Fatalf("还原后 ANTHROPIC_MODEL 应写回,实际: %v", env["ANTHROPIC_MODEL"])
+	}
+	if _, err := os.Stat(claudeBackupPath()); !os.IsNotExist(err) {
+		t.Fatalf("还原后备份文件应被删除")
+	}
+}
+
+// 共存:桌面端只清模型 → Claude Code 完整注入 → 桌面端取消接管时应「跳过还原」保持清除态;
+// 直到完整接管也取消,model 字段才回到原值。
+func TestDesktopRestoreSkipsWhileFullInjectActive(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeSeedSettings(t, dir, map[string]interface{}{"model": "opus"})
+
+	if err := CleanClaudeModelConfig(); err != nil {
+		t.Fatalf("CleanClaudeModelConfig: %v", err)
+	}
+	if err := InjectClaudeSettings(9200); err != nil {
+		t.Fatalf("InjectClaudeSettings: %v", err)
+	}
+	// 桌面端取消接管:完整注入仍在用 → 应跳过,model 保持清除、BASE_URL 仍在。
+	if err := RestoreClaudeModelConfig(); err != nil {
+		t.Fatalf("RestoreClaudeModelConfig: %v", err)
+	}
+	settings := readClaudeSettings(t)
+	if _, ok := settings["model"]; ok {
+		t.Fatalf("完整接管仍生效时 model 应保持清除,实际: %v", settings["model"])
+	}
+	if env := claudeEnvBlock(t); env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:9200" {
+		t.Fatalf("完整接管的 BASE_URL 不应被桌面端还原破坏,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+
+	// 完整接管取消:此时才把 model 写回原值。
+	if err := RestoreClaudeSettings(); err != nil {
+		t.Fatalf("RestoreClaudeSettings: %v", err)
+	}
+	settings = readClaudeSettings(t)
+	if settings["model"] != "opus" {
+		t.Fatalf("完整接管还原后 model 应回到原值,实际: %v", settings["model"])
+	}
+	if env, _ := settings["env"].(map[string]interface{}); env["ANTHROPIC_BASE_URL"] != nil {
+		t.Fatalf("完整接管还原后 BASE_URL 应被移除,实际: %v", env["ANTHROPIC_BASE_URL"])
+	}
+}

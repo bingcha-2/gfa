@@ -112,7 +112,13 @@ func (p *ClaudeProxy) doReportProblem(card, deviceId string, d ReportDetails, up
 // parseClaudeUnifiedWindows 从上游 anthropic-ratelimit-unified-* 响应头解析 5h/周额度。
 // 头里是 *-Utilization(已用比例 0..1)+ *-Reset(epoch 秒);转成"剩余 %"+ISO reset。
 // 仅成功(200)响应带这些头;解析到任一窗口即 ok=true。
+//
+// 某个窗口的头本次缺失时,如实上报 -1(未知),【绝不】退回 0 假装"已耗尽"——
+// 上游 200 并不保证每次都带 7d 头,一个缺头的成功响应若被当成 weekly=0 上报,
+// 服务端落库后会把健康号打到最后兜底。-1 是全链路统一的"未知"约定(见 bloodbar
+// 的 AccountFraction、服务端 applyQuotaSnapshot),由数据源头如实表达,服务端不猜。
 func parseClaudeUnifiedWindows(h http.Header) (hourlyPct, weeklyPct float64, hourlyReset, weeklyReset string, ok bool) {
+	hourlyPct, weeklyPct = -1, -1 // -1 = 该窗口的限流头本次缺失(未知),不是 0
 	remPct := func(key string) (float64, bool) {
 		v := strings.TrimSpace(h.Get(key))
 		if v == "" {

@@ -83,3 +83,29 @@ func hasArg(argv []string, want string) bool {
 	}
 	return false
 }
+
+// Store(MSIX)版接管前置识别:WindowsApps 下的路径必须判为商店版 → 接管入口据此拒绝并引导
+// 换装独立安装器版,而非硬 exec 撞 Access is denied(见 takeover.go claudeDesktopTarget.Inject)。
+func TestIsMicrosoftStoreClaude(t *testing.T) {
+	store := []string{
+		`C:\Program Files\WindowsApps\Claude_1.8555.2.0_x64__pzs8sxrjxfjjc\app\Claude.exe`,
+		`C:\Program Files\windowsapps\Claude_x\app\claude.exe`, // 大小写不敏感
+		`D:/Program Files/WindowsApps/Claude_y/app/Claude.exe`, // 正斜杠也认
+	}
+	for _, p := range store {
+		if !isMicrosoftStoreClaude(p) {
+			t.Errorf("应判为 Store(MSIX)版: %s", p)
+		}
+	}
+	notStore := []string{
+		`C:\Users\dell\AppData\Local\AnthropicClaude\claude.exe`,        // Squirrel
+		`C:\Users\dell\AppData\Local\AnthropicClaude\app-0.1\claude.exe`, // Squirrel 版本子目录
+		`/Applications/Claude.app/Contents/MacOS/Claude`,                // macOS
+		``,
+	}
+	for _, p := range notStore {
+		if isMicrosoftStoreClaude(p) {
+			t.Errorf("不应判为 Store 版: %q", p)
+		}
+	}
+}

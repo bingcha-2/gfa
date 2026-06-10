@@ -256,6 +256,56 @@ describe("RosettaService", () => {
     expect((r as any).quotaError).toBeTruthy();
   });
 
+  it("refreshClaudeAccountQuota keeps the prior weekly when upstream omits seven_day (no spurious 0/100)", async () => {
+    const svc = new RosettaService({ dataDir: tempDir });
+    // Seed a known-good weekly (98%) already on disk.
+    writeJson(path.join(tempDir, "anthropic-accounts.json"), {
+      accounts: [
+        {
+          id: 1,
+          email: "max@x.com",
+          refreshToken: "rt",
+          enabled: true,
+          planType: "max",
+          claudeHourlyPercent: 10,
+          claudeWeeklyPercent: 98,
+          claudeWeeklyResetTime: "2026-06-16T14:00:00.000Z",
+        },
+      ],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes("/api/oauth/usage")) {
+          // Partial probe: five_hour present, seven_day OMITTED, only a drained Opus
+          // sub-cap — the exact shape that used to report 周剩余=0 and bench the号.
+          return new Response(
+            JSON.stringify({
+              five_hour: { utilization: 0.06, resets_at: null }, // 94% remaining
+              seven_day_opus: { utilization: 1.0, resets_at: null }, // drained → must be ignored
+            }),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/api/oauth/profile")) return new Response(JSON.stringify({ organization: { organization_type: "claude_max" } }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600 }), { status: 200 });
+      }),
+    );
+
+    const r = await svc.refreshClaudeAccountQuota({ accountId: 1 });
+    // 5h updates to 94; weekly stays at the prior good 98 — NOT 0 (Opus sub-cap), NOT 100.
+    expect(r).toMatchObject({ ok: true, hourlyPercent: 94, weeklyPercent: 98 });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
+    const acc = stored.accounts[0];
+    expect(acc.claudeHourlyPercent).toBe(94);
+    expect(acc.claudeWeeklyPercent).toBe(98); // preserved, not clobbered by a partial response
+    expect(acc.claudeWeeklyResetTime).toBe("2026-06-16T14:00:00.000Z"); // preserved
+    // Binding = the more restrictive known window: 5h 94 vs weekly 98 → 5h binds → 0.94.
+    expect(acc.modelQuotaFractions).toMatchObject({ claude: 0.94 });
+  });
+
   it("surfaces claude 5h/weekly percentages and bound-card counts in listClaudeAccounts", () => {
     const svc = new RosettaService({ dataDir: tempDir });
     writeJson(path.join(tempDir, "anthropic-accounts.json"), {

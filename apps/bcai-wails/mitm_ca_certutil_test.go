@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 )
@@ -57,28 +56,6 @@ func TestCertutilDelUserRootArgs(t *testing.T) {
 	want := []string{"-user", "-delstore", "Root", "BingchaAI Local Root"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("legacy del(user) args = %v, want %v", got, want)
-	}
-}
-
-// 已安装 = 退出码 0 且输出含目标 CN。非 0 退出(找不到)或输出无 CN 都算"未装"。
-func TestCertutilQueryShowsCA(t *testing.T) {
-	const cn = "BingchaAI Local Root"
-	tests := []struct {
-		name string
-		out  string
-		err  error
-		want bool
-	}{
-		{"found", "================ Certificate 0 ================\nSubject: CN=BingchaAI Local Root\n", nil, true},
-		{"not found (non-zero exit)", "CertUtil: -store command FAILED: 0x80092004", errors.New("exit status 1"), false},
-		{"exit 0 but other cert only", "Subject: CN=Some Other Root\n", nil, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := certutilQueryShowsCA([]byte(tt.out), tt.err, cn); got != tt.want {
-				t.Fatalf("certutilQueryShowsCA(%q, %v) = %v, want %v", tt.out, tt.err, got, tt.want)
-			}
-		})
 	}
 }
 

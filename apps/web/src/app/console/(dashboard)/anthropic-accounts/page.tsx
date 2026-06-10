@@ -35,6 +35,8 @@ type ClaudeAccount = {
   shareCapacity: number;
   claudeHourlyPercent: number;
   claudeWeeklyPercent: number;
+  claudeHourlyResetTime: string;
+  claudeWeeklyResetTime: string;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
   quotaStatus?: string;
@@ -43,6 +45,31 @@ type ClaudeAccount = {
 
 function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
+}
+
+// 距某个 ISO 重置时间还剩多久。空/已过 → "" / "已重置"。
+function timeUntil(iso: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const diff = t - Date.now();
+  if (diff <= 0) return "已重置";
+  const mins = Math.floor(diff / 60_000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h >= 24) return `${Math.floor(h / 24)}天${h % 24}时后`;
+  if (h >= 1) return `${h}时${m}分后`;
+  return `${m}分后`;
+}
+
+// 额度最后刷新于多久前。0 → "从未"。
+function refreshAgo(ms: number): string {
+  if (!ms) return "从未";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "刚刚";
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分前`;
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 时前`;
+  return `${Math.floor(diff / 86400_000)} 天前`;
 }
 
 export default function ClaudeAccountsPage() {
@@ -251,7 +278,7 @@ export default function ClaudeAccountsPage() {
       if (data.quotaError) {
         toast.success(`#${account.id} token 已刷新(${data.quotaError})`);
       } else {
-        toast.success(`#${account.id} 已刷新 · 5h ${Math.round(data.hourlyPercent)}% · 周 ${Math.round(data.weeklyPercent)}%`);
+        toast.success(`#${account.id} 已刷新 · 5h ${pct(Number(data.hourlyPercent))} · 周 ${pct(Number(data.weeklyPercent))}`);
       }
       fetchAccounts(true);
     } catch (error) {
@@ -425,6 +452,7 @@ export default function ClaudeAccountsPage() {
                   <TableHead>套餐</TableHead>
                   <TableHead>5h 剩余</TableHead>
                   <TableHead>周剩余</TableHead>
+                  <TableHead>刷新</TableHead>
                   <TableHead>Token</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>出口代理</TableHead>
@@ -443,8 +471,24 @@ export default function ClaudeAccountsPage() {
                       {a.alias ? <div className="text-xs text-muted-foreground">{a.alias}</div> : null}
                     </TableCell>
                     <TableCell className="text-sm">{a.planType || "—"}</TableCell>
-                    <TableCell className="text-sm">{pct(a.claudeHourlyPercent)}</TableCell>
-                    <TableCell className="text-sm">{pct(a.claudeWeeklyPercent)}</TableCell>
+                    <TableCell className="text-sm">
+                      <div>{pct(a.claudeHourlyPercent)}</div>
+                      {a.claudeHourlyResetTime ? (
+                        <div className="text-[10px] text-muted-foreground">{timeUntil(a.claudeHourlyResetTime)}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div>{pct(a.claudeWeeklyPercent)}</div>
+                      {a.claudeWeeklyResetTime ? (
+                        <div className="text-[10px] text-muted-foreground">{timeUntil(a.claudeWeeklyResetTime)}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell
+                      className="text-xs text-muted-foreground whitespace-nowrap"
+                      title={a.modelQuotaRefreshedAt ? new Date(a.modelQuotaRefreshedAt).toLocaleString() : "从未刷新"}
+                    >
+                      {refreshAgo(a.modelQuotaRefreshedAt)}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={a.hasToken ? "default" : "destructive"}>{a.hasToken ? "有" : "无"}</Badge>
                     </TableCell>

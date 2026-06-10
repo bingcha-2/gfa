@@ -370,7 +370,7 @@ export class AccessKeyService {
 
     // Count peers already bound to this (provider, account), excluding this card
     // so a re-bind / no-op is idempotent and never trips the limit.
-    // Capacity is by SHARES (份): used (excluding this card) + this card's weight ≤ 4.
+    // Capacity is by SHARES (份): used (excluding this card) + this card's weight ≤ ACCOUNT_SHARE_CAPACITY.
     const need = cardWeight(record);
     const used = this.usedShares(provider, accountId, id);
     if (used + need > ACCOUNT_SHARE_CAPACITY) {
@@ -429,7 +429,7 @@ export class AccessKeyService {
     for (const provider of ["codex", "antigravity", "anthropic"]) {
       const accountId = Number(desired[provider] || 0);
       if (!(accountId > 0)) continue; // 该 provider → 池子模式(不绑)
-      // 份额:目标号已用(排除本卡) + 本卡份额 ≤ 4。
+      // 份额:目标号已用(排除本卡) + 本卡份额 ≤ ACCOUNT_SHARE_CAPACITY。
       const used = this.usedShares(provider, accountId, id);
       if (used + need > ACCOUNT_SHARE_CAPACITY) {
         const label = provider === "codex" ? "Codex" : provider === "anthropic" ? "Claude" : "Antigravity";

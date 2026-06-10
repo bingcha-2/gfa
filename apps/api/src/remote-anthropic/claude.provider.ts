@@ -163,19 +163,42 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
     }
     const cq = quota?.claudeQuota;
     if (cq && typeof cq === "object") {
-      const hourly = clampPercent(cq.hourlyPercent);
-      const weekly = clampPercent(cq.weeklyPercent);
+      const rawHourly = Number(cq.hourlyPercent);
+      const rawWeekly = Number(cq.weeklyPercent);
       const hourlyReset = cq.hourlyResetTime ? String(cq.hourlyResetTime) : "";
       const weeklyReset = cq.weeklyResetTime ? String(cq.weeklyResetTime) : "";
 
-      // Binding window = the more restrictive (lower remaining %) of the two.
-      const weeklyBinds = weekly < hourly;
-      const bindingPercent = weeklyBinds ? weekly : hourly;
-      const bindingReset = weeklyBinds ? weeklyReset : hourlyReset;
+      // Contract: the client reports a window whose rate-limit header was absent on
+      // this upstream 200 as -1 — an explicit "unknown", never a fabricated 0. So
+      // known = a finite, non-negative percent; -1 (or an absent field → NaN) is
+      // unknown and keeps the last good value, so a partial report can't bench a
+      // healthy account (binding→0, Tier 3). A genuine 0 is honored as 0.
+      const hourlyKnown = Number.isFinite(rawHourly) && rawHourly >= 0;
+      const weeklyKnown = Number.isFinite(rawWeekly) && rawWeekly >= 0;
+      if (!hourlyKnown && !weeklyKnown) {
+        // Report carried no usable window — don't touch persisted quota state.
+        return { account };
+      }
 
-      account.modelQuotaFractions = { claude: bindingPercent / 100 };
-      // Only overwrite the reset time when the snapshot actually carries one; a
-      // window without a reset string must not wipe a still-valid prior reset.
+      const prevHourly = Number(acc.claudeHourlyPercent ?? -1);
+      const prevWeekly = Number(acc.claudeWeeklyPercent ?? -1);
+      const hourly = hourlyKnown ? clampPercent(rawHourly) : prevHourly;
+      const weekly = weeklyKnown ? clampPercent(rawWeekly) : prevWeekly;
+
+      // Binding window = the more restrictive of the KNOWN windows; if one side is
+      // unknown (-1), the other binds.
+      let weeklyBinds: boolean;
+      if (hourly < 0) weeklyBinds = true;
+      else if (weekly < 0) weeklyBinds = false;
+      else weeklyBinds = weekly < hourly;
+      const bindingPercent = weeklyBinds ? weekly : hourly;
+      const bindingReset = weeklyBinds
+        ? (weeklyKnown ? weeklyReset : String(acc.claudeWeeklyResetTime || ""))
+        : (hourlyKnown ? hourlyReset : String(acc.claudeHourlyResetTime || ""));
+
+      if (bindingPercent >= 0) account.modelQuotaFractions = { claude: bindingPercent / 100 };
+      // Only overwrite the reset time when we have one; a window without a reset
+      // must not wipe a still-valid prior reset.
       if (bindingReset) {
         account.modelQuotaResetTimes = { claude: bindingReset };
       } else if (!account.modelQuotaResetTimes) {
@@ -183,10 +206,16 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
       }
       account.modelQuotaRefreshedAt = Date.now();
 
-      acc.claudeHourlyPercent = hourly;
-      acc.claudeWeeklyPercent = weekly;
-      acc.claudeHourlyResetTime = hourlyReset;
-      acc.claudeWeeklyResetTime = weeklyReset;
+      // Persist only the windows we actually learned this report; keep prior values
+      // for unknown ones so a partial report can't corrupt the stored quota.
+      if (hourlyKnown) {
+        acc.claudeHourlyPercent = clampPercent(rawHourly);
+        acc.claudeHourlyResetTime = hourlyReset;
+      }
+      if (weeklyKnown) {
+        acc.claudeWeeklyPercent = clampPercent(rawWeekly);
+        acc.claudeWeeklyResetTime = weeklyReset;
+      }
     }
     return { account };
   }
