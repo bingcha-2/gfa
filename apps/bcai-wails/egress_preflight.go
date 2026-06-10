@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -126,6 +127,27 @@ func egressProbeOnce(client *http.Client, endpoint string) (string, error) {
 	return "", fmt.Errorf("回显服务返回 HTTP %d", resp.StatusCode)
 }
 
+// anthropicProbeTarget:anthropic 真实可达性探测的目标(host:port)。
+const anthropicProbeTarget = "api.anthropic.com:443"
+
+// egressAnthropicReachable 经账号代理对 api.anthropic.com:443 做一次【裸 CONNECT】:走和真实请求
+// 完全相同的出口路径(dialRawThroughProxy → ConnectViaProxy / SOCKS5),只建隧道、不发 TLS、不带
+// token,成功立刻关闭。anthropic 侧只会看到一个空闲 TCP 连接,零封号信号。
+//
+// 为什么 ipify 探测不够:节点可能「能上网(ipify 通)却对 anthropic 定向拦截/污染」——明文 CONNECT
+// 被中间盒子注一个假的 400。ipify 那一探永远发现不了,于是给坏节点开绿灯、接管后每个真实请求才 502。
+// 这一探用真实目标 + 真实出口路径,把这种坏路径在接管前就拦下。
+func egressAnthropicReachable(proxyURL string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), egressPreflightTimeout)
+	defer cancel()
+	conn, err := dialRawThroughProxy(ctx, anthropicProbeTarget, proxyURL)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
+
 // ─── 接管闸:把出口探测接到 InjectSelected 上 ────────────────────────────────
 
 // egressGateMarker:错误前缀,让前端识别这是「出口未通过」、弹专门的强提示框(开 TUN 引导),
@@ -201,5 +223,15 @@ func enforceEgressGate(product string, cfg Config) error {
 			egressGateMarker, perr)
 	}
 	Log("[egress-gate] %s 出口探测通过,代理出口 IP=%s", product, exitIP)
+	// anthropic 额外做一次【真实目标】可达性探测:ipify 通不代表 anthropic 通(节点可能对 anthropic
+	// 定向拦截/污染)。走和真实请求相同的出口路径裸 CONNECT,失败就拒绝接管、提示换节点。
+	if product == "anthropic" {
+		if aerr := egressAnthropicReachable(proxyURL); aerr != nil {
+			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, proxyURL)
+			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n常见原因:当前代理节点对 anthropic 做了拦截/污染。请在 Clash 里换一个干净的境外节点后重试。",
+				egressGateMarker, aerr)
+		}
+		Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测通过", product)
+	}
 	return nil
 }

@@ -59,7 +59,7 @@ func (p *LocalHTTPProxy) Start(port int, card, deviceId, upstreamProxy string) e
 		Handler: handler,
 	}
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenWithReclaim(addr)
 	if err != nil {
 		p.lastError = err.Error()
 		return fmt.Errorf("监听 %s 失败: %w", addr, err)

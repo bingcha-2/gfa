@@ -19,7 +19,7 @@ export function Modal({ open, title, message, type = 'alert', confirmLabel, canc
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{message}</DialogDescription>
+          <DialogDescription className="whitespace-pre-line">{message}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           {type === 'confirm' && (

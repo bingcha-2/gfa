@@ -159,7 +159,7 @@ export function TokenSourceControl() {
       if (!(await ensureCard('Claude Desktop'))) return
       const ok = await showConfirm(
         '接管 Claude Desktop',
-        '接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话(聊天不受影响)。是否继续?',
+        '⚠ Chat 和 Cowork 无法接管使用，请使用桌面端 Code 功能！\n\n接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话。是否继续?',
       )
       if (!ok) return
     }

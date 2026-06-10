@@ -42,7 +42,7 @@ func (p *mitmProxy) Start(addr string) error {
 	if p.running {
 		return nil
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenWithReclaim(addr)
 	if err != nil {
 		return err
 	}

@@ -20,14 +20,28 @@ func mitmInstallCA(certPath string) error {
 	if _, err := os.Stat(certPath); err != nil {
 		return fmt.Errorf("CA cert not found: %s", certPath)
 	}
+
+	// 往【系统钥匙串】写证书 + 设 admin 域信任都需要 root,只能经 osascript 提权(`security` 命令行
+	// 自己不会弹授权框)。
 	script := fmt.Sprintf(
 		`do shell script "security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '%s'" with administrator privileges`,
 		certPath,
 	)
-	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
-		return fmt.Errorf("add-trusted-cert: %v: %s", err, string(out))
+	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
+	if err == nil {
+		return nil
 	}
-	return nil
+
+	// ⚠ 已知坑(实测复现):add-trusted-cert 经 osascript 提权时,信任【可能已写入钥匙串】却仍返回非零
+	// 退出码 +「SecTrustSettingsSetTrustSettings: The authorization was denied since no user interaction
+	// was possible」。原因:设 admin 域信任那步会再要一次二级授权,提权出来的 root 子进程脱离了 GUI
+	// 会话弹不出它 —— 但信任设置往往已落盘。所以【绝不能只看退出码】,否则会把已装好的 CA 误判成失败、
+	// 白白退回 env-only(订阅等级显示不出 Max)。复核真实信任态:确实装上了就按成功处理。
+	if mitmIsCAInstalled() {
+		Log("[mitm] add-trusted-cert 返回非零但信任已写入,按成功处理: %v: %s", err, string(out))
+		return nil
+	}
+	return fmt.Errorf("add-trusted-cert: %v: %s", err, string(out))
 }
 
 func mitmUninstallCA() error {
