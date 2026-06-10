@@ -138,6 +138,11 @@ const anthropicProbeTarget = "api.anthropic.com:443"
 // 被中间盒子注一个假的 400。ipify 那一探永远发现不了,于是给坏节点开绿灯、接管后每个真实请求才 502。
 // 这一探用真实目标 + 真实出口路径,把这种坏路径在接管前就拦下。
 func egressAnthropicReachable(proxyURL string) error {
+	// 铁律 fail-closed:proxyURL 为空时 dialRawThroughProxy 会回落【直连】，会从本机真实 IP 裸连
+	// anthropic → 暴露真实 IP 封号风险。这里硬拒，绝不直连 —— 即使调用点漏了非空校验也兜得住。
+	if strings.TrimSpace(proxyURL) == "" {
+		return errors.New("anthropic 出口探测拒绝：无出口代理，不允许从本机直连")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), egressPreflightTimeout)
 	defer cancel()
 	conn, err := dialRawThroughProxy(ctx, anthropicProbeTarget, proxyURL)
@@ -228,7 +233,7 @@ func enforceEgressGate(product string, cfg Config) error {
 	if product == "anthropic" {
 		if aerr := egressAnthropicReachable(proxyURL); aerr != nil {
 			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, proxyURL)
-			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n常见原因:当前代理节点对 anthropic 做了拦截/污染。请在 Clash 里换一个干净的境外节点后重试。",
+			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n多半是当前代理节点对 anthropic 做了拦截/污染,请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n实在没有可用节点,可自购:https://xn--cp3a08l.com/#/plan(不赚钱、无广告)。",
 				egressGateMarker, aerr)
 		}
 		Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测通过", product)
