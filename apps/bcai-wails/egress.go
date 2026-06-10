@@ -26,7 +26,7 @@ var errEgressRequired = errors.New("egress proxy required but not configured; re
 // (userProxy 为空时下游 client 工厂会继续走系统代理 → 直连)。
 func resolveEgress(e EgressInfo, userProxy string) (proxy string, blocked bool) {
 	if p := strings.TrimSpace(e.ProxyURL); p != "" {
-		return p, false
+		return resolveEgressProxyURL(p), false
 	}
 	if e.EgressRequired {
 		return "", true

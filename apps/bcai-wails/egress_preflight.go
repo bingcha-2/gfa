@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -68,17 +69,53 @@ func classifyEgressError(err error) error {
 }
 
 // egressPreflight 用账号代理 proxyURL 经代理 GET 回显服务,返回探到的出口 IP。
-// 失败返回 (",", err):errEgressBanned=被代理按 IP 拒;其它=连不通/超时/异常。
+// 优先尝试 SOCKS5，失败则回落到原本的 HTTP 协议。
+// 失败返回 ("", err):errEgressBanned=被代理按 IP 拒;其它=连不通/超时/异常。
 func egressPreflight(proxyURL string) (string, error) {
 	scheme, u, err := parseEgressProxy(proxyURL)
 	if err != nil || scheme == "" {
 		return "", fmt.Errorf("无效的账号出口代理地址: %v", err)
 	}
-	// http.Transport.Proxy 原生支持 http/https/socks5 的 CONNECT/拨号;parseEgressProxy 已校验过 scheme。
+
+	host := u.Host
+	maskedOrig := maskProxyURL(proxyURL)
+
+	// 如果原本是 HTTP(S)，优先尝试转换为 SOCKS5 协议探测
+	if scheme == "http" || scheme == "https" {
+		socksURL := "socks5://"
+		if u.User != nil {
+			socksURL += u.User.String() + "@"
+		}
+		socksURL += u.Host
+		_, socksU, socksErr := parseEgressProxy(socksURL)
+		if socksErr == nil && socksU != nil {
+			maskedSocks := maskProxyURL(socksURL)
+			Log("[egress-gate] 优先尝试使用 SOCKS5 协议连接代理: %s", maskedSocks)
+			ip, err := egressPreflightDirect(socksU)
+			if err == nil {
+				Log("[egress-gate] SOCKS5 探测成功, 已缓存使用 SOCKS5 协议。出口 IP=%s", ip)
+				setProxySchemeCache(host, "socks5")
+				return ip, nil
+			}
+			Log("[egress-gate] SOCKS5 探测未成功 (%v), 回落尝试原 HTTP 协议: %s", err, maskedOrig)
+		}
+	}
+
+	// 执行原本的/直连协议探测
+	ip, err := egressPreflightDirect(u)
+	if err == nil {
+		setProxySchemeCache(host, scheme)
+		return ip, nil
+	}
+	return "", err
+}
+
+// egressPreflightDirect 直连账号代理做回显探测。
+func egressPreflightDirect(acctU *url.URL) (string, error) {
 	client := &http.Client{
 		Timeout: egressPreflightTimeout,
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyURL(u),
+			Proxy:                 http.ProxyURL(acctU),
 			TLSHandshakeTimeout:   egressPreflightTimeout,
 			ResponseHeaderTimeout: egressPreflightTimeout,
 			DisableKeepAlives:     true,
@@ -130,22 +167,19 @@ func egressProbeOnce(client *http.Client, endpoint string) (string, error) {
 // anthropicProbeTarget:anthropic 真实可达性探测的目标(host:port)。
 const anthropicProbeTarget = "api.anthropic.com:443"
 
-// egressAnthropicReachable 经账号代理对 api.anthropic.com:443 做一次【裸 CONNECT】:走和真实请求
-// 完全相同的出口路径(dialRawThroughProxy → ConnectViaProxy / SOCKS5),只建隧道、不发 TLS、不带
-// token,成功立刻关闭。anthropic 侧只会看到一个空闲 TCP 连接,零封号信号。
-//
-// 为什么 ipify 探测不够:节点可能「能上网(ipify 通)却对 anthropic 定向拦截/污染」——明文 CONNECT
-// 被中间盒子注一个假的 400。ipify 那一探永远发现不了,于是给坏节点开绿灯、接管后每个真实请求才 502。
-// 这一探用真实目标 + 真实出口路径,把这种坏路径在接管前就拦下。
+// egressAnthropicReachable 经账号代理对 api.anthropic.com:443 做一次【裸 CONNECT】
 func egressAnthropicReachable(proxyURL string) error {
-	// 铁律 fail-closed:proxyURL 为空时 dialRawThroughProxy 会回落【直连】，会从本机真实 IP 裸连
-	// anthropic → 暴露真实 IP 封号风险。这里硬拒，绝不直连 —— 即使调用点漏了非空校验也兜得住。
 	if strings.TrimSpace(proxyURL) == "" {
 		return errors.New("anthropic 出口探测拒绝：无出口代理，不允许从本机直连")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), egressPreflightTimeout)
 	defer cancel()
-	conn, err := dialRawThroughProxy(ctx, anthropicProbeTarget, proxyURL)
+
+	resolvedURL := resolveEgressProxyURL(proxyURL)
+	masked := maskProxyURL(resolvedURL)
+	Log("[egress-gate] 对 api.anthropic.com 进行可达性探测, proxy=%s", masked)
+
+	conn, err := dialRawThroughProxy(ctx, anthropicProbeTarget, resolvedURL)
 	if err != nil {
 		return err
 	}
@@ -159,7 +193,7 @@ func egressAnthropicReachable(proxyURL string) error {
 // 而不是泛化的「操作失败」。前端会剥掉本前缀再展示。
 const egressGateMarker = "EGRESS_BLOCKED:"
 
-// egressInfoForTakeover 取目标产品当前账号的出口策略(proxyUrl + egressRequired)。
+// egressInfoForTakeover 取目标产品当前账号 of 出口策略(proxyUrl + egressRequired)。
 // 走各自 leaser 的 LeaseToken(force=false,复用缓存):这是控制面请求(走 bcai.space),
 // 即使账号出口代理被 ban 也能拿到 —— 我们正是要先拿到 proxyUrl 才能去探它。
 func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
@@ -201,6 +235,7 @@ func enforceEgressGate(product string, cfg Config) error {
 	if product == "" {
 		return nil
 	}
+	Log("[egress-gate] 开始执行出口闸检查: product=%s, card=%s", product, cfg.AccountCard)
 	label := productLabel(product)
 	eg, err := egressInfoForTakeover(product, cfg)
 	if err != nil {
@@ -219,11 +254,11 @@ func enforceEgressGate(product string, cfg Config) error {
 	exitIP, perr := egressPreflight(proxyURL)
 	if perr != nil {
 		if errors.Is(perr, errEgressBanned) {
-			Log("[egress-gate] %s 出口探测被拒(banned),拦截接管。proxy=%s", product, proxyURL)
+			Log("[egress-gate] %s 出口探测被拒(banned),拦截接管。proxy=%s", product, maskProxyURL(proxyURL))
 			return fmt.Errorf("%s接管已拦截:你的网络出口是大陆 IP、被账号代理拒绝(banned)。\n\n请先在 Clash / Mihomo 里开启【TUN 模式(建议全局)】,让流量从境外节点出去,再重新接管。\n否则你的真实 IP 会暴露给官方,有封号风险。",
 				egressGateMarker)
 		}
-		Log("[egress-gate] %s 出口探测失败,拦截接管:%v。proxy=%s", product, perr, proxyURL)
+		Log("[egress-gate] %s 出口探测失败,拦截接管:%v。proxy=%s", product, perr, maskProxyURL(proxyURL))
 		return fmt.Errorf("%s接管已拦截:账号出口代理连不通(%v)。\n\n为避免从你的真实 IP 直连官方被封号,未通过出口检查就不允许接管。请检查网络 / 开启 TUN 后重试。",
 			egressGateMarker, perr)
 	}
@@ -232,7 +267,7 @@ func enforceEgressGate(product string, cfg Config) error {
 	// 定向拦截/污染)。走和真实请求相同的出口路径裸 CONNECT,失败就拒绝接管、提示换节点。
 	if product == "anthropic" {
 		if aerr := egressAnthropicReachable(proxyURL); aerr != nil {
-			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, proxyURL)
+			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, maskProxyURL(proxyURL))
 			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n多半是当前代理节点对 anthropic 做了拦截/污染,请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n若换了节点仍连不上,可能是当前机场已被列入黑名单,需自行更换机场。",
 				egressGateMarker, aerr)
 		}

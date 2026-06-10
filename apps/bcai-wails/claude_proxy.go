@@ -415,7 +415,7 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 // claudeEgressProxy 返回该号的出口代理 = 服务端为账号下发的粘性住宅代理(lease.ProxyURL)。
 // claude 出口【只】由服务端按号控制,不再回落客户端 upstreamProxy;为空则被安全闸拒绝(不直连)。
 func claudeEgressProxy(accountProxy string) string {
-	return strings.TrimSpace(accountProxy)
+	return resolveEgressProxyURL(strings.TrimSpace(accountProxy))
 }
 
 func isClaudeStreamingResponse(resp *http.Response) bool {
