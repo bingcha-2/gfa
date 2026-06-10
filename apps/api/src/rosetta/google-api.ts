@@ -337,6 +337,39 @@ export async function discoverProject(
   proxyUrl?: string,
 ): Promise<DiscoveredProject | null> {
   try {
+    // 1. Try to load existing project via loadCodeAssist first
+    try {
+      const loadRes = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal:loadCodeAssist`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": userAgent(),
+        },
+        body: JSON.stringify({ metadata: buildMetadata() }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+
+      if (loadRes.ok) {
+        const d = (await loadRes.json()) as Record<string, any>;
+        const p = d.cloudaicompanionProject;
+        let projId = "";
+        let tier = "";
+        if (typeof p === "string" && p) {
+          projId = p;
+        } else if (p && typeof p === "object") {
+          projId = normalizeProjectId(p.projectId || p.project || p.id || p.name || "");
+          tier = p.tier || p.tierId || "";
+        }
+        if (projId) {
+          return { projectId: projId, planType: tier };
+        }
+      }
+    } catch {
+      // Ignore loadCodeAssist error and proceed to onboardUser
+    }
+
+    // 2. Proceed to onboardUser if no project was found
     const res = await proxyAwareFetch(proxyUrl, `${endpoint}/v1internal:onboardUser`, {
       method: "POST",
       headers: {
