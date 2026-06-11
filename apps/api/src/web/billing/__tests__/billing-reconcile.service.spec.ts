@@ -2,12 +2,18 @@
  * billing-reconcile.service.spec.ts — real Prisma DB tests for stranded-paid
  * order recovery.
  *
- * Two scenarios the reconcile cron must handle idempotently:
+ * Disambiguation is EXACT via Subscription.activatedFromOrderId (M13b):
  *   1. Stranded order with NO subscription (activation never ran) → reconcile
  *      activates AND links, exactly once.
- *   2. Stranded order whose subscription ALREADY exists (only the order.
- *      subscriptionId linkage failed) → reconcile re-links WITHOUT re-activating
- *      (expiresAt must be unchanged — no double-extend / free month).
+ *   2. Stranded order whose subscription recorded activatedFromOrderId ==
+ *      order.id (only the order.subscriptionId linkage failed) → re-link
+ *      WITHOUT re-activating (expiresAt unchanged — no double-extend).
+ *   3. A same-plan ACTIVE sub linked to a DIFFERENT order is NOT evidence:
+ *      the stranded order must be ACTIVATED, not mis-relinked (the old
+ *      heuristic's false positive — the purchase silently evaporated).
+ *   4. Legacy fallback: an ACTIVE same (customer, plan) sub with NO order link
+ *      at all (activatedFromOrderId null, pre-link-column) touched at/after
+ *      paidAt → re-link only.
  */
 import "reflect-metadata";
 import * as fs from "fs";
@@ -135,24 +141,30 @@ describe("BillingReconcileService.reconcileOne", () => {
     expect(refreshed!.subscriptionId).toBe(subs[0].id);
   });
 
-  it("stranded order whose sub ALREADY exists (linkage-only failure) → re-links WITHOUT double-extending", async () => {
+  it("stranded order whose sub recorded activatedFromOrderId == order.id → re-links ONLY (no activateOrExtend, no extend)", async () => {
     const customer = await createTestCustomer();
     const plan = await createTestPlan({ durationDays: 30 });
     const paidAt = new Date(Date.now() - 10 * 60 * 1000);
     const order = await createStrandedOrder(customer.id, plan.id, paidAt);
 
-    // Simulate "activation already ran but linkage failed": create the ACTIVE
-    // sub now (its updatedAt will be >= paidAt). The order still has
-    // subscriptionId=null.
+    // Simulate "activation already ran but linkage failed": activate with THIS
+    // order's id (persists activatedFromOrderId = order.id). The order still
+    // has subscriptionId=null.
     const existingSub = await subscriptionService.activateOrExtend(customer.id, plan.id, { orderId: order.id });
     const expiryBefore = existingSub.expiresAt!.getTime();
+    expect(existingSub.activatedFromOrderId).toBe(order.id);
 
     // Sanity: exactly one sub, order still unlinked.
     expect(await prisma.subscription.count({ where: { customerId: customer.id } })).toBe(1);
     const before = await prisma.planOrder.findUnique({ where: { id: order.id } });
     expect(before!.subscriptionId).toBeNull();
 
+    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
+
     await reconcileService.reconcileOne(order);
+
+    // Exact-link path: activation must NOT have been re-driven at all.
+    expect(activateSpy).not.toHaveBeenCalled();
 
     // Must NOT have created a second sub nor extended the existing one.
     const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
@@ -163,6 +175,74 @@ describe("BillingReconcileService.reconcileOne", () => {
     // Order is now linked to the pre-existing sub.
     const after = await prisma.planOrder.findUnique({ where: { id: order.id } });
     expect(after!.subscriptionId).toBe(existingSub.id);
+  });
+
+  it("same-plan sub linked to a DIFFERENT order is NOT evidence → stranded order is ACTIVATED, not mis-relinked", async () => {
+    const customer = await createTestCustomer();
+    const plan = await createTestPlan({ durationDays: 30 });
+
+    // Order A paid and FULLY activated+linked: the sub records
+    // activatedFromOrderId = orderA.id.
+    const orderA = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 30 * 60 * 1000));
+    const sub = await subscriptionService.activateOrExtend(customer.id, plan.id, { orderId: orderA.id });
+    await prisma.planOrder.update({ where: { id: orderA.id }, data: { subscriptionId: sub.id } });
+    const expiryAfterA = sub.expiresAt!.getTime();
+
+    // Order B: a SECOND purchase of the same plan whose Phase-2 activation
+    // never ran (stranded). Under the old updatedAt heuristic the ACTIVE
+    // same-plan sub (touched >= paidAt, but owned by order A) was treated as
+    // evidence and order B was silently re-linked — the customer's second
+    // purchase evaporated.
+    const orderB = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+
+    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
+
+    await reconcileService.reconcileOne(orderB);
+
+    // Activation MUST have been driven for order B...
+    expect(activateSpy).toHaveBeenCalledTimes(1);
+    expect(activateSpy).toHaveBeenCalledWith(customer.id, plan.id, { orderId: orderB.id });
+
+    // ...which, for a same-plan ACTIVE sub, EXTENDS it by durationDays — the
+    // customer actually receives the time order B paid for.
+    const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
+    expect(subs).toHaveLength(1);
+    expect(subs[0].id).toBe(sub.id);
+    expect(subs[0].expiresAt!.getTime()).toBe(expiryAfterA + 30 * DAY_MS);
+    expect(subs[0].activatedFromOrderId).toBe(orderB.id); // link moved to the latest activating order
+
+    // Order B linked; order A's link untouched.
+    const bAfter = await prisma.planOrder.findUnique({ where: { id: orderB.id } });
+    expect(bAfter!.subscriptionId).toBe(sub.id);
+    const aAfter = await prisma.planOrder.findUnique({ where: { id: orderA.id } });
+    expect(aAfter!.subscriptionId).toBe(sub.id);
+  });
+
+  it("legacy fallback: ACTIVE same-plan sub with NO order link (pre-link-column) touched >= paidAt → re-links ONLY", async () => {
+    const customer = await createTestCustomer();
+    const plan = await createTestPlan({ durationDays: 30 });
+    const paidAt = new Date(Date.now() - 10 * 60 * 1000);
+    const order = await createStrandedOrder(customer.id, plan.id, paidAt);
+
+    // Pre-link-column activation: no orderId passed → activatedFromOrderId
+    // stays null. Its updatedAt (now) is >= paidAt.
+    const legacySub = await subscriptionService.activateOrExtend(customer.id, plan.id);
+    expect(legacySub.activatedFromOrderId).toBeNull();
+    const expiryBefore = legacySub.expiresAt!.getTime();
+
+    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
+
+    await reconcileService.reconcileOne(order);
+
+    // Legacy path: re-link only, never re-activate.
+    expect(activateSpy).not.toHaveBeenCalled();
+
+    const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
+    expect(subs).toHaveLength(1);
+    expect(subs[0].expiresAt!.getTime()).toBe(expiryBefore); // no extend
+
+    const after = await prisma.planOrder.findUnique({ where: { id: order.id } });
+    expect(after!.subscriptionId).toBe(legacySub.id);
   });
 
   it("is idempotent across repeated runs (second run is a no-op)", async () => {

@@ -11,22 +11,35 @@
  *
  *   This cron finds those orders and re-drives activation IDEMPOTENTLY.
  *
- * Idempotency without a schema migration:
- *   We can't tell "activation never ran" from "activation ran but only the
- *   order.subscriptionId linkage failed" by looking at the order alone. So we
- *   disambiguate via the Subscription side:
+ * Idempotency (exact since M13a/M13b):
+ *   Subscription.activatedFromOrderId records the order that created or last
+ *   extended a subscription — activateOrExtend persists it on BOTH paths, and
+ *   every order-driven activation (epay callback Phase 2, this cron) passes
+ *   the orderId. That makes disambiguation exact:
  *
- *     Look for an ACTIVE subscription for (customerId, planId) that was created
- *     OR extended at/after order.paidAt (updatedAt >= paidAt — this catches both
- *     the create-new and the extend-existing paths, since Prisma @updatedAt
- *     bumps on the extend update too).
+ *     1. Some subscription has activatedFromOrderId == order.id
+ *          → activation for THIS order already happened (whatever the sub's
+ *            current status — a later refund/revoke doesn't un-happen it);
+ *            ONLY the linkage failed. Set order.subscriptionId, DO NOT
+ *            re-activate (re-activating would extend by another durationDays
+ *            — a free month).
+ *     2. Otherwise, LEGACY fallback for activations that predate the link
+ *        column: an ACTIVE (customerId, planId) sub touched at/after paidAt
+ *        AND carrying NO order link at all (activatedFromOrderId null). A sub
+ *        linked to a DIFFERENT order is deliberately NOT evidence for this
+ *        one — that was the old heuristic's false positive (the stranded
+ *        order got "re-linked" to a same-plan sub it never paid for, and the
+ *        customer's purchase silently evaporated).
+ *     3. No evidence at all → activation never durably ran. Call
+ *        activateOrExtend (which syncs the shadow record), then link.
  *
- *       • found  → activation already happened; ONLY the linkage failed.
- *                  Just set order.subscriptionId to it. DO NOT re-activate
- *                  (re-activating would extend by another durationDays — a
- *                  free month).
- *       • none   → activation never durably ran. Call activateOrExtend (which
- *                  syncs the shadow record), then link.
+ *   Known residual edge (errs in the CUSTOMER's favor, accepted): order O1
+ *   activates a sub but its linkage write fails; before the cron runs, the
+ *   customer buys O2 for the same plan, moving activatedFromOrderId to O2.
+ *   O1 then matches neither rule 1 nor 2 and is re-activated — an extra
+ *   extension for an order the customer DID pay. The alternative (treating a
+ *   later-order link as evidence) would swallow genuinely-unactivated orders,
+ *   which is the worse failure.
  *
  * Guards:
  *   - Only orders whose paidAt is older than RECONCILE_MIN_AGE_MS are touched,
@@ -111,31 +124,49 @@ export class BillingReconcileService {
       return;
     }
 
-    // Did activation already happen (only the linkage failed)?
-    // An ACTIVE sub for this (customer, plan) touched at/after paidAt means yes.
-    const existing = await this.prisma.subscription.findFirst({
+    // 1) EXACT evidence: a subscription that recorded THIS order as its
+    //    activator (activatedFromOrderId, set by activateOrExtend on both the
+    //    create and extend paths). Authoritative regardless of sub status.
+    const exact = await this.prisma.subscription.findFirst({
+      where: { activatedFromOrderId: order.id },
+    });
+    if (exact) {
+      await this.prisma.planOrder.update({
+        where: { id: order.id },
+        data: { subscriptionId: exact.id },
+      });
+      this.logger.log(
+        `[billing-reconcile] order ${order.id}: re-linked to subscription ${exact.id} via activatedFromOrderId (activation had already run; no re-extend)`,
+      );
+      return;
+    }
+
+    // 2) LEGACY fallback — pre-link-column activations only: an ACTIVE
+    //    (customer, plan) sub touched at/after paidAt that carries NO order
+    //    link at all. Subs linked to a DIFFERENT order are NOT evidence for
+    //    this one (see module doc).
+    const legacy = await this.prisma.subscription.findFirst({
       where: {
         customerId: order.customerId,
         planId: order.planId,
         status: "ACTIVE",
         updatedAt: { gte: order.paidAt },
+        activatedFromOrderId: null,
       },
       orderBy: { updatedAt: "desc" },
     });
-
-    if (existing) {
-      // Linkage-only failure → re-link WITHOUT re-activating (no double-extend).
+    if (legacy) {
       await this.prisma.planOrder.update({
         where: { id: order.id },
-        data: { subscriptionId: existing.id },
+        data: { subscriptionId: legacy.id },
       });
       this.logger.log(
-        `[billing-reconcile] order ${order.id}: re-linked to existing subscription ${existing.id} (activation had already run; no re-extend)`,
+        `[billing-reconcile] order ${order.id}: re-linked to pre-link-column subscription ${legacy.id} (legacy heuristic; no re-extend)`,
       );
       return;
     }
 
-    // No activation evidence → drive it now, then link.
+    // 3) No activation evidence → drive it now, then link.
     const sub = await this.subscriptionService.activateOrExtend(
       order.customerId,
       order.planId,
