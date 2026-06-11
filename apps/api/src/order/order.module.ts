@@ -5,6 +5,7 @@ import { QUEUE_NAMES } from "@gfa/shared";
 import { RedeemCodeModule } from "../redeem-code/redeem-code.module";
 import { FamilyGroupModule } from "../family-group/family-group.module";
 import { OrderController } from "./order.controller";
+import { OrderPublicController } from "./order-public.controller";
 import { OrderService } from "./order.service";
 
 @Module({
@@ -17,7 +18,7 @@ import { OrderService } from "./order.service";
     RedeemCodeModule,
     FamilyGroupModule
   ],
-  controllers: [OrderController],
+  controllers: [OrderController, OrderPublicController],
   providers: [OrderService],
   exports: [OrderService]
 })

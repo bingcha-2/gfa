@@ -20,7 +20,7 @@ class EnqueueInviteDto {
   userEmail!: string;
 }
 
-@Controller("debug")
+@Controller(["debug", "console/debug"])
 @Roles("ADMIN")
 export class QueueController {
   constructor(

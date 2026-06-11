@@ -2,7 +2,7 @@ import { Controller, Get, Query as QueryParam } from "@nestjs/common";
 import { Roles } from "./auth/roles.decorator";
 import { PrismaService } from "./prisma/prisma.service";
 
-@Controller("stats")
+@Controller(["stats", "console/stats"])
 export class StatsController {
   constructor(private readonly prisma: PrismaService) {}
 

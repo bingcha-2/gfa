@@ -14,7 +14,7 @@ import {
 } from "@nestjs/common";
 import { AgentAccountService } from "./agent-account.service";
 
-@Controller("agent-accounts")
+@Controller(["agent-accounts", "console/agent-accounts"])
 export class AgentAccountController {
   constructor(private readonly agentAccountService: AgentAccountService) {}
 

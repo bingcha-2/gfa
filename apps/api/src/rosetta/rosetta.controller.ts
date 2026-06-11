@@ -12,7 +12,7 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 // `gfa.console.token` cookie. The desktop client never calls /rosetta/* — it uses
 // the @Public() remote-token / remote-codex controllers authenticated by the
 // x-token-server-secret access key, which are unaffected by this guard.
-@Controller("rosetta")
+@Controller(["rosetta", "console/rosetta"])
 export class RosettaController {
   constructor(
     private readonly rosetta: RosettaService,

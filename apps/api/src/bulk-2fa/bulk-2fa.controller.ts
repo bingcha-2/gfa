@@ -2,7 +2,7 @@ import { Controller, Post, Get, Param, Body, Res, Query } from "@nestjs/common";
 import { Bulk2faService } from "./bulk-2fa.service";
 import { Roles } from "../auth/roles.decorator";
 
-@Controller("bulk-2fa")
+@Controller(["bulk-2fa", "console/bulk-2fa"])
 export class Bulk2faController {
   constructor(private readonly service: Bulk2faService) {}
 

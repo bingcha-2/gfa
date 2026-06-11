@@ -63,7 +63,7 @@ class MigrateMemberDto {
   validDays?: number;
 }
 
-@Controller("family-groups")
+@Controller(["family-groups", "console/family-groups"])
 export class FamilyGroupController {
   constructor(
     private readonly familyGroupService: FamilyGroupService,
