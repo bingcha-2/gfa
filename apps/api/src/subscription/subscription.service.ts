@@ -46,7 +46,7 @@ export class SubscriptionService {
     return this.createFromPlan(customerId, plan, opts);
   }
 
-  async createFromPlan(customerId: string, plan: Plan, _opts: { orderId?: string } = {}): Promise<Subscription> {
+  async createFromPlan(customerId: string, plan: Plan, opts: { orderId?: string } = {}): Promise<Subscription> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
       select: { id: true, email: true },
@@ -65,7 +65,11 @@ export class SubscriptionService {
       const base = Math.max(now.getTime(), same.expiresAt ? same.expiresAt.getTime() : now.getTime());
       const extended = await this.prisma.subscription.update({
         where: { id: same.id },
-        data: { expiresAt: new Date(base + durationMs) },
+        data: {
+          expiresAt: new Date(base + durationMs),
+          // Exact order→sub link (reconcile/refund): the LATEST activating order.
+          ...(opts.orderId ? { activatedFromOrderId: opts.orderId } : {}),
+        },
       });
       await this.entitlementSync.syncSubscription(extended, { customerEmail: customer.email });
       return (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
@@ -98,6 +102,7 @@ export class SubscriptionService {
         weeklyTokenLimit: plan.weeklyTokenLimit,
         windowMs: plan.windowMs,
         backingKeyValue: newBackingKeyValue(),
+        activatedFromOrderId: opts.orderId ?? null,
       },
     });
     await this.entitlementSync.syncSubscription(sub, { customerEmail: customer.email });

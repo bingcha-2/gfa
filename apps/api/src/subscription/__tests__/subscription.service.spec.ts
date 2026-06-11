@@ -207,4 +207,30 @@ describe("SubscriptionService.createFromPlan / activateOrExtend", () => {
     const customer = await createTestCustomer();
     await expect(service.activateOrExtend(customer.id, "no-such-plan")).rejects.toThrow(/not found/i);
   });
+
+  it("activateOrExtend with an orderId persists activatedFromOrderId (create AND extend)", async () => {
+    const customer = await createTestCustomer();
+    const plan = await createPlan();
+
+    const created = await service.activateOrExtend(customer.id, plan.id, { orderId: "order-1" });
+    expect(created.activatedFromOrderId).toBe("order-1");
+
+    // Same plan again with a NEW order → same sub, link moves to the latest order.
+    const extended = await service.activateOrExtend(customer.id, plan.id, { orderId: "order-2" });
+    expect(extended.id).toBe(created.id);
+    expect(extended.activatedFromOrderId).toBe("order-2");
+
+    // No orderId (e.g. an admin grant) → existing link is left alone.
+    const extendedAgain = await service.activateOrExtend(customer.id, plan.id);
+    expect(extendedAgain.activatedFromOrderId).toBe("order-2");
+  });
+
+  it("activateOrExtend without an orderId leaves activatedFromOrderId null on create", async () => {
+    const customer = await createTestCustomer();
+    const plan = await createPlan();
+
+    const sub = await service.activateOrExtend(customer.id, plan.id);
+
+    expect(sub.activatedFromOrderId).toBeNull();
+  });
 });

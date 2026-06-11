@@ -661,6 +661,7 @@ model Subscription {
   status              SubscriptionStatus @default(ACTIVE)
   startsAt            DateTime           @default(now())
   expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
+  activatedFromOrderId String?           // PlanOrder.id that created/last extended this sub — exact order→sub link for reconcile + refund
   // Purchase-time snapshots decoupled from Plan
   productEntitlements String
   bucketLimits        String?
@@ -679,6 +680,7 @@ model Subscription {
 
   @@index([customerId])
   @@index([planId])
+  @@index([activatedFromOrderId])
 }
 
 /// Plan purchase order (distinct from the existing family-group Order).
