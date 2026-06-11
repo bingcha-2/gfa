@@ -89,6 +89,11 @@ const nextConfig: NextConfig = {
       "remote-stats",
       "rosetta",
       "bulk-2fa",
+      // The console-namespaced admin API (dual-mounted in NestJS next to the
+      // legacy prefixes above). Required for the split-domain deploy: the
+      // admin subdomain (Caddyfile.migration) proxies ONLY to Next.js, so
+      // /api/console/* must flow NestJS-ward through this rewrite.
+      "console",
     ];
 
     return [
