@@ -10,7 +10,7 @@ import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 
 import { AppModule } from "./app.module";
-import { PrismaService } from "./prisma/prisma.service";
+import { PrismaService } from "./shared/prisma/prisma.service";
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
