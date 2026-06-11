@@ -534,6 +534,7 @@ func (a *App) CheckForUpdate() map[string]interface{} {
 		"status":    status.Status,
 		"error":     status.Error,
 		"current":   AppVersion,
+		"changelog": status.Changelog, // 已是最新时 = 当前版本的更新内容
 	}
 }
 

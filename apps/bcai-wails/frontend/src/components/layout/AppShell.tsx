@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { Sidebar } from './Sidebar'
 import { AnnouncementBar } from '@/components/AnnouncementBar'
+import { UpdateBanner } from '@/components/UpdateBanner'
+import { WhatsNewBanner } from '@/components/WhatsNewBanner'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LanguageMenu } from '@/components/LanguageMenu'
 import { BAR_H, topInset } from './chrome'
@@ -57,8 +59,10 @@ export function AppShell({ currentPage, onPageChange, children }: AppShellProps)
           </div>
         </header>
 
-        {/* Ad banner */}
+        {/* 更新提示 / 更新完成 / 公告 */}
         <div className="shrink-0 px-6 pt-3">
+          <UpdateBanner />
+          <WhatsNewBanner />
           <AnnouncementBar />
         </div>
 

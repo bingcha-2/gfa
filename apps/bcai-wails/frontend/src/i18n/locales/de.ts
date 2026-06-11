@@ -57,6 +57,10 @@ export const de: DeepPartialDict = {
     restart: 'App neu starten',
     failed: 'Update fehlgeschlagen: {error}',
     retry: 'Erneut versuchen',
+    changelogTitle: 'Neuerungen',
+    updatedTo: 'Auf v{version} aktualisiert',
+    dismiss: 'Verstanden',
+    noChangelog: 'Kein Änderungsprotokoll verfügbar',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const de: DeepPartialDict = {
     deviceId: 'Geräte-ID',
     feedbackLabel: 'Feedback',
     feedbackBtn: 'Auf GitHub melden',
+    changelogLabel: 'Änderungsprotokoll',
+    changelogBtn: 'Anzeigen',
+    changelogModalTitle: 'Neuerungen in v{version}',
   },
 
   modal: {

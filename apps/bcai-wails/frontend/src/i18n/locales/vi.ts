@@ -57,6 +57,10 @@ export const vi: DeepPartialDict = {
     restart: 'Khởi động lại ứng dụng',
     failed: 'Cập nhật thất bại: {error}',
     retry: 'Thử lại',
+    changelogTitle: 'Nội dung cập nhật',
+    updatedTo: 'Đã cập nhật lên v{version}',
+    dismiss: 'Đã hiểu',
+    noChangelog: 'Chưa có nhật ký thay đổi',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const vi: DeepPartialDict = {
     deviceId: 'ID thiết bị',
     feedbackLabel: 'Phản hồi vấn đề',
     feedbackBtn: 'Gửi phản hồi trên GitHub',
+    changelogLabel: 'Nhật ký cập nhật',
+    changelogBtn: 'Xem',
+    changelogModalTitle: 'Nội dung cập nhật v{version}',
   },
 
   modal: {

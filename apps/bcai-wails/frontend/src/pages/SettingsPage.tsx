@@ -10,12 +10,34 @@ import { PromoSection } from '@/components/PromoSection'
 import { useT, useLocaleStore, SUPPORTED_LOCALES, LOCALE_NAMES } from '@/i18n'
 import { GitHubIcon } from '@/components/GitHubIcon'
 import { GITHUB_ISSUES_URL } from '@/lib/feedback'
-import { FolderOpen, Info, Languages } from 'lucide-react'
+import { getChangelogRecord } from '@/lib/changelog'
+import { FolderOpen, Info, Languages, ScrollText } from 'lucide-react'
 
 export function SettingsPage() {
   const t = useT()
-  const { config, appVersion } = useAppStore()
+  const { config, appVersion, updateStatus } = useAppStore()
   const { modalProps, showAlert } = useModal()
+
+  // 当前版本的更新内容:优先本地留存(更新前记下的),其次后台检查返回的
+  // up-to-date 状态(服务端 latest == 当前版本),最后现场触发一次检查。
+  const handleViewChangelog = async () => {
+    const rec = getChangelogRecord()
+    let text = ''
+    if (rec && rec.version === appVersion && rec.changelog.trim()) {
+      text = rec.changelog
+    } else if (updateStatus?.changelog?.trim()) {
+      text = updateStatus.changelog
+    } else {
+      try {
+        const resp = await api.checkForUpdate()
+        if (typeof resp?.changelog === 'string') text = resp.changelog
+      } catch { /* 网络失败走兜底文案 */ }
+    }
+    await showAlert(
+      t('settings.changelogModalTitle', { version: appVersion }),
+      text.trim() || t('update.noChangelog'),
+    )
+  }
   const locale = useLocaleStore((s) => s.locale)
   const setLocale = useLocaleStore((s) => s.setLocale)
 
@@ -192,6 +214,12 @@ export function SettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-[var(--text-muted)]">{t('settings.deviceId')}</span>
               <span className="text-[var(--text-secondary)] font-mono-data text-[10px]">{config?.deviceId || '-'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[var(--text-muted)]">{t('settings.changelogLabel')}</span>
+              <Button size="sm" variant="ghost" onClick={handleViewChangelog} className="h-7 gap-1.5 px-2">
+                <ScrollText size={13} /> {t('settings.changelogBtn')}
+              </Button>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[var(--text-muted)]">{t('settings.feedbackLabel')}</span>

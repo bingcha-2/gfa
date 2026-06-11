@@ -260,14 +260,16 @@ func (u *Updater) CheckForUpdate() *UpdateInfo {
 
 	if !isNewerVersion(info.Version, AppVersion) {
 		Log("[updater] Already up to date (v%s)", AppVersion)
-		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion})
+		// 带上服务端 changelog:版本一致时它就是「当前版本的更新内容」,
+		// 供设置页「更新日志」查看(无需新增绑定,随 GetStats 下发)。
+		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion, Changelog: info.Changelog})
 		return nil
 	}
 
 	// 检查当前平台是否有对应的下载资源
 	if _, _, _, assetErr := info.resolveAsset(); assetErr != nil {
 		Log("[updater] New version v%s available but no asset for %s/%s: %v", info.Version, runtime.GOOS, runtime.GOARCH, assetErr)
-		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion})
+		u.setStatus(UpdateStatus{Status: "up-to-date", Version: AppVersion, Changelog: info.Changelog})
 		return nil
 	}
 

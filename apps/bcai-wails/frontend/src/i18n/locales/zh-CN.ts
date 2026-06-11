@@ -58,6 +58,10 @@ export const zhCN = {
     restart: '重启应用',
     failed: '更新失败: {error}',
     retry: '重试',
+    changelogTitle: '本次更新',
+    updatedTo: '已更新到 v{version}',
+    dismiss: '知道了',
+    noChangelog: '暂无更新日志',
   },
 
   dashboard: {
@@ -257,6 +261,9 @@ export const zhCN = {
     deviceId: '设备 ID',
     feedbackLabel: '问题反馈',
     feedbackBtn: 'GitHub 提交反馈',
+    changelogLabel: '更新日志',
+    changelogBtn: '查看',
+    changelogModalTitle: 'v{version} 更新内容',
   },
 
   modal: {

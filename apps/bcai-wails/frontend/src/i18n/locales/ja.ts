@@ -57,6 +57,10 @@ export const ja: DeepPartialDict = {
     restart: 'アプリを再起動',
     failed: '更新に失敗しました: {error}',
     retry: '再試行',
+    changelogTitle: '更新内容',
+    updatedTo: 'v{version} に更新しました',
+    dismiss: 'OK',
+    noChangelog: '更新履歴はありません',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const ja: DeepPartialDict = {
     deviceId: 'デバイス ID',
     feedbackLabel: 'フィードバック',
     feedbackBtn: 'GitHub で報告',
+    changelogLabel: '更新履歴',
+    changelogBtn: '表示',
+    changelogModalTitle: 'v{version} の更新内容',
   },
 
   modal: {

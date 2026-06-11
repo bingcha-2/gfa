@@ -57,6 +57,10 @@ export const zhTW: DeepPartialDict = {
     restart: '重啟應用程式',
     failed: '更新失敗: {error}',
     retry: '重試',
+    changelogTitle: '本次更新',
+    updatedTo: '已更新至 v{version}',
+    dismiss: '知道了',
+    noChangelog: '暫無更新日誌',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const zhTW: DeepPartialDict = {
     deviceId: '裝置 ID',
     feedbackLabel: '問題回報',
     feedbackBtn: 'GitHub 提交回報',
+    changelogLabel: '更新日誌',
+    changelogBtn: '檢視',
+    changelogModalTitle: 'v{version} 更新內容',
   },
 
   modal: {

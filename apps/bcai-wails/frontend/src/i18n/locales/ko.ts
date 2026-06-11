@@ -57,6 +57,10 @@ export const ko: DeepPartialDict = {
     restart: '앱 재시작',
     failed: '업데이트 실패: {error}',
     retry: '재시도',
+    changelogTitle: '업데이트 내용',
+    updatedTo: 'v{version}(으)로 업데이트됨',
+    dismiss: '확인',
+    noChangelog: '변경 사항이 없습니다',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const ko: DeepPartialDict = {
     deviceId: '기기 ID',
     feedbackLabel: '문제 제보',
     feedbackBtn: 'GitHub에서 제보',
+    changelogLabel: '업데이트 내역',
+    changelogBtn: '보기',
+    changelogModalTitle: 'v{version} 업데이트 내용',
   },
 
   modal: {

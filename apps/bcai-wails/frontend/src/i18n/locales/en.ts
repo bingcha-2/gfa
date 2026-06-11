@@ -57,6 +57,10 @@ export const en: DeepPartialDict = {
     restart: 'Restart app',
     failed: 'Update failed: {error}',
     retry: 'Retry',
+    changelogTitle: 'What\'s new',
+    updatedTo: 'Updated to v{version}',
+    dismiss: 'Got it',
+    noChangelog: 'No changelog available',
   },
 
   dashboard: {
@@ -256,6 +260,9 @@ export const en: DeepPartialDict = {
     deviceId: 'Device ID',
     feedbackLabel: 'Feedback',
     feedbackBtn: 'Report on GitHub',
+    changelogLabel: 'Changelog',
+    changelogBtn: 'View',
+    changelogModalTitle: 'What\'s new in v{version}',
   },
 
   modal: {
