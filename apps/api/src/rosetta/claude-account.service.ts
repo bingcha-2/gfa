@@ -8,7 +8,7 @@
 import * as crypto from "crypto";
 import * as path from "path";
 
-import { proxyAwareFetch } from "../lease-core/egress";
+import { proxyAwareFetch, proxyRequiredFetch } from "../lease-core/egress";
 import { fetchClaudeQuotaUpstream } from "../remote-anthropic/auth/claude-usage";
 import { refreshClaudeAccessToken } from "../remote-anthropic/auth/claude-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
@@ -366,10 +366,10 @@ export class ClaudeAccountService {
   }
 
   private async completeClaudeOAuthLogin(pending: CodexOAuthPending, code: string, state: string) {
-    const doFetch = pending.proxyUrl
-      ? (url: string, init: RequestInit) => proxyAwareFetch(pending.proxyUrl!, url, init)
-      : this.ctx.claudeOAuthFetch;
-    const response = await doFetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
+    // Anthropic egress is fail-closed: the code→token exchange MUST leave from
+    // the account's sticky proxy IP. No proxy = hard error, never a direct
+    // datacenter-IP call (would leak the IP and trip anti-abuse on the new token).
+    const response = await proxyRequiredFetch(pending.proxyUrl, CLAUDE_OAUTH_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
