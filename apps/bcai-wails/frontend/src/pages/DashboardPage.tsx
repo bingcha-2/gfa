@@ -43,7 +43,7 @@ export function DashboardPage() {
   const {
     config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
     accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode, recoveryRemainingMs,
-    cardWeight, cardShareCapacity, cardBuckets, cardWeeklyBuckets,
+    cardBuckets, cardWeeklyBuckets,
     codexQuota, claudeQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
@@ -76,33 +76,26 @@ export function DashboardPage() {
       const staticBar = (key: string, suffix: string, u: number, lim: number, resetMs?: number) => (
         <UsageBar key={key} label={`${t('dashboard.myCard')} · ${suffix}`} used={u} limit={lim}
           fraction={accountProblem ? -1 : Math.max(0, Math.min(1, (lim - u) / lim))}
-          resetMs={resetMs}
-          expandable
-          detail={t('dashboard.myCardDetail', { used: formatTokens(u), limit: formatTokens(lim) })} />
+          resetMs={resetMs} />
       )
       const wk = cardWeeklyBuckets?.[bar.bucket]
       if (wk && wk.limit > 0) {
         return [staticBar('mine-5h', '5h', used, limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined),
-                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit)]
+                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined)]
       }
       return [(
         <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
           fraction={accountProblem ? -1 : frac}
-          resetMs={recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined}
-          expandable
-          detail={t('dashboard.myCardDetail', { used: formatTokens(used), limit: formatTokens(limit) })} />
+          resetMs={recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined} />
       )]
     }
     const myFrac = myFractions?.[bar.bucket]
     if (myFrac == null) return []
     // 份额条:label 复用 myCardShare,加语言中性窗口后缀(5h / 7d)区分两条。
     const shareBar = (key: string, suffix: string, frac: number, resetMs?: number) => {
-      const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100)
       return (
         <UsageBar key={key} label={`${t('dashboard.myCardShare')} · ${suffix}`} used={null} limit={null}
-          fraction={accountProblem ? -1 : frac} resetMs={resetMs}
-          expandable
-          detail={t('dashboard.myCardShareDetail', { weight: cardWeight, capacity: cardShareCapacity, pct })} />
+          fraction={accountProblem ? -1 : frac} resetMs={resetMs} />
       )
     }
     const wk = myWeeklyFractions?.[bar.bucket]
@@ -112,12 +105,9 @@ export function DashboardPage() {
               shareBar('mine-7d', '7d', wk, myWeeklyResetMs?.[bar.bucket])]
     }
     // 无周数据(antigravity 或旧服务端)→ 保持原单条,标签不变。
-    const pct = Math.round(Math.max(0, Math.min(1, myFrac)) * 100)
     return [(
       <UsageBar key="mine" label={t('dashboard.myCardShare')} used={null} limit={null}
-        fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]}
-        expandable
-        detail={t('dashboard.myCardShareDetail', { weight: cardWeight, capacity: cardShareCapacity, pct })} />
+        fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]} />
     )]
   }
 
