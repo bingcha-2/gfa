@@ -34,6 +34,7 @@ import { Bulk2faModule } from "./bulk-2fa/bulk-2fa.module";
 import { MailModule } from "./mail/mail.module";
 import { WebModule } from "./web/web.module";
 import { AppSurfaceModule } from "./app/app-surface.module";
+import { PlanModule } from "./plan/plan.module";
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { AppSurfaceModule } from "./app/app-surface.module";
     MailModule,
     WebModule,
     AppSurfaceModule,
+    PlanModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [
