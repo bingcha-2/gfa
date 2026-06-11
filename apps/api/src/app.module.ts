@@ -35,6 +35,7 @@ import { MailModule } from "./mail/mail.module";
 import { WebModule } from "./web/web.module";
 import { AppSurfaceModule } from "./app/app-surface.module";
 import { PlanModule } from "./plan/plan.module";
+import { SubscriptionModule } from "./subscription/subscription.module";
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { PlanModule } from "./plan/plan.module";
     WebModule,
     AppSurfaceModule,
     PlanModule,
+    SubscriptionModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [

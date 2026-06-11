@@ -215,6 +215,14 @@ export class RosettaService {
   setAccessKeyBindings(payload: any) { return this.accessKeySvc.setAccessKeyBindings(payload); }
   cleanupExpiredKeys() { return this.accessKeySvc.cleanupExpiredKeys(); }
   cleanupUnboundKeys() { return this.accessKeySvc.cleanupUnboundKeys(); }
+  // Account-system writers (subscription shadow records / bind-card migration).
+  // Delegate to the SAME AccessKeyService so access-keys.json keeps one writer.
+  upsertKeyRecord(fields: { id: string } & Record<string, unknown>, options?: { createIfMissing?: boolean }) {
+    return this.accessKeySvc.upsertKeyRecord(fields, options);
+  }
+  assignSeatForProduct(product: string, weight: number, level: string) {
+    return this.accessKeySvc.assignSeatForProduct(product, weight, level);
+  }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────
   createCaptchaUnblock(payload: any) { return this.captchaSvc.createCaptchaUnblock(payload); }

@@ -306,6 +306,55 @@ export class AccessKeyService {
     };
   }
 
+  /**
+   * Single-writer record upsert for the account system (subscription shadow
+   * records + bind-card migration). Merges the provided fields onto the
+   * existing record — preserving every unspecified field (usage counters,
+   * firstUsedAt, bindings, session state) byte-for-byte — or appends a new
+   * record when absent (createIfMissing). `null` deletes a field; `undefined`
+   * is skipped. Uses the exact same read→mutate→atomic-write path as every
+   * admin mutation in this service, so access-keys.json keeps ONE writer.
+   */
+  upsertKeyRecord(
+    fields: { id: string } & Record<string, unknown>,
+    options: { createIfMissing?: boolean } = {},
+  ): { ok: boolean; created?: boolean; error?: string } {
+    const id = String(fields.id || "");
+    if (!id) return { ok: false, error: "id 不能为空" };
+    const filePath = path.join(this.ctx.dataDir, "access-keys.json");
+    const data = readJson(filePath, { keys: [] });
+    const keys = Array.isArray(data.keys) ? data.keys : [];
+    let record = keys.find((key: any) => String(key.id) === id);
+    let created = false;
+    if (!record) {
+      if (!options.createIfMissing) return { ok: false, error: "卡密不存在" };
+      record = { id, createdAt: nowIso() };
+      keys.push(record);
+      created = true;
+    }
+    for (const [field, value] of Object.entries(fields)) {
+      if (field === "id" || value === undefined) continue;
+      if (value === null) delete record[field];
+      else record[field] = value;
+    }
+    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    return { ok: true, created };
+  }
+
+  /**
+   * Auto-assign ONE upstream seat for a product at the given membership level —
+   * the same best-fit share-packing logic card minting uses (autoAssignSeats),
+   * exposed for subscription shadow-record creation. Returns the accountId or
+   * null when no account of that level has `weight` free shares.
+   */
+  assignSeatForProduct(product: string, weight: number, level: string): number | null {
+    if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
+    const lvl = String(level || "").trim();
+    if (!lvl) return null;
+    const seats = this.autoAssignSeats(product, 1, cardWeight({ weight }), lvl);
+    return seats ? seats[0] : null;
+  }
+
   deleteAccessKey(payload: any) {
     const id = String(payload?.id || "");
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
