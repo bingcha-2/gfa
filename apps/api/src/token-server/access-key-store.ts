@@ -27,8 +27,8 @@ import {
   UNIVERSAL_BILLING,
   ProviderBilling,
   keyExpiresAt,
-  accessKeySessionTtlMs,
   isAccessKeySessionExpired,
+  DEFAULT_KEY_SESSION_TTL_MS,
   ACCESS_KEY_BINDING_GRACE_MS,
   ACCOUNT_SHARE_CAPACITY,
 } from './token-billing';
@@ -701,7 +701,9 @@ export class AccessKeyStore {
     now = Date.now(),
     options: { create?: boolean; rotate?: boolean } = {},
   ): string {
-    const ttlMs = accessKeySessionTtlMs(record);
+    // 直接用全局默认(env 可调),不读 record.sessionTtlMs —— 否则老卡上持久化的旧值
+    // 会把它「粘住」,改默认对存量卡不生效。每次刷新都回写当前默认,存量卡下次请求即自愈。
+    const ttlMs = DEFAULT_KEY_SESSION_TTL_MS;
     const clientId = String(payload?.clientId || payload?.client || '').trim();
     const hasLiveSession =
       AccessKeyStore.normalizeSessionId(record.activeSessionId) &&

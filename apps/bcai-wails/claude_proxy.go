@@ -34,6 +34,12 @@ var ANTHROPIC_API_BASE = getEnvOrDefault("BCAI_ANTHROPIC_API_BASE", "https://api
 // claudeOAuthBeta 是订阅号 OAuth token 必带的 anthropic-beta 值(对照 Claude Code 2.x)。
 const claudeOAuthBeta = "oauth-2025-04-20"
 
+const claudeTransportFriendlyMessage = "冰茶AI 正在重试连接 Claude。当前请求未能通过你的出口代理建立稳定连接，通常是本机网络、VPN 节点或代理链路临时不通导致。如果持续出现，请切换 VPN 节点或检查本机网络。"
+
+func claudeTransportAuditNote(prefix string, _ error) string {
+	return prefix + claudeTransportFriendlyMessage
+}
+
 // mergeAnthropicBeta 把 want 合并进逗号分隔的 anthropic-beta 头(已存在则不重复)。
 func mergeAnthropicBeta(existing, want string) string {
 	existing = strings.TrimSpace(existing)
@@ -264,11 +270,11 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 	if err != nil {
 		atomic.AddInt64(&p.totalErrors, 1)
 		audit.status = 502
-		audit.note = "上游请求失败(Do err):" + err.Error()
+		audit.note = claudeTransportAuditNote("上游请求失败(Do err):", err)
 		p.doReportProblem(card, deviceId, ReportDetails{
 			StatusCode: 502, ModelKey: modelKey, Reason: "upstream_error", ErrorText: err.Error(),
 		}, upstreamProxy, lease)
-		p.sendJSONError(w, http.StatusBadGateway, err.Error())
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
 		return
 	}
 	defer resp.Body.Close()
@@ -399,8 +405,8 @@ func (p *ClaudeProxy) forwardAux(w http.ResponseWriter, r *http.Request, card, d
 			audit.note = fmt.Sprintf("上游瞬时错误,重试 %d/%d: %v", attempt, claudeAuxMaxAttempts, doErr)
 			continue
 		}
-		audit.note = "上游请求失败:" + doErr.Error()
-		p.sendJSONError(w, http.StatusBadGateway, doErr.Error())
+		audit.note = claudeTransportAuditNote("上游请求失败:", doErr)
+		p.sendJSONError(w, http.StatusBadGateway, claudeTransportFriendlyMessage)
 		return
 	}
 	defer resp.Body.Close()

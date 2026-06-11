@@ -364,6 +364,7 @@ func (l *Leaser) Activate(card, deviceId string, upstreamProxy string) (string, 
 	l.mu.Lock()
 	l.cardExpires = actData.AccountCard.ExpiresAt
 	l.lastError = ""
+	l.cardUnusable = false
 	l.mu.Unlock()
 
 	// 存下权威 accessKeyStatus → CardProducts() 立即可用,决定哪个产品自动租号/显示血条。
@@ -585,6 +586,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	l.cachedToken = lease
 	l.leaseCount++
 	l.lastError = ""
+	l.cardUnusable = false
 	if leaseResp.ActivationExpiresAt != "" {
 		l.cardExpires = leaseResp.ActivationExpiresAt
 	}

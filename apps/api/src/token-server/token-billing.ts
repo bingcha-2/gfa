@@ -66,7 +66,13 @@ export const DEFAULT_KEY_TOKENS_PER_REQUEST = Math.max(
   1000,
   Number(process.env.BCAI_DEFAULT_KEY_TOKENS_PER_REQUEST || 100_000),
 );
-export const DEFAULT_KEY_SESSION_TTL_MS = 10 * 60 * 1000;
+// 卡密「活跃会话」独占锁的空闲存活时长:占用设备停止发请求后,锁还能撑多久(滑动续期)。
+// 缩短 = 本人换设备接管更快,但同卡跨设备的独占更易被「错峰抢占」(详见 validateSession)。
+// env 可调,缺省 30s,下限 5s。
+export const DEFAULT_KEY_SESSION_TTL_MS = Math.max(
+  5_000,
+  Number(process.env.BCAI_KEY_SESSION_TTL_MS || 30_000),
+);
 export const ACCESS_KEY_BINDING_GRACE_MS = Math.max(
   1000,
   Number(process.env.BCAI_ACCESS_KEY_BINDING_GRACE_MS || 15_000),

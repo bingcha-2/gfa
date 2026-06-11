@@ -1,11 +1,18 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
 
 func withAnthropicAPIBase(t *testing.T, base string) {
 	t.Helper()
@@ -123,6 +130,60 @@ func TestClaudeProxyEnsuresOAuthBetaHeader(t *testing.T) {
 	}
 	if !strings.Contains(gotBeta, "fine-grained-tool-streaming-2025-05-14") {
 		t.Fatalf("existing beta flags must be preserved, got %q", gotBeta)
+	}
+}
+
+func TestClaudeProxyHidesTransportDetailsFromClient(t *testing.T) {
+	rawErr := `socks connect tcp 173.44.178.29:443->api.anthropic.com:443: EOF`
+	var reported ReportDetails
+	reportedOK := false
+	p := &ClaudeProxy{
+		leaseToken: func(card, deviceId string, force bool, opts map[string]interface{}, up string) (*ClaudeTokenLease, error) {
+			return &ClaudeTokenLease{AccessToken: "sk-ant-oauth", AccountId: 4, LeaseId: "l1", EgressInfo: EgressInfo{ProxyURL: "socks5://173.44.178.29:443", EgressRequired: true}}, nil
+		},
+		reportProblem: func(card, deviceId string, d ReportDetails, up string, lease *ClaudeTokenLease) {
+			reported = d
+			reportedOK = true
+		},
+		upstreamClient: func(string) *http.Client {
+			return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New(rawErr)
+			})}
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-opus-4-8","stream":true}`))
+	rw := httptest.NewRecorder()
+	p.ServeHTTP(rw, req, "card-1", "dev-1", "")
+
+	if rw.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rw.Code)
+	}
+	body := rw.Body.String()
+	wantMessage := "冰茶AI 正在重试连接 Claude。当前请求未能通过你的出口代理建立稳定连接，通常是本机网络、VPN 节点或代理链路临时不通导致。如果持续出现，请切换 VPN 节点或检查本机网络。"
+	if !strings.Contains(body, wantMessage) {
+		t.Fatalf("client error body = %q, want friendly message %q", body, wantMessage)
+	}
+	if strings.Contains(body, rawErr) {
+		t.Fatalf("client error body leaked raw transport error: %q", body)
+	}
+	if !reportedOK {
+		t.Fatal("problem was not reported")
+	}
+	if !strings.Contains(reported.ErrorText, rawErr) {
+		t.Fatalf("reported raw error = %q, want it to contain %q", reported.ErrorText, rawErr)
+	}
+}
+
+func TestClaudeTransportAuditNoteHidesConnectionResetDetails(t *testing.T) {
+	rawErr := `read tcp 198.18.0.1:53930->216.175.200.154:443: wsarecv: An existing connection was forcibly closed by the remote host.`
+	note := claudeTransportAuditNote("上游请求失败(Do err):", errors.New(rawErr))
+
+	if !strings.Contains(note, claudeTransportFriendlyMessage) {
+		t.Fatalf("audit note = %q, want friendly message %q", note, claudeTransportFriendlyMessage)
+	}
+	if strings.Contains(note, "wsarecv") || strings.Contains(note, "forcibly closed") || strings.Contains(note, "198.18.0.1") {
+		t.Fatalf("audit note leaked raw connection reset details: %q", note)
 	}
 }
 
