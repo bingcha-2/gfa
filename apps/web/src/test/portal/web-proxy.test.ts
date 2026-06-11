@@ -145,7 +145,7 @@ describe("api/web/[...path] proxy", () => {
     expect(resp.status).toBe(404);
   });
 
-  it("supports PATCH and DELETE methods", async () => {
+  it("supports PATCH and DELETE methods and forwards their bodies", async () => {
     mockCookieValue = "token";
 
     for (const [handler, method] of [
@@ -157,12 +157,89 @@ describe("api/web/[...path] proxy", () => {
       );
       vi.stubGlobal("fetch", mockFetch);
 
-      await handler(makeRequest(method, ["some", "path"]), {
+      await handler(makeRequest(method, ["some", "path"], { reason: "cleanup" }), {
         params: Promise.resolve({ path: ["some", "path"] }),
       });
 
       const [, calledInit] = mockFetch.mock.calls[0] as [string, RequestInit];
       expect(calledInit.method).toBe(method);
+      // Spec: body is forwarded for POST/PATCH/DELETE (GET stays body-less)
+      expect(calledInit.body).toBe(JSON.stringify({ reason: "cleanup" }));
     }
+  });
+
+  // ── Path traversal protection ──────────────────────────────────────────────
+  // new URL() resolves ".." (and even "%2e%2e") segments, so crafted path
+  // segments could escape the /web/ prefix and reach e.g. /api/console.
+  // Every case below must return 400 BAD_REQUEST and never touch the backend.
+
+  it("rejects '..' segments with 400 and never calls fetch", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["..", "console"] }),
+    });
+
+    expect(resp.status).toBe(400);
+    expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects URL-encoded '..' ('%2e%2e') segments with 400 and never calls fetch", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["%2e%2e", "console"] }),
+    });
+
+    expect(resp.status).toBe(400);
+    expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects segments containing '/' with 400 and never calls fetch", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["a/..", "b"] }),
+    });
+
+    expect(resp.status).toBe(400);
+    expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty segments with 400 and never calls fetch", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["", "me"] }),
+    });
+
+    expect(resp.status).toBe(400);
+    expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects backslash segments with 400 and never calls fetch", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["..\\console"] }),
+    });
+
+    expect(resp.status).toBe(400);
+    expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

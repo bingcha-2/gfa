@@ -22,6 +22,31 @@ const BACKEND_BASE_URL =
 
 const ALLOWED_METHODS = new Set(["GET", "POST", "PATCH", "DELETE"]);
 
+/**
+ * Layer 1 of path traversal protection.
+ *
+ * new URL() resolves dot segments — including percent-encoded ones ("%2e%2e"
+ * is treated as ".." by the WHATWG URL parser) — so a crafted segment could
+ * escape the /web/ prefix and reach e.g. /api/console. Reject any segment
+ * that is empty, contains "..", "/" or "\", or decodes to any of those.
+ */
+function isUnsafeSegment(segment: string): boolean {
+  const containsBad = (s: string) =>
+    s.includes("..") || s.includes("/") || s.includes("\\");
+
+  if (!segment) return true; // empty segment
+  if (containsBad(segment)) return true;
+
+  try {
+    const decoded = decodeURIComponent(segment);
+    if (!decoded || containsBad(decoded)) return true;
+  } catch {
+    return true; // malformed percent-encoding — reject
+  }
+
+  return false;
+}
+
 async function handler(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -31,6 +56,11 @@ async function handler(
   // Enforce that path segments are present
   if (!path || path.length === 0) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+  }
+
+  // Layer 1: reject traversal / separator / empty segments outright
+  if (path.some(isUnsafeSegment)) {
+    return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
   }
 
   // Only allow supported methods
@@ -51,6 +81,14 @@ async function handler(
   const pathStr = path.join("/");
   const backendUrl = new URL(`${BACKEND_BASE_URL}/web/${pathStr}`);
 
+  // Layer 2: assert the resolved pathname is still under <base>/web/.
+  // Defense in depth in case Layer 1 ever misses an encoding the URL parser
+  // normalizes into a traversal.
+  const expectedPrefix = `${new URL(BACKEND_BASE_URL).pathname.replace(/\/+$/, "")}/web/`;
+  if (!backendUrl.pathname.startsWith(expectedPrefix)) {
+    return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
+  }
+
   // Forward query string from the incoming request URL
   const incomingUrl = new URL(request.url);
   incomingUrl.searchParams.forEach((value, key) => {
@@ -69,9 +107,9 @@ async function handler(
     forwardHeaders.set("content-type", contentType);
   }
 
-  // Forward request body for non-GET methods
+  // Forward request body for POST/PATCH/DELETE (GET stays body-less)
   let body: BodyInit | undefined;
-  if (method !== "GET" && method !== "DELETE") {
+  if (method !== "GET") {
     body = await request.text();
     if (!body) body = undefined;
   }

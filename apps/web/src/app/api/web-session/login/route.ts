@@ -4,21 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   USER_AUTH_COOKIE,
   USER_AUTH_MAX_AGE,
+  shouldUseSecureUserCookie,
 } from "../../../../lib/user-auth-cookie";
 import type { PortalSession } from "../../../../lib/user-types";
-
-/** Detect HTTPS from the request URL or forwarded proto header. */
-function isSecureRequest(request: NextRequest): boolean {
-  const override = process.env.USER_COOKIE_SECURE?.trim().toLowerCase();
-  if (override) return ["1", "true", "yes", "on"].includes(override);
-  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-  if (proto === "https") return true;
-  try {
-    return new URL(request.url).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 const BACKEND_BASE_URL =
   process.env.API_BASE_URL ??
@@ -53,7 +41,7 @@ export async function POST(request: NextRequest) {
   cookieStore.set(USER_AUTH_COOKIE, session.accessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure: isSecureRequest(request),
+    secure: shouldUseSecureUserCookie(request),
     path: "/",
     maxAge: USER_AUTH_MAX_AGE,
   });
