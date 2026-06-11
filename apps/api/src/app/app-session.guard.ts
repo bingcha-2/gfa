@@ -1,20 +1,7 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException
-} from "@nestjs/common";
-
 /**
- * AppSessionGuard — skeleton guard for the desktop client surface.
+ * AppSessionGuard — re-export of CustomerJwtGuard for the app surface.
  *
- * TODO(milestone 2): replace with the real Customer session JWT strategy
- * guard. Until then every request is rejected so no client endpoint can be
- * accidentally exposed.
+ * The real implementation lives in web/customer-auth/customer-jwt.guard.ts
+ * (single guard for both surfaces; strategy is "user-jwt").
  */
-@Injectable()
-export class AppSessionGuard implements CanActivate {
-  canActivate(_context: ExecutionContext): boolean {
-    throw new UnauthorizedException("customer session required");
-  }
-}
+export { CustomerJwtGuard as AppSessionGuard } from "../web/customer-auth/customer-jwt.guard";

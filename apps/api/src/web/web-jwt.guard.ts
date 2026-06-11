@@ -1,20 +1,7 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException
-} from "@nestjs/common";
-
 /**
- * WebJwtGuard — skeleton guard for the customer web portal surface.
+ * WebJwtGuard — re-export of CustomerJwtGuard for the web surface.
  *
- * TODO(milestone 2): replace with the real Customer JWT strategy guard.
- * Until then every request is rejected so no customer endpoint can be
- * accidentally exposed.
+ * The real implementation lives in customer-auth/customer-jwt.guard.ts.
+ * This file is kept for backward-compat import paths used in tests.
  */
-@Injectable()
-export class WebJwtGuard implements CanActivate {
-  canActivate(_context: ExecutionContext): boolean {
-    throw new UnauthorizedException("customer session required");
-  }
-}
+export { CustomerJwtGuard as WebJwtGuard } from "./customer-auth/customer-jwt.guard";

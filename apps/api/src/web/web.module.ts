@@ -1,13 +1,20 @@
 import { Module } from "@nestjs/common";
 
 import { WebSurfaceController } from "./web-surface.controller";
+import { CustomerAuthModule } from "./customer-auth/customer-auth.module";
 
 /**
  * WebModule — customer web portal surface (/api/web/*).
  *
- * Skeleton for milestone 0; customer auth and endpoints arrive in milestone 2.
+ * Imports CustomerAuthModule which provides:
+ *   - POST /api/web/auth/register
+ *   - POST /api/web/auth/login
+ *   - POST /api/web/auth/change-password
+ *   - POST /api/web/auth/refresh
+ *   - GET/PATCH /api/web/me
  */
 @Module({
+  imports: [CustomerAuthModule],
   controllers: [WebSurfaceController]
 })
 export class WebModule {}
