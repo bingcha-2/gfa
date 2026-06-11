@@ -10,6 +10,17 @@
  * NEVER call the backend directly from client code.
  */
 
+import type {
+  BillingOrderCreated,
+  BillingOrderRecord,
+  BillingOrderState,
+  BindCardResult,
+  PayChannel,
+  Plan,
+  PortalDevice,
+  Subscription,
+} from "./user-types";
+
 type RequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 type UserApiOptions = {
@@ -52,6 +63,31 @@ function extractMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Error thrown by userApi on non-2xx responses.
+ * `code` carries the backend's machine-readable error field
+ * (e.g. CARD_NOT_FOUND, CARD_ALREADY_BOUND) for per-code UI messages.
+ */
+export class UserApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null = null) {
+    super(message);
+    this.name = "UserApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function extractCode(payload: unknown): string | null {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const e = (payload as { error?: unknown }).error;
+    if (typeof e === "string") return e;
+  }
+  return null;
+}
+
 /** Generic portal data call through /api/web/[...path]. */
 export async function userApi<T>(
   path: string,
@@ -73,8 +109,10 @@ export async function userApi<T>(
   const payload = rawText ? safeJson(rawText) : null;
 
   if (!resp.ok) {
-    throw new Error(
-      extractMessage(payload, rawText || `Request failed with status ${resp.status}`)
+    throw new UserApiError(
+      extractMessage(payload, rawText || `Request failed with status ${resp.status}`),
+      resp.status,
+      extractCode(payload)
     );
   }
 
@@ -140,4 +178,59 @@ export async function forgotPassword(email: string) {
 
 export async function resetPassword(token: string, password: string) {
   return webSessionPost<{ ok: boolean }>("reset", { token, password });
+}
+
+// ─── Billing helpers (Stage 2a) ───────────────────────────────────────────────
+
+export async function getPlans() {
+  return userApi<{ plans: Plan[] }>("plans");
+}
+
+export async function createBillingOrder(planId: string, channel: PayChannel) {
+  return userApi<BillingOrderCreated>("billing/orders", {
+    method: "POST",
+    body: { planId, channel },
+  });
+}
+
+export async function getBillingOrderState(outTradeNo: string) {
+  return userApi<BillingOrderState>(`billing/orders/${outTradeNo}`);
+}
+
+export async function listBillingOrders(page: number, pageSize: number) {
+  return userApi<{ orders: BillingOrderRecord[]; total: number }>(
+    "billing/orders",
+    { search: { page, pageSize } }
+  );
+}
+
+export async function getSubscriptions() {
+  return userApi<{ subscriptions: Subscription[] }>("subscriptions");
+}
+
+export async function bindCard(cardKey: string) {
+  return userApi<BindCardResult>("bind-card", {
+    method: "POST",
+    body: { cardKey },
+  });
+}
+
+// ─── Device helpers (Stage 2a) ────────────────────────────────────────────────
+
+export async function getDevices() {
+  return userApi<{ devices: PortalDevice[]; deviceLimit: number }>("devices");
+}
+
+export async function renameDevice(id: string, name: string) {
+  return userApi<{ ok: true; device: PortalDevice }>(`devices/${id}`, {
+    method: "PATCH",
+    body: { name },
+  });
+}
+
+export async function revokeDevice(id: string) {
+  return userApi<{ ok: true }>(`devices/${id}/revoke`, {
+    method: "POST",
+    body: {},
+  });
 }
