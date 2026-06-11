@@ -14,10 +14,18 @@
  *   3. reload all three pools        — same as rosetta's reloadKeyStores.
  * Steps 1–3 run synchronously (no awaits in between), so the store's debounced
  * flush timer can never interleave and clobber the write.
+ *
+ * Concurrency (M13b): the WHOLE critical section — seat assignment (which
+ * computes free shares by reading the file) through the upsert that consumes
+ * those shares and the pool reload — additionally runs under the process-wide
+ * access-keys write lock (withAccessKeysWriteLock). Without it, two concurrent
+ * purchases both read "1 free share" before either persists, and one upstream
+ * account gets double-booked past ACCOUNT_SHARE_CAPACITY.
  */
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { Subscription } from "@prisma/client";
 
+import { withAccessKeysWriteLock } from "../rosetta/access-key.service";
 import { RosettaService } from "../rosetta/rosetta.service";
 import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
@@ -48,78 +56,100 @@ export class EntitlementSyncService {
    */
   async syncSubscription(sub: Subscription, opts: { customerEmail?: string } = {}): Promise<void> {
     const products = parseProducts(sub.productEntitlements);
-    const existing = this.accessKeyStore.findById(sub.id);
+    const bucketLimits = parseObject(sub.bucketLimits);
+    // Resolved BEFORE the locked section so the critical section stays free of
+    // awaits (an await inside would let other async writers interleave between
+    // the seat computation and the write that consumes the seats).
+    const customerEmail = opts.customerEmail ?? (await this.lookupCustomerEmail(sub.customerId));
 
-    let bindings = parseObject(sub.bindings);
-    if (!existing && sub.planId) {
-      // NEW plan-backed record → auto-assign one open-seat account per product,
-      // at the plan's membership level, reusing the card-mint binding logic.
-      // A failed product is logged LOUDLY and left unbound (TODO M13 hardening:
-      // retry queue / operator alert) — never fail the whole sync, the customer
-      // just paid.
-      bindings = {};
-      const levels = parseObject(sub.levels);
-      for (const product of products) {
-        const level = String(levels[product] || "").trim();
-        if (!level) {
-          this.logger.error(
-            `[entitlement-sync] subscription ${sub.id}: no membership level configured for product "${product}" — leaving it UNBOUND (plan ${sub.planId})`,
-          );
-          continue;
+    // The seat assignment + record write + pool reload run as ONE serialized,
+    // fully SYNCHRONOUS critical section (see module doc "Concurrency"): the
+    // free-share read and the share-consuming write must be atomic w.r.t.
+    // every other access-keys.json mutation, or two concurrent purchases
+    // double-book the same upstream account past capacity.
+    let assignedBindings: Record<string, number> | null = null;
+    await withAccessKeysWriteLock(() => {
+      const existing = this.accessKeyStore.findById(sub.id);
+
+      let bindings = parseObject(sub.bindings);
+      if (!existing && sub.planId) {
+        // NEW plan-backed record → auto-assign one open-seat account per product,
+        // at the plan's membership level, reusing the card-mint binding logic.
+        // A failed product is logged LOUDLY and left unbound (TODO M13 hardening:
+        // retry queue / operator alert) — never fail the whole sync, the customer
+        // just paid.
+        bindings = {};
+        const levels = parseObject(sub.levels);
+        for (const product of products) {
+          const level = String(levels[product] || "").trim();
+          if (!level) {
+            this.logger.error(
+              `[entitlement-sync] subscription ${sub.id}: no membership level configured for product "${product}" — leaving it UNBOUND (plan ${sub.planId})`,
+            );
+            continue;
+          }
+          const accountId = this.rosetta.assignSeatForProduct(product, sub.weight, level);
+          if (!accountId) {
+            this.logger.error(
+              `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${sub.weight} — no account with free shares; leaving it UNBOUND (TODO M13 hardening)`,
+            );
+            continue;
+          }
+          bindings[product] = accountId;
         }
-        const accountId = this.rosetta.assignSeatForProduct(product, sub.weight, level);
-        if (!accountId) {
-          this.logger.error(
-            `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${sub.weight} — no account with free shares; leaving it UNBOUND (TODO M13 hardening)`,
-          );
-          continue;
-        }
-        bindings[product] = accountId;
+        assignedBindings = bindings;
       }
-      // Persist the assigned seats back into the subscription snapshot so
-      // future resyncs (extend) re-apply the same seats.
+
+      // flush → write → reload, synchronously (see module doc).
+      this.accessKeyStore.flush();
+      const result = this.rosetta.upsertKeyRecord(
+        {
+          id: sub.id,
+          key: sub.backingKeyValue,
+          name: `订阅:${customerEmail}`,
+          status: "active",
+          weight: sub.weight,
+          windowMs: sub.windowMs,
+          weeklyTokenLimit: sub.weeklyTokenLimit ?? 0,
+          bucketLimits: Object.keys(bucketLimits).length > 0 ? bucketLimits : null,
+          bindings,
+          products,
+          // ABSOLUTE expiry (keyExpiresAt() reads it ahead of firstUsedAt+durationMs).
+          // null expiry (migrated never-used card) → field stays unset.
+          keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
+        },
+        { createIfMissing: true },
+      );
+      if (!result.ok) {
+        throw new Error(`[entitlement-sync] shadow record upsert failed for subscription ${sub.id}: ${result.error}`);
+      }
+      this.reloadPools();
+    });
+
+    // Persist the assigned seats back into the subscription snapshot so future
+    // resyncs (extend) re-apply the same seats. Outside the lock — the seats
+    // are already consumed in the file; this is only the Prisma mirror.
+    if (assignedBindings) {
       try {
         await this.prisma.subscription.update({
           where: { id: sub.id },
-          data: { bindings: JSON.stringify(bindings) },
+          data: { bindings: JSON.stringify(assignedBindings) },
         });
       } catch (err: any) {
         this.logger.error(`[entitlement-sync] subscription ${sub.id}: persisting bindings snapshot failed: ${err?.message || err}`);
       }
     }
-
-    const customerEmail = opts.customerEmail ?? (await this.lookupCustomerEmail(sub.customerId));
-    const bucketLimits = parseObject(sub.bucketLimits);
-
-    // flush → write → reload, synchronously (see module doc).
-    this.accessKeyStore.flush();
-    const result = this.rosetta.upsertKeyRecord(
-      {
-        id: sub.id,
-        key: sub.backingKeyValue,
-        name: `订阅:${customerEmail}`,
-        status: "active",
-        weight: sub.weight,
-        windowMs: sub.windowMs,
-        weeklyTokenLimit: sub.weeklyTokenLimit ?? 0,
-        bucketLimits: Object.keys(bucketLimits).length > 0 ? bucketLimits : null,
-        bindings,
-        products,
-        // ABSOLUTE expiry (keyExpiresAt() reads it ahead of firstUsedAt+durationMs).
-        // null expiry (migrated never-used card) → field stays unset.
-        keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
-      },
-      { createIfMissing: true },
-    );
-    if (!result.ok) {
-      throw new Error(`[entitlement-sync] shadow record upsert failed for subscription ${sub.id}: ${result.error}`);
-    }
-    this.reloadPools();
   }
 
   /**
    * Mark a subscription's shadow record expired (store rejects non-active
    * records at resolve time). The record and its usage history are retained.
+   *
+   * Intentionally synchronous and NOT behind the write lock: the body is a
+   * single flush→upsert→reload sequence with no awaits, which Node's event
+   * loop already makes atomic w.r.t. every other writer; callers
+   * (SubscriptionService.expire/cancel) rely on the record being expired the
+   * moment this returns.
    */
   expireShadowRecord(subscriptionId: string): void {
     this.accessKeyStore.flush();

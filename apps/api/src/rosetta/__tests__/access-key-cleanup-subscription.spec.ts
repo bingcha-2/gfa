@@ -40,7 +40,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("does NOT delete a shadow record whose id equals a Subscription id (no sessionClientId)", () => {
+  it("does NOT delete a shadow record whose id equals a Subscription id (no sessionClientId)", async () => {
     const subscriptionId = "sub_abc123";
 
     writeJson(filePath, {
@@ -55,7 +55,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupUnboundKeys(new Set([subscriptionId]));
+    const result = await svc.cleanupUnboundKeys(new Set([subscriptionId]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -65,7 +65,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     expect(remainingIds).not.toContain("card_orphan_1"); // orphan deleted
   });
 
-  it("does NOT delete a migrated card record (migratedToCustomerId set, no sessionClientId)", () => {
+  it("does NOT delete a migrated card record (migratedToCustomerId set, no sessionClientId)", async () => {
     writeJson(filePath, {
       keys: [
         // Migrated card: migratedToCustomerId set → kept regardless of sessionClientId
@@ -86,7 +86,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
     // No subscription IDs; the protection here comes from migratedToCustomerId
-    const result = svc.cleanupUnboundKeys(new Set([]));
+    const result = await svc.cleanupUnboundKeys(new Set([]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -96,7 +96,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     expect(remainingIds).not.toContain("card_orphan_2"); // orphan deleted
   });
 
-  it("deletes a genuinely unbound admin card (no subscription, not migrated, no sessionClientId)", () => {
+  it("deletes a genuinely unbound admin card (no subscription, not migrated, no sessionClientId)", async () => {
     writeJson(filePath, {
       keys: [
         { id: "card_plain_1", key: "bcai_plain", name: "Plain card", status: "active" },
@@ -107,7 +107,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupUnboundKeys(new Set([]));
+    const result = await svc.cleanupUnboundKeys(new Set([]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -117,7 +117,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     expect(remainingIds).not.toContain("card_plain_1");
   });
 
-  it("handles combination: subscription shadow + migrated + sessionClientId card + orphan", () => {
+  it("handles combination: subscription shadow + migrated + sessionClientId card + orphan", async () => {
     const subId = "sub_combo";
 
     writeJson(filePath, {
@@ -136,7 +136,7 @@ describe("cleanupUnboundKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupUnboundKeys(new Set([subId]));
+    const result = await svc.cleanupUnboundKeys(new Set([subId]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -160,7 +160,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("does NOT delete an expired migrated card record (migratedToCustomerId set)", () => {
+  it("does NOT delete an expired migrated card record (migratedToCustomerId set)", async () => {
     const now = Date.now();
 
     writeJson(filePath, {
@@ -200,7 +200,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupExpiredKeys(new Set([]));
+    const result = await svc.cleanupExpiredKeys(new Set([]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -211,7 +211,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     expect(remainingIds).toContain("card_active");
   });
 
-  it("does NOT delete an expired subscription shadow record (id in subscription set)", () => {
+  it("does NOT delete an expired subscription shadow record (id in subscription set)", async () => {
     const now = Date.now();
     const subId = "sub_expired_shadow";
 
@@ -237,7 +237,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupExpiredKeys(new Set([subId]));
+    const result = await svc.cleanupExpiredKeys(new Set([subId]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 
@@ -247,7 +247,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     expect(remainingIds).not.toContain("card_expired_2"); // plain expired, deleted
   });
 
-  it("deletes an expired plain admin card (no subscription, not migrated)", () => {
+  it("deletes an expired plain admin card (no subscription, not migrated)", async () => {
     const now = Date.now();
 
     writeJson(filePath, {
@@ -272,7 +272,7 @@ describe("cleanupExpiredKeys — subscription-aware", () => {
     const svc = new AccessKeyService(
       { dataDir, accessKeysFile: { read: () => readJson(filePath) } } as any,
     );
-    const result = svc.cleanupExpiredKeys(new Set([]));
+    const result = await svc.cleanupExpiredKeys(new Set([]));
 
     expect(result).toMatchObject({ ok: true, deleted: 1 });
 

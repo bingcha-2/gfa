@@ -211,4 +211,45 @@ describe("EntitlementSyncService", () => {
     service.expireShadowRecord("ghost-sub");
     expect(reloads.tokenServer.reloadAccessKeys).not.toHaveBeenCalled();
   });
+
+  // ── M13b: writer serialization over access-keys.json ──────────────────────
+
+  it("two CONCURRENT plan syncs competing for the last free shares → exactly one gets the seat, never both (no overcommit past capacity)", async () => {
+    // Capacity is 4 (BCAI_ACCOUNT_SHARE_CAPACITY=4 in the test env) and the
+    // pool has ONE ultra account (id 7). Two weight-3 subscriptions cannot
+    // both fit: without serialization both seat computations read "4 free"
+    // before either write lands, double-booking the account to 6/4.
+    const subA = makeSub({ id: "sub-race-a", weight: 3, backingKeyValue: "sub_" + "a".repeat(48) });
+    const subB = makeSub({ id: "sub-race-b", weight: 3, backingKeyValue: "sub_" + "b".repeat(48) });
+
+    await Promise.all([
+      service.syncSubscription(subA, { customerEmail: "a@example.com" }),
+      service.syncSubscription(subB, { customerEmail: "b@example.com" }),
+    ]);
+
+    const keys = readKeys();
+    expect(keys).toHaveLength(2);
+    const bound = keys.filter((k: any) => Number(k?.bindings?.antigravity) === 7);
+    // Exactly ONE winner; the loser is left unbound (logged loudly), NOT
+    // double-booked onto the same account.
+    expect(bound).toHaveLength(1);
+    const totalShares = bound.reduce((sum: number, k: any) => sum + Number(k.weight || 1), 0);
+    expect(totalShares).toBeLessThanOrEqual(4); // ACCOUNT_SHARE_CAPACITY (test env)
+  });
+
+  it("two CONCURRENT syncs for different subscriptions lose neither write (both records + both seats present)", async () => {
+    const subA = makeSub({ id: "sub-par-a", weight: 1, backingKeyValue: "sub_" + "c".repeat(48) });
+    const subB = makeSub({ id: "sub-par-b", weight: 1, backingKeyValue: "sub_" + "d".repeat(48) });
+
+    await Promise.all([
+      service.syncSubscription(subA, { customerEmail: "a@example.com" }),
+      service.syncSubscription(subB, { customerEmail: "b@example.com" }),
+    ]);
+
+    const keys = readKeys();
+    const ids = keys.map((k: any) => k.id).sort();
+    expect(ids).toEqual(["sub-par-a", "sub-par-b"]);
+    // Both fit (1+1 ≤ 4) → both seated on account 7, shares accounted exactly.
+    for (const key of keys) expect(key.bindings).toEqual({ antigravity: 7 });
+  });
 });

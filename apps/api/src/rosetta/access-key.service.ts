@@ -20,6 +20,35 @@ import { accessKeyExpiresAt, cardWeight, maskKey, newAccessKeyValue, recentToken
 import type { RosettaContext } from "./lib/context";
 import { nowIso, readJson, writeJson } from "./lib/store";
 
+// ── access-keys.json write lock ──────────────────────────────────────────────
+// Process-wide promise-chain mutex serializing every COMPOUND read→mutate→write
+// critical section over access-keys.json. Node's single thread already makes
+// each individual synchronous mutation in this service atomic; the lock exists
+// for callers whose critical section spans `await`s or composes several calls:
+//   • EntitlementSyncService.syncSubscription — the free-share computation
+//     (assignSeatForProduct reads the file) and the upsert that consumes those
+//     shares must be atomic, or two concurrent purchases double-book the same
+//     upstream account past ACCOUNT_SHARE_CAPACITY;
+//   • CardMigrationService.bindCard — the duplicate-bind check, the Prisma tx
+//     (with the file re-home write inside), and the post-commit reload must not
+//     interleave with other writers;
+//   • the admin cleanup sweeps below — so they can never observe (and delete)
+//     a record mid-migration while a locked section is parked on an await.
+// IN-PROCESS ONLY: the deployment is single-instance; running multiple API
+// processes over one dataDir needs a real cross-process lock (out of scope).
+let accessKeysWriteChain: Promise<unknown> = Promise.resolve();
+
+export function withAccessKeysWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
+  const run = accessKeysWriteChain.then(fn);
+  // Keep the chain alive when fn rejects — the CALLER sees the rejection via
+  // `run`; the next queued section must still get its turn.
+  accessKeysWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export class AccessKeyService {
   constructor(private readonly ctx: RosettaContext) {}
 
@@ -627,8 +656,16 @@ export class AccessKeyService {
    *   2. It has `migratedToCustomerId` set — it is a migrated legacy card whose
    *      CardTokenUsage history is keyed to this record; deleting it orphans
    *      the customer's usage attribution.
+   *
+   * Runs under the access-keys write lock so a sweep can never land inside
+   * another writer's in-flight critical section (e.g. delete a card mid
+   * bind-card migration, before its migratedToCustomerId guard is persisted).
    */
   cleanupExpiredKeys(subscriptionIds: ReadonlySet<string> = new Set()) {
+    return withAccessKeysWriteLock(() => this.cleanupExpiredKeysLocked(subscriptionIds));
+  }
+
+  private cleanupExpiredKeysLocked(subscriptionIds: ReadonlySet<string>) {
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
@@ -672,8 +709,14 @@ export class AccessKeyService {
    *   2. It has `migratedToCustomerId` set — it is a migrated legacy card that
    *      belongs to a customer and whose key has been rotated to a `sub_…`
    *      backing value; the per-card session mechanism does not apply to it.
+   *
+   * Runs under the access-keys write lock (same rationale as cleanupExpiredKeys).
    */
   cleanupUnboundKeys(subscriptionIds: ReadonlySet<string> = new Set()) {
+    return withAccessKeysWriteLock(() => this.cleanupUnboundKeysLocked(subscriptionIds));
+  }
+
+  private cleanupUnboundKeysLocked(subscriptionIds: ReadonlySet<string>) {
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
