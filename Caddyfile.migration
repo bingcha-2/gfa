@@ -1,6 +1,22 @@
 bcai.space {
-    # Next.js session routes (login/logout via httpOnly cookie)
+    # Next.js admin session routes (login/logout via httpOnly console cookie)
     handle /api/session/* {
+        reverse_proxy localhost:3000
+    }
+
+    # Next.js customer portal session routes (login/register/logout/forgot/reset).
+    # These handlers set/clear the gfa.user.token httpOnly cookie and must NOT
+    # be forwarded to the NestJS backend — they live in Next.js route handlers
+    # under src/app/api/web-session/*.
+    handle /api/web-session/* {
+        reverse_proxy localhost:3000
+    }
+
+    # Next.js generic authenticated portal proxy.
+    # Reads gfa.user.token cookie, forwards as Bearer to backend /web/*.
+    # Must route through Next.js (not directly to :3001) so cookie→Bearer
+    # conversion happens server-side. See src/app/api/web/[...path]/route.ts.
+    handle /api/web/* {
         reverse_proxy localhost:3000
     }
 

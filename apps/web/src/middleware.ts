@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CONSOLE_AUTH_COOKIE } from "./lib/auth-cookie";
+import { USER_AUTH_COOKIE } from "./lib/user-auth-cookie";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -46,8 +47,32 @@ function notFound() {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
+// ─── Portal auth pages (no redirect when already logged in — handled by layout) ─
+const PORTAL_AUTH_PAGES = ["/app/login", "/app/register", "/app/forgot", "/app/reset"];
+
+function isPortalAuthPage(pathname: string): boolean {
+  return PORTAL_AUTH_PAGES.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ── Portal branch (independent of console) ────────────────────────────────
+  // Protect /app/* routes (but not auth pages themselves).
+  const isPortalPath = pathname === "/app" || pathname.startsWith("/app/");
+
+  if (isPortalPath && !isPortalAuthPage(pathname)) {
+    const hasUserToken = request.cookies.has(USER_AUTH_COOKIE);
+    if (!hasUserToken) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/app/login";
+      return NextResponse.redirect(loginUrl);
+    }
+    // Has token — pass through; backend validation happens in the layout.
+    return NextResponse.next();
+  }
 
   // The canonical path that Next.js file system uses is always /console/*
   const isConsolePath = pathname === "/console" || pathname.startsWith("/console/");

@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev -p 3000",
     "start": "next start",
-    "lint": "tsc -p tsconfig.lint.json --noEmit"
+    "lint": "tsc -p tsconfig.lint.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

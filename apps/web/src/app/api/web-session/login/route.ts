@@ -1,0 +1,62 @@
+import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
+
+import {
+  USER_AUTH_COOKIE,
+  USER_AUTH_MAX_AGE,
+} from "../../../../lib/user-auth-cookie";
+import type { PortalSession } from "../../../../lib/user-types";
+
+/** Detect HTTPS from the request URL or forwarded proto header. */
+function isSecureRequest(request: NextRequest): boolean {
+  const override = process.env.USER_COOKIE_SECURE?.trim().toLowerCase();
+  if (override) return ["1", "true", "yes", "on"].includes(override);
+  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  if (proto === "https") return true;
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const BACKEND_BASE_URL =
+  process.env.API_BASE_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  "http://localhost:3001/api";
+
+export async function POST(request: NextRequest) {
+  const payload = await request.json();
+
+  const response = await fetch(`${BACKEND_BASE_URL}/web/auth/login`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  const raw = await response.text();
+  const data = raw ? JSON.parse(raw) : null;
+
+  if (!response.ok) {
+    return NextResponse.json(data ?? { message: "Login failed" }, {
+      status: response.status,
+    });
+  }
+
+  const session = data as PortalSession;
+  const cookieStore = await cookies();
+
+  cookieStore.set(USER_AUTH_COOKIE, session.accessToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isSecureRequest(request),
+    path: "/",
+    maxAge: USER_AUTH_MAX_AGE,
+  });
+
+  return NextResponse.json({ customer: session.customer });
+}

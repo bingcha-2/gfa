@@ -27,7 +27,13 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "20mb",
     },
   },
-  // Proxy FAQ images to the backend API server
+  // Proxy FAQ images and admin API to the backend API server.
+  //
+  // ⚠️  DO NOT add /api/web or /api/web-session to this rewrite list.
+  //     Those paths are handled by Next.js route handlers in src/app/api/web/
+  //     and src/app/api/web-session/ which perform cookie→Bearer conversion for
+  //     the customer portal.  Adding them here would bypass the route handlers
+  //     and send unauthenticated requests directly to the NestJS backend.
   async rewrites() {
     const backendPrefixes = [
       "auth",
