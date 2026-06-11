@@ -74,6 +74,20 @@ describe("派生周上限 = 5h上限 × R(anthropic/codex)", () => {
     expect(res.record).not.toBeNull();
   });
 
+  it("publicStatus 派生周桶:池子卡 bucketLimits → weeklyBuckets 含 5h×R", () => {
+    const s = makeStore({ ...base, windowStartedAt: nowVal, weeklyWindowStartedAt: nowVal, bucketLimits: { "anthropic-claude": 1000 } });
+    out500(s, "r1"); // 5h & 周 各 500 CU
+    const st = s.publicStatus(s.findById("k")!, 0, () => 3) as any; // R=3
+    const wb = (st.weeklyBuckets || []).find((b: any) => b.bucket === "anthropic-claude");
+    expect(wb).toBeDefined();
+    expect(wb.limit).toBe(3000); // 1000 × 3
+    expect(wb.used).toBe(500);
+    // 5h 桶照旧
+    const fh = (st.buckets || []).find((b: any) => b.bucket === "anthropic-claude");
+    expect(fh.limit).toBe(1000);
+    expect(fh.used).toBe(500);
+  });
+
   it("显式 weeklyTokenLimit 独立生效(无 bucketLimits → 不派生,只用显式周限)", () => {
     // 显式周限 1500、无 5h 上限:派生分支不触发(cap5h=0),走显式分支 → 用量 2000 ≥ 1500 拦。
     const s = makeStore({ ...base, windowStartedAt: nowVal, weeklyWindowStartedAt: nowVal, weeklyTokenLimit: 1500 });

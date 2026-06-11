@@ -578,7 +578,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       sessionId: accessKeySessionId,
       sessionExpiresAt: auth.record.sessionExpiresAt || "",
       // 绑定卡:把账号对齐的窗口 reset 下发,客户端本地额度窗口据此与服务端对齐(号池卡为 0,不改)。
-      accessKeyStatus: this.accessKeyStore.publicStatus(auth.record, this.boundAccountResetAt(auth.record, modelKey)),
+      accessKeyStatus: this.accessKeyStore.publicStatus(
+        auth.record,
+        this.boundAccountResetAt(auth.record, modelKey),
+        // 派生周上限(池子卡周血条)用的按桶 R:卡设置框 > 学习 > 全局默认。
+        (bucket: string) => this.weeklyRatioForFamily(auth.record, familyOfBucket(bucket)),
+      ),
       accountId: account.id,
       emailHint: maskEmail(account.email),
       // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
@@ -639,9 +644,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
    * 池子卡无固定账号 → 按最高档假定(claude=max / gpt=pro);绑卡用绑定账号的真实 plan。
    */
   private resolveWeeklyRatio(record: any, modelKey: string): number {
+    return this.weeklyRatioForFamily(record, familyOfBucket(bucketKey(this.provider.id, modelKey)));
+}
+
+  /** 按家族解析 R(供 enforce 与 publicStatus 共用)。family = claude|gpt|gemini。 */
+  private weeklyRatioForFamily(record: any, family: string): number {
     const cardR = Number(record?.weeklyRatio || 0);
     if (cardR > 0) return cardR;
-    const family = familyOfBucket(bucketKey(this.provider.id, modelKey));
     const topPlan = family === "gpt" ? "pro" : "max";
     let plan = topPlan;
     const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);

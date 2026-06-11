@@ -43,7 +43,7 @@ export function DashboardPage() {
   const {
     config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
     accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode, recoveryRemainingMs,
-    cardWeight, cardShareCapacity, cardBuckets,
+    cardWeight, cardShareCapacity, cardBuckets, cardWeeklyBuckets,
     codexQuota, claudeQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
@@ -72,6 +72,19 @@ export function DashboardPage() {
       if (!limit || limit <= 0) return []
       const used = b?.used ?? 0
       const frac = Math.max(0, Math.min(1, (limit - used) / limit))
+      // static 卡封顶条:有周上限(显式或派生 5h×R)时 → 5h + 周 双条,否则单条。
+      const staticBar = (key: string, suffix: string, u: number, lim: number, resetMs?: number) => (
+        <UsageBar key={key} label={`${t('dashboard.myCard')} · ${suffix}`} used={u} limit={lim}
+          fraction={accountProblem ? -1 : Math.max(0, Math.min(1, (lim - u) / lim))}
+          resetMs={resetMs}
+          expandable
+          detail={t('dashboard.myCardDetail', { used: formatTokens(u), limit: formatTokens(lim) })} />
+      )
+      const wk = cardWeeklyBuckets?.[bar.bucket]
+      if (wk && wk.limit > 0) {
+        return [staticBar('mine-5h', '5h', used, limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined),
+                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit)]
+      }
       return [(
         <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
           fraction={accountProblem ? -1 : frac}
