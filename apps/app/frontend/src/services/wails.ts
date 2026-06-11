@@ -34,11 +34,11 @@ import {
 
 // ===== Portal URLs =====
 export const PORTAL_URLS = {
-  register: 'https://bcai.lol/app/register',
-  forgot: 'https://bcai.lol/app/forgot',
-  billing: 'https://bcai.lol/app/billing',
-  bind: 'https://bcai.lol/app/bind',
-  devices: 'https://bcai.lol/app/devices',
+  register: 'https://bcai.lol/account/register',
+  forgot: 'https://bcai.lol/account/forgot',
+  billing: 'https://bcai.lol/account/billing',
+  bind: 'https://bcai.lol/account/bind',
+  devices: 'https://bcai.lol/account/devices',
 } as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'

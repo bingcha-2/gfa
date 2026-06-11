@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function AuthLayout({ children }: { children: ReactNode }) {
   const token = await getUserTokenFromCookie();
   if (token) {
-    redirect("/app");
+    redirect("/account");
   }
   return <>{children}</>;
 }

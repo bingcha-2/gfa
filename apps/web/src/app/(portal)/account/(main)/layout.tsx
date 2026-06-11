@@ -17,7 +17,7 @@ export default async function MainLayout({ children }: { children: ReactNode }) 
   try {
     customer = await serverUserApi<Customer>("me");
   } catch {
-    redirect("/app/login");
+    redirect("/account/login");
   }
 
   return <PortalShell initialCustomer={customer}>{children}</PortalShell>;

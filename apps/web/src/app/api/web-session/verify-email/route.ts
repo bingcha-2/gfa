@@ -5,7 +5,7 @@ import { getBackendBaseUrl, safeParseJson } from "../../../../lib/backend-url";
 /**
  * Email verification — unauthenticated by design: the user clicks the link
  * from their inbox and may not have a session cookie yet. No cookie is read
- * or written here; the page links to /app afterwards.
+ * or written here; the page links to /account afterwards.
  */
 export async function POST(request: NextRequest) {
   // Guard the body parse — a malformed JSON body must not throw a 500 that

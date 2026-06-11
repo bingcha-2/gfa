@@ -177,7 +177,7 @@ export class CustomerAuthService {
     this.emailTokenService
       .issueToken(customerId, CustomerEmailTokenPurpose.VERIFY_EMAIL, ttlMs)
       .then((plaintext) => {
-        const link = `${webBaseUrl()}/app/verify-email?token=${plaintext}`;
+        const link = `${webBaseUrl()}/account/verify-email?token=${plaintext}`;
         return this.mailService.sendMail({
           to: email,
           subject: "Verify your email address",
@@ -375,7 +375,7 @@ export class CustomerAuthService {
         30 * 60 * 1000
       );
 
-      const link = `${webBaseUrl()}/app/reset?token=${plaintext}`;
+      const link = `${webBaseUrl()}/account/reset?token=${plaintext}`;
       // Fire-and-forget the mail send — do not await failure into the response
       this.mailService
         .sendMail({
@@ -452,7 +452,7 @@ export class CustomerAuthService {
       24 * 60 * 60 * 1000 // 24h
     );
 
-    const link = `${webBaseUrl()}/app/verify-email?token=${plaintext}`;
+    const link = `${webBaseUrl()}/account/verify-email?token=${plaintext}`;
     this.mailService
       .sendMail({
         to: customer.email,

@@ -121,7 +121,7 @@ export function TicketsList() {
                 <TableRow key={ticket.id}>
                   <TableCell>
                     <Link
-                      href={`/app/tickets/${ticket.id}`}
+                      href={`/account/tickets/${ticket.id}`}
                       className="font-medium underline-offset-4 hover:underline"
                     >
                       {ticket.subject}

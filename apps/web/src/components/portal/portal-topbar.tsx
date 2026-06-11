@@ -58,7 +58,7 @@ export function PortalTopbar({ title }: { title?: string }) {
         className="relative"
         nativeButton={false}
         render={
-          <Link href="/app/notifications" aria-label={t.nav.notifications} />
+          <Link href="/account/notifications" aria-label={t.nav.notifications} />
         }
       >
         <BellIcon className="size-4" />
@@ -81,7 +81,7 @@ export function PortalTopbar({ title }: { title?: string }) {
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
-          <DropdownMenuItem render={<Link href="/app/settings" />}>
+          <DropdownMenuItem render={<Link href="/account/settings" />}>
             <SettingsIcon className="size-4 mr-2" />
             {t.nav.settings}
           </DropdownMenuItem>

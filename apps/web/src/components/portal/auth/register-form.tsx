@@ -33,7 +33,7 @@ export function RegisterForm() {
         displayName || undefined,
         referralCode || undefined
       );
-      router.push("/app");
+      router.push("/account");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.registerFailed);
@@ -101,7 +101,7 @@ export function RegisterForm() {
 
       <p className="text-center text-sm text-muted-foreground">
         {t.form.haveAccount}{" "}
-        <Link href="/app/login" className="hover:text-foreground transition-colors underline-offset-4 hover:underline">
+        <Link href="/account/login" className="hover:text-foreground transition-colors underline-offset-4 hover:underline">
           {t.actions.login}
         </Link>
       </p>

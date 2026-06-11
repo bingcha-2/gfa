@@ -26,7 +26,7 @@ export function LoginForm() {
     setLoading(true);
     try {
       await loginUser(email, password);
-      router.push("/app");
+      router.push("/account");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.loginFailed);
@@ -75,13 +75,13 @@ export function LoginForm() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <Link
-          href="/app/forgot"
+          href="/account/forgot"
           className="hover:text-foreground transition-colors"
         >
           {t.actions.forgotPassword}
         </Link>
         <Link
-          href="/app/register"
+          href="/account/register"
           className="hover:text-foreground transition-colors"
         >
           {t.actions.register}

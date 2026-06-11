@@ -42,7 +42,7 @@ export function PortalProvider({
       setCustomer(updated);
     } catch {
       // If token expired, redirect to login
-      router.push("/app/login");
+      router.push("/account/login");
     }
   }, [router]);
 
@@ -52,7 +52,7 @@ export function PortalProvider({
     } catch {
       // ignore logout errors
     }
-    router.push("/app/login");
+    router.push("/account/login");
     router.refresh();
   }, [router]);
 

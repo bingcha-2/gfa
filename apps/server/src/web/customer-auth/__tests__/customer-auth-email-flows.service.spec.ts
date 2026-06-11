@@ -239,7 +239,7 @@ describe("CustomerAuthService.forgotPassword", () => {
     expect(mailService.sendMail).toHaveBeenCalledOnce();
     const callArg = mailService.sendMail.mock.calls[0][0];
     expect(callArg.to).toBe("user@test.com");
-    expect(callArg.text).toContain("/app/reset?token=");
+    expect(callArg.text).toContain("/account/reset?token=");
     expect(callArg.text).toContain("https://bcai.lol");
   });
 
@@ -461,7 +461,7 @@ describe("CustomerAuthService.requestVerifyEmail", () => {
     expect(mailService.sendMail).toHaveBeenCalledOnce();
     const callArg = mailService.sendMail.mock.calls[0][0];
     expect(callArg.to).toBe("user@test.com");
-    expect(callArg.text).toContain("/app/verify-email?token=");
+    expect(callArg.text).toContain("/account/verify-email?token=");
   });
 
   it("verify link token matches the issued token (hash check)", async () => {

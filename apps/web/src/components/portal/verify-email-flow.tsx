@@ -48,7 +48,7 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
         <XCircleIcon className="size-10 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">{t.missingToken}</p>
         <Link
-          href="/app"
+          href="/account"
           className="text-sm text-accent underline-offset-4 hover:underline"
         >
           {t.goPortal}
@@ -73,7 +73,7 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
         <div className="text-base font-semibold">{t.successTitle}</div>
         <p className="text-sm text-muted-foreground">{t.successDesc}</p>
         <Link
-          href="/app"
+          href="/account"
           className="text-sm text-accent underline-offset-4 hover:underline"
         >
           {t.goPortal}
@@ -88,7 +88,7 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
       <div className="text-base font-semibold">{t.invalidTitle}</div>
       <p className="text-sm text-muted-foreground">{t.invalidDesc}</p>
       <Link
-        href="/app"
+        href="/account"
         className="text-sm text-accent underline-offset-4 hover:underline"
       >
         {t.goPortal}

@@ -35,7 +35,7 @@ export function ForgotForm() {
       <div className="space-y-4 text-center">
         <p className="text-sm text-muted-foreground">{t.form.forgotSent}</p>
         <Link
-          href="/app/login"
+          href="/account/login"
           className="text-sm text-accent hover:underline"
         >
           {t.actions.backToLogin}
@@ -65,7 +65,7 @@ export function ForgotForm() {
 
       <p className="text-center text-sm">
         <Link
-          href="/app/login"
+          href="/account/login"
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           {t.actions.backToLogin}

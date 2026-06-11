@@ -32,7 +32,7 @@ export class ReferralService {
     ]);
 
     const referralCode = customer.referralCode;
-    const referralLink = `${webBaseUrl()}/app/register?ref=${referralCode}`;
+    const referralLink = `${webBaseUrl()}/account/register?ref=${referralCode}`;
 
     // Build a set of rewarded invitee ids for O(1) lookup
     const rewardedInviteeIds = new Set(rewards.map((r) => r.inviteeId));

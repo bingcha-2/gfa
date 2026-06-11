@@ -41,7 +41,7 @@ describe("VerifyEmailFlow", () => {
     // Link back into the portal
     expect(screen.getByRole("link", { name: "进入用户中心 →" })).toHaveAttribute(
       "href",
-      "/app"
+      "/account"
     );
   });
 

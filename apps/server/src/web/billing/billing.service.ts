@@ -38,7 +38,7 @@ function resolveNotifyUrl(): string {
 
 function resolveReturnUrl(): string {
   const web = process.env.WEB_BASE_URL ?? "http://localhost:3000";
-  return process.env.EPAY_RETURN_URL ?? `${web}/app/billing`;
+  return process.env.EPAY_RETURN_URL ?? `${web}/account/billing`;
 }
 
 /** Collision-resistant trade number: "gfa" + timestamp + 12 random hex chars. */

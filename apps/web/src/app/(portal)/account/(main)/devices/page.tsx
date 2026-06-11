@@ -165,7 +165,7 @@ export default function DevicesPage() {
           </EmptyHeader>
           <EmptyContent>
             <Link
-              href="/app/download"
+              href="/account/download"
               className="text-sm text-accent underline-offset-4 hover:underline"
             >
               {d.emptyDownload}

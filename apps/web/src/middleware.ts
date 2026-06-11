@@ -48,14 +48,14 @@ function notFound() {
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 // ─── Portal auth pages (no redirect when already logged in — handled by layout) ─
-// /app/verify-email is exempt too: the user clicks it from an email and may
+// /account/verify-email is exempt too: the user clicks it from an email and may
 // not be logged in; it must render with or without a session cookie.
 const PORTAL_AUTH_PAGES = [
-  "/app/login",
-  "/app/register",
-  "/app/forgot",
-  "/app/reset",
-  "/app/verify-email",
+  "/account/login",
+  "/account/register",
+  "/account/forgot",
+  "/account/reset",
+  "/account/verify-email",
 ];
 
 function isPortalAuthPage(pathname: string): boolean {
@@ -68,14 +68,14 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ── Portal branch (independent of console) ────────────────────────────────
-  // Protect /app/* routes (but not auth pages themselves).
-  const isPortalPath = pathname === "/app" || pathname.startsWith("/app/");
+  // Protect /account/* routes (but not auth pages themselves).
+  const isPortalPath = pathname === "/account" || pathname.startsWith("/account/");
 
   if (isPortalPath && !isPortalAuthPage(pathname)) {
     const hasUserToken = request.cookies.has(USER_AUTH_COOKIE);
     if (!hasUserToken) {
       const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/app/login";
+      loginUrl.pathname = "/account/login";
       return NextResponse.redirect(loginUrl);
     }
     // Has token — pass through; backend validation happens in the layout.

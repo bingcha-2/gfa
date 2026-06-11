@@ -98,7 +98,7 @@ export default function OverviewPage() {
         description={customer.email}
         actions={
           overview && overview.unreadNotifications > 0 ? (
-            <Link href="/app/notifications">
+            <Link href="/account/notifications">
               <Badge variant="secondary" className="gap-1">
                 <BellIcon className="size-3" />
                 {fmt(ov.unreadChip, { n: overview.unreadNotifications })}
@@ -180,7 +180,7 @@ export default function OverviewPage() {
             </EmptyHeader>
             <EmptyContent>
               <Link
-                href="/app/billing"
+                href="/account/billing"
                 className="text-sm text-accent underline-offset-4 hover:underline"
               >
                 {ov.goBilling}

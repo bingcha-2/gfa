@@ -27,7 +27,7 @@ export function ResetForm() {
     setLoading(true);
     try {
       await resetPassword(token, password);
-      router.push("/app/login");
+      router.push("/account/login");
     } catch (err) {
       setError(err instanceof Error ? err.message : t.errors.resetFailed);
     } finally {

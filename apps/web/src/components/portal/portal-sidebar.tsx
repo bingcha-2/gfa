@@ -39,55 +39,55 @@ const NAV_ITEMS: NavItem[] = [
   {
     id: "overview",
     labelKey: "overview",
-    url: "/app",
+    url: "/account",
     icon: <LayoutDashboardIcon className="size-4" />,
   },
   {
     id: "billing",
     labelKey: "billing",
-    url: "/app/billing",
+    url: "/account/billing",
     icon: <CreditCardIcon className="size-4" />,
   },
   {
     id: "devices",
     labelKey: "devices",
-    url: "/app/devices",
+    url: "/account/devices",
     icon: <MonitorSmartphoneIcon className="size-4" />,
   },
   {
     id: "usage",
     labelKey: "usage",
-    url: "/app/usage",
+    url: "/account/usage",
     icon: <BarChart2Icon className="size-4" />,
   },
   {
     id: "notifications",
     labelKey: "notifications",
-    url: "/app/notifications",
+    url: "/account/notifications",
     icon: <BellIcon className="size-4" />,
   },
   {
     id: "tickets",
     labelKey: "tickets",
-    url: "/app/tickets",
+    url: "/account/tickets",
     icon: <MessageSquareIcon className="size-4" />,
   },
   {
     id: "referral",
     labelKey: "referral",
-    url: "/app/referral",
+    url: "/account/referral",
     icon: <GiftIcon className="size-4" />,
   },
   {
     id: "download",
     labelKey: "download",
-    url: "/app/download",
+    url: "/account/download",
     icon: <DownloadIcon className="size-4" />,
   },
   {
     id: "settings",
     labelKey: "settings",
-    url: "/app/settings",
+    url: "/account/settings",
     icon: <SettingsIcon className="size-4" />,
   },
 ];
@@ -99,7 +99,7 @@ export function PortalSidebar() {
   const nav = dict.portalApp.nav;
 
   function isActive(url: string) {
-    if (url === "/app") return pathname === "/app";
+    if (url === "/account") return pathname === "/account";
     return pathname.startsWith(url);
   }
 
@@ -110,7 +110,7 @@ export function PortalSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               className="data-[slot=sidebar-menu-button]:p-1.5!"
-              render={<Link href="/app" />}
+              render={<Link href="/account" />}
             >
               <span className="size-5 flex items-center justify-center rounded bg-accent text-accent-foreground text-xs font-bold shrink-0">
                 冰

@@ -115,7 +115,7 @@ describe("ReferralService.getSummary", () => {
 
     const result = await service.getSummary("cust-1");
 
-    expect(result.referralLink).toBe("https://myapp.example.com/app/register?ref=ABC123");
+    expect(result.referralLink).toBe("https://myapp.example.com/account/register?ref=ABC123");
   });
 
   it("referralLink defaults to bcai.lol when WEB_BASE_URL is not set", async () => {
@@ -126,7 +126,7 @@ describe("ReferralService.getSummary", () => {
 
     const result = await service.getSummary("cust-1");
 
-    expect(result.referralLink).toBe("https://bcai.lol/app/register?ref=XYZ");
+    expect(result.referralLink).toBe("https://bcai.lol/account/register?ref=XYZ");
   });
 
   it("returns creditCents from customer", async () => {

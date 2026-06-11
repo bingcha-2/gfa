@@ -79,7 +79,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">{t.notFound}</p>
         <Link
-          href="/app/tickets"
+          href="/account/tickets"
           className="text-sm text-accent underline-offset-4 hover:underline"
         >
           {t.backToList}
@@ -97,7 +97,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
             {t.retry}
           </Button>
           <Link
-            href="/app/tickets"
+            href="/account/tickets"
             className="text-sm text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
           >
             {t.backToList}
@@ -123,7 +123,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     <div className="space-y-6 max-w-3xl">
       <div className="space-y-2">
         <Link
-          href="/app/tickets"
+          href="/account/tickets"
           className="text-xs text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
         >
           {t.backToList}
