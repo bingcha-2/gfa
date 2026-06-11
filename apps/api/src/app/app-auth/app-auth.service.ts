@@ -7,8 +7,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import { CustomerAuthService } from "../../web/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../web/customer-auth/customer-token.service";
-
-// TODO(Milestone 6): add device-count enforcement here (currently unlimited).
+import { DeviceService } from "../../web/device/device.service";
 
 function buildSubscriptionSummary(subscription: {
   planId: string | null;
@@ -43,7 +42,8 @@ export class AppAuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customerAuthService: CustomerAuthService,
-    private readonly tokenService: CustomerTokenService
+    private readonly tokenService: CustomerTokenService,
+    private readonly deviceService: DeviceService
   ) {}
 
   private async getActiveSubscription(customerId: string) {
@@ -79,6 +79,34 @@ export class AppAuthService {
       dto.email,
       dto.password
     );
+
+    // Device-limit enforcement (Milestone 6) — AFTER credential validation,
+    // BEFORE issuing the token. Re-login on an existing ACTIVE device is always
+    // allowed (doesn't add an active slot). A new device OR a REVOKED device
+    // being reactivated both add an active slot, so they're rejected at the
+    // limit. Reject-don't-auto-kick: the client links users to the web portal
+    // to free a slot.
+    const existingDevice = await this.prisma.device.findUnique({
+      where: {
+        customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId }
+      }
+    });
+
+    if (!existingDevice || existingDevice.status !== "ACTIVE") {
+      const [activeCount, deviceLimit] = await Promise.all([
+        this.prisma.device.count({
+          where: { customerId: customer.id, status: "ACTIVE" }
+        }),
+        this.deviceService.effectiveDeviceLimit(customer.id)
+      ]);
+
+      if (activeCount >= deviceLimit) {
+        throw new ForbiddenException({
+          error: "DEVICE_LIMIT_EXCEEDED",
+          message: "设备数量已达上限，请先在网页端移除不用的设备"
+        });
+      }
+    }
 
     // Sign a token WITH the deviceId so heartbeat can verify it.
     // We need the jti from the token — sign first, then decode.

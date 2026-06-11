@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 
 import { CustomerAuthModule } from "../../web/customer-auth/customer-auth.module";
+import { DeviceModule } from "../../web/device/device.module";
 import { AppAuthService } from "./app-auth.service";
 import { AppAuthController } from "./app-auth.controller";
 
@@ -12,10 +13,15 @@ import { AppAuthController } from "./app-auth.controller";
  *   - CustomerTokenService (JWT sign/verify)
  *   - CustomerJwtGuard / CustomerJwtStrategy ("user-jwt" passport strategy)
  *
- * Adds Device management (upsert on login, heartbeat, logout).
+ * Imports DeviceModule to reuse DeviceService.effectiveDeviceLimit for the
+ * login device-limit check (DeviceModule exports the service — this is the
+ * clean dependency direction, no circular imports).
+ *
+ * Adds Device management (upsert on login, heartbeat, logout) and
+ * device-limit enforcement at login (403 DEVICE_LIMIT_EXCEEDED).
  */
 @Module({
-  imports: [CustomerAuthModule],
+  imports: [CustomerAuthModule, DeviceModule],
   controllers: [AppAuthController],
   providers: [AppAuthService]
 })

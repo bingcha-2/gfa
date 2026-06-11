@@ -20,6 +20,7 @@ import { JwtService } from "@nestjs/jwt";
 import { AppAuthService } from "../app-auth.service";
 import { CustomerAuthService } from "../../../web/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../../web/customer-auth/customer-token.service";
+import { DeviceService } from "../../../web/device/device.service";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -145,10 +146,19 @@ async function makeAppAuthService(options: {
         }
         devices[idx] = { ...devices[idx], ...update };
         return devices[idx];
+      }),
+      // M6 device-limit enforcement counts ACTIVE devices
+      count: vi.fn(async ({ where }: any) => {
+        return devices.filter(d => {
+          if (where?.customerId && d.customerId !== where.customerId) return false;
+          if (where?.status && d.status !== where.status) return false;
+          return true;
+        }).length;
       })
     },
     subscription: {
-      findFirst: vi.fn(async () => null) // no subscriptions in these tests
+      findFirst: vi.fn(async () => null), // no subscriptions in these tests
+      findMany: vi.fn(async () => [])     // effectiveDeviceLimit → no subs → limit 1
     }
   };
 
@@ -170,7 +180,13 @@ async function makeAppAuthService(options: {
     emailTokenService as any,
     mailService as any
   );
-  const appAuthService = new AppAuthService(prisma as any, customerAuthService, tokenService);
+  const deviceService = new DeviceService(prisma as any);
+  const appAuthService = new AppAuthService(
+    prisma as any,
+    customerAuthService,
+    tokenService,
+    deviceService
+  );
 
   return { appAuthService, tokenService, prisma, customer, devices };
 }
