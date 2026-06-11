@@ -22,9 +22,9 @@ export class RemoteCodexController {
   }
 
   @Post("api/activate")
-  activate(@Req() request: any, @Body() body: any, @Res() response: any) {
+  async activate(@Req() request: any, @Body() body: any, @Res() response: any) {
     try {
-      return response.status(200).json(this.remoteCodex.activateAccessKey(request, body));
+      return response.status(200).json(await this.remoteCodex.activateAccessKey(request, body));
     } catch (error) {
       return response.status(500).json({
         success: false,

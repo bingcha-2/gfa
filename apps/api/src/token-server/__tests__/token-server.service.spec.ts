@@ -224,10 +224,10 @@ describe("TokenServerService", () => {
     expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
   });
 
-  it("activates a Wails accountCard and binds it to the device session", () => {
+  it("activates a Wails accountCard and binds it to the device session", async () => {
     const service = makeService();
 
-    const result = service.activateAccessKey(
+    const result = await service.activateAccessKey(
       { headers: {} },
       { accountCard: "secret-card", deviceId: "device-a" },
     );
@@ -242,10 +242,10 @@ describe("TokenServerService", () => {
     expect(stored.keys[0].sessionClientId).toBe("device-a");
   });
 
-  it("rejects activation when accountCard is missing", () => {
+  it("rejects activation when accountCard is missing", async () => {
     const service = makeService();
 
-    const result = service.activateAccessKey({ headers: {} }, { deviceId: "device-a" });
+    const result = await service.activateAccessKey({ headers: {} }, { deviceId: "device-a" });
 
     expect(result).toMatchObject({
       success: false,

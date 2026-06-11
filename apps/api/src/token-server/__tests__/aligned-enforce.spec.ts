@@ -35,7 +35,7 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
 
   const REQ = { headers: { "x-access-key": "secret1" } } as any;
 
-  it("counts usage inside the current aligned window → over limit", () => {
+  it("counts usage inside the current aligned window → over limit", async () => {
     const now = Date.now();
     const store = makeStore({
       id: "k1", key: "secret1", status: "active",
@@ -45,7 +45,7 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
         { at: now - 1000, inputTokens: 300_000, outputTokens: 200_001, modelKey: "claude-sonnet-4-6", product: "anthropic" },
       ],
     });
-    const result = store.resolveFromRequest(REQ, {}, {
+    const result = await store.resolveFromRequest(REQ, {}, {
       enforceLimit: true, modelKey: "claude-sonnet-4-6", product: "anthropic",
       alignedResetAt: now + 10_000, // account window resets far in the future → no roll
     });
@@ -53,7 +53,7 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
     expect(result.limitExceeded).toBe(true);
   });
 
-  it("publicStatus reports the account-aligned reset so the client window aligns", () => {
+  it("publicStatus reports the account-aligned reset so the client window aligns", async () => {
     const store = makeStore({
       id: "k1", key: "secret1", status: "active",
       bucketLimits: { "anthropic-claude": 500_000 },
@@ -72,7 +72,7 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
     expect(poolStatus.tokenWindowResetMs).toBeGreaterThan(1_000_000);
   });
 
-  it("drops pre-boundary usage once the account window rolls → under limit again", () => {
+  it("drops pre-boundary usage once the account window rolls → under limit again", async () => {
     const now = Date.now();
     const store = makeStore({
       id: "k1", key: "secret1", status: "active",
@@ -82,7 +82,7 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
         { at: now - 1000, inputTokens: 300_000, outputTokens: 200_001, modelKey: "claude-sonnet-4-6", product: "anthropic" },
       ],
     });
-    const result = store.resolveFromRequest(REQ, {}, {
+    const result = await store.resolveFromRequest(REQ, {}, {
       enforceLimit: true, modelKey: "claude-sonnet-4-6", product: "anthropic",
       alignedResetAt: now - 500, // boundary after window-start, before now → rolls; old event excluded
     });

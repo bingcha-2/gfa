@@ -71,6 +71,18 @@ export interface AccessKeyRecord {
   /** Legacy single-binding fields, still read by boundAccountIdFor as a fallback. */
   provider?: string;
   boundAccountId?: number;
+  /** ABSOLUTE expiry (ISO) — set on subscription shadow records (mirrors
+   * Subscription.expiresAt). Takes priority over firstUsedAt+durationMs in
+   * keyExpiresAt(). Regular cards never carry it. */
+  keyExpiresAt?: string;
+  /** Card-migration provenance: set when a legacy card was re-homed to a
+   * customer Subscription (bind-card). The record keeps its id (usage/windows
+   * carry over); its key is rotated to the subscription's backing key. */
+  migratedToCustomerId?: string;
+  migratedAt?: string;
+  /** Old card key kept for idempotent re-bind lookups ONLY — the byKey auth
+   * index is built from `key`, so this value can no longer authenticate. */
+  migratedFromKey?: string;
   totalRequests?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
@@ -101,6 +113,48 @@ export interface ResolveResult {
   limitExceeded?: boolean;
   /** 配额用尽时距窗口重置的毫秒数,用于 Retry-After。 */
   resetMs?: number;
+  /** True when the request authenticated with a customer session JWT (the
+   * record is a subscription shadow record). Callers skip the per-card
+   * single-session machinery for these — multi-device is governed by Device
+   * rows + Subscription.deviceLimit instead. */
+  viaSession?: boolean;
+  /** Machine-readable session failure (SESSION_INVALID / DEVICE_REVOKED /
+   * SUBSCRIPTION_EXPIRED) for the client's fatal-error matching. */
+  sessionError?: { statusCode: number; code: string };
+}
+
+/**
+ * Resolves a customer session JWT (Authorization bearer with typ
+ * "user-session") to the ACTIVE Subscription id, which doubles as the shadow
+ * AccessKeyRecord id. Injected from Nest (SessionTokenResolver) via
+ * setSessionResolver — the store itself stays a plain TS class.
+ */
+export interface SessionResolverLike {
+  resolve(
+    bearerToken: string,
+    opts: { product?: string },
+  ): Promise<
+    | { ok: true; cardId: string }
+    | { ok: false; statusCode: number; error: string; message: string }
+  >;
+}
+
+/**
+ * Cheap shape check (NO signature verification): does this bearer look like a
+ * customer session JWT? Three dot-segments whose payload decodes to JSON with
+ * typ === "user-session". Card keys (BCAI-… / sub_… / opaque secrets) never
+ * match, so the card path is untouched. Verification happens in the resolver.
+ */
+function looksLikeUserSessionToken(bearer: string): boolean {
+  if (!bearer) return false;
+  const parts = bearer.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return !!payload && payload.typ === 'user-session';
+  } catch {
+    return false;
+  }
 }
 
 export interface SessionValidation {
@@ -406,18 +460,83 @@ export class AccessKeyStore {
     ).trim();
   }
 
-  /** Resolve an access key from a request, checking validity and limits. */
-  resolveFromRequest(
+  /** Injected session-JWT → subscription resolver (see SessionResolverLike). */
+  private sessionResolver: SessionResolverLike | null = null;
+
+  /** Wire the customer-session resolver. Called from a Nest OnModuleInit (the
+   * store is a plain class shared across pools and can't use DI itself). */
+  setSessionResolver(resolver: SessionResolverLike | null): void {
+    this.sessionResolver = resolver;
+  }
+
+  /**
+   * Resolve an access key from a request, checking validity and limits.
+   *
+   * Two auth shapes share this entry point:
+   *   • Card key (legacy): any of the extractKeyFromRequest sources → byKey
+   *     lookup. Behavior is byte-equivalent to the historical sync version.
+   *   • Customer session JWT: an Authorization bearer that LOOKS like a
+   *     user-session token routes to the injected SessionTokenResolver, which
+   *     verifies it and maps it to the customer's ACTIVE Subscription — whose id
+   *     IS the shadow record id. The record then runs the exact same validation
+   *     pipeline (status/expiry/window/bucket/weekly) as a card key.
+   */
+  async resolveFromRequest(
     req: any,
     payload: any,
     options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
-  ): ResolveResult {
+  ): Promise<ResolveResult> {
+    const authHeader = String(req?.headers?.authorization || '');
+    const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (looksLikeUserSessionToken(bearer)) {
+      const data = this.readAll();
+      if (!this.sessionResolver) {
+        // Wiring gap (resolver not yet registered) — fail closed with a clear
+        // operator-facing reason rather than misclassifying as a bad card.
+        return { key: '', record: null, error: 'session resolver unavailable', viaSession: true };
+      }
+      const resolved = await this.sessionResolver.resolve(bearer, { product: options.product });
+      if (!resolved.ok) {
+        return {
+          key: '', record: null, viaSession: true,
+          error: resolved.message,
+          sessionError: { statusCode: resolved.statusCode, code: resolved.error },
+        };
+      }
+      const record = this.byId.get(resolved.cardId) || null;
+      if (!record) {
+        // Subscription row exists but its shadow record is missing (sync gap):
+        // surface as an expired subscription so the client shows the right state.
+        return {
+          key: '', record: null, viaSession: true,
+          error: '无有效订阅或已到期',
+          sessionError: { statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' },
+        };
+      }
+      return { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
+    }
+
     const keyValue = AccessKeyStore.extractKeyFromRequest(req, payload);
     if (!keyValue) return { key: keyValue, record: null, error: 'Missing access key' };
 
     const data = this.readAll();
     const record = this.byKey.get(this.keyHash(keyValue)) || null;
     if (!record) return { key: keyValue, record: null, error: 'Invalid access key' };
+    return this.validateRecord(keyValue, record, data, options);
+  }
+
+  /**
+   * Shared validation pipeline for a looked-up record: status → activation →
+   * expiry → window resets → per-bucket caps (429 w/ resetMs) → weekly window.
+   * Extracted verbatim from the historical resolveFromRequest body so the card
+   * path stays byte-equivalent and the session path reuses it unduplicated.
+   */
+  private validateRecord(
+    keyValue: string,
+    record: AccessKeyRecord,
+    data: AccessKeysData,
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
+  ): ResolveResult {
     if (record.status && record.status !== 'active') {
       return { key: keyValue, record: null, error: 'Access key disabled' };
     }

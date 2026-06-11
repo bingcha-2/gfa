@@ -33,7 +33,7 @@ describe("AccessKeyStore — codex billing bucket", () => {
     return new AccessKeyStore(accessKeysPath, CODEX_BILLING);
   }
 
-  it("bills codex usage under the composite codex-gpt bucket, not claude", () => {
+  it("bills codex usage under the composite codex-gpt bucket, not claude", async () => {
     const store = codexStore(1000);
     store.recordUsage("c", 200, { totalTokens: 300 }, "gpt-5-codex", "r1", "codex");
 
@@ -45,11 +45,11 @@ describe("AccessKeyStore — codex billing bucket", () => {
     expect(codexBucket.limit).toBe(1000);
   });
 
-  it("rejects over the codex 5h bucket limit with a Codex-labelled error", () => {
+  it("rejects over the codex 5h bucket limit with a Codex-labelled error", async () => {
     const store = codexStore(200);
     store.recordUsage("c", 200, { totalTokens: 200 }, "gpt-5-codex", "r1", "codex");
 
-    const res = store.resolveFromRequest(
+    const res = await store.resolveFromRequest(
       { headers: { "x-access-key": "cs" } } as any,
       {},
       { enforceLimit: true, modelKey: "gpt-5-codex", product: "codex" },

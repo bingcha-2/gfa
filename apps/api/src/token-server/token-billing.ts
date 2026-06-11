@@ -499,8 +499,19 @@ export function recentWeeklyBucketUsage(record: any, now = Date.now()): Map<stri
 
 // ── Key expiration ───────────────────────────────────────────────────────────
 
-/** Compute ISO expiration date from firstUsedAt + durationMs. */
+/**
+ * Compute ISO expiration date. Two sources, in priority order:
+ *   1. `keyExpiresAt` — an ABSOLUTE timestamp on the record. Set by the
+ *      subscription entitlement sync (shadow records mirror Subscription.expiresAt,
+ *      which is fixed at purchase, not at first use). Regular cards never carry it.
+ *   2. firstUsedAt + durationMs — the legacy relative card expiry (unchanged).
+ */
 export function keyExpiresAt(record: any): string {
+  const absolute = record?.keyExpiresAt;
+  if (absolute) {
+    const ts = Date.parse(String(absolute));
+    if (Number.isFinite(ts)) return new Date(ts).toISOString();
+  }
   if (!record?.firstUsedAt) return '';
   const durationMs = Number(record.durationMs || 0);
   if (!durationMs) return '';

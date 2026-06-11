@@ -32,7 +32,7 @@ export class TokenServerController {
   @Post("api/activate")
   async activate(@Req() request: any, @Body() body: any, @Res() response: any) {
     try {
-      return response.status(200).json(this.tokenServer.activateAccessKey(request, body));
+      return response.status(200).json(await this.tokenServer.activateAccessKey(request, body));
     } catch (error) {
       return response.status(500).json({
         success: false,

@@ -401,7 +401,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 每卡 token 配额(bucketLimits,按复合桶设的每模型上限)在此作为服务端兜底 enforce:
     // 客户端 localQuota 是主拦截(租号前回 429),服务端按复合桶精确再拦一道,防客户端被绕过。
     // 绑定卡另有 fair-share(下方)+ 账号原生配额;两层谁先到谁拦。
-    const auth = this.accessKeyStore.resolveFromRequest(req, payload, {
+    const auth = await this.accessKeyStore.resolveFromRequest(req, payload, {
       activate: true,
       enforceLimit: true,
       modelKey,
@@ -418,6 +418,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         ok: false,
         error: auth.error || "配额已用尽",
         ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
+      });
+    }
+    // Session-JWT auth failure → machine code in `error` (SESSION_INVALID /
+    // DEVICE_REVOKED / SUBSCRIPTION_EXPIRED). The desktop client treats these as
+    // fatal (re-login / renew) instead of retrying, so the code MUST ride in the
+    // body's error field verbatim.
+    if (auth.sessionError) {
+      throw this.fail(auth.sessionError.statusCode, auth.error || "Unauthorized", {
+        ok: false,
+        error: auth.sessionError.code,
       });
     }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
@@ -451,22 +461,32 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
     }
 
-    const sessionCheck = this.accessKeyStore.validateSession(auth.record, payload, this.now());
-    if (!sessionCheck.ok) {
-      throw this.fail(sessionCheck.statusCode || 409, sessionCheck.error || "Access key session conflict", {
-        ok: false,
-        error: sessionCheck.error,
-        sessionClientId: sessionCheck.sessionClientId,
-        sessionExpiresAt: sessionCheck.sessionExpiresAt,
-        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+    const clientId = String(payload?.clientId || payload?.client || "").trim();
+    let accessKeySessionId: string;
+    if (auth.viaSession) {
+      // Subscription session lease: multi-device is governed by Device rows +
+      // Subscription.deviceLimit (enforced at login), NOT the per-card
+      // single-session lock — so validateSession/refreshSession are skipped
+      // entirely and concurrent clients may lease the same shadow record. The
+      // lease still needs a stable non-empty session id for its bookkeeping.
+      accessKeySessionId = `sess:${clientId || "session"}`;
+    } else {
+      const sessionCheck = this.accessKeyStore.validateSession(auth.record, payload, this.now());
+      if (!sessionCheck.ok) {
+        throw this.fail(sessionCheck.statusCode || 409, sessionCheck.error || "Access key session conflict", {
+          ok: false,
+          error: sessionCheck.error,
+          sessionClientId: sessionCheck.sessionClientId,
+          sessionExpiresAt: sessionCheck.sessionExpiresAt,
+          accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+        });
+      }
+
+      accessKeySessionId = this.accessKeyStore.refreshSession(auth.record, { clientId }, this.now(), {
+        create: sessionCheck.action === "create",
+        rotate: sessionCheck.action === "refresh",
       });
     }
-
-    const clientId = String(payload?.clientId || payload?.client || "").trim();
-    const accessKeySessionId = this.accessKeyStore.refreshSession(auth.record, { clientId }, this.now(), {
-      create: sessionCheck.action === "create",
-      rotate: sessionCheck.action === "refresh",
-    });
 
     const tokenFailedIds: number[] = [];
     let lastError: Error | null = null;
@@ -740,7 +760,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async reportResult(req: any, payload: any) {
-    const auth = this.accessKeyStore.resolveFromRequest(req, payload);
+    const auth = await this.accessKeyStore.resolveFromRequest(req, payload);
+    // Same machine-code contract as leaseToken for session-JWT failures.
+    if (auth.sessionError) {
+      throw this.fail(auth.sessionError.statusCode, auth.error || "Unauthorized", {
+        ok: false,
+        error: auth.sessionError.code,
+      });
+    }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
     const cardId = auth.record.id;
 
@@ -770,7 +797,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const accountId = lease?.accountId ?? 0;
     const retryAfterMs = Number(payload?.retryAfterMs || 0);
 
-    this.accessKeyStore.refreshSession(auth.record, { clientId: lease?.clientId }, this.now());
+    // Session leases never touch the per-card session machinery (see leaseToken);
+    // usage attribution below still works because record.id == lease.accessKeyId
+    // == Subscription.id.
+    if (!auth.viaSession) {
+      this.accessKeyStore.refreshSession(auth.record, { clientId: lease?.clientId }, this.now());
+    }
     if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
       // Fair-share: push updated quota fractions into the tracker.
@@ -975,7 +1007,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
   }
 
-  activateAccessKey(req: any, payload: any) {
+  async activateAccessKey(req: any, payload: any) {
     const accountCard = AccessKeyStore.extractKeyFromRequest(req, payload);
     const clientId = String(payload?.deviceId || payload?.clientId || payload?.client || "").trim();
 
@@ -994,7 +1026,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
 
-    const auth = this.accessKeyStore.resolveFromRequest(req, { ...payload, accessKey: accountCard }, { activate: true });
+    // Card-only flow: activation predates the account system and stays keyed to
+    // physical cards (session-JWT clients never call activate).
+    const auth = await this.accessKeyStore.resolveFromRequest(req, { ...payload, accessKey: accountCard }, { activate: true });
     if (!auth.record) {
       return {
         success: false,
@@ -1039,7 +1073,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async shadowReport(req: any, payload: any) {
-    this.accessKeyStore.resolveFromRequest(req, payload);
+    await this.accessKeyStore.resolveFromRequest(req, payload);
     return { ok: true };
   }
 
