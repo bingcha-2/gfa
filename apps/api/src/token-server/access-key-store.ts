@@ -37,6 +37,15 @@ import {
   bucketFamily,
   bucketsForProducts,
 } from '../lease-core/product-bucket';
+import {
+  looksLikeUserSessionToken,
+  missingShadowRecord,
+  sessionResolveFailure,
+  sessionResolverUnavailable,
+  type SessionResolverLike,
+} from './session-credential';
+
+export type { SessionResolverLike } from './session-credential';
 
 /** Bucket key for the model a request is asking for, scoped to the product
  *  serving it. Falls back to bare family when product is unknown (legacy path). */
@@ -121,40 +130,6 @@ export interface ResolveResult {
   /** Machine-readable session failure (SESSION_INVALID / DEVICE_REVOKED /
    * SUBSCRIPTION_EXPIRED) for the client's fatal-error matching. */
   sessionError?: { statusCode: number; code: string };
-}
-
-/**
- * Resolves a customer session JWT (Authorization bearer with typ
- * "user-session") to the ACTIVE Subscription id, which doubles as the shadow
- * AccessKeyRecord id. Injected from Nest (SessionTokenResolver) via
- * setSessionResolver — the store itself stays a plain TS class.
- */
-export interface SessionResolverLike {
-  resolve(
-    bearerToken: string,
-    opts: { product?: string },
-  ): Promise<
-    | { ok: true; cardId: string }
-    | { ok: false; statusCode: number; error: string; message: string }
-  >;
-}
-
-/**
- * Cheap shape check (NO signature verification): does this bearer look like a
- * customer session JWT? Three dot-segments whose payload decodes to JSON with
- * typ === "user-session". Card keys (BCAI-… / sub_… / opaque secrets) never
- * match, so the card path is untouched. Verification happens in the resolver.
- */
-function looksLikeUserSessionToken(bearer: string): boolean {
-  if (!bearer) return false;
-  const parts = bearer.split('.');
-  if (parts.length !== 3) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    return !!payload && payload.typ === 'user-session';
-  } catch {
-    return false;
-  }
 }
 
 export interface SessionValidation {
@@ -490,29 +465,11 @@ export class AccessKeyStore {
     const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (looksLikeUserSessionToken(bearer)) {
       const data = this.readAll();
-      if (!this.sessionResolver) {
-        // Wiring gap (resolver not yet registered) — fail closed with a clear
-        // operator-facing reason rather than misclassifying as a bad card.
-        return { key: '', record: null, error: 'session resolver unavailable', viaSession: true };
-      }
+      if (!this.sessionResolver) return sessionResolverUnavailable();
       const resolved = await this.sessionResolver.resolve(bearer, { product: options.product });
-      if (!resolved.ok) {
-        return {
-          key: '', record: null, viaSession: true,
-          error: resolved.message,
-          sessionError: { statusCode: resolved.statusCode, code: resolved.error },
-        };
-      }
+      if (!resolved.ok) return sessionResolveFailure(resolved);
       const record = this.byId.get(resolved.cardId) || null;
-      if (!record) {
-        // Subscription row exists but its shadow record is missing (sync gap):
-        // surface as an expired subscription so the client shows the right state.
-        return {
-          key: '', record: null, viaSession: true,
-          error: '无有效订阅或已到期',
-          sessionError: { statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' },
-        };
-      }
+      if (!record) return missingShadowRecord();
       return { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
     }
 
