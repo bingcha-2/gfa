@@ -1,30 +1,30 @@
 {
-  "version": "9.4.0",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0.exe",
-  "sha256": "C77334095A2F1983B2B89B888A710A1229424A0C6AA47BDA50A7C54899FB15E3",
-  "size": 21023232,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0-setup.exe",
-  "installerSha256": "023E7ED23CEBC97549EF8F75E2F204E3ECC4E1AC3DC80F89B6748136ECB09A22",
-  "installerSize": 11126190,
+  "version": "9.5.0",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.5.0/BingchaAI-9.5.0.exe",
+  "sha256": "7C8858B6E5DF51D99DD8AFE9D0F1F403CC1261926DCB0AD1E49E19E3CA9E962B",
+  "size": 21123584,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.5.0/BingchaAI-9.5.0-setup.exe",
+  "installerSha256": "F2D4605A24935598687C19858E74C7DF849273DDC3D02CAF3CD79DD63EF04304",
+  "installerSize": 11168248,
   "changelog": "桌面端体验优化与稳定性修复",
-  "minVersion": "9.4.0",
+  "minVersion": "9.5.0",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0-arm64.dmg",
-      "sha256": "C20E0172411113BCEC523F584DC0CBD85270881AC9C12AA2D5A81616BBEEAA9E",
-      "size": 10247871
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.5.0/BingchaAI-9.5.0-arm64.dmg",
+      "sha256": "0E33C449ACE6C1435BC43F7C56FC0C975EDD36E5A9A48E4D35E4861AF790F424",
+      "size": 10292591
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0-amd64.dmg",
-      "sha256": "29ED1F8664BD6C966847F3786CAA9525135BFC218B3FAE13D09101804E98FE88",
-      "size": 10971423
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.5.0/BingchaAI-9.5.0-amd64.dmg",
+      "sha256": "A3D41569E39A774A2ED4B0BE9F6CA869ACECEE2090473B67637D01EF83116E5C",
+      "size": 11027574
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0-linux-amd64.tar.gz",
-      "sha256": "C0907FBF2838C1DD56F3D264452D80E0928D52F9EC93D27727DD8FD38D246ACC",
-      "size": 8685509
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.5.0/BingchaAI-9.5.0-linux-amd64.tar.gz",
+      "sha256": "FF01912F8A3C07BA55EEB0252D6C038DA6F3D3D8DD8F8AC40DD9C53C053492D0",
+      "size": 8727718
     }
   }
 }
