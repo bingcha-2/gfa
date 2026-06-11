@@ -441,6 +441,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (boundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
       throw this.fail(409, "此卡未开通该服务，请联系客服");
     }
+    // M13b: plan-backed shadow records (requiresBinding, set by entitlement-sync)
+    // must HOLD a seat in this pool to lease. Seat exhaustion at activation
+    // leaves them with NO bindings at all — without this guard they'd fall
+    // through to the broad dynamic POOL below, granting access the plan never
+    // sold. Distinct wording from the wrong-product 409 above so ops can tell
+    // seat-exhaustion from not-sold-for-this-pool. Cards and legacy pool
+    // records never carry the flag → their paths are byte-identical.
+    if (boundAccountId === 0 && auth.record.requiresBinding) {
+      throw this.fail(409, "服务开通中，请稍后重试或联系客服");
+    }
 
     // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
     if (boundAccountId > 0 && this.fairShareTracker) {

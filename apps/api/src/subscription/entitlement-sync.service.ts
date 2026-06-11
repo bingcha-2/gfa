@@ -114,6 +114,12 @@ export class EntitlementSyncService {
           bucketLimits: Object.keys(bucketLimits).length > 0 ? bucketLimits : null,
           bindings,
           products,
+          // Plan-backed records must HOLD a seat to lease (M13b): when seat
+          // assignment failed for every product (binding-less record), the
+          // lease path denies instead of falling through to the broad dynamic
+          // pool. planId-null subs (migrated legacy cards) are pool cards by
+          // design → field left untouched (undefined is skipped by the upsert).
+          requiresBinding: sub.planId ? true : undefined,
           // ABSOLUTE expiry (keyExpiresAt() reads it ahead of firstUsedAt+durationMs).
           // null expiry (migrated never-used card) → field stays unset.
           keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,

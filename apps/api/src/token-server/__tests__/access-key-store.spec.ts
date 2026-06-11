@@ -260,6 +260,24 @@ describe('AccessKeyStore', () => {
       const inMem = store.findById('k1')!;
       expect((inMem.tokenUsageEvents || []).length).toBeGreaterThan(0);
     });
+
+    it('round-trips requiresBinding through flush → disk → reload (M13b plan-record flag)', async () => {
+      const store = makeStore([{
+        id: 'sub-1', key: 'sub_backing', status: 'active', requiresBinding: true,
+        totalRequests: 0, windowStartedAt: Date.now(),
+      }]);
+      // Dirty the cache so flush() rewrites the file via serializable().
+      store.recordUsage('sub-1', 200, { inputTokens: 10, outputTokens: 5 }, '');
+      store.flush();
+
+      // serializable() must NOT strip the flag (it only omits event arrays).
+      const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
+      expect(raw.keys[0].requiresBinding).toBe(true);
+
+      // ...and a reload (admin edit path) keeps it in memory too.
+      store.reload();
+      expect(store.findById('sub-1')!.requiresBinding).toBe(true);
+    });
   });
 
   describe('reload', () => {

@@ -130,7 +130,7 @@ describe("EntitlementSyncService", () => {
     });
   });
 
-  it("seat-assignment failure logs loudly and leaves the product unbound — sync still succeeds", async () => {
+  it("seat-assignment failure logs loudly and leaves the product unbound — sync still succeeds, record marked requiresBinding", async () => {
     // Pool has no "premium" account → assignment fails for antigravity.
     const sub = makeSub({ levels: JSON.stringify({ antigravity: "premium" }) });
     await expect(service.syncSubscription(sub)).resolves.toBeUndefined();
@@ -138,6 +138,24 @@ describe("EntitlementSyncService", () => {
     const record = readKeys()[0];
     expect(record.bindings).toEqual({});
     expect(record.status).toBe("active");
+    // M13b: binding-less plan-backed record must NOT fall through to the broad
+    // dynamic pool — the flag makes LeaseService deny instead.
+    expect(record.requiresBinding).toBe(true);
+  });
+
+  it("plan-backed sub → requiresBinding true; planId-null sub (migrated legacy card) → flag NOT set", async () => {
+    await service.syncSubscription(makeSub({ id: "sub-plan", backingKeyValue: "sub_" + "e".repeat(48) }));
+    await service.syncSubscription(
+      makeSub({ id: "sub-legacy", planId: null, levels: null, expiresAt: null, backingKeyValue: "sub_" + "f".repeat(48) }),
+    );
+
+    const keys = readKeys();
+    const planRecord = keys.find((k: any) => k.id === "sub-plan");
+    const legacyRecord = keys.find((k: any) => k.id === "sub-legacy");
+    expect(planRecord.requiresBinding).toBe(true);
+    // Migrated legacy cards are POOL cards by design — they must keep leasing
+    // from the dynamic pool, so the flag must never appear on them.
+    expect(legacyRecord.requiresBinding).toBeUndefined();
   });
 
   it("extend → expiry updated, usage counters and in-memory window events untouched", async () => {

@@ -199,6 +199,74 @@ describe("LeaseService — session-JWT leases", () => {
     });
   });
 
+  // ── M13b: seat-exhausted plan records must NOT fall through to the pool ──
+  // entitlement-sync marks every plan-backed shadow record requiresBinding.
+  // When seat assignment failed for ALL products the record has no bindings;
+  // before M13b it leased from the broad dynamic pool — access the plan never
+  // sold. Cards and legacy pool records never carry the flag (byte-identical).
+
+  it("requiresBinding record with NO binding for this pool → 409 capacity message, NO upstream lease attempted", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "sub-1", key: "sub_backing_value", status: "active", requiresBinding: true }],
+    });
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
+
+    await expect(
+      service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: "服务开通中，请稍后重试或联系客服", // capacity wording, NOT "未开通该服务"
+    });
+    // The pool was never touched — no upstream token refresh attempted.
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
+  it("requiresBinding record WITH a seat in this pool → leases normally from its bound account", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "sub-1", key: "sub_backing_value", status: "active",
+        requiresBinding: true, bindings: { fake: 1 }, // provider id is "fake"
+      }],
+    });
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
+
+    const lease = await service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+    expect(lease.accountId).toBe(1); // the bound seat, not a pool pick
+    expect(lease.bound).toBe(true);
+  });
+
+  it("legacy POOL card (no requiresBinding, no bindings) still leases from the dynamic pool — regression guard", async () => {
+    const { service } = makeService(null);
+
+    const lease = await service.leaseToken(
+      { headers: { "x-access-key": "sub_backing_value" } },
+      { clientId: "c1", modelKey: "gpt-5-codex" },
+    );
+    expect(lease.ok).toBe(true);
+    expect(lease.bound).toBe(false);
+    expect(refreshToken).toHaveBeenCalled(); // pool lease really happened
+  });
+
+  it("card bound for a DIFFERENT pool only keeps the unchanged wrong-product 409", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "card_secret", status: "active", bindings: { otherpool: 3 } }],
+    });
+    const { service } = makeService(null);
+
+    await expect(
+      service.leaseToken({ headers: { "x-access-key": "card_secret" } }, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: "此卡未开通该服务，请联系客服",
+    });
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
   it("session lease over a bucket cap still 429s with retryAfterMs (shared pipeline)", async () => {
     const now = Date.now();
     writeJson(accessKeysFilePath, {
