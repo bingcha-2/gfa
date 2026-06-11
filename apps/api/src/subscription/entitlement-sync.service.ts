@@ -149,7 +149,12 @@ export class EntitlementSyncService {
 
   /**
    * Mark a subscription's shadow record expired (store rejects non-active
-   * records at resolve time). The record and its usage history are retained.
+   * records at resolve time). The record, its usage history AND its bindings
+   * are retained — the upstream seat is still released, because share
+   * accounting (AccessKeyService.usedShares / boundSharesByAccount) only
+   * counts ACTIVE records' bindings. Flipping the status to "expired" is
+   * therefore sufficient to free the seat for reassignment; the bindings stay
+   * as attribution history and the dead record can never lease again.
    *
    * Intentionally synchronous and NOT behind the write lock: the body is a
    * single flush→upsert→reload sequence with no awaits, which Node's event

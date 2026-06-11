@@ -46,7 +46,9 @@ export class BillingAdminService {
 
   /**
    * Refund a PAID plan order: order → REFUNDED, its subscription (if any) →
-   * CANCELLED + shadow record expired (seat freed), customer notified.
+   * CANCELLED + shadow record expired, customer notified. The upstream seat is
+   * released because share accounting ignores non-active records — the expired
+   * record keeps its bindings as history.
    */
   async refundOrder(orderId: string): Promise<RefundResult> {
     const order = await this.prisma.planOrder.findUnique({ where: { id: orderId } });
@@ -73,6 +75,11 @@ export class BillingAdminService {
       throw new ConflictException(`订单状态已变化，退款未执行（当前状态 ${again?.status ?? "UNKNOWN"}）`);
     }
 
+    // TODO(known minor non-atomicity): the CAS above and the cancellation below
+    // are two separate writes. If the CAS succeeds and cancelOrderSubscription
+    // then throws, the order is already REFUNDED — a retried refund call returns
+    // alreadyRefunded WITHOUT cancelling the subscription. Remediation: the
+    // operator cancels the leftover subscription via the revoke endpoint.
     const cancelledSubscriptionId = await this.cancelOrderSubscription(order);
 
     await this.prisma.notification.create({
@@ -92,8 +99,9 @@ export class BillingAdminService {
   }
 
   /**
-   * Revoke a subscription: status CANCELLED + shadow record expired (seat
-   * freed) + customer notified.
+   * Revoke a subscription: status CANCELLED + shadow record expired + customer
+   * notified. The upstream seat is released because share accounting ignores
+   * non-active records — the expired record keeps its bindings as history.
    */
   async revokeSubscription(subscriptionId: string): Promise<RevokeResult> {
     const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
@@ -138,7 +146,9 @@ export class BillingAdminService {
     }
     if (sub.status === "CANCELLED") return null;
 
-    // cancelSubscription = status CANCELLED + shadow record expired (frees seat).
+    // cancelSubscription = status CANCELLED + shadow record expired. The seat
+    // is released by share accounting ignoring non-active records (bindings on
+    // the expired record are kept as history, not cleared).
     await this.subscriptionService.cancelSubscription(sub.id);
     return sub.id;
   }

@@ -230,6 +230,57 @@ describe("EntitlementSyncService", () => {
     expect(reloads.tokenServer.reloadAccessKeys).not.toHaveBeenCalled();
   });
 
+  // ── Terminal subscriptions release upstream seat capacity ─────────────────
+  // The seat is released by share ACCOUNTING (non-active records' bindings stop
+  // counting), not by mutating the terminal record — its bindings stay as history.
+
+  it("expireShadowRecord releases the seat: a NEW plan sync assigns the freed share; the expired record keeps its bindings", async () => {
+    // subA (weight 4) fills account 7 to capacity (4 in the test env).
+    const subA = makeSub({ id: "sub-full", weight: 4, backingKeyValue: "sub_" + "1".repeat(48) });
+    await service.syncSubscription(subA);
+    expect(readKeys().find((k: any) => k.id === "sub-full").bindings).toEqual({ antigravity: 7 });
+    // 0 free shares → the seat probe finds nothing.
+    expect(rosetta.assignSeatForProduct("antigravity", 1, "ultra")).toBeNull();
+
+    service.expireShadowRecord(subA.id);
+    const expired = readKeys().find((k: any) => k.id === "sub-full");
+    expect(expired.status).toBe("expired");
+    expect(expired.bindings).toEqual({ antigravity: 7 }); // history retained
+
+    // The share is free again → a NEW plan sync binds the freed seat.
+    expect(rosetta.assignSeatForProduct("antigravity", 1, "ultra")).toBe(7);
+    const subB = makeSub({ id: "sub-next", weight: 1, backingKeyValue: "sub_" + "2".repeat(48) });
+    await service.syncSubscription(subB);
+    const next = readKeys().find((k: any) => k.id === "sub-next");
+    expect(next.bindings).toEqual({ antigravity: 7 });
+  });
+
+  it("a seat HELD by an active sub still counts (new sync starved + requiresBinding guard intact); after expiry the freed seat is reused and the expired record never resolves", async () => {
+    const subA = makeSub({ id: "sub-holder", weight: 4, backingKeyValue: "sub_" + "3".repeat(48) });
+    await service.syncSubscription(subA);
+
+    // ACTIVE seats are not double-allocated: account full → the new sub gets NO
+    // seat and carries the M13b deny flag (seat-exhaustion guard, not pool access).
+    const subB = makeSub({ id: "sub-starved", weight: 1, backingKeyValue: "sub_" + "4".repeat(48) });
+    await service.syncSubscription(subB);
+    const starved = readKeys().find((k: any) => k.id === "sub-starved");
+    expect(starved.bindings).toEqual({});
+    expect(starved.requiresBinding).toBe(true);
+
+    // Terminal holder → the whole 4-share seat is reusable by a new sub.
+    service.expireShadowRecord(subA.id);
+    const subC = makeSub({ id: "sub-reuse", weight: 4, backingKeyValue: "sub_" + "5".repeat(48) });
+    await service.syncSubscription(subC);
+    expect(readKeys().find((k: any) => k.id === "sub-reuse").bindings).toEqual({ antigravity: 7 });
+
+    // The expired record whose seat was reassigned can NEVER serve again
+    // (status gates the resolve path).
+    const resolved = await store.resolveFromRequest(
+      { headers: { "x-access-key": subA.backingKeyValue } } as any, {},
+    );
+    expect(resolved.record).toBeNull();
+  });
+
   // ── M13b: writer serialization over access-keys.json ──────────────────────
 
   it("two CONCURRENT plan syncs competing for the last free shares → exactly one gets the seat, never both (no overcommit past capacity)", async () => {

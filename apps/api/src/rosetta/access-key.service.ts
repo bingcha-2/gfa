@@ -401,13 +401,29 @@ export class AccessKeyService {
   // antigravity and codex pools allocate ids independently, so (provider, id) is
   // the real key. See AccessKeyStore.boundAccountIdFor / LeaseService.leaseToken.
 
-  /** Shares already consumed on an account (sum of bound cards' weights), excluding `excludeId`. */
+  /**
+   * Live-record predicate for share accounting — the EXACT predicate the lease
+   * side uses for "can this record serve" (AccessKeyStore.cardsBoundToAccount /
+   * validateRecord): status unset or "active". A terminal record (expired /
+   * disabled / …) keeps its bindings as HISTORY — the lease path refuses to
+   * serve it — but its shares no longer occupy capacity. That is what releases
+   * an upstream seat when a subscription goes terminal: no record mutation, the
+   * accounting simply stops counting it.
+   */
+  private isLiveKey(key: any): boolean {
+    return !key?.status || key.status === "active";
+  }
+
+  /**
+   * Shares already consumed on an account (sum of LIVE bound cards' weights),
+   * excluding `excludeId`. Non-active records don't count (see isLiveKey).
+   */
   private usedShares(provider: string, accountId: number, excludeId = ""): number {
     const data = readJson(path.join(this.ctx.dataDir, "access-keys.json"), { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
     let used = 0;
     for (const key of keys) {
-      if (String(key.id) !== excludeId && this.keyBoundAccount(key, provider) === accountId) {
+      if (this.isLiveKey(key) && String(key.id) !== excludeId && this.keyBoundAccount(key, provider) === accountId) {
         used += cardWeight(key);
       }
     }
@@ -552,12 +568,18 @@ export class AccessKeyService {
     return path.join(this.ctx.dataDir, fileName);
   }
 
-  /** Shares consumed per account in a pool (sum of bound cards' weights). */
+  /**
+   * Shares consumed per account in a pool (sum of LIVE bound cards' weights).
+   * Non-active records don't count (see isLiveKey) — this is what frees a
+   * terminal subscription's seat for autoAssignSeats without touching the
+   * record itself.
+   */
   boundSharesByAccount(provider: string): Map<number, number> {
     const data = readJson(path.join(this.ctx.dataDir, "access-keys.json"), { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const m = new Map<number, number>();
     for (const key of keys) {
+      if (!this.isLiveKey(key)) continue;
       const acc = this.keyBoundAccount(key, provider);
       if (acc > 0) m.set(acc, (m.get(acc) || 0) + cardWeight(key));
     }

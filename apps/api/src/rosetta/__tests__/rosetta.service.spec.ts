@@ -1264,6 +1264,53 @@ describe("RosettaService", () => {
     });
   });
 
+  describe("terminal records release share capacity (status-aware share accounting)", () => {
+    it("an expired card's shares stop counting: usedShares drops and a new card can bind; bindings kept as history", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      for (let i = 1; i <= 4; i++) {
+        svc.createAccessKey({ id: `c${i}` });
+        expect(svc.bindAccessKey({ id: `c${i}`, provider: "codex", accountId: id }).ok).toBe(true);
+      }
+      // Fully seated by ACTIVE cards → 0 free shares; a 5th card does NOT fit
+      // (regression: active seats are never double-allocated).
+      expect((svc.listCodexAccounts().accounts[0] as any).usedShares).toBe(4);
+      svc.createAccessKey({ id: "c5" });
+      expect(svc.bindAccessKey({ id: "c5", provider: "codex", accountId: id }).ok).toBe(false);
+
+      // Expire one occupant → its share is released by ACCOUNTING alone.
+      svc.updateAccessKey({ id: "c1", status: "expired" });
+      expect((svc.listCodexAccounts().accounts[0] as any).usedShares).toBe(3);
+      expect(svc.bindAccessKey({ id: "c5", provider: "codex", accountId: id }).ok).toBe(true);
+
+      // The expired record is NOT mutated: bindings stay as history.
+      const expired = svc.listAccessKeys({}).keys.find((k) => k.id === "c1") as any;
+      expect(expired.status).toBe("expired");
+      expect(expired.bindings).toEqual({ codex: id });
+    });
+
+    it("a disabled card's shares don't count; auto-assign reuses the freed seat", () => {
+      const svc = new RosettaService({ dataDir: tempDir });
+      svc.addCodexAccount({ email: "a@x.com", refreshToken: "rt", planType: "pro" });
+      const id = svc.listCodexAccounts().accounts[0].id;
+      // Fill the account via auto-assign (4 × 1-share = capacity in the test env).
+      expect(svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" }, count: 4 }).ok).toBe(true);
+      // ACTIVE seats still count: no room for one more.
+      expect((svc.createAccessKey({ products: ["codex"], levels: { codex: "pro" } }) as any).ok).toBe(false);
+
+      const occupant = svc.listAccessKeys({}).keys[0] as any;
+      svc.updateAccessKey({ id: occupant.id, status: "disabled" });
+      expect((svc.listCodexAccounts().accounts[0] as any).usedShares).toBe(3);
+
+      // Auto-assign now finds the freed seat.
+      const res: any = svc.createAccessKey({ id: "fresh", products: ["codex"], levels: { codex: "pro" } });
+      expect(res.ok).toBe(true);
+      const fresh = svc.listAccessKeys({}).keys.find((k) => k.id === "fresh") as any;
+      expect(fresh.bindings).toEqual({ codex: id });
+    });
+  });
+
   describe("auto-bind on card creation", () => {
     it("auto-binds a new codex card to an account with an open seat", () => {
       const svc = new RosettaService({ dataDir: tempDir });
