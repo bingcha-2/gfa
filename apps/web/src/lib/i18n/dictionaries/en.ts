@@ -799,7 +799,6 @@ export const en: DeepPartialDict = {
       minutesOnly: "{m}m",
       weeklyLabel: "Weekly quota",
       windowUsed: "{tokens} used this window",
-      totalUsed: "{tokens} used in total",
       noBuckets: "No quota data",
     },
     settings: {
@@ -987,6 +986,8 @@ export const en: DeepPartialDict = {
       authorAdmin: "Support",
       authorCustomer: "Me",
       notFound: "Ticket not found or deleted.",
+      threadLoadFailed: "Failed to load ticket. Please retry.",
+      retry: "Retry",
     },
     referral: {
       codeLabel: "Referral code",

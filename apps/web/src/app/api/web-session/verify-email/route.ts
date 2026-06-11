@@ -8,7 +8,13 @@ import { getBackendBaseUrl, safeParseJson } from "../../../../lib/backend-url";
  * or written here; the page links to /app afterwards.
  */
 export async function POST(request: NextRequest) {
-  const payload = await request.json();
+  // Guard the body parse — a malformed JSON body must not throw a 500 that
+  // the page would surface as "invalid token".
+  const rawBody = await request.text();
+  const payload = rawBody ? safeParseJson(rawBody) : null;
+  if (!payload || typeof payload !== "object") {
+    return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
+  }
 
   let response: Response;
   let raw: string;

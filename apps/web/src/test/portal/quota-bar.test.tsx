@@ -84,6 +84,7 @@ describe("QuotaBar rendering", () => {
     tokenWindowResetMs: 90 * 60_000,
     weeklyTokenLimit: null,
     weeklyWindowResetMs: null,
+    weeklyWindowTokens: 0,
     totalTokensUsed: 5000,
   };
 
@@ -98,19 +99,26 @@ describe("QuotaBar rendering", () => {
     expect(screen.getByText("codex")).toBeInTheDocument();
   });
 
-  it("adds a weekly bar when weeklyTokenLimit is set", () => {
+  it("adds a weekly bar driven by weeklyWindowTokens (not totalTokensUsed)", () => {
     render(
       <QuotaBar
         quota={{
           ...baseQuota,
           weeklyTokenLimit: 10_000,
+          // 9000/10000 = 90% → critical. totalTokensUsed (5000 = 50% → ok)
+          // must NOT be the source for this bar.
+          weeklyWindowTokens: 9000,
+          totalTokensUsed: 5000,
           weeklyWindowResetMs: 24 * 3600_000,
         }}
       />
     );
 
-    expect(screen.getAllByRole("progressbar")).toHaveLength(3);
+    const bars = screen.getAllByRole("progressbar");
+    expect(bars).toHaveLength(3);
     expect(screen.getByText("本周额度")).toBeInTheDocument();
+    // Weekly bar is the last one — level reflects weeklyWindowTokens (critical).
+    expect(bars[2]).toHaveAttribute("data-level", "critical");
   });
 
   it("shows 不限量 instead of bars for unlimited mode", () => {

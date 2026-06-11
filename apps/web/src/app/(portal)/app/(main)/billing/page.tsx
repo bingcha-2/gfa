@@ -23,13 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
+import { DataPagination } from "@/components/portal/data-pagination";
 import {
   getPlans,
   getSubscriptions,
@@ -347,47 +341,16 @@ export default function BillingPage() {
               </Table>
             </div>
 
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between gap-4">
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  {fmt(b.pageInfo, { page, pages: totalPages })}
-                </span>
-                <Pagination className="mx-0 w-auto justify-end">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        href="#"
-                        text={b.prevPage}
-                        aria-disabled={page <= 1}
-                        className={
-                          page <= 1 ? "pointer-events-none opacity-50" : ""
-                        }
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (page > 1) setPage(page - 1);
-                        }}
-                      />
-                    </PaginationItem>
-                    <PaginationItem>
-                      <PaginationNext
-                        href="#"
-                        text={b.nextPage}
-                        aria-disabled={page >= totalPages}
-                        className={
-                          page >= totalPages
-                            ? "pointer-events-none opacity-50"
-                            : ""
-                        }
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (page < totalPages) setPage(page + 1);
-                        }}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              </div>
-            )}
+            <DataPagination
+              page={page}
+              totalPages={totalPages}
+              onPage={setPage}
+              labels={{
+                prevPage: b.prevPage,
+                nextPage: b.nextPage,
+                pageInfo: b.pageInfo,
+              }}
+            />
           </div>
         )}
       </section>

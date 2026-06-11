@@ -5,7 +5,6 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { PlusIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,24 +31,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { TicketStatusBadge } from "@/components/portal/ticket-status-badge";
 import { createTicket, getTickets } from "@/lib/user-api";
-import type { TicketStatus, TicketSummary } from "@/lib/user-types";
+import type { TicketSummary } from "@/lib/user-types";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
-
-function statusVariant(
-  status: TicketStatus
-): "secondary" | "outline" | "ghost" {
-  switch (status) {
-    case "ANSWERED":
-      return "secondary";
-    case "OPEN":
-      return "outline";
-    case "CLOSED":
-    default:
-      return "ghost";
-  }
-}
 
 export function TicketsList() {
   const dict = useDict();
@@ -85,9 +71,8 @@ export function TicketsList() {
     try {
       await createTicket(subject.trim(), body.trim());
       toast.success(t.createdToast);
+      // Closing triggers onOpenChange(false), which resets subject/body.
       setDialogOpen(false);
-      setSubject("");
-      setBody("");
       await load();
     } catch {
       toast.error(t.createFailed);
@@ -143,9 +128,7 @@ export function TicketsList() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={statusVariant(ticket.status)}>
-                      {t.status[ticket.status]}
-                    </Badge>
+                    <TicketStatusBadge status={ticket.status} />
                   </TableCell>
                   <TableCell className="tabular-nums text-muted-foreground">
                     {formatDateTime(ticket.createdAt)}
@@ -160,7 +143,17 @@ export function TicketsList() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          // Reset the form when the dialog is dismissed (Escape / backdrop / close).
+          if (!open) {
+            setSubject("");
+            setBody("");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t.newTicket}</DialogTitle>

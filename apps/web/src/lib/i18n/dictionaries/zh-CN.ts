@@ -774,7 +774,6 @@ export const zhCN = {
       minutesOnly: "{m} 分钟",
       weeklyLabel: "本周额度",
       windowUsed: "窗口已用 {tokens}",
-      totalUsed: "累计已用 {tokens}",
       noBuckets: "暂无额度数据",
     },
     settings: {
@@ -963,6 +962,8 @@ export const zhCN = {
       authorAdmin: "客服",
       authorCustomer: "我",
       notFound: "工单不存在或已被删除。",
+      threadLoadFailed: "工单加载失败,请重试。",
+      retry: "重试",
     },
     referral: {
       codeLabel: "邀请码",

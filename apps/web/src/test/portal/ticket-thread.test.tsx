@@ -147,4 +147,52 @@ describe("TicketThread", () => {
       screen.queryByPlaceholderText("输入回复内容…")
     ).not.toBeInTheDocument();
   });
+
+  it("shows the not-found state on a 404", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ error: "TICKET_NOT_FOUND" }, 404)
+      );
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<TicketThread ticketId="missing" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("工单不存在或已被删除。")).toBeInTheDocument();
+    });
+    // Not the generic error state.
+    expect(
+      screen.queryByText("工单加载失败,请重试。")
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a retryable error state on a 500 (not 'not found')", async () => {
+    let call = 0;
+    const mockFetch = vi.fn().mockImplementation(() => {
+      call += 1;
+      // First load fails with 500; retry succeeds.
+      if (call === 1) {
+        return Promise.resolve(jsonResponse({ message: "boom" }, 500));
+      }
+      return Promise.resolve(jsonResponse(OPEN_THREAD));
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<TicketThread ticketId="t1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("工单加载失败,请重试。")).toBeInTheDocument();
+    });
+    // Must NOT be the not-found copy.
+    expect(
+      screen.queryByText("工单不存在或已被删除。")
+    ).not.toBeInTheDocument();
+
+    // Retry recovers the thread.
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => {
+      expect(screen.getByText("客户端登录报错")).toBeInTheDocument();
+    });
+  });
 });

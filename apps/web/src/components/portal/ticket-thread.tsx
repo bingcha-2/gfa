@@ -5,45 +5,41 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { LockIcon, SendIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { TicketStatusBadge } from "@/components/portal/ticket-status-badge";
 import { getTicket, replyTicket, UserApiError } from "@/lib/user-api";
-import type { TicketDetail, TicketStatus } from "@/lib/user-types";
+import type { TicketDetail } from "@/lib/user-types";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 
-function statusVariant(
-  status: TicketStatus
-): "secondary" | "outline" | "ghost" {
-  switch (status) {
-    case "ANSWERED":
-      return "secondary";
-    case "OPEN":
-      return "outline";
-    case "CLOSED":
-    default:
-      return "ghost";
-  }
-}
+type LoadState = "loading" | "ready" | "notFound" | "error";
 
 export function TicketThread({ ticketId }: { ticketId: string }) {
   const dict = useDict();
   const t = dict.portalApp.tickets;
 
   const [detail, setDetail] = useState<TicketDetail | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
+    setLoadState("loading");
     try {
       const next = await getTicket(ticketId);
       setDetail(next);
-    } catch {
-      setNotFound(true);
+      setLoadState("ready");
+    } catch (err) {
+      // Only a genuine 404 means "not found"; 500s / network errors get a
+      // retryable generic error state instead of a misleading "not found".
+      if (err instanceof UserApiError && err.status === 404) {
+        setLoadState("notFound");
+      } else {
+        setLoadState("error");
+      }
     }
   }, [ticketId]);
 
@@ -78,7 +74,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     }
   }
 
-  if (notFound) {
+  if (loadState === "notFound") {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">{t.notFound}</p>
@@ -92,7 +88,26 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     );
   }
 
-  if (detail === null) {
+  if (loadState === "error") {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-destructive">{t.threadLoadFailed}</p>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={() => void load()}>
+            {t.retry}
+          </Button>
+          <Link
+            href="/app/tickets"
+            className="text-sm text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
+          >
+            {t.backToList}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadState === "loading" || detail === null) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-6 w-64 rounded" />
@@ -115,9 +130,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
         </Link>
         <div className="flex items-center gap-3">
           <h3 className="text-base font-semibold">{detail.ticket.subject}</h3>
-          <Badge variant={statusVariant(detail.ticket.status)}>
-            {t.status[detail.ticket.status]}
-          </Badge>
+          <TicketStatusBadge status={detail.ticket.status} />
         </div>
         <p className="text-xs text-muted-foreground tabular-nums">
           {formatDateTime(detail.ticket.createdAt)}

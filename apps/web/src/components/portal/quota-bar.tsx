@@ -146,7 +146,7 @@ export function QuotaBar({ quota }: { quota: SubscriptionQuota }) {
       {quota.weeklyTokenLimit != null && quota.weeklyTokenLimit > 0 && (
         <Bar
           label={q.weeklyLabel}
-          used={quota.totalTokensUsed}
+          used={quota.weeklyWindowTokens}
           limit={quota.weeklyTokenLimit}
           resetText={
             weeklyResetText ? fmt(q.resetIn, { time: weeklyResetText }) : null

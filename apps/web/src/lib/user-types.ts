@@ -122,6 +122,8 @@ export type SubscriptionQuota = {
   tokenWindowResetMs: number | null;
   weeklyTokenLimit: number | null;
   weeklyWindowResetMs: number | null;
+  /** Tokens used in the current weekly window (sum of weekly buckets, not lifetime). */
+  weeklyWindowTokens: number;
   totalTokensUsed: number;
 };
 

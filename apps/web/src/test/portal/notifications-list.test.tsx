@@ -141,4 +141,41 @@ describe("NotificationsList", () => {
       );
     });
   });
+
+  it("rolls back the optimistic mark-all when read-all fails", async () => {
+    const mockFetch = mockNotificationsFetch(500);
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<NotificationsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("维护公告")).toBeInTheDocument();
+    });
+
+    // Pre-condition: first item is unread.
+    expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
+      "data-read",
+      "false"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "全部已读" }));
+
+    // Optimistic: everything flips to read…
+    for (const item of screen.getAllByRole("listitem")) {
+      expect(item).toHaveAttribute("data-read", "true");
+    }
+
+    // …then the snapshot is restored after the failure (n1 unread again).
+    await waitFor(() => {
+      expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
+        "data-read",
+        "false"
+      );
+    });
+    // n2 was already read and stays read.
+    expect(screen.getAllByRole("listitem")[1]).toHaveAttribute(
+      "data-read",
+      "true"
+    );
+  });
 });
