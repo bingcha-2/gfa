@@ -289,7 +289,11 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(@types/node@22.19.15)(jsdom@29.1.1(@noble/hashes@2.0.1))(msw@2.13.3(@types/node@22.19.15)(typescript@5.9.3))(vite@8.0.2(@types/node@22.19.15)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
 
-  packages/shared: {}
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
 
 packages:
 

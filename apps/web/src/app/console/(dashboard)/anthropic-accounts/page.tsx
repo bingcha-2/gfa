@@ -894,7 +894,6 @@ export default function ClaudeAccountsPage() {
                   <TableHead>Token</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>出口代理</TableHead>
-                  <TableHead>浏览器号</TableHead>
                   <TableHead>份额用量</TableHead>
                   <TableHead>启用</TableHead>
                   <TableHead>入池</TableHead>
@@ -964,42 +963,6 @@ export default function ClaudeAccountsPage() {
                         >
                           {a.proxyUrl ? (
                             <span className="text-muted-foreground">{a.proxyUrl}</span>
-                          ) : (
-                            <span className="text-destructive">未配置·点此设置</span>
-                          )}
-                        </button>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {adspowerEditId === a.id ? (
-                        <div className="flex items-center gap-1">
-                          <Input
-                            className="h-7 w-[120px] text-xs"
-                            autoFocus
-                            placeholder="指纹 ID"
-                            value={adspowerEditVal}
-                            onChange={(e) => setAdspowerEditVal(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleSaveAdspower(a);
-                              if (e.key === "Escape") setAdspowerEditId(null);
-                            }}
-                          />
-                          <Button size="sm" className="h-7 px-2" disabled={adspowerSaving} onClick={() => handleSaveAdspower(a)}>
-                            {adspowerSaving ? <Spinner size={12} /> : "保存"}
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setAdspowerEditId(null)}>
-                            取消
-                          </Button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="block max-w-[120px] truncate text-left text-xs underline-offset-2 hover:underline"
-                          title={a.adspowerProfileId || "点此设置浏览器号"}
-                          onClick={() => startEditAdspower(a)}
-                        >
-                          {a.adspowerProfileId ? (
-                            <span className="text-muted-foreground">{a.adspowerProfileId}</span>
                           ) : (
                             <span className="text-destructive">未配置·点此设置</span>
                           )}

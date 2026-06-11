@@ -8,5 +8,9 @@
     "build": "tsc -p tsconfig.json && node -e \"require('fs').copyFileSync('src/pricing.json','dist/pricing.json')\"",
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
   }
 }
+
