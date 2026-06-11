@@ -530,3 +530,256 @@ model FairShareWindow {
   @@id([provider, accountId, bucket, cardId])
   @@index([provider, accountId, bucket])
 }
+
+// ─── Customer Account System ────────────────────────────────────────────────
+
+enum CustomerStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum CustomerEmailTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum PlanOrderStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+enum PayChannel {
+  ALIPAY
+  WXPAY
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum NotificationType {
+  SYSTEM
+  BILLING
+  TICKET
+  REFERRAL
+  MIGRATION
+}
+
+enum TicketStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum ReferralRewardStatus {
+  PENDING
+  GRANTED
+  REVOKED
+}
+
+/// Terminal customer — fully separate from admin User.
+model Customer {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  status        CustomerStatus @default(ACTIVE)
+  emailVerified Boolean        @default(false)
+  displayName   String?
+  tokenVersion  Int            @default(0)   // bumped on password change/reset → revokes all JWTs
+  referralCode  String         @unique
+  invitedById   String?
+  creditCents   Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  invitedBy     Customer?              @relation("CustomerReferrals", fields: [invitedById], references: [id])
+  referrals     Customer[]             @relation("CustomerReferrals")
+  emailTokens   CustomerEmailToken[]
+  subscriptions Subscription[]
+  planOrders    PlanOrder[]
+  devices       Device[]
+  notifications Notification[]
+  tickets       Ticket[]
+
+  @@index([invitedById])
+}
+
+/// Single-use email tokens for verification and password reset.
+model CustomerEmailToken {
+  id         String                    @id @default(cuid())
+  customerId String
+  tokenHash  String                    @unique
+  purpose    CustomerEmailTokenPurpose
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime                  @default(now())
+
+  customer   Customer                  @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+}
+
+/// Purchasable plan template.
+model Plan {
+  id                   String   @id @default(cuid())
+  name                 String
+  description          String?
+  priceCents           Int
+  durationDays         Int
+  productEntitlements  String                    // JSON array e.g. ["antigravity","codex","anthropic"]
+  bucketLimits         String?                   // JSON per-model caps
+  levels               String?                   // JSON per-product plan levels
+  weight               Int      @default(1)      // fair-share: 1=拼车 … 8=独享
+  deviceLimit          Int      @default(1)
+  weeklyTokenLimit     Int?                      // token count; 2^31 ceiling acceptable
+  windowMs             Int      @default(18000000) // 5h in ms
+  active               Boolean  @default(true)
+  sortOrder            Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  planOrders  PlanOrder[]
+  subscriptions Subscription[]
+}
+
+/// Active / past subscription; its id doubles as shadow access-key record id and fair-share cardId.
+/// For migrated cards the id is set to the old card's id on create.
+model Subscription {
+  id                  String             @id @default(cuid())
+  customerId          String
+  planId              String?
+  status              SubscriptionStatus @default(ACTIVE)
+  startsAt            DateTime           @default(now())
+  expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
+  // Purchase-time snapshots decoupled from Plan
+  productEntitlements String
+  bucketLimits        String?
+  bindings            String?            // JSON product→accountId mirror
+  levels              String?
+  weight              Int                @default(1)
+  deviceLimit         Int                @default(1)
+  weeklyTokenLimit    Int?
+  windowMs            Int                @default(18000000)
+  backingKeyValue     String             @unique  // opaque key value written into access-keys.json
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  customer  Customer  @relation(fields: [customerId], references: [id])
+  plan      Plan?     @relation(fields: [planId], references: [id])
+
+  @@index([customerId])
+  @@index([planId])
+}
+
+/// Plan purchase order (distinct from the existing family-group Order).
+model PlanOrder {
+  id             String         @id @default(cuid())
+  customerId     String
+  planId         String
+  subscriptionId String?        // filled on activation
+  amountCents    Int
+  payChannel     PayChannel
+  outTradeNo     String         @unique  // idempotency anchor
+  epayTradeNo    String?
+  status         PlanOrderStatus @default(PENDING)
+  notifyRaw      String?
+  paidAt         DateTime?
+  referrerId     String?        // Customer id of inviter at purchase time
+  expiresAt      DateTime       // pending-payment TTL
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  customer  Customer  @relation(fields: [customerId], references: [id])
+  plan      Plan      @relation(fields: [planId], references: [id])
+
+  @@index([customerId])
+  @@index([planId])
+  @@index([status])
+}
+
+/// Customer device (supports multi-device enforcement and session revocation).
+model Device {
+  id          String       @id @default(cuid())
+  customerId  String
+  deviceId    String       // client-generated stable id
+  name        String?
+  platform    String?
+  status      DeviceStatus @default(ACTIVE)
+  lastSeenAt  DateTime?
+  lastIp      String?
+  sessionJti  String?      // current session token id; mismatch = revoked
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  customer    Customer     @relation(fields: [customerId], references: [id])
+
+  @@unique([customerId, deviceId])
+  @@index([customerId])
+}
+
+/// In-app notification for a customer.
+model Notification {
+  id         String           @id @default(cuid())
+  customerId String
+  type       NotificationType @default(SYSTEM)
+  title      String
+  body       String?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  customer   Customer         @relation(fields: [customerId], references: [id])
+
+  @@index([customerId, createdAt])
+}
+
+/// Support ticket opened by a customer.
+model Ticket {
+  id         String       @id @default(cuid())
+  customerId String
+  subject    String
+  status     TicketStatus @default(OPEN)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  customer   Customer       @relation(fields: [customerId], references: [id])
+  messages   TicketMessage[]
+
+  @@index([customerId])
+}
+
+/// Individual message within a support ticket.
+model TicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorType String   // "CUSTOMER" | "ADMIN"
+  authorId   String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  ticket     Ticket   @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
+}
+
+/// Referral reward record — one per qualifying order, replay-safe.
+model ReferralReward {
+  id           String               @id @default(cuid())
+  referrerId   String               // Customer id being rewarded
+  inviteeId    String
+  planOrderId  String               @unique  // one reward per order
+  amountCents  Int
+  status       ReferralRewardStatus @default(GRANTED)
+  createdAt    DateTime             @default(now())
+
+  @@index([referrerId])
+}
