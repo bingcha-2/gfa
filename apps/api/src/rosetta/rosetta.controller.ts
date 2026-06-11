@@ -216,6 +216,11 @@ export class RosettaController {
     return this.rosetta.setClaudeAccountMailPassword(body);
   }
 
+  @Post("anthropic-set-adspower-profile")
+  setClaudeAccountAdspowerProfile(@Body() body: any) {
+    return this.rosetta.setClaudeAccountAdspowerProfile(body);
+  }
+
   // 通用出口代理设置(御三家共用):body = { provider, accountId, proxyUrl }。空 proxyUrl=清除。
   @Post("account-set-proxy")
   setAccountProxy(@Body() body: any) {

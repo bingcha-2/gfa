@@ -186,6 +186,7 @@ export class RosettaService {
   toggleClaudeAccountPool(payload: any) { return this.claudeSvc.toggleClaudeAccountPool(payload); }
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }
   setClaudeAccountMailPassword(payload: any) { return this.claudeSvc.setClaudeAccountMailPassword(payload); }
+  setClaudeAccountAdspowerProfile(payload: any) { return this.claudeSvc.setClaudeAccountAdspowerProfile(payload); }
   deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
 
   // ── 通用出口代理(御三家共用) ───────────────────────────────────────────

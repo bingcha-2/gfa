@@ -98,6 +98,7 @@ export class ClaudeAccountService {
       claudeWeeklyResetTime: String(account.claudeWeeklyResetTime || ""),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
       proxyUrl: String(account.proxyUrl || ""),
+      adspowerProfileId: String(account.adspowerProfileId || ""),
       // 是否已存邮箱密码(用于 token 失效时自动重登)。不回传明文密码。
       hasMailPassword: Boolean(account.mailPassword),
       // Persisted dead-account verdict (written by lease-service) so the console
@@ -135,6 +136,10 @@ export class ClaudeAccountService {
       if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl !== undefined) existing.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       if (payload.mailPassword) existing.mailPassword = String(payload.mailPassword);
+      if (payload.adspowerProfileId !== undefined) {
+        if (payload.adspowerProfileId) existing.adspowerProfileId = String(payload.adspowerProfileId).trim();
+        else delete existing.adspowerProfileId;
+      }
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -151,6 +156,7 @@ export class ClaudeAccountService {
       if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl) record.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       if (payload.mailPassword) record.mailPassword = String(payload.mailPassword);
+      if (payload.adspowerProfileId) record.adspowerProfileId = String(payload.adspowerProfileId).trim();
       accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
@@ -466,17 +472,33 @@ export class ClaudeAccountService {
     email: string;
     password: string;
     proxyUrl: string;
+    adspowerProfileId?: string;
     sessionKey?: string;
   }) {
     const { email, password, proxyUrl } = payload;
-    if (!email || !proxyUrl) return { ok: false, error: "email 和 proxyUrl 必填" };
+    if (!email) return { ok: false, error: "email 必填" };
+
+    let adspowerProfileId = payload.adspowerProfileId;
+    if (!adspowerProfileId) {
+      const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+      const data = readJson(filePath, { accounts: [] });
+      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+      const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+      if (existing && existing.adspowerProfileId) {
+        adspowerProfileId = existing.adspowerProfileId;
+      }
+    }
+
+    if (!adspowerProfileId && !proxyUrl) {
+      return { ok: false, error: "未使用指纹浏览器时，proxyUrl 必填" };
+    }
     if (!password) return { ok: false, error: "password 必填(用于 mail.com 网页抓取)" };
 
     const taskId = base64Url(crypto.randomBytes(12));
     this.autoOAuthTask = { taskId, phase: "starting", status: "running" };
 
     // Fire and forget — caller polls via getAutoOAuthStatus
-    this.runAutoOAuth(taskId, email, password, proxyUrl).catch((err) => {
+    this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId).catch((err) => {
       if (this.autoOAuthTask?.taskId === taskId) {
         this.autoOAuthTask.status = "error";
         this.autoOAuthTask.error = String(err?.message || err);
@@ -501,7 +523,7 @@ export class ClaudeAccountService {
     };
   }
 
-  private async runAutoOAuth(taskId: string, email: string, password: string, proxyUrl: string) {
+  private async runAutoOAuth(taskId: string, email: string, password: string, proxyUrl?: string, adspowerProfileId?: string) {
     const task = this.autoOAuthTask!;
     const step = (phase: string) => {
       if (task.taskId !== taskId) return;
@@ -525,12 +547,13 @@ export class ClaudeAccountService {
       pending.mailPassword = password;
 
       // 2. Browser: navigate to authorize URL → CF challenge → fill email → submit
-      step("launching browser (SOCKS5 proxy)");
+      step(adspowerProfileId ? `launching AdsPower profile: ${adspowerProfileId}` : "launching browser (SOCKS5 proxy)");
       const triggerStart = Date.now();
       const trigger = await triggerMagicLinkViaBrowser({
         authorizeUrl: pending.authUrl,
         email,
         proxyUrl,
+        adspowerProfileId,
       });
       if (!trigger.ok || !trigger.session) {
         throw new Error(trigger.error || "浏览器触发失败");
@@ -643,6 +666,21 @@ export class ClaudeAccountService {
     else delete account.mailPassword;
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
     return { ok: true, email: account.email, hasMailPassword: Boolean(account.mailPassword) };
+  }
+
+  // 设置/清除某 anthropic 账号的 AdsPower 浏览器号。空=清除。
+  setClaudeAccountAdspowerProfile(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const adspowerProfileId = String(payload?.adspowerProfileId ?? "").trim();
+    const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    if (adspowerProfileId) account.adspowerProfileId = adspowerProfileId;
+    else delete account.adspowerProfileId;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, adspowerProfileId: account.adspowerProfileId };
   }
 
   deleteClaudeAccount(payload: any) {
