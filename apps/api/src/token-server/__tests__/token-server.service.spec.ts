@@ -1014,6 +1014,56 @@ describe("TokenServerService — account cooling and retry", () => {
     expect(acct.quotaStatusReason || "").not.toBe("verification_required");
   });
 
+  it("刷新成功自动恢复 reactivateIfAuthDead:清掉'已失效'(error)死号判决,放回候选池", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    // 标成 error / verification_required(=控制台'已失效·...')
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 403, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_403_account_verification_required", retryAfterMs: 0,
+    });
+    expect(service.getStatus().quota.accounts.find((a: any) => a.id === id)!.quotaStatus).toBe("error");
+
+    // 刷 token 成功后调用:清掉死号判决并放回池
+    expect(service.reactivateIfAuthDead(id)).toEqual({ ok: true, reactivated: true });
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(acct.quotaStatus).not.toBe("error");
+    expect(acct.quotaStatusReason || "").not.toBe("verification_required");
+  });
+
+  it("reactivateIfAuthDead:健康号是 no-op(reactivated:false,状态不变)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    expect(service.getStatus().quota.accounts.find((a: any) => a.id === id)!.quotaStatus).toBe("ok");
+
+    expect(service.reactivateIfAuthDead(id)).toEqual({ ok: true, reactivated: false });
+    expect(service.getStatus().quota.accounts.find((a: any) => a.id === id)!.quotaStatus).toBe("ok");
+  });
+
+  it("reactivateIfAuthDead:'额度恢复中'(cooling)不动 —— 刷 token 不代表额度已回,保留冷却", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+    const id = r.accountId;
+    // 503 容量 → cooling + blockedUntil 冷却
+    await service.reportResult(REQ, {
+      leaseId: r.leaseId, status: 503, modelKey: "claude-opus-4-6-thinking",
+      reason: "http_503_model_capacity_exhausted", retryAfterMs: 15000,
+    });
+    const before: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(before.quotaStatus).toBe("cooling");
+
+    // 不是 error → 不恢复,冷却原样保留
+    expect(service.reactivateIfAuthDead(id)).toEqual({ ok: true, reactivated: false });
+    const after: any = service.getStatus().quota.accounts.find((a: any) => a.id === id);
+    expect(after.quotaStatus).toBe("cooling");
+    expect(after.blockedUntil).toBe(before.blockedUntil);
+  });
+
   it("duplicate error report (same reportId) does not re-extend the cooldown", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const service = makeService();

@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import {
+  TOKEN_DEATH_STRIKE_THRESHOLD,
+  TOKEN_DEATH_FIRST_COOLDOWN_MS,
+} from "../../token-server/token-billing";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -61,15 +65,22 @@ describe("dead account status persistence", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("writes quotaStatus=error to the accounts file on invalid_grant", async () => {
+  it("writes quotaStatus=error to the accounts file after N invalid_grant strikes", async () => {
+    let clock = 1_000_000;
     const provider = makeProvider(accountsFilePath, async () => {
       throw new Error('400 {"error":"invalid_grant","error_description":"refresh token revoked"}');
     });
-    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" });
+    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "", now: () => clock });
 
-    await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
-    ).rejects.toBeTruthy();
+    // A single invalid_grant now only soft-cools (not persisted) — a transient blip
+    // shouldn't bench a live account for 24h. Only the N-th consecutive strike, with
+    // no successful refresh in between, escalates to the persisted dead verdict.
+    for (let i = 0; i < TOKEN_DEATH_STRIKE_THRESHOLD; i++) {
+      await expect(
+        service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+      ).rejects.toBeTruthy();
+      clock += TOKEN_DEATH_FIRST_COOLDOWN_MS + 1; // past the soft cooldown → re-probed next time
+    }
 
     service.flushAccounts();
 

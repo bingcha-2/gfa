@@ -30,3 +30,7 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy boo
 func mitmRelaunchClaudePlain() error {
 	return fmt.Errorf("mitm: 重启 Claude 暂未在该平台实现")
 }
+
+func mitmOpenCACertForTrust() error {
+	return fmt.Errorf("mitm: 打开证书信任暂未在该平台实现")
+}

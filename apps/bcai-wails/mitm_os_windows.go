@@ -223,3 +223,13 @@ func mitmRelaunchClaudePlain() error {
 	mitmKillClaudeWindows()
 	return exec.Command(bin).Start()
 }
+
+// mitmOpenCACertForTrust 打开证书的「证书信息」对话框(含"安装证书…"向导入口),供用户手动安装/信任。
+// 仅作自动安装失败后的兜底;Windows 正常走 certutil 静默装当前用户库,通常用不到。
+func mitmOpenCACertForTrust() error {
+	cert := mitmCACertPath()
+	if _, err := os.Stat(cert); err != nil {
+		return fmt.Errorf("CA cert not found: %s", cert)
+	}
+	return exec.Command("rundll32.exe", "cryptext.dll,CryptExtAddCER", cert).Run()
+}

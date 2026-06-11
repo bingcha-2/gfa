@@ -238,8 +238,16 @@ export class RosettaController {
 
   // 「刷新」= 强制刷 token + 探测拉额度(合并为一个动作)。
   @Post("anthropic-refresh-quota")
-  refreshClaudeAccountQuota(@Body() body: any) {
-    return this.rosetta.refreshClaudeAccountQuota(body);
+  async refreshClaudeAccountQuota(@Body() body: any) {
+    const result = await this.rosetta.refreshClaudeAccountQuota(body);
+    // 刷 token 成功 = 该号鉴权已恢复。若它此前被判「已失效」(quotaStatus=error:
+    // 鉴权失效/连续报错/需验证),顺手清掉死号判决并放回候选池 —— 免得还要再点一次「恢复」。
+    // 只清 error 态,不动「额度恢复中」(exhausted/cooling):刷 token 不代表额度已回。
+    if (result?.ok) {
+      const { reactivated } = this.remoteAnthropic.reactivateIfAuthDead(Number(body?.accountId));
+      return { ...result, reactivated };
+    }
+    return result;
   }
 
   @Post("access-key")

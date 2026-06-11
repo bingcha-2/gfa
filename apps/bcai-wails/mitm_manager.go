@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // ─── Claude 桌面端 Code/Cowork 接管：MITM 管理器 ────────────────────────────
@@ -252,7 +253,16 @@ func (m *mitmManager) RelaunchClaudeProcess(caResult caInstallResult) error {
 	// 被 MITM 但叶证书不被信任 → 整页 ERR_CERT_AUTHORITY_INVALID → 桌面端白屏。CA 不可信时退回
 	// 「只设 env」:Code/Cowork 的 Node 推理照样走号池,Chromium 直连 claude.ai → UI 正常(仅订阅
 	// 等级不会改写成 Max)。这是「白屏」与「无 Max」之间的安全降级,绝不能为了 Max 把界面整白。
-	chromiumProxy := mitmIsCAInstalled()
+	//
+	// ⚠ 关键修复:不能在 add-trusted-cert 刚返回就单发一次 verify-cert —— 实测 trustd 未刷新会短暂误报
+	// 未受信(装成功 32ms 后 verify 仍 false),把刚装好的证书误判成未信任、白白退 env-only(没了 Max)。
+	// 系统域(admin)Chromium 必认,直接开;用户域/兜底则【轮询】verify-cert 给 trustd 留刷新时间后再判。
+	verifyTrusted := false
+	if caResult != caInstalledMachine {
+		verifyTrusted = mitmWaitCATrusted(5 * time.Second)
+	}
+	chromiumProxy := chromiumProxyDecision(caResult, verifyTrusted)
+	Log("[mitm] 接管闸门:CA 安装结局=%d, verify-cert 轮询确认=%v → Chromium 走代理=%v", caResult, verifyTrusted, chromiumProxy)
 	if !chromiumProxy {
 		Log("[mitm] 根 CA 未被信任 → 退回 env-only 重启(Chromium 不走代理,避免白屏;订阅等级暂不会显示 Max,批准证书后重新接管即可)")
 	}
@@ -261,6 +271,22 @@ func (m *mitmManager) RelaunchClaudeProcess(caResult caInstallResult) error {
 	}
 	mitmSetTakeoverActive(true)
 	return nil
+}
+
+// mitmWaitCATrusted 在 timeout 内轮询 verify-cert,直到确认根受信(或超时)。
+// 修「刚 add-trusted-cert 完、trustd 未刷新 → verify-cert 短暂误报未受信 → 白白退 env-only」:
+// 给 trustd 一点刷新时间再判,避免把刚装好的证书误判成未信任。受信后立即返回,不空等。
+func mitmWaitCATrusted(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if mitmIsCAInstalled() { // 跨平台:darwin=verify-cert,windows=certutil 查库
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
 }
 
 // RelaunchClaudePlain 退出并按原样重启 Claude.app（还原，不带代理），清除「接管中」标记。

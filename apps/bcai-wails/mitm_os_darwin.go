@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,37 +17,50 @@ import (
 
 const mitmClaudeAppBinary = "/Applications/Claude.app/Contents/MacOS/Claude"
 
-// mitmInstallCA macOS 走系统钥匙串,无「当前用户库降级」概念:装成功 → caInstalledMachine
-// (系统域信任,全进程可见);装失败 → caInstallFailed。返回 caInstallResult 以对齐跨平台签名。
+// mitmInstallCA 走 admin/系统域 → 用户域 的降级阶梯(对齐 Windows 的 LocalMachine→CurrentUser):
+//   - 首选 admin 域(osascript 提权 + System 钥匙串):全进程一律信任,Chromium 必认。
+//   - admin 域那步内部的 SecTrustSettingsSetTrustSettings 需一道独立的 com.apple.trust-settings.admin
+//     授权;提权出来、脱离 GUI 会话的 root 子进程在远程会话/受管 Mac 上弹不出它 →
+//     "The authorization was denied since no user interaction was possible" → 降级用户域。
+//   - 用户域(不带 -d、落 login 库)免管理员、免那道二次授权;macOS 的 SecTrustEvaluate 合并
+//     user+admin+system 域,Chromium 同样认 → 仍能掀付费墙显示 Max。两域都失败才 caInstallFailed。
+//
+// 编排细节(含"返回非零但信任已落盘"的复核)见 decideCAInstall,纯逻辑、可单测。
 func mitmInstallCA(certPath string) (caInstallResult, error) {
 	if _, err := os.Stat(certPath); err != nil {
 		return caInstallFailed, fmt.Errorf("CA cert not found: %s", certPath)
 	}
-
-	// 往【系统钥匙串】写证书 + 设 admin 域信任都需要 root,只能经 osascript 提权(`security` 命令行
-	// 自己不会弹授权框)。
-	script := fmt.Sprintf(
-		`do shell script "security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '%s'" with administrator privileges`,
-		certPath,
-	)
-	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	if err == nil {
-		return caInstalledMachine, nil
+	res, err := decideCAInstall(caInstallSteps{
+		installMachine: func() (string, error) {
+			out, e := exec.Command("osascript", "-e", securityAddTrustedCertAdminScript(certPath)).CombinedOutput()
+			if e != nil && securityAuthInteractionDenied(string(out)) {
+				Log("[mitm] admin 域设信任的二次授权框无法弹出(远程会话/受管 Mac 常见),降级用户域…")
+			}
+			return string(out), e
+		},
+		verifyMachine:    mitmCAVerifyTrusted,
+		skipUserFallback: securityAuthUserCanceled,
+		installUser: func() (string, error) {
+			out, e := exec.Command("security", securityAddTrustedCertUserArgs(certPath)...).CombinedOutput()
+			return string(out), e
+		},
+		verifyUser: mitmCAVerifyTrusted,
+	})
+	if err != nil {
+		return res, fmt.Errorf("add-trusted-cert: %w", err)
 	}
-
-	// ⚠ 已知坑(实测复现):add-trusted-cert 经 osascript 提权时,信任【可能已写入钥匙串】却仍返回非零
-	// 退出码 +「SecTrustSettingsSetTrustSettings: The authorization was denied since no user interaction
-	// was possible」。原因:设 admin 域信任那步会再要一次二级授权,提权出来的 root 子进程脱离了 GUI
-	// 会话弹不出它 —— 但信任设置往往已落盘。所以【绝不能只看退出码】,否则会把已装好的 CA 误判成失败、
-	// 白白退回 env-only(订阅等级显示不出 Max)。复核真实信任态:确实装上了就按成功处理。
-	if mitmIsCAInstalled() {
-		Log("[mitm] add-trusted-cert 返回非零但信任已写入,按成功处理: %v: %s", err, string(out))
-		return caInstalledMachine, nil
+	if res == caInstalledUser {
+		Log("[mitm] 根 CA 已降级安装到当前用户信任域(免管理员;是否显示 Max 待重启前 verify-cert 轮询确认)")
 	}
-	return caInstallFailed, fmt.Errorf("add-trusted-cert: %v: %s", err, string(out))
+	return res, nil
 }
 
 func mitmUninstallCA() error {
+	// 用户域降级安装可能把信任 + 证书落在当前用户 login 库,免管理员先 best-effort 清掉
+	// (remove-trusted-cert 撤用户域信任设置;delete-certificate 删 login 库里的同名证书)。
+	_ = exec.Command("security", "remove-trusted-cert", mitmCACertPath()).Run()
+	_, _ = exec.Command("security", "delete-certificate", "-c", mitmCACommonName).CombinedOutput()
+	// admin/System 域:删证书 + 撤 admin 信任需管理员授权。
 	script := fmt.Sprintf(
 		`do shell script "security delete-certificate -c '%s' /Library/Keychains/System.keychain" with administrator privileges`,
 		mitmCACommonName,
@@ -57,29 +71,59 @@ func mitmUninstallCA() error {
 	return nil
 }
 
-// mitmCleanupLegacyUserCA 仅 Windows 有「当前用户库」迁移问题;macOS 走系统钥匙串,无需清理。
+// mitmCleanupLegacyUserCA macOS 历史上一直走系统钥匙串,从无「遗留用户库孤儿根」迁移问题;
+// 9.x 起新增的用户域降级是当前机制、由 mitmCAInUserStore 守护,不属于"遗留",故仍无需清理。
 func mitmCleanupLegacyUserCA() error { return nil }
 
-// mitmCAInUserStore macOS 无「当前用户根存储」概念(走系统钥匙串),恒 false。
-func mitmCAInUserStore() bool { return false }
+// mitmCAVerifyTrusted 问系统"当前 ca.crt 现在到底受不受信"——【权威】判定:verify-cert 跑的就是
+// Chromium/Safari 用的 SecTrustEvaluate,合并 user+admin+system 三域、按证书指纹(非 CN)判定,
+// 跨 macOS 版本与各种残留态(装一半 / 0 条信任设置 / 同名孤儿根)都一致。取代按 dump-trust-settings
+// 文本推断信任的脆弱做法。带超时兜底,避免极端情况下 verify-cert 卡住阻塞接管。
+func mitmCAVerifyTrusted() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "security", securityVerifyCertArgs(mitmCACertPath())...).CombinedOutput()
+	return securityVerifyCertTrusted(string(out), err)
+}
 
+// mitmIsCAInstalled 当前 ca.crt 是否真受信。直接用 verify-cert 的权威结果 —— 这正是 chromiumProxy
+// 闸门(决定是否给 Claude.app 加 --proxy-server)最该问的问题:Chromium 信不信我们的 MITM 叶证书。
 func mitmIsCAInstalled() bool {
-	// 必须是「受信任根」，不能只是「存在于钥匙串」——Chromium/Safari 只信任设置里的根，
-	// 仅存在但未设信任会导致 TLS 握手 "unknown certificate"。且必须比对【当前 ca.crt 的指纹】:
-	// 仅比 CN 会被同名孤儿根骗过(CA 重生成后旧根还在 → 误判已装 → 当前叶证书验不过 → 白屏)。
+	return mitmCAVerifyTrusted()
+}
+
+// mitmCATrustedInDomain 按 dump-trust-settings + find-certificate 判定某【单个域】是否受信。
+// 注意:已不再用于"是否受信"的主判定(那走权威的 mitmCAVerifyTrusted);仅 mitmCAInUserStore
+// 还用它喂跨平台的清理守护(darwin 的 mitmCleanupLegacyUserCA 是 no-op,故其精度无关紧要)。
+func mitmCATrustedInDomain(adminDomain bool, keychain string) bool {
 	tp, err := mitmCASHA1FromFile(mitmCACertPath())
 	if err != nil || tp == "" {
 		return false
 	}
-	// ① CN 是否被设为受信根(dump-trust-settings -d 在无任何 admin 信任设置时返回非 0 = 未装)。
-	dump, derr := exec.Command("security", "dump-trust-settings", "-d").CombinedOutput()
+	dump, derr := exec.Command("security", securityDumpTrustSettingsArgs(adminDomain)...).CombinedOutput()
 	if derr != nil {
 		return false
 	}
-	// ② 钥匙串里是否存在指纹 == 当前 ca.crt 的同名证书(-Z 打印 SHA-1)。
-	find, _ := exec.Command("security", "find-certificate", "-a", "-Z",
-		"-c", mitmCACommonName, "/Library/Keychains/System.keychain").CombinedOutput()
+	find, _ := exec.Command("security", securityFindCertArgs(mitmCACommonName, keychain)...).CombinedOutput()
 	return mitmDarwinThumbprintInstalled(string(find), string(dump), tp, mitmCACommonName)
+}
+
+// mitmCAInUserStore 当前 ca.crt 是否在用户域受信(login 库)。仅供跨平台清理守护
+// (mitm_manager.go 的 caResult != caInstalledUser && !mitmCAInUserStore())调用;darwin 的
+// 清理本身是 no-op,故此处返回值不影响任何实际副作用。"是否受信"的权威判定见 mitmCAVerifyTrusted。
+func mitmCAInUserStore() bool {
+	return mitmCATrustedInDomain(false, "")
+}
+
+// mitmOpenCACertForTrust 用「钥匙串访问」打开当前 ca.crt,让用户手动把它设为"始终信任"。
+// 仅用于自动安装(admin + 用户域)都失败后的【一键兜底】:macOS 不允许程序静默信任根 CA,但能
+// 替用户把证书直接在钥匙串里打开,省掉找隐藏目录 ~/.bcai + ⌘⇧G 的导航。授权那一下 macOS 不让省。
+func mitmOpenCACertForTrust() error {
+	cert := mitmCACertPath()
+	if _, err := os.Stat(cert); err != nil {
+		return fmt.Errorf("CA cert not found: %s", cert)
+	}
+	return exec.Command("open", openKeychainCertArgs(cert)...).Run()
 }
 
 func mitmClaudeBinaryPath() string { return mitmClaudeAppBinary }

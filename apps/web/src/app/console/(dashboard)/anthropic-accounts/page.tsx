@@ -275,10 +275,12 @@ export default function ClaudeAccountsPage() {
         // 打印 /api/oauth/usage 原始返回,便于排查。
         console.log(`[claude-refresh] #${account.id} usage:`, data.raw);
       }
+      // 刷 token 成功且该号此前被判「已失效」→ 后端已顺手清掉死号判决并放回候选池。
+      const recovered = data.reactivated ? " · 已自动恢复(放回候选池)" : "";
       if (data.quotaError) {
-        toast.success(`#${account.id} token 已刷新(${data.quotaError})`);
+        toast.success(`#${account.id} token 已刷新(${data.quotaError})${recovered}`);
       } else {
-        toast.success(`#${account.id} 已刷新 · 5h ${pct(Number(data.hourlyPercent))} · 周 ${pct(Number(data.weeklyPercent))}`);
+        toast.success(`#${account.id} 已刷新 · 5h ${pct(Number(data.hourlyPercent))} · 周 ${pct(Number(data.weeklyPercent))}${recovered}`);
       }
       fetchAccounts(true);
     } catch (error) {

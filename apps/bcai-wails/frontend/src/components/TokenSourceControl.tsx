@@ -97,12 +97,23 @@ export function TokenSourceControl() {
         await waitForInjected(target, inject)
         return true
       }
-      // ── 根证书安装失败(CA_FAILED):接管已生效、推理正常,但证书装不上(多为安全软件拦截),
-      //    订阅等级不显示 Max。同为「软成功」,提示用户如何获得完整体验后返回 true。
+      // ── 根证书没装上(CA_FAILED):推理已走号池(正常),只是证书没信任、Max 不显示。
+      //    不再自称「接管成功」。macOS 首选让用户【重新接管】——点了会再弹一次系统密码框,输入即
+      //    当场装上证书并带 Max 重启(而不是把人丢进钥匙串自己摸索)。手动兜底步骤已在 detail 文案里。
       if (msg && msg.includes('CA_FAILED:')) {
         setBusy(null)
         const detail = msg.split('CA_FAILED:').pop()?.trim() || msg
-        await showAlert('接管成功 · 证书未安装', detail)
+        if (isMac) {
+          const retry = await showConfirm('推理已接管 · Max 待启用', detail, {
+            confirmLabel: '重新接管 · 装证书',
+            cancelLabel: '稍后',
+          })
+          if (retry) {
+            return await runTakeover(target, true) // 递归重试:再弹密码框,装上则带 Max 重启
+          }
+        } else {
+          await showAlert('推理已接管 · Max 待启用', detail)
+        }
         await waitForInjected(target, inject)
         return true
       }

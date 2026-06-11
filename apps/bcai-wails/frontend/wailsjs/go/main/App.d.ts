@@ -40,6 +40,8 @@ export function IsHubRunningCheck():Promise<boolean>;
 
 export function IsIDERunningCheck():Promise<boolean>;
 
+export function OpenCACertForTrust():Promise<void>;
+
 export function OpenSystemPermissionSettings():Promise<void>;
 
 export function RestartProxy():Promise<void>;

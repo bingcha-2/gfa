@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import {
+  TOKEN_DEATH_STRIKE_THRESHOLD,
+  TOKEN_DEATH_FIRST_COOLDOWN_MS,
+} from "../../token-server/token-billing";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 回归:把"永久死亡"错误按 reason 细分 + 计数升级(不再当短瞬时冷却)。
@@ -146,13 +150,22 @@ describe("永久死亡分档 + 计数升级", () => {
     console.log("[对照] verification:需验证/不可用,300min 自动复检,非永久死亡");
   });
 
-  it("对照:invalid_grant 仍是 24h 持久化(分类对了本就能做对)", async () => {
+  it("对照:invalid_grant 也走 N 击升级 —— 攒满后才 24h 持久化", async () => {
     const svc = makeService(async () => {
       throw new Error('400 {"error":"invalid_grant","error_description":"token revoked"}');
     });
-    await svc.leaseToken(REQ, { clientId: "c1", modelKey: MODEL }).catch(() => {});
+    // 前 N-1 次只软冷却、不落盘;第 N 次才升级为持久化死号。
+    for (let i = 0; i < TOKEN_DEATH_STRIKE_THRESHOLD; i++) {
+      await svc.leaseToken(REQ, { clientId: "c1", modelKey: MODEL }).catch(() => {});
+      clock += TOKEN_DEATH_FIRST_COOLDOWN_MS + 1;
+    }
+    svc.flushAccounts();
+    const a1 = JSON.parse(fs.readFileSync(accountsFilePath, "utf8")).accounts.find((a: any) => a.id === 1);
+    expect(a1.quotaStatus).toBe("error");
+    expect(a1.quotaStatusReason).toBe("invalid_grant");
+
     clock += 60 * MIN;
-    expect(await canLease(svc)).toBe(false); // 1h 后仍封(24h 档)
-    console.log("[对照] invalid_grant:24h 永久封不变");
+    expect(await canLease(svc)).toBe(false); // 升级后 1h 仍封(24h 档)
+    console.log("[对照] invalid_grant:N 击升级后 24h 持久化");
   });
 });

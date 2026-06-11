@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { TOKEN_DEATH_STRIKE_THRESHOLD } from "../../token-server/token-billing";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 绑定卡忽略冷却:绑定卡只有这一个号、无号可换,429/503 这类【可恢复冷却】对它
@@ -113,17 +114,25 @@ describe("绑定卡忽略冷却", () => {
     console.log(`[池子] opus 503 仍被冷却挡:${msg}`);
   });
 
-  it("号彻底死了(invalid_grant)→ 绑定卡也救不了,仍拦并给'鉴权失效'", async () => {
-    // refreshToken 抛 invalid_grant → markAccountTokenError 直接把号标 error。
+  it("号彻底死了(invalid_grant)→ 连撞 N 次升级后,绑定卡仍拦并给'鉴权失效'", async () => {
+    // invalid_grant 改为 N 击确认:首次只软冷却(绑定卡此时给"繁忙",不误报死);
+    // 绑定卡无视软冷却、每次都重试真上游 → 同 clock 连撞即可攒满 strike,第 N 次升级为
+    // 持久化死号,boundUnavailableMessage 才给"鉴权失效"。
     const svc = makeService("anthropic", async () => {
       throw new Error("invalid_grant");
     });
-    const msg = await svc
-      .leaseToken(BOUND_REQ, { clientId: "c1", modelKey: OPUS })
-      .then(() => "")
-      .catch((e: any) => String(e?.message || e));
-    expect(msg).toContain("鉴权失效");
-    console.log(`[绑定] 死号仍拦:${msg}`);
+    let firstMsg = "";
+    let lastMsg = "";
+    for (let i = 0; i < TOKEN_DEATH_STRIKE_THRESHOLD; i++) {
+      lastMsg = await svc
+        .leaseToken(BOUND_REQ, { clientId: "c1", modelKey: OPUS })
+        .then(() => "")
+        .catch((e: any) => String(e?.message || e));
+      if (i === 0) firstMsg = lastMsg;
+    }
+    expect(firstMsg).not.toContain("鉴权失效"); // 首击只软冷却,不误报死
+    expect(lastMsg).toContain("鉴权失效"); // 第 N 击升级 → 死号文案
+    console.log(`[绑定] 首击=${firstMsg} / 第 N 击=${lastMsg}`);
   });
 
   it("绑定卡:opus 冷却被无视、haiku 也照常(两 model 都能租)", async () => {

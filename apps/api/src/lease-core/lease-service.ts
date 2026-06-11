@@ -18,6 +18,8 @@ import {
   REMOTE_ACCOUNT_ERROR_THRESHOLD,
   REMOTE_TRANSIENT_ERROR_COOLDOWN_MS,
   TOKEN_REFRESH_FAILURE_COOLDOWN_MS,
+  TOKEN_DEATH_STRIKE_THRESHOLD,
+  TOKEN_DEATH_FIRST_COOLDOWN_MS,
   PERMANENT_DEATH_STRIKE_THRESHOLD,
   PERMANENT_DEATH_FIRST_COOLDOWN_MS,
   PERMANENT_DEATH_COOLDOWN_MS,
@@ -117,6 +119,9 @@ type AccountRuntimeState = {
   consecutiveErrors: number;
   transientErrors: number;
   deathStrikes: number;
+  // invalid_grant「N 击确认」计数:每次 token 刷新撞 invalid_grant +1,刷成功清零。
+  // 攒满 TOKEN_DEATH_STRIKE_THRESHOLD 才升级为持久化死号,前几次只软冷却。
+  tokenDeathStrikes: number;
   lastUsedAt: number;
   blockedModels: Map<string, { modelKey: string; reason: string; blockedAt: number; blockedUntil: number }>;
 };
@@ -496,6 +501,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         rotated = refreshBefore !== (account as any).refreshToken;
         const runtime = this.ensureRuntime(account.id);
         runtime.consecutiveErrors = 0;
+        runtime.tokenDeathStrikes = 0; // 刷 token 成功 → 清掉 invalid_grant 软冷却计数
         lastError = null;
         break;
       } catch (error) {
@@ -1348,7 +1354,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!state) {
       state = {
         quotaStatus: "ok", quotaStatusReason: "", exhaustedAt: 0,
-        exhaustedUntil: 0, consecutiveErrors: 0, transientErrors: 0, deathStrikes: 0, lastUsedAt: 0,
+        exhaustedUntil: 0, consecutiveErrors: 0, transientErrors: 0, deathStrikes: 0,
+        tokenDeathStrikes: 0, lastUsedAt: 0,
         blockedModels: new Map(),
       };
       this.accountRuntime.set(accountId, state);
@@ -1405,10 +1412,24 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     state.consecutiveErrors++;
 
     if (isPermanentTokenRefreshError(errorMessage)) {
-      state.quotaStatus = "error";
-      state.quotaStatusReason = "invalid_grant";
-      state.exhaustedUntil = this.now() + TOKEN_REFRESH_FAILURE_COOLDOWN_MS;
-      this.persistQuotaStatus(accountId, state);
+      // N 击确认:单次 invalid_grant 极可能瞬时(出口代理抖动 / OAuth 反滥用误判 /
+      // family-reuse 误报)。前 N-1 次只软冷却(quotaStatus=exhausted、不落盘、可自动
+      // 复检),给一次独立重试自愈的机会;攒满第 N 次(两击之间无刷新成功)才升级为
+      // 持久化「已失效·鉴权失效」。任一次刷 token 成功即把 tokenDeathStrikes 清零。
+      state.tokenDeathStrikes++;
+      const now = this.now();
+      if (state.tokenDeathStrikes >= TOKEN_DEATH_STRIKE_THRESHOLD) {
+        state.quotaStatus = "error";
+        state.quotaStatusReason = "invalid_grant";
+        state.exhaustedUntil = now + TOKEN_REFRESH_FAILURE_COOLDOWN_MS;
+        this.persistQuotaStatus(accountId, state);
+      } else {
+        state.quotaStatus = "exhausted";          // 黄、出池、可自动复检
+        state.quotaStatusReason = "invalid_grant"; // 保留真因供遥测/复现
+        state.exhaustedAt = now;
+        state.exhaustedUntil = now + TOKEN_DEATH_FIRST_COOLDOWN_MS;
+        // 故意不 persistQuotaStatus:软冷却态不跨重启,瞬时误判不留痕。
+      }
     } else if (state.consecutiveErrors >= REMOTE_ACCOUNT_ERROR_THRESHOLD) {
       state.quotaStatus = "error";
       state.quotaStatusReason = "consecutive_errors";
@@ -1455,9 +1476,38 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     state.consecutiveErrors = 0;
     state.transientErrors = 0;
     state.deathStrikes = 0;
+    state.tokenDeathStrikes = 0;
     state.blockedModels.clear();
     this.clearPersistedAccountError(accountId);
     return { ok: true };
+  }
+
+  /**
+   * After a manual token refresh proves the account's auth is alive again, clear
+   * ONLY a persisted dead verdict (quotaStatus==="error": invalid_grant /
+   * consecutive_errors / verification_required) and put it back in the pool —
+   * sparing the operator a second "恢复" click after a successful "刷新".
+   *
+   * Also clears a PENDING invalid_grant soft strike (tokenDeathStrikes>0, still
+   * quotaStatus=exhausted, not yet the persisted verdict): the refresh just proved
+   * auth is alive, so the account shouldn't sit out its remaining soft cooldown.
+   *
+   * Deliberately a no-op for healthy accounts AND for merely quota-exhausted ones
+   * (exhausted/cooling = "额度恢复中") with no auth strike pending: a fresh access_token
+   * does not replenish the 5h/weekly quota, so reactivating would yank a still-throttled
+   * account back into rotation and instantly re-rate-limit it. Only the auth-dead /
+   * auth-strike state is something a token refresh can actually cure.
+   */
+  reactivateIfAuthDead(accountId: number): { ok: boolean; reactivated: boolean } {
+    if (!Number.isFinite(accountId) || accountId <= 0) return { ok: false, reactivated: false };
+    const runtime = this.accountRuntime.get(accountId);
+    const runtimeDead = runtime?.quotaStatus === "error";
+    const strikePending = (runtime?.tokenDeathStrikes ?? 0) > 0;
+    const persistedDead =
+      (this.readAccounts().find((a) => a.id === accountId) as any)?.quotaStatus === "error";
+    if (!runtimeDead && !persistedDead && !strikePending) return { ok: true, reactivated: false };
+    this.reactivateAccount(accountId);
+    return { ok: true, reactivated: true };
   }
 
   /**
@@ -1596,6 +1646,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     state.consecutiveErrors = 0;
     state.transientErrors = 0;
     state.deathStrikes = 0;
+    state.tokenDeathStrikes = 0;
     state.lastUsedAt = this.now();
 
     const normalized = normalizeModelKey(modelKey);

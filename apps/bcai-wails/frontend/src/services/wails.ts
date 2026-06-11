@@ -13,6 +13,7 @@ import {
   ClearLogs as _ClearLogs,
   GetIDEStatus,
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
+  OpenCACertForTrust as _OpenCACertForTrust,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
@@ -135,6 +136,12 @@ export async function getIDEStatus(): Promise<IDEStatus> {
 
 export async function openSystemPermissionSettings(): Promise<void> {
   return _OpenSystemPermissionSettings()
+}
+
+// 用系统证书 UI 打开根 CA(macOS:钥匙串访问;Windows:证书对话框),供用户手动设"始终信任"。
+// 仅在自动安装(CA_FAILED)失败后兜底用 —— 省掉用户找隐藏目录 ~/.bcai 的麻烦。
+export async function openCACertForTrust(): Promise<void> {
+  return _OpenCACertForTrust()
 }
 
 export async function injectSelected(targets: string[]): Promise<string> {

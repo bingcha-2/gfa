@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"runtime"
+)
 
 // ─── Takeover 抽象层 ────────────────────────────────────────────────────────
 //
@@ -27,6 +30,39 @@ type TakeoverTarget interface {
 
 func takeoverProxyURL(proxyPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+}
+
+// caTakeoverHint 按【平台 + 根 CA 安装结局】生成接管后的面向用户反馈(含前端识别用的
+// CA_DEGRADED: / CA_FAILED: 前缀)。拆成纯函数 + 带 goos 入参,是因为"装证书失败/降级后该
+// 怎么办"在两平台是两套完全不同的操作:Windows 走 UAC / 右键以管理员身份运行;macOS 没有
+// "以管理员身份运行 App"这回事 —— 得用管理员账户登录、在本机物理屏幕前操作,或在钥匙串访问里
+// 手动设"始终信任"(且证书在隐藏目录 ~/.bcai,得用访达 ⌘⇧G 前往,不能直接双击)。
+func caTakeoverHint(goos string, result caInstallResult) string {
+	switch result {
+	case caInstalledUser:
+		if goos == "windows" {
+			return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
+				"但根证书因权限受限,已降级安装到「当前用户」证书库。若打开 Claude 出现【白屏】,请按任一方式处理后重新接管:\n" +
+				"1. 临时关闭安全软件(火绒 / 360 等)的「主动防御」;\n" +
+				"2. 或右键以【管理员身份】重新运行本程序。"
+		}
+		return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
+			"根证书因权限受限,已降级安装到「当前用户」信任域(免管理员),订阅等级通常仍可显示为 Max。" +
+			"若未显示或打开异常,请用【管理员账户】登录、在本机物理屏幕前(勿用远程桌面 / 屏幕共享)重新接管。"
+	case caInstallFailed:
+		// 不再自称"接管成功":推理确实 OK,但证书没装、Max 没出来,把两件事拆开讲。
+		if goos == "windows" {
+			return "CA_FAILED:✅ 推理已接管,号池可正常使用(发消息照常)。\n" +
+				"⚠️ 但根证书没装上,Max 等级标识不会显示。\n\n" +
+				"想要 Max:右键以【管理员身份】重新运行本程序、再重新接管;若被安全软件(火绒 / 360 等)拦截,先在其中放行。"
+		}
+		return "CA_FAILED:✅ 推理已接管,号池可正常使用(发消息照常)。\n" +
+			"⚠️ 但根证书没装上,Max 等级标识不会显示。\n\n" +
+			"点【重新接管 · 装证书】会再弹一次系统密码框,输入即可装上并显示 Max(会重启 Claude)。刚才若点了「取消」,再来一次输入密码即可。\n\n" +
+			"反复装不上(安全软件拦截 / 远程会话弹不出框 / 受管 Mac)可手动信任:打开「钥匙串访问」,找到「BingchaAI Local Root」→ 双击 → 展开「信任」→「使用此证书时」选『始终信任』→ 输密码。"
+	default: // caInstalledMachine:装进本机/系统域,最优,无需任何提示
+		return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)..."
+	}
 }
 
 // 注册表:新增产品在这里加一行即可。
@@ -332,22 +368,9 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 		}
 	}()
 
-	// ④ 按 CA 安装结局给前端分级反馈(前缀供前端识别弹对应提示;接管本身已照常进行)。
-	switch caResult {
-	case caInstalledUser:
-		// 降级装进【当前用户】证书库:推理正常,但少数机器 Chromium 不信用户级证书 → 打开可能白屏。
-		return "CA_DEGRADED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
-			"但根证书因权限受限,已降级安装到「当前用户」证书库。若打开 Claude 出现【白屏】,说明当前系统不信任用户级证书,请按任一方式处理后重新接管:\n" +
-			"1. 临时关闭安全软件(火绒 / 360 等)的「主动防御」;\n" +
-			"2. 或右键以【管理员身份】重新运行本程序。", nil
-	case caInstallFailed:
-		// 本机库 + 用户库都失败(多为安全软件拦截):Node 侧推理照走号池,仅 Chromium 侧订阅等级不显示 Max。
-		return "CA_FAILED:Claude Desktop 已接管,推理功能可正常使用。\n\n" +
-			"但根证书安装被拦截(通常是安全软件的主动防御),订阅等级不会显示为 Max。如需完整体验,请在安全软件中放行后," +
-			"以【管理员身份】重新运行本程序并重新接管。", nil
-	default:
-		return "Claude Desktop: ✓ 已接管,正在重启 Claude(将中断 Cowork 会话)...", nil
-	}
+	// ④ 按【平台 + CA 安装结局】给前端分级反馈(前缀供前端识别弹对应提示;接管本身已照常进行)。
+	//    平台相关文案见 caTakeoverHint:Windows 走 UAC/管理员运行,macOS 走管理员账户/钥匙串手动信任。
+	return caTakeoverHint(runtime.GOOS, caResult), nil
 }
 
 func (claudeDesktopTarget) Restore() (string, error) {

@@ -162,6 +162,20 @@ export const PERMANENT_DEATH_COOLDOWN_MS = Math.max(
   Number(process.env.BCAI_PERMANENT_DEATH_COOLDOWN_MS || 24 * 60 * 60 * 1000),
 );
 
+// ── invalid_grant「N 击确认」分档 ────────────────────────────────────────────
+// 单次 invalid_grant 极可能瞬时(出口代理抖动 / OAuth 反滥用误判 / family-reuse 误报),
+// 一击就持久化死号 + 24h 太狠。改成 strike 升级:前 N-1 次只软冷却(不落盘、可自动复检),
+// 攒满第 N 次才升级为持久化「已失效·鉴权失效」(等同原 invalid_grant 待遇)。两击之间任一
+// 次刷 token 成功即清零。瞬时误判在重试里自愈,真死号在 N×软冷却 内复发确认。
+export const TOKEN_DEATH_STRIKE_THRESHOLD = Math.max(
+  1,
+  Number(process.env.BCAI_TOKEN_DEATH_STRIKE_THRESHOLD || 5),
+);
+export const TOKEN_DEATH_FIRST_COOLDOWN_MS = Math.max(
+  5 * 1000,
+  Number(process.env.BCAI_TOKEN_DEATH_FIRST_COOLDOWN_MS || 30 * 1000),
+);
+
 // reason 形如 http_403_service_disabled / http_400_location_unsupported
 // (Go 端 buildAccountProblemReason → http_<code>_<base>)。这些是账号/项目级、
 // 非自愈的死亡;明确【排除】用户可自行恢复的验证挑战(account_verification_required)。

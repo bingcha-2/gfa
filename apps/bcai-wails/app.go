@@ -463,6 +463,13 @@ func (a *App) OpenSystemPermissionSettings() error {
 	}
 }
 
+// OpenCACertForTrust 用系统证书 UI 打开根 CA(macOS:钥匙串访问;Windows:证书对话框),
+// 供用户手动设为"始终信任"。仅作自动安装(admin + 用户域)都失败后的一键兜底 —— macOS 不允许
+// 程序静默信任根 CA,但能替用户把证书直接打开,省掉找隐藏目录 ~/.bcai + 导航。前端在 CA_FAILED 时调用。
+func (a *App) OpenCACertForTrust() error {
+	return mitmOpenCACertForTrust()
+}
+
 // IsIDERunningCheck 检测 IDE 是否正在运行（前端用于提示重启）
 func (a *App) IsIDERunningCheck() bool {
 	return IsIDERunning()
@@ -623,4 +630,3 @@ func (a *App) GetFaqData() map[string]interface{} {
 
 	return result
 }
-

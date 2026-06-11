@@ -78,6 +78,10 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function OpenCACertForTrust() {
+  return window['go']['main']['App']['OpenCACertForTrust']();
+}
+
 export function OpenSystemPermissionSettings() {
   return window['go']['main']['App']['OpenSystemPermissionSettings']();
 }
