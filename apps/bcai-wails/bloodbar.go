@@ -62,10 +62,14 @@ type bucketQuota struct {
 	HasAccount      bool
 	AccountFraction float64 // 0~1;-1 = 已查询但无额度信息(未知)
 	AccountResetAt  int64   // 整号额度下次刷新的 epoch ms(0=未知)
-	// 我的份额维度:这张卡分到的 fair-share 份额还剩多少(仅绑定卡多租户时有)。
+	// 我的份额维度(5h 窗口):这张卡分到的 fair-share 份额还剩多少(仅绑定卡多租户时有)。
 	HasMy      bool
 	MyFraction float64
 	MyResetAt  int64
+	// 我的份额维度(周窗口):同上,但对应 5h 之外的「周」公平份额(仅 codex/anthropic 下发)。
+	HasMyWeekly      bool
+	MyWeeklyFraction float64
+	MyWeeklyResetAt  int64
 }
 
 var (
@@ -109,6 +113,21 @@ func recordMyBucketFraction(bucket string, fraction float64, resetAt int64) {
 	q.HasMy = true
 	q.MyFraction = fraction
 	q.MyResetAt = resetAt
+	boundFractions[bucket] = q
+	boundFracMu.Unlock()
+}
+
+// recordMyWeeklyBucketFraction 按复合桶 key 记录【我的份额·周】(fair-share 周窗口)剩余分数,
+// 保留已有的整号值与 5h 份额值。用于 lease 响应里的 weeklyFairShareQuota(周血条视角)。
+func recordMyWeeklyBucketFraction(bucket string, fraction float64, resetAt int64) {
+	if bucket == "" {
+		return
+	}
+	boundFracMu.Lock()
+	q := boundFractions[bucket]
+	q.HasMyWeekly = true
+	q.MyWeeklyFraction = fraction
+	q.MyWeeklyResetAt = resetAt
 	boundFractions[bucket] = q
 	boundFracMu.Unlock()
 }
@@ -173,6 +192,36 @@ func snapshotMyResets(nowMs int64) map[string]int64 {
 	for k, v := range boundFractions {
 		if v.HasMy && v.MyResetAt > 0 {
 			if rem := v.MyResetAt - nowMs; rem > 0 {
+				out[k] = rem
+			} else {
+				out[k] = 0
+			}
+		}
+	}
+	return out
+}
+
+// snapshotMyWeeklyFractions 返回各 bucket【我的份额·周】剩余分数拷贝(仅含有周份额的桶)。
+func snapshotMyWeeklyFractions() map[string]float64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]float64)
+	for k, v := range boundFractions {
+		if v.HasMyWeekly {
+			out[k] = v.MyWeeklyFraction
+		}
+	}
+	return out
+}
+
+// snapshotMyWeeklyResets 返回各 bucket【我的份额·周】额度恢复的剩余毫秒(供周血条显示倒计时)。
+func snapshotMyWeeklyResets(nowMs int64) map[string]int64 {
+	boundFracMu.RLock()
+	defer boundFracMu.RUnlock()
+	out := make(map[string]int64)
+	for k, v := range boundFractions {
+		if v.HasMyWeekly && v.MyWeeklyResetAt > 0 {
+			if rem := v.MyWeeklyResetAt - nowMs; rem > 0 {
 				out[k] = rem
 			} else {
 				out[k] = 0

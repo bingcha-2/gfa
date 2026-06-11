@@ -297,6 +297,35 @@ describe("周窗口公平份额(trackWeekly)", () => {
   });
 });
 
+describe("getCardWeeklyQuotaFractions(周血条)", () => {
+  const T = 1_700_000_000_000;
+
+  it("返回周窗口 fraction,键为基础桶名;5h 接口仍不含周键", () => {
+    const t = makeClaudeTracker(() => T, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // 500 CU → 5h & 周
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // 周预算=500/0.5=1000;每卡=125;已用500 → fraction 0
+    const wk = t.getCardWeeklyQuotaFractions(1, "c1");
+    expect(wk["anthropic-claude"]).toBeDefined();
+    expect(wk["anthropic-claude"].fraction).toBeCloseTo(0, 5);
+    // 键是基础桶名(无 ::weekly 后缀),与 5h 对齐
+    expect(Object.keys(wk).some((k) => k.includes("weekly"))).toBe(false);
+    // getCardQuotaFractions(5h)仍只回 5h,不混入周键
+    const fh = t.getCardQuotaFractions(1, "c1");
+    expect(Object.keys(fh)).toContain("anthropic-claude");
+    expect(Object.keys(fh).some((k) => k.includes("weekly"))).toBe(false);
+  });
+
+  it("trackWeekly 关闭 → 周血条为空", () => {
+    const t = new FairShareTracker({
+      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      accountShareCapacity: 8, now: () => T,
+    });
+    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8");
+    expect(t.getCardWeeklyQuotaFractions(1, "c1")).toEqual({});
+    expect(t.isWeeklyTracked()).toBe(false);
+  });
+});
+
 describe("trackWeekly 默认关闭:行为与历史一致(antigravity)", () => {
   it("不创建周窗口,周喂数据方法 no-op", () => {
     const T = 1_700_000_000_000;

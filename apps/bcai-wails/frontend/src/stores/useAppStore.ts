@@ -34,8 +34,10 @@ interface AppState {
   quotaMode: string  // 'static' | 'dynamic' | 'unlimited'
   accountFractions: Record<string, number>  // 整号上游余量(号余量条)
   accountResetMs: Record<string, number>
-  myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条)
+  myFractions: Record<string, number>       // 我的 fair-share 份额(绑定卡的我的卡条·5h)
   myResetMs: Record<string, number>
+  myWeeklyFractions: Record<string, number> // 我的 fair-share 份额·周(仅 codex/anthropic)
+  myWeeklyResetMs: Record<string, number>
   cardWeight: number                        // 本卡 fair-share 份额权重(份额 X/Y 的 X)
   cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
   cardBuckets: Record<string, { used: number; limit: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源)
@@ -109,6 +111,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   accountResetMs: {},
   myFractions: {},
   myResetMs: {},
+  myWeeklyFractions: {},
+  myWeeklyResetMs: {},
   cardWeight: 1,
   cardShareCapacity: 8,
   cardBuckets: {},
@@ -163,6 +167,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         accountResetMs: data.leaser?.accountResetMs || {},
         myFractions: data.leaser?.myFractions || {},
         myResetMs: data.leaser?.myResetMs || {},
+        myWeeklyFractions: data.leaser?.myWeeklyFractions || {},
+        myWeeklyResetMs: data.leaser?.myWeeklyResetMs || {},
         cardWeight: data.leaser?.accessKeyStatus?.weight || 1,
         cardShareCapacity: data.leaser?.accessKeyStatus?.shareCapacity || 8,
         cardBuckets: Object.fromEntries(

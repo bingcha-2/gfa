@@ -62,6 +62,9 @@ export interface StatsResponse {
     accountResetMs?: Record<string, number>
     myFractions?: Record<string, number>
     myResetMs?: Record<string, number>
+    // 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)
+    myWeeklyFractions?: Record<string, number>
+    myWeeklyResetMs?: Record<string, number>
     codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     boundAccounts?: BoundAccountInfo[]

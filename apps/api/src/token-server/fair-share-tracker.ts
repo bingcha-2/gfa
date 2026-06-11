@@ -377,6 +377,44 @@ export class FairShareTracker {
     return out;
   }
 
+  /**
+   * 周窗口的每卡剩余 fraction(供「周血条」)。键用去掉 `::weekly` 后缀的基础桶名,与 5h 对齐,
+   * 客户端按同一 bucket 同时拿到 5h 与周两条。仅 trackWeekly(codex/anthropic)时有数据。
+   */
+  getCardWeeklyQuotaFractions(accountId: number, cardId: string): Record<string, { fraction: number; resetAt: number }> {
+    if (!this.trackWeekly) return {};
+    const bucketTrackers = this.trackers.get(accountId);
+    if (!bucketTrackers) return {};
+
+    const now = this.nowFn();
+    const weight = this.opts.getCardWeight(cardId);
+    const capacity = this.opts.accountShareCapacity;
+    const out: Record<string, { fraction: number; resetAt: number }> = {};
+
+    for (const [key, tracker] of bucketTrackers) {
+      if (!isWeeklyBucketKey(key)) continue; // 只取周窗口
+      this.ensureWindow(tracker, now);
+      const baseBucket = baseBucketOf(key);
+      const resetAt = tracker.windowStart + tracker.windowMs;
+      if (tracker.lastFraction >= 0.90) {
+        out[baseBucket] = { fraction: tracker.lastFraction, resetAt };
+        continue;
+      }
+      const perCardBudget = tracker.estimatedBudget * (weight / capacity);
+      const myUsage = tracker.perCard.get(cardId) || 0;
+      const remaining = Math.max(0, perCardBudget - myUsage);
+      const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
+      out[baseBucket] = { fraction, resetAt };
+    }
+
+    return out;
+  }
+
+  /** 是否启用周窗口(codex/anthropic=true)。供 lease 响应决定是否下发「周血条」。 */
+  isWeeklyTracked(): boolean {
+    return this.trackWeekly;
+  }
+
   // ── Internal ────────────────────────────────────────────────────────────
 
   private getOrCreate(accountId: number, bucket: string): BucketTracker {

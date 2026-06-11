@@ -557,6 +557,20 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         )
       : rawFairShare;
 
+    // 周血条:仅启用周窗口的线(codex/anthropic)下发,结构与 fairShareQuota 平行(同 bucket 键)。
+    // 旧客户端忽略该字段、不受影响。空数据(首次激活/重启)同样回落 100% 满条。
+    const weeklyTracked = boundAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
+    const rawWeeklyFairShare = weeklyTracked
+      ? this.fairShareTracker!.getCardWeeklyQuotaFractions(boundAccountId, auth.record.id)
+      : undefined;
+    const weeklyFairShareQuota = !weeklyTracked
+      ? undefined
+      : (rawWeeklyFairShare && Object.keys(rawWeeklyFairShare).length === 0)
+        ? Object.fromEntries(
+            Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: Date.now() + 7 * 24 * 60 * 60 * 1000 }]),
+          )
+        : rawWeeklyFairShare;
+
     return {
       ok: true,
       leaseId: lease.leaseId,
@@ -595,6 +609,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
       fairShareQuota,
+      // 周窗口的每卡 fraction(「周血条」),仅 codex/anthropic 绑卡;undefined → JSON 中省略。
+      ...(weeklyFairShareQuota ? { weeklyFairShareQuota } : {}),
     };
   }
 
