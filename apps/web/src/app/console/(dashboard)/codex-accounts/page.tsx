@@ -599,11 +599,11 @@ export default function CodexAccountsPage() {
                     <TableCell>
                       <AccountStatusCell account={a} />
                     </TableCell>
-                    <TableCell className="max-w-[240px]">
+                    <TableCell>
                       {proxyEditId === a.id ? (
                         <div className="flex items-center gap-1">
                           <Input
-                            className="h-7 text-xs"
+                            className="h-7 w-[320px] text-xs"
                             autoFocus
                             placeholder="host:port:user:pass 或 http(s)://"
                             value={proxyEditVal}

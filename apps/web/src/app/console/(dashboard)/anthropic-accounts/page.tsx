@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
@@ -94,10 +94,24 @@ export default function ClaudeAccountsPage() {
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
-  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
+  // 本次尝试的起始时刻(点「发起 OAuth」时记)。抓邮件时只接受此刻之后到达的登录邮件,
+  // 避免捞到上一次登录留下的旧链接(magic link 约 15 分钟过期)。
+  const [attemptStartedAt, setAttemptStartedAt] = useState(0);
   const [oauthCallbackInput, setOauthCallbackInput] = useState("");
   const [oauthStatusText, setOauthStatusText] = useState("");
   const [oauthSubmitting, setOauthSubmitting] = useState(false);
+
+  // 一键导入：email----password----sessionKey----proxyUrl
+  const [importLine, setImportLine] = useState("");
+  const [importParsed, setImportParsed] = useState<{ email: string; password: string; sessionKey: string; proxyUrl: string } | null>(null);
+  const [imapFetching, setImapFetching] = useState(false);
+  const [imapResult, setImapResult] = useState<{ url?: string; error?: string; date?: string } | null>(null);
+  const [followingLink, setFollowingLink] = useState(false);
+  const [followResult, setFollowResult] = useState<{ ok: boolean; email?: string; error?: string; bodySnippet?: string } | null>(null);
+  const [probeInfo, setProbeInfo] = useState<{ status: number; location?: string; bodySnippet?: string } | null>(null);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoPhase, setAutoPhase] = useState("");
+  const [autoResult, setAutoResult] = useState<{ ok: boolean; email?: string; error?: string; phase?: string } | null>(null);
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -147,21 +161,25 @@ export default function ClaudeAccountsPage() {
 
   async function handleOAuthStart() {
     setOauthStarting(true);
+    setProbeInfo(null);
+    setFollowResult(null);
+    setAttemptStartedAt(Date.now());
     try {
       const res = await fetch("/api/rosetta/anthropic-oauth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proxyUrl: importParsed?.proxyUrl || "" }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Anthropic OAuth start failed");
       setOauthLoginId(data.loginId);
-      setOauthAuthUrl(data.authUrl || "");
+     
       setOauthCallbackInput("");
       setOauthStatusText("");
-      window.open(data.authUrl, "_blank", "noopener,noreferrer");
+      if (data.probeInfo) setProbeInfo(data.probeInfo);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Anthropic OAuth start failed");
-      setOauthLoginId(""); setOauthAuthUrl(""); setOauthStatusText("");
+      setOauthLoginId(""); setOauthStatusText("");
     } finally {
       setOauthStarting(false);
     }
@@ -184,7 +202,7 @@ export default function ClaudeAccountsPage() {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "完成授权失败");
       toast.success(data.isUpdate ? `OAuth 已更新 ${data.email}` : `OAuth 已添加 ${data.email}`);
-      setOauthLoginId(""); setOauthAuthUrl(""); setOauthCallbackInput(""); setOauthStatusText("");
+      setOauthLoginId(""); setOauthCallbackInput(""); setOauthStatusText("");
       fetchAccounts();
     } catch (error) {
       const msg = error instanceof Error ? error.message : "完成授权失败";
@@ -197,7 +215,7 @@ export default function ClaudeAccountsPage() {
 
   async function handleOAuthCancel() {
     const loginId = oauthLoginId;
-    setOauthLoginId(""); setOauthStatusText(""); setOauthAuthUrl(""); setOauthCallbackInput("");
+    setOauthLoginId(""); setOauthStatusText(""); setOauthCallbackInput("");
     if (!loginId) return;
     try {
       await fetch("/api/rosetta/anthropic-oauth-cancel", {
@@ -207,6 +225,200 @@ export default function ClaudeAccountsPage() {
       });
     } catch {
       // best-effort
+    }
+  }
+
+  // 出口统一走 SOCKS5：把代理串归一成 socks5://user:pass@host:port，
+  // 不管它原来写的是 http:// / 裸 host:port:user:pass / 还是已经是 socks。
+  function toSocks5(raw: string): string {
+    const s = (raw || "").trim();
+    if (!s) return "";
+    // 已经是 socks(4/5)就原样保留
+    if (/^socks[45]?h?:\/\//i.test(s)) return s;
+    // 带 http(s):// 前缀 → 换成 socks5://
+    if (/^https?:\/\//i.test(s)) return s.replace(/^https?:\/\//i, "socks5://");
+    // 裸 host:port:user:pass
+    const p = s.split(":");
+    if (p.length === 4) return `socks5://${p[2]}:${p[3]}@${p[0]}:${p[1]}`;
+    // 裸 host:port（无鉴权）或 user:pass@host:port（无 scheme）
+    return `socks5://${s}`;
+  }
+
+  function parseImportLine(line: string) {
+    const parts = line.trim().split("----");
+    if (parts.length < 3) return null;
+    // last separator might be --- (3 dashes) for proxy
+    let proxyUrl = "";
+    if (parts.length >= 4) {
+      proxyUrl = parts[3].trim();
+    } else {
+      const last = parts[parts.length - 1];
+      const idx = last.lastIndexOf("---");
+      if (idx > 0) {
+        parts[parts.length - 1] = last.slice(0, idx);
+        proxyUrl = last.slice(idx + 3).trim();
+      }
+    }
+    return {
+      email: parts[0]?.trim() || "",
+      password: parts[1]?.trim() || "",
+      sessionKey: parts[2]?.trim() || "",
+      proxyUrl: toSocks5(proxyUrl),
+    };
+  }
+
+  function handleImportParse() {
+    const parsed = parseImportLine(importLine);
+    if (!parsed || !parsed.email || !parsed.password) {
+      toast.error("格式不对，需要: 邮箱----密码----sessionKey----代理URL");
+      return;
+    }
+    setImportParsed(parsed);
+    toast.success(`已解析: ${parsed.email}`);
+  }
+
+  async function handleFetchMagicLink() {
+    if (!importParsed) {
+      toast.error("请先粘贴并解析账号行");
+      return;
+    }
+    setImapFetching(true);
+    setImapResult(null);
+    try {
+      // 只接受「本次尝试开始」之后到达的邮件;并且无论如何不取超过 15 分钟的旧链接(必已过期)。
+      // 同时轮询等待邮件到达(触发后投递有几秒延迟)。
+      const since = Math.max(attemptStartedAt || 0, Date.now() - 15 * 60 * 1000);
+      const res = await fetch("/api/rosetta/anthropic-fetch-magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: importParsed.email,
+          password: importParsed.password,
+          sinceMs: since,
+          waitMs: 30000,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setImapResult({ error: data.error || "获取失败" });
+        toast.error(data.error || "获取失败");
+      } else {
+        setImapResult({ url: data.url, date: data.date });
+        toast.success("已获取登录链接");
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "请求失败";
+      setImapResult({ error: msg });
+      toast.error(msg);
+    } finally {
+      setImapFetching(false);
+    }
+  }
+
+  async function handleFollowMagicLink() {
+    if (!imapResult?.url || !oauthLoginId) {
+      toast.error("请先获取邮件链接并发起 OAuth");
+      return;
+    }
+    setFollowingLink(true);
+    setFollowResult(null);
+    try {
+      const res = await fetch("/api/rosetta/anthropic-follow-magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: oauthLoginId, url: imapResult.url }),
+      });
+      const data = await res.json();
+      if (data.ok && data.status === "completed") {
+        setFollowResult({ ok: true, email: data.email });
+        toast.success(data.isUpdate ? `OAuth 已更新 ${data.email}` : `OAuth 已添加 ${data.email}`);
+        setOauthLoginId(""); setOauthCallbackInput(""); setOauthStatusText("");
+        setImapResult(null);
+        fetchAccounts();
+      } else {
+        setFollowResult({ ok: false, error: data.error, bodySnippet: data.bodySnippet });
+        toast.error(data.error || "跟随链接失败");
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "请求失败";
+      setFollowResult({ ok: false, error: msg });
+      toast.error(msg);
+    } finally {
+      setFollowingLink(false);
+    }
+  }
+
+  async function handleAutoOAuth() {
+    if (!importParsed) {
+      toast.error("请先粘贴并解析账号行");
+      return;
+    }
+    if (!importParsed.proxyUrl) {
+      toast.error("全自动需要 SOCKS5 代理");
+      return;
+    }
+    if (!importParsed.password) {
+      toast.error("全自动需要邮箱密码(用于抓取 magic link)");
+      return;
+    }
+    setAutoRunning(true);
+    setAutoResult(null);
+    setAutoPhase("starting");
+    try {
+      // 1. Fire the async job — returns taskId immediately
+      const res = await fetch("/api/rosetta/anthropic-auto-oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: importParsed.email,
+          password: importParsed.password,
+          proxyUrl: importParsed.proxyUrl,
+          sessionKey: importParsed.sessionKey,
+        }),
+      });
+      const start = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
+      if (!start.ok || !start.taskId) {
+        setAutoResult({ ok: false, error: start.error || "启动失败" });
+        toast.error(start.error || "启动失败");
+        setAutoRunning(false);
+        return;
+      }
+
+      // 2. Poll for status every 2s
+      const taskId = start.taskId;
+      const poll = async (): Promise<void> => {
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const sr = await fetch(`/api/rosetta/anthropic-auto-oauth-status?taskId=${taskId}`);
+            const st = await sr.json().catch(() => null);
+            if (!st) continue;
+            setAutoPhase(st.phase || "");
+            if (st.status === "done") {
+              setAutoResult({ ok: true, email: st.email });
+              toast.success(st.isUpdate ? `全自动已更新 ${st.email}` : `全自动已添加 ${st.email}`);
+              fetchAccounts();
+              return;
+            }
+            if (st.status === "error") {
+              setAutoResult({ ok: false, error: st.error, phase: st.phase });
+              toast.error(st.error || "全自动失败");
+              return;
+            }
+            // still running — loop
+          } catch {
+            // network blip — keep polling
+          }
+        }
+      };
+      await poll();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "请求失败";
+      setAutoResult({ ok: false, error: msg });
+      toast.error(msg);
+    } finally {
+      setAutoRunning(false);
+      setAutoPhase("");
     }
   }
 
@@ -367,37 +579,146 @@ export default function ClaudeAccountsPage() {
         </div>
       </div>
 
-      {oauthLoginId ? (
-        <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
-          <div className="space-y-1">
-            <p className="font-medium">完成 Anthropic OAuth 登录</p>
-            <p className="text-muted-foreground">
-              1. 在新打开的页面用 Anthropic 订阅号(Pro/Max)登录并授权(没弹出的话,
-              {oauthAuthUrl ? (
-                <a href={oauthAuthUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">点此打开授权页</a>
-              ) : "请重新发起"}
-              )。
-            </p>
-            <p className="text-muted-foreground">
-              2. 授权后页面会显示一段授权码(形如 <code className="rounded bg-muted px-1">code#state</code>),把它整段复制粘贴到下面,点「完成授权」。也可直接粘贴回调 URL。
-            </p>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MailIcon className="size-4" /> 一键导入 &amp; 获取登录链接
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            粘贴账号行（格式: <code className="rounded bg-muted px-1">邮箱----密码----sessionKey----代理URL</code>），自动解析后登录 mail.com 网页邮箱抓取 Anthropic 登录链接（无需开 IMAP）。
+          </p>
+
+          {/* Step 1: 粘贴解析 */}
+          <div className="flex items-end gap-3">
+            <Field className="flex-1">
+              <FieldLabel>账号行</FieldLabel>
+              <Input
+                placeholder="email----password----sk-ant-xxx----http://proxy"
+                value={importLine}
+                onChange={(e) => setImportLine(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleImportParse(); }}
+              />
+            </Field>
+            <Button variant="outline" onClick={handleImportParse}>解析</Button>
           </div>
-          <Textarea
-            rows={3}
-            placeholder="粘贴页面显示的授权码 code#state,或完整回调 URL"
-            value={oauthCallbackInput}
-            onChange={(e) => setOauthCallbackInput(e.target.value)}
-          />
-          {oauthStatusText ? <p className="text-destructive">{oauthStatusText}</p> : null}
-          <div className="flex gap-2">
-            <Button size="sm" onClick={handleOAuthSubmit} disabled={oauthSubmitting}>
-              {oauthSubmitting ? <Spinner size={14} /> : null}
-              完成授权
-            </Button>
-            <Button size="sm" variant="outline" onClick={handleOAuthCancel} disabled={oauthSubmitting}>取消</Button>
-          </div>
-        </div>
-      ) : null}
+
+          {importParsed ? (
+            <div className="space-y-3 rounded-md border p-3 text-sm">
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
+                <span>邮箱: <span className="text-foreground">{importParsed.email}</span></span>
+                <span>密码: <span className="text-foreground">***</span></span>
+                <span>代理: <span className="text-foreground">{importParsed.proxyUrl || "无"}</span></span>
+              </div>
+
+              {/* Full auto: Playwright headless browser through SOCKS5 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">全自动（无头浏览器）</span>
+                <Button size="sm" variant="default" onClick={handleAutoOAuth} disabled={autoRunning}>
+                  {autoRunning ? <Spinner size={14} /> : null}
+                  {autoRunning ? "自动化中…" : "一键全自动"}
+                </Button>
+              </div>
+              {autoRunning ? (
+                <p className="text-xs text-muted-foreground">
+                  Chromium 无头浏览器通过 SOCKS5 代理执行中… 当前阶段: <span className="font-medium text-foreground">{autoPhase || "starting"}</span>
+                </p>
+              ) : null}
+              {autoResult?.ok ? (
+                <p className="text-xs text-green-600">全自动成功: {autoResult.email}</p>
+              ) : null}
+              {autoResult && !autoResult.ok ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-destructive">全自动失败{autoResult.phase ? `（阶段: ${autoResult.phase}）` : ""}: {autoResult.error}</p>
+                </div>
+              ) : null}
+
+              <hr className="my-2 border-dashed" />
+              <p className="text-xs text-muted-foreground">以下为分步手动操作（全自动失败时回退）：</p>
+
+              {/* Step 2: 发起 OAuth（通过代理请求 authorize URL） */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">① 发起 OAuth（代理）</span>
+                <Button size="sm" variant="outline" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
+                  {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-3.5" />}
+                  发起授权
+                </Button>
+                {oauthLoginId ? <span className="text-xs text-green-600">已就绪</span> : null}
+              </div>
+              {probeInfo ? (
+                <div className="rounded-md border bg-muted/50 p-2 text-xs text-muted-foreground">
+                  <p>代理探测: HTTP {probeInfo.status}{probeInfo.location ? ` → ${probeInfo.location}` : ""}</p>
+                  {probeInfo.bodySnippet ? <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap">{probeInfo.bodySnippet.slice(0, 500)}</pre> : null}
+                </div>
+              ) : null}
+
+              {/* Step 3: 网页登录邮箱抓取登录链接 */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">② 获取邮件链接</span>
+                <Button size="sm" onClick={handleFetchMagicLink} disabled={imapFetching}>
+                  {imapFetching ? <Spinner size={14} /> : <MailIcon className="size-3.5" />}
+                  网页抓取
+                </Button>
+              </div>
+              {imapResult?.url ? (
+                <div className="rounded-md border bg-muted/50 p-2">
+                  <p className="mb-1 text-xs font-medium text-green-600">
+                    登录链接{imapResult.date ? `（邮件时间 ${new Date(imapResult.date).toLocaleString()}）` : ""}：
+                  </p>
+                  <p className="break-all text-xs text-muted-foreground">{imapResult.url}</p>
+                </div>
+              ) : null}
+              {imapResult?.error ? <p className="text-xs text-destructive">{imapResult.error}</p> : null}
+
+              {/* Step 4: 通过代理跟随 magic link，自动拿 code 换 token */}
+              {oauthLoginId && imapResult?.url ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">③ 代理完成授权</span>
+                    <Button size="sm" onClick={handleFollowMagicLink} disabled={followingLink}>
+                      {followingLink ? <Spinner size={14} /> : null}
+                      跟随链接换 Token
+                    </Button>
+                  </div>
+                  {followResult?.ok ? (
+                    <p className="text-xs text-green-600">授权成功: {followResult.email}</p>
+                  ) : null}
+                  {followResult?.error ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-destructive">{followResult.error}</p>
+                      {followResult.bodySnippet ? <pre className="max-h-24 overflow-auto rounded bg-muted p-1 text-xs">{followResult.bodySnippet}</pre> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* 回退: 手动粘贴 code（代理跟随失败时用） */}
+              {oauthLoginId ? (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">手动粘贴 code（回退）</summary>
+                  <div className="mt-2 space-y-2">
+                    <Textarea
+                      rows={2}
+                      placeholder="粘贴授权码 code#state 或回调 URL"
+                      value={oauthCallbackInput}
+                      onChange={(e) => setOauthCallbackInput(e.target.value)}
+                    />
+                    {oauthStatusText ? <p className="text-xs text-destructive">{oauthStatusText}</p> : null}
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleOAuthSubmit} disabled={oauthSubmitting}>
+                        {oauthSubmitting ? <Spinner size={14} /> : null}
+                        完成授权
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={handleOAuthCancel} disabled={oauthSubmitting}>取消</Button>
+                    </div>
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <QuotaProfilesCard product="anthropic" statusUrl="/api/remote-anthropic/status" />
 
@@ -497,11 +818,11 @@ export default function ClaudeAccountsPage() {
                     <TableCell>
                       <AccountStatusCell account={a} />
                     </TableCell>
-                    <TableCell className="max-w-[240px]">
+                    <TableCell>
                       {proxyEditId === a.id ? (
                         <div className="flex items-center gap-1">
                           <Input
-                            className="h-7 text-xs"
+                            className="h-7 w-[320px] text-xs"
                             autoFocus
                             placeholder="host:port:user:pass 或 http(s)://"
                             value={proxyEditVal}

@@ -174,10 +174,14 @@ export class RosettaService {
   // ── Claude/Anthropic accounts + OAuth (→ ClaudeAccountService) ──────────
   listClaudeAccounts() { return this.claudeSvc.listClaudeAccounts(); }
   addClaudeAccount(payload: any) { return this.claudeSvc.addClaudeAccount(payload); }
-  startClaudeOAuthLogin() { return this.claudeSvc.startClaudeOAuthLogin(); }
+  startClaudeOAuthLogin(proxyUrl?: string) { return this.claudeSvc.startClaudeOAuthLogin(proxyUrl); }
   getClaudeOAuthLoginStatus(loginId: string) { return this.claudeSvc.getClaudeOAuthLoginStatus(loginId); }
   cancelClaudeOAuthLogin(loginId: string) { return this.claudeSvc.cancelClaudeOAuthLogin(loginId); }
   submitClaudeOAuthCallback(loginId: string, rawInput: string) { return this.claudeSvc.submitClaudeOAuthCallback(loginId, rawInput); }
+  fetchClaudeMagicLink(payload: any) { return this.claudeSvc.fetchClaudeMagicLink(payload); }
+  followClaudeMagicLink(loginId: string, url: string) { return this.claudeSvc.followMagicLink(loginId, url); }
+  startAutoClaudeOAuth(payload: any) { return this.claudeSvc.startAutoClaudeOAuth(payload); }
+  getAutoClaudeOAuthStatus(taskId: string) { return this.claudeSvc.getAutoOAuthStatus(taskId); }
   toggleClaudeAccount(payload: any) { return this.claudeSvc.toggleClaudeAccount(payload); }
   toggleClaudeAccountPool(payload: any) { return this.claudeSvc.toggleClaudeAccountPool(payload); }
   setClaudeAccountProxy(payload: any) { return this.claudeSvc.setClaudeAccountProxy(payload); }

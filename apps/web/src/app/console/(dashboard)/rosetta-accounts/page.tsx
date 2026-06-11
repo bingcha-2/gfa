@@ -620,7 +620,7 @@ export default function RosettaAccountsPage() {
         return proxyEditId === account.id ? (
           <div className="flex items-center gap-1">
             <Input
-              className="h-7 text-xs"
+              className="h-7 w-[320px] text-xs"
               autoFocus
               placeholder="host:port:user:pass 或 http(s)://"
               value={proxyEditVal}
@@ -679,7 +679,7 @@ export default function RosettaAccountsPage() {
       case "planType": return "text-xs";
       case "familyRole": return "text-xs";
       case "familyStatus": return "text-xs";
-      case "proxy": return "max-w-[240px]";
+      case "proxy": return "";
       case "token": return "text-center";
       case "status": return "text-center";
       default: return "";

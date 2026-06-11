@@ -217,8 +217,8 @@ export class RosettaController {
   }
 
   @Post("anthropic-oauth-start")
-  startClaudeOAuthLogin() {
-    return this.rosetta.startClaudeOAuthLogin();
+  startClaudeOAuthLogin(@Body() body: any) {
+    return this.rosetta.startClaudeOAuthLogin(body?.proxyUrl ? String(body.proxyUrl) : undefined);
   }
 
   @Get("anthropic-oauth-status")
@@ -234,6 +234,26 @@ export class RosettaController {
   @Post("anthropic-oauth-submit")
   submitClaudeOAuthCallback(@Body() body: any) {
     return this.rosetta.submitClaudeOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
+  }
+
+  @Post("anthropic-fetch-magic-link")
+  fetchClaudeMagicLink(@Body() body: any) {
+    return this.rosetta.fetchClaudeMagicLink(body);
+  }
+
+  @Post("anthropic-follow-magic-link")
+  followClaudeMagicLink(@Body() body: any) {
+    return this.rosetta.followClaudeMagicLink(String(body?.loginId || ""), String(body?.url || ""));
+  }
+
+  @Post("anthropic-auto-oauth")
+  startAutoClaudeOAuth(@Body() body: any) {
+    return this.rosetta.startAutoClaudeOAuth(body);
+  }
+
+  @Get("anthropic-auto-oauth-status")
+  getAutoClaudeOAuthStatus(@Query("taskId") taskId?: string) {
+    return this.rosetta.getAutoClaudeOAuthStatus(String(taskId || ""));
   }
 
   // 「刷新」= 强制刷 token + 探测拉额度(合并为一个动作)。

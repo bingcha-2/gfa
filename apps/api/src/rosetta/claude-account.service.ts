@@ -8,12 +8,16 @@
 import * as crypto from "crypto";
 import * as path from "path";
 
+import { proxyAwareFetch } from "../lease-core/egress";
 import { fetchClaudeQuotaUpstream } from "../remote-anthropic/auth/claude-usage";
 import { refreshClaudeAccessToken } from "../remote-anthropic/auth/claude-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import type { AccessKeyService } from "./access-key.service";
 import type { RosettaContext } from "./lib/context";
+import { fetchAnthropicMagicLink } from "./lib/imap-magic-link";
+import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
+import { triggerMagicLinkViaBrowser, type PlaywrightOAuthSession } from "./lib/playwright-oauth";
 import { normalizeProxyUrl, nowIso, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
 
 // Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
@@ -26,6 +30,27 @@ const CLAUDE_OAUTH_REDIRECT_URI = process.env.BCAI_CLAUDE_REDIRECT_URI || "https
 const CLAUDE_OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
 const CLAUDE_OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
 
+function extractSetCookies(res: Response): string {
+  const raw = res.headers.getSetCookie?.() || [];
+  return raw.map((c) => c.split(";")[0]).join("; ");
+}
+
+function mergeSetCookies(existing: string, res: Response): string {
+  const fresh = extractSetCookies(res);
+  if (!fresh) return existing;
+  if (!existing) return fresh;
+  const map = new Map<string, string>();
+  for (const pair of existing.split("; ")) {
+    const [k] = pair.split("=", 1);
+    if (k) map.set(k, pair);
+  }
+  for (const pair of fresh.split("; ")) {
+    const [k] = pair.split("=", 1);
+    if (k) map.set(k, pair);
+  }
+  return [...map.values()].join("; ");
+}
+
 type CodexOAuthPending = {
   loginId: string;
   state: string;
@@ -37,10 +62,12 @@ type CodexOAuthPending = {
   email?: string;
   error?: string;
   isUpdate?: boolean;
+  proxyUrl?: string;
 };
 
 export class ClaudeAccountService {
   private claudeOAuthPending: CodexOAuthPending | null = null;
+  private playwrightSession: PlaywrightOAuthSession | null = null;
 
   constructor(private readonly ctx: RosettaContext, private readonly accessKey: AccessKeyService) {}
 
@@ -128,7 +155,7 @@ export class ClaudeAccountService {
   // 不起本地回调 server:用户在浏览器登录 Claude 订阅号授权后,把回调页展示的
   // code(形如 "code#state")或整段回调 URL 粘回后台,这里换 token 并入库。
 
-  async startClaudeOAuthLogin() {
+  async startClaudeOAuthLogin(proxyUrl?: string) {
     const existing = this.claudeOAuthPending;
     if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
       return { ok: true, loginId: existing.loginId, authUrl: existing.authUrl, redirectUri: existing.redirectUri, expiresAt: existing.expiresAt };
@@ -148,17 +175,112 @@ export class ClaudeAccountService {
       code_challenge_method: "S256",
       state,
     });
+    const authUrl = `${CLAUDE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`;
+
+    // 通过代理请求 authorize URL，探测服务端是否能直接拿到重定向/页面
+    let probeInfo: { status: number; location?: string; bodySnippet?: string } | undefined;
+    if (proxyUrl) {
+      try {
+        const res = await proxyAwareFetch(proxyUrl, authUrl, {
+          method: "GET",
+          redirect: "manual",
+          headers: {
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+          },
+        });
+        const location = res.headers.get("location") || undefined;
+        const body = await res.text();
+        probeInfo = { status: res.status, location, bodySnippet: body.slice(0, 2000) };
+      } catch (err: any) {
+        probeInfo = { status: 0, bodySnippet: `probe error: ${err?.message || err}` };
+      }
+    }
+
     const pending: CodexOAuthPending = {
       loginId,
       state,
       codeVerifier,
       redirectUri: CLAUDE_OAUTH_REDIRECT_URI,
-      authUrl: `${CLAUDE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+      authUrl,
       expiresAt: Date.now() + CLAUDE_OAUTH_TIMEOUT_MS,
       status: "pending",
+      proxyUrl: proxyUrl || undefined,
     };
     this.claudeOAuthPending = pending;
-    return { ok: true, loginId, authUrl: pending.authUrl, redirectUri: pending.redirectUri, expiresAt: pending.expiresAt };
+    return { ok: true, loginId, authUrl: pending.authUrl, redirectUri: pending.redirectUri, expiresAt: pending.expiresAt, probeInfo };
+  }
+
+  // 通过代理跟随 magic link 重定向,自动提取 code（省去手动打开浏览器粘贴 code）
+  async followMagicLink(loginId: string, magicLinkUrl: string) {
+    const pending = this.claudeOAuthPending;
+    if (!pending || pending.loginId !== loginId) {
+      return { ok: false, error: "登录会话不存在" };
+    }
+    if (!pending.proxyUrl) {
+      return { ok: false, error: "未设置代理,无法服务端跟随链接" };
+    }
+
+    try {
+      // 第一步:请求 magic link,不自动跟随重定向
+      const res = await proxyAwareFetch(pending.proxyUrl, magicLinkUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        },
+      });
+
+      // 跟随重定向链,最多 10 次,直到找到 callback URL 含 code
+      let location = res.headers.get("location");
+      let hops = 0;
+      let cookies = extractSetCookies(res);
+      let currentUrl = magicLinkUrl;
+      let currentStatus = res.status;
+      let lastBody = "";
+
+      while (location && hops < 10) {
+        const absUrl = new URL(location, currentUrl).href;
+        // 检查 callback URL 是否包含 code
+        try {
+          const parsed = new URL(absUrl);
+          const code = parsed.searchParams.get("code");
+          if (code) {
+            // 拿到 code 了,直接走完授权
+            const state = parsed.searchParams.get("state") || pending.state;
+            const result = await this.completeClaudeOAuthLogin(pending, code, state);
+            return { ok: true, status: "completed", email: result.email, isUpdate: result.isUpdate, accountId: result.accountId };
+          }
+        } catch {}
+
+        const nextRes = await proxyAwareFetch(pending.proxyUrl!, absUrl, {
+          method: "GET",
+          redirect: "manual",
+          headers: {
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            ...(cookies ? { cookie: cookies } : {}),
+          },
+        });
+        cookies = mergeSetCookies(cookies, nextRes);
+        currentUrl = absUrl;
+        currentStatus = nextRes.status;
+        location = nextRes.headers.get("location") || null;
+        lastBody = await nextRes.text();
+        hops++;
+      }
+
+      return {
+        ok: false,
+        error: `跟随 ${hops} 次重定向后未找到 code`,
+        lastStatus: currentStatus,
+        lastUrl: currentUrl,
+        bodySnippet: lastBody.slice(0, 1000),
+      };
+    } catch (err: any) {
+      return { ok: false, error: `跟随链接失败: ${err?.message || err}` };
+    }
   }
 
   getClaudeOAuthLoginStatus(loginId: string) {
@@ -239,7 +361,10 @@ export class ClaudeAccountService {
   }
 
   private async completeClaudeOAuthLogin(pending: CodexOAuthPending, code: string, state: string) {
-    const response = await this.ctx.claudeOAuthFetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
+    const doFetch = pending.proxyUrl
+      ? (url: string, init: RequestInit) => proxyAwareFetch(pending.proxyUrl!, url, init)
+      : this.ctx.claudeOAuthFetch;
+    const response = await doFetch(CLAUDE_OAUTH_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
@@ -266,6 +391,7 @@ export class ClaudeAccountService {
       accessToken: tokenData.access_token || "",
       accessTokenExpiresAt: Date.now() + Number(tokenData.expires_in || 3600) * 1000,
       alias: String(tokenData?.organization?.name || ""),
+      proxyUrl: pending.proxyUrl || "",
     });
     if (!result.ok) throw new Error(String(result.error || "Failed to save Claude account"));
 
@@ -273,6 +399,191 @@ export class ClaudeAccountService {
     pending.email = email;
     pending.isUpdate = Boolean(result.isUpdate);
     return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
+  }
+
+  // ── Magic-link fetcher ──────────────────────────────────────────────────
+  // Find the latest Anthropic "Secure link to log in to Claude.ai" email and
+  // return its magic-link URL, to automate the email step of the OAuth flow.
+  //
+  // Two transports:
+  //   - "web" (default): log into mail.com's no-JS web mailbox over HTTP. Works
+  //     even when the account has IMAP turned off (mail.com free/bulk accounts
+  //     default IMAP OFF → IMAP LOGIN returns "authentication failed").
+  //   - "imap": classic IMAP fetch (only works if IMAP is enabled on the box).
+  // method=auto tries web first, then IMAP.
+  async fetchClaudeMagicLink(payload: any) {
+    const email = String(payload?.email || "").trim();
+    const password = String(payload?.password || "").trim();
+    if (!email || !password) return { ok: false, error: "email 和 password 必填" };
+    const method = String(payload?.method || "web").toLowerCase();
+    const host = payload?.host ? String(payload.host).trim() : undefined;
+    const port = payload?.port ? Number(payload.port) : undefined;
+    // Only accept a link received at/after sinceMs (defends against stale links
+    // from a prior login). waitMs polls for the email to arrive after trigger,
+    // capped so a single request never outlives the dev proxy's socket timeout
+    // (a long-held request shows up as ECONNRESET → HTML 500 → JSON parse error
+    // on the client). The frontend polls across multiple short requests instead.
+    const sinceMs = payload?.sinceMs ? Number(payload.sinceMs) : undefined;
+    const waitMs = payload?.waitMs ? Math.min(Number(payload.waitMs) || 0, 12_000) : undefined;
+
+    if (method === "imap") {
+      return fetchAnthropicMagicLink({ email, password, host, port });
+    }
+
+    const web = await fetchAnthropicMagicLinkViaWeb({ email, password, sinceMs, waitMs });
+    if (web.ok || method === "web") return web;
+
+    // method=auto: fall back to IMAP if web scraping failed
+    const imap = await fetchAnthropicMagicLink({ email, password, host, port });
+    return imap.ok ? imap : { ok: false, error: `web: ${web.error}; imap: ${imap.error}` };
+  }
+
+  // ── 全自动 Playwright OAuth (异步) ──────────────────────────────────────
+  // The full flow (browser → CF challenge → fill email → fetch mail → consume
+  // magic link → token) takes 30-120s. Next.js dev proxy drops connections
+  // after ~30s, so we run asynchronously: startAutoOAuth() validates + fires
+  // the background job + returns a taskId instantly; getAutoOAuthStatus()
+  // returns the live status for polling.
+
+  private autoOAuthTask: {
+    taskId: string;
+    phase: string;
+    status: "running" | "done" | "error";
+    error?: string;
+    email?: string;
+    isUpdate?: boolean;
+    accountId?: number;
+  } | null = null;
+
+  startAutoClaudeOAuth(payload: {
+    email: string;
+    password: string;
+    proxyUrl: string;
+    sessionKey?: string;
+  }) {
+    const { email, password, proxyUrl } = payload;
+    if (!email || !proxyUrl) return { ok: false, error: "email 和 proxyUrl 必填" };
+    if (!password) return { ok: false, error: "password 必填(用于 mail.com 网页抓取)" };
+
+    const taskId = base64Url(crypto.randomBytes(12));
+    this.autoOAuthTask = { taskId, phase: "starting", status: "running" };
+
+    // Fire and forget — caller polls via getAutoOAuthStatus
+    this.runAutoOAuth(taskId, email, password, proxyUrl).catch((err) => {
+      if (this.autoOAuthTask?.taskId === taskId) {
+        this.autoOAuthTask.status = "error";
+        this.autoOAuthTask.error = String(err?.message || err);
+      }
+    });
+
+    return { ok: true, taskId };
+  }
+
+  getAutoOAuthStatus(taskId: string) {
+    const t = this.autoOAuthTask;
+    if (!t || t.taskId !== taskId) return { ok: false, error: "任务不存在" };
+    return {
+      ok: true,
+      taskId: t.taskId,
+      phase: t.phase,
+      status: t.status,
+      error: t.error,
+      email: t.email,
+      isUpdate: t.isUpdate,
+      accountId: t.accountId,
+    };
+  }
+
+  private async runAutoOAuth(taskId: string, email: string, password: string, proxyUrl: string) {
+    const task = this.autoOAuthTask!;
+    const step = (phase: string) => {
+      if (task.taskId !== taskId) return;
+      task.phase = phase;
+      console.log(`[auto-oauth] ${email}: ${phase}`);
+    };
+
+    try {
+      // Clean up any previous browser session
+      if (this.playwrightSession) {
+        await this.playwrightSession.close().catch(() => {});
+        this.playwrightSession = null;
+      }
+
+      // 1. Create OAuth pending (PKCE + authorize URL)
+      step("creating OAuth session");
+      this.claudeOAuthPending = null;
+      const startResult = await this.startClaudeOAuthLogin(proxyUrl);
+      if (!startResult.ok) throw new Error("OAuth 会话创建失败");
+      const pending = this.claudeOAuthPending!;
+
+      // 2. Browser: navigate to authorize URL → CF challenge → fill email → submit
+      step("launching browser (SOCKS5 proxy)");
+      const triggerStart = Date.now();
+      const trigger = await triggerMagicLinkViaBrowser({
+        authorizeUrl: pending.authUrl,
+        email,
+        proxyUrl,
+      });
+      if (!trigger.ok || !trigger.session) {
+        throw new Error(trigger.error || "浏览器触发失败");
+      }
+      this.playwrightSession = trigger.session;
+      step(`email submitted (${((Date.now() - triggerStart) / 1000).toFixed(1)}s), waiting for magic link email`);
+
+      // 3. Fetch magic link from mail.com (poll up to 90s)
+      step("fetching magic link from mailbox");
+      const sinceMs = triggerStart - 30_000;
+      const mailResult = await fetchAnthropicMagicLinkViaWeb({
+        email,
+        password,
+        sinceMs,
+        waitMs: 90_000,
+      });
+      if (!mailResult.ok || !mailResult.url) {
+        await this.playwrightSession.close().catch(() => {});
+        this.playwrightSession = null;
+        throw new Error(mailResult.error || "未获取到 magic link");
+      }
+      step("got magic link, consuming in browser");
+
+      // 4. Consume magic link in browser → OAuth code
+      const consume = await this.playwrightSession.consumeMagicLink(mailResult.url, 60_000);
+      await this.playwrightSession.close().catch(() => {});
+      this.playwrightSession = null;
+
+      if (!consume.ok || !consume.code) {
+        throw new Error(consume.error || "未获取到 OAuth code");
+      }
+      step("got code, exchanging for token");
+
+      // 5. Code → token
+      const result = await this.completeClaudeOAuthLogin(pending, consume.code, consume.state || pending.state);
+      step(`done! ${result.email} ${result.isUpdate ? "updated" : "added"}`);
+
+      // 6. Auto-refresh quota (token + usage probe)
+      if (result.accountId) {
+        step("refreshing quota");
+        try {
+          await this.refreshClaudeAccountQuota({ accountId: result.accountId });
+          step("quota refreshed");
+        } catch {
+          // non-fatal — account is already saved
+        }
+      }
+
+      if (task.taskId === taskId) {
+        task.status = "done";
+        task.email = result.email;
+        task.isUpdate = result.isUpdate;
+        task.accountId = result.accountId;
+        task.phase = "completed";
+      }
+    } catch (err: any) {
+      if (task.taskId === taskId) {
+        task.status = "error";
+        task.error = String(err?.message || err);
+      }
+    }
   }
 
   toggleClaudeAccount(payload: any) {
