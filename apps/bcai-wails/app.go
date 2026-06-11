@@ -229,6 +229,9 @@ func (a *App) GetStats() map[string]interface{} {
 	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
 	leaserStatus["myFractions"] = snapshotMyFractions()
 	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
+	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
+	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
+	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)
 	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
 	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["codexQuota"] = cq

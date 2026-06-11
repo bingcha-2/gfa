@@ -124,4 +124,36 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
     // In-memory learning still works even without persistence.
     expect(tracker.getLearnedBudget5h("codex", "pro", "gpt")).toBe(300000);
   });
+
+  // ── 周/5h 换算比 R(学习/默认部分;卡级设置框覆盖在调用方)──────────────────────
+  describe("getWeeklyToShortRatio", () => {
+    it("有 5h+weekly 学习值时返回 weekly/5h", () => {
+      const tracker = new QuotaProfileTracker();
+      active = tracker;
+      tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false);  // 5h = 100000
+      tracker.recordExhaustion("anthropic", "max", "claude", 400000, 0.2, true);  // weekly = 500000
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBeCloseTo(5, 5);
+    });
+
+    it("无学习数据 → 全局默认 5", () => {
+      const tracker = new QuotaProfileTracker();
+      active = tracker;
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(5);
+    });
+
+    it("只有 5h 没有 weekly → 全局默认 5", () => {
+      const tracker = new QuotaProfileTracker();
+      active = tracker;
+      tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false); // 仅 5h
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(5);
+    });
+
+    it("比值越界被夹到 [2,30]", () => {
+      const tracker = new QuotaProfileTracker();
+      active = tracker;
+      tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false);    // 5h = 100000
+      tracker.recordExhaustion("anthropic", "max", "claude", 9000000, 0.1, true);   // weekly = 10,000,000 → 比值 100
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(30); // 夹到 30
+    });
+  });
 });

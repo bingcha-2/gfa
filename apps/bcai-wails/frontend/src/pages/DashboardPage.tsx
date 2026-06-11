@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { StatusPill } from '@/components/StatusPill'
 import { NotificationBanner } from '@/components/NotificationBanner'
@@ -42,8 +42,8 @@ export function DashboardPage() {
   const t = useT()
   const {
     config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
-    accountFractions, accountResetMs, myFractions, myResetMs, quotaMode, recoveryRemainingMs,
-    cardWeight, cardShareCapacity, cardBuckets,
+    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode, recoveryRemainingMs,
+    cardWeight, cardShareCapacity, cardBuckets, cardWeeklyBuckets,
     codexQuota, claudeQuota,
     activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
@@ -61,34 +61,64 @@ export function DashboardPage() {
   //  • static 卡:本地 bucketLimits 剩余(localQuota 家族字段),可展开看 token 数。
   //  • 绑定卡:fair-share 份额(myFractions),只给 %。
   //  • 无独立额度(无限号池卡)→ null,降级单条。
-  const renderMyCardBar = (bar: BarSpec) => {
+  // 返回「我的卡」条数组(0~2 条):static 卡单条;绑定卡的 fair-share 份额在有周数据时
+  // 出 5h + 周 双条(与账号侧 5h/周 双条对称),否则单条。
+  const renderMyCardBar = (bar: BarSpec): ReactNode[] => {
     if (quotaMode === 'static') {
       // 用服务端 buckets 真相(复合桶精确),不用本地 localQuota——后者不含 claude/codex
       // 走独立 leaser 的用量,会假报「已用 0 · 充足」。
       const b = cardBuckets?.[bar.bucket]
       const limit = b?.limit ?? 0
-      if (!limit || limit <= 0) return null
+      if (!limit || limit <= 0) return []
       const used = b?.used ?? 0
       const frac = Math.max(0, Math.min(1, (limit - used) / limit))
-      return (
+      // static 卡封顶条:有周上限(显式或派生 5h×R)时 → 5h + 周 双条,否则单条。
+      const staticBar = (key: string, suffix: string, u: number, lim: number, resetMs?: number) => (
+        <UsageBar key={key} label={`${t('dashboard.myCard')} · ${suffix}`} used={u} limit={lim}
+          fraction={accountProblem ? -1 : Math.max(0, Math.min(1, (lim - u) / lim))}
+          resetMs={resetMs}
+          expandable
+          detail={t('dashboard.myCardDetail', { used: formatTokens(u), limit: formatTokens(lim) })} />
+      )
+      const wk = cardWeeklyBuckets?.[bar.bucket]
+      if (wk && wk.limit > 0) {
+        return [staticBar('mine-5h', '5h', used, limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined),
+                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit)]
+      }
+      return [(
         <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
           fraction={accountProblem ? -1 : frac}
           resetMs={recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined}
           expandable
           detail={t('dashboard.myCardDetail', { used: formatTokens(used), limit: formatTokens(limit) })} />
-      )
+      )]
     }
     const myFrac = myFractions?.[bar.bucket]
-    if (myFrac != null) {
-      const pct = Math.round(Math.max(0, Math.min(1, myFrac)) * 100)
+    if (myFrac == null) return []
+    // 份额条:label 复用 myCardShare,加语言中性窗口后缀(5h / 7d)区分两条。
+    const shareBar = (key: string, suffix: string, frac: number, resetMs?: number) => {
+      const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100)
       return (
-        <UsageBar key="mine" label={t('dashboard.myCardShare')} used={null} limit={null}
-          fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]}
+        <UsageBar key={key} label={`${t('dashboard.myCardShare')} · ${suffix}`} used={null} limit={null}
+          fraction={accountProblem ? -1 : frac} resetMs={resetMs}
           expandable
           detail={t('dashboard.myCardShareDetail', { weight: cardWeight, capacity: cardShareCapacity, pct })} />
       )
     }
-    return null
+    const wk = myWeeklyFractions?.[bar.bucket]
+    if (wk != null) {
+      // 5h + 周 双条。
+      return [shareBar('mine-5h', '5h', myFrac, myResetMs?.[bar.bucket]),
+              shareBar('mine-7d', '7d', wk, myWeeklyResetMs?.[bar.bucket])]
+    }
+    // 无周数据(antigravity 或旧服务端)→ 保持原单条,标签不变。
+    const pct = Math.round(Math.max(0, Math.min(1, myFrac)) * 100)
+    return [(
+      <UsageBar key="mine" label={t('dashboard.myCardShare')} used={null} limit={null}
+        fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]}
+        expandable
+        detail={t('dashboard.myCardShareDetail', { weight: cardWeight, capacity: cardShareCapacity, pct })} />
+    )]
   }
 
   const { modalProps, showAlert } = useModal()
@@ -234,7 +264,7 @@ export function DashboardPage() {
             // 远程/绑定模式无 bucket 数据 / 账号异常 → fraction=-1 显示「未知」,
             // 不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。
             const modelRows = (bar: BarSpec) => {
-              const myBar = renderMyCardBar(bar)
+              const myBars = renderMyCardBar(bar)
               // codex / anthropic-claude 是账号级 5h + 周 双窗口;antigravity 的 Claude 单条号余量。
               const split =
                 bar.family === 'gpt' && codexQuota && !accountProblem ? codexQuota :
@@ -249,7 +279,7 @@ export function DashboardPage() {
                   fraction={accountProblem ? -1 : (accountFractions?.[bar.bucket] ?? -1)}
                   resetMs={accountResetMs?.[bar.bucket]} />,
               ]
-              return [...accountBars, myBar].filter(Boolean)
+              return [...accountBars, ...myBars].filter(Boolean)
             }
 
             // 按服务商分栏:Antigravity / Codex / Anthropic,各自一个带品牌标识的描边面板;

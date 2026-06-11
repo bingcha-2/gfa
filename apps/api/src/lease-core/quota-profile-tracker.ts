@@ -44,6 +44,20 @@ const FLUSH_INTERVAL_MS = 30_000;
 /** Minimum totalUsed to consider a sample valid (avoid noise from empty windows). */
 const MIN_SAMPLE_THRESHOLD = 10_000;
 
+// ── 周/5h 换算比 R(全局)──────────────────────────────────────────────────────
+// 「一个周限额相当于多少个 5h 限额」。优先级(在调用方解析):卡级设置框 > 后台学习
+// (weekly/5h) > 全局默认。全局默认 = env BCAI_WEEKLY_RATIO_DEFAULT,缺省 5。
+/** 全局默认 R(env 可配,缺省 5)。 */
+export const DEFAULT_WEEKLY_RATIO = Math.max(1, Number(process.env.BCAI_WEEKLY_RATIO_DEFAULT || 5));
+/** R 的合理夹取区间:周窗口至少 2 个 5h、至多 30 个 5h(一周 ≈ 33.6 个 5h)。 */
+export const MIN_WEEKLY_RATIO = 2;
+export const MAX_WEEKLY_RATIO = 30;
+/** 夹取 R;非法/非正 → 全局默认。 */
+export function clampWeeklyRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio <= 0) return DEFAULT_WEEKLY_RATIO;
+  return Math.min(MAX_WEEKLY_RATIO, Math.max(MIN_WEEKLY_RATIO, ratio));
+}
+
 // ── Core class ──────────────────────────────────────────────────────────────
 
 export class QuotaProfileTracker {
@@ -133,6 +147,24 @@ export class QuotaProfileTracker {
   getLearnedBudget5h(product: string, planType: string, family: string): number {
     const profile = this.getProfile(product, planType, family);
     return profile?.window5h || 0;
+  }
+
+  /** Get the learned **weekly** budget for a given plan+family, or 0 if unknown. */
+  getLearnedBudgetWeekly(product: string, planType: string, family: string): number {
+    const profile = this.getProfile(product, planType, family);
+    return profile?.weekly || 0;
+  }
+
+  /**
+   * 周/5h 换算比 R 的「学习/默认」部分(卡级设置框的覆盖在调用方处理)。
+   * 后台同时学到 window5h>0 且 weekly>0 → 返回 weekly/window5h(夹取);否则全局默认。
+   */
+  getWeeklyToShortRatio(product: string, planType: string, family: string): number {
+    const p = this.getProfile(product, planType, family);
+    if (p && p.window5h > 0 && p.weekly > 0) {
+      return clampWeeklyRatio(p.weekly / p.window5h);
+    }
+    return DEFAULT_WEEKLY_RATIO;
   }
 
   /** Restore persisted profiles into memory. Call once at startup. */

@@ -154,4 +154,13 @@ export const JOB_DEFAULTS = {
   removeOnFail: { count: 500 },
 } as const;
 
-export { PRICING, QUOTA_WEIGHTS, type Family, type FamilyPrice } from "./pricing";
+export {
+  PRICING,
+  QUOTA_WEIGHTS,
+  CLAUDE_TIER_PRICING,
+  CLAUDE_TIER_WEIGHTS,
+  type Family,
+  type FamilyPrice,
+  type ClaudeTier,
+  type QuotaWeight,
+} from "./pricing";

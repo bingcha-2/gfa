@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,6 +99,71 @@ func TestMarkCardUnusableStopsAutoLease(t *testing.T) {
 	}
 	if st := l.GetStatus(); st["cardUnusable"] != true {
 		t.Fatalf("GetStatus 应上报 cardUnusable=true, 得到 %v", st["cardUnusable"])
+	}
+}
+
+func TestLeaseTokenSuccessClearsCardUnusable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":                   true,
+			"accessToken":          "token-ok",
+			"projectId":            "project-ok",
+			"accountId":            8,
+			"leaseId":              "lease-ok",
+			"accessTokenExpiresIn": 3600,
+			"activationExpiresAt":  "2027-01-01T00:00:00Z",
+			"candidateStats":       map[string]interface{}{"healthyForModel": 1},
+			"accessKeyStatus":      map[string]interface{}{"products": []interface{}{"antigravity"}},
+			"accountBuckets":       map[string]interface{}{},
+		})
+	}))
+	defer srv.Close()
+	oldBase := API_BASE
+	API_BASE = srv.URL
+	t.Cleanup(func() { API_BASE = oldBase })
+
+	l := &Leaser{cardUnusable: true, lastError: "Invalid access key"}
+	if _, err := l.LeaseToken("card-1", "dev-1", true, nil, ""); err != nil {
+		t.Fatalf("LeaseToken should succeed: %v", err)
+	}
+
+	st := l.GetStatus()
+	if st["cardUnusable"] != false {
+		t.Fatalf("successful lease should clear cardUnusable, got %v", st["cardUnusable"])
+	}
+	if st["lastError"] != "" {
+		t.Fatalf("successful lease should clear lastError, got %q", st["lastError"])
+	}
+}
+
+func TestActivateSuccessClearsCardUnusable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data": map[string]interface{}{
+				"accountCard": map[string]interface{}{"expiresAt": "2027-01-01T00:00:00Z"},
+				"accessKeyStatus": map[string]interface{}{
+					"products": []interface{}{"anthropic"},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	oldBase := API_BASE
+	API_BASE = srv.URL
+	t.Cleanup(func() { API_BASE = oldBase })
+
+	l := &Leaser{cardUnusable: true, lastError: "Invalid access key"}
+	if _, err := l.Activate("card-1", "dev-1", ""); err != nil {
+		t.Fatalf("Activate should succeed: %v", err)
+	}
+
+	st := l.GetStatus()
+	if st["cardUnusable"] != false {
+		t.Fatalf("successful activation should clear cardUnusable, got %v", st["cardUnusable"])
+	}
+	if st["lastError"] != "" {
+		t.Fatalf("successful activation should clear lastError, got %q", st["lastError"])
 	}
 }
 
