@@ -36,6 +36,7 @@ import { WebModule } from "./web/web.module";
 import { AppSurfaceModule } from "./app/app-surface.module";
 import { PlanModule } from "./plan/plan.module";
 import { SubscriptionModule } from "./subscription/subscription.module";
+import { CardMigrationModule } from "./web/card-migration/card-migration.module";
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { SubscriptionModule } from "./subscription/subscription.module";
     AppSurfaceModule,
     PlanModule,
     SubscriptionModule,
+    CardMigrationModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [
