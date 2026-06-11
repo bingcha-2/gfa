@@ -8,19 +8,41 @@ export { main as WailsModels } from '../../wailsjs/go/models'
 
 // ===== Config =====
 export interface Config {
+  // Legacy card fields (kept for parsing old configs; not used for runtime auth)
   accountCard: string
+  cardExpiry: string
   deviceId: string
   proxyPort: number
   idePath: string
   hubPath: string
   codexAppPath: string
   claudeDesktopPath: string
-  cardExpiry: string
+  // Account-login fields
+  userToken: string
+  userTokenExpiry: string
+  userEmail: string
+  planName: string
+  planExpiry: string
+  planDeviceMax: number
+  deviceName: string
   codexMode: string
   codexRelayBase: string
   codexRelayKey: string
   codexRelayProtocol: string
   codexModelMap: Record<string, string>
+}
+
+// ===== Account State =====
+export interface AccountState {
+  loggedIn: boolean
+  email: string
+  planName: string
+  planExpiry: string
+  planDeviceMax: number
+  deviceName: string
+  tokenExpiry: string
+  tokenExpired: boolean
+  sessionUnusable: boolean
 }
 
 // ===== IDE =====

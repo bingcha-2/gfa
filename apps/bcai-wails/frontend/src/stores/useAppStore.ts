@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import * as api from '@/services/wails'
-import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo } from '@/types'
+import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
 
 /** Fallback rate-limit window when the server hasn't reported one yet (5h). */
 const DEFAULT_WINDOW_MS = 5 * 60 * 60 * 1000
@@ -20,6 +20,9 @@ export type AppNotification = {
 }
 
 interface AppState {
+  // ===== Account =====
+  account: AccountState | null
+
   // ===== Data =====
   config: Config | null
   proxyRunning: boolean
@@ -88,11 +91,14 @@ interface AppState {
   fetchConfig: () => Promise<void>
   fetchIDEStatus: () => Promise<IDEProduct[]>
   fetchAnnouncement: () => Promise<void>
+  fetchAccountState: () => Promise<void>
   saveConfig: (cfg: Config) => Promise<void>
-  activateCard: (card: string) => Promise<string>
+  login: (email: string, password: string) => Promise<Record<string, unknown>>
+  logout: () => Promise<void>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  account: null,
   config: null,
   proxyRunning: false,
   proxyPort: 48800,
@@ -234,14 +240,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  fetchAccountState: async () => {
+    try {
+      const state = await api.getAccountState()
+      set({ account: state })
+    } catch (err) {
+      console.error('fetchAccountState failed:', err)
+    }
+  },
+
   saveConfig: async (cfg: Config) => {
     await api.saveConfig(cfg)
     set({ config: cfg })
   },
 
-  activateCard: async (card: string) => {
-    const result = await api.activateCard(card)
+  login: async (email: string, password: string) => {
+    const result = await api.userLogin(email, password)
+    await get().fetchAccountState()
     await get().fetchConfig()
     return result
+  },
+
+  logout: async () => {
+    await api.userLogout()
+    set({ account: null })
+    await get().fetchAccountState()
   },
 }))

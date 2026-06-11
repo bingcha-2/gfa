@@ -197,7 +197,7 @@ const egressGateMarker = "EGRESS_BLOCKED:"
 // 走各自 leaser 的 LeaseToken(force=false,复用缓存):这是控制面请求(走 bcai.space),
 // 即使账号出口代理被 ban 也能拿到 —— 我们正是要先拿到 proxyUrl 才能去探它。
 func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
-	card, dev, up := cfg.AccountCard, cfg.DeviceId, ""
+	card, dev, up := cfg.UserToken, cfg.DeviceId, ""
 	switch product {
 	case "anthropic":
 		lease, err := GetClaudeLeaser().LeaseToken(card, dev, false, nil, up)
@@ -235,7 +235,7 @@ func enforceEgressGate(product string, cfg Config) error {
 	if product == "" {
 		return nil
 	}
-	Log("[egress-gate] 开始执行出口闸检查: product=%s, card=%s", product, cfg.AccountCard)
+	Log("[egress-gate] 开始执行出口闸检查: product=%s, token=%s...", product, cfg.UserToken[:min(8, len(cfg.UserToken))])
 	label := productLabel(product)
 	eg, err := egressInfoForTakeover(product, cfg)
 	if err != nil {

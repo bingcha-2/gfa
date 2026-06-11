@@ -12,8 +12,13 @@ func TestPostJSONWithSecretToBase(t *testing.T) {
 		if r.URL.Path != "/lease-token" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if got := r.Header.Get("x-token-server-secret"); got != "secret-card" {
-			t.Fatalf("x-token-server-secret = %q", got)
+		// NEW: must use Authorization: Bearer instead of x-token-server-secret
+		if got := r.Header.Get("Authorization"); got != "Bearer secret-card" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer secret-card")
+		}
+		// NEW: old header must be absent
+		if got := r.Header.Get("x-token-server-secret"); got != "" {
+			t.Fatalf("x-token-server-secret should be absent, got %q", got)
 		}
 		var payload map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {

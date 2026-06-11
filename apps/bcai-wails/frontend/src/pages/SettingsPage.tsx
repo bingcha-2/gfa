@@ -11,12 +11,26 @@ import { useT, useLocaleStore, SUPPORTED_LOCALES, LOCALE_NAMES } from '@/i18n'
 import { GitHubIcon } from '@/components/GitHubIcon'
 import { GITHUB_ISSUES_URL } from '@/lib/feedback'
 import { getChangelogRecord } from '@/lib/changelog'
-import { FolderOpen, Info, Languages, ScrollText } from 'lucide-react'
+import { FolderOpen, Info, Languages, LogOut, ScrollText, User } from 'lucide-react'
 
 export function SettingsPage() {
   const t = useT()
-  const { config, appVersion, updateStatus } = useAppStore()
-  const { modalProps, showAlert } = useModal()
+  const { config, appVersion, updateStatus, account, logout } = useAppStore()
+  const { modalProps, showAlert, showConfirm } = useModal()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const handleLogout = async () => {
+    const confirmed = await showConfirm(t('account.logoutConfirmTitle'), t('account.logoutConfirmBody'))
+    if (!confirmed) return
+    setLoggingOut(true)
+    try {
+      await logout()
+    } catch (err) {
+      await showAlert('Error', String(err))
+    } finally {
+      setLoggingOut(false)
+    }
+  }
 
   // 当前版本的更新内容:优先本地留存(更新前记下的),其次后台检查返回的
   // up-to-date 状态(服务端 latest == 当前版本),最后现场触发一次检查。
@@ -199,6 +213,46 @@ export function SettingsPage() {
       <div className="mb-4">
         <PromoSection />
       </div>
+
+      {/* Account */}
+      {account && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle><User size={15} /> {t('account.title')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-2">
+              {account.email && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">{t('account.email')}</span>
+                  <span className="text-[var(--text-secondary)] font-mono-data text-[12px]">{account.email}</span>
+                </div>
+              )}
+              {account.planName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">{t('account.plan')}</span>
+                  <span className="text-[var(--text-secondary)] text-[12px]">{account.planName}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[var(--text-muted)]">{t('account.manageDevices')}</span>
+                <Button size="sm" variant="ghost" onClick={() => api.openURL(api.PORTAL_URLS.devices)} className="h-7 px-2">
+                  {t('account.manageDevices')}
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="w-full mt-1 text-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger)]/5 gap-2"
+              >
+                <LogOut size={14} />
+                {loggingOut ? '...' : t('account.logout')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* About */}
       <Card>

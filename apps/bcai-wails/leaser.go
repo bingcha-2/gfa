@@ -16,7 +16,7 @@ import (
 
 // API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
 // 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
-var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.lol/api/remote-token")
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.lol/api/app/lease/antigravity")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 
@@ -117,6 +117,7 @@ func (l *Leaser) autoLease(card, deviceId string, force bool, options map[string
 func isCardFatalError(msg string) bool {
 	m := strings.ToLower(msg)
 	for _, s := range []string{
+		// Legacy card-key fatal strings
 		"invalid access key",
 		"missing access key",
 		"access key expired",
@@ -127,6 +128,11 @@ func isCardFatalError(msg string) bool {
 		"账号卡未激活",
 		"账号卡已过期",
 		"账号卡已禁用",
+		// Account-login session fatal tokens
+		"session_invalid",
+		"subscription_expired",
+		"device_revoked",
+		"device_limit_exceeded",
 	} {
 		if strings.Contains(m, s) {
 			return true

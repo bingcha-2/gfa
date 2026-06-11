@@ -131,10 +131,10 @@ func productLabel(product string) string {
 	}
 }
 
-// validateTakeoverPrereqs 接管前置校验:需已激活账号卡(官方透传)。
+// validateTakeoverPrereqs 接管前置校验:需已登录账号(官方透传)。
 func validateTakeoverPrereqs(cfg Config) error {
-	if cfg.AccountCard == "" {
-		return fmt.Errorf("请先激活账号卡再开启接管")
+	if cfg.UserToken == "" {
+		return fmt.Errorf("请先登录账号再开启接管")
 	}
 	return nil
 }

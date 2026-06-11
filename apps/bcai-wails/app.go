@@ -44,25 +44,12 @@ func (a *App) startup(ctx context.Context) {
 		Log("[app] Loaded existing deviceId: %s", cfg.DeviceId)
 	}
 
-	// Auto-start HTTP proxy and token leaser if account card is configured
-	if cfg.AccountCard != "" {
-		Log("[app] Auto-starting HTTP proxy and leaser...")
-		// 从配置恢复到期时间
-		if cfg.CardExpiry != "" {
-			leaser := GetLeaser()
-			leaser.mu.Lock()
-			leaser.cardExpires = cfg.CardExpiry
-			leaser.mu.Unlock()
-		}
-		// 先 Activate 拿到权威 products(开通了哪些产品),StartAutoLease 据此决定是否跑
-		// antigravity 自动租号 —— 避免 codex-only 卡在启动时盲发 antigravity 租号并报错。
-		// Activate 失败(网络等)不阻塞:StartAutoLease 仍会尝试(池子卡语义)。
-		if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, ""); err != nil {
-			Log("[app] 启动时 Activate 失败(不阻塞自动租号): %v", err)
-		}
-		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, "")
+	// Auto-start services if user is logged in (has a session token)
+	if cfg.UserToken != "" {
+		Log("[app] User logged in, auto-starting services...")
+		startServicesForUser(cfg)
 	} else {
-		Log("[app] No account card configured. Waiting for user configuration.")
+		Log("[app] No user session. Waiting for user to log in.")
 	}
 
 	// 清理旧版接管残留的本地 chatgpt_base_url(新版用自定义 provider;旧残留会让
@@ -74,20 +61,8 @@ func (a *App) startup(ctx context.Context) {
 	// 应用 Codex 中转(API 卡密)模式配置(若未配置 relay 则为 no-op,走号池/租号)。
 	GetCodexProxy().ApplyConfig(cfg)
 
-	// Always start the HTTP proxy server
-	err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, "")
-	if err != nil {
-		Log("[app] HTTP proxy start failed: %v", err)
-	} else {
-		Log("[app] HTTP proxy started on 127.0.0.1:%d", cfg.ProxyPort)
-		a.proxyStartedAt = time.Now()
-	}
-
-	// 常驻启动 Claude 桌面端接管用的 MITM 代理(独立端口 48801)。仅监听,不影响任何流量;
-	// 只有用户开启接管(装 CA + 带代理重启 Claude.app)后,Code/Cowork 子进程才会走它。
-	if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.AccountCard, cfg.DeviceId, ""); err != nil {
-		Log("[app] MITM 代理启动失败(不影响其它功能): %v", err)
-	}
+	// Record proxy start time (startServicesForUser starts it if logged in)
+	a.proxyStartedAt = time.Now()
 
 	// 预热连接池，提前建立 TLS 连接
 	WarmupConnectionPool("")
@@ -123,99 +98,45 @@ func (a *App) SaveConfig(cfg Config) error {
 	GetCodexProxy().ApplyConfig(cfg)
 
 	// If crucial settings changed, restart services
-	if oldCfg.AccountCard != cfg.AccountCard ||
+	if oldCfg.UserToken != cfg.UserToken ||
 		oldCfg.ProxyPort != cfg.ProxyPort {
 
 		Log("[app] Core settings changed. Restarting services...")
 
-		// 换卡时清空本地统计数据 + 旧卡的 products(accessKeyStatus),避免用旧卡产品
-		// 误判新卡是否开通 antigravity;新卡 products 由下面的 Activate 重新写入。
-		if oldCfg.AccountCard != cfg.AccountCard {
+		// Token changed: clear stale local state
+		if oldCfg.UserToken != cfg.UserToken {
 			clearLocalCardState()
 		}
 
 		GetLeaser().StopAutoLease()
 		GetHTTPProxy().Stop()
 
-		if cfg.AccountCard != "" {
-			// 重新 Activate 拿到(可能换了卡的)权威 products,再让 StartAutoLease 按产品决定
-			// 是否跑 antigravity 自动租号,避免沿用旧卡 products 误判。
-			if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, ""); err != nil {
-				Log("[app] 重启时 Activate 失败(不阻塞自动租号): %v", err)
-			}
-			GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, "")
+		if cfg.UserToken != "" {
+			startServicesForUser(cfg)
 		}
-
-		// Restart HTTP proxy
-		GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, "")
 	} else {
 		// Just update proxy config without restart
-		GetHTTPProxy().UpdateConfig(cfg.AccountCard, cfg.DeviceId, "")
+		GetHTTPProxy().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 	}
 
-	// MITM 代理端口固定,无需重启,只同步卡密/出口(覆盖上面两个分支)。
-	GetMitmManager().UpdateConfig(cfg.AccountCard, cfg.DeviceId, "")
+	// MITM 代理端口固定,无需重启,只同步 token/出口(覆盖上面两个分支)。
+	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 
 	return nil
 }
 
-// clearLocalCardState 换卡时清空所有本地卡级状态:用量统计、本地额度跟踪、缓存的
-// 卡密状态(products)、以及绑定号血条残量。两条换卡路径(ActivateCard 与
-// App.SaveConfig)共用,避免旧卡数据串到新卡。
+// clearLocalCardState clears all local session-level state when the session token changes.
+// Used by both SaveConfig and UserLogout to avoid stale data on new sessions.
 func clearLocalCardState() {
-	Log("[app] Account card changed: clearing local stats")
+	Log("[app] Session token changed: clearing local stats")
 	GetUsageStats().Reset()
 	GetLeaser().ResetLocalQuota()
 	GetLeaser().ClearAccessKeyStatus()
 	resetBoundFractions()
-	// 三家 leaser 的额度/租号错误(如「卡额度已用完」红 banner)属旧卡,一并清掉 —— 否则
-	// 换新卡 / 后台加额度后,旧卡的 block 提示会一直挂着。三家逻辑保持一致。
+	// Clear leaser errors from the old session to avoid stale banners.
 	GetLeaser().setLastError("")
 	GetClaudeLeaser().setLastError("")
 	GetCodexLeaser().setLastError("")
-}
-
-// switchCardConfig 把配置切到 newCard 并持久化;仅当卡确实变化时清空本地状态,
-// 返回最新配置与是否发生了切换。无网络副作用,可单测。
-func switchCardConfig(newCard string) (Config, bool) {
-	cfg := LoadConfig()
-	switched := cfg.AccountCard != newCard
-	if switched {
-		clearLocalCardState()
-	}
-	cfg.AccountCard = newCard
-	_ = SaveConfig(cfg)
-	return cfg, switched
-}
-
-// ActivateCard saves the account card/access key and validates it server-side.
-func (a *App) ActivateCard(card string) (string, error) {
-	cfg, _ := switchCardConfig(card)
-
-	// Activation = card validation only (/api/activate). Whether a token can be
-	// leased right now (account-pool availability) is a runtime concern, not an
-	// activation failure — a momentarily dry pool must not block activation.
-	expiresAt, err := GetLeaser().Activate(card, cfg.DeviceId, "")
-	if err != nil {
-		return "", err
-	}
-
-	// Start auto-lease / proxy so the client is ready to serve requests.
-	GetLeaser().StartAutoLease(card, cfg.DeviceId, "")
-	GetHTTPProxy().UpdateConfig(card, cfg.DeviceId, "")
-	GetMitmManager().UpdateConfig(card, cfg.DeviceId, "")
-
-	// Best-effort warm probe — never fatal. If the pool is momentarily dry the
-	// card is still activated; the user just sees a "busy" hint at request time.
-	// 只为开通了 antigravity 的卡(或池子卡)预热 —— codex-only 卡预热 antigravity 无意义,
-	// 且会把"此卡未开通该服务"写进 lastError、弹给前端。
-	if GetLeaser().coversAntigravity() {
-		if _, leaseErr := GetLeaser().LeaseToken(card, cfg.DeviceId, true, nil, ""); leaseErr != nil {
-			Log("[activate] card activated but warm lease failed (non-fatal): %v", leaseErr)
-		}
-	}
-
-	return expiresAt, nil
 }
 
 // GetStats returns combined proxy and leaser metrics
@@ -252,7 +173,7 @@ func (a *App) GetStats() map[string]interface{} {
 		{Source: "codex", Msg: GetCodexLeaser().LastError()},
 	})
 	notifications = append(notifications, derivedNotifications(clientHealth{
-		CardConfigured: a.GetConfig().AccountCard != "",
+		CardConfigured: a.GetConfig().UserToken != "",
 		ProxyRunning:   httpProxyStatus.Running,
 		PendingReports: GetLeaser().pendingCount() + GetClaudeLeaser().pendingCount() + GetCodexLeaser().pendingCount(),
 	})...)
@@ -290,12 +211,12 @@ func (a *App) RestartProxy() error {
 	GetLeaser().StopAutoLease()
 	GetHTTPProxy().Stop()
 
-	if cfg.AccountCard != "" {
-		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, "")
+	if cfg.UserToken != "" {
+		GetLeaser().StartAutoLease(cfg.UserToken, cfg.DeviceId, "")
 	}
 
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
-	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, "")
+	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
 }
 
 // SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「登录态 mock」。

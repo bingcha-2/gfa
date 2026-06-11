@@ -22,7 +22,7 @@ export function StatusPill({ compact = false }: StatusPillProps) {
   } else if (leaserState === 'waiting_first_lease') {
     dotColor = 'bg-[var(--warning)]'
     text = t('status.leasing')
-  } else if (leaserState === 'unconfigured' || !config?.accountCard) {
+  } else if (leaserState === 'unconfigured' || !config?.userToken) {
     text = t('status.needCard')
   } else {
     dotColor = 'bg-[var(--success)]'

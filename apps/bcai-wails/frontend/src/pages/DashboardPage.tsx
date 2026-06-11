@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { StatusPill } from '@/components/StatusPill'
 import { NotificationBanner } from '@/components/NotificationBanner'
@@ -6,18 +5,14 @@ import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
+import { AccountStatusCard } from '@/components/AccountStatusCard'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
-import { Modal, useModal } from '@/components/Modal'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import * as api from '@/services/wails'
-import { cn, formatTokens, maskCard, formatDate } from '@/lib/utils'
+import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
-import { Key, BarChart3 } from 'lucide-react'
+import { BarChart3 } from 'lucide-react'
 
 /** 顶部「今日概览」里的一格统计。数字大、标签小,克制单色,只有关键项点琥珀。 */
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'primary' | 'danger' }) {
@@ -41,11 +36,11 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'pr
 export function DashboardPage() {
   const t = useT()
   const {
-    config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
+    leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
     accountFractions, accountResetMs, myFractions, myResetMs, quotaMode, recoveryRemainingMs,
     cardWeight, cardShareCapacity, cardBuckets,
     codexQuota, claudeQuota,
-    activationExpiresAt, todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
+    todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
   } = useAppStore()
 
@@ -91,34 +86,16 @@ export function DashboardPage() {
     return null
   }
 
-  const { modalProps, showAlert } = useModal()
-
-  const [cardInput, setCardInput] = useState('')
-  const [activating, setActivating] = useState(false)
-  const [changing, setChanging] = useState(false)
-  const handleActivateCard = async (): Promise<boolean> => {
-    if (!cardInput.trim()) { await showAlert(t('dashboard.alertHint'), t('dashboard.alertNeedCard')); return false }
-    setActivating(true)
-    try {
-      const result = await useAppStore.getState().activateCard(cardInput.trim())
-      await showAlert(t('dashboard.alertActivated'), t('dashboard.alertActivatedBody', { date: formatDate(result) })); setCardInput('')
-      return true
-    } catch (err) { await showAlert(t('dashboard.alertActivateFailed'), `${err}`); return false }
-    finally { setActivating(false) }
-  }
-
-  const activated = !!config?.accountCard
-  const statusBadge = activated
-    ? (autoLeaseRunning ? (hasToken ? t('dashboard.badgeTokenOk') : t('dashboard.badgeFetching')) : t('dashboard.badgeIdle'))
-    : t('dashboard.badgeInactive')
-
   return (
     <div className="max-w-[960px] flex flex-col gap-4">
       {/* ── 状态 ── */}
       <StatusPill />
       <NotificationBanner />
 
-      {/* 无可用卡密:停止租号、功能不可用,只能重新激活或退出接管 */}
+      {/* ── 账号卡:显示登录状态、套餐、到期、设备 ── */}
+      <AccountStatusCard />
+
+      {/* 会话不可用(SESSION_INVALID / SUBSCRIPTION_EXPIRED):提示重新登录 */}
       {cardUnusable && (
         <div className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
           <div className="text-sm font-medium text-[var(--danger)]">{t('dashboard.cardUnusableTitle')}</div>
@@ -126,68 +103,6 @@ export function DashboardPage() {
             {t('dashboard.cardUnusableBody1')}<strong>{t('dashboard.cardUnusableStrong1')}</strong>{t('dashboard.cardUnusableBody2')}<strong>{t('dashboard.cardUnusableStrong2')}</strong>{t('dashboard.cardUnusableBody3')}
           </div>
         </div>
-      )}
-
-      {/* ── 账号卡:未激活 → 突出引导;已激活 → 紧凑条(可内联更换)── */}
-      {!activated ? (
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Key size={16} className="text-[var(--primary)]" />
-            <span className="text-[15px] font-bold text-[var(--text-primary)]">{t('dashboard.activateTitle')}</span>
-          </div>
-          <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed mb-3 max-w-[64ch]">
-            {t('dashboard.activateIntro')}
-          </p>
-          <div className="flex gap-2">
-            <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-              placeholder={t('dashboard.cardPlaceholder')} className="flex-1 h-10"
-              onKeyDown={(e) => { if (e.key === 'Enter') handleActivateCard() }} />
-            <Button onClick={() => handleActivateCard()} disabled={activating} className="h-10 px-6 shrink-0">
-              {activating ? t('dashboard.activating') : t('dashboard.activate')}
-            </Button>
-          </div>
-          <button
-            onClick={() => api.openURL('https://bcai.store')}
-            className="mt-2.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)] transition-colors"
-          >
-            {t('dashboard.buyCardLink')}
-          </button>
-        </Card>
-      ) : (
-        <Card className="px-4 py-3 flex flex-col gap-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-[var(--bg-tertiary)] text-[var(--primary)] shrink-0">
-                <Key size={15} />
-              </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-mono-data text-[var(--text-primary)]">{maskCard(config!.accountCard)}</span>
-                  <Badge variant={hasToken ? 'success' : 'default'}>{statusBadge}</Badge>
-                </div>
-                <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-                  {t('dashboard.expiry', { date: activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) ? formatDate(activationExpiresAt) : '—' })}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config!.accountCard)}>{t('common.copy')}</Button>
-              <Button size="sm" variant="secondary" onClick={() => { setChanging((v) => !v); setCardInput('') }}>
-                {changing ? t('common.cancel') : t('dashboard.change')}
-              </Button>
-            </div>
-          </div>
-          {changing && (
-            <div className="flex gap-2 pt-0.5">
-              <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder={t('dashboard.newCardPlaceholder')} className="flex-1 h-9"
-                onKeyDown={(e) => { if (e.key === 'Enter') handleActivateCard().then((ok) => ok && setChanging(false)) }} />
-              <Button onClick={() => handleActivateCard().then((ok) => ok && setChanging(false))} disabled={activating} className="px-5 shrink-0">
-                {activating ? t('common.saving') : t('common.save')}
-              </Button>
-            </div>
-          )}
-        </Card>
       )}
 
       {/* ── 今日概览:分段统计条 ── */}
@@ -307,8 +222,6 @@ export function DashboardPage() {
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
-        <span>{t('dashboard.footDevice')}: {config?.deviceId?.substring(0, 8) || '-'}...</span>
-        <span className="text-[var(--border)]">·</span>
         <span>{t('dashboard.footActive')}: {accountId ? `#${accountId}` : t('common.none')}</span>
         <span className="text-[var(--border)]">·</span>
         <span>{t('dashboard.footToken')}: {autoLeaseRunning ? (hasToken ? t('dashboard.footTokenOk') : t('dashboard.footTokenFetching')) : t('dashboard.footTokenIdle')}</span>
@@ -319,8 +232,6 @@ export function DashboardPage() {
           </>
         )}
       </div>
-
-      <Modal {...modalProps} />
     </div>
   )
 }

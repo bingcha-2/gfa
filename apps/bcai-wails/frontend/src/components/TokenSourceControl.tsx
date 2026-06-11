@@ -41,7 +41,7 @@ export function TokenSourceControl() {
   const proxyPort = useAppStore((s) => s.proxyPort)
   const { showAlert, showConfirm, modalProps } = useModal()
 
-  const hasCard = !!config?.accountCard && config.accountCard.trim() !== ''
+  const hasCard = !!config?.userToken && config.userToken.trim() !== ''
 
   const agApps = ideProducts.filter((p) => p.id.startsWith('antigravity'))
   const codexApp = ideProducts.find((p) => p.id === 'codex')

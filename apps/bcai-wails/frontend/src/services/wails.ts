@@ -6,7 +6,6 @@
 import {
   GetConfig,
   SaveConfig as _SaveConfig,
-  ActivateCard as _ActivateCard,
   GetStats,
   RestartProxy as _RestartProxy,
   GetLogs,
@@ -27,11 +26,23 @@ import {
   GetFaqData,
   GetCodexRelayConfig as _GetCodexRelayConfig,
   SaveCodexRelayConfig as _SaveCodexRelayConfig,
+  UserLogin as _UserLogin,
+  UserLogout as _UserLogout,
+  GetAccountState as _GetAccountState,
 } from '../../wailsjs/go/main/App'
+
+// ===== Portal URLs =====
+export const PORTAL_URLS = {
+  register: 'https://bcai.lol/app/register',
+  forgot: 'https://bcai.lol/app/forgot',
+  billing: 'https://bcai.lol/app/billing',
+  bind: 'https://bcai.lol/app/bind',
+  devices: 'https://bcai.lol/app/devices',
+} as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
-import type { Config, IDEStatus, UpdateStatus, BoundAccountInfo } from '@/types'
+import type { Config, IDEStatus, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
@@ -42,9 +53,17 @@ export async function saveConfig(cfg: Config): Promise<void> {
   await _SaveConfig(cfg)
 }
 
-// ===== Account Card =====
-export async function activateCard(card: string): Promise<string> {
-  return _ActivateCard(card)
+// ===== Account Login =====
+export async function userLogin(email: string, password: string): Promise<Record<string, unknown>> {
+  return _UserLogin(email, password)
+}
+
+export async function userLogout(): Promise<void> {
+  await _UserLogout()
+}
+
+export async function getAccountState(): Promise<AccountState> {
+  return _GetAccountState() as Promise<AccountState>
 }
 
 // ===== Stats =====

@@ -20,7 +20,7 @@ func postJSONWithSecretToBase(baseURL string, client *http.Client, path string, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if secret != "" {
-		req.Header.Set("x-token-server-secret", secret)
+		req.Header.Set("Authorization", "Bearer "+secret)
 	}
 
 	resp, err := client.Do(req)

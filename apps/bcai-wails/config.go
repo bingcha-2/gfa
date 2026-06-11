@@ -9,7 +9,10 @@ import (
 )
 
 type Config struct {
-	AccountCard  string `json:"accountCard"`
+	// ── Legacy card-key fields (kept for old config file parsing; not used for runtime auth) ──
+	AccountCard string `json:"accountCard"` // kept for backward-compat; runtime no longer reads this for auth
+	CardExpiry  string `json:"cardExpiry"`  // kept for backward-compat
+
 	DeviceId     string `json:"deviceId"`
 	ProxyPort    int    `json:"proxyPort"`
 	IDEPath      string `json:"idePath"` // 用户自定义 IDE 安装路径（留空则自动检测）
@@ -18,7 +21,15 @@ type Config struct {
 	// 用户自定义 Claude 桌面端可执行文件路径(留空则自动检测)。逃生口:自动检测漏掉
 	// 非标准安装/提权导致 %LOCALAPPDATA% 偏移时,用户可手动指定,无需 Claude 先开着。
 	ClaudeDesktopPath string `json:"claudeDesktopPath"`
-	CardExpiry        string `json:"cardExpiry"` // 账号卡到期时间
+
+	// ── Account-login fields (new) ──
+	UserToken       string `json:"userToken"`       // session JWT from /app/login
+	UserTokenExpiry string `json:"userTokenExpiry"` // ISO-8601 expiry
+	UserEmail       string `json:"userEmail"`       // account email
+	PlanName        string `json:"planName"`        // subscription plan name
+	PlanExpiry      string `json:"planExpiry"`      // subscription expiry (ISO-8601 or null string)
+	PlanDeviceMax   int    `json:"planDeviceMax"`   // device limit from subscription
+	DeviceName      string `json:"deviceName"`      // hostname + " (" + GOOS + ")"
 
 	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
 	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。
@@ -31,9 +42,16 @@ type Config struct {
 
 var (
 	configLock sync.RWMutex
+
+	// origConfigDir allows tests to redirect config to a temp directory.
+	// Set to a non-empty path before calling LoadConfig/SaveConfig/configFilePath.
+	origConfigDir string
 )
 
 func getAppDataDir() string {
+	if origConfigDir != "" {
+		return origConfigDir
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		// fallback: 极端情况下 $HOME 未定义等
