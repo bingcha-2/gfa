@@ -147,9 +147,11 @@ describe('AccessKeyStore — session-JWT routing', () => {
     expect(result.limitExceeded).toBe(true);
     expect(result.resetMs).toBeGreaterThan(0);
     expect(result.viaSession).toBe(true);
+    // Quota exhaustion keeps its 429 contract — NOT mapped to SUBSCRIPTION_EXPIRED.
+    expect(result.sessionError).toBeUndefined();
   });
 
-  it('an expired shadow record errors through the same pipeline', async () => {
+  it('an EXPIRED shadow record on the session path carries the SUBSCRIPTION_EXPIRED machine code (403)', async () => {
     const store = makeStore([{
       id: 'sub-1', key: 'sub_backing', status: 'active',
       keyExpiresAt: new Date(Date.now() - 1000).toISOString(),
@@ -161,6 +163,113 @@ describe('AccessKeyStore — session-JWT routing', () => {
     expect(result.record).toBeNull();
     expect(result.error).toBe('Access key expired');
     expect(result.viaSession).toBe(true);
+    expect(result.sessionError).toEqual({ statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' });
+  });
+
+  it('a DISABLED shadow record on the session path carries the SUBSCRIPTION_EXPIRED machine code too', async () => {
+    const store = makeStore([{ id: 'sub-1', key: 'sub_backing', status: 'expired' }]);
+    store.setSessionResolver({ resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }) });
+
+    const result = await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {});
+
+    expect(result.record).toBeNull();
+    expect(result.error).toBe('Access key disabled');
+    expect(result.sessionError).toEqual({ statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' });
+  });
+
+  it('the CARD path keeps its generic expiry error — no sessionError machine code', async () => {
+    const store = makeStore([{
+      id: 'k1', key: 'secret1', status: 'active',
+      keyExpiresAt: new Date(Date.now() - 1000).toISOString(),
+    }]);
+    store.setSessionResolver({ resolve: vi.fn() });
+
+    const result = await store.resolveFromRequest({ headers: { 'x-access-key': 'secret1' } } as any, {});
+
+    expect(result.record).toBeNull();
+    expect(result.error).toBe('Access key expired');
+    expect(result.viaSession).toBeUndefined();
+    expect(result.sessionError).toBeUndefined();
+  });
+});
+
+describe('first-use expiry resync hook (onShadowRecordFirstUse)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it('arming firstUsedAt on a no-absolute-expiry record fires the hook ONCE with the effective expiry', async () => {
+    // Migrated never-used card: no keyExpiresAt, no firstUsedAt, relative durationMs.
+    const store = makeStore([{ id: 'sub-1', key: 'sub_backing', status: 'active', durationMs: 7 * DAY_MS }]);
+    const onShadowRecordFirstUse = vi.fn();
+    store.setSessionResolver({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }),
+      onShadowRecordFirstUse,
+    });
+
+    const first = await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {}, { activate: true });
+
+    expect(first.record?.id).toBe('sub-1');
+    expect(onShadowRecordFirstUse).toHaveBeenCalledTimes(1);
+    const [cardId, iso] = onShadowRecordFirstUse.mock.calls[0];
+    expect(cardId).toBe('sub-1');
+    // Effective expiry == the keyExpiresAt the engine uses (firstUsedAt + durationMs).
+    expect(iso).toBe(new Date(Date.parse(first.record!.firstUsedAt!) + 7 * DAY_MS).toISOString());
+
+    // Second lease: firstUsedAt already armed → hook NOT fired again.
+    await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {}, { activate: true });
+    expect(onShadowRecordFirstUse).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT fire for records that already carry an absolute keyExpiresAt (plan-backed shadow)', async () => {
+    const store = makeStore([{
+      id: 'sub-1', key: 'sub_backing', status: 'active',
+      keyExpiresAt: new Date(Date.now() + 30 * DAY_MS).toISOString(),
+    }]);
+    const onShadowRecordFirstUse = vi.fn();
+    store.setSessionResolver({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }),
+      onShadowRecordFirstUse,
+    });
+
+    await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {}, { activate: true });
+
+    expect(onShadowRecordFirstUse).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire on non-activating resolves (report path leaves the record unarmed)', async () => {
+    const store = makeStore([{ id: 'sub-1', key: 'sub_backing', status: 'active', durationMs: 7 * DAY_MS }]);
+    const onShadowRecordFirstUse = vi.fn();
+    store.setSessionResolver({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }),
+      onShadowRecordFirstUse,
+    });
+
+    const result = await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {});
+
+    expect(result.record?.id).toBe('sub-1');
+    expect(onShadowRecordFirstUse).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire when the record has no durationMs (no effective expiry to sync)', async () => {
+    const store = makeStore([{ id: 'sub-1', key: 'sub_backing', status: 'active' }]);
+    const onShadowRecordFirstUse = vi.fn();
+    store.setSessionResolver({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }),
+      onShadowRecordFirstUse,
+    });
+
+    await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {}, { activate: true });
+
+    expect(onShadowRecordFirstUse).not.toHaveBeenCalled();
+  });
+
+  it('a resolver without the optional hook still resolves fine (backward compatible)', async () => {
+    const store = makeStore([{ id: 'sub-1', key: 'sub_backing', status: 'active', durationMs: 7 * DAY_MS }]);
+    store.setSessionResolver({ resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'sub-1' }) });
+
+    const result = await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {}, { activate: true });
+
+    expect(result.record?.id).toBe('sub-1');
+    expect(result.record?.firstUsedAt).toBeTruthy();
   });
 });
 

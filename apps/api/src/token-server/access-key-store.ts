@@ -42,6 +42,7 @@ import {
   missingShadowRecord,
   sessionResolveFailure,
   sessionResolverUnavailable,
+  shadowRecordValidationFailure,
   type SessionResolverLike,
 } from './session-credential';
 
@@ -470,7 +471,20 @@ export class AccessKeyStore {
       if (!resolved.ok) return sessionResolveFailure(resolved);
       const record = this.byId.get(resolved.cardId) || null;
       if (!record) return missingShadowRecord();
-      return { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
+      // Migrated never-used card: no absolute expiry AND not yet armed.
+      const unarmed = !record.keyExpiresAt && !record.firstUsedAt;
+      const result: ResolveResult = { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
+      // This lease just armed firstUsedAt → tell the resolver the record's
+      // now-effective expiry so Subscription.expiresAt gets resynced. Fires at
+      // most ONCE per record (firstUsedAt persists) and is NOT awaited — zero
+      // added latency on the hot path; the hook owns its errors.
+      if (unarmed && result.record && record.firstUsedAt) {
+        const effective = keyExpiresAt(record);
+        if (effective) this.sessionResolver.onShadowRecordFirstUse?.(record.id, effective);
+      }
+      // Record-level expiry/disabled on the session path → SUBSCRIPTION_EXPIRED
+      // machine code (the sub row was ACTIVE but the record can't serve).
+      return shadowRecordValidationFailure(result);
     }
 
     const keyValue = AccessKeyStore.extractKeyFromRequest(req, payload);

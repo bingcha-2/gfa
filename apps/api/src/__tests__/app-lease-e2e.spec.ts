@@ -381,7 +381,7 @@ describe("M7 — antigravity session lease (full engine path)", () => {
     });
   });
 
-  it("(e) expired subscription shadow record → access key expired error", async () => {
+  it("(e) ACTIVE sub but EXPIRED shadow record (drift) → 403 SUBSCRIPTION_EXPIRED machine code", async () => {
     const { customer, token } = await seedCustomerWithDevice();
     const sub = await seedSubscription(customer.id, { expiresAt: new Date(Date.now() + 5 * DAY_MS) });
     // Shadow record with an absolute expiry already in the past
@@ -391,12 +391,17 @@ describe("M7 — antigravity session lease (full engine path)", () => {
 
     const service = makeService("real");
 
+    // M13a: record-level expiry on the session path carries the machine code —
+    // the desktop client must see "renew subscription", not a generic 401.
     await expect(
       service.leaseToken(
         { headers: { authorization: `Bearer ${token}` } },
         { clientId: "client-A", modelKey: "gemini-2.5-pro" },
       ),
-    ).rejects.toMatchObject({ statusCode: 401 });
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      body: { ok: false, error: "SUBSCRIPTION_EXPIRED" },
+    });
   });
 
   it("(e) expired/cancelled subscription (resolver returns SUBSCRIPTION_EXPIRED) → 403", async () => {

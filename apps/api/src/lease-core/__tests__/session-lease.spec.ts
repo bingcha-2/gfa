@@ -162,6 +162,43 @@ describe("LeaseService — session-JWT leases", () => {
     expect(record.sessionExpiresAt).toBeUndefined();
   });
 
+  it("ACTIVE sub + EXPIRED shadow record + session token → 403 with the SUBSCRIPTION_EXPIRED machine code (drift surfaced, not a generic 401)", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "sub-1", key: "sub_backing_value", status: "active",
+        keyExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      }],
+    });
+    // Resolver says the sub row is ACTIVE — only the record is expired.
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
+
+    await expect(
+      service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      body: { ok: false, error: "SUBSCRIPTION_EXPIRED" },
+    });
+  });
+
+  it("card path with an expired key keeps the generic 401 (no machine code)", async () => {
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "card_secret", status: "active",
+        firstUsedAt: "2020-01-01T00:00:00.000Z", durationMs: 1000,
+      }],
+    });
+    const { service } = makeService(null);
+
+    await expect(
+      service.leaseToken({ headers: { "x-access-key": "card_secret" } }, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message: "Access key expired",
+    });
+  });
+
   it("session lease over a bucket cap still 429s with retryAfterMs (shared pipeline)", async () => {
     const now = Date.now();
     writeJson(accessKeysFilePath, {

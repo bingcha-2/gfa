@@ -24,6 +24,15 @@ export interface SessionResolverLike {
     | { ok: true; cardId: string }
     | { ok: false; statusCode: number; error: string; message: string }
   >;
+  /**
+   * Optional fire-and-forget hook: a session lease just armed firstUsedAt on a
+   * shadow record that carries NO absolute keyExpiresAt (i.e. a migrated
+   * never-used card whose Subscription.expiresAt is still null). Receives the
+   * record's now-effective expiry (firstUsedAt + durationMs) so the caller can
+   * resync it onto the Subscription row. Called WITHOUT await on the lease hot
+   * path — implementations must be non-blocking and swallow their own errors.
+   */
+  onShadowRecordFirstUse?(cardId: string, effectiveExpiresAtIso: string): void;
 }
 
 /**
@@ -74,4 +83,20 @@ export function missingShadowRecord(): ResolveResult {
     error: '无有效订阅或已到期',
     sessionError: { statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' },
   };
+}
+
+/**
+ * Session-resolved shadow record failed RECORD-level validation — the sub row
+ * was ACTIVE (the resolver passed) but the record is expired/disabled (drift,
+ * e.g. a never-used migrated card whose firstUsedAt+durationMs ran out while
+ * Subscription.expiresAt is still null). Without this the client gets a bare
+ * 401 "Access key expired" and can't tell "renew subscription" from "bad
+ * credential" — so attach the SUBSCRIPTION_EXPIRED machine code. Quota
+ * failures keep their 429 contract (limitExceeded passes through untouched),
+ * successes and already-coded failures pass through unchanged. Card-key
+ * lookups never route here, so the card path's generic errors are untouched.
+ */
+export function shadowRecordValidationFailure(result: ResolveResult): ResolveResult {
+  if (result.record || result.limitExceeded || result.sessionError) return result;
+  return { ...result, sessionError: { statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' } };
 }

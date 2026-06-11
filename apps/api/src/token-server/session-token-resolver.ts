@@ -21,7 +21,7 @@
  * Success returns the chosen Subscription id — which IS the shadow
  * AccessKeyRecord id, so the whole quota engine keys off it unchanged.
  */
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 
 import { CustomerTokenService } from "../web/customer-auth/customer-token.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -32,6 +32,8 @@ export type SessionResolution =
 
 @Injectable()
 export class SessionTokenResolver {
+  private readonly logger = new Logger(SessionTokenResolver.name);
+
   constructor(
     private readonly customerTokens: CustomerTokenService,
     private readonly prisma: PrismaService,
@@ -87,6 +89,35 @@ export class SessionTokenResolver {
     // Multiple covering subscriptions: pick the longest-lived (null expiry = ∞).
     const best = covering.reduce((a, b) => (expiryMs(b.expiresAt) > expiryMs(a.expiresAt) ? b : a));
     return { ok: true, cardId: best.id };
+  }
+
+  /**
+   * First-use expiry resync (SessionResolverLike hook, called fire-and-forget
+   * by AccessKeyStore OFF the await chain): a migrated never-used card keeps
+   * Subscription.expiresAt null until its shadow record arms firstUsedAt +
+   * durationMs on the first lease. Persist that effective expiry onto the row
+   * so the portal shows a real date and the expiry cron can act on it.
+   *
+   * Best-effort by contract: guarded by `expiresAt: null` in the where (never
+   * clobbers a real expiry; naturally idempotent), failures are logged and
+   * never surface into — let alone block — the lease.
+   */
+  onShadowRecordFirstUse(cardId: string, effectiveExpiresAtIso: string): Promise<void> {
+    const ts = Date.parse(String(effectiveExpiresAtIso || ""));
+    if (!cardId || !Number.isFinite(ts)) return Promise.resolve();
+    return this.prisma.subscription
+      .updateMany({
+        where: { id: cardId, expiresAt: null },
+        data: { expiresAt: new Date(ts) },
+      })
+      .then((res) => {
+        if (res.count > 0) {
+          this.logger.log(`first-use expiry resync: subscription ${cardId} expiresAt=${new Date(ts).toISOString()}`);
+        }
+      })
+      .catch((err: any) => {
+        this.logger.warn(`first-use expiry resync failed for subscription ${cardId}: ${err?.message || err}`);
+      });
   }
 
   private deny(statusCode: number, error: string, message: string): SessionResolution {
