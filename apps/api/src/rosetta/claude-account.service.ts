@@ -98,6 +98,8 @@ export class ClaudeAccountService {
       claudeWeeklyResetTime: String(account.claudeWeeklyResetTime || ""),
       modelQuotaRefreshedAt: Number(account.modelQuotaRefreshedAt || 0),
       proxyUrl: String(account.proxyUrl || ""),
+      // 是否已存邮箱密码(用于 token 失效时自动重登)。不回传明文密码。
+      hasMailPassword: Boolean(account.mailPassword),
       // Persisted dead-account verdict (written by lease-service) so the console
       // can surface invalid_grant / repeatedly-failing accounts as dead.
       quotaStatus: String(account.quotaStatus || "ok"),
@@ -622,6 +624,22 @@ export class ClaudeAccountService {
   setClaudeAccountProxy(payload: any) {
     const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
     return setAccountProxyInPool(filePath, Number(payload?.accountId), payload?.proxyUrl);
+  }
+
+  // 设置/清除某 anthropic 账号的邮箱密码。空=清除。存了密码 + 代理后,token
+  // 失效(invalid_grant)时刷额度会自动走 Playwright 重登。给老账号补登用。
+  setClaudeAccountMailPassword(payload: any) {
+    const accountId = Number(payload?.accountId);
+    const mailPassword = String(payload?.mailPassword ?? "");
+    const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const account = accounts.find((item: any) => Number(item.id) === accountId);
+    if (!account) return { ok: false, error: "账号不存在" };
+    if (mailPassword) account.mailPassword = mailPassword;
+    else delete account.mailPassword;
+    writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
+    return { ok: true, email: account.email, hasMailPassword: Boolean(account.mailPassword) };
   }
 
   deleteClaudeAccount(payload: any) {

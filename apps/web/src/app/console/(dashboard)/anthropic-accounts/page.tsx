@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, KeyRoundIcon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
@@ -39,6 +39,7 @@ type ClaudeAccount = {
   claudeWeeklyResetTime: string;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
+  hasMailPassword?: boolean;
   quotaStatus?: string;
   quotaStatusReason?: string;
 };
@@ -91,6 +92,10 @@ export default function ClaudeAccountsPage() {
   const [proxyEditId, setProxyEditId] = useState<number | null>(null);
   const [proxyEditVal, setProxyEditVal] = useState("");
   const [proxySaving, setProxySaving] = useState(false);
+  // 邮箱密码行内编辑(token 失效自动重登用)。
+  const [pwEditId, setPwEditId] = useState<number | null>(null);
+  const [pwEditVal, setPwEditVal] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
@@ -575,6 +580,31 @@ export default function ClaudeAccountsPage() {
     }
   }
 
+  function startEditPw(account: ClaudeAccount) {
+    setPwEditId(account.id);
+    setPwEditVal("");
+  }
+
+  async function handleSavePw(account: ClaudeAccount) {
+    setPwSaving(true);
+    try {
+      const res = await fetch("/api/rosetta/anthropic-set-mail-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id, mailPassword: pwEditVal }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success(pwEditVal ? `#${account.id} 邮箱密码已设置(token 失效将自动重登)` : `#${account.id} 邮箱密码已清除`);
+      setPwEditId(null);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -901,17 +931,45 @@ export default function ClaudeAccountsPage() {
                       </button>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}
-                        onClick={() => handleRefresh(a)}>
-                        {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
-                      </Button>
-                      <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
-                        onClick={() => handleReactivate(a)}>
-                        <BadgeCheckIcon className="size-4 text-amber-500" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
-                        <Trash2Icon className="size-4 text-destructive" />
-                      </Button>
+                      {pwEditId === a.id ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Input
+                            type="password"
+                            className="h-7 w-[180px] text-xs"
+                            autoFocus
+                            placeholder="邮箱密码（留空=清除）"
+                            value={pwEditVal}
+                            onChange={(e) => setPwEditVal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSavePw(a);
+                              if (e.key === "Escape") setPwEditId(null);
+                            }}
+                          />
+                          <Button size="sm" className="h-7 px-2" disabled={pwSaving} onClick={() => handleSavePw(a)}>
+                            {pwSaving ? <Spinner size={12} /> : "保存"}
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setPwEditId(null)}>取消</Button>
+                        </div>
+                      ) : (
+                        <>
+                          <Button variant="ghost" size="icon"
+                            title={a.hasMailPassword ? "已存邮箱密码（token 失效自动重登）· 点击修改" : "设置邮箱密码（token 失效自动重登）"}
+                            onClick={() => startEditPw(a)}>
+                            <KeyRoundIcon className={`size-4 ${a.hasMailPassword ? "text-green-600" : "text-muted-foreground"}`} />
+                          </Button>
+                          <Button variant="ghost" size="icon" title="刷新 token + 探测额度" disabled={busyId === a.id}
+                            onClick={() => handleRefresh(a)}>
+                            {busyId === a.id ? <Spinner size={14} /> : <GaugeIcon className="size-4" />}
+                          </Button>
+                          <Button variant="ghost" size="icon" title="恢复（清除冷却/需验证封禁，放回候选池）" disabled={busyId === a.id}
+                            onClick={() => handleReactivate(a)}>
+                            <BadgeCheckIcon className="size-4 text-amber-500" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)}>
+                            <Trash2Icon className="size-4 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

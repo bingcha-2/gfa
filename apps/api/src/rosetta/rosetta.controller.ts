@@ -210,6 +210,12 @@ export class RosettaController {
     return this.rosetta.setClaudeAccountProxy(body);
   }
 
+  // 设置/清除邮箱密码(token 失效自动重登用)。body = { accountId, mailPassword }。空=清除。
+  @Post("anthropic-set-mail-password")
+  setClaudeAccountMailPassword(@Body() body: any) {
+    return this.rosetta.setClaudeAccountMailPassword(body);
+  }
+
   // 通用出口代理设置(御三家共用):body = { provider, accountId, proxyUrl }。空 proxyUrl=清除。
   @Post("account-set-proxy")
   setAccountProxy(@Body() body: any) {
