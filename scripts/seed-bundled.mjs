@@ -2,7 +2,7 @@
  * seed-bundled.mjs
  *
  * Bundled-mode equivalent of seed.mjs.
- * Imports @prisma/client from the bundled apps/api/node_modules path,
+ * Imports @prisma/client from the bundled apps/server/node_modules path,
  * without requiring pnpm to be installed on the end-user machine.
  *
  * Environment vars:
@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 
 // Resolve @prisma/client from the bundled api node_modules
-const apiNodeModules = join(rootDir, "apps", "api", "node_modules");
+const apiNodeModules = join(rootDir, "apps", "server", "node_modules");
 const require = createRequire(import.meta.url);
 
 let PrismaClient;

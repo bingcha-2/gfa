@@ -3,7 +3,7 @@
  * referral rewards.
  *
  * NOTE FOR COORDINATOR: This module must be added to AppModule.imports[]
- * in apps/api/src/app.module.ts. It is intentionally self-contained so the
+ * in apps/server/src/app.module.ts. It is intentionally self-contained so the
  * coordinator can wire it without touching any files owned by billing.
  *
  *   import { BillingModule } from "./web/billing/billing.module";

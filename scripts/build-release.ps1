@@ -114,13 +114,13 @@ Write-Host "  Copied redis-server.exe to runtime/"
 # @vercel/ncc inlines all JS deps into one file. Only native binary files
 # (.prisma/client query engines) need to be copied separately.
 Write-Step "Bundling API with ncc"
-$apiDeployDir = Join-Path $releaseDir "apps\api"
+$apiDeployDir = Join-Path $releaseDir "apps\server"
 New-Item -ItemType Directory -Path $apiDeployDir -Force | Out-Null
 
 # ncc compiles dist/main.js + all node_modules into a single bundle.js
 # Externalize @prisma/client because it uses native .node binaries ncc can't inline
 $nccApiOut = Join-Path $apiDeployDir "dist"
-& npx --yes @vercel/ncc build (Join-Path $repoRoot "apps\api\dist\main.js") `
+& npx --yes @vercel/ncc build (Join-Path $repoRoot "apps\server\dist\main.js") `
   --out $nccApiOut `
   --external "@prisma/client" `
   --external ".prisma" `
@@ -143,7 +143,7 @@ $prismaRuntimeSrc = Get-ChildItem -Path (Join-Path $repoRoot "node_modules\.pnpm
 $prismaClientPkgSrc = Join-Path $repoRoot "node_modules\@prisma\client"
 $prismaClientVersion = (Get-Content -Raw (Join-Path $prismaClientPkgSrc "package.json") | ConvertFrom-Json).version
 $prismaCliVersion = (Get-Content -Raw (Join-Path $repoRoot "node_modules\prisma\package.json") | ConvertFrom-Json).version
-$bcryptVersion = (Get-Content -Raw (Join-Path $repoRoot "apps\api\node_modules\bcrypt\package.json") | ConvertFrom-Json).version
+$bcryptVersion = (Get-Content -Raw (Join-Path $repoRoot "apps\server\node_modules\bcrypt\package.json") | ConvertFrom-Json).version
 
 $apiRuntimeInstallTemp = Join-Path $tmpDir "api-runtime-install"
 if (Test-Path $apiRuntimeInstallTemp) {
@@ -151,7 +151,7 @@ if (Test-Path $apiRuntimeInstallTemp) {
 }
 New-Item -ItemType Directory -Path $apiRuntimeInstallTemp -Force | Out-Null
 $apiRuntimePackage = @{
-  name = "@gfa/api-runtime"
+  name = "@gfa/server-runtime"
   private = $true
   version = "0.1.0"
   packageManager = "pnpm@10.27.0"

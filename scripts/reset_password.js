@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const bcrypt = require(require.resolve('bcrypt', { paths: [__dirname + '/../apps/api'] }));
+const bcrypt = require(require.resolve('bcrypt', { paths: [__dirname + '/../apps/server'] }));
 
 const prisma = new PrismaClient();
 

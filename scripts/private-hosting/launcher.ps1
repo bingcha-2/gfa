@@ -478,7 +478,7 @@ function Get-ServiceDefinitions([hashtable]$EnvironmentContext, [string]$NodeExe
     Name             = "api"
     FilePath         = $NodeExe
     Arguments        = @("dist/main.js")
-    WorkingDirectory = (Join-Path $repoRoot "apps\api")
+    WorkingDirectory = (Join-Path $repoRoot "apps\server")
     Environment      = $envMap
     HealthUrl        = "http://127.0.0.1:$apiPort/api/health"
     Port             = $apiPort
@@ -578,7 +578,7 @@ function New-ServiceState(
 function Build-Artifacts([string]$PnpmExe, [hashtable]$EnvironmentOverrides) {
   $requiredArtifacts = @(
     (Join-Path $repoRoot "packages\shared\dist\index.js"),
-    (Join-Path $repoRoot "apps\api\dist\main.js"),
+    (Join-Path $repoRoot "apps\server\dist\main.js"),
     (Join-Path $repoRoot "apps\worker\dist\index.js"),
     (Join-Path $repoRoot "apps\web\.next\BUILD_ID")
   )

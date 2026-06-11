@@ -40,7 +40,7 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
-  apps/api:
+  apps/server:
     dependencies:
       '@gfa/shared':
         specifier: workspace:*

@@ -298,7 +298,7 @@ function checkBuildArtifacts() {
   if (skipBuild) {
     // Only verify artifacts exist when skipping build
     const required = [
-      { path: join(ROOT, "apps/api/dist/main.js"), name: "API" },
+      { path: join(ROOT, "apps/server/dist/main.js"), name: "API" },
       { path: join(ROOT, "apps/worker/dist/index.js"), name: "Worker" },
       { path: join(ROOT, "apps/web/.next/BUILD_ID"), name: "Web" },
     ];
@@ -350,7 +350,7 @@ function getServices(env) {
       label: "api   ",
       command: "node",
       args: ["dist/main.js"],
-      cwd: join(ROOT, "apps/api"),
+      cwd: join(ROOT, "apps/server"),
       readyPattern: /\[api\] listening/i,
       port: apiPort,
     },

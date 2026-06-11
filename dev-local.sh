@@ -28,7 +28,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ── 路径 ──
-API_DIR="$ROOT/apps/api"
+API_DIR="$ROOT/apps/server"
 WAILS_DIR="$ROOT/apps/bcai-wails"
 DATA_DIR="$HOME/Library/Application Support/Antigravity/rosetta"
 WAILS_BIN="${WAILS_BIN:-$(command -v wails 2>/dev/null || echo "$HOME/go/bin/wails")}"

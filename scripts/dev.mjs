@@ -126,7 +126,7 @@ const services = [
   {
     name: "api",
     label: "api   ",
-    filter: "@gfa/api",
+    filter: "@gfa/server",
     ready: /\[api\] listening/i,
   },
   {

@@ -10,7 +10,7 @@
  *
  * Environment vars:
  *   DATABASE_URL   - absolute SQLite path, e.g. file:C:/Program Files/GFA/data/gfa.db
- *   PRISMA_CLI     - path to the local prisma CLI (bundled apps/api/node_modules/.bin/prisma)
+ *   PRISMA_CLI     - path to the local prisma CLI (bundled apps/server/node_modules/.bin/prisma)
  */
 
 import { spawnSync } from "node:child_process";
@@ -29,7 +29,7 @@ if (!databaseUrl) {
 }
 
 // Resolve prisma CLI: try bundled api node_modules first, then PATH
-const bundledPrisma = join(rootDir, "apps", "api", "node_modules", ".bin", "prisma");
+const bundledPrisma = join(rootDir, "apps", "server", "node_modules", ".bin", "prisma");
 const prismaCli = existsSync(bundledPrisma + ".cmd")
   ? bundledPrisma + ".cmd"
   : existsSync(bundledPrisma)
@@ -57,7 +57,7 @@ const runPrisma = (args, extraEnv = {}) => {
     });
   } else {
     // Fallback: call prisma via its JS entry point
-    const prismaJs = join(rootDir, "apps", "api", "node_modules", "prisma", "build", "index.js");
+    const prismaJs = join(rootDir, "apps", "server", "node_modules", "prisma", "build", "index.js");
     result = spawnSync(nodeExe, [prismaJs, ...args], {
       cwd: rootDir,
       env: { ...process.env, DATABASE_URL: databaseUrl, ...extraEnv },
