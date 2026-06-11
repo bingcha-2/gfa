@@ -29,6 +29,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 let tmpDir: string;
 let accessKeysPath: string;
 let store: AccessKeyStore;
+let rosetta: RosettaService;
 let service: CardMigrationService;
 
 function writeKeys(keys: any[]) {
@@ -76,7 +77,7 @@ beforeEach(async () => {
   accessKeysPath = path.join(tmpDir, "access-keys.json");
   writeKeys([]);
 
-  const rosetta = new RosettaService({ dataDir: tmpDir });
+  rosetta = new RosettaService({ dataDir: tmpDir });
   store = new AccessKeyStore(accessKeysPath);
   service = new CardMigrationService(
     prisma as any,
@@ -340,6 +341,124 @@ describe("CardMigrationService.bindCard — idempotency and errors", () => {
       status: 400,
       response: { error: "CARD_EXPIRED" },
     });
+  });
+
+  it("two CONCURRENT binds of one card by DIFFERENT customers → one success, one clean 409 (never a 500/PK leak)", async () => {
+    writeKeys([usedCard()]);
+    store.reload();
+    const alice = await createTestCustomer();
+    const bob = await createTestCustomer();
+
+    const results = await Promise.allSettled([
+      service.bindCard(alice.id, "BCAI-AAAA-BBBB"),
+      service.bindCard(bob.id, "BCAI-AAAA-BBBB"),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser gets the SAME clean conflict a sequential duplicate gets.
+    expect(rejected[0].reason).toMatchObject({
+      status: 409,
+      response: { error: "CARD_ALREADY_BOUND" },
+    });
+
+    // Exactly one Subscription, owned by the winner.
+    const subs = await prisma.subscription.findMany();
+    expect(subs).toHaveLength(1);
+    expect((fulfilled[0] as PromiseFulfilledResult<any>).value.subscription.id).toBe("card-legacy-1");
+  });
+
+  it("two CONCURRENT binds by the SAME customer → one migration, the other idempotent alreadyBound (no 500, single sub + notification)", async () => {
+    writeKeys([usedCard()]);
+    store.reload();
+    const customer = await createTestCustomer();
+
+    const results = await Promise.allSettled([
+      service.bindCard(customer.id, "BCAI-AAAA-BBBB"),
+      service.bindCard(customer.id, "BCAI-AAAA-BBBB"),
+    ]);
+
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const values = (results as PromiseFulfilledResult<any>[]).map((r) => r.value);
+    expect(values.filter((v) => v.alreadyBound).length).toBe(1);
+    expect(values.every((v) => v.subscription.id === "card-legacy-1")).toBe(true);
+
+    expect(await prisma.subscription.count()).toBe(1);
+    expect(await prisma.notification.count({ where: { customerId: customer.id } })).toBe(1);
+  });
+
+  it("P2002 drift (Subscription row already exists for the record id) maps to 409 / alreadyBound — never a 500", async () => {
+    writeKeys([usedCard()]);
+    store.reload();
+    const owner = await createTestCustomer();
+    const intruder = await createTestCustomer();
+    // Drift: the row exists (e.g. created out-of-band) while the record is NOT
+    // marked migrated — the pre-checks pass and the tx hits the id unique.
+    await prisma.subscription.create({
+      data: {
+        id: "card-legacy-1",
+        customerId: owner.id,
+        planId: null,
+        status: "ACTIVE",
+        startsAt: new Date(),
+        expiresAt: null,
+        productEntitlements: JSON.stringify(["antigravity"]),
+        weight: 1,
+        deviceLimit: 3,
+        backingKeyValue: "sub_" + "e".repeat(48),
+      },
+    });
+
+    await expect(service.bindCard(intruder.id, "BCAI-AAAA-BBBB")).rejects.toMatchObject({
+      status: 409,
+      response: { error: "CARD_ALREADY_BOUND" },
+    });
+
+    const again = await service.bindCard(owner.id, "BCAI-AAAA-BBBB");
+    expect(again.ok).toBe(true);
+    expect(again.alreadyBound).toBe(true);
+    expect(again.subscription.id).toBe("card-legacy-1");
+    expect(await prisma.subscription.count()).toBe(1);
+  });
+
+  it("a concurrent STALE store flush mid-bind cannot resurrect the old card key (post-commit barrier re-asserts + preserves interim usage)", async () => {
+    writeKeys([usedCard()]);
+    store.reload();
+    const customer = await createTestCustomer();
+
+    // Simulate the race the review found: right after the IN-TX file write
+    // (before commit/reload), a lease-path flush() rewrites the file from the
+    // store's still-stale in-memory cache (old key, no migration fields).
+    const realUpsert = rosetta.upsertKeyRecord.bind(rosetta);
+    const spy = vi.spyOn(rosetta, "upsertKeyRecord").mockImplementation((fields: any, options?: any) => {
+      const result = realUpsert(fields, options);
+      if (spy.mock.calls.length === 1) {
+        store.recordUsage("card-legacy-1", 200, { totalTokens: 5 }, "gemini-2.5-pro", "clobber-1", "antigravity");
+        store.flush(); // stale cache → resurrects the old key on disk
+      }
+      return result;
+    });
+    try {
+      await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The barrier re-asserted the migration on disk…
+    const after = readKeys()[0];
+    expect(after.migratedToCustomerId).toBe(customer.id);
+    expect(after.migratedFromKey).toBe("BCAI-AAAA-BBBB");
+    expect(after.key).toMatch(/^sub_[0-9a-f]{48}$/);
+    // …WITHOUT losing the usage the stale flush carried (42 base + 1 interim).
+    expect(after.totalRequests).toBe(43);
+
+    // Old key is dead in the reloaded index; the backing key resolves.
+    expect(store.findByKey("BCAI-AAAA-BBBB")).toBeNull();
+    const oldAuth = await store.resolveFromRequest({ headers: { "x-access-key": "BCAI-AAAA-BBBB" } } as any, {});
+    expect(oldAuth.error).toBe("Invalid access key");
+    expect(store.findByKey(after.key)?.id).toBe("card-legacy-1");
   });
 
   it("a failing file write rolls back the Subscription + Notification rows (no orphans)", async () => {

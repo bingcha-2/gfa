@@ -22,6 +22,22 @@
  * failed — vanishingly rare with SQLite) is self-healing: the record carries
  * migratedToCustomerId, so the customer's retry takes the already-bound path,
  * which recreates the missing Subscription row from the record.
+ *
+ * Concurrency (M13b):
+ *   • The whole bind runs under the process-wide access-keys write lock
+ *     (withAccessKeysWriteLock), so duplicate concurrent binds serialize: the
+ *     loser re-reads the record inside its own lock turn, sees
+ *     migratedToCustomerId, and answers 409 / alreadyBound instead of racing
+ *     into the tx. A residual unique-violation (P2002 on Subscription.id —
+ *     e.g. db/file drift or a row created out-of-band) is caught and mapped
+ *     to the same clean conflict answers; it must never surface as a 500.
+ *   • Post-commit write barrier: while the tx commit is awaited, a concurrent
+ *     store flush (debounce timer / lease-path flush()) can rewrite the file
+ *     from an in-memory cache that predates the in-tx write, resurrecting the
+ *     old card key. After commit we therefore re-run flush → upsert(migration
+ *     fields) → reload as one synchronous sequence: the flush persists any
+ *     interim counters, the idempotent upsert re-asserts the migration on top
+ *     of whatever is on disk, and the reload makes every pool see it.
  */
 import {
   BadRequestException,
@@ -34,6 +50,7 @@ import {
 import type { Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../prisma/prisma.service";
+import { withAccessKeysWriteLock } from "../../rosetta/access-key.service";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { AccessKeyStore, type AccessKeyRecord } from "../../token-server/access-key-store";
 import { TokenServerService } from "../../token-server/token-server.service";
@@ -79,7 +96,12 @@ export class CardMigrationService {
     if (!cardKey) {
       throw new BadRequestException({ error: "CARD_NOT_FOUND", message: "卡密不能为空" });
     }
+    // Serialize the ENTIRE bind (validation → tx+file write → reload) against
+    // every other access-keys.json writer — see the module doc "Concurrency".
+    return withAccessKeysWriteLock(() => this.bindCardLocked(customerId, cardKey));
+  }
 
+  private async bindCardLocked(customerId: string, cardKey: string): Promise<BindCardResult> {
     // Persist pending in-memory counter deltas so the migration's file
     // read-modify-write starts from current state (single-writer discipline).
     this.accessKeyStore.flush();
@@ -122,49 +144,75 @@ export class CardMigrationService {
     const weeklyTokenLimit = Number(record.weeklyTokenLimit || 0) || null;
     const windowMs = Number(record.windowMs || 0) > 0 ? Number(record.windowMs) : undefined;
 
+    const migratedAtIso = new Date().toISOString();
+    const migrationFields = {
+      id: recordId,
+      key: backingKeyValue,
+      migratedFromKey: cardKey,
+      migratedToCustomerId: customerId,
+      migratedAt: migratedAtIso,
+    };
+
     // Prisma rows first, file write LAST, all inside one transaction — see the
     // module doc for the crash-ordering rationale.
-    await this.prisma.$transaction(async (tx) => {
-      await tx.subscription.create({
-        data: {
-          id: recordId, // ID CONTINUITY — the record is re-homed, not re-minted
-          customerId,
-          planId: null,
-          status: "ACTIVE",
-          startsAt: new Date(),
-          expiresAt,
-          productEntitlements: JSON.stringify(products),
-          bucketLimits: record!.bucketLimits ? JSON.stringify(record!.bucketLimits) : null,
-          bindings: record!.bindings ? JSON.stringify(record!.bindings) : null,
-          weight,
-          deviceLimit,
-          weeklyTokenLimit,
-          ...(windowMs ? { windowMs } : {}),
-          backingKeyValue,
-        },
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.subscription.create({
+          data: {
+            id: recordId, // ID CONTINUITY — the record is re-homed, not re-minted
+            customerId,
+            planId: null,
+            status: "ACTIVE",
+            startsAt: new Date(),
+            expiresAt,
+            productEntitlements: JSON.stringify(products),
+            bucketLimits: record!.bucketLimits ? JSON.stringify(record!.bucketLimits) : null,
+            bindings: record!.bindings ? JSON.stringify(record!.bindings) : null,
+            weight,
+            deviceLimit,
+            weeklyTokenLimit,
+            ...(windowMs ? { windowMs } : {}),
+            backingKeyValue,
+          },
+        });
+        await tx.notification.create({
+          data: {
+            customerId,
+            type: "MIGRATION",
+            title: "卡密已绑定为订阅",
+            body: `卡密已迁移为账号订阅（订阅编号 ${recordId}），原卡密失效，后续请直接登录使用。`,
+          },
+        });
+        // flush → write back-to-back (synchronous pair) so the in-tx file
+        // write starts from the freshest counters and nothing can interleave
+        // between them.
+        this.accessKeyStore.flush();
+        const written = this.rosetta.upsertKeyRecord(migrationFields, { createIfMissing: false });
+        if (!written.ok) {
+          throw new Error(`card migration file write failed for record ${recordId}: ${written.error}`);
+        }
       });
-      await tx.notification.create({
-        data: {
-          customerId,
-          type: "MIGRATION",
-          title: "卡密已绑定为订阅",
-          body: `卡密已迁移为账号订阅（订阅编号 ${recordId}），原卡密失效，后续请直接登录使用。`,
-        },
-      });
-      const written = this.rosetta.upsertKeyRecord(
-        {
-          id: recordId,
-          key: backingKeyValue,
-          migratedFromKey: cardKey,
-          migratedToCustomerId: customerId,
-          migratedAt: new Date().toISOString(),
-        },
-        { createIfMissing: false },
+    } catch (err: any) {
+      const mapped = await this.mapDuplicateBind(err, customerId, recordId);
+      if (mapped) return mapped;
+      throw err;
+    }
+
+    // Post-commit write barrier (synchronous triple — see module doc): a
+    // concurrent store flush during the commit await may have rewritten the
+    // file from a cache that predates the in-tx write. Flush whatever is
+    // pending, re-assert the migration fields on top of the current disk
+    // state (idempotent merge), and reload the pools so the old card key dies
+    // in every byKey index.
+    this.accessKeyStore.flush();
+    const reasserted = this.rosetta.upsertKeyRecord(migrationFields, { createIfMissing: false });
+    if (!reasserted.ok) {
+      // Record vanished mid-flight (operator deletion) — the committed rows
+      // stand; log loudly instead of failing a bind the customer already won.
+      this.logger.error(
+        `bind-card: post-commit re-assert failed for record ${recordId}: ${reasserted.error} — record missing from access-keys.json while its Subscription row exists`,
       );
-      if (!written.ok) {
-        throw new Error(`card migration file write failed for record ${recordId}: ${written.error}`);
-      }
-    });
+    }
     this.reloadPools();
     this.logger.log(`bind-card: record ${recordId} migrated to customer ${customerId} (products=${products.join(",")})`);
 
@@ -208,6 +256,36 @@ export class CardMigrationService {
       });
     }
     return { ok: true, alreadyBound: true, subscription: summarize(sub) };
+  }
+
+  /**
+   * Map a unique-violation (P2002 on Subscription.id == record.id) from the
+   * bind transaction to a clean conflict answer instead of a 500. The write
+   * lock already serializes same-process duplicate binds (the loser's
+   * re-validation sees migratedToCustomerId), so reaching this means db/file
+   * drift: a Subscription row with the record's id exists while the record is
+   * not (yet) marked migrated. Ownership is decided by the record's
+   * provenance first, the existing row's customerId second.
+   * Returns null when the error is not a unique violation (caller rethrows).
+   */
+  private async mapDuplicateBind(err: any, customerId: string, recordId: string): Promise<BindCardResult | null> {
+    if (String(err?.code || "") !== "P2002") return null;
+    const record = this.accessKeyStore.findById(recordId);
+    const owner =
+      String(record?.migratedToCustomerId || "") ||
+      String(
+        (await this.prisma.subscription.findUnique({
+          where: { id: recordId },
+          select: { customerId: true },
+        }))?.customerId || "",
+      );
+    this.logger.warn(
+      `bind-card: duplicate bind for record ${recordId} hit the Subscription unique (P2002); owner=${owner || "unknown"} requester=${customerId}`,
+    );
+    if (owner && owner === customerId) {
+      return this.alreadyBoundResponse(customerId, (record ?? ({ id: recordId } as AccessKeyRecord)));
+    }
+    throw new ConflictException({ error: "CARD_ALREADY_BOUND", message: "该卡密已绑定到其他账号" });
   }
 
   private findByMigratedFromKey(cardKey: string): AccessKeyRecord | null {
