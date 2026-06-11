@@ -84,6 +84,27 @@ export function normalizeProxyUrl(raw: unknown): string {
 }
 
 /**
+ * SOCKS5-forcing variant of normalizeProxyUrl for Anthropic, whose egress MUST be
+ * SOCKS5 (the static residential exit). Unlike normalizeProxyUrl (which defaults
+ * bare host:port forms to http for codex/antigravity), this coerces EVERYTHING to
+ * socks5://, so whatever an operator types in the console always exits via SOCKS5:
+ *   - socks4/5(h):// URL            -> as-is
+ *   - http(s):// URL                -> scheme rewritten to socks5://
+ *   - host:port:user:pass           -> socks5://user:pass@host:port
+ *   - host:port / user:pass@host:port (no scheme) -> socks5:// prefixed
+ * Empty/blank -> "".
+ */
+export function toSocks5ProxyUrl(raw: unknown): string {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^socks[45]h?:\/\//i.test(s)) return s;            // already socks
+  if (/^https?:\/\//i.test(s)) return s.replace(/^https?:\/\//i, "socks5://");
+  const p = s.split(":");
+  if (p.length === 4) return `socks5://${p[2]}:${p[3]}@${p[0]}:${p[1]}`; // host:port:user:pass
+  return `socks5://${s}`;                                  // host:port 或 user:pass@host:port
+}
+
+/**
  * Set (or clear, when proxyUrl is blank) the sticky exit proxy on one account in
  * a provider's `{accounts:[...]}` JSON pool. Generic across providers — the only
  * difference is the pool file path. Returns the affected account's email + the

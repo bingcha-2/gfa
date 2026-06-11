@@ -18,7 +18,7 @@ import { fetchAnthropicMagicLink } from "./lib/imap-magic-link";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
 import { triggerMagicLinkViaBrowser, type PlaywrightOAuthSession } from "./lib/playwright-oauth";
-import { normalizeProxyUrl, nowIso, readJson, setAccountProxyInPool, writeJson } from "./lib/store";
+import { nowIso, readJson, setAccountProxyInPool, toSocks5ProxyUrl, writeJson } from "./lib/store";
 
 // Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
 // claude.com),全部可经 env 覆盖以便线上纠偏而不重新发版。手动流:授权后用户把
@@ -109,9 +109,10 @@ export class ClaudeAccountService {
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }
 
-  // 归一化代理委托给通用实现(lib/store),三家共用一套解析。
+  // anthropic 出口强制 SOCKS5:无论填什么格式都归一成 socks5://,绝不存成 http
+  // 直连(裸 host:port 在通用 normalizeProxyUrl 里会默认 http,这里覆盖为 socks5)。
   private normalizeProxyUrl(raw: string): string {
-    return normalizeProxyUrl(raw);
+    return toSocks5ProxyUrl(raw);
   }
 
   addClaudeAccount(payload: any) {
@@ -621,9 +622,11 @@ export class ClaudeAccountService {
 
   // 设置/清除某 anthropic 账号的出口代理(粘性住宅代理 URL)。空=清除。
   // 客户端租到该号时随 lease 下发 accountProxyUrl,该号的 anthropic 出口固定走它(一号一IP)。
+  // anthropic 出口强制 SOCKS5:无论后台填什么格式(裸 host:port:user:pass / http:// /
+  // 已是 socks5://),都先归一成 socks5:// 再入库,绝不存成 http 直连。
   setClaudeAccountProxy(payload: any) {
     const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
-    return setAccountProxyInPool(filePath, Number(payload?.accountId), payload?.proxyUrl);
+    return setAccountProxyInPool(filePath, Number(payload?.accountId), toSocks5ProxyUrl(payload?.proxyUrl));
   }
 
   // 设置/清除某 anthropic 账号的邮箱密码。空=清除。存了密码 + 代理后,token

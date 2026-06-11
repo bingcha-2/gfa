@@ -882,7 +882,7 @@ export default function ClaudeAccountsPage() {
                           <Input
                             className="h-7 w-[320px] text-xs"
                             autoFocus
-                            placeholder="host:port:user:pass 或 http(s)://"
+                            placeholder="host:port:user:pass（强制走 SOCKS5）"
                             value={proxyEditVal}
                             onChange={(e) => setProxyEditVal(e.target.value)}
                             onKeyDown={(e) => {
