@@ -351,8 +351,10 @@ func (claudeDesktopTarget) Inject(_ int) (string, error) {
 	//    白白中断对话)。直接返回 STORE_CLAUDE: 引导换装独立安装器版。
 	if isMicrosoftStoreClaude(bin) {
 		Log("[takeover] 检测到 Microsoft Store 版 Claude Desktop,跳过重启(沙箱无法注入代理),引导换装。CA 安装结局=%d", caResult)
-		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop,无法接管 —— " +
-			"商店版跑在系统沙箱里,既不能带代理重启、也无法注入证书环境。请改装官方独立安装器版本后重试。")
+		return "", fmt.Errorf("STORE_CLAUDE:检测到 Microsoft Store(应用商店)版 Claude Desktop，无法接管 —— " +
+			"商店版跑在系统沙箱里，无法携带代理启动。两种解决方法：" +
+			"①让 Agent 执行（把 Claude Desktop 安装目录移动到 D:\\ClaudeDesktop，并在原默认路径创建 junction，确保系统仍能正常识别和启动）操作；" +
+			"②安装非应用商店独立版 ClaudeDesktop。")
 	}
 
 	// ③ 非 store 版:异步带代理重启 Claude.app(会杀掉当前 Cowork 会话)。异步是为了不阻塞 UI,

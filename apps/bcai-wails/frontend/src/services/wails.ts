@@ -14,6 +14,7 @@ import {
   GetIDEStatus,
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   OpenCACertForTrust as _OpenCACertForTrust,
+  InstallStandaloneClaude as _InstallStandaloneClaude,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
@@ -146,6 +147,12 @@ export async function openSystemPermissionSettings(): Promise<void> {
 // 仅在自动安装(CA_FAILED)失败后兜底用 —— 省掉用户找隐藏目录 ~/.bcai 的麻烦。
 export async function openCACertForTrust(): Promise<void> {
   return _OpenCACertForTrust()
+}
+
+// 「一键安装独立版」:winget 从社区源静默装官方独立版 Claude Desktop。winget 不存在/失败
+// 会抛错,调用方据此回退到打开下载页。
+export async function installStandaloneClaude(): Promise<void> {
+  return _InstallStandaloneClaude()
 }
 
 export async function injectSelected(targets: string[]): Promise<string> {
