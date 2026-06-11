@@ -8,6 +8,7 @@ import { ProviderLogo } from '@/components/ProviderLogo'
 import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
 import { isMacPlatform, isWindowsPlatform } from '@/lib/platform'
+import { useT, t as tr } from '@/i18n'
 import { Zap } from 'lucide-react'
 
 /**
@@ -32,6 +33,7 @@ function idToTarget(id: string): string {
 }
 
 export function TokenSourceControl() {
+  const t = useT()
   const config = useAppStore((s) => s.config)
   const ideProducts = useAppStore((s) => s.ideProducts)
   const fetchIDEStatus = useAppStore((s) => s.fetchIDEStatus)
@@ -83,7 +85,7 @@ export function TokenSourceControl() {
   // 盖住 —— 用户只看到转圈遮罩、看不到下面的提示/按钮。故每个分支都先关遮罩再弹。
   const runTakeover = async (target: string, inject: boolean): Promise<boolean> => {
     setBusy(target)
-    setBusyLabel(`${inject ? '正在接管' : '正在停止接管'} ${targetName(target)}...`)
+    setBusyLabel(inject ? t('takeover.injecting', { name: targetName(target) }) : t('takeover.stopping', { name: targetName(target) }))
     try {
       const msg = inject ? await api.injectSelected([target]) : await api.restoreSelected([target])
 
@@ -93,7 +95,7 @@ export function TokenSourceControl() {
       if (msg && msg.includes('CA_DEGRADED:')) {
         setBusy(null) // 先关遮罩,否则弹窗被盖住
         const detail = msg.split('CA_DEGRADED:').pop()?.trim() || msg
-        await showAlert('接管成功 · 证书已降级安装', detail)
+        await showAlert(t('takeover.caDegradedTitle'), detail)
         await waitForInjected(target, inject)
         return true
       }
@@ -104,15 +106,15 @@ export function TokenSourceControl() {
         setBusy(null)
         const detail = msg.split('CA_FAILED:').pop()?.trim() || msg
         if (isMac) {
-          const retry = await showConfirm('推理已接管 · Max 待启用', detail, {
-            confirmLabel: '重新接管 · 装证书',
-            cancelLabel: '稍后',
+          const retry = await showConfirm(t('takeover.caFailedTitle'), detail, {
+            confirmLabel: t('takeover.caRetakeBtn'),
+            cancelLabel: t('common.later'),
           })
           if (retry) {
             return await runTakeover(target, true) // 递归重试:再弹密码框,装上则带 Max 重启
           }
         } else {
-          await showAlert('推理已接管 · Max 待启用', detail)
+          await showAlert(t('takeover.caFailedTitle'), detail)
         }
         await waitForInjected(target, inject)
         return true
@@ -123,7 +125,7 @@ export function TokenSourceControl() {
         setBusy(null)
         await fetchIDEStatus()
         const detail = msg.split('STORE_CLAUDE:').pop()?.replace(/\)\s*$/, '').trim() || msg
-        const go = await showConfirm('⚠ 商店版无法接管', detail, { confirmLabel: '去下载独立安装器', cancelLabel: '稍后' })
+        const go = await showConfirm(t('takeover.storeClaudeTitle'), detail, { confirmLabel: t('takeover.storeClaudeBtn'), cancelLabel: t('common.later') })
         if (go) api.openURL('https://claude.ai/download')
         return false
       }
@@ -131,18 +133,18 @@ export function TokenSourceControl() {
       if (/失败|权限|permission|not permitted|denied/i.test(msg) && isMac) {
         setBusy(null)
         await fetchIDEStatus()
-        await showAlert('需要系统权限', `${msg}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。`)
+        await showAlert(t('takeover.permissionTitle'), t('takeover.permissionBody', { message: msg }))
         await api.openSystemPermissionSettings()
         return false
       }
       if (msg && msg.trim() && /失败/.test(msg)) {
         setBusy(null)
         await fetchIDEStatus()
-        await showAlert('操作失败', msg)
+        await showAlert(t('takeover.opFailed'), msg)
         return false
       }
       // 等真实状态翻转(loading 期间保持遮罩)。
-      setBusyLabel(`${inject ? '正在接管' : '正在停止接管'} ${targetName(target)} · 等待生效...`)
+      setBusyLabel(inject ? t('takeover.injectingWait', { name: targetName(target) }) : t('takeover.stoppingWait', { name: targetName(target) }))
       await waitForInjected(target, inject)
       return true
     } catch (err) {
@@ -153,10 +155,10 @@ export function TokenSourceControl() {
       // 弹专门的强提示(开 TUN 引导),而不是泛化的「操作失败」。
       if (raw.includes('EGRESS_BLOCKED:')) {
         const detail = raw.split('EGRESS_BLOCKED:').pop()?.trim() || raw
-        await showAlert('⚠ 接管已拦截 · 出口未通过', detail)
+        await showAlert(t('takeover.egressBlockedTitle'), detail)
         return false
       }
-      await showAlert('操作失败', raw)
+      await showAlert(t('takeover.opFailed'), raw)
       return false
     } finally {
       setBusy(null)
@@ -166,7 +168,7 @@ export function TokenSourceControl() {
   // 接管前校验账号卡;无卡则引导激活,不下发后端动作。
   const ensureCard = async (productLabel: string): Promise<boolean> => {
     if (hasCard) return true
-    await showAlert('请先激活账号卡', `${productLabel} 接管需要账号卡,请在「账号卡配置」激活。`)
+    await showAlert(t('takeover.needCardTitle'), t('takeover.needCardBody', { product: productLabel }))
     return false
   }
 
@@ -197,8 +199,8 @@ export function TokenSourceControl() {
     if (!claudeDesktopInjected) {
       if (!(await ensureCard('Claude Desktop'))) return
       const ok = await showConfirm(
-        '接管 Claude Desktop',
-        '⚠ Chat 和 Cowork 无法接管使用，请使用桌面端 Code 功能！\n\n接管会重启 Claude 桌面端 —— 这会中断当前正在运行的 Cowork 会话。是否继续?',
+        t('takeover.desktopConfirmTitle'),
+        t('takeover.desktopConfirmBody'),
       )
       if (!ok) return
     }
@@ -214,7 +216,7 @@ export function TokenSourceControl() {
     undetectedText?: string
     onToggle: () => void
   }) => {
-    const { target, name, injected, detected = true, undetectedText = '未安装', onToggle } = opts
+    const { target, name, injected, detected = true, undetectedText = tr('takeover.notInstalled'), onToggle } = opts
     return (
       <div
         className={cn(
@@ -225,7 +227,7 @@ export function TokenSourceControl() {
         <div>
           <div className="text-[12px] text-[var(--text-primary)] font-medium">{name}</div>
           <div className={cn('text-[10px]', injected ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-            {!detected ? undetectedText : injected ? '✓ 已接管' : '未接管'}
+            {!detected ? undetectedText : injected ? t('takeover.injected') : t('takeover.notInjected')}
           </div>
         </div>
         <Button
@@ -235,7 +237,7 @@ export function TokenSourceControl() {
           onClick={onToggle}
           className="shrink-0 cursor-pointer min-w-[68px]"
         >
-          {busy === target ? '...' : injected ? '停止' : '接管'}
+          {busy === target ? '...' : injected ? t('takeover.stop') : t('takeover.takeover')}
         </Button>
       </div>
     )
@@ -261,7 +263,7 @@ export function TokenSourceControl() {
 
   return (
     <Card>
-      <CardHeader><CardTitle><Zap size={15} /> 接管</CardTitle></CardHeader>
+      <CardHeader><CardTitle><Zap size={15} /> {t('takeover.title')}</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-4">
         {/* 生态自适应网格:加生态 = 加块,横向铺开,不挤压 */}
         <div
@@ -269,7 +271,7 @@ export function TokenSourceControl() {
           style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}
         >
           {/* ── Antigravity ── */}
-          <Block title="Antigravity" provider="antigravity" note="官方透传 · 从远程服务器自动获取 Token">
+          <Block title="Antigravity" provider="antigravity" note={t('takeover.agNote')}>
             {agApps.map((p) => (
               <div key={p.id}>
                 {takeoverRow({
@@ -284,7 +286,7 @@ export function TokenSourceControl() {
           </Block>
 
           {/* ── Codex ── */}
-          <Block title="Codex" provider="codex" note="官方透传 · 从远程服务器租用 ChatGPT 账号">
+          <Block title="Codex" provider="codex" note={t('takeover.codexNote')}>
             {takeoverRow({
               target: 'codex',
               name: 'Codex',
@@ -298,15 +300,15 @@ export function TokenSourceControl() {
           <Block
             title="Anthropic"
             provider="anthropic"
-            note="官方透传 · 从远程租用 Claude 订阅"
-            footnote="接管写入 ~/.claude/settings.json。CLI 下次启动生效,VSCode 扩展需 Reload Window。"
+            note={t('takeover.claudeNote')}
+            footnote={t('takeover.claudeFootnote')}
           >
             {takeoverRow({
               target: 'claude',
               name: 'Claude Code (CLI + VSCode)',
               injected: claudeInjected,
               detected: !!claudeApp?.detected,
-              undetectedText: '未检测到 ~/.claude',
+              undetectedText: t('takeover.noClaudeDir'),
               onToggle: handleClaudeToggle,
             })}
           </Block>
@@ -314,16 +316,16 @@ export function TokenSourceControl() {
           {/* ── Claude Desktop(Code/Cowork,MITM 接管;macOS/Windows 常显示,未装则灰显) ── */}
           {showClaudeDesktop && (
             <Block
-              title="Anthropic · 桌面端"
+              title={t('takeover.desktopTitle')}
               provider="anthropic"
-              note="官方透传 · Code/Cowork 走号池,免费号即可"
+              note={t('takeover.desktopNote')}
               footnote={
                 claudeDesktopApp?.detected ? (
                   <>
-                    <span className="text-[var(--text-secondary)]">⚠ 请先接管,再登录 Claude</span>(顺序反了授权抓不到)。接管会重启 Claude(中断 Cowork,聊天不受影响)。<span className="text-[var(--text-secondary)]">Claude 更新或自行重启后需重新点接管</span>(代理随重启失效)。
+                    <span className="text-[var(--text-secondary)]">{t('takeover.desktopFootDetected1')}</span>{t('takeover.desktopFootDetected2')}<span className="text-[var(--text-secondary)]">{t('takeover.desktopFootDetected3')}</span>{t('takeover.desktopFootDetected4')}
                   </>
                 ) : (
-                  <>未检测到 Claude 桌面端。若已安装但未识别,可在<span className="text-[var(--text-secondary)]">「设置 → 安装路径」</span>手动指定 Claude 程序路径(无需先打开 Claude)。</>
+                  <>{t('takeover.desktopFootUndetected1')}<span className="text-[var(--text-secondary)]">{t('takeover.desktopFootUndetected2')}</span>{t('takeover.desktopFootUndetected3')}</>
                 )
               }
             >
@@ -332,7 +334,7 @@ export function TokenSourceControl() {
                 name: 'Claude Desktop (Code/Cowork)',
                 injected: claudeDesktopInjected,
                 detected: !!claudeDesktopApp?.detected,
-                undetectedText: '未安装 / 未检测到',
+                undetectedText: t('takeover.notInstalledOrDetected'),
                 onToggle: handleClaudeDesktopToggle,
               })}
             </Block>
@@ -343,10 +345,10 @@ export function TokenSourceControl() {
         {isMac && agApps.some((p) => p.id === 'antigravity_hub' && p.detected && !p.injected) && (
           <div className="flex items-center justify-between gap-2 rounded-[8px] border border-[var(--border-light)] px-3 py-2">
             <div className="text-[10px] text-[var(--text-muted)] leading-relaxed">
-              接管 Hub 需修改应用文件,需授予 <span className="text-[var(--text-secondary)] font-medium">App 管理</span> 权限。
+              {t('takeover.hubPermission1')}<span className="text-[var(--text-secondary)] font-medium">{t('takeover.hubPermission2')}</span>{t('takeover.hubPermission3')}
             </div>
             <Button size="sm" variant="ghost" className="shrink-0 cursor-pointer text-[11px] h-6 px-2" onClick={() => api.openSystemPermissionSettings()}>
-              去授权
+              {t('takeover.goAuthorize')}
             </Button>
           </div>
         )}
@@ -355,11 +357,11 @@ export function TokenSourceControl() {
         <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[var(--bg-tertiary)] border border-[var(--border-light)]">
           <div className="flex items-center gap-2">
             <span className={cn('w-2 h-2 rounded-full', proxyRunning ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]')} />
-            <span className="text-[12px] text-[var(--text-secondary)]">本地代理</span>
-            <span className="text-[10px] text-[var(--text-muted)]">· 接管后请求经此自动注入令牌,「停止」即恢复原状</span>
+            <span className="text-[12px] text-[var(--text-secondary)]">{t('takeover.localProxy')}</span>
+            <span className="text-[10px] text-[var(--text-muted)]">{t('takeover.localProxyNote')}</span>
           </div>
           <span className="text-[12px] font-mono-data text-[var(--text-muted)] shrink-0">
-            {proxyRunning ? `运行中 · 127.0.0.1:${proxyPort}` : '未运行'}
+            {proxyRunning ? t('takeover.proxyRunning', { port: proxyPort }) : t('takeover.proxyStopped')}
           </span>
         </div>
       </CardContent>

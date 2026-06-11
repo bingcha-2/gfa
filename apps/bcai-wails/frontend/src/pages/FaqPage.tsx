@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Search, ChevronRight, ChevronDown, Loader2, AlertCircle, MessageCircle, ExternalLink } from 'lucide-react'
 import * as api from '@/services/wails'
+import { useT } from '@/i18n'
+import { GitHubIcon } from '@/components/GitHubIcon'
+import { GITHUB_ISSUES_URL } from '@/lib/feedback'
 
 const CACHE_KEY = 'bcai_faq_cache'
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24h
@@ -38,6 +41,7 @@ function saveCache(items: FaqItem[], settings: Record<string, string>) {
 }
 
 export function FaqPage() {
+  const t = useT()
   const [items, setItems] = useState<FaqItem[]>([])
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -67,8 +71,8 @@ export function FaqPage() {
         setLoading(false)
         setError('')
       })
-      .catch((err) => {
-        if (!cache) setError('无法加载常见问题，请检查网络连接')
+      .catch(() => {
+        if (!cache) setError(t('faq.loadFailed'))
         setLoading(false)
       })
   }, [])
@@ -114,7 +118,7 @@ export function FaqPage() {
 
   return (
     <div className="max-w-[680px] flex flex-col gap-4 pt-1">
-      <p className="text-[12px] text-[var(--text-muted)]">常见问题解答，帮你快速上手</p>
+      <p className="text-[12px] text-[var(--text-muted)]">{t('faq.subtitle')}</p>
 
       {/* Search */}
       <div className="relative">
@@ -122,7 +126,7 @@ export function FaqPage() {
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索问题..."
+          placeholder={t('faq.searchPlaceholder')}
           className="pl-9 h-[40px]"
         />
       </div>
@@ -131,7 +135,7 @@ export function FaqPage() {
       {loading && (
         <div className="flex items-center justify-center gap-2 py-12 text-[var(--text-muted)] text-[13px]">
           <Loader2 size={16} className="animate-spin" />
-          加载中...
+          {t('common.loading')}
         </div>
       )}
 
@@ -146,7 +150,7 @@ export function FaqPage() {
       {/* FAQ groups */}
       {!loading && grouped.length === 0 && !error && (
         <div className="text-center py-12 text-[var(--text-muted)] text-[13px]">
-          {search ? '没有找到匹配的问题' : '暂无常见问题'}
+          {search ? t('faq.noMatch') : t('faq.empty')}
         </div>
       )}
 
@@ -206,6 +210,27 @@ export function FaqPage() {
         )
       })}
 
+      {/* GitHub feedback card — 常驻,不依赖 FAQ 是否加载成功 */}
+      {!loading && (
+        <Card>
+          <CardContent className="flex items-center gap-3 py-3">
+            <div className="w-9 h-9 rounded-[10px] bg-[var(--bg-tertiary)] flex items-center justify-center shrink-0 text-[var(--text-primary)]">
+              <GitHubIcon size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-[var(--text-primary)]">{t('faq.githubTitle')}</div>
+              <div className="text-[11px] text-[var(--text-muted)]">{t('faq.githubDesc')}</div>
+            </div>
+            <button
+              onClick={() => api.openURL(GITHUB_ISSUES_URL)}
+              className="flex items-center gap-1 text-[11px] text-[var(--primary-strong)] hover:underline shrink-0 cursor-pointer"
+            >
+              {t('faq.githubCta')} <ExternalLink size={11} />
+            </button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Contact card */}
       {!loading && items.length > 0 && (
         <Card>
@@ -214,11 +239,11 @@ export function FaqPage() {
               <MessageCircle size={18} className="text-[var(--primary)]" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-semibold text-[var(--text-primary)]">没有找到答案？</div>
+              <div className="text-[13px] font-semibold text-[var(--text-primary)]">{t('faq.noAnswer')}</div>
               <div className="text-[11px] text-[var(--text-muted)]">
                 {settings.contact_wechat
-                  ? `加微信 ${settings.contact_wechat} 联系客服`
-                  : '加入售后群联系客服'}
+                  ? t('faq.wechatContact', { wechat: settings.contact_wechat })
+                  : t('faq.groupContact')}
               </div>
             </div>
             <a
@@ -227,7 +252,7 @@ export function FaqPage() {
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-[11px] text-[var(--primary-strong)] hover:underline shrink-0"
             >
-              查看完整版 <ExternalLink size={11} />
+              {t('faq.viewFull')} <ExternalLink size={11} />
             </a>
           </CardContent>
         </Card>

@@ -1,12 +1,14 @@
 import { useAppStore } from '@/stores/useAppStore'
 import { Megaphone } from 'lucide-react'
+import { useT } from '@/i18n'
 
 /**
  * 公告栏 — 经典跑马灯：文字从右侧进入，匀速滑过，从左侧离开，循环往复
  */
 export function AnnouncementBar() {
+  const t = useT()
   const announcement = useAppStore((s) => s.announcement)
-  const text = announcement || '欢迎使用冰茶AI'
+  const text = announcement || t('announcement.welcome')
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 mb-4 rounded-[12px] bg-[var(--bg-secondary)] border border-[var(--border-light)] overflow-hidden">

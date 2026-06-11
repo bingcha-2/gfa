@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import { bloodBarStatus, bloodBarFromFraction } from '@/lib/bloodBar'
+import { t } from '@/i18n'
 
 interface UsageBarProps {
   label: string
@@ -25,10 +26,11 @@ interface UsageBarProps {
 /** Format a remaining-ms duration as a short "Xh Ym" / "Zm" recovery hint. */
 function formatReset(ms: number): string {
   const totalMin = Math.ceil(ms / 60000)
-  if (totalMin <= 0) return '已恢复'
+  if (totalMin <= 0) return t('usage.recovered')
   const h = Math.floor(totalMin / 60)
   const m = totalMin % 60
-  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}后恢复` : `${m}m后恢复`
+  const time = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`
+  return t('usage.resetIn', { time })
 }
 
 /**
@@ -43,11 +45,11 @@ export function UsageBar({ label, used, limit, subtitle, fraction, resetMs, expa
   const [expanded, setExpanded] = useState(false)
   // Any non-null fraction (including -1 = 未知) is authoritative; only fall back to
   // local used/limit when no fraction was provided at all.
-  const { remainingPct, label: statusLabel, tone } =
+  const { remainingPct, label: statusLabel, tone, key } =
     fraction != null ? bloodBarFromFraction(fraction) : bloodBarStatus(used, limit)
   // 颜色完全由健康度决定(一眼看出余量):充足=绿 → 一般=黄 → 紧张=橙 → 已用尽=红;
   // 未知/等待=中性灰。全是状态语义色,不靠模型身份配色(那会变彩虹)。
-  const isUnknown = statusLabel === '未知' || statusLabel === '等待数据'
+  const isUnknown = key === 'unknown' || key === 'waiting'
   const barColor =
     isUnknown ? 'bg-[var(--text-muted)]'
       : tone === 'empty' ? 'bg-[var(--danger)]'

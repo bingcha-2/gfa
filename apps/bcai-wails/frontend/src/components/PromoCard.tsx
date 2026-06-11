@@ -1,32 +1,33 @@
 import { ArrowUpRight, ShoppingBag, Zap } from 'lucide-react'
 import * as api from '@/services/wails'
-
-const ADS = [
-  {
-    icon: ShoppingBag,
-    title: '冰茶商店',
-    desc: 'Codex Plus · Cursor · Windsurf 一键代理',
-    cta: '选购',
-    link: 'https://bcai.store',
-    tone: 'var(--primary)',
-  },
-  {
-    icon: Zap,
-    title: '冰茶 API',
-    desc: 'Claude / Gemini / GPT 低价调用',
-    cta: '了解',
-    link: 'https://api.bcai.space',
-    tone: 'var(--primary)',
-  },
-]
+import { useT } from '@/i18n'
 
 /**
  * 全宽 2 列入口 — 常驻。中性卡 + 各自标识色,克制,无渐变/玻璃。
  */
 export function PromoCard() {
+  const t = useT()
+  const ads = [
+    {
+      icon: ShoppingBag,
+      title: t('promo.storeTitle'),
+      desc: t('promo.storeDescCard'),
+      cta: t('promo.storeCta'),
+      link: 'https://bcai.store',
+      tone: 'var(--primary)',
+    },
+    {
+      icon: Zap,
+      title: t('promo.apiTitle'),
+      desc: t('promo.apiDescCard'),
+      cta: t('promo.apiCta'),
+      link: 'https://api.bcai.space',
+      tone: 'var(--primary)',
+    },
+  ]
   return (
     <div className="grid grid-cols-2 gap-3">
-      {ADS.map((ad) => {
+      {ads.map((ad) => {
         const Icon = ad.icon
         return (
           <button

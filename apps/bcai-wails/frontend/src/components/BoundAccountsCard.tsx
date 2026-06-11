@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { useT, t as tr, useLocaleStore } from '@/i18n'
 import { Users, Copy, Check, Mail, Crown } from 'lucide-react'
 import type { BoundAccountInfo } from '@/types'
 
@@ -42,7 +43,7 @@ function formatExpiry(ms: number): string {
   if (!ms || ms <= 0) return ''
   const d = new Date(ms)
   if (isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('zh-CN', { hour12: false })
+  return d.toLocaleTimeString(useLocaleStore.getState().locale, { hour12: false })
 }
 
 function CopyButton({ value, title }: { value: string; title: string }) {
@@ -76,26 +77,26 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
           <span className={cn('w-2 h-2 rounded-full', meta.dot)} />
           {meta.label}
         </span>
-        <Badge variant={acc.accessToken ? 'success' : 'muted'}>{acc.accessToken ? '已绑定' : '获取中'}</Badge>
+        <Badge variant={acc.accessToken ? 'success' : 'muted'}>{acc.accessToken ? tr('bound.bound') : tr('bound.fetching')}</Badge>
       </div>
 
       {/* 账号邮箱 */}
       <div className="flex items-center justify-between text-[12px]">
         <span className="flex items-center gap-1 text-[var(--text-muted)]">
-          <Mail size={12} /> 账号
+          <Mail size={12} /> {tr('bound.account')}
         </span>
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="font-mono-data text-[var(--text-secondary)] truncate max-w-[150px]">
             {acc.emailHint || '—'}
           </span>
-          {acc.emailHint && <CopyButton value={acc.emailHint} title="复制账号" />}
+          {acc.emailHint && <CopyButton value={acc.emailHint} title={tr('bound.copyAccount')} />}
         </span>
       </div>
 
       {/* 会员等级 */}
       <div className="flex items-center justify-between text-[12px]">
         <span className="flex items-center gap-1 text-[var(--text-muted)]">
-          <Crown size={12} /> 会员等级
+          <Crown size={12} /> {tr('bound.planLevel')}
         </span>
         {acc.planType ? (
           <Badge variant={planTone(acc.planType)}>{planLabel(acc.planType)}</Badge>
@@ -113,9 +114,9 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
               {acc.accessToken}
             </code>
           ) : (
-            <span className="text-[var(--text-muted)]">获取中…</span>
+            <span className="text-[var(--text-muted)]">{tr('bound.fetchingDots')}</span>
           )}
-          {expiry && <span className="text-[10px] text-[var(--text-muted)] font-mono-data shrink-0">· 有效至 {expiry}</span>}
+          {expiry && <span className="text-[10px] text-[var(--text-muted)] font-mono-data shrink-0">{tr('bound.validUntil', { time: expiry })}</span>}
         </span>
       </div>
     </div>
@@ -127,6 +128,7 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
  * 池子卡每次请求轮换账号,展示「绑定账号」无意义,故隐藏。
  */
 export function BoundAccountsCard() {
+  const t = useT()
   const boundAccounts = useAppStore((s) => s.boundAccounts)
   const cardProducts = useAppStore((s) => s.cardProducts)
 
@@ -148,7 +150,7 @@ export function BoundAccountsCard() {
 
   return (
     <Card>
-      <CardHeader><CardTitle><Users size={15} /> 绑定账号信息</CardTitle></CardHeader>
+      <CardHeader><CardTitle><Users size={15} /> {t('bound.title')}</CardTitle></CardHeader>
       <CardContent>
         <div
           className="grid gap-2.5 items-start"

@@ -1,31 +1,32 @@
 import * as api from '@/services/wails'
 import { ArrowUpRight, ShoppingBag, Zap } from 'lucide-react'
-
-const PROMOS = [
-  {
-    icon: ShoppingBag,
-    tag: '热卖',
-    title: '冰茶商店',
-    desc: 'Codex Plus · Cursor Pro · Windsurf\n一键代理全家桶,9.9 元起',
-    cta: '立即选购',
-    link: 'https://bcai.store',
-    tone: 'var(--primary)',
-  },
-  {
-    icon: Zap,
-    tag: 'NEW',
-    title: '冰茶 API',
-    desc: 'Claude / Gemini / GPT 低价调用\n企业级稳定,按量计费',
-    cta: '了解更多',
-    link: 'https://bcai.online',
-    tone: 'var(--primary)',
-  },
-]
+import { useT } from '@/i18n'
 
 export function PromoSection() {
+  const t = useT()
+  const promos = [
+    {
+      icon: ShoppingBag,
+      tag: t('promo.hotTag'),
+      title: t('promo.storeTitle'),
+      desc: t('promo.storeDescFull'),
+      cta: t('promo.storeCtaFull'),
+      link: 'https://bcai.store',
+      tone: 'var(--primary)',
+    },
+    {
+      icon: Zap,
+      tag: t('promo.newTag'),
+      title: t('promo.apiTitle'),
+      desc: t('promo.apiDescFull'),
+      cta: t('promo.apiCtaFull'),
+      link: 'https://bcai.online',
+      tone: 'var(--primary)',
+    },
+  ]
   return (
     <div className="grid grid-cols-2 gap-4">
-      {PROMOS.map((p) => {
+      {promos.map((p) => {
         const Icon = p.icon
         return (
           <button

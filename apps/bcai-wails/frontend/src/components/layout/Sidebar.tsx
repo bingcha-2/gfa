@@ -1,7 +1,11 @@
 import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download, BookOpen } from 'lucide-react'
+import { GitHubIcon } from '@/components/GitHubIcon'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
+import { useT } from '@/i18n'
+import { GITHUB_ISSUES_URL } from '@/lib/feedback'
+import { BAR_H, topInset } from './chrome'
 import type { PageId } from '@/types'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
 
@@ -15,18 +19,20 @@ interface SidebarProps {
   onToggleCollapse: () => void
 }
 
-const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
-  { id: 'home', label: '控制台', icon: LayoutDashboard },
-  { id: 'faq', label: '使用指南', icon: BookOpen },
-  { id: 'logs', label: '日志', icon: ScrollText },
-]
-
 export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse }: SidebarProps) {
+  const t = useT()
   const appVersion = useAppStore((s) => s.appVersion)
   const updateStatus = useAppStore((s) => s.updateStatus)
   const width = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED
+  const inset = topInset()
 
   const hasUpdate = updateStatus && updateStatus.status === 'available'
+
+  const navItems: { id: PageId; label: string; icon: React.ElementType }[] = [
+    { id: 'home', label: t('nav.home'), icon: LayoutDashboard },
+    { id: 'faq', label: t('nav.faq'), icon: BookOpen },
+    { id: 'logs', label: t('nav.logs'), icon: ScrollText },
+  ]
 
   return (
     <>
@@ -37,32 +43,32 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
           transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
-        {/* ① Traffic lights zone */}
+        {/* ① 顶部安全区:mac 给红绿灯让位(簇底 ~28px),其余平台仅留空气;整条可拖拽 */}
         <div
-          className="h-[20px] shrink-0"
-          style={{ '--wails-draggable': 'drag' } as React.CSSProperties}
+          className="shrink-0"
+          style={{ height: `${inset}px`, '--wails-draggable': 'drag' } as React.CSSProperties}
         />
 
-        {/* ② Brand row */}
+        {/* ② Brand row:固定 48px,与内容区 header 等高 → 两栏分隔线连成一条贯通线 */}
         <div
           className={cn(
-            'shrink-0 pb-3 mb-1',
-            collapsed ? 'mx-3 flex justify-center' : 'mx-3 flex items-center gap-2.5'
+            'shrink-0 mx-3 flex items-center border-b border-[var(--border-light)]',
+            collapsed ? 'justify-center' : 'gap-2.5'
           )}
-          style={{ borderBottom: '1px solid var(--border-light)' }}
+          style={{ height: `${BAR_H}px`, '--wails-draggable': 'drag' } as React.CSSProperties}
         >
           <div
             className="flex items-center gap-2.5"
             style={{ '--wails-draggable': 'no-drag' } as React.CSSProperties}
           >
-            <img src={bcaiIcon} alt="冰茶AI" className="w-10 h-10 rounded-xl shadow-sm" />
+            <img src={bcaiIcon} alt="冰茶AI" className="w-8 h-8 rounded-[10px] shadow-sm" />
             {!collapsed && (
               <span className="text-[14px] font-bold text-[var(--text-primary)] tracking-tight select-none">冰茶AI</span>
             )}
           </div>
         </div>
 
-        {/* ③ Main nav */}
+        {/* ③ Main nav(分隔线下 8px 起步) */}
         <div className={cn('flex-1 flex flex-col gap-[3px] pt-2', collapsed ? 'px-3 items-center' : 'px-3')}>
           {navItems.map((item) => {
             const Icon = item.icon
@@ -95,7 +101,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
             {/* Settings button */}
             <button
               onClick={() => onPageChange('settings')}
-              title={collapsed ? '设置' : undefined}
+              title={collapsed ? t('nav.settings') : undefined}
               className={cn(
                 'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
                 collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
@@ -105,14 +111,28 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
               )}
             >
               <Settings size={20} strokeWidth={currentPage === 'settings' ? 2.2 : 1.7} className="flex-shrink-0" />
-              {!collapsed && '设置'}
+              {!collapsed && t('nav.settings')}
+            </button>
+
+            {/* GitHub feedback — open the public issue tracker */}
+            <button
+              onClick={() => api.openURL(GITHUB_ISSUES_URL)}
+              title={collapsed ? t('nav.feedback') : undefined}
+              className={cn(
+                'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
+                collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
+                'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+              )}
+            >
+              <GitHubIcon size={20} className="flex-shrink-0" />
+              {!collapsed && t('nav.feedback')}
             </button>
 
             {/* Update button — next to settings */}
             {hasUpdate && (
               <button
                 onClick={() => api.downloadUpdate()}
-                title={`更新到 v${updateStatus!.version}`}
+                title={t('nav.updateTo', { version: updateStatus!.version })}
                 className={cn(
                   'flex items-center rounded-[10px] text-[12px] font-semibold transition-all duration-200',
                   collapsed
@@ -121,7 +141,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                 )}
               >
                 <Download size={15} className="flex-shrink-0" />
-                {!collapsed && `v${updateStatus!.version} 可用`}
+                {!collapsed && t('nav.updateAvailable', { version: updateStatus!.version })}
               </button>
             )}
           </div>
@@ -138,12 +158,12 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
         onClick={onToggleCollapse}
         className="fixed z-50 flex items-center justify-center border border-[var(--border-light)] border-l-0 rounded-r-[10px] bg-[var(--bg-card)] backdrop-blur-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer w-[18px] h-[30px] shadow-[4px_0_12px_rgba(15,23,42,0.08)]"
         style={{
-          top: '72px',
+          top: `${inset + BAR_H + 8}px`,
           left: `${width}px`,
           transition: 'left 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
           '--wails-draggable': 'no-drag',
         } as React.CSSProperties}
-        title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+        title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
       >
         {collapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
       </button>

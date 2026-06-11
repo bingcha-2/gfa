@@ -1,30 +1,32 @@
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 
 interface StatusPillProps {
   compact?: boolean
 }
 
 export function StatusPill({ compact = false }: StatusPillProps) {
+  const t = useT()
   const { proxyRunning, proxyPort, leaserState, leaserError, config } = useAppStore()
 
   let dotColor = 'bg-[var(--text-muted)]'
-  let text = '正在检查状态...'
+  let text = t('status.checking')
   let showPulse = false
 
   if (!proxyRunning) {
-    text = '代理未启动'
+    text = t('status.proxyDown')
   } else if (leaserError) {
     dotColor = 'bg-[var(--danger)]'
-    text = `错误 · ${leaserError}`
+    text = t('status.error', { error: leaserError })
   } else if (leaserState === 'waiting_first_lease') {
     dotColor = 'bg-[var(--warning)]'
-    text = '获取租约中...'
+    text = t('status.leasing')
   } else if (leaserState === 'unconfigured' || !config?.accountCard) {
-    text = '请配置并激活账号卡'
+    text = t('status.needCard')
   } else {
     dotColor = 'bg-[var(--success)]'
-    text = `服务正常 · 127.0.0.1:${proxyPort}`
+    text = t('status.ok', { port: proxyPort })
     showPulse = true
   }
 

@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import * as api from '@/services/wails'
 import { cn, formatTokens, maskCard, formatDate } from '@/lib/utils'
+import { useT } from '@/i18n'
 import { Key, BarChart3 } from 'lucide-react'
 
 /** 顶部「今日概览」里的一格统计。数字大、标签小,克制单色,只有关键项点琥珀。 */
@@ -38,6 +39,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'pr
 }
 
 export function DashboardPage() {
+  const t = useT()
   const {
     config, leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
     accountFractions, accountResetMs, myFractions, myResetMs, quotaMode, recoveryRemainingMs,
@@ -69,21 +71,21 @@ export function DashboardPage() {
       const used = b?.used ?? 0
       const frac = Math.max(0, Math.min(1, (limit - used) / limit))
       return (
-        <UsageBar key="mine" label="我的卡" used={used} limit={limit}
+        <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
           fraction={accountProblem ? -1 : frac}
           resetMs={recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined}
           expandable
-          detail={`已用 ${formatTokens(used)} / 上限 ${formatTokens(limit)}`} />
+          detail={t('dashboard.myCardDetail', { used: formatTokens(used), limit: formatTokens(limit) })} />
       )
     }
     const myFrac = myFractions?.[bar.bucket]
     if (myFrac != null) {
       const pct = Math.round(Math.max(0, Math.min(1, myFrac)) * 100)
       return (
-        <UsageBar key="mine" label="我的卡 · 份额" used={null} limit={null}
+        <UsageBar key="mine" label={t('dashboard.myCardShare')} used={null} limit={null}
           fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]}
           expandable
-          detail={`份额 ${cardWeight}/${cardShareCapacity} · 本期剩 ${pct}%`} />
+          detail={t('dashboard.myCardShareDetail', { weight: cardWeight, capacity: cardShareCapacity, pct })} />
       )
     }
     return null
@@ -95,20 +97,20 @@ export function DashboardPage() {
   const [activating, setActivating] = useState(false)
   const [changing, setChanging] = useState(false)
   const handleActivateCard = async (): Promise<boolean> => {
-    if (!cardInput.trim()) { await showAlert('提示', '请输入账号卡号！'); return false }
+    if (!cardInput.trim()) { await showAlert(t('dashboard.alertHint'), t('dashboard.alertNeedCard')); return false }
     setActivating(true)
     try {
       const result = await useAppStore.getState().activateCard(cardInput.trim())
-      await showAlert('激活成功', `有效期至: ${formatDate(result)}`); setCardInput('')
+      await showAlert(t('dashboard.alertActivated'), t('dashboard.alertActivatedBody', { date: formatDate(result) })); setCardInput('')
       return true
-    } catch (err) { await showAlert('激活失败', `${err}`); return false }
+    } catch (err) { await showAlert(t('dashboard.alertActivateFailed'), `${err}`); return false }
     finally { setActivating(false) }
   }
 
   const activated = !!config?.accountCard
   const statusBadge = activated
-    ? (autoLeaseRunning ? (hasToken ? '令牌正常' : '获取中') : '闲置')
-    : '未激活'
+    ? (autoLeaseRunning ? (hasToken ? t('dashboard.badgeTokenOk') : t('dashboard.badgeFetching')) : t('dashboard.badgeIdle'))
+    : t('dashboard.badgeInactive')
 
   return (
     <div className="max-w-[960px] flex flex-col gap-4">
@@ -119,9 +121,9 @@ export function DashboardPage() {
       {/* 无可用卡密:停止租号、功能不可用,只能重新激活或退出接管 */}
       {cardUnusable && (
         <div className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
-          <div className="text-sm font-medium text-[var(--danger)]">卡密不可用,功能已停用</div>
+          <div className="text-sm font-medium text-[var(--danger)]">{t('dashboard.cardUnusableTitle')}</div>
           <div className="text-[12px] text-[var(--text-secondary)] mt-1">
-            当前账号卡已失效(无效/过期/禁用)。请在下方<strong>重新激活有效卡密</strong>;或在「接管」面板<strong>退出接管</strong>,恢复 IDE / Codex 正常使用。
+            {t('dashboard.cardUnusableBody1')}<strong>{t('dashboard.cardUnusableStrong1')}</strong>{t('dashboard.cardUnusableBody2')}<strong>{t('dashboard.cardUnusableStrong2')}</strong>{t('dashboard.cardUnusableBody3')}
           </div>
         </div>
       )}
@@ -131,24 +133,24 @@ export function DashboardPage() {
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-1.5">
             <Key size={16} className="text-[var(--primary)]" />
-            <span className="text-[15px] font-bold text-[var(--text-primary)]">激活账号卡</span>
+            <span className="text-[15px] font-bold text-[var(--text-primary)]">{t('dashboard.activateTitle')}</span>
           </div>
           <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed mb-3 max-w-[64ch]">
-            输入卡密即可直连官方模型 —— 无需配置 API Key,代码数据直发官方,冰茶只在本地注入授权令牌。
+            {t('dashboard.activateIntro')}
           </p>
           <div className="flex gap-2">
             <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-              placeholder="输入账号卡 (AI...)" className="flex-1 h-10"
+              placeholder={t('dashboard.cardPlaceholder')} className="flex-1 h-10"
               onKeyDown={(e) => { if (e.key === 'Enter') handleActivateCard() }} />
             <Button onClick={() => handleActivateCard()} disabled={activating} className="h-10 px-6 shrink-0">
-              {activating ? '激活中...' : '验证激活'}
+              {activating ? t('dashboard.activating') : t('dashboard.activate')}
             </Button>
           </div>
           <button
             onClick={() => api.openURL('https://bcai.store')}
             className="mt-2.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)] transition-colors"
           >
-            还没有卡密?前往冰茶商店购买 ↗
+            {t('dashboard.buyCardLink')}
           </button>
         </Card>
       ) : (
@@ -164,24 +166,24 @@ export function DashboardPage() {
                   <Badge variant={hasToken ? 'success' : 'default'}>{statusBadge}</Badge>
                 </div>
                 <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-                  到期 {activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) ? formatDate(activationExpiresAt) : '—'}
+                  {t('dashboard.expiry', { date: activationExpiresAt && !isNaN(new Date(activationExpiresAt).getTime()) ? formatDate(activationExpiresAt) : '—' })}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config!.accountCard)}>复制</Button>
+              <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(config!.accountCard)}>{t('common.copy')}</Button>
               <Button size="sm" variant="secondary" onClick={() => { setChanging((v) => !v); setCardInput('') }}>
-                {changing ? '取消' : '更换'}
+                {changing ? t('common.cancel') : t('dashboard.change')}
               </Button>
             </div>
           </div>
           {changing && (
             <div className="flex gap-2 pt-0.5">
               <Input value={cardInput} onChange={(e) => setCardInput(e.target.value)}
-                placeholder="输入新账号卡以更换" className="flex-1 h-9"
+                placeholder={t('dashboard.newCardPlaceholder')} className="flex-1 h-9"
                 onKeyDown={(e) => { if (e.key === 'Enter') handleActivateCard().then((ok) => ok && setChanging(false)) }} />
               <Button onClick={() => handleActivateCard().then((ok) => ok && setChanging(false))} disabled={activating} className="px-5 shrink-0">
-                {activating ? '保存中...' : '保存'}
+                {activating ? t('common.saving') : t('common.save')}
               </Button>
             </div>
           )}
@@ -191,21 +193,21 @@ export function DashboardPage() {
       {/* ── 今日概览:分段统计条 ── */}
       <Card className="overflow-hidden p-0">
         <div className="grid grid-cols-4 divide-x divide-[var(--border-light)]">
-          <Stat label="今日请求" value={todayRequests.toLocaleString()} tone="primary" />
-          <Stat label="错误" value={todayErrors.toLocaleString()} tone={todayErrors > 0 ? 'danger' : undefined} />
-          <Stat label="净输入 Token" value={formatTokens(todayInputTokens)} />
-          <Stat label="输出 Token" value={formatTokens(todayOutputTokens)} />
+          <Stat label={t('dashboard.statToday')} value={todayRequests.toLocaleString()} tone="primary" />
+          <Stat label={t('dashboard.statErrors')} value={todayErrors.toLocaleString()} tone={todayErrors > 0 ? 'danger' : undefined} />
+          <Stat label={t('dashboard.statInput')} value={formatTokens(todayInputTokens)} />
+          <Stat label={t('dashboard.statOutput')} value={formatTokens(todayOutputTokens)} />
         </div>
         <div className="grid grid-cols-2 divide-x divide-[var(--border-light)] border-t border-[var(--border-light)] bg-[var(--bg-tertiary)]/40">
           <div className="px-4 py-2.5">
             <div className="text-[14px] font-bold font-mono-data text-[var(--text-primary)]">{formatTokens(todayBillableTokens)}</div>
             <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-              今日计费 · 含缓存(读 1/10 折) · 写 {formatTokens(todayCacheWriteTokens)} · 读 {formatTokens(todayCachedTokens)}
+              {t('dashboard.statBillable', { write: formatTokens(todayCacheWriteTokens), read: formatTokens(todayCachedTokens) })}
             </div>
           </div>
           <div className="px-4 py-2.5">
             <div className="text-[14px] font-bold font-mono-data text-[var(--text-primary)]">${cumulativeSaving.toFixed(2)}</div>
-            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">累计已节省 · 按各模型 API 定价估算</div>
+            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{t('dashboard.statSaving')}</div>
           </div>
         </div>
       </Card>
@@ -219,12 +221,12 @@ export function DashboardPage() {
       {/* ── 模型用量:每个服务商一栏(带品牌标识),顶部对齐 —— Antigravity / Codex / Anthropic。
           颜色随健康度变(充足绿/一般黄/紧张橙/已用尽红);只有部分服务商有数据时自动减少栏数。 ── */}
       <Card>
-        <CardHeader><CardTitle><BarChart3 size={15} /> 模型用量</CardTitle></CardHeader>
+        <CardHeader><CardTitle><BarChart3 size={15} /> {t('dashboard.usageTitle')}</CardTitle></CardHeader>
         <CardContent>
           {/* 绑定账号当前异常 → 明确提示,不让用户对着「充足」误判。 */}
           {accountProblem && (
             <div className="mb-3 rounded-[8px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-              ⚠ 绑定账号暂时不可用,额度数据无法确认:{leaserError}
+              {t('dashboard.accountProblem', { error: leaserError })}
             </div>
           )}
           {(() => {
@@ -238,12 +240,12 @@ export function DashboardPage() {
                 bar.family === 'gpt' && codexQuota && !accountProblem ? codexQuota :
                 bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem ? claudeQuota : null
               const accountBars = split ? [
-                <UsageBar key="acct-5h" label="号 · 5h 窗口" used={null} limit={null}
+                <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
                   fraction={split.hourlyFraction} resetMs={split.hourlyResetMs} />,
-                <UsageBar key="acct-week" label="号 · 周窗口" used={null} limit={null}
+                <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
                   fraction={split.weeklyFraction} resetMs={split.weeklyResetMs} />,
               ] : [
-                <UsageBar key="acct" label="号余量" used={null} limit={null}
+                <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
                   fraction={accountProblem ? -1 : (accountFractions?.[bar.bucket] ?? -1)}
                   resetMs={accountResetMs?.[bar.bucket]} />,
               ]
@@ -262,7 +264,7 @@ export function DashboardPage() {
               .filter((p) => p.bars.length > 0)
 
             if (columns.length === 0) {
-              return <div className="text-[12px] text-[var(--text-muted)] py-1">暂无用量数据</div>
+              return <div className="text-[12px] text-[var(--text-muted)] py-1">{t('dashboard.noUsageData')}</div>
             }
             return (
               <div className="grid gap-3 items-start" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
@@ -305,11 +307,11 @@ export function DashboardPage() {
 
       {/* ── Footer: device info ── */}
       <div className="flex items-center gap-2 text-[11px] font-mono-data text-[var(--text-muted)] px-1 pb-2">
-        <span>设备: {config?.deviceId?.substring(0, 8) || '-'}...</span>
+        <span>{t('dashboard.footDevice')}: {config?.deviceId?.substring(0, 8) || '-'}...</span>
         <span className="text-[var(--border)]">·</span>
-        <span>活跃: {accountId ? `#${accountId}` : '暂无'}</span>
+        <span>{t('dashboard.footActive')}: {accountId ? `#${accountId}` : t('common.none')}</span>
         <span className="text-[var(--border)]">·</span>
-        <span>令牌: {autoLeaseRunning ? (hasToken ? '正常' : '获取中') : '闲置'}</span>
+        <span>{t('dashboard.footToken')}: {autoLeaseRunning ? (hasToken ? t('dashboard.footTokenOk') : t('dashboard.footTokenFetching')) : t('dashboard.footTokenIdle')}</span>
         {leaserError && (
           <>
             <span className="text-[var(--border)]">·</span>

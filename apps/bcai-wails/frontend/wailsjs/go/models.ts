@@ -4,7 +4,6 @@ export namespace main {
 	    accountCard: string;
 	    deviceId: string;
 	    proxyPort: number;
-	    upstreamProxy: string;
 	    idePath: string;
 	    hubPath: string;
 	    codexAppPath: string;
@@ -25,7 +24,6 @@ export namespace main {
 	        this.accountCard = source["accountCard"];
 	        this.deviceId = source["deviceId"];
 	        this.proxyPort = source["proxyPort"];
-	        this.upstreamProxy = source["upstreamProxy"];
 	        this.idePath = source["idePath"];
 	        this.hubPath = source["hubPath"];
 	        this.codexAppPath = source["codexAppPath"];

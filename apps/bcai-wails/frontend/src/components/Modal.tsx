@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { useT } from '@/i18n'
 
 interface ModalProps {
   open: boolean
@@ -13,7 +14,8 @@ interface ModalProps {
 }
 
 export function Modal({ open, title, message, type = 'alert', confirmLabel, cancelLabel, onClose }: ModalProps) {
-  const okLabel = confirmLabel ?? (type === 'confirm' ? '确认' : '我知道了')
+  const t = useT()
+  const okLabel = confirmLabel ?? (type === 'confirm' ? t('modal.confirm') : t('modal.gotIt'))
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose(false)}>
       <DialogContent>
@@ -23,7 +25,7 @@ export function Modal({ open, title, message, type = 'alert', confirmLabel, canc
         </DialogHeader>
         <DialogFooter>
           {type === 'confirm' && (
-            <Button variant="secondary" onClick={() => onClose(false)}>{cancelLabel ?? '取消'}</Button>
+            <Button variant="secondary" onClick={() => onClose(false)}>{cancelLabel ?? t('modal.cancel')}</Button>
           )}
           <Button onClick={() => onClose(true)}>{okLabel}</Button>
         </DialogFooter>

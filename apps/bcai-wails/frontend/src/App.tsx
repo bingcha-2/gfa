@@ -4,15 +4,17 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { FaqPage } from '@/pages/FaqPage'
-import { Modal } from '@/components/Modal'
 import { ToastHost } from '@/components/ToastHost'
 import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { usePolling } from '@/hooks/usePolling'
+import { useLocale } from '@/i18n'
 import type { PageId } from '@/types'
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<PageId>('home')
+  // 语言切换时以 key 整树重挂,保证所有文案(含非订阅的 t() 调用)立即刷新。
+  const locale = useLocale()
 
   const { fetchStats, fetchConfig, fetchIDEStatus, fetchAnnouncement } = useAppStore()
   const { fetchLogs } = useLogStore()
@@ -43,11 +45,11 @@ export default function App() {
   }
 
   return (
-    <>
+    <div key={locale} className="contents">
       <AppShell currentPage={currentPage} onPageChange={setCurrentPage}>
         {renderPage()}
       </AppShell>
       <ToastHost />
-    </>
+    </div>
   )
 }

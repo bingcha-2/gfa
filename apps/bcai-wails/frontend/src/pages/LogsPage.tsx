@@ -5,19 +5,21 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 import { Trash2, Copy, Search } from 'lucide-react'
 
-const filters: { id: LogFilter; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'error', label: '错误' },
-  { id: 'warn', label: '警告' },
-  { id: 'proxy', label: '代理' },
-  { id: 'inject', label: '注入' },
-]
-
 export function LogsPage() {
+  const t = useT()
   const { filter, searchQuery, setFilter, setSearchQuery, clearLogs, getFilteredLogs, logs } = useLogStore()
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const filters: { id: LogFilter; label: string }[] = [
+    { id: 'all', label: t('logs.filterAll') },
+    { id: 'error', label: t('logs.filterError') },
+    { id: 'warn', label: t('logs.filterWarn') },
+    { id: 'proxy', label: t('logs.filterProxy') },
+    { id: 'inject', label: t('logs.filterInject') },
+  ]
 
   const filteredLogs = getFilteredLogs()
 
@@ -57,16 +59,16 @@ export function LogsPage() {
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索日志..."
+            placeholder={t('logs.searchPlaceholder')}
             className="pl-8 h-8 text-[12px]"
           />
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           <Button size="sm" variant="ghost" onClick={clearLogs}>
-            <Trash2 size={13} /> 清空
+            <Trash2 size={13} /> {t('logs.clear')}
           </Button>
           <Button size="sm" variant="ghost" onClick={handleCopyLogs}>
-            <Copy size={13} /> 复制
+            <Copy size={13} /> {t('logs.copy')}
           </Button>
         </div>
       </div>
@@ -78,7 +80,7 @@ export function LogsPage() {
         style={{ minHeight: 0 }}
       >
         {filteredLogs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-[13px] text-[var(--text-muted)]">暂无日志</div>
+          <div className="flex items-center justify-center h-full text-[13px] text-[var(--text-muted)]">{t('logs.empty')}</div>
         ) : (
           filteredLogs.map((log, i) => <LogLine key={i} log={log} />)
         )}

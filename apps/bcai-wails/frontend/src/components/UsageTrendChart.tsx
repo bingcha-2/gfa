@@ -3,19 +3,13 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } fro
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAppStore } from '@/stores/useAppStore'
 import { formatTokens } from '@/lib/utils'
+import { useT, t as tr } from '@/i18n'
 
 type Range = 'day' | '3day' | 'week' | 'month'
 
-const RANGES: { key: Range; label: string }[] = [
-  { key: 'day', label: '日' },
-  { key: '3day', label: '3 日' },
-  { key: 'week', label: '周' },
-  { key: 'month', label: '月' },
-]
-
 // 日=按小时(今日),其余=按天;近 N 天从 dailyHistory(倒序,今天在前)切片再反转成正序
 const DAYS: Record<Exclude<Range, 'day'>, number> = { '3day': 3, week: 7, month: 30 }
-const TITLE: Record<Range, string> = { day: '今日(小时)', '3day': '近 3 天', week: '近 7 天', month: '近 30 天' }
+const TITLE_KEY: Record<Range, string> = { day: 'trend.titleDay', '3day': 'trend.title3Day', week: 'trend.titleWeek', month: 'trend.titleMonth' }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function TrendTooltip({ active, payload, label }: any) {
@@ -25,16 +19,24 @@ function TrendTooltip({ active, payload, label }: any) {
   return (
     <div className="rounded-[6px] border border-[var(--border)] bg-[var(--bg-card)] px-2.5 py-1.5 text-[11px] shadow-md">
       <div className="mb-0.5 font-semibold text-[var(--text-primary)]">{label}</div>
-      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />输入 {formatTokens(val('input'))}</div>
-      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />输出 {formatTokens(val('output'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />{tr('trend.input')} {formatTokens(val('input'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />{tr('trend.output')} {formatTokens(val('output'))}</div>
     </div>
   )
 }
 
 export function UsageTrendChart() {
+  const t = useT()
   const { dailyHistory, hourlyHistory, chartMode } = useAppStore()
   // 默认档:只有今天有数据时落在「日」,否则「周」(对齐旧版 chartMode 自动判定)
   const [range, setRange] = useState<Range>(chartMode === 'hourly' ? 'day' : 'week')
+
+  const RANGES: { key: Range; label: string }[] = [
+    { key: 'day', label: t('trend.rangeDay') },
+    { key: '3day', label: t('trend.range3Day') },
+    { key: 'week', label: t('trend.rangeWeek') },
+    { key: 'month', label: t('trend.rangeMonth') },
+  ]
 
   const rows = range === 'day'
     ? hourlyHistory.map((h) => ({ label: h.hour, input: h.inputTokens, output: h.outputTokens }))
@@ -46,7 +48,7 @@ export function UsageTrendChart() {
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle>用量趋势 · {TITLE[range]}</CardTitle>
+        <CardTitle>{t('trend.title', { range: t(TITLE_KEY[range]) })}</CardTitle>
         <div className="flex gap-0.5 rounded-[8px] border border-[var(--border)] bg-[var(--bg-tertiary)] p-0.5">
           {RANGES.map((r) => (
             <button
@@ -76,11 +78,11 @@ export function UsageTrendChart() {
             </BarChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-[132px] items-center justify-center text-[12px] text-[var(--text-muted)]">近期无用量</div>
+          <div className="flex h-[132px] items-center justify-center text-[12px] text-[var(--text-muted)]">{t('trend.noData')}</div>
         )}
         <div className="mt-2 flex gap-4 text-[11px] text-[var(--text-muted)]">
-          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />输入</span>
-          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />输出</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />{t('trend.input')}</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />{t('trend.output')}</span>
         </div>
       </CardContent>
     </Card>

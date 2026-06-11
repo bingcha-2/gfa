@@ -6,6 +6,7 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import type { ParsedLog } from '@/types'
+import { t, useLocaleStore } from '@/i18n'
 
 /**
  * 格式化 token：阶梯 K → M → B,最小单位 K(小于 1K 也显示为 0.xxK)。
@@ -38,7 +39,7 @@ export function escapeHtml(s: string): string {
 
 /** 格式化倒计时 ms → "2h 31m" */
 export function formatCountdown(ms: number): string {
-  if (ms <= 0) return '已恢复'
+  if (ms <= 0) return t('time.recovered')
   const h = Math.floor(ms / 3600000)
   const m = Math.floor((ms % 3600000) / 60000)
   const s = Math.floor((ms % 60000) / 1000)
@@ -49,10 +50,10 @@ export function formatCountdown(ms: number): string {
 /** 格式化会话时长 */
 export function formatDuration(startTime: number): string {
   const mins = Math.floor((Date.now() - startTime) / 60000)
-  if (mins < 60) return `${mins}分钟`
+  if (mins < 60) return t('time.minutes', { m: mins })
   const hrs = Math.floor(mins / 60)
   const rm = mins % 60
-  return `${hrs}小时${rm}分钟`
+  return t('time.hoursMinutes', { h: hrs, m: rm })
 }
 
 /** 解析单行日志 */
@@ -97,12 +98,12 @@ export function parseLogLine(line: string): ParsedLog {
   return { raw, time, tag, message, level }
 }
 
-/** 格式化日期 */
+/** 格式化日期(按当前界面语言) */
 export function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr)
     if (isNaN(d.getTime())) return dateStr
-    return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+    return d.toLocaleDateString(useLocaleStore.getState().locale, { year: 'numeric', month: 'long', day: 'numeric' })
   } catch {
     return dateStr
   }

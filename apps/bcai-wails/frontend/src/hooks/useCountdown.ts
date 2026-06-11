@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { formatCountdown } from '@/lib/utils'
+import { t } from '@/i18n'
 
 /**
  * 倒计时 Hook
@@ -15,7 +16,7 @@ export function useCountdown(remainingMs: number, totalMs = 5 * 3600 * 1000) {
     const total = totalMs > 0 ? totalMs : 5 * 3600 * 1000
 
     if (remainingMs <= 0) {
-      setDisplay('已恢复')
+      setDisplay(t('time.recovered'))
       setPercent(100)
       return
     }
@@ -26,7 +27,7 @@ export function useCountdown(remainingMs: number, totalMs = 5 * 3600 * 1000) {
     const id = setInterval(() => {
       const now = remainingMs - 1000
       if (now <= 0) {
-        setDisplay('已恢复')
+        setDisplay(t('time.recovered'))
         setPercent(100)
         clearInterval(id)
       } else {

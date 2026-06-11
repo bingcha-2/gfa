@@ -11,7 +11,6 @@ export interface Config {
   accountCard: string
   deviceId: string
   proxyPort: number
-  upstreamProxy: string
   idePath: string
   hubPath: string
   codexAppPath: string
