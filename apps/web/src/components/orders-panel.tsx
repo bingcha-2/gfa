@@ -2,7 +2,6 @@
 
 import React from "react";
 
-import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 
 import { formatDateTime } from "../lib/format";
@@ -326,13 +325,6 @@ export function OrdersPanel({ role, showToast }: OrdersPanelProps) {
                               >
                                 {isExpanded ? "收起" : "查看"}
                               </Button>
-                              <Link
-                                className="button secondary small"
-                                href={`/status/${order.orderNo}`}
-                                style={{ whiteSpace: "nowrap", padding: "0 10px", minHeight: 32, fontSize: 13 }}
-                              >
-                                状态页
-                              </Link>
                               {canReplaceMember(role) && order.familyGroup ? (
                                 <Button
                                   variant="outline"

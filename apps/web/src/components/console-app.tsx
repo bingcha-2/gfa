@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -765,9 +764,6 @@ export function ConsoleApp({ initialData }: ConsoleAppProps) {
               <><Spinner size={14} color="currentColor" /> 刷新中...</>
             ) : "刷新数据"}
           </Button>
-          <Link className="pill-link" href="/redeem">
-            公共提交页
-          </Link>
           <Button variant="outline" onClick={handleLogout} type="button">
             退出登录
           </Button>

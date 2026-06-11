@@ -7,7 +7,6 @@ import { formatDateTime } from "@/lib/format";
 import { canReplaceMember } from "@/lib/permissions";
 import type { OrderSummary } from "@/lib/types";
 import { toast } from "sonner";
-import Link from "next/link";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,7 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, Eye, ExternalLink, ArrowLeftRight, RotateCcw } from "lucide-react";
+import { RefreshCw, Eye, ArrowLeftRight, RotateCcw } from "lucide-react";
 
 const ORDER_TYPE_LABEL: Record<string, string> = { JOIN: "上车", SWAP: "换号", SUBSCRIPTION: "订阅" };
 const PAGE_SIZE = 50;
@@ -263,12 +262,6 @@ export default function OrdersPage() {
                                 <Eye className="h-3.5 w-3.5" />
                               </TooltipTrigger>
                               <TooltipContent>查看订单详情</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger render={<Button variant="ghost" size="sm" className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" nativeButton={false} render={<Link href={`/status/${order.orderNo}`} target="_blank" />} />}>
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </TooltipTrigger>
-                              <TooltipContent>在新标签查看状态</TooltipContent>
                             </Tooltip>
                             {canReplaceMember(user.role) && order.familyGroup && (
                               <Tooltip>
