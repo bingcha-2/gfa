@@ -72,6 +72,11 @@ func (a *proxyAudit) emit() {
 	}
 	a.emitted = true
 
+	if a.product == "claude" && strings.Contains(a.note, claudeTransportFriendlyMessage) {
+		Log("%s", claudeTransportFriendlyMessage)
+		return
+	}
+
 	var b strings.Builder
 	kind := a.kind
 	if kind == "" {

@@ -120,13 +120,18 @@ export function TokenSourceControl() {
         return true
       }
       // ── Windows 商店版 Claude Desktop 无法接管:后端用 STORE_CLAUDE: 前缀标记 → 弹专门引导,
-      //    「去下载独立安装器」按钮直接打开官网下载页,而不是泛化的「操作失败」死胡同。
+      //    正文给两种解决方法(①迁移目录+junction ②装独立版),「一键安装独立版」按钮直接 winget 装,
+      //    winget 不存在/失败再回退打开下载页,而不是泛化的「操作失败」死胡同。
       if (msg && msg.includes('STORE_CLAUDE:')) {
         setBusy(null)
         await fetchIDEStatus()
         const detail = msg.split('STORE_CLAUDE:').pop()?.replace(/\)\s*$/, '').trim() || msg
         const go = await showConfirm(t('takeover.storeClaudeTitle'), detail, { confirmLabel: t('takeover.storeClaudeBtn'), cancelLabel: t('common.later') })
-        if (go) api.openURL('https://claude.ai/download')
+        if (go) {
+          // 一键 winget 安装官方独立版;winget 不存在/失败 → 回退到打开下载页。
+          try { await api.installStandaloneClaude() }
+          catch { api.openURL('https://claude.ai/download') }
+        }
         return false
       }
       // ── 失败(尤其 macOS 权限)直接走错误分支,不必等状态翻转。

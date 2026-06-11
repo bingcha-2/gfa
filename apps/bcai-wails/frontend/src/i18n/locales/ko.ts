@@ -183,7 +183,7 @@ export const ko: DeepPartialDict = {
     caFailedTitle: '추론 테이크오버됨 · Max 활성화 대기',
     caRetakeBtn: '다시 테이크오버 · 인증서 설치',
     storeClaudeTitle: '⚠ 스토어 버전은 테이크오버할 수 없음',
-    storeClaudeBtn: '독립 설치 프로그램 다운로드',
+    storeClaudeBtn: '독립 버전 원클릭 설치',
     permissionTitle: '시스템 권한 필요',
     permissionBody: '{message}\n\n“시스템 설정 → 개인정보 보호 및 보안 → 앱 관리”에서 BingchaAI 권한을 켠 다음 다시 시도해 주세요.',
     opFailed: '작업 실패',

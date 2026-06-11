@@ -183,7 +183,7 @@ export const zhTW: DeepPartialDict = {
     caFailedTitle: '推理已接管 · Max 待啟用',
     caRetakeBtn: '重新接管 · 裝憑證',
     storeClaudeTitle: '⚠ 商店版無法接管',
-    storeClaudeBtn: '去下載獨立安裝程式',
+    storeClaudeBtn: '一鍵安裝獨立版',
     permissionTitle: '需要系統權限',
     permissionBody: '{message}\n\n請在「系統設定 → 隱私權與安全性 → App 管理」中開啟冰茶AI 的權限,然後重試。',
     opFailed: '操作失敗',
