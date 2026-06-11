@@ -82,7 +82,7 @@ _deprecated/bcai-client/dev.*.log
 **/updates/*.exe
 **/updates/*.dmg
 **/updates/*.blockmap
-apps/bcai-wails/bcai-wails
+apps/app/bcai-wails
 
 # dev-local.sh 临时备份
 *.bak

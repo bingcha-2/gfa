@@ -7,7 +7,7 @@
 export {};
 
 const WEB = "../apps/web/src/lib/i18n/dictionaries";
-const APP = "../apps/bcai-wails/frontend/src/i18n/locales";
+const APP = "../apps/app/frontend/src/i18n/locales";
 
 const LOCALES: Array<[string, string]> = [
   ["zh-TW", "zhTW"],

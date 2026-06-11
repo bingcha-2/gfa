@@ -6,9 +6,9 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC = new URL("../apps/bcai-wails/frontend/src", import.meta.url).pathname;
+const SRC = new URL("../apps/app/frontend/src", import.meta.url).pathname;
 
-const { zhCN } = await import("../apps/bcai-wails/frontend/src/i18n/locales/zh-CN");
+const { zhCN } = await import("../apps/app/frontend/src/i18n/locales/zh-CN");
 
 function exists(path: string): boolean {
   let cur: unknown = zhCN;

@@ -21,7 +21,7 @@ defaults:
     shell: bash
 
 env:
-  WAILS_DIR: apps/bcai-wails
+  WAILS_DIR: apps/app
 
 jobs:
   build-test:
@@ -74,7 +74,7 @@ jobs:
         run: go test ./... -timeout 8m
 
   # 定价单一源防漂移:packages/shared/src/pricing.json 是唯一源,客户端的
-  # apps/bcai-wails/pricing.json 必须是它的同步副本(由 scripts/sync-pricing.mjs 生成)。
+  # apps/app/pricing.json 必须是它的同步副本(由 scripts/sync-pricing.mjs 生成)。
   # 改了源没同步副本 → 这步红。
   pricing-sync:
     name: pricing single-source drift check
@@ -89,4 +89,4 @@ jobs:
       - name: Sync pricing and assert no drift
         run: |
           node scripts/sync-pricing.mjs
-          git diff --exit-code apps/bcai-wails/pricing.json
+          git diff --exit-code apps/app/pricing.json

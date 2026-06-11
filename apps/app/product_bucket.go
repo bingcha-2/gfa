@@ -3,7 +3,7 @@ package main
 import "strings"
 
 // product_bucket.go — 客户端侧「产品 / 族 / 桶」命名与来回映射的唯一真源,
-// 与服务端 apps/api/src/lease-core/product-bucket.ts 语义保持一致。
+// 与服务端 apps/server/src/lease-core/product-bucket.ts 语义保持一致。
 //
 //   产品 Product : 卡售卖的顶层轴 — antigravity | codex | anthropic。
 //   族   Family  : 模型属于哪家厂商 — gemini | claude | gpt。由模型名推断,

@@ -32,7 +32,7 @@
     "test:unit": "pnpm -r --if-present run test:unit && pnpm test:go",
     "test:integration": "pnpm -r --if-present run test:integration",
     "test:e2e": "pnpm -r --if-present run test:e2e",
-    "test:go": "cd apps/bcai-wails && go test ./...",
+    "test:go": "cd apps/app && go test ./...",
     "sync:pricing": "node scripts/sync-pricing.mjs"
   },
   "dependencies": {

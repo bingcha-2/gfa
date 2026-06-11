@@ -1,7 +1,7 @@
 /**
  * 统一 token 显示:阶梯 K → M → B,最小单位 K(小于 1K 也显示为 0.xxK)。
  * 整数不带小数,非整数保留两位小数;0 → "0"。
- * 与客户端 apps/bcai-wails(frontend lib/utils.ts 与 Go leaser_status.go)口径一致。
+ * 与客户端 apps/app(frontend lib/utils.ts 与 Go leaser_status.go)口径一致。
  * 例:842→"0.84K" · 1200→"1.20K" · 12000→"12K" · 1M · 1.50M · 3.45B
  */
 export function formatTokens(n: number | null | undefined): string {

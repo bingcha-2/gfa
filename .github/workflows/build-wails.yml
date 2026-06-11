@@ -17,7 +17,7 @@ permissions:
 
 env:
   APP_NAME: BingchaAI
-  WAILS_DIR: apps/bcai-wails
+  WAILS_DIR: apps/app
   UPDATES_DIR: apps/web/public/updates
 
 jobs:
