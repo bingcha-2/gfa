@@ -108,24 +108,27 @@ describe("Surface route normalization — controller path metadata", () => {
     }
   );
 
-  // ---- Remote controllers: must stay single-string, untouched ----
+  // ---- Remote controllers: dual-registered (legacy + app/lease/<provider>) ----
 
-  it("TokenServerController stays on 'remote-token'", () => {
-    expect(Reflect.getMetadata("path", TokenServerController)).toBe(
-      "remote-token"
-    );
+  it("TokenServerController is registered on ['remote-token', 'app/lease/antigravity']", () => {
+    expect(Reflect.getMetadata("path", TokenServerController)).toEqual([
+      "remote-token",
+      "app/lease/antigravity",
+    ]);
   });
 
-  it("RemoteCodexController stays on 'remote-codex'", () => {
-    expect(Reflect.getMetadata("path", RemoteCodexController)).toBe(
-      "remote-codex"
-    );
+  it("RemoteCodexController is registered on ['remote-codex', 'app/lease/codex']", () => {
+    expect(Reflect.getMetadata("path", RemoteCodexController)).toEqual([
+      "remote-codex",
+      "app/lease/codex",
+    ]);
   });
 
-  it("RemoteAnthropicController stays on 'remote-anthropic'", () => {
-    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toBe(
-      "remote-anthropic"
-    );
+  it("RemoteAnthropicController is registered on ['remote-anthropic', 'app/lease/anthropic']", () => {
+    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toEqual([
+      "remote-anthropic",
+      "app/lease/anthropic",
+    ]);
   });
 
   // ---- OrderController split ----

@@ -8,7 +8,7 @@ import { Public } from "../auth/public.decorator";
 import { TokenServerHttpError, TokenServerService } from "./token-server.service";
 
 @Public()
-@Controller("remote-token")
+@Controller(["remote-token", "app/lease/antigravity"])
 export class TokenServerController {
   constructor(private readonly tokenServer: TokenServerService) {}
 
