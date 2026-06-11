@@ -297,6 +297,171 @@ func TestUserLogout_ClearsMitmToken(t *testing.T) {
 	}
 }
 
+// ── Heartbeat: server-driven session lifecycle ───────────────────────────────
+
+// newHeartbeatServer returns a test server answering POST /app/heartbeat.
+func newHeartbeatServer(t *testing.T, resp interface{}, statusCode int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/heartbeat" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+// seedLoggedInConfig writes a logged-in config into the (test-isolated) dir.
+func seedLoggedInConfig(t *testing.T, token string) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.UserToken = token
+	cfg.DeviceId = "dev-hb"
+	cfg.UserEmail = "hb@example.com"
+	cfg.PlanName = "Pro"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+}
+
+// TestHeartbeat_SessionInvalid_ClearsSession: 401 SESSION_INVALID → forced
+// local logout — services stopped, MITM token cleared, config session cleared
+// (the UI then lands on LoginPage via GetAccountState).
+func TestHeartbeat_SessionInvalid_ClearsSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-dead")
+
+	GetMitmManager().UpdateConfig("tok-dead", "dev-hb", "")
+	defer GetMitmManager().UpdateConfig("", "", "")
+
+	srv := newHeartbeatServer(t, map[string]string{"error": "SESSION_INVALID", "message": "session revoked"}, http.StatusUnauthorized)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	_, err := app.HeartbeatCheck()
+	if err == nil || !strings.Contains(err.Error(), "SESSION_INVALID") {
+		t.Fatalf("want SESSION_INVALID error, got %v", err)
+	}
+	if got := LoadConfig().UserToken; got != "" {
+		t.Errorf("UserToken after SESSION_INVALID = %q, want empty (forced logout)", got)
+	}
+	if got := GetMitmManager().sessionCard(); got != "" {
+		t.Errorf("MITM token after SESSION_INVALID = %q, want empty", got)
+	}
+}
+
+// TestHeartbeat_TransientError_KeepsSession: a network-level failure must NOT
+// log the user out — the token stays, only an error is returned.
+func TestHeartbeat_TransientError_KeepsSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-alive")
+
+	// Closed server → connection refused (transport error, not an HTTP response).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.HeartbeatCheck(); err == nil {
+		t.Fatal("expected network error")
+	}
+	if got := LoadConfig().UserToken; got != "tok-alive" {
+		t.Errorf("UserToken after transient error = %q, want %q (session kept)", got, "tok-alive")
+	}
+}
+
+// TestHeartbeat_SubscriptionExpired_KeepsToken: still authenticated — keep the
+// session (no LoginPage), mark the leaser card-unusable (drives the dashboard
+// banner) and stop auto-lease.
+func TestHeartbeat_SubscriptionExpired_KeepsToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-plan-ended")
+
+	srv := newHeartbeatServer(t, map[string]string{"error": "SUBSCRIPTION_EXPIRED", "message": "plan ended"}, http.StatusForbidden)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	// Reset the global leaser flag afterwards so other tests aren't affected.
+	defer func() {
+		l := GetLeaser()
+		l.mu.Lock()
+		l.cardUnusable = false
+		l.mu.Unlock()
+	}()
+
+	app := &App{}
+	_, err := app.HeartbeatCheck()
+	if err == nil || !strings.Contains(err.Error(), "SUBSCRIPTION_EXPIRED") {
+		t.Fatalf("want SUBSCRIPTION_EXPIRED error, got %v", err)
+	}
+	if got := LoadConfig().UserToken; got != "tok-plan-ended" {
+		t.Errorf("UserToken after SUBSCRIPTION_EXPIRED = %q, want kept", got)
+	}
+	if got, _ := GetLeaser().GetStatus()["cardUnusable"].(bool); !got {
+		t.Errorf("leaser cardUnusable = %v, want true (drives the dashboard banner)", got)
+	}
+}
+
+// TestHeartbeat_Success_PersistsSubscription: 200 with a refreshed subscription
+// → plan fields persisted so renewals/changes show up without re-login.
+func TestHeartbeat_Success_PersistsSubscription(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-renewed")
+
+	resp := map[string]interface{}{
+		"ok": true,
+		"subscription": map[string]interface{}{
+			"planName":    "Business",
+			"expiresAt":   "2027-01-02T03:04:05Z",
+			"deviceLimit": 5,
+		},
+	}
+	srv := newHeartbeatServer(t, resp, http.StatusOK)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	result, err := app.HeartbeatCheck()
+	if err != nil {
+		t.Fatalf("HeartbeatCheck: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected heartbeat result map")
+	}
+
+	cfg := LoadConfig()
+	if cfg.UserToken != "tok-renewed" {
+		t.Errorf("UserToken = %q, want kept", cfg.UserToken)
+	}
+	if cfg.PlanName != "Business" {
+		t.Errorf("PlanName = %q, want %q", cfg.PlanName, "Business")
+	}
+	if cfg.PlanExpiry != "2027-01-02T03:04:05Z" {
+		t.Errorf("PlanExpiry = %q, want refreshed", cfg.PlanExpiry)
+	}
+	if cfg.PlanDeviceMax != 5 {
+		t.Errorf("PlanDeviceMax = %d, want 5", cfg.PlanDeviceMax)
+	}
+}
+
 // ── TestGetAccountState ───────────────────────────────────────────────────────
 
 func TestGetAccountState(t *testing.T) {

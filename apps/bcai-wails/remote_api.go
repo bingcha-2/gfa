@@ -29,7 +29,9 @@ func postJSONWithSecretToBase(baseURL string, client *http.Client, path string, 
 	}
 	defer resp.Body.Close()
 
-	respBody, readErr := io.ReadAll(resp.Body)
+	// 限制响应体读取上限(1 MiB):lease/auth 响应都是小 JSON,防止异常/恶意上游
+	// 用超大响应把客户端内存打爆。doAuthPost / doAuthPostWithBearer 也经这里。
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return respBody, resp.StatusCode, readErr
 }
 

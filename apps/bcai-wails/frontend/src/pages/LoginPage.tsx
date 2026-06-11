@@ -78,10 +78,11 @@ export function LoginPage() {
           {/* Form */}
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <div>
-              <label className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
+              <label htmlFor="login-email" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
                 {t('login.emailLabel')}
               </label>
               <Input
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -91,10 +92,11 @@ export function LoginPage() {
               />
             </div>
             <div>
-              <label className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
+              <label htmlFor="login-password" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
                 {t('login.passwordLabel')}
               </label>
               <Input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

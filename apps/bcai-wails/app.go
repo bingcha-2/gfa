@@ -215,6 +215,10 @@ func (a *App) RestartProxy() error {
 		GetLeaser().StartAutoLease(cfg.UserToken, cfg.DeviceId, "")
 	}
 
+	// MITM 代理端口固定、不停监听,但 token 必须跟着重启同步(与 SaveConfig 一致),
+	// 否则代理重启后 MITM 可能仍拿旧 token 继续租号。
+	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
+
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
 }

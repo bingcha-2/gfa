@@ -18,7 +18,7 @@ export default function App() {
   // 语言切换时以 key 整树重挂,保证所有文案(含非订阅的 t() 调用)立即刷新。
   const locale = useLocale()
 
-  const { fetchStats, fetchConfig, fetchIDEStatus, fetchAnnouncement, fetchAccountState, account } = useAppStore()
+  const { fetchStats, fetchConfig, fetchIDEStatus, fetchAnnouncement, fetchAccountState, heartbeat, account } = useAppStore()
   const { fetchLogs } = useLogStore()
 
   // Initialize on mount
@@ -31,8 +31,10 @@ export default function App() {
 
   const isLoggedIn = account?.loggedIn === true
 
-  // Polling: account state every 60s while logged in
-  usePolling(fetchAccountState, 60000, isLoggedIn)
+  // Polling: server heartbeat every ~60s while logged in(usePolling 串行链 +
+  // store 在途守护 → 永不重叠)。会话吊销/订阅到期由 Go 侧落地;心跳完成后刷新
+  // 账号态 —— SESSION_INVALID/DEVICE_REVOKED → 登录页,SUBSCRIPTION_EXPIRED → 横幅。
+  usePolling(heartbeat, 60000, isLoggedIn)
 
   // Polling: stats every 2s, IDE every 15s, announcement every 5min (only when logged in)
   // 降低频率 + 后端缓存，避免 IPC 阻塞导致界面卡死

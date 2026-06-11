@@ -92,10 +92,15 @@ interface AppState {
   fetchIDEStatus: () => Promise<IDEProduct[]>
   fetchAnnouncement: () => Promise<void>
   fetchAccountState: () => Promise<void>
+  heartbeat: () => Promise<void>
   saveConfig: (cfg: Config) => Promise<void>
   login: (email: string, password: string) => Promise<Record<string, unknown>>
   logout: () => Promise<void>
 }
+
+// 心跳串行守护:usePolling 本身是串行链(上一次完成后才调度下一次),这里再防
+// 多处触发重叠 —— 同一时刻最多一个心跳在途。
+let heartbeatInFlight = false
 
 export const useAppStore = create<AppState>((set, get) => ({
   account: null,
@@ -264,6 +269,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: async () => {
     await api.userLogout()
     set({ account: null })
+    await get().fetchAccountState()
+  },
+
+  // 服务端心跳(60s 轮询):校验会话/订阅。致命类由 Go 侧落地 —— SESSION_INVALID /
+  // DEVICE_REVOKED 清本地会话(随后 fetchAccountState → 登录页),SUBSCRIPTION_EXPIRED
+  // 标记 cardUnusable(仪表盘横幅)。瞬时网络错误只记日志,绝不登出。
+  heartbeat: async () => {
+    if (heartbeatInFlight) return
+    heartbeatInFlight = true
+    try {
+      await api.heartbeatCheck()
+    } catch (err) {
+      console.error('heartbeat failed:', err)
+    } finally {
+      heartbeatInFlight = false
+    }
+    // 无论成败都从配置重读账号态:致命类已被后端清掉/更新 → UI 跟着落地。
     await get().fetchAccountState()
   },
 }))

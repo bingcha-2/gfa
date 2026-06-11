@@ -29,6 +29,7 @@ import {
   UserLogin as _UserLogin,
   UserLogout as _UserLogout,
   GetAccountState as _GetAccountState,
+  HeartbeatCheck as _HeartbeatCheck,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal URLs =====
@@ -64,6 +65,13 @@ export async function userLogout(): Promise<void> {
 
 export async function getAccountState(): Promise<AccountState> {
   return _GetAccountState() as Promise<AccountState>
+}
+
+// 服务端心跳:校验会话/订阅是否仍有效。致命类(SESSION_INVALID / DEVICE_REVOKED /
+// SUBSCRIPTION_EXPIRED)由 Go 侧处理(清会话 / 标记不可用)并以 reject 返回;
+// 瞬时网络错误同样 reject 但不动本地会话。
+export async function heartbeatCheck(): Promise<Record<string, unknown>> {
+  return _HeartbeatCheck()
 }
 
 // ===== Stats =====

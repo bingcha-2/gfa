@@ -148,9 +148,27 @@ func stopServicesForUser() {
 // Exported App methods (bound to Wails)
 // ────────────────────────────────────────────────────────────────────────────
 
+// clearUserSession zeroes the account-session fields on cfg.
+// DeviceName (and DeviceId) are intentionally kept — they are device identity,
+// not session state, and must survive logout/revocation for the next login.
+func clearUserSession(cfg *Config) {
+	cfg.UserToken = ""
+	cfg.UserTokenExpiry = ""
+	cfg.UserEmail = ""
+	cfg.PlanName = ""
+	cfg.PlanExpiry = ""
+	cfg.PlanDeviceMax = 0
+}
+
 // UserLogin authenticates with email+password, persists session data to config,
 // and starts leaser/proxy services.
 func (a *App) UserLogin(email, password string) (map[string]interface{}, error) {
+	// Serialize with SaveConfig/RestartProxy/UserLogout/HeartbeatCheck — config
+	// writes and service lifecycle must not interleave. The lock is taken at
+	// the outermost App-method layer only (start/stopServicesForUser don't lock).
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	cfg := LoadConfig()
 
 	deviceName := cfg.DeviceName
@@ -223,6 +241,10 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 
 // UserLogout sends a best-effort logout to the server, clears config, stops services.
 func (a *App) UserLogout() error {
+	// Same serialization as UserLogin — see comment there.
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	cfg := LoadConfig()
 	token := cfg.UserToken
 	deviceId := cfg.DeviceId
@@ -241,13 +263,9 @@ func (a *App) UserLogout() error {
 	// Stop services.
 	stopServicesForUser()
 
-	// Clear account fields from config.
-	cfg.UserToken = ""
-	cfg.UserTokenExpiry = ""
-	cfg.UserEmail = ""
-	cfg.PlanName = ""
-	cfg.PlanExpiry = ""
-	cfg.PlanDeviceMax = 0
+	// Clear account-session fields from config (DeviceName is intentionally
+	// kept — it's device identity, not session state).
+	clearUserSession(&cfg)
 	if err := SaveConfig(cfg); err != nil {
 		Log("[auth] Failed to clear config on logout: %v", err)
 		return err
@@ -293,9 +311,23 @@ func min(a, b int) int {
 	return b
 }
 
-// HeartbeatCheck sends a heartbeat to the server and handles fatal session errors.
-// Returns the updated subscription info if successful.
+// HeartbeatCheck sends a heartbeat to the server (frontend polls ~60s),
+// persists refreshed subscription info, and handles fatal session classes:
+//   - SESSION_INVALID / DEVICE_REVOKED / DEVICE_LIMIT_EXCEEDED → the session is
+//     dead server-side: stop services and clear the local session so the UI
+//     lands on the login page (via GetAccountState).
+//   - SUBSCRIPTION_EXPIRED → still authenticated, but the plan lapsed: keep the
+//     session, mark the leaser card-unusable (drives the dashboard banner) and
+//     stop auto-lease.
+//
+// Transient network errors return an error WITHOUT touching local state — a
+// flaky network must never log the user out.
 func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
+	// Mutates config + service lifecycle on fatal classes → same outermost
+	// App-method serialization as UserLogin/UserLogout/SaveConfig.
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	cfg := LoadConfig()
 	if cfg.UserToken == "" {
 		return nil, fmt.Errorf("not logged in")
@@ -308,26 +340,64 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 
 	body, status, err := doAuthPostWithBearer("/app/heartbeat", payload, cfg.UserToken)
 	if err != nil {
+		// Network failure — keep the session untouched, only surface the error.
 		return nil, fmt.Errorf("heartbeat network error: %w", err)
 	}
 
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		var errResp loginErrorResponse
 		if jsonErr := json.Unmarshal(body, &errResp); jsonErr == nil && errResp.Error != "" {
-			errCode := errResp.Error
-			// Fatal session errors — stop services, mark session unusable.
-			if isCardFatalError(strings.ToLower(errCode)) {
-				Log("[auth] Heartbeat fatal error: %s — stopping services", errCode)
-				GetLeaser().StopAutoLease()
+			switch errCode := strings.ToUpper(errResp.Error); errCode {
+			case "SESSION_INVALID", "DEVICE_REVOKED", "DEVICE_LIMIT_EXCEEDED":
+				// Forced local logout (no server POST — the token is already dead).
+				Log("[auth] Heartbeat fatal (%s): clearing local session", errCode)
+				stopServicesForUser()
+				clearUserSession(&cfg)
+				if saveErr := SaveConfig(cfg); saveErr != nil {
+					Log("[auth] Failed to clear session after %s: %v", errCode, saveErr)
+				}
+				return nil, fmt.Errorf("%s", errCode)
+			case "SUBSCRIPTION_EXPIRED":
+				// Keep the session; stop leasing and raise the dashboard banner
+				// (existing cardUnusable mechanism).
+				Log("[auth] Heartbeat: subscription expired — marking card unusable")
+				GetLeaser().markCardUnusable(fmt.Errorf("SUBSCRIPTION_EXPIRED"))
 				return nil, fmt.Errorf("%s", errCode)
 			}
 		}
 		return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
 	}
 
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("heartbeat failed (HTTP %d): %s", status, string(body))
+	}
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("heartbeat parse error: %w", err)
+	}
+
+	// Refresh the local subscription snapshot so plan renewals/changes show up
+	// in the UI (GetAccountState reads config) without a re-login.
+	if sub, ok := result["subscription"].(map[string]interface{}); ok {
+		changed := false
+		if v, ok := sub["planName"].(string); ok && v != cfg.PlanName {
+			cfg.PlanName = v
+			changed = true
+		}
+		if v, ok := sub["expiresAt"].(string); ok && v != cfg.PlanExpiry {
+			cfg.PlanExpiry = v
+			changed = true
+		}
+		if v, ok := sub["deviceLimit"].(float64); ok && int(v) != cfg.PlanDeviceMax {
+			cfg.PlanDeviceMax = int(v)
+			changed = true
+		}
+		if changed {
+			if saveErr := SaveConfig(cfg); saveErr != nil {
+				Log("[auth] Failed to persist heartbeat subscription update: %v", saveErr)
+			}
+		}
 	}
 	return result, nil
 }
