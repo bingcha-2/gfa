@@ -104,3 +104,125 @@ export type PortalDevice = {
   lastSeenAt: string | null;
   lastIp: string | null;
 };
+
+// ─── Overview / quota (Stage 2b — M9 contract A) ──────────────────────────────
+
+export type QuotaMode = "static" | "dynamic" | "unlimited";
+
+export type QuotaBucket = {
+  bucket: string;
+  used: number;
+  limit: number;
+};
+
+export type SubscriptionQuota = {
+  quotaMode: QuotaMode;
+  buckets: QuotaBucket[];
+  recentWindowTokens: number;
+  tokenWindowResetMs: number | null;
+  weeklyTokenLimit: number | null;
+  weeklyWindowResetMs: number | null;
+  totalTokensUsed: number;
+};
+
+export type OverviewSubscription = Subscription & {
+  quota: SubscriptionQuota;
+};
+
+export type PortalOverview = {
+  customer: Customer;
+  subscriptions: OverviewSubscription[];
+  devices: { count: number; limit: number };
+  unreadNotifications: number;
+};
+
+// ─── Usage (contract B) ───────────────────────────────────────────────────────
+
+export type UsageDays = 1 | 7 | 30;
+
+export type UsageRecord = {
+  id: string;
+  timestamp: string;
+  modelKey: string;
+  bucket: string;
+  status: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
+export type UsagePage = {
+  records: UsageRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+// ─── Notifications (contracts C/D) ────────────────────────────────────────────
+
+export type NotificationType =
+  | "SYSTEM"
+  | "BILLING"
+  | "TICKET"
+  | "REFERRAL"
+  | "MIGRATION";
+
+export type PortalNotification = {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type NotificationsPage = {
+  notifications: PortalNotification[];
+  total: number;
+  unread: number;
+};
+
+// ─── Tickets (contracts E-H) ──────────────────────────────────────────────────
+
+export type TicketStatus = "OPEN" | "ANSWERED" | "CLOSED";
+
+export type TicketSummary = {
+  id: string;
+  subject: string;
+  status: TicketStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TicketMessage = {
+  id: string;
+  authorType: "CUSTOMER" | "ADMIN";
+  body: string;
+  createdAt: string;
+};
+
+export type TicketDetail = {
+  ticket: {
+    id: string;
+    subject: string;
+    status: TicketStatus;
+    createdAt: string;
+  };
+  messages: TicketMessage[];
+};
+
+// ─── Referral (contract I) ────────────────────────────────────────────────────
+
+export type ReferralInvitee = {
+  email: string;
+  registeredAt: string;
+  rewarded: boolean;
+};
+
+export type ReferralInfo = {
+  referralCode: string;
+  referralLink: string;
+  invitees: ReferralInvitee[];
+  rewards: { totalCents: number; grantedCount: number };
+  creditCents: number;
+};

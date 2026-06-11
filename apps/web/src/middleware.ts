@@ -48,7 +48,15 @@ function notFound() {
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 // ─── Portal auth pages (no redirect when already logged in — handled by layout) ─
-const PORTAL_AUTH_PAGES = ["/app/login", "/app/register", "/app/forgot", "/app/reset"];
+// /app/verify-email is exempt too: the user clicks it from an email and may
+// not be logged in; it must render with or without a session cookie.
+const PORTAL_AUTH_PAGES = [
+  "/app/login",
+  "/app/register",
+  "/app/forgot",
+  "/app/reset",
+  "/app/verify-email",
+];
 
 function isPortalAuthPage(pathname: string): boolean {
   return PORTAL_AUTH_PAGES.some(

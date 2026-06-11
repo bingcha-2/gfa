@@ -15,10 +15,18 @@ import type {
   BillingOrderRecord,
   BillingOrderState,
   BindCardResult,
+  NotificationsPage,
   PayChannel,
   Plan,
   PortalDevice,
+  PortalOverview,
+  ReferralInfo,
   Subscription,
+  TicketDetail,
+  TicketMessage,
+  TicketSummary,
+  UsageDays,
+  UsagePage,
 } from "./user-types";
 
 type RequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -233,4 +241,95 @@ export async function revokeDevice(id: string) {
     method: "POST",
     body: {},
   });
+}
+
+// ─── Overview / usage / notifications / tickets / referral (Stage 2b) ─────────
+
+export async function getPortalOverview() {
+  return userApi<PortalOverview>("portal/overview");
+}
+
+export async function getUsage(page: number, pageSize: number, days: UsageDays) {
+  return userApi<UsagePage>("usage", { search: { page, pageSize, days } });
+}
+
+export async function getNotifications(page: number, pageSize: number) {
+  return userApi<NotificationsPage>("notifications", {
+    search: { page, pageSize },
+  });
+}
+
+export async function markNotificationRead(id: string) {
+  return userApi<{ ok: true }>(`notifications/${id}/read`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function markAllNotificationsRead() {
+  return userApi<{ ok: true }>("notifications/read-all", {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function getTickets() {
+  return userApi<{ tickets: TicketSummary[] }>("tickets");
+}
+
+export async function createTicket(subject: string, body: string) {
+  return userApi<{ ticket: TicketSummary }>("tickets", {
+    method: "POST",
+    body: { subject, body },
+  });
+}
+
+export async function getTicket(id: string) {
+  return userApi<TicketDetail>(`tickets/${id}`);
+}
+
+export async function replyTicket(id: string, body: string) {
+  return userApi<{ message: TicketMessage }>(`tickets/${id}/messages`, {
+    method: "POST",
+    body: { body },
+  });
+}
+
+export async function getReferral() {
+  return userApi<ReferralInfo>("referral");
+}
+
+// ─── Email verification (contract J — unauthenticated, via web-session) ───────
+
+export type VerifyEmailResult =
+  | { ok: true }
+  | { ok: false; code: string };
+
+/**
+ * Verify an email token. Goes through /api/web-session/verify-email because
+ * the user may NOT be logged in when clicking the link from their inbox
+ * (the /api/web proxy would reject without a cookie).
+ * Returns a discriminated result instead of throwing — the page renders states.
+ */
+export async function verifyEmailToken(token: string): Promise<VerifyEmailResult> {
+  const resp = await fetch("/api/web-session/verify-email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ token }),
+    cache: "no-store",
+  });
+
+  if (resp.ok) return { ok: true };
+
+  const rawText = await resp.text();
+  const payload = rawText ? safeJson(rawText) : null;
+  const code =
+    payload && typeof payload === "object" && "error" in payload &&
+    typeof (payload as { error?: unknown }).error === "string"
+      ? ((payload as { error: string }).error)
+      : "UNKNOWN";
+  return { ok: false, code };
 }
