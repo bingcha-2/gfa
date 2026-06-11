@@ -37,7 +37,7 @@ export const PORTAL_URLS = {
   register: 'https://bcai.lol/account/register',
   forgot: 'https://bcai.lol/account/forgot',
   billing: 'https://bcai.lol/account/billing',
-  bind: 'https://bcai.lol/account/bind',
+  bind: 'https://bcai.lol/account/billing',
   devices: 'https://bcai.lol/account/devices',
 } as const
 

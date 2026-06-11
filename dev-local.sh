@@ -37,37 +37,6 @@ WAILS_BIN="${WAILS_BIN:-$(command -v wails 2>/dev/null || echo "$HOME/go/bin/wai
 SERVER_PID=""
 CLIENT_PID=""
 
-# ── 清理函数 ──
-cleanup() {
-  echo ""
-  echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
-
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo -e "${DIM}[shutdown] 停止后端服务 (PID $SERVER_PID)${NC}"
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-
-  if [ -n "$CLIENT_PID" ] && kill -0 "$CLIENT_PID" 2>/dev/null; then
-    echo -e "${DIM}[shutdown] 停止 Wails 客户端 (PID $CLIENT_PID)${NC}"
-    kill "$CLIENT_PID" 2>/dev/null || true
-    wait "$CLIENT_PID" 2>/dev/null || true
-  fi
-
-  if [ "$PATCHED" = true ] && [ -f "$LEASER_GO.bak" ]; then
-    echo -e "${DIM}[shutdown] 恢复 leaser.go 原始 API_BASE${NC}"
-    mv "$LEASER_GO.bak" "$LEASER_GO"
-  fi
-
-  # 清理残留端口占用
-  lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
-  lsof -ti :3001 2>/dev/null | xargs kill -9 2>/dev/null || true
-
-  echo -e "${GREEN}[shutdown] 已全部停止${NC}"
-  exit 0
-}
-trap cleanup SIGINT SIGTERM EXIT
-
 # ── 环境检查 ──
 check_prerequisites() {
   local mode="$1"
@@ -213,7 +182,7 @@ setup_client_env() {
   echo ""
 }
 
-# 覆盖 cleanup
+# ── 清理函数 ──
 cleanup() {
   echo ""
   echo -e "${YELLOW}[shutdown] 正在停止所有服务...${NC}"
