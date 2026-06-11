@@ -11,6 +11,10 @@
  *   - Starts with a conservative default per planType
  *   - Refined by quota fraction signals: estimated = totalUsed / (1 - fraction)
  *   - Confirmed by 429: estimatedBudget = totalUsed at trigger time
+ *
+ * Dual window (5h + 周):御三家(Anthropic/Codex)是「5h + 周」双限。每个 bucket 同时
+ * 跟踪 fast(5h)与 slow(7d)两个窗口,同一笔成本同时计入两者,但各自按上游 reset
+ * 独立重置。判定/份额取两窗更紧的一个(后续循环接入)。
  */
 
 import { QUOTA_WEIGHTS, type Family } from "@gfa/shared";
@@ -49,19 +53,33 @@ const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
   free:       { gemini:    50_000, claude:    20_000, gpt:    20_000 },
 };
 
-const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
+type WindowKind = "fast" | "slow";
+
+// 各窗口长度。fast = 5h(御三家共有),slow = 7d(Anthropic/Codex 的周限)。
+const WINDOW_MS: Record<WindowKind, number> = {
+  fast: 5 * 60 * 60 * 1000,
+  slow: 7 * 24 * 60 * 60 * 1000,
+};
+
+// 拦截/血条文案用的窗口名。
+const WINDOW_LABEL: Record<WindowKind, string> = { fast: "5h", slow: "周" };
 
 /** Periodic batch-write interval for FairShareWindow persistence (ms). */
 const FLUSH_INTERVAL_MS = 30_000;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-interface BucketTracker {
+/** 单个窗口(fast 或 slow)的状态。两窗结构对称,各自独立累计与重置。 */
+interface WindowState {
   windowStart: number;
   estimatedBudget: number;
   confidence: 'default' | 'estimated' | 'confirmed';
   perCard: Map<string, number>; // cardId → weighted tokens used
   lastFraction: number;
+}
+
+interface BucketTracker {
+  windows: Record<WindowKind, WindowState>;
 }
 
 export interface FairShareCheck {
@@ -141,28 +159,35 @@ export class FairShareTracker {
     cachedInputTokens: number,
   ): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, this.nowFn());
+    const now = this.nowFn();
     const cost = FairShareTracker.weightedCost(bucket, inputTokens, outputTokens, cachedInputTokens);
-    tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
+    // 同一笔成本同时计入 5h 与周两个窗口(消耗 5h 额度也消耗周额度)。
+    for (const kind of ["fast", "slow"] as WindowKind[]) {
+      const w = tracker.windows[kind];
+      this.ensureWindow(w, now, kind);
+      w.perCard.set(cardId, (w.perCard.get(cardId) || 0) + cost);
+    }
     this.dirty = true;
   }
 
   /**
-   * Synchronize the internal window to the upstream resetTime.
-   * Instead of self-timing a 5h window, we align to Google/Codex/Anthropic's
+   * Synchronize a window to the upstream resetTime.
+   * Instead of self-timing the window, we align to Google/Codex/Anthropic's
    * actual window boundary so totalUsed accurately reflects the real window.
    *
    * @param resetTimeMs  Epoch ms of the upstream window reset.
+   * @param kind         Which window to align (defaults to fast/5h).
    */
-  syncWindow(accountId: number, bucket: string, resetTimeMs: number): void {
+  syncWindow(accountId: number, bucket: string, resetTimeMs: number, kind: WindowKind = "fast"): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    const windowStart = resetTimeMs - WINDOW_MS;
+    const w = tracker.windows[kind];
+    const windowStart = resetTimeMs - WINDOW_MS[kind];
     // Only reset if the window start actually changed (> 60s drift tolerance)
-    if (Math.abs(windowStart - tracker.windowStart) > 60_000) {
-      tracker.windowStart = windowStart;
-      tracker.perCard.clear();
-      if (tracker.confidence === 'confirmed') {
-        tracker.confidence = 'estimated';
+    if (Math.abs(windowStart - w.windowStart) > 60_000) {
+      w.windowStart = windowStart;
+      w.perCard.clear();
+      if (w.confidence === 'confirmed') {
+        w.confidence = 'estimated';
       }
       this.dirty = true;
     }
@@ -179,27 +204,29 @@ export class FairShareTracker {
   } | null {
     const tracker = this.trackers.get(accountId)?.get(bucket);
     if (!tracker) return null;
+    const w = tracker.windows.fast;
     return {
-      totalUsed: this.totalWeighted(tracker),
-      lastFraction: tracker.lastFraction,
-      confidence: tracker.confidence,
+      totalUsed: this.totalWeighted(w),
+      lastFraction: w.lastFraction,
+      confidence: w.confidence,
     };
   }
 
   /** Update budget estimate from a quota fraction signal. Called from scheduler/report. */
-  updateBudgetEstimate(accountId: number, bucket: string, fraction: number): void {
+  updateBudgetEstimate(accountId: number, bucket: string, fraction: number, kind: WindowKind = "fast"): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, this.nowFn());
-    const totalUsed = this.totalWeighted(tracker);
+    const w = tracker.windows[kind];
+    this.ensureWindow(w, this.nowFn(), kind);
+    const totalUsed = this.totalWeighted(w);
     const consumed = 1.0 - fraction;
 
     if (consumed > 0.05 && totalUsed > 0) {
       const estimated = totalUsed / consumed;
       // Only adjust upward (avoid fraction jitter shrinking the budget),
       // unless we're still on the default and first real estimate arrives.
-      if (estimated > tracker.estimatedBudget || tracker.confidence === 'default') {
-        tracker.estimatedBudget = estimated;
-        tracker.confidence = 'estimated';
+      if (estimated > w.estimatedBudget || w.confidence === 'default') {
+        w.estimatedBudget = estimated;
+        w.confidence = 'estimated';
       }
     } else if (fraction >= 0.90 && totalUsed > 0) {
       // Upstream still reports "full" (e.g. Google's 20% granularity hasn't
@@ -208,56 +235,67 @@ export class FairShareTracker {
       // Do NOT upgrade confidence: we have no real signal, so checkFairShare
       // should remain lenient.
       const floor = totalUsed * 5;
-      if (floor > tracker.estimatedBudget) {
-        tracker.estimatedBudget = floor;
+      if (floor > w.estimatedBudget) {
+        w.estimatedBudget = floor;
       }
     }
-    tracker.lastFraction = fraction;
+    w.lastFraction = fraction;
     this.dirty = true;
   }
 
   /** Confirm budget at 429 — the most accurate signal. */
   confirmBudget(accountId: number, bucket: string): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    const totalUsed = this.totalWeighted(tracker);
+    const w = tracker.windows.fast;
+    const totalUsed = this.totalWeighted(w);
     if (totalUsed > 0) {
-      tracker.estimatedBudget = totalUsed;
-      tracker.confidence = 'confirmed';
+      w.estimatedBudget = totalUsed;
+      w.confidence = 'confirmed';
       this.dirty = true;
     }
   }
 
-  /** Check if a card is within its fair share. Called before granting a lease. */
+  /**
+   * Check if a card is within its fair share. Called before granting a lease.
+   * Evaluates every present window (5h + 周) and takes the tightest one (min):
+   * a card may sit inside its 5h share yet have exhausted the account's weekly
+   * cap — then the weekly window must block.
+   */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
     const tracker = this.trackers.get(accountId)?.get(bucket);
     if (!tracker) {
       return { allowed: true, remainingFraction: 1.0 };
     }
-    this.ensureWindow(tracker, this.nowFn());
-
-    // When upstream reports ≥90% remaining, we have no reliable budget estimate.
-    // Allow the lease unconditionally — real protection comes from the upstream
-    // 429 response. Blocking based on a guess would prematurely cut off cards
-    // while Google's coarse 20% granularity hasn't even budged.
-    if (tracker.lastFraction >= 0.90) {
-      return { allowed: true, remainingFraction: tracker.lastFraction };
-    }
-
+    const now = this.nowFn();
     const weight = this.opts.getCardWeight(cardId);
     const capacity = this.opts.accountShareCapacity;
-    const perCardBudget = tracker.estimatedBudget * (weight / capacity);
-    const myUsage = tracker.perCard.get(cardId) || 0;
-    const remaining = Math.max(0, perCardBudget - myUsage);
-    const remainingFraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
 
-    if (myUsage >= perCardBudget) {
-      return {
-        allowed: false,
-        reason: `公平限额已用完 (已用 ${formatTokens(myUsage)}/${formatTokens(perCardBudget)} 加权单元)`,
-        remainingFraction: 0,
-      };
+    let remainingFraction = 1;
+    for (const kind of ["fast", "slow"] as WindowKind[]) {
+      const w = tracker.windows[kind];
+      this.ensureWindow(w, now, kind);
+      const f = this.windowRemainingFraction(w, cardId, weight, capacity);
+      if (f <= 0) {
+        return { allowed: false, reason: `公平限额(${WINDOW_LABEL[kind]})用完`, remainingFraction: 0 };
+      }
+      if (f < remainingFraction) remainingFraction = f;
     }
     return { allowed: true, remainingFraction };
+  }
+
+  /**
+   * One window's per-card remaining fraction (0~1).
+   * ≥90% upstream remaining → no reliable budget yet, hand back the upstream
+   * fraction (lenient; real protection is the upstream 429). Below that, use the
+   * weighted-token budget subtraction.
+   */
+  private windowRemainingFraction(w: WindowState, cardId: string, weight: number, capacity: number): number {
+    if (w.lastFraction >= 0.90) return w.lastFraction;
+    const perCardBudget = w.estimatedBudget * (weight / capacity);
+    if (perCardBudget <= 0) return 1;
+    const myUsage = w.perCard.get(cardId) || 0;
+    if (myUsage >= perCardBudget) return 0;
+    return (perCardBudget - myUsage) / perCardBudget;
   }
 
   /**
@@ -275,23 +313,21 @@ export class FairShareTracker {
     const out: Record<string, { fraction: number; resetAt: number }> = {};
 
     for (const [bucket, tracker] of bucketTrackers) {
-      this.ensureWindow(tracker, now);
-      const resetAt = tracker.windowStart + WINDOW_MS;
-
-      // When upstream reports ≥90% remaining, we don't know the real budget.
-      // Show the upstream fraction directly so the blood bar stays full
-      // instead of draining based on a guess.
-      if (tracker.lastFraction >= 0.90) {
-        out[bucket] = { fraction: tracker.lastFraction, resetAt };
-        continue;
+      // Each present window contributes a fraction; the blood bar shows the
+      // tightest one (min) and its resetAt — so the user sees the real binding
+      // constraint (5h vs 周) and when it recovers.
+      let minFraction = Infinity;
+      let resetAt = now;
+      for (const kind of ["fast", "slow"] as WindowKind[]) {
+        const w = tracker.windows[kind];
+        this.ensureWindow(w, now, kind);
+        const f = this.windowRemainingFraction(w, cardId, weight, capacity);
+        if (f < minFraction) {
+          minFraction = f;
+          resetAt = w.windowStart + WINDOW_MS[kind];
+        }
       }
-
-      // Real signal available — calculate per-card fair share fraction.
-      const perCardBudget = tracker.estimatedBudget * (weight / capacity);
-      const myUsage = tracker.perCard.get(cardId) || 0;
-      const remaining = Math.max(0, perCardBudget - myUsage);
-      const fraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
-      out[bucket] = { fraction, resetAt };
+      out[bucket] = { fraction: minFraction === Infinity ? 1 : minFraction, resetAt };
     }
 
     return out;
@@ -313,33 +349,35 @@ export class FairShareTracker {
       const learned = this.opts.getLearnedBudget?.(planType, bucket) || 0;
       const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
       const defaultBudget = defaults[family] || defaults.gemini || 50_000;
-      tracker = {
+      const makeWindow = (): WindowState => ({
         windowStart: this.nowFn(),
         estimatedBudget: learned > 0 ? learned : defaultBudget,
         confidence: learned > 0 ? 'estimated' : 'default',
         perCard: new Map(),
         lastFraction: 1.0,
-      };
+      });
+      tracker = { windows: { fast: makeWindow(), slow: makeWindow() } };
       bucketMap.set(bucket, tracker);
     }
     return tracker;
   }
 
-  private ensureWindow(tracker: BucketTracker, now: number): void {
-    if (now - tracker.windowStart >= WINDOW_MS) {
-      tracker.windowStart = now;
-      tracker.perCard.clear();
+  /** Roll a window forward if its boundary has passed: clear usage, downgrade confidence. */
+  private ensureWindow(w: WindowState, now: number, kind: WindowKind): void {
+    if (now - w.windowStart >= WINDOW_MS[kind]) {
+      w.windowStart = now;
+      w.perCard.clear();
       // Retain estimated budget across windows, but downgrade confidence
-      if (tracker.confidence === 'confirmed') {
-        tracker.confidence = 'estimated';
+      if (w.confidence === 'confirmed') {
+        w.confidence = 'estimated';
       }
       this.dirty = true;
     }
   }
 
-  private totalWeighted(tracker: BucketTracker): number {
+  private totalWeighted(w: WindowState): number {
     let total = 0;
-    for (const v of tracker.perCard.values()) total += v;
+    for (const v of w.perCard.values()) total += v;
     return total;
   }
 
@@ -350,6 +388,9 @@ export class FairShareTracker {
    * Windows whose 5h boundary has already passed keep their learned budget
    * (downgraded confirmed→estimated) but drop stale per-card usage — the
    * upstream window has reset, so "remaining" starts fresh.
+   *
+   * NOTE: only the fast(5h) window is persisted today; slow(周) is rebuilt
+   * from live reports until its persistence lands in a later step.
    */
   async load(): Promise<void> {
     if (!this.prisma || !this.providerId) return;
@@ -363,7 +404,7 @@ export class FairShareTracker {
     const now = this.nowFn();
     const groups = new Map<string, any[]>();
     for (const r of rows) {
-      const key = `${r.accountId} ${r.bucket}`;
+      const key = `${r.accountId} ${r.bucket}`;
       let g = groups.get(key);
       if (!g) groups.set(key, (g = []));
       g.push(r);
@@ -373,22 +414,32 @@ export class FairShareTracker {
       const accountId = Number(first.accountId);
       const bucket = String(first.bucket);
       const windowStart = Number(first.windowStart);
-      const expired = now - windowStart >= WINDOW_MS;
-      let confidence = (String(first.confidence) as BucketTracker["confidence"]) || "default";
+      const expired = now - windowStart >= WINDOW_MS.fast;
+      let confidence = (String(first.confidence) as WindowState["confidence"]) || "default";
       if (expired && confidence === "confirmed") confidence = "estimated";
       const perCard = new Map<string, number>();
       if (!expired) {
         for (const r of groupRows) perCard.set(String(r.cardId), Number(r.weightedUsed) || 0);
       }
-      let bucketMap = this.trackers.get(accountId);
-      if (!bucketMap) this.trackers.set(accountId, (bucketMap = new Map()));
-      bucketMap.set(bucket, {
+      const estimatedBudget = Number(first.estimatedBudget) || 0;
+      const fast: WindowState = {
         windowStart: expired ? now : windowStart,
-        estimatedBudget: Number(first.estimatedBudget) || 0,
+        estimatedBudget,
         confidence,
         perCard,
         lastFraction: expired ? 1.0 : (Number(first.lastFraction) || 0),
-      });
+      };
+      // 周窗口持久化在后续循环补;当前从空累计起步。
+      const slow: WindowState = {
+        windowStart: now,
+        estimatedBudget,
+        confidence: 'default',
+        perCard: new Map(),
+        lastFraction: 1.0,
+      };
+      let bucketMap = this.trackers.get(accountId);
+      if (!bucketMap) this.trackers.set(accountId, (bucketMap = new Map()));
+      bucketMap.set(bucket, { windows: { fast, slow } });
     }
   }
 
@@ -427,14 +478,15 @@ export class FairShareTracker {
     const now = this.nowFn();
     let total = 0;
     for (const tracker of bucketMap.values()) {
-      this.ensureWindow(tracker, now);
-      total += tracker.perCard.get(cardId) || 0;
+      const w = tracker.windows.fast;
+      this.ensureWindow(w, now, "fast");
+      total += w.perCard.get(cardId) || 0;
     }
     return total;
   }
 
-  /** Snapshot one bucket's tracker state. Test-only. */
-  getBucketStateForTesting(accountId: number, bucket: string): {
+  /** Snapshot one bucket's window state. Test-only. */
+  getBucketStateForTesting(accountId: number, bucket: string, windowKind: WindowKind = "fast"): {
     windowStart: number;
     estimatedBudget: number;
     confidence: string;
@@ -444,13 +496,14 @@ export class FairShareTracker {
   } | null {
     const tracker = this.trackers.get(accountId)?.get(bucket);
     if (!tracker) return null;
+    const w = tracker.windows[windowKind];
     return {
-      windowStart: tracker.windowStart,
-      estimatedBudget: tracker.estimatedBudget,
-      confidence: tracker.confidence,
-      lastFraction: tracker.lastFraction,
-      totalUsed: this.totalWeighted(tracker),
-      perCard: Object.fromEntries(tracker.perCard),
+      windowStart: w.windowStart,
+      estimatedBudget: w.estimatedBudget,
+      confidence: w.confidence,
+      lastFraction: w.lastFraction,
+      totalUsed: this.totalWeighted(w),
+      perCard: Object.fromEntries(w.perCard),
     };
   }
 
@@ -468,27 +521,22 @@ export class FairShareTracker {
     const rows: ReturnType<FairShareTracker["serializeRows"]> = [];
     for (const [accountId, bucketMap] of this.trackers) {
       for (const [bucket, tracker] of bucketMap) {
-        for (const [cardId, weightedUsed] of tracker.perCard) {
+        const w = tracker.windows.fast;
+        for (const [cardId, weightedUsed] of w.perCard) {
           rows.push({
             provider: this.providerId,
             accountId,
             bucket,
             cardId,
-            windowStart: BigInt(Math.trunc(tracker.windowStart)),
+            windowStart: BigInt(Math.trunc(w.windowStart)),
             weightedUsed,
-            estimatedBudget: tracker.estimatedBudget,
-            confidence: tracker.confidence,
-            lastFraction: tracker.lastFraction,
+            estimatedBudget: w.estimatedBudget,
+            confidence: w.confidence,
+            lastFraction: w.lastFraction,
           });
         }
       }
     }
     return rows;
   }
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return String(Math.round(n));
 }
