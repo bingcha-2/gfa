@@ -525,6 +525,7 @@ describe("RosettaService", () => {
         organization: { name: "Max Org" },
       }), { status: 200 });
     }) as typeof fetch;
+    vi.stubGlobal("fetch", tokenFetch);
     const svc = new RosettaService({ dataDir: tempDir, claudeOAuthFetch: tokenFetch });
 
     const started = await svc.startClaudeOAuthLogin();
