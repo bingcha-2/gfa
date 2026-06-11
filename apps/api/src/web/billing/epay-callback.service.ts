@@ -3,33 +3,43 @@
  *
  * idempotency contract:
  *   - If the order is already PAID when a callback arrives, return "success"
- *     immediately without re-activating or re-rewarding.
- *   - ReferralReward has @unique planOrderId, so a concurrent duplicate commit
- *     that beats the idempotency check will cause a P2002 which is caught and
- *     treated as already-rewarded.
+ *     immediately (pre-tx fast path) without re-activating or re-rewarding.
+ *   - The authoritative idempotency guard is a compare-and-swap INSIDE the tx:
+ *     updateMany WHERE status="PENDING" → only the FIRST concurrent callback
+ *     flips PENDING→PAID (count===1) and proceeds; a racing second callback
+ *     sees count===0 and bails as an idempotent success. This prevents two
+ *     concurrent callbacks from both activating (a free extra durationDays +
+ *     duplicate BILLING notification).
+ *   - ReferralReward has @unique planOrderId as a second belt-and-braces guard.
+ *
+ * EXPIRED-order activation (by design):
+ *   The CAS guard matches status="PENDING" only, so a late but validly-signed
+ *   TRADE_SUCCESS for an order our reconcile cron has marked EXPIRED will NOT
+ *   re-activate here. BUT see below — we intentionally widen the CAS to also
+ *   accept EXPIRED because the money was genuinely captured: epay confirming a
+ *   payment means we owe the customer the plan even if our pending-TTL fired
+ *   first. The PENDING-or-EXPIRED guard is the deliberate policy.
  *
  * callback response contract (epay expectation):
- *   - "success"  — we durably accepted the TRADE_SUCCESS (or it was already PAID)
+ *   - "success"  — we durably accepted the TRADE_SUCCESS (or it was already PAID,
+ *     or a concurrent callback already took it)
  *   - "success"  — signed notification for a non-TRADE_SUCCESS terminal status
  *     (acked without action, stops retries)
- *   - "fail"     — invalid signature, wrong pid, amount mismatch, unknown order,
- *     or any other error
+ *   - "fail"     — missing/empty epay config, invalid signature, wrong pid,
+ *     amount mismatch, unknown order, or a Phase-1 tx error
  *
  * Transaction design (two-phase to avoid Prisma interactive-tx timeout):
- *   Phase 1 — fast Prisma-only transaction: mark order PAID, create Notification,
- *             create ReferralReward + increment creditCents. No file I/O inside.
+ *   Phase 1 — fast Prisma-only transaction: CAS the order PENDING→PAID, create
+ *             Notification, create ReferralReward + increment creditCents. No
+ *             file I/O inside (sync writes access-keys.json → too slow for a tx).
  *   Phase 2 — outside tx: call SubscriptionService.activateOrExtend (which
  *             internally calls EntitlementSyncService.syncSubscription for
  *             access-keys.json writes). Then update order.subscriptionId.
- *   Phase 3 — post-commit: call entitlementSync.syncSubscription again to
- *             guarantee the shadow record is fresh (activateOrExtend already
- *             does this, so the call here is intentionally omitted to avoid
- *             double-sync — the comment and tests document this choice).
  *
- * Atomicity note: marking PAID and creating the reward is atomic in Phase 1.
- * The subscriptionId linkage (Phase 2) is best-effort: if it fails after PAID
- * is committed, the order row has status=PAID but subscriptionId=null. This is
- * visible to operators; the subscription is still active and can be reconciled.
+ * Stranded-payment recovery:
+ *   If Phase 2 throws, the order is PAID with subscriptionId=null. We still
+ *   return "success" (payment is durable). BillingReconcileService re-drives
+ *   such orders idempotently — see that file.
  */
 import { Injectable, Logger } from "@nestjs/common";
 
@@ -68,15 +78,26 @@ export class EpayCallbackService {
    * Returns "success" or "fail" as plain text.
    */
   async handleNotify(body: Record<string, string>): Promise<"success" | "fail"> {
-    // Step 1: verify signature (constant-time).
+    // Step 0: FAIL-CLOSED on missing config. An empty EPAY_KEY makes every
+    // signature forgeable (md5(qs + "") is attacker-computable); an empty
+    // EPAY_PID lets a request with no pid field pass the pid check below.
+    // Either condition is a misconfiguration that must NEVER fall open.
     const epayKey = resolveEpayKey();
+    const expectedPid = resolveEpayPid();
+    if (!epayKey || !expectedPid) {
+      this.logger.error(
+        `[epay-callback] REFUSING callback — epay not configured (EPAY_KEY ${epayKey ? "set" : "MISSING"}, EPAY_PID ${expectedPid ? "set" : "MISSING"}). Failing closed.`,
+      );
+      return "fail";
+    }
+
+    // Step 1: verify signature (constant-time).
     if (!verifySign(body, epayKey)) {
       this.logger.warn(`[epay-callback] invalid signature — body=${JSON.stringify(body)}`);
       return "fail";
     }
 
     // Step 2: check pid.
-    const expectedPid = resolveEpayPid();
     if (body.pid !== expectedPid) {
       this.logger.warn(`[epay-callback] pid mismatch: got="${body.pid}" expected="${expectedPid}"`);
       return "fail";
@@ -101,7 +122,9 @@ export class EpayCallbackService {
       return "fail";
     }
 
-    // Idempotency: already paid → ack without action.
+    // Idempotency fast path: already paid → ack without action. This is an
+    // optimization for the common (sequential) replay case; the authoritative
+    // guard is the CAS in Phase 1 which handles the concurrent race.
     if (order.status === "PAID") {
       this.logger.log(`[epay-callback] idempotent replay for already-PAID order "${outTradeNo}" — returning success`);
       return "success";
@@ -117,14 +140,19 @@ export class EpayCallbackService {
     }
 
     // Step 5 — Phase 1: fast Prisma-only transaction (no file I/O).
-    // Marks order PAID, creates notification, creates referral reward.
+    // CAS the order PENDING|EXPIRED→PAID; only the winner proceeds.
     const referralPercent = resolveReferralPercent();
 
+    let claimed = false;
     try {
-      await this.prisma.$transaction(async (tx) => {
-        // Mark order PAID.
-        await tx.planOrder.update({
-          where: { outTradeNo },
+      claimed = await this.prisma.$transaction(async (tx) => {
+        // Compare-and-swap: flip to PAID ONLY if still PENDING or EXPIRED.
+        // PENDING is the normal case. EXPIRED is intentionally accepted: epay
+        // confirming TRADE_SUCCESS means money was captured, so a late callback
+        // that lost a race against our pending-TTL cron still earns the plan.
+        // A concurrent second callback (or an already-PAID row) yields count===0.
+        const cas = await tx.planOrder.updateMany({
+          where: { outTradeNo, status: { in: ["PENDING", "EXPIRED"] } },
           data: {
             status: "PAID",
             paidAt: new Date(),
@@ -132,6 +160,10 @@ export class EpayCallbackService {
             notifyRaw: JSON.stringify(body),
           },
         });
+        if (cas.count !== 1) {
+          // Lost the race / already taken → no-op, treat as idempotent success.
+          return false;
+        }
 
         // Create billing notification.
         await tx.notification.create({
@@ -172,10 +204,17 @@ export class EpayCallbackService {
             }
           }
         }
+        return true;
       });
     } catch (err: any) {
       this.logger.error(`[epay-callback] transaction failed for out_trade_no="${outTradeNo}": ${err?.message || err}`);
       return "fail";
+    }
+
+    if (!claimed) {
+      // A concurrent callback already claimed this order; nothing more to do.
+      this.logger.log(`[epay-callback] order "${outTradeNo}" already claimed by a concurrent callback — returning success`);
+      return "success";
     }
 
     // Step 5 — Phase 2: activate subscription (outside tx — includes file I/O via sync).
@@ -193,13 +232,16 @@ export class EpayCallbackService {
         data: { subscriptionId: updatedSub.id },
       });
     } catch (activateErr: any) {
-      // Payment is already captured (PAID committed above). Log loudly but
-      // don't return "fail" — returning "fail" would cause epay to retry and
-      // double-pay. The subscription can be reconciled manually.
+      // Payment is already captured (PAID committed in Phase 1). We return
+      // "success" rather than "fail" NOT to avoid double-charging (an epay
+      // notify retry never re-charges the customer) but because the payment is
+      // durable and re-driving here is futile — returning "fail" would just
+      // make epay retry into the already-PAID short-circuit above, never
+      // reaching activation. The order is left PAID + subscriptionId=null for
+      // BillingReconcileService to re-drive idempotently.
       this.logger.error(
-        `[epay-callback] subscription activation FAILED for order ${order.id} (PAYMENT ALREADY CAPTURED): ${activateErr?.message || activateErr} — MANUAL RECONCILIATION NEEDED`,
+        `[epay-callback] subscription activation FAILED for order ${order.id} (PAYMENT ALREADY CAPTURED): ${activateErr?.message || activateErr} — reconcile cron will retry`,
       );
-      // Still return "success" so epay doesn't retry (payment is durable).
       return "success";
     }
 

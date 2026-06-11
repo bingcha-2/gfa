@@ -84,6 +84,20 @@ describe("verifySign", () => {
     expect(verifySign(params as any, KEY)).toBe(false);
   });
 
+  it("returns false (no throw) when sign is an array — param pollution sign=a&sign=b", () => {
+    const params = { a: "1", b: "2" };
+    // Express parses repeated query keys into an array; .toLowerCase() would
+    // otherwise throw a 500. The guard must treat non-string sign as invalid.
+    expect(() => verifySign({ ...params, sign: ["aaa", "bbb"] } as any, KEY)).not.toThrow();
+    expect(verifySign({ ...params, sign: ["aaa", "bbb"] } as any, KEY)).toBe(false);
+  });
+
+  it("returns false (no throw) when sign is a non-string scalar (number/object)", () => {
+    const params = { a: "1", b: "2" };
+    expect(verifySign({ ...params, sign: 12345 } as any, KEY)).toBe(false);
+    expect(verifySign({ ...params, sign: { nested: true } } as any, KEY)).toBe(false);
+  });
+
   it("returns false when a param value is tampered", () => {
     const params = { a: "1", b: "2" };
     const sign = signParams(params, KEY);

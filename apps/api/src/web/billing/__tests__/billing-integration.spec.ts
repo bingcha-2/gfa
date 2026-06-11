@@ -211,6 +211,11 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
     const r1 = await callbackService.handleNotify(body);
     expect(r1).toBe("success");
 
+    // Capture subscription expiry after the first activation.
+    const order1 = await prisma.planOrder.findUnique({ where: { outTradeNo } });
+    const subAfterFirst = await prisma.subscription.findUnique({ where: { id: order1!.subscriptionId! } });
+    const expiryAfterFirst = subAfterFirst!.expiresAt!.getTime();
+
     // Second callback (replay)
     const r2 = await callbackService.handleNotify(body);
     expect(r2).toBe("success");
@@ -218,6 +223,10 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
     // Only one subscription
     const subCount = await prisma.subscription.count({ where: { customerId: customer.id } });
     expect(subCount).toBe(1);
+
+    // Replay must NOT extend: expiresAt is unchanged (guards extend-on-replay regression).
+    const subAfterSecond = await prisma.subscription.findUnique({ where: { id: order1!.subscriptionId! } });
+    expect(subAfterSecond!.expiresAt!.getTime()).toBe(expiryAfterFirst);
 
     // Only one reward
     const rewards = await prisma.referralReward.findMany({
@@ -228,6 +237,53 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
     // Referrer creditCents incremented only once: 10% of 990 = 99
     const refreshedReferrer = await prisma.customer.findUnique({ where: { id: referrer.id } });
     expect(refreshedReferrer!.creditCents).toBe(99);
+  });
+
+  it("two CONCURRENT callbacks for one PENDING order: exactly one activation, one notification, one reward, extended once", async () => {
+    const referrer = await createTestCustomer();
+    const customer = await prisma.customer.create({
+      data: {
+        email: `buyer-concurrent-${Date.now()}@test.local`,
+        passwordHash: "$2b$10$test",
+        referralCode: `RCONC${Date.now()}`,
+        invitedById: referrer.id,
+      },
+    });
+    const plan = await createTestPlan({ durationDays: 30 });
+    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+
+    const body = buildBody(outTradeNo, "9.90");
+
+    // Fire two callbacks concurrently. The CAS guarantees only one wins.
+    const [r1, r2] = await Promise.all([
+      callbackService.handleNotify(body),
+      callbackService.handleNotify(body),
+    ]);
+    expect(r1).toBe("success");
+    expect(r2).toBe("success");
+
+    // Exactly one subscription (no double activation = no free extra month).
+    const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
+    expect(subs).toHaveLength(1);
+
+    // Expiry extended by exactly one durationDays from now (~30 days).
+    const expectedExpiry = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(subs[0].expiresAt!.getTime() - expectedExpiry)).toBeLessThan(5 * 60 * 1000);
+
+    // Exactly one BILLING notification.
+    const notifs = await prisma.notification.findMany({ where: { customerId: customer.id, type: "BILLING" } });
+    expect(notifs).toHaveLength(1);
+
+    // Exactly one reward; referrer credited once.
+    const rewards = await prisma.referralReward.findMany({ where: { referrerId: referrer.id } });
+    expect(rewards).toHaveLength(1);
+    const refreshedReferrer = await prisma.customer.findUnique({ where: { id: referrer.id } });
+    expect(refreshedReferrer!.creditCents).toBe(99);
+
+    // Order is PAID and linked.
+    const order = await prisma.planOrder.findUnique({ where: { outTradeNo } });
+    expect(order!.status).toBe("PAID");
+    expect(order!.subscriptionId).toBe(subs[0].id);
   });
 });
 

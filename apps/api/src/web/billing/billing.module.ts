@@ -24,13 +24,14 @@ import { BillingService } from "./billing.service";
 import { EpayController } from "./epay.controller";
 import { EpayCallbackService } from "./epay-callback.service";
 import { OrderExpiryService } from "./order-expiry.service";
+import { BillingReconcileService } from "./billing-reconcile.service";
 import { CustomerAuthModule } from "../customer-auth/customer-auth.module";
 import { SubscriptionModule } from "../../subscription/subscription.module";
 
 @Module({
   imports: [CustomerAuthModule, SubscriptionModule],
   controllers: [BillingController, EpayController],
-  providers: [BillingService, EpayCallbackService, OrderExpiryService],
+  providers: [BillingService, EpayCallbackService, OrderExpiryService, BillingReconcileService],
   exports: [BillingService],
 })
 export class BillingModule {}

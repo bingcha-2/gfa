@@ -33,9 +33,13 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
   };
 
   // The $transaction mock runs the callback with a "tx" proxy
-  // that mirrors the mock functions above.
+  // that mirrors the mock functions above. updateMany is the CAS used to
+  // claim the order PENDING→PAID; default count:1 means "this caller won".
   const txProxy = {
-    planOrder: { update: vi.fn() },
+    planOrder: {
+      update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     notification: { create: vi.fn().mockResolvedValue({}) },
     referralReward: { create: vi.fn().mockResolvedValue({ id: "rr-1" }) },
     customer: { update: vi.fn().mockResolvedValue({}) },
@@ -151,8 +155,11 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     // Verify activateOrExtend is called AFTER $transaction resolves.
     const callOrder: string[] = [];
     prisma.$transaction.mockImplementation(async (fn: any) => {
-      await fn(prisma._txProxy);
+      // Preserve the callback's return value (the CAS "claimed" boolean) so the
+      // service proceeds to Phase 2; just record commit ordering.
+      const claimed = await fn(prisma._txProxy);
       callOrder.push("tx-committed");
+      return claimed;
     });
     // Also need planOrder.update for the subscriptionId linkage
     prisma.planOrder.update = vi.fn().mockResolvedValue({});
@@ -398,5 +405,120 @@ describe("EpayCallbackService.handleNotify — security", () => {
     const result = await service.handleNotify(validBody());
     // Payment was captured; activation failed; must still return "success" to avoid duplicate charge
     expect(result).toBe("success");
+  });
+
+  it("returns 'fail' for array sign (param pollution) without throwing", async () => {
+    // sign=a&sign=b parses to an array; verifySign must not 500 on .toLowerCase().
+    const body: any = { ...validBody(), sign: ["aaa", "bbb"] };
+    const result = await service.handleNotify(body);
+    expect(result).toBe("fail");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+  });
+});
+
+describe("EpayCallbackService.handleNotify — fail-closed on missing config", () => {
+  let prisma: any;
+  let subService: any;
+  let syncService: any;
+  let service: EpayCallbackService;
+
+  beforeEach(() => {
+    prisma = makeMockPrisma();
+    subService = makeSubscriptionService();
+    syncService = makeEntitlementSync();
+    service = new EpayCallbackService(prisma, subService, syncService);
+    prisma.planOrder.findUnique.mockResolvedValue(pendingOrder);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("returns 'fail' and does nothing when EPAY_KEY is empty (signatures forgeable)", async () => {
+    vi.stubEnv("EPAY_KEY", "");
+    vi.stubEnv("EPAY_PID", EPAY_PID);
+    // Body signed with empty key would otherwise verify — must still fail closed.
+    const base: Record<string, string> = {
+      pid: EPAY_PID,
+      trade_no: "epay-trade-123",
+      out_trade_no: "gfa-order-1",
+      money: "9.90",
+      trade_status: "TRADE_SUCCESS",
+    };
+    const forged = { ...base, sign_type: "MD5", sign: signParams(base, "") };
+    const result = await service.handleNotify(forged);
+    expect(result).toBe("fail");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+  });
+
+  it("returns 'fail' and does nothing when EPAY_PID is empty (pid= bypass)", async () => {
+    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PID", "");
+    // An attacker omitting pid (so pid==="" passes the pid check) must be blocked.
+    const base: Record<string, string> = {
+      pid: "",
+      trade_no: "epay-trade-123",
+      out_trade_no: "gfa-order-1",
+      money: "9.90",
+      trade_status: "TRADE_SUCCESS",
+    };
+    const body = { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+    const result = await service.handleNotify(body);
+    expect(result).toBe("fail");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+  });
+});
+
+describe("EpayCallbackService.handleNotify — concurrent CAS", () => {
+  let prisma: any;
+  let subService: any;
+  let syncService: any;
+  let service: EpayCallbackService;
+
+  beforeEach(() => {
+    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PID", EPAY_PID);
+    prisma = makeMockPrisma();
+    subService = makeSubscriptionService();
+    syncService = makeEntitlementSync();
+    service = new EpayCallbackService(prisma, subService, syncService);
+    prisma.planOrder.findUnique.mockResolvedValue(pendingOrder);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("loser of the CAS (count===0) returns 'success' without activating or notifying", async () => {
+    // Simulate a concurrent callback having already flipped the row: CAS matches nothing.
+    prisma._txProxy.planOrder.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.handleNotify(validBody());
+    expect(result).toBe("success");
+    // No side effects: notification not created, activation not run.
+    expect(prisma._txProxy.notification.create).not.toHaveBeenCalled();
+    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+  });
+
+  it("winner of the CAS (count===1) proceeds to notify + activate", async () => {
+    prisma._txProxy.planOrder.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.handleNotify(validBody());
+    expect(result).toBe("success");
+    expect(prisma._txProxy.notification.create).toHaveBeenCalledOnce();
+    expect(subService.activateOrExtend).toHaveBeenCalledOnce();
+  });
+
+  it("CAS WHERE clause restricts to PENDING|EXPIRED statuses", async () => {
+    await service.handleNotify(validBody());
+    const casArg = prisma._txProxy.planOrder.updateMany.mock.calls[0][0];
+    expect(casArg.where.outTradeNo).toBe("gfa-order-1");
+    expect(casArg.where.status).toEqual({ in: ["PENDING", "EXPIRED"] });
+    expect(casArg.data.status).toBe("PAID");
   });
 });

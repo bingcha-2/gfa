@@ -149,14 +149,20 @@ export class BillingService {
     page: number,
     pageSize: number,
   ) {
-    const skip = (page - 1) * pageSize;
+    // Clamp to safe ranges. A negative page would yield a negative skip and a
+    // non-positive pageSize would yield a negative take — both make Prisma 500.
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+    const safePageSize = Number.isFinite(pageSize)
+      ? Math.min(100, Math.max(1, Math.floor(pageSize)))
+      : 20;
+    const skip = (safePage - 1) * safePageSize;
     const [orders, total] = await Promise.all([
       this.prisma.planOrder.findMany({
         where: { customerId },
         include: { plan: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
         skip,
-        take: pageSize,
+        take: safePageSize,
       }),
       this.prisma.planOrder.count({ where: { customerId } }),
     ]);

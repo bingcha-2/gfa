@@ -255,6 +255,39 @@ describe("BillingService.listOrders", () => {
     const callArgs = prisma.planOrder.findMany.mock.calls[0][0];
     expect(callArgs.where.customerId).toBe("cust-1");
   });
+
+  it("clamps negative page to 1 (no negative skip → no Prisma 500)", async () => {
+    prisma.planOrder.findMany.mockResolvedValue([]);
+    prisma.planOrder.count.mockResolvedValue(0);
+    await service.listOrders("cust-1", -5, 10);
+    const callArgs = prisma.planOrder.findMany.mock.calls[0][0];
+    expect(callArgs.skip).toBe(0); // clamped page 1 → skip (1-1)*10 = 0
+    expect(callArgs.skip).toBeGreaterThanOrEqual(0);
+  });
+
+  it("clamps page 0 to 1", async () => {
+    prisma.planOrder.findMany.mockResolvedValue([]);
+    prisma.planOrder.count.mockResolvedValue(0);
+    await service.listOrders("cust-1", 0, 10);
+    expect(prisma.planOrder.findMany.mock.calls[0][0].skip).toBe(0);
+  });
+
+  it("clamps pageSize to a max of 100", async () => {
+    prisma.planOrder.findMany.mockResolvedValue([]);
+    prisma.planOrder.count.mockResolvedValue(0);
+    await service.listOrders("cust-1", 1, 9999);
+    expect(prisma.planOrder.findMany.mock.calls[0][0].take).toBe(100);
+  });
+
+  it("clamps non-positive pageSize up to 1 (no negative take → no Prisma 500)", async () => {
+    prisma.planOrder.findMany.mockResolvedValue([]);
+    prisma.planOrder.count.mockResolvedValue(0);
+    await service.listOrders("cust-1", 1, 0);
+    expect(prisma.planOrder.findMany.mock.calls[0][0].take).toBe(1);
+
+    await service.listOrders("cust-1", 1, -10);
+    expect(prisma.planOrder.findMany.mock.calls[1][0].take).toBe(1);
+  });
 });
 
 describe("BillingService.listSubscriptions", () => {

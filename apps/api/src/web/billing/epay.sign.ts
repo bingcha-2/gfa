@@ -26,12 +26,18 @@ export function signParams(params: Record<string, string>, key: string): string 
 
 /**
  * Verify a params object's sign field.
- * Returns false (never throws) if the sign is missing, empty, or wrong length.
+ * Returns false (never throws) if the sign is missing, empty, non-string
+ * (e.g. array via `sign=a&sign=b` param pollution), or wrong length.
  * Uses constant-time comparison when lengths match to prevent timing attacks.
  */
 export function verifySign(params: Record<string, string>, key: string): boolean {
+  // Guard against param pollution (sign=a&sign=b → array): a non-string sign
+  // would throw on .toLowerCase(). Treat any non-string sign as invalid.
+  const rawSign = (params as Record<string, unknown>).sign;
+  if (typeof rawSign !== "string") return false;
+
   const expected = signParams(params, key);
-  const actual = (params.sign ?? "").toLowerCase();
+  const actual = rawSign.toLowerCase();
 
   // Length check is not constant-time, but leaks only length equality.
   // Unequal length → definitively wrong, short-circuit is safe.
