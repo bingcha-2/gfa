@@ -327,15 +327,15 @@ export class RosettaController {
   }
 
   @Post("cleanup-expired-keys")
-  cleanupExpiredKeys() {
-    const result = this.rosetta.cleanupExpiredKeys();
+  async cleanupExpiredKeys() {
+    const result = await this.rosetta.cleanupExpiredKeys();
     this.reloadKeyStores();
     return result;
   }
 
   @Post("cleanup-unbound-keys")
-  cleanupUnboundKeys() {
-    const result = this.rosetta.cleanupUnboundKeys();
+  async cleanupUnboundKeys() {
+    const result = await this.rosetta.cleanupUnboundKeys();
     this.reloadKeyStores();
     return result;
   }

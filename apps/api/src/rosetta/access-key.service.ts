@@ -615,12 +615,32 @@ export class AccessKeyService {
     return assigned;
   }
 
-  cleanupExpiredKeys() {
+  /**
+   * Delete access-key records that are time-expired or have an explicit
+   * "expired" status, while preserving records that back active customer
+   * subscriptions or belong to migrated legacy cards.
+   *
+   * A record MUST NOT be deleted if any of the following are true:
+   *   1. Its id is present in `subscriptionIds` — it is a subscription shadow
+   *      record; expiry of such records is managed by EntitlementSyncService,
+   *      not admin cleanup.
+   *   2. It has `migratedToCustomerId` set — it is a migrated legacy card whose
+   *      CardTokenUsage history is keyed to this record; deleting it orphans
+   *      the customer's usage attribution.
+   */
+  cleanupExpiredKeys(subscriptionIds: ReadonlySet<string> = new Set()) {
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const now = Date.now();
     const filtered = keys.filter((key: any) => {
+      // Never delete subscription shadow records — their expiry lifecycle is
+      // owned by EntitlementSyncService, not admin maintenance.
+      if (subscriptionIds.has(String(key.id || ""))) return true;
+      // Never delete migrated-card records — they carry CardTokenUsage history
+      // attribution and their backing key may still be active.
+      if (key.migratedToCustomerId) return true;
+
       // Explicitly expired status
       if (String(key.status || "").toLowerCase() === "expired") return false;
       // Compute expiresAt from firstUsedAt + durationMs
@@ -637,11 +657,34 @@ export class AccessKeyService {
     return { ok: true, deleted };
   }
 
-  cleanupUnboundKeys() {
+  /**
+   * Delete access-key records that have no bound session client (i.e., no
+   * `sessionClientId`), while preserving records that back customer
+   * subscriptions or belong to migrated legacy cards.
+   *
+   * Subscription shadow records intentionally have NO sessionClientId — the
+   * session-lease path bypasses the per-card session mechanism entirely.
+   * Deleting them would instantly 403 every active paid customer.
+   *
+   * A record MUST NOT be deleted if any of the following are true:
+   *   1. Its id is present in `subscriptionIds` — it is a subscription shadow
+   *      record and must never be removed by admin cleanup.
+   *   2. It has `migratedToCustomerId` set — it is a migrated legacy card that
+   *      belongs to a customer and whose key has been rotated to a `sub_…`
+   *      backing value; the per-card session mechanism does not apply to it.
+   */
+  cleanupUnboundKeys(subscriptionIds: ReadonlySet<string> = new Set()) {
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
     const data = readJson(filePath, { keys: [] });
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const filtered = keys.filter((key: any) => {
+      // Never delete subscription shadow records — they have no sessionClientId
+      // by design; deleting them kills every active subscription.
+      if (subscriptionIds.has(String(key.id || ""))) return true;
+      // Never delete migrated-card records — they belong to a customer and
+      // were never part of the per-card session mechanism.
+      if (key.migratedToCustomerId) return true;
+
       const clientId = String(key.sessionClientId || "").trim();
       return clientId.length > 0;
     });

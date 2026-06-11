@@ -805,7 +805,7 @@ describe("RosettaService", () => {
     expect(service.deleteAccessKey({ id: created.key.id })).toMatchObject({ ok: true, totalKeys: 0 });
   });
 
-  it("cleanupExpiredKeys removes expired keys and keeps active ones", () => {
+  it("cleanupExpiredKeys removes expired keys and keeps active ones", async () => {
     const now = Date.now();
     writeJson(path.join(tempDir, "access-keys.json"), {
       keys: [
@@ -831,25 +831,25 @@ describe("RosettaService", () => {
     });
 
     const service = new RosettaService({ dataDir: tempDir });
-    const result = service.cleanupExpiredKeys();
+    const result = await service.cleanupExpiredKeys();
 
     expect(result).toMatchObject({ ok: true, deleted: 2 });
     const remaining = service.listAccessKeys({});
     expect(remaining.keys.map((k) => k.id)).toEqual(["k3", "k4"]);
   });
 
-  it("cleanupExpiredKeys returns deleted:0 when no expired keys exist", () => {
+  it("cleanupExpiredKeys returns deleted:0 when no expired keys exist", async () => {
     writeJson(path.join(tempDir, "access-keys.json"), {
       keys: [
         { id: "k1", key: "key1", status: "active", createdAt: new Date().toISOString() },
       ],
     });
 
-    const result = new RosettaService({ dataDir: tempDir }).cleanupExpiredKeys();
+    const result = await new RosettaService({ dataDir: tempDir }).cleanupExpiredKeys();
     expect(result).toMatchObject({ ok: true, deleted: 0 });
   });
 
-  it("cleanupUnboundKeys removes keys without sessionClientId", () => {
+  it("cleanupUnboundKeys removes keys without sessionClientId", async () => {
     writeJson(path.join(tempDir, "access-keys.json"), {
       keys: [
         // No sessionClientId
@@ -864,21 +864,21 @@ describe("RosettaService", () => {
     });
 
     const service = new RosettaService({ dataDir: tempDir });
-    const result = service.cleanupUnboundKeys();
+    const result = await service.cleanupUnboundKeys();
 
     expect(result).toMatchObject({ ok: true, deleted: 3 });
     const remaining = service.listAccessKeys({});
     expect(remaining.keys.map((k) => k.id)).toEqual(["k4"]);
   });
 
-  it("cleanupUnboundKeys returns deleted:0 when all keys have clients", () => {
+  it("cleanupUnboundKeys returns deleted:0 when all keys have clients", async () => {
     writeJson(path.join(tempDir, "access-keys.json"), {
       keys: [
         { id: "k1", key: "key1", status: "active", sessionClientId: "client-1" },
       ],
     });
 
-    const result = new RosettaService({ dataDir: tempDir }).cleanupUnboundKeys();
+    const result = await new RosettaService({ dataDir: tempDir }).cleanupUnboundKeys();
     expect(result).toMatchObject({ ok: true, deleted: 0 });
   });
 

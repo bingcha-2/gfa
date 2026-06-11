@@ -6,6 +6,7 @@ import { AgentAccountService } from "../automation/agent-account.service";
 import { AutomationService } from "../automation/automation.service";
 import { proxyAwareFetch } from "../lease-core/egress";
 import type { CachedToken } from "./google-api";
+import { PrismaService } from "../prisma/prisma.service";
 
 import { AccessKeyService } from "./access-key.service";
 import { AdspowerService } from "./adspower.service";
@@ -73,6 +74,7 @@ export class RosettaService {
     @Optional() private readonly automation?: AutomationService,
     @Optional() private readonly agentAccounts?: AgentAccountService,
     @Optional() @Inject("SHARED_ACCESS_KEY_STORE") injectedAccessKeyStore?: AccessKeyStore,
+    @Optional() private readonly prisma?: PrismaService,
   ) {
     // Prefer an explicitly-passed store (tests); else the DI-shared one (prod).
     options = { ...options, accessKeyStore: options.accessKeyStore || injectedAccessKeyStore };
@@ -213,8 +215,28 @@ export class RosettaService {
   bindAccessKey(payload: any) { return this.accessKeySvc.bindAccessKey(payload); }
   unbindAccessKey(payload: any) { return this.accessKeySvc.unbindAccessKey(payload); }
   setAccessKeyBindings(payload: any) { return this.accessKeySvc.setAccessKeyBindings(payload); }
-  cleanupExpiredKeys() { return this.accessKeySvc.cleanupExpiredKeys(); }
-  cleanupUnboundKeys() { return this.accessKeySvc.cleanupUnboundKeys(); }
+  async cleanupExpiredKeys() {
+    const subscriptionIds = await this.loadSubscriptionIds();
+    return this.accessKeySvc.cleanupExpiredKeys(subscriptionIds);
+  }
+  async cleanupUnboundKeys() {
+    const subscriptionIds = await this.loadSubscriptionIds();
+    return this.accessKeySvc.cleanupUnboundKeys(subscriptionIds);
+  }
+  /** Load the set of active Subscription ids from Prisma (if available).
+   *  Used by cleanup methods to guard subscription shadow records. */
+  private async loadSubscriptionIds(): Promise<ReadonlySet<string>> {
+    if (!this.prisma) return new Set();
+    try {
+      const rows = await this.prisma.subscription.findMany({ select: { id: true } });
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      // If the DB is unavailable (e.g. test environment without Prisma), be
+      // conservative and return an empty set — cleanup still runs but the
+      // migratedToCustomerId guard remains active.
+      return new Set();
+    }
+  }
   // Account-system writers (subscription shadow records / bind-card migration).
   // Delegate to the SAME AccessKeyService so access-keys.json keeps one writer.
   upsertKeyRecord(fields: { id: string } & Record<string, unknown>, options?: { createIfMissing?: boolean }) {
