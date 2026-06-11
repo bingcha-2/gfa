@@ -38,7 +38,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.2",
     "imapflow": "^1.4.0",
-    "playwright": "^1.58.2",
+    "playwright": "^1.60.0",
     "puppeteer-core": "^25.1.0",
     "socks": "^2.8.9",
     "ssh2": "^1.17.0"
