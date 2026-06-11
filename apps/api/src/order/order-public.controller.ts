@@ -52,6 +52,11 @@ export class SubscriptionSwapDto {
   newEmail!: string;
 }
 
+export class MigrationEmailDto {
+  @IsEmail()
+  email!: string;
+}
+
 @Controller("public")
 export class OrderPublicController {
   constructor(private readonly orderService: OrderService) {}
@@ -127,7 +132,7 @@ export class OrderPublicController {
   @Public()
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post("check-migration")
-  checkMigration(@Body() dto: { email: string }) {
+  checkMigration(@Body() dto: MigrationEmailDto) {
     return this.orderService.checkMigration(dto.email ?? "");
   }
 
@@ -135,7 +140,7 @@ export class OrderPublicController {
   @Public()
   @Throttle({ default: { ttl: 60000, limit: 3 } })
   @Post("self-migrate")
-  selfMigrate(@Body() dto: { email: string }) {
+  selfMigrate(@Body() dto: MigrationEmailDto) {
     return this.orderService.selfMigrate(dto.email ?? "");
   }
 }
