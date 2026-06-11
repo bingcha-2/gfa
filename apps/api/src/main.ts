@@ -21,6 +21,9 @@ async function bootstrap() {
 
   // Increase JSON body size limit for FAQ rich-text content with images
   app.useBodyParser("json", { limit: "20mb" });
+  // Parse form-encoded bodies so the epay (易支付) async callback, which posts
+  // application/x-www-form-urlencoded, is read by the notify controller.
+  app.useBodyParser("urlencoded", { extended: true });
 
   // Ensure faq-images directory exists and serve static files
   const faqImagesDir = join(process.cwd(), "data", "faq-images");

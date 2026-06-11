@@ -37,6 +37,11 @@ import { AppSurfaceModule } from "./app/app-surface.module";
 import { PlanModule } from "./plan/plan.module";
 import { SubscriptionModule } from "./subscription/subscription.module";
 import { CardMigrationModule } from "./web/card-migration/card-migration.module";
+import { BillingModule } from "./web/billing/billing.module";
+import { PortalModule } from "./web/portal/portal.module";
+import { NotificationModule } from "./web/notification/notification.module";
+import { TicketModule } from "./web/ticket/ticket.module";
+import { ReferralModule } from "./web/referral/referral.module";
 
 @Module({
   imports: [
@@ -91,6 +96,11 @@ import { CardMigrationModule } from "./web/card-migration/card-migration.module"
     PlanModule,
     SubscriptionModule,
     CardMigrationModule,
+    BillingModule,
+    PortalModule,
+    NotificationModule,
+    TicketModule,
+    ReferralModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [
