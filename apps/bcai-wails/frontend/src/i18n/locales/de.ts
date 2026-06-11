@@ -41,7 +41,6 @@ export const de: DeepPartialDict = {
     proxyDown: 'Proxy läuft nicht',
     error: 'Fehler · {error}',
     leasing: 'Lease wird abgerufen...',
-    needCard: 'Bitte Zugangskarte einrichten und aktivieren',
     ok: 'Dienst läuft · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const de: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Karte unbrauchbar — Funktionen deaktiviert',
-    cardUnusableBody1: 'Ihre Zugangskarte ist nicht mehr gültig (ungültig / abgelaufen / deaktiviert). ',
-    cardUnusableStrong1: 'Aktivieren Sie unten eine gültige Karte',
-    cardUnusableBody2: ' — oder wählen Sie im Übernahme-Panel ',
-    cardUnusableStrong2: '„Übernahme beenden“',
-    cardUnusableBody3: ', um IDE / Codex wieder normal zu verwenden.',
     activateTitle: 'Zugangskarte aktivieren',
     activateIntro: 'Karte eingeben und direkt mit offiziellen Modellen verbinden — kein API-Schlüssel nötig, Code geht direkt an offizielle Server, Bingcha injiziert nur lokal das Autorisierungs-Token.',
     cardPlaceholder: 'Zugangskarte eingeben (AI...)',
@@ -188,8 +181,6 @@ export const de: DeepPartialDict = {
     permissionBody: '{message}\n\nAktivieren Sie BingchaAI unter „Systemeinstellungen → Datenschutz & Sicherheit → App-Verwaltung“ und versuchen Sie es erneut.',
     opFailed: 'Aktion fehlgeschlagen',
     egressBlockedTitle: '⚠ Übernahme blockiert · Ausgangsprüfung fehlgeschlagen',
-    needCardTitle: 'Bitte zuerst Zugangskarte aktivieren',
-    needCardBody: 'Die Übernahme von {product} erfordert eine Zugangskarte — bitte unter „Zugangskarte“ aktivieren.',
     desktopConfirmTitle: 'Claude Desktop übernehmen',
     desktopConfirmBody: '⚠ Chat und Cowork funktionieren über die Übernahme nicht — nutzen Sie die Code-Funktion der Desktop-App!\n\nDie Übernahme startet Claude Desktop neu — eine laufende Cowork-Sitzung wird dadurch unterbrochen. Fortfahren?',
     hubPermission1: 'Die Übernahme des Hub ändert App-Dateien und benötigt die Berechtigung ',

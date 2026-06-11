@@ -132,9 +132,16 @@ func startServicesForUser(cfg Config) {
 }
 
 // stopServicesForUser stops leaser + proxy (used by logout).
+// The MITM proxy keeps listening on its fixed port (an active Claude Desktop
+// takeover still routes traffic through it), but its session token must be
+// cleared — the same UpdateConfig sync app.go's SaveConfig does on config
+// change — otherwise it would keep leasing with the stale token after logout.
+// On the next login, startServicesForUser's StartProxy re-arms it (StartProxy
+// on an already-running proxy just refreshes card/deviceId/upstream).
 func stopServicesForUser() {
 	GetLeaser().StopAutoLease()
 	GetHTTPProxy().Stop()
+	GetMitmManager().UpdateConfig("", LoadConfig().DeviceId, "")
 }
 
 // ────────────────────────────────────────────────────────────────────────────

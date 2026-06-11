@@ -14,7 +14,7 @@ vi.mock('@/services/wails', () => ({
 const { store } = vi.hoisted(() => ({
   store: {
     state: {
-      config: { accountCard: 'CARD-XYZ' },
+      config: { userToken: 'tok-xyz' },
       ideProducts: [
         { id: 'claude_desktop', name: 'Claude Desktop (Code/Cowork)', detected: true, injected: false },
       ] as Array<Record<string, unknown>>,

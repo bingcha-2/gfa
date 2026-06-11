@@ -41,7 +41,6 @@ export const es: DeepPartialDict = {
     proxyDown: 'Proxy detenido',
     error: 'Error · {error}',
     leasing: 'Asignando cuenta...',
-    needCard: 'Configura y activa una tarjeta de cuenta',
     ok: 'Servicio operativo · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const es: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Tarjeta inutilizable — funciones desactivadas',
-    cardUnusableBody1: 'Tu tarjeta de cuenta ya no es válida (inválida / vencida / deshabilitada). ',
-    cardUnusableStrong1: 'Activa una tarjeta válida abajo',
-    cardUnusableBody2: ', o usa el panel de Toma de control para ',
-    cardUnusableStrong2: 'salir de la toma de control',
-    cardUnusableBody3: ' y restaurar el funcionamiento normal del IDE / Codex.',
     activateTitle: 'Activar tarjeta de cuenta',
     activateIntro: 'Ingresa tu tarjeta y conéctate directo a los modelos oficiales — sin API Key, el código va directo a los servidores oficiales y Bingcha solo inyecta el token de autorización en local.',
     cardPlaceholder: 'Ingresa la tarjeta de cuenta (AI...)',
@@ -188,8 +181,6 @@ export const es: DeepPartialDict = {
     permissionBody: '{message}\n\nActiva el permiso de BingchaAI en “Configuración del Sistema → Privacidad y seguridad → Gestión de apps” y reintenta.',
     opFailed: 'Operación fallida',
     egressBlockedTitle: '⚠ Toma de control bloqueada · falló la verificación de salida',
-    needCardTitle: 'Primero activa una tarjeta de cuenta',
-    needCardBody: 'Tomar el control de {product} requiere una tarjeta de cuenta — activa una en “Tarjeta de cuenta”.',
     desktopConfirmTitle: 'Tomar el control de Claude Desktop',
     desktopConfirmBody: '⚠ Chat y Cowork no se pueden usar con la toma de control — ¡usa la función Code del escritorio!\n\nLa toma de control reinicia Claude Desktop, lo que interrumpe cualquier sesión de Cowork en curso. ¿Continuar?',
     hubPermission1: 'Tomar el control del Hub modifica archivos de la app y necesita el permiso de ',

@@ -41,7 +41,6 @@ export const ko: DeepPartialDict = {
     proxyDown: '프록시 미실행',
     error: '오류 · {error}',
     leasing: '계정 임대 중...',
-    needCard: '계정 카드를 설정하고 활성화해 주세요',
     ok: '서비스 정상 · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const ko: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: '카드를 사용할 수 없어 기능이 중지되었습니다',
-    cardUnusableBody1: '현재 계정 카드가 더 이상 유효하지 않습니다 (무효/만료/비활성화). 아래에서 ',
-    cardUnusableStrong1: '유효한 카드를 다시 활성화',
-    cardUnusableBody2: '하거나, “테이크오버” 패널에서 ',
-    cardUnusableStrong2: '테이크오버를 해제',
-    cardUnusableBody3: '하여 IDE / Codex를 정상 상태로 복원하세요.',
     activateTitle: '계정 카드 활성화',
     activateIntro: '카드를 입력하면 공식 모델에 바로 연결됩니다 — API Key 설정 불필요, 코드 데이터는 공식 서버로 직접 전송되며 Bingcha는 로컬에서 인증 토큰만 주입합니다.',
     cardPlaceholder: '계정 카드 입력 (AI...)',
@@ -188,8 +181,6 @@ export const ko: DeepPartialDict = {
     permissionBody: '{message}\n\n“시스템 설정 → 개인정보 보호 및 보안 → 앱 관리”에서 BingchaAI 권한을 켠 다음 다시 시도해 주세요.',
     opFailed: '작업 실패',
     egressBlockedTitle: '⚠ 테이크오버 차단됨 · 출구 검증 실패',
-    needCardTitle: '먼저 계정 카드를 활성화해 주세요',
-    needCardBody: '{product} 테이크오버에는 계정 카드가 필요합니다. “계정 카드” 섹션에서 활성화해 주세요.',
     desktopConfirmTitle: 'Claude Desktop 테이크오버',
     desktopConfirmBody: '⚠ Chat과 Cowork은 테이크오버로 사용할 수 없습니다. 데스크톱의 Code 기능을 사용해 주세요!\n\n테이크오버 시 Claude Desktop이 재시작되며, 실행 중인 Cowork 세션이 중단됩니다. 계속할까요?',
     hubPermission1: 'Hub 테이크오버는 앱 파일을 수정하므로 ',

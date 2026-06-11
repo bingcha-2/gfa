@@ -41,7 +41,6 @@ export const fr: DeepPartialDict = {
     proxyDown: 'Proxy à l\'arrêt',
     error: 'Erreur · {error}',
     leasing: 'Location de compte en cours...',
-    needCard: 'Configurez et activez une carte de compte',
     ok: 'Service opérationnel · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const fr: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Carte inutilisable — fonctions désactivées',
-    cardUnusableBody1: 'Votre carte de compte n\'est plus valide (invalide / expirée / désactivée). ',
-    cardUnusableStrong1: 'Activez une carte valide ci-dessous',
-    cardUnusableBody2: ', ou utilisez le panneau Prise en contrôle pour ',
-    cardUnusableStrong2: 'quitter la prise en contrôle',
-    cardUnusableBody3: ' et rétablir le fonctionnement normal de l\'IDE / Codex.',
     activateTitle: 'Activer la carte de compte',
     activateIntro: 'Saisissez votre carte pour vous connecter directement aux modèles officiels — sans clé API, le code part directement vers les serveurs officiels, Bingcha n\'injecte que le jeton d\'autorisation en local.',
     cardPlaceholder: 'Saisir la carte de compte (AI...)',
@@ -188,8 +181,6 @@ export const fr: DeepPartialDict = {
     permissionBody: '{message}\n\nActivez BingchaAI dans « Réglages Système → Confidentialité et sécurité → Gestion des apps », puis réessayez.',
     opFailed: 'Échec de l\'opération',
     egressBlockedTitle: '⚠ Prise en contrôle bloquée · échec du contrôle de sortie',
-    needCardTitle: 'Activez d\'abord une carte de compte',
-    needCardBody: 'La prise en contrôle de {product} nécessite une carte de compte — activez-en une dans « Carte de compte ».',
     desktopConfirmTitle: 'Prendre le contrôle de Claude Desktop',
     desktopConfirmBody: '⚠ Chat et Cowork ne peuvent pas être utilisés via la prise en contrôle — utilisez la fonction Code du client de bureau !\n\nLa prise en contrôle redémarre Claude Desktop, ce qui interrompt toute session Cowork en cours. Continuer ?',
     hubPermission1: 'La prise en contrôle du Hub modifie des fichiers de l\'application et nécessite l\'autorisation ',

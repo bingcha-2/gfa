@@ -41,7 +41,6 @@ export const ja: DeepPartialDict = {
     proxyDown: 'プロキシが未起動',
     error: 'エラー · {error}',
     leasing: 'リースを取得中...',
-    needCard: 'アカウントカードを設定して有効化してください',
     ok: 'サービス正常 · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const ja: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'カードが利用できないため、機能を停止しました',
-    cardUnusableBody1: '現在のアカウントカードは失効しています(無効 / 期限切れ / 停止)。下で',
-    cardUnusableStrong1: '利用可能なカードを再び有効化',
-    cardUnusableBody2: 'するか、「引き継ぎ」パネルから',
-    cardUnusableStrong2: '引き継ぎを解除',
-    cardUnusableBody3: 'して、IDE / Codex を通常どおり使える状態に戻してください。',
     activateTitle: 'アカウントカードを有効化',
     activateIntro: 'カードを入力するだけで公式モデルに直結 —— API Key の設定は不要。コードデータは公式へ直接送信され、BingchaAI はローカルで認証トークンを注入するだけです。',
     cardPlaceholder: 'アカウントカードを入力 (AI...)',
@@ -188,8 +181,6 @@ export const ja: DeepPartialDict = {
     permissionBody: '{message}\n\n「システム設定 → プライバシーとセキュリティ → アプリ管理」で BingchaAI の権限を有効にしてから、もう一度お試しください。',
     opFailed: '操作に失敗しました',
     egressBlockedTitle: '⚠ 引き継ぎをブロック · エグレスチェック未通過',
-    needCardTitle: '先にアカウントカードを有効化してください',
-    needCardBody: '{product} の引き継ぎにはアカウントカードが必要です。「アカウントカード設定」で有効化してください。',
     desktopConfirmTitle: 'Claude Desktop を引き継ぐ',
     desktopConfirmBody: '⚠ Chat と Cowork は引き継ぎでは利用できません。デスクトップ版の Code 機能をご利用ください!\n\n引き継ぎ時に Claude デスクトップ版を再起動します —— 実行中の Cowork セッションは中断されます。続行しますか?',
     hubPermission1: 'Hub の引き継ぎではアプリファイルを変更するため、「',

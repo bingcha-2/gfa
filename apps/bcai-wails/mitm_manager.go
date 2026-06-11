@@ -180,6 +180,14 @@ func (m *mitmManager) UpdateConfig(card, deviceId, upstream string) {
 	m.card, m.deviceId, m.upstream = card, deviceId, upstream
 }
 
+// sessionCard returns the session token the manager currently holds.
+// Test seam — lets the logout path assert the stale token was cleared.
+func (m *mitmManager) sessionCard() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.card
+}
+
 func (m *mitmManager) IsProxyRunning() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

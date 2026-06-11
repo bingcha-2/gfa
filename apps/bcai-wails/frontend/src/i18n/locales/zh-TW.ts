@@ -41,7 +41,6 @@ export const zhTW: DeepPartialDict = {
     proxyDown: '代理未啟動',
     error: '錯誤 · {error}',
     leasing: '取得租約中...',
-    needCard: '請設定並啟用帳號卡',
     ok: '服務正常 · 127.0.0.1:{port}',
   },
 
@@ -64,12 +63,6 @@ export const zhTW: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: '卡密不可用,功能已停用',
-    cardUnusableBody1: '目前帳號卡已失效(無效/過期/停用)。請在下方',
-    cardUnusableStrong1: '重新啟用有效卡密',
-    cardUnusableBody2: ';或在「接管」面板',
-    cardUnusableStrong2: '退出接管',
-    cardUnusableBody3: ',恢復 IDE / Codex 正常使用。',
     activateTitle: '啟用帳號卡',
     activateIntro: '輸入卡密即可直連官方模型 —— 無需設定 API Key,程式碼資料直送官方,冰茶只在本機注入授權權杖。',
     cardPlaceholder: '輸入帳號卡 (AI...)',
@@ -188,8 +181,6 @@ export const zhTW: DeepPartialDict = {
     permissionBody: '{message}\n\n請在「系統設定 → 隱私權與安全性 → App 管理」中開啟冰茶AI 的權限,然後重試。',
     opFailed: '操作失敗',
     egressBlockedTitle: '⚠ 接管已攔截 · 出口未通過',
-    needCardTitle: '請先啟用帳號卡',
-    needCardBody: '{product} 接管需要帳號卡,請在「帳號卡設定」啟用。',
     desktopConfirmTitle: '接管 Claude Desktop',
     desktopConfirmBody: '⚠ Chat 和 Cowork 無法接管使用,請使用桌面版 Code 功能!\n\n接管會重啟 Claude 桌面版 —— 這會中斷目前正在執行的 Cowork 工作階段。是否繼續?',
     hubPermission1: '接管 Hub 需修改應用程式檔案,需授予 ',

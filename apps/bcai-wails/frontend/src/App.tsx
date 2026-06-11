@@ -10,6 +10,7 @@ import { useAppStore } from '@/stores/useAppStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { usePolling } from '@/hooks/usePolling'
 import { useLocale } from '@/i18n'
+import { Loader2 } from 'lucide-react'
 import type { PageId } from '@/types'
 
 export default function App() {
@@ -42,9 +43,18 @@ export default function App() {
   // 日志仅在日志页时才轮询（减少非活跃页的 IPC 开销）
   usePolling(fetchLogs, 3000, currentPage === 'logs' && isLoggedIn)
 
-  // Show login page when not logged in (null = loading, false = not logged in)
-  // Only show login after initial account state has been fetched
-  if (account !== null && !isLoggedIn) {
+  // account === null → 首次 GetAccountState 尚未返回。渲染极简居中加载态,
+  // 避免主界面壳先闪一下再被 LoginPage 顶掉(未登录时)。
+  if (account === null) {
+    return (
+      <div key={locale} className="flex min-h-screen items-center justify-center bg-[var(--bg-primary)]">
+        <Loader2 size={24} className="animate-spin text-[var(--text-muted)]" />
+      </div>
+    )
+  }
+
+  // Show login page when not logged in
+  if (!isLoggedIn) {
     return (
       <div key={locale} className="contents">
         <LoginPage />

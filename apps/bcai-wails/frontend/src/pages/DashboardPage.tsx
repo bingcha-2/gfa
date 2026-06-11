@@ -10,6 +10,8 @@ import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import * as api from '@/services/wails'
 import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
 import { BarChart3 } from 'lucide-react'
@@ -95,12 +97,19 @@ export function DashboardPage() {
       {/* ── 账号卡:显示登录状态、套餐、到期、设备 ── */}
       <AccountStatusCard />
 
-      {/* 会话不可用(SESSION_INVALID / SUBSCRIPTION_EXPIRED):提示重新登录 */}
+      {/* 会话/订阅已失效(SESSION_INVALID / SUBSCRIPTION_EXPIRED 等):
+          引导重新登录(登出 → 自动回登录页)或前往网页端处理订阅与账单 */}
       {cardUnusable && (
         <div className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
           <div className="text-sm font-medium text-[var(--danger)]">{t('dashboard.cardUnusableTitle')}</div>
-          <div className="text-[12px] text-[var(--text-secondary)] mt-1">
-            {t('dashboard.cardUnusableBody1')}<strong>{t('dashboard.cardUnusableStrong1')}</strong>{t('dashboard.cardUnusableBody2')}<strong>{t('dashboard.cardUnusableStrong2')}</strong>{t('dashboard.cardUnusableBody3')}
+          <div className="text-[12px] text-[var(--text-secondary)] mt-1">{t('dashboard.cardUnusableBody')}</div>
+          <div className="flex items-center gap-2 mt-2.5">
+            <Button size="sm" onClick={() => useAppStore.getState().logout()}>
+              {t('dashboard.cardUnusableRelogin')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => api.openURL(api.PORTAL_URLS.billing)}>
+              {t('dashboard.cardUnusableBilling')}
+            </Button>
           </div>
         </div>
       )}

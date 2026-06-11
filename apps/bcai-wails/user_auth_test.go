@@ -240,6 +240,63 @@ func TestHeartbeat_SessionInvalid_FatalPath(t *testing.T) {
 	}
 }
 
+// ── TestUserLogout_ClearsMitmToken ───────────────────────────────────────────
+
+// TestUserLogout_ClearsMitmToken: logout must neutralize the MITM proxy's
+// session token. The MITM keeps listening on its fixed port (an active Claude
+// Desktop takeover still routes traffic through it), but with the token cleared
+// it can no longer lease with the stale session — mirroring app.go SaveConfig's
+// GetMitmManager().UpdateConfig sync on config change.
+func TestUserLogout_ClearsMitmToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+
+	// Seed a logged-in config.
+	cfg := DefaultConfig()
+	cfg.UserToken = "tok-stale"
+	cfg.DeviceId = "dev-mitm-1"
+	cfg.UserEmail = "user@example.com"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	// Simulate the MITM manager holding the session token, as
+	// startServicesForUser sets it on login.
+	GetMitmManager().UpdateConfig("tok-stale", "dev-mitm-1", "")
+	defer GetMitmManager().UpdateConfig("", "", "") // don't leak into other tests
+
+	// Stub the auth server so the best-effort POST /app/logout stays local.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/logout" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok-stale" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer tok-stale")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if err := app.UserLogout(); err != nil {
+		t.Fatalf("UserLogout: %v", err)
+	}
+
+	// The MITM manager must no longer hold the stale session token.
+	if got := GetMitmManager().sessionCard(); got != "" {
+		t.Errorf("MITM session token after logout = %q, want empty", got)
+	}
+	// And the config token must be cleared too.
+	if got := LoadConfig().UserToken; got != "" {
+		t.Errorf("UserToken after logout = %q, want empty", got)
+	}
+}
+
 // ── TestGetAccountState ───────────────────────────────────────────────────────
 
 func TestGetAccountState(t *testing.T) {
