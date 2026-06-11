@@ -3,15 +3,8 @@ import "server-only";
 import { cookies } from "next/headers";
 
 import { USER_AUTH_COOKIE } from "./user-auth-cookie";
+import { getBackendBaseUrl } from "./backend-url";
 import type { Customer } from "./user-types";
-
-function getBackendBaseUrl() {
-  return (
-    process.env.API_BASE_URL ??
-    process.env.NEXT_PUBLIC_API_BASE_URL ??
-    "http://localhost:3001/api"
-  );
-}
 
 /** Read the portal user token from the httpOnly cookie (server components only). */
 export async function getUserTokenFromCookie(): Promise<string | null> {

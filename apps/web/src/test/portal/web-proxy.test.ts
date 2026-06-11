@@ -242,4 +242,19 @@ describe("api/web/[...path] proxy", () => {
     expect(await resp.json()).toEqual({ error: "BAD_REQUEST" });
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("returns 502 SERVICE_UNAVAILABLE when the backend is unreachable", async () => {
+    mockCookieValue = "valid-token";
+    const mockFetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const resp = await GET(makeRequest("GET", ["me"]), {
+      params: Promise.resolve({ path: ["me"] }),
+    });
+
+    expect(resp.status).toBe(502);
+    const body = await resp.json();
+    expect(body.error).toBe("SERVICE_UNAVAILABLE");
+    expect(typeof body.message).toBe("string");
+  });
 });

@@ -1,3 +1,5 @@
+"use client";
+
 import {
   CreditCardIcon,
   CalendarIcon,
@@ -5,33 +7,28 @@ import {
   MonitorSmartphoneIcon,
 } from "lucide-react";
 
-import { serverUserApi } from "@/lib/user-server-api";
-import { getDict } from "@/lib/i18n/server";
+import { usePortal } from "@/components/portal/portal-provider";
+import { useDict } from "@/lib/i18n/client";
 import { PageHeader } from "@/components/portal/page-header";
 import { StatCard } from "@/components/portal/stat-card";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import type { Customer } from "@/lib/user-types";
 
-export const dynamic = "force-dynamic";
-
-export default async function OverviewPage() {
-  const dict = await getDict();
+/**
+ * Overview — consumes the customer the (main) layout guard already fetched
+ * (passed through PortalShell → PortalProvider); no second /web/me round-trip.
+ * Parent layout is force-dynamic, so no route segment config needed here.
+ */
+export default function OverviewPage() {
+  const { customer } = usePortal();
+  const dict = useDict();
   const t = dict.portalApp;
   const ov = t.overview;
-
-  // Re-fetch customer here for fresh data (already validated in layout)
-  let customer: Customer | null = null;
-  try {
-    customer = await serverUserApi<Customer>("me");
-  } catch {
-    // Layout would have redirected; this is a safety fallback
-  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={t.pages.overviewTitle}
-        description={customer?.email}
+        description={customer.email}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

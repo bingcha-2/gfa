@@ -14,11 +14,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { USER_AUTH_COOKIE } from "../../../../lib/user-auth-cookie";
-
-const BACKEND_BASE_URL =
-  process.env.API_BASE_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:3001/api";
+import { getBackendBaseUrl } from "../../../../lib/backend-url";
 
 const ALLOWED_METHODS = new Set(["GET", "POST", "PATCH", "DELETE"]);
 
@@ -78,13 +74,14 @@ async function handler(
   }
 
   // Build the backend URL — ONLY /web/* is permitted
+  const backendBaseUrl = getBackendBaseUrl();
   const pathStr = path.join("/");
-  const backendUrl = new URL(`${BACKEND_BASE_URL}/web/${pathStr}`);
+  const backendUrl = new URL(`${backendBaseUrl}/web/${pathStr}`);
 
   // Layer 2: assert the resolved pathname is still under <base>/web/.
   // Defense in depth in case Layer 1 ever misses an encoding the URL parser
   // normalizes into a traversal.
-  const expectedPrefix = `${new URL(BACKEND_BASE_URL).pathname.replace(/\/+$/, "")}/web/`;
+  const expectedPrefix = `${new URL(backendBaseUrl).pathname.replace(/\/+$/, "")}/web/`;
   if (!backendUrl.pathname.startsWith(expectedPrefix)) {
     return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
   }
@@ -114,14 +111,26 @@ async function handler(
     if (!body) body = undefined;
   }
 
-  const backendResponse = await fetch(backendUrl.toString(), {
-    method,
-    headers: forwardHeaders,
-    body,
-    cache: "no-store",
-  });
-
-  const responseText = await backendResponse.text();
+  let backendResponse: Response;
+  let responseText: string;
+  try {
+    backendResponse = await fetch(backendUrl.toString(), {
+      method,
+      headers: forwardHeaders,
+      body,
+      cache: "no-store",
+    });
+    responseText = await backendResponse.text();
+  } catch (err) {
+    // Backend down (ECONNREFUSED etc.) — return a structured 502, not a stack trace.
+    return NextResponse.json(
+      {
+        error: "SERVICE_UNAVAILABLE",
+        message: err instanceof Error ? err.message : "Backend unreachable",
+      },
+      { status: 502 }
+    );
+  }
 
   return new NextResponse(responseText || null, {
     status: backendResponse.status,

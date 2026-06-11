@@ -70,7 +70,9 @@ export function ChangePasswordForm() {
 
       {error && <FieldError>{error}</FieldError>}
       {success && (
-        <p className="text-sm text-green-600 dark:text-green-400">
+        // No --success design token in globals.css yet; emerald matches the
+        // repo's existing success hue (.status-emerald). Swap to token when added.
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">
           {t.settings.changePwdSuccess}
         </p>
       )}
