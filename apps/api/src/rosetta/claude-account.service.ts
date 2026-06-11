@@ -63,6 +63,7 @@ type CodexOAuthPending = {
   error?: string;
   isUpdate?: boolean;
   proxyUrl?: string;
+  mailPassword?: string;
 };
 
 export class ClaudeAccountService {
@@ -130,6 +131,7 @@ export class ClaudeAccountService {
       if (payload.accessToken) existing.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl !== undefined) existing.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
+      if (payload.mailPassword) existing.mailPassword = String(payload.mailPassword);
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);
@@ -145,6 +147,7 @@ export class ClaudeAccountService {
       if (payload.accessToken) record.accessToken = String(payload.accessToken);
       if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl) record.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
+      if (payload.mailPassword) record.mailPassword = String(payload.mailPassword);
       accounts.push(record);
     }
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
@@ -392,6 +395,7 @@ export class ClaudeAccountService {
       accessTokenExpiresAt: Date.now() + Number(tokenData.expires_in || 3600) * 1000,
       alias: String(tokenData?.organization?.name || ""),
       proxyUrl: pending.proxyUrl || "",
+      mailPassword: pending.mailPassword || "",
     });
     if (!result.ok) throw new Error(String(result.error || "Failed to save Claude account"));
 
@@ -515,6 +519,7 @@ export class ClaudeAccountService {
       const startResult = await this.startClaudeOAuthLogin(proxyUrl);
       if (!startResult.ok) throw new Error("OAuth 会话创建失败");
       const pending = this.claudeOAuthPending!;
+      pending.mailPassword = password;
 
       // 2. Browser: navigate to authorize URL → CF challenge → fill email → submit
       step("launching browser (SOCKS5 proxy)");
@@ -732,7 +737,26 @@ export class ClaudeAccountService {
         weeklyResetTime: acc.claudeWeeklyResetTime || "",
       };
     } catch (err: any) {
-      return { ok: false, email: acc.email, error: String(err?.message || err) };
+      const msg = String(err?.message || err);
+      // Token 彻底失效(invalid_grant / refresh token revoked)→ 有存储密码时自动重新走 OAuth
+      if (/invalid_grant|refresh token not found|token.*revoked/i.test(msg) && acc.mailPassword && acc.proxyUrl) {
+        console.log(`[claude-refresh] #${accountId} ${acc.email} token dead, auto re-auth...`);
+        const reauth = this.startAutoClaudeOAuth({
+          email: acc.email,
+          password: acc.mailPassword,
+          proxyUrl: acc.proxyUrl,
+        });
+        if (reauth.ok) {
+          return {
+            ok: false,
+            email: acc.email,
+            error: msg,
+            autoReauth: true,
+            reauthTaskId: reauth.taskId,
+          };
+        }
+      }
+      return { ok: false, email: acc.email, error: msg };
     }
   }
 }

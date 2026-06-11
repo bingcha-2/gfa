@@ -482,7 +482,35 @@ export default function ClaudeAccountsPage() {
         body: JSON.stringify({ accountId: account.id }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "刷新失败");
+      if (!data.ok) {
+        if (data.autoReauth && data.reauthTaskId) {
+          toast.info(`#${account.id} token 已失效，正在自动重新登录授权…`);
+          // Poll the re-auth task
+          const tid = data.reauthTaskId;
+          const pollReauth = async () => {
+            for (;;) {
+              await new Promise((r) => setTimeout(r, 3000));
+              try {
+                const sr = await fetch(`/api/rosetta/anthropic-auto-oauth-status?taskId=${tid}`);
+                const st = await sr.json().catch(() => null);
+                if (!st) continue;
+                if (st.status === "done") {
+                  toast.success(`#${account.id} 自动重新授权成功: ${st.email}`);
+                  fetchAccounts();
+                  return;
+                }
+                if (st.status === "error") {
+                  toast.error(`#${account.id} 自动重新授权失败: ${st.error}`);
+                  return;
+                }
+              } catch { /* keep polling */ }
+            }
+          };
+          pollReauth();
+          return;
+        }
+        throw new Error(data.error || "刷新失败");
+      }
       if (data.raw) {
         // 打印 /api/oauth/usage 原始返回,便于排查。
         console.log(`[claude-refresh] #${account.id} usage:`, data.raw);
