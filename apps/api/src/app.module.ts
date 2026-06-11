@@ -36,6 +36,7 @@ import { WebModule } from "./web/web.module";
 import { AppSurfaceModule } from "./app/app-surface.module";
 import { PlanModule } from "./plan/plan.module";
 import { SubscriptionModule } from "./subscription/subscription.module";
+import { BillingAdminModule } from "./console/billing-admin/billing-admin.module";
 import { CardMigrationModule } from "./web/card-migration/card-migration.module";
 import { BillingModule } from "./web/billing/billing.module";
 import { PortalModule } from "./web/portal/portal.module";
@@ -95,6 +96,7 @@ import { ReferralModule } from "./web/referral/referral.module";
     AppSurfaceModule,
     PlanModule,
     SubscriptionModule,
+    BillingAdminModule,
     CardMigrationModule,
     BillingModule,
     PortalModule,
