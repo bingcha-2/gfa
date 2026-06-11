@@ -346,12 +346,12 @@ function getServices(env) {
 
   return [
     {
-      name: "api",
-      label: "api   ",
+      name: "server",
+      label: "server",
       command: "node",
       args: ["dist/main.js"],
       cwd: join(ROOT, "apps/server"),
-      readyPattern: /\[api\] listening/i,
+      readyPattern: /\[server\] listening/i,
       port: apiPort,
     },
     {

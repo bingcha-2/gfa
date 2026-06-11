@@ -86,10 +86,10 @@ async function bootstrap() {
 
   await app.listen(port);
 
-  console.log(`[api] listening on http://localhost:${port}/api`);
+  console.log(`[server] listening on http://localhost:${port}/api`);
 }
 
 bootstrap().catch((error) => {
-  console.error("[api] bootstrap failed", error);
+  console.error("[server] bootstrap failed", error);
   process.exit(1);
 });

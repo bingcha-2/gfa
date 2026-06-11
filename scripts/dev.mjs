@@ -6,7 +6,7 @@
  * ready signals, then prints a unified startup summary banner.
  *
  * Ready signals (matched in stdout / stderr):
- *   api    → "[api] listening"
+ *   server → "[server] listening"
  *   web    → "✓ Ready in"
  *   worker → "[worker-1] ready" | "Worker is running"
  */
@@ -124,10 +124,10 @@ const services = [
     optional: true,   // shared may not print a clear ready signal
   },
   {
-    name: "api",
-    label: "api   ",
+    name: "server",
+    label: "server",
     filter: "@gfa/server",
-    ready: /\[api\] listening/i,
+    ready: /\[server\] listening/i,
   },
   {
     name: "web",
