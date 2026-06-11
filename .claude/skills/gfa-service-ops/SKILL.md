@@ -1,6 +1,6 @@
 ---
 name: gfa-service-ops
-description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, cutting a Wails client release via the build-wails.yml GitHub Actions workflow (gh workflow run, version input), bumping apps/bcai-wails/updater.go AppVersion or the server minClientVersion floor in apps/api lease-service.ts, or editing latest-wails.json.
+description: Operate GFA production updates, restarts, health checks, Caddy reverse proxy checks, and BingchaAI Wails client release publishing. Use for Windows server flows with pnpm start:stop/start:daemon, git pull deployment, GitHub artifact/release downloads from private repositories using gh CLI first and GitHub API + curl fallback, cutting a Wails client release via the build-wails.yml GitHub Actions workflow (gh workflow run, version input), bumping apps/app/updater.go AppVersion or the server minClientVersion floor in apps/server/src/leasing/lease-core/lease-service.ts, or editing latest-wails.json.
 ---
 
 # GFA Service Ops
@@ -20,7 +20,7 @@ description: Operate GFA production updates, restarts, health checks, Caddy reve
 - PID: `gfa.pid`.
 - Logs: `logs\daemon.log`, `logs\api-YYYY-MM-DD.log`, `logs\web-YYYY-MM-DD.log`, `logs\worker-YYYY-MM-DD.log`.
 - Ports: Web `3000`, API `3001` unless `.env` overrides `WEB_PORT` / `API_PORT`.
-- Client version: `apps\bcai-wails\updater.go` -> `AppVersion`.
+- Client version: `apps\app\updater.go` -> `AppVersion`.
 - Client update manifest: `apps\web\public\updates\latest-wails.json`.
 - Public update files: `apps\web\public\updates\`.
 
@@ -112,7 +112,7 @@ manifest unless the workflow is unavailable.
 
 Steps:
 
-1. Bump source-of-truth `AppVersion` in `apps\bcai-wails\updater.go` to the release version
+1. Bump source-of-truth `AppVersion` in `apps\app\updater.go` to the release version
    (the build also injects it via `-ldflags -X main.AppVersion=<version>`, but keep the source honest).
 2. (If the new version should be mandatory) raise the server minimum — see "Server minimum client version".
 3. Commit + push to `main`, then dispatch the build:
@@ -139,11 +139,11 @@ internal mechanics.
 and the server also rejects them at lease time (see below). Use the exact version you intend as the floor.
 
 Binaries are NO LONGER committed to `apps\web\public\updates\` — only `latest-wails.json` lives there.
-The Wails build output `apps\bcai-wails\build\bin\` is not the public update dir.
+The Wails build output `apps\app\build\bin\` is not the public update dir.
 
 ### Server minimum client version
 
-`apps\api\src\lease-core\lease-service.ts` → `minClientVersion` default (currently `9.1.0`) is the
+`apps\server\src\leasing\lease-core\lease-service.ts` → `minClientVersion` default (currently `9.2.0`) is the
 single floor for ALL lease paths — `RemoteAnthropicService` / `RemoteCodexService` / `TokenServerService`
 all extend `LeaseService` and none override it (their modules call
 `new XxxService({ tokenUsageTracker, accountQuotaSnapshotTracker })` with no `minClientVersion`).
@@ -154,7 +154,7 @@ update its accept/reject versions to match. (Tests run via `vitest`, not jest.)
 ### Fallback: manual single-platform build (only when the workflow is down)
 
 ```powershell
-cd C:\Users\Administrator\Desktop\GFA\apps\bcai-wails
+cd C:\Users\Administrator\Desktop\GFA\apps\app
 wails build -platform windows/amd64 -clean -ldflags "-s -w -X main.AppVersion=8.6.0"
 # then upload the .exe to a bingcha-2/bcai-releases Release (tag wails-v8.6.0)
 # and hand-edit apps\web\public\updates\latest-wails.json (url/sha256/size/version/minVersion).
