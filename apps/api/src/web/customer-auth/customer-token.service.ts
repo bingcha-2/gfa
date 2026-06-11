@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 // Known weak/placeholder secrets — rejected unconditionally (mirrors admin jwt.strategy.ts)
 const WEAK_SECRETS = [
@@ -70,7 +70,16 @@ export interface CustomerJwtPayload {
 
 @Injectable()
 export class CustomerTokenService {
-  constructor(private readonly jwt: JwtService) {}
+  /**
+   * Resolved ONCE at construction — fails fast on missing/weak secrets and
+   * avoids re-reading process.env on every sign/verify (hot path).
+   * Mirrors CustomerJwtStrategy, which also resolves at construction.
+   */
+  private readonly secret: string;
+
+  constructor(private readonly jwt: JwtService) {
+    this.secret = resolveCustomerJwtSecret();
+  }
 
   sign(payload: {
     customerId: string;
@@ -88,7 +97,7 @@ export class CustomerTokenService {
     };
 
     return this.jwt.sign(claims, {
-      secret: resolveCustomerJwtSecret(),
+      secret: this.secret,
       expiresIn: "30d"
     });
   }
@@ -100,7 +109,7 @@ export class CustomerTokenService {
   verify(token: string): CustomerJwtPayload | null {
     try {
       const payload = this.jwt.verify<CustomerJwtPayload>(token, {
-        secret: resolveCustomerJwtSecret()
+        secret: this.secret
       });
 
       if (payload.typ !== "user-session") {

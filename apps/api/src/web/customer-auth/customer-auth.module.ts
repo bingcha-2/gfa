@@ -28,9 +28,9 @@ import { CustomerProfileController } from "./customer-profile.controller";
     PassportModule.register({ defaultStrategy: "user-jwt" }),
     // A minimal JwtModule instance for CustomerTokenService.
     // We do NOT share the admin JwtModule (different secret + options).
-    // Secret is resolved at call-time in CustomerTokenService.sign/verify,
-    // so this registration is just to provide JwtService; secret here is a
-    // harmless placeholder — all actual sign/verify calls pass explicit options.
+    // CustomerTokenService resolves CUSTOMER_JWT_SECRET once at construction;
+    // this registration is just to provide JwtService — secret here is a
+    // harmless placeholder, all actual sign/verify calls pass explicit options.
     JwtModule.register({ secret: "placeholder-overridden-per-call" })
   ],
   controllers: [CustomerAuthController, CustomerProfileController],

@@ -339,7 +339,7 @@ describe("CustomerAuthService token lifecycle", () => {
     const store = [customer];
     const { service, tokenService } = makeService(store);
 
-    const { accessToken } = await service.refresh(customer.id, 5);
+    const { accessToken } = await service.refresh(customer.id);
 
     const payload = tokenService.verify(accessToken);
     expect(payload).not.toBeNull();

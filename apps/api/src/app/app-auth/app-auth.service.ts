@@ -28,7 +28,9 @@ function buildSubscriptionSummary(subscription: {
   }
 
   return {
-    planName: subscription.plan?.name ?? "已绑定套餐",
+    // null when the subscription has no linked Plan (e.g. migrated cards) —
+    // clients localize the fallback label themselves.
+    planName: subscription.plan?.name ?? null,
     status: subscription.status,
     expiresAt: subscription.expiresAt,
     deviceLimit: subscription.deviceLimit,
@@ -70,28 +72,16 @@ export class AppAuthService {
     platform?: string;
     lastIp?: string;
   }) {
-    // Validate credentials via CustomerAuthService
-    const result = await this.customerAuthService.login({
-      email: dto.email,
-      password: dto.password
-    });
+    // Validate credentials — returns the raw Customer in a SINGLE fetch.
+    // (A second findUnique here would race with a concurrent password change:
+    // we could sign a token for a tokenVersion that was just bumped.)
+    const customer = await this.customerAuthService.validateCredentials(
+      dto.email,
+      dto.password
+    );
 
-    const customer = await this.prisma.customer.findUnique({
-      where: { email: dto.email.toLowerCase().trim() }
-    });
-
-    if (!customer) {
-      // Should never happen after successful login, but guard anyway
-      throw new UnauthorizedException({
-        error: "SESSION_INVALID",
-        message: "Customer not found"
-      });
-    }
-
-    // Sign a token WITH the deviceId so heartbeat can verify it
-    const jtiHolder = { jti: "" };
-
-    // We need the jti from the token — sign first, then decode
+    // Sign a token WITH the deviceId so heartbeat can verify it.
+    // We need the jti from the token — sign first, then decode.
     const token = this.tokenService.sign({
       customerId: customer.id,
       email: customer.email,
@@ -107,39 +97,35 @@ export class AppAuthService {
     const sessionJti = payload.jti;
     const now = new Date();
 
-    // Upsert Device by @@unique(customerId, deviceId)
-    // If an existing REVOKED device re-logs in → reactivate to ACTIVE (documented choice:
+    // Atomic upsert on @@unique(customerId, deviceId) — find-then-create/update
+    // was a TOCTOU: two simultaneous logins could both take the create path and
+    // the loser would 500 on P2002. Upsert lets Prisma resolve the race.
+    // REVOKED device re-login reactivates to ACTIVE (documented choice:
     // re-login is an explicit user action, so we restore access rather than blocking).
-    const existing = await this.prisma.device.findUnique({
-      where: { customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId } }
+    await this.prisma.device.upsert({
+      where: {
+        customerId_deviceId: { customerId: customer.id, deviceId: dto.deviceId }
+      },
+      create: {
+        customerId: customer.id,
+        deviceId: dto.deviceId,
+        name: dto.deviceName ?? null,
+        platform: dto.platform ?? null,
+        status: "ACTIVE",
+        lastSeenAt: now,
+        lastIp: dto.lastIp ?? null,
+        sessionJti
+      },
+      update: {
+        // Keep existing name/platform unless the client sent new values
+        ...(dto.deviceName !== undefined ? { name: dto.deviceName } : {}),
+        ...(dto.platform !== undefined ? { platform: dto.platform } : {}),
+        status: "ACTIVE", // reactivate REVOKED device on re-login
+        lastSeenAt: now,
+        lastIp: dto.lastIp ?? null,
+        sessionJti
+      }
     });
-
-    if (existing) {
-      await this.prisma.device.update({
-        where: { id: existing.id },
-        data: {
-          name: dto.deviceName ?? existing.name,
-          platform: dto.platform ?? existing.platform,
-          status: "ACTIVE", // reactivate REVOKED device on re-login
-          lastSeenAt: now,
-          lastIp: dto.lastIp ?? null,
-          sessionJti
-        }
-      });
-    } else {
-      await this.prisma.device.create({
-        data: {
-          customerId: customer.id,
-          deviceId: dto.deviceId,
-          name: dto.deviceName ?? null,
-          platform: dto.platform ?? null,
-          status: "ACTIVE",
-          lastSeenAt: now,
-          lastIp: dto.lastIp ?? null,
-          sessionJti
-        }
-      });
-    }
 
     // Compute token expiry (30d from now)
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);

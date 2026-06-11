@@ -78,7 +78,7 @@ export class CustomerAuthController {
   @UseGuards(CustomerJwtGuard)
   @Post("refresh")
   refresh(@CurrentCustomer() customer: CustomerUser) {
-    return this.authService.refresh(customer.customerId, 0 /* unused */);
+    return this.authService.refresh(customer.customerId);
   }
 
   /**

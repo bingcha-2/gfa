@@ -8,6 +8,7 @@ export class AppLoginDto {
 
   @IsString()
   @MinLength(6)
+  @MaxLength(128)
   password!: string;
 
   @IsString()

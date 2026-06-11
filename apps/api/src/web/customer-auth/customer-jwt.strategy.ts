@@ -32,8 +32,11 @@ export class CustomerJwtStrategy extends PassportStrategy(Strategy, "user-jwt") 
       });
     }
 
+    // Runs on the lease hot path — select only what validation needs
+    // (avoids dragging passwordHash & co. out of the DB on every request).
     const customer = await this.prisma.customer.findUnique({
-      where: { id: payload.sub }
+      where: { id: payload.sub },
+      select: { id: true, email: true, status: true, tokenVersion: true }
     });
 
     if (!customer) {

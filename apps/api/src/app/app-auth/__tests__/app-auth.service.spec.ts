@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as bcrypt from "bcrypt";
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 
 import { AppAuthService } from "../app-auth.service";
@@ -130,6 +130,21 @@ async function makeAppAuthService(options: {
         if (idx === -1) return null;
         devices[idx] = { ...devices[idx], ...data };
         return devices[idx];
+      }),
+      // Atomic upsert on @@unique(customerId, deviceId) — mirrors Prisma semantics
+      upsert: vi.fn(async ({ where, create, update }: any) => {
+        const idx = devices.findIndex(
+          d =>
+            d.customerId === where.customerId_deviceId.customerId &&
+            d.deviceId === where.customerId_deviceId.deviceId
+        );
+        if (idx === -1) {
+          const dev = makeDevice({ ...create });
+          devices.push(dev);
+          return dev;
+        }
+        devices[idx] = { ...devices[idx], ...update };
+        return devices[idx];
       })
     },
     subscription: {
@@ -139,7 +154,22 @@ async function makeAppAuthService(options: {
 
   const jwtService = new JwtService({});
   const tokenService = new CustomerTokenService(jwtService);
-  const customerAuthService = new CustomerAuthService(prisma as any, tokenService);
+
+  // M3 deps — stubs; app login never touches email tokens or mail
+  const emailTokenService = {
+    issueToken: vi.fn(async () => "plaintext-stub"),
+    consumeToken: vi.fn(async () => null)
+  };
+  const mailService = {
+    sendMail: vi.fn(async () => ({ ok: true }))
+  };
+
+  const customerAuthService = new CustomerAuthService(
+    prisma as any,
+    tokenService,
+    emailTokenService as any,
+    mailService as any
+  );
   const appAuthService = new AppAuthService(prisma as any, customerAuthService, tokenService);
 
   return { appAuthService, tokenService, prisma, customer, devices };
@@ -152,8 +182,8 @@ describe("AppAuthService.login", () => {
     process.env.CUSTOMER_JWT_SECRET = "test-customer-secret-that-is-32-chars-long!!";
   });
 
-  it("creates a Device row with sessionJti on first login", async () => {
-    const { appAuthService, prisma } = await makeAppAuthService();
+  it("creates a Device row with sessionJti on first login (via atomic upsert)", async () => {
+    const { appAuthService, prisma, devices } = await makeAppAuthService();
 
     const result = await appAuthService.login({
       email: "user@example.com",
@@ -166,12 +196,22 @@ describe("AppAuthService.login", () => {
     expect(result.tokenExpiresAt).toBeInstanceOf(Date);
     expect(result.account.email).toBe("user@example.com");
 
-    // Device was created (not updated) since no existing device
-    expect(prisma.device.create).toHaveBeenCalledOnce();
-    const createData = prisma.device.create.mock.calls[0][0].data;
-    expect(createData.deviceId).toBe("device-abc");
-    expect(createData.name).toBe("My Mac");
-    expect(createData.sessionJti).toBeTruthy();
+    // Login must use upsert (race-safe), never the find-then-create path
+    expect(prisma.device.upsert).toHaveBeenCalledOnce();
+    expect(prisma.device.create).not.toHaveBeenCalled();
+
+    const upsertArgs = prisma.device.upsert.mock.calls[0][0];
+    expect(upsertArgs.where.customerId_deviceId).toEqual({
+      customerId: "cust-1",
+      deviceId: "device-abc"
+    });
+    expect(upsertArgs.create.deviceId).toBe("device-abc");
+    expect(upsertArgs.create.name).toBe("My Mac");
+    expect(upsertArgs.create.sessionJti).toBeTruthy();
+
+    // One device row created
+    expect(devices).toHaveLength(1);
+    expect(devices[0].sessionJti).toBeTruthy();
   });
 
   it("second login with same deviceId updates (does not create duplicate)", async () => {
@@ -181,7 +221,7 @@ describe("AppAuthService.login", () => {
       sessionJti: "old-jti",
       status: "ACTIVE"
     });
-    const { appAuthService, prisma } = await makeAppAuthService({
+    const { appAuthService, prisma, devices } = await makeAppAuthService({
       devices: [existingDevice]
     });
 
@@ -191,14 +231,38 @@ describe("AppAuthService.login", () => {
       deviceId: "device-abc"
     });
 
-    // Should update, not create
+    // Upsert took the update branch — still exactly one device row
+    expect(prisma.device.upsert).toHaveBeenCalledOnce();
     expect(prisma.device.create).not.toHaveBeenCalled();
-    expect(prisma.device.update).toHaveBeenCalledOnce();
+    expect(devices).toHaveLength(1);
 
     // sessionJti should be updated (new login → new jti)
-    const updateData = prisma.device.update.mock.calls[0][0].data;
-    expect(updateData.sessionJti).toBeTruthy();
-    expect(updateData.sessionJti).not.toBe("old-jti");
+    expect(devices[0].sessionJti).toBeTruthy();
+    expect(devices[0].sessionJti).not.toBe("old-jti");
+  });
+
+  it("two concurrent logins on same (customerId, deviceId) both succeed without duplicates", async () => {
+    // Regression guard for the find-then-create TOCTOU: with upsert, neither
+    // login can hit an unhandled P2002 and the device row count stays at 1.
+    const { appAuthService, prisma, devices } = await makeAppAuthService();
+
+    const [r1, r2] = await Promise.all([
+      appAuthService.login({
+        email: "user@example.com",
+        password: "password123",
+        deviceId: "device-abc"
+      }),
+      appAuthService.login({
+        email: "user@example.com",
+        password: "password123",
+        deviceId: "device-abc"
+      })
+    ]);
+
+    expect(r1.token).toBeDefined();
+    expect(r2.token).toBeDefined();
+    expect(prisma.device.upsert).toHaveBeenCalledTimes(2);
+    expect(devices.filter(d => d.deviceId === "device-abc")).toHaveLength(1);
   });
 
   it("REVOKED device re-login reactivates to ACTIVE", async () => {
@@ -208,7 +272,7 @@ describe("AppAuthService.login", () => {
       status: "REVOKED",
       sessionJti: "revoked-jti"
     });
-    const { appAuthService, prisma } = await makeAppAuthService({
+    const { appAuthService, prisma, devices } = await makeAppAuthService({
       devices: [revokedDevice]
     });
 
@@ -218,9 +282,10 @@ describe("AppAuthService.login", () => {
       deviceId: "device-abc"
     });
 
-    // Should update with status ACTIVE
-    const updateData = prisma.device.update.mock.calls[0][0].data;
-    expect(updateData.status).toBe("ACTIVE");
+    // Upsert's update branch sets status ACTIVE
+    const upsertArgs = prisma.device.upsert.mock.calls[0][0];
+    expect(upsertArgs.update.status).toBe("ACTIVE");
+    expect(devices[0].status).toBe("ACTIVE");
   });
 
   it("token payload includes deviceId and typ=user-session", async () => {
@@ -350,6 +415,42 @@ describe("AppAuthService.heartbeat", () => {
         deviceId: "unknown-device"
       })
     ).rejects.toMatchObject({ response: { error: "SESSION_INVALID" } });
+  });
+
+  it("body deviceId ≠ token deviceId → 401 SESSION_INVALID", async () => {
+    const device = makeDevice({
+      customerId: "cust-1",
+      deviceId: "device-abc",
+      status: "ACTIVE",
+      sessionJti: "live-jti"
+    });
+    const { appAuthService, prisma } = await makeAppAuthService({
+      devices: [device]
+    });
+
+    await expect(
+      appAuthService.heartbeat({
+        customerId: "cust-1",
+        jti: "live-jti",
+        tokenDeviceId: "device-abc", // from JWT
+        deviceId: "device-OTHER" // from request body — mismatch
+      })
+    ).rejects.toThrow(UnauthorizedException);
+
+    try {
+      await appAuthService.heartbeat({
+        customerId: "cust-1",
+        jti: "live-jti",
+        tokenDeviceId: "device-abc",
+        deviceId: "device-OTHER"
+      });
+    } catch (err: any) {
+      expect(err.response.error).toBe("SESSION_INVALID");
+    }
+
+    // Mismatch is rejected before any DB access
+    expect(prisma.device.findUnique).not.toHaveBeenCalled();
+    expect(prisma.device.update).not.toHaveBeenCalled();
   });
 });
 

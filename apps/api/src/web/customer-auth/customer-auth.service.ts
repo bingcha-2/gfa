@@ -88,6 +88,19 @@ export class CustomerAuthService {
   }) {
     const email = dto.email.toLowerCase().trim();
 
+    // Preflight uniqueness check — avoid burning a bcrypt hash (~100ms) on a
+    // doomed registration. The P2002 catch below stays as the race-safe backstop.
+    const taken = await this.prisma.customer.findUnique({
+      where: { email },
+      select: { id: true }
+    });
+    if (taken) {
+      throw new ConflictException({
+        error: "EMAIL_TAKEN",
+        message: "An account with this email already exists"
+      });
+    }
+
     // Resolve inviter from referral code; unknown code is silently ignored
     let invitedById: string | undefined;
     if (dto.referralCode) {
@@ -178,11 +191,22 @@ export class CustomerAuthService {
       });
   }
 
-  async login(dto: { email: string; password: string }) {
-    const email = dto.email.toLowerCase().trim();
+  /**
+   * Validate email+password and return the RAW Customer row.
+   *
+   * Shared by web login and app login — app login needs id/email/tokenVersion/
+   * displayName to sign a device-bound token without a second findUnique
+   * (which would race with a concurrent password change).
+   *
+   * Throws the same structured errors as login():
+   *   unknown email / wrong password → 401 INVALID_CREDENTIALS (no enumeration)
+   *   DISABLED account → 403 ACCOUNT_DISABLED
+   */
+  async validateCredentials(email: string, password: string) {
+    const normalizedEmail = email.toLowerCase().trim();
 
     const customer = await this.prisma.customer.findUnique({
-      where: { email }
+      where: { email: normalizedEmail }
     });
 
     // Same error for unknown email and wrong password — no enumeration
@@ -193,7 +217,7 @@ export class CustomerAuthService {
       });
     }
 
-    const valid = await bcrypt.compare(dto.password, customer.passwordHash);
+    const valid = await bcrypt.compare(password, customer.passwordHash);
 
     if (!valid) {
       throw new UnauthorizedException({
@@ -208,6 +232,12 @@ export class CustomerAuthService {
         message: "This account has been disabled"
       });
     }
+
+    return customer;
+  }
+
+  async login(dto: { email: string; password: string }) {
+    const customer = await this.validateCredentials(dto.email, dto.password);
 
     const accessToken = this.tokenService.sign({
       customerId: customer.id,
@@ -259,7 +289,7 @@ export class CustomerAuthService {
     return { ok: true };
   }
 
-  async refresh(customerId: string, currentTokenVersion: number) {
+  async refresh(customerId: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId }
     });
@@ -462,6 +492,4 @@ export class CustomerAuthService {
 
     return { ok: true };
   }
-
-  sanitize = sanitizeCustomer;
 }
