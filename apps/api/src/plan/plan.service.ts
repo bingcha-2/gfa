@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -27,6 +28,8 @@ export interface PublicPlanShape {
 
 @Injectable()
 export class PlanService {
+  private readonly logger = new Logger(PlanService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ---- Shared validation helpers ----
@@ -62,6 +65,66 @@ export class PlanService {
     }
   }
 
+  /**
+   * Tri-state JSON column semantics for bucketLimits:
+   * null → clear the field (store DB NULL); object → validate values are
+   * positive integers, then stringify. (undefined is handled by callers: leave untouched.)
+   */
+  private normalizeBucketLimits(value: Record<string, number> | null): string | null {
+    if (value === null) return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new BadRequestException("bucketLimits must be an object map");
+    }
+    for (const [key, limit] of Object.entries(value)) {
+      if (!Number.isInteger(limit) || (limit as number) <= 0) {
+        throw new BadRequestException(
+          `bucketLimits["${key}"] must be a positive integer`
+        );
+      }
+    }
+    return JSON.stringify(value);
+  }
+
+  /**
+   * Tri-state JSON column semantics for levels:
+   * null → clear the field (store DB NULL); object → validate values are
+   * strings, then stringify. (undefined is handled by callers: leave untouched.)
+   */
+  private normalizeLevels(value: Record<string, string> | null): string | null {
+    if (value === null) return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new BadRequestException("levels must be an object map");
+    }
+    for (const [key, level] of Object.entries(value)) {
+      if (typeof level !== "string") {
+        throw new BadRequestException(`levels["${key}"] must be a string`);
+      }
+    }
+    return JSON.stringify(value);
+  }
+
+  /**
+   * Parse productEntitlements defensively — one corrupt row must not 500
+   * the whole public catalog. Falls back to [] for the bad row and logs it.
+   */
+  private parseProductsSafe(plan: { id: string; productEntitlements: string }): string[] {
+    try {
+      const parsed = JSON.parse(plan.productEntitlements);
+      if (!Array.isArray(parsed)) {
+        this.logger.error(
+          `Plan ${plan.id} has non-array productEntitlements; falling back to []`
+        );
+        return [];
+      }
+      return parsed;
+    } catch (err) {
+      this.logger.error(
+        `Plan ${plan.id} has corrupt productEntitlements JSON; falling back to []: ${err}`
+      );
+      return [];
+    }
+  }
+
   // ---- Public catalog ----
 
   async listPublic(): Promise<{ plans: PublicPlanShape[] }> {
@@ -77,7 +140,7 @@ export class PlanService {
         description: p.description,
         priceCents: p.priceCents,
         durationDays: p.durationDays,
-        products: JSON.parse(p.productEntitlements) as string[],
+        products: this.parseProductsSafe(p),
         deviceLimit: p.deviceLimit,
         weight: p.weight,
         sortOrder: p.sortOrder,
@@ -118,8 +181,10 @@ export class PlanService {
     };
 
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.bucketLimits !== undefined) data.bucketLimits = JSON.stringify(dto.bucketLimits);
-    if (dto.levels !== undefined) data.levels = JSON.stringify(dto.levels);
+    if (dto.bucketLimits !== undefined) {
+      data.bucketLimits = this.normalizeBucketLimits(dto.bucketLimits);
+    }
+    if (dto.levels !== undefined) data.levels = this.normalizeLevels(dto.levels);
     if (dto.weeklyTokenLimit !== undefined) data.weeklyTokenLimit = dto.weeklyTokenLimit;
 
     return this.prisma.plan.create({ data });
@@ -148,8 +213,10 @@ export class PlanService {
     if (dto.priceCents !== undefined) data.priceCents = dto.priceCents;
     if (dto.durationDays !== undefined) data.durationDays = dto.durationDays;
     if (dto.products !== undefined) data.productEntitlements = JSON.stringify(dto.products);
-    if (dto.bucketLimits !== undefined) data.bucketLimits = JSON.stringify(dto.bucketLimits);
-    if (dto.levels !== undefined) data.levels = JSON.stringify(dto.levels);
+    if (dto.bucketLimits !== undefined) {
+      data.bucketLimits = this.normalizeBucketLimits(dto.bucketLimits);
+    }
+    if (dto.levels !== undefined) data.levels = this.normalizeLevels(dto.levels);
     if (dto.weight !== undefined) data.weight = dto.weight;
     if (dto.deviceLimit !== undefined) data.deviceLimit = dto.deviceLimit;
     if (dto.weeklyTokenLimit !== undefined) data.weeklyTokenLimit = dto.weeklyTokenLimit;

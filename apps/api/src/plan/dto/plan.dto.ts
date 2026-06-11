@@ -36,15 +36,22 @@ export class CreatePlanDto {
   @IsString({ each: true })
   products!: string[];
 
-  /** Optional per-model caps: { [model: string]: number } */
+  /**
+   * Optional per-model caps: { [model: string]: number }.
+   * Tri-state: undefined = leave default, null = store DB NULL, object = stringify.
+   * Note: @IsOptional skips validators for null, so the service enforces value rules.
+   */
   @IsOptional()
   @IsObject()
-  bucketLimits?: Record<string, number>;
+  bucketLimits?: Record<string, number> | null;
 
-  /** Optional per-product plan levels: { [product: string]: string } */
+  /**
+   * Optional per-product plan levels: { [product: string]: string }.
+   * Tri-state: undefined = leave default, null = store DB NULL, object = stringify.
+   */
   @IsOptional()
   @IsObject()
-  levels?: Record<string, string>;
+  levels?: Record<string, string> | null;
 
   @IsInt()
   @Min(1)
@@ -99,13 +106,15 @@ export class UpdatePlanDto {
   @IsString({ each: true })
   products?: string[];
 
+  /** Tri-state: undefined = leave untouched, null = clear (DB NULL), object = stringify. */
   @IsOptional()
   @IsObject()
-  bucketLimits?: Record<string, number>;
+  bucketLimits?: Record<string, number> | null;
 
+  /** Tri-state: undefined = leave untouched, null = clear (DB NULL), object = stringify. */
   @IsOptional()
   @IsObject()
-  levels?: Record<string, string>;
+  levels?: Record<string, string> | null;
 
   @IsOptional()
   @IsInt()

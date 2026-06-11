@@ -6,10 +6,17 @@
  * 2. Create: valid payload persists; invalid product rejected; duplicates rejected; weight 0/9 rejected; priceCents -1 rejected
  * 3. Update: partial patch updates only sent fields; invalid patch rejected
  * 4. Delete: unreferenced plan deletes; Subscription reference → 409; PlanOrder reference → 409
+ * 5. JSON column tri-state semantics: object = set, null = clear (DB NULL), undefined = leave untouched
+ * 6. listPublic resilience: one corrupt productEntitlements row must not 500 the catalog
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 
 import { PlanService } from "./plan.service";
 
@@ -392,5 +399,183 @@ describe("PlanService.delete", () => {
     });
 
     await expect(service.delete("non-existent")).rejects.toThrow(NotFoundException);
+  });
+});
+
+// ---- 5. JSON column tri-state semantics (set / clear / leave) ----
+
+describe("PlanService JSON column null-clear semantics", () => {
+  function makeUpdateService() {
+    const existing = makePlan({
+      bucketLimits: JSON.stringify({ legacy: 1 }),
+      levels: JSON.stringify({ antigravity: "old" }),
+    });
+    return makeService({
+      plan: {
+        findUnique: vi.fn().mockResolvedValue(existing),
+        update: vi.fn().mockResolvedValue(existing),
+      },
+    });
+  }
+
+  describe("bucketLimits transitions on update", () => {
+    it("set: object value is stringified into the column", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { bucketLimits: { gpt4: 100 } } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect(data.bucketLimits).toBe(JSON.stringify({ gpt4: 100 }));
+    });
+
+    it("clear: explicit null stores DB NULL, not the string 'null'", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { bucketLimits: null } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect(data.bucketLimits).toBeNull();
+      expect(data.bucketLimits).not.toBe("null");
+    });
+
+    it("leave: omitting the field keeps the column untouched", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { name: "Renamed" } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect("bucketLimits" in data).toBe(false);
+    });
+  });
+
+  describe("levels transitions on update", () => {
+    it("set: object value is stringified into the column", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { levels: { codex: "plus" } } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect(data.levels).toBe(JSON.stringify({ codex: "plus" }));
+    });
+
+    it("clear: explicit null stores DB NULL, not the string 'null'", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { levels: null } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect(data.levels).toBeNull();
+      expect(data.levels).not.toBe("null");
+    });
+
+    it("leave: omitting the field keeps the column untouched", async () => {
+      const { prisma, service } = makeUpdateService();
+
+      await service.update("plan-1", { name: "Renamed" } as any);
+
+      const data = prisma.plan.update.mock.calls[0][0].data;
+      expect("levels" in data).toBe(false);
+    });
+  });
+
+  it("create: null bucketLimits/levels store DB NULL, not the string 'null'", async () => {
+    const { prisma, service } = makeService({
+      plan: { create: vi.fn().mockResolvedValue(makePlan()) },
+    });
+
+    await service.create({
+      name: "Null JSON Plan",
+      priceCents: 100,
+      durationDays: 30,
+      products: ["codex"],
+      weight: 1,
+      deviceLimit: 1,
+      active: true,
+      sortOrder: 0,
+      bucketLimits: null,
+      levels: null,
+    } as any);
+
+    const data = prisma.plan.create.mock.calls[0][0].data;
+    expect(data.bucketLimits ?? null).toBeNull();
+    expect(data.bucketLimits).not.toBe("null");
+    expect(data.levels ?? null).toBeNull();
+    expect(data.levels).not.toBe("null");
+  });
+
+  it("rejects bucketLimits values that are not positive integers", async () => {
+    const { service } = makeUpdateService();
+
+    await expect(
+      service.update("plan-1", { bucketLimits: { gpt4: 0 } } as any)
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.update("plan-1", { bucketLimits: { gpt4: -5 } } as any)
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.update("plan-1", { bucketLimits: { gpt4: 1.5 } } as any)
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it("rejects levels values that are not strings", async () => {
+    const { service } = makeUpdateService();
+
+    await expect(
+      service.update("plan-1", { levels: { antigravity: 7 } } as any)
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+// ---- 6. listPublic corrupt-JSON resilience ----
+
+describe("PlanService.listPublic corrupt-JSON resilience", () => {
+  it("returns remaining plans and [] products for a corrupt row, without throwing", async () => {
+    const errorSpy = vi.spyOn(Logger.prototype, "error").mockImplementation(() => {});
+
+    const good = makePlan({
+      id: "plan-good",
+      productEntitlements: JSON.stringify(["codex", "anthropic"]),
+    });
+    const corrupt = makePlan({
+      id: "plan-corrupt",
+      productEntitlements: "{not-valid-json",
+    });
+    const { service } = makeService({
+      plan: { findMany: vi.fn().mockResolvedValue([good, corrupt]) },
+    });
+
+    const result = await service.listPublic();
+
+    expect(result.plans).toHaveLength(2);
+    expect(result.plans.find((p) => p.id === "plan-good")!.products).toEqual([
+      "codex",
+      "anthropic",
+    ]);
+    expect(result.plans.find((p) => p.id === "plan-corrupt")!.products).toEqual([]);
+
+    // The corrupt row must be logged, not silently degraded
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("plan-corrupt"));
+
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to [] when productEntitlements parses to a non-array", async () => {
+    const errorSpy = vi.spyOn(Logger.prototype, "error").mockImplementation(() => {});
+
+    const nonArray = makePlan({
+      id: "plan-nonarray",
+      productEntitlements: JSON.stringify({ oops: true }),
+    });
+    const { service } = makeService({
+      plan: { findMany: vi.fn().mockResolvedValue([nonArray]) },
+    });
+
+    const result = await service.listPublic();
+
+    expect(result.plans).toHaveLength(1);
+    expect(result.plans[0].products).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("plan-nonarray"));
+
+    errorSpy.mockRestore();
   });
 });
