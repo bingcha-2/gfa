@@ -118,7 +118,6 @@ func GetUpdater() *Updater {
 // updaterHttpDo 执行 HTTP 请求：依次尝试主域名 → 备域名（bcai_hosts.go），
 // 每个域名内部再做 直连 → 代理 回退。仅 GET（无 body），每次重建 request。
 func updaterHttpDo(req *http.Request) (*http.Response, error) {
-	cfg := LoadConfig()
 	var lastErr error
 	for _, rawURL := range bcaiURLCandidates(req.URL.String()) {
 		// 直连（和 leaser 等对 bcai 的请求保持一致）
@@ -135,14 +134,14 @@ func updaterHttpDo(req *http.Request) (*http.Response, error) {
 			lastErr = derr
 		}
 
-		// 回退到系统代理 / 用户配置的上游代理
+		// 回退到系统代理
 		proxyReq, err := http.NewRequest(req.Method, rawURL, nil)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		proxyReq.Header = req.Header
-		if resp, perr := createHttpClient(cfg.UpstreamProxy).Do(proxyReq); perr == nil {
+		if resp, perr := createHttpClient("").Do(proxyReq); perr == nil {
 			return resp, nil
 		} else {
 			Log("[updater] Proxy request to %s failed (%v)", rawURL, perr)

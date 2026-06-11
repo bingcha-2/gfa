@@ -9,13 +9,12 @@ import (
 )
 
 type Config struct {
-	AccountCard   string `json:"accountCard"`
-	DeviceId      string `json:"deviceId"`
-	ProxyPort     int    `json:"proxyPort"`
-	UpstreamProxy string `json:"upstreamProxy"`
-	IDEPath       string `json:"idePath"` // 用户自定义 IDE 安装路径（留空则自动检测）
-	HubPath       string `json:"hubPath"` // 用户自定义 Hub 安装路径（留空则自动检测）
-	CodexAppPath  string `json:"codexAppPath"`
+	AccountCard  string `json:"accountCard"`
+	DeviceId     string `json:"deviceId"`
+	ProxyPort    int    `json:"proxyPort"`
+	IDEPath      string `json:"idePath"` // 用户自定义 IDE 安装路径（留空则自动检测）
+	HubPath      string `json:"hubPath"` // 用户自定义 Hub 安装路径（留空则自动检测）
+	CodexAppPath string `json:"codexAppPath"`
 	// 用户自定义 Claude 桌面端可执行文件路径(留空则自动检测)。逃生口:自动检测漏掉
 	// 非标准安装/提权导致 %LOCALAPPDATA% 偏移时,用户可手动指定,无需 Claude 先开着。
 	ClaudeDesktopPath string `json:"claudeDesktopPath"`
@@ -67,10 +66,9 @@ func configFilePath() string {
 
 func DefaultConfig() Config {
 	return Config{
-		AccountCard:   "",
-		DeviceId:      "",
-		ProxyPort:     DefaultProxyPort,
-		UpstreamProxy: "",
+		AccountCard: "",
+		DeviceId:    "",
+		ProxyPort:   DefaultProxyPort,
 	}
 }
 
