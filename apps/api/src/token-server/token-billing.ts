@@ -12,6 +12,8 @@ import {
   modelFamily,
   bucketKey,
   bucketLabel as composeBucketLabel,
+  productOfBucket,
+  quotaWeightFor,
 } from '../lease-core/product-bucket';
 
 // Re-exported from the single naming/mapping source (lease-core/product-bucket).
@@ -251,9 +253,9 @@ export function recentBucketUsage(record: any, now = Date.now()): Map<string, nu
   resetWindowIfExpired(record, now);
   const out = new Map<string, number>();
   for (const item of record.tokenUsageEvents || []) {
-    const billable = billableTokenUsageTotal(item, item?.modelKey);
     const bucket = eventBucket(item);
-    out.set(bucket, (out.get(bucket) || 0) + billable);
+    // anthropic/codex → CU(加权);antigravity → 原始(eventUsageForLimit 内部按产品分流)。
+    out.set(bucket, (out.get(bucket) || 0) + eventUsageForLimit(item));
   }
   return out;
 }
@@ -296,6 +298,34 @@ export function billableTokenUsageTotal(usage: any = {}, modelKey = ''): number 
     billable = rawTotalTokens || reportedTotalTokens || inputTokens + outputTokens;
   }
   return billable;
+}
+
+/**
+ * 一条用量事件的 **CU(加权成本,Opus 等价单元)**。按事件真实 modelKey 取档位权重。
+ * input 为 gross(computeUsageDetail 已 normalizeUsageToGross,netInput=input-cached)。
+ * 无 input/output 拆分的异常/legacy 事件 → 退回原始计费,不臆测方向(避免把总量当输出 8× 高估)。
+ */
+export function eventWeightedCost(item: any = {}): number {
+  const inputTokens = readTokenCount(item?.inputTokens);
+  const outputTokens = readTokenCount(item?.outputTokens);
+  if (inputTokens === 0 && outputTokens === 0) {
+    return billableTokenUsageTotal(item, String(item?.modelKey || ''));
+  }
+  const cachedInputTokens = readTokenCount(item?.cachedInputTokens) || readTokenCount(item?.cachedTokens);
+  const w = quotaWeightFor(String(item?.modelKey || '') || eventBucket(item));
+  const netInput = Math.max(0, inputTokens - cachedInputTokens);
+  return netInput * w.input + outputTokens * w.output + cachedInputTokens * w.cache;
+}
+
+/**
+ * 用量事件对「每卡额度上限」的计数口径:
+ *   anthropic / codex 桶 → CU(加权),与"上限数字即 CU"匹配;
+ *   其余(antigravity:gemini 与 antigravity-claude)→ 原始计费(维持历史 raw + ×5 倍率,未在本轮改造范围)。
+ */
+export function eventUsageForLimit(item: any = {}): number {
+  const product = productOfBucket(eventBucket(item));
+  if (product === 'anthropic' || product === 'codex') return eventWeightedCost(item);
+  return billableTokenUsageTotal(item, String(item?.modelKey || ''));
 }
 
 /**
@@ -490,9 +520,8 @@ export function recentWeeklyBucketUsage(record: any, now = Date.now()): Map<stri
   resetWeeklyWindowIfExpired(record, now);
   const out = new Map<string, number>();
   for (const item of record.weeklyTokenUsageEvents || []) {
-    const billable = billableTokenUsageTotal(item, item?.modelKey);
     const bucket = eventBucket(item);
-    out.set(bucket, (out.get(bucket) || 0) + billable);
+    out.set(bucket, (out.get(bucket) || 0) + eventUsageForLimit(item));
   }
   return out;
 }

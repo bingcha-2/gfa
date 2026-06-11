@@ -1,7 +1,8 @@
 import { QUOTA_WEIGHTS as SHARED_WEIGHTS } from "@gfa/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FairShareTracker } from "../fair-share-tracker";
+import { claudeModelTier } from "../../lease-core/product-bucket";
+import { FairShareTracker, weeklyBucketKey } from "../fair-share-tracker";
 
 // weightedCost 约定:input 为 gross(含 cached,经 normalizeUsageToGross 归一),
 // 故内部取 netInput = max(0, input - cached) 再加权,避免缓存被双算。
@@ -167,6 +168,148 @@ describe("FairShareTracker.getCardWindowUsed", () => {
     t.recordUsage(1, "c1", "anthropic-claude", 0, 10, 0); // 10*5=50
     expect(t.getCardWindowUsed(1, "c1")).toBeCloseTo(150, 5);
     expect(t.getCardWindowUsed(1, "absent")).toBe(0);
+  });
+});
+
+// ── 按 Claude 模型档位计价(方案 A:成本加权单桶)──────────────────────────────
+// 用线上真实上报的 modelKey 串做固件,确保版本/日期/-thinking 后缀、fable、自动补全
+// 都被正确归档。weightedCost(input=100, output=10, cached=0) → net=100:
+//   opus {1,5,0.1}=150 / sonnet {0.6,3,0.06}=90 / haiku {0.2,1,0.02}=30 /
+//   fable {2,10,0.2}=300(恰为 Opus 2×) / autocomplete {0.02,0.08,..}=2.8
+describe("claudeModelTier:线上真实上报串归档", () => {
+  it.each([
+    ["claude-opus-4-8", "opus"],
+    ["claude-opus-4-6-thinking", "opus"], // -thinking 别名 → 仍按 opus(思考已计入 output)
+    ["claude-fable-5", "fable"],
+    ["claude-haiku-4-5-20251001", "haiku"], // 日期后缀忽略
+    ["claude-opus-4-6", "opus"],
+    ["claude-sonnet-4-6", "sonnet"],
+    ["claude-opus-4-7", "opus"],
+    ["tab_flash_lite_preview", "autocomplete"], // 自动补全,不再被当 Opus
+    ["tab_jump_flash_lite_preview", "autocomplete"],
+  ] as const)("%s → %s", (modelKey, tier) => {
+    expect(claudeModelTier(modelKey)).toBe(tier);
+  });
+
+  it("未知 claude 别名兜底为 unknown(计价侧按 Opus)", () => {
+    expect(claudeModelTier("claude-mystery-9")).toBe("unknown");
+  });
+});
+
+describe("weightedCost:按 Claude 档位单价", () => {
+  it.each([
+    ["claude-opus-4-8", 150],
+    ["claude-opus-4-6-thinking", 150], // 深度模式不额外加价(输出已含思考)
+    ["claude-opus-4-6", 150],
+    ["claude-opus-4-7", 150],
+    ["claude-sonnet-4-6", 90],
+    ["claude-haiku-4-5-20251001", 30],
+    ["claude-fable-5", 300], // 恰为 Opus 的 2×
+    ["tab_flash_lite_preview", 2.8],
+    ["tab_jump_flash_lite_preview", 2.8],
+  ] as const)("%s → %d", (modelKey, expected) => {
+    expect(FairShareTracker.weightedCost(modelKey, 100, 10, 0)).toBeCloseTo(expected, 5);
+  });
+
+  it("fable 恒为同口径 opus 的 2×(含 input/output/cache)", () => {
+    const opus = FairShareTracker.weightedCost("claude-opus-4-8", 500, 120, 200);
+    const fable = FairShareTracker.weightedCost("claude-fable-5", 500, 120, 200);
+    expect(fable).toBeCloseTo(opus * 2, 5);
+  });
+
+  it("未知 claude 别名按 Opus 计(与历史 anthropic-claude 桶一致)", () => {
+    const unknown = FairShareTracker.weightedCost("claude-mystery-9", 230, 10, 80);
+    const legacyBucket = FairShareTracker.weightedCost("anthropic-claude", 230, 10, 80);
+    expect(unknown).toBeCloseTo(legacyBucket, 5);
+    expect(unknown).toBeCloseTo(208, 5);
+  });
+});
+
+describe("recordUsage:按 modelKey 计权,同账号 Claude 共享一个桶", () => {
+  it("传 modelKey 时按档位计价;Opus 比 Haiku 多扣份额", () => {
+    const t = new FairShareTracker({
+      getAccountPlanType: () => "max", getBoundCardIds: () => [], getCardWeight: () => 1,
+      accountShareCapacity: 8, now: () => 1_700_000_000_000,
+    });
+    // 同一个 anthropic-claude 桶,不同模型 → 不同加权成本
+    t.recordUsage(1, "opusCard", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");   // 150
+    t.recordUsage(1, "haikuCard", "anthropic-claude", 100, 10, 0, "claude-haiku-4-5"); // 30
+    const st = t.getBucketStateForTesting(1, "anthropic-claude");
+    expect(st?.perCard.opusCard).toBeCloseTo(150, 5);
+    expect(st?.perCard.haikuCard).toBeCloseTo(30, 5);
+    expect(st?.totalUsed).toBeCloseTo(180, 5);
+  });
+});
+
+// ── 阶段 2:自动补全不计额度 + 5h/周双窗口公平份额 ────────────────────────────
+function makeClaudeTracker(now: () => number, trackWeekly: boolean) {
+  return new FairShareTracker({
+    getAccountPlanType: () => "max", getBoundCardIds: () => [], getCardWeight: () => 1,
+    accountShareCapacity: 8, trackWeekly, now,
+  });
+}
+
+describe("自动补全(tab_*/flash_lite)不消耗额度", () => {
+  it("autocomplete 档不记入任何窗口,也不创建 tracker", () => {
+    const t = makeClaudeTracker(() => 1_700_000_000_000, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "tab_flash_lite_preview");
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "tab_jump_flash_lite_preview");
+    expect(t.getCardWindowUsed(1, "c1")).toBe(0);
+    expect(t.getBucketStateForTesting(1, "anthropic-claude")).toBeNull();
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
+    // 正常模型仍照常计入
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
+    expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(150, 5);
+  });
+});
+
+describe("周窗口公平份额(trackWeekly)", () => {
+  const T = 1_700_000_000_000;
+  const FIVE_H = 5 * 60 * 60 * 1000;
+
+  it("每笔成本同时累计到 5h 与周两个独立窗口", () => {
+    const t = makeClaudeTracker(() => T, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8"); // 150
+    expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(150, 5);
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))?.perCard.c1).toBeCloseTo(150, 5);
+  });
+
+  it("跨 5h 边界:5h 窗口归零,周窗口累计保留", () => {
+    let now = T;
+    const t = makeClaudeTracker(() => now, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8"); // 150 / 150
+    now = T + FIVE_H + 1; // 过 5h
+    t.recordUsage(1, "c1", "anthropic-claude", 0, 2, 0, "claude-opus-4-8"); // +10:5h 重置后=10,周=160
+    expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(10, 5);
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))?.perCard.c1).toBeCloseTo(160, 5);
+    // getCardWindowUsed 只统计 5h,不与周双算
+    expect(t.getCardWindowUsed(1, "c1")).toBeCloseTo(10, 5);
+  });
+
+  it("周份额用完即拦,即便 5h 窗口仍宽松(reason 标注本周)", () => {
+    const t = makeClaudeTracker(() => T, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // cost 500 → 5h & 周
+    // 上游周剩余 50%:周预算反推 = 500/0.5 = 1000;每卡 = 1000 × 1/8 = 125;已用 500 ≥ 125 → 拦
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5);
+    const r = t.checkFairShare(1, "c1", "anthropic-claude");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("本周");
+  });
+});
+
+describe("trackWeekly 默认关闭:行为与历史一致(antigravity)", () => {
+  it("不创建周窗口,周喂数据方法 no-op", () => {
+    const T = 1_700_000_000_000;
+    const t = new FairShareTracker({
+      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      accountShareCapacity: 8, now: () => T, // 无 trackWeekly
+    });
+    t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
+    expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(150, 5);
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // no-op
+    t.confirmWeeklyBudget(1, "anthropic-claude"); // no-op
+    expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
   });
 });
 

@@ -72,6 +72,13 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
           provider.id, planType, bucketFamily(bucket),
         );
       },
+      // Codex 上游有 5h + 周双限额 → 启用周公平份额第二层窗口。
+      trackWeekly: true,
+      getLearnedWeeklyBudget: (planType: string, bucket: string) => {
+        return quotaProfileTracker.getLearnedBudgetWeekly(
+          provider.id, planType, bucketFamily(bucket),
+        );
+      },
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,

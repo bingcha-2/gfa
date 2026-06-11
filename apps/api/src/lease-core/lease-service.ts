@@ -6,7 +6,7 @@ import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
-import { QuotaProfileTracker } from "./quota-profile-tracker";
+import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
@@ -410,6 +410,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       product: this.provider.id,
       // 绑定卡:限额窗口对齐绑定账号的上游刷新窗口(每桶);号池卡返回 0 → 走固定周期。
       alignedResetAt: (record: any) => this.boundAccountResetAt(record, modelKey),
+      // 派生周上限(anthropic/codex)用的 5h/周 换算比 R。回调解 record→R 的鸡生蛋。
+      weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
     });
     // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
     if (auth.limitExceeded) {
@@ -616,6 +618,24 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return getModelQuotaResetAt(account as any, modelKey);
   }
 
+  /**
+   * 派生周上限用的 5h/周 换算比 R:卡设置框(weeklyRatio>0) > 后台学习(weekly/5h) > 全局默认。
+   * 池子卡无固定账号 → 按最高档假定(claude=max / gpt=pro);绑卡用绑定账号的真实 plan。
+   */
+  private resolveWeeklyRatio(record: any, modelKey: string): number {
+    const cardR = Number(record?.weeklyRatio || 0);
+    if (cardR > 0) return cardR;
+    const family = familyOfBucket(bucketKey(this.provider.id, modelKey));
+    const topPlan = family === "gpt" ? "pro" : "max";
+    let plan = topPlan;
+    const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
+    if (boundId > 0) {
+      const acct = this.readAccounts().find((a) => a.id === boundId) as any;
+      plan = String(acct?.planType || "").trim() || topPlan;
+    }
+    return this.quotaProfileTracker?.getWeeklyToShortRatio(this.provider.id, plan, family) ?? DEFAULT_WEEKLY_RATIO;
+  }
+
   private boundUnavailableMessage(boundAccountId: number): string {
     const acct = this.readAccounts().find((a) => a.id === boundAccountId);
     if (!acct || (acct as any).enabled === false) {
@@ -797,6 +817,23 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             }
           }
         }
+        // Fair-share 周窗口:用通用 quotaSnapshotInputs 的 weeklyPercent/weeklyResetAt 喂周预算
+        // 估计 + 对齐上游周 reset。仅 codex/anthropic 提供 weekly(antigravity 为空→跳过);
+        // updateWeeklyBudgetEstimate/syncWeeklyWindow 内部受 trackWeekly 门控,关闭线自动 no-op。
+        if (this.provider.quotaSnapshotInputs) {
+          for (const inp of this.provider.quotaSnapshotInputs(account as TAccount)) {
+            const wpRaw = Number(inp.weeklyPercent);
+            if (inp.weeklyPercent == null || !Number.isFinite(wpRaw)) continue;
+            // weeklyPercent 通常是 0..100(剩余 %);防御性兼容已是 0..1 的情况。
+            const fraction = wpRaw > 1 ? Math.min(1, wpRaw / 100) : Math.max(0, wpRaw);
+            const bucket = bucketKey(this.provider.id, inp.modelKey);
+            this.fairShareTracker.updateWeeklyBudgetEstimate(accountId, bucket, fraction);
+            const wReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
+            if (Number.isFinite(wReset) && wReset > 0) {
+              this.fairShareTracker.syncWeeklyWindow(accountId, bucket, wReset);
+            }
+          }
+        }
       }
     }
 
@@ -823,6 +860,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         this.fairShareTracker.recordUsage(
           accountId, cardId, bucket,
           detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
+          modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
         );
       }
     }
@@ -901,6 +939,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           if (this.fairShareTracker && status === 429) {
             const bucket = bucketKey(this.provider.id, modelKey);
             this.fairShareTracker.confirmBudget(accountId, bucket);
+            // 「周」429:上游 retry-after 远超 5h → 周限额触顶,额外把周预算钉到当前周已用。
+            // confirmWeeklyBudget 内部受 trackWeekly 门控,无周窗口的线(antigravity)自动 no-op。
+            if (retryAfterMs > 5 * 60 * 60 * 1000) {
+              this.fairShareTracker.confirmWeeklyBudget(accountId, bucket);
+            }
             // Record exhaustion sample for quota profile learning
             if (this.quotaProfileTracker) {
               const state = this.fairShareTracker.getTrackerState(accountId, bucket);

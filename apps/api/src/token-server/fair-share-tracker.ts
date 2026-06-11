@@ -13,9 +13,14 @@
  *   - Confirmed by 429: estimatedBudget = totalUsed at trigger time
  */
 
-import { QUOTA_WEIGHTS, type Family } from "@gfa/shared";
+import { QUOTA_WEIGHTS } from "@gfa/shared";
 
-import { bucketFamily } from "../lease-core/product-bucket";
+import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/product-bucket";
+import { DEFAULT_WEEKLY_RATIO } from "../lease-core/quota-profile-tracker";
+
+// quotaWeightFor 已迁至 product-bucket(供 token-billing 的静态封顶复用,避免
+// token-billing ↔ fair-share 循环依赖)。此处 re-export 兼容既有引用点。
+export { quotaWeightFor };
 
 // ── Weight constants (derived from the shared pricing source) ───────────────
 
@@ -49,7 +54,27 @@ const DEFAULT_BUDGETS: Record<string, Record<string, number>> = {
   free:       { gemini:    50_000, claude:    20_000, gpt:    20_000 },
 };
 
-const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
+const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours(短窗口/5h)
+const WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days(长窗口/周)
+/** 周默认预算 = 5h 默认预算 × 该系数(冷启动初值,之后被学到的 weekly 预算 / weeklyPercent
+ *  反推 / 周 429 实测覆盖)。系数 = 全局默认 R(env BCAI_WEEKLY_RATIO_DEFAULT,默认 5)。 */
+const WEEKLY_BUDGET_MULTIPLIER = DEFAULT_WEEKLY_RATIO;
+/** 周窗口在内存/持久化里用「桶名 + 该后缀」作为独立 key,复用同一套 tracker 逻辑与 DB 列
+ *  (无需加库表字段)。后缀编码 scope,load 时据此还原窗口长度。 */
+const WEEKLY_SUFFIX = "::weekly";
+
+/** 某桶对应的周窗口 key。 */
+export function weeklyBucketKey(bucket: string): string {
+  return `${bucket}${WEEKLY_SUFFIX}`;
+}
+/** 该 key 是否是周窗口(用于求和/血条时排除,避免与 5h 双算)。 */
+export function isWeeklyBucketKey(bucket: string): boolean {
+  return bucket.endsWith(WEEKLY_SUFFIX);
+}
+/** 去掉周后缀,取回基础桶名(用于 family/learned-budget 查表)。 */
+function baseBucketOf(bucket: string): string {
+  return isWeeklyBucketKey(bucket) ? bucket.slice(0, -WEEKLY_SUFFIX.length) : bucket;
+}
 
 /** Periodic batch-write interval for FairShareWindow persistence (ms). */
 const FLUSH_INTERVAL_MS = 30_000;
@@ -57,6 +82,8 @@ const FLUSH_INTERVAL_MS = 30_000;
 // ── Types ───────────────────────────────────────────────────────────────────
 
 interface BucketTracker {
+  /** 本 tracker 的窗口长度(5h 或 7d)。由 key 是否带周后缀决定。 */
+  windowMs: number;
   windowStart: number;
   estimatedBudget: number;
   confidence: 'default' | 'estimated' | 'confirmed';
@@ -83,6 +110,11 @@ export interface FairShareTrackerOptions {
   /** Optional: retrieve a learned budget from QuotaProfileTracker.
    *  Returns the learned 5h budget in weighted units, or 0 if unknown. */
   getLearnedBudget?: (planType: string, bucket: string) => number;
+  /** Optional: learned **weekly** budget(加权单元),0 = 未知。仅有周窗口的线启用。 */
+  getLearnedWeeklyBudget?: (planType: string, bucket: string) => number;
+  /** 是否启用「周公平份额」第二层窗口。codex/anthropic 上游有 5h+周双限额 → true;
+   *  antigravity 仅 5h(每模型)→ false(默认)。关闭时行为与历史完全一致。 */
+  trackWeekly?: boolean;
   /** PrismaService for FairShareWindow persistence. Omit to disable persistence. */
   prisma?: any;
   /** Provider id (antigravity | codex | anthropic) — partitions persisted rows. */
@@ -100,6 +132,7 @@ export class FairShareTracker {
   private readonly prisma: any;
   private readonly providerId: string;
   private readonly nowFn: () => number;
+  private readonly trackWeekly: boolean;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private dirty = false;
 
@@ -108,6 +141,7 @@ export class FairShareTracker {
     this.prisma = opts.prisma ?? null;
     this.providerId = opts.provider || "";
     this.nowFn = opts.now || Date.now;
+    this.trackWeekly = opts.trackWeekly === true;
     if (this.prisma && this.providerId) {
       this.flushTimer = setInterval(() => {
         void this.flush();
@@ -117,14 +151,16 @@ export class FairShareTracker {
 
   // ── Public API ──────────────────────────────────────────────────────────
 
-  /** Calculate weighted token cost for a single request. */
+  /** Calculate weighted token cost for a single request. `modelOrBucket` 优先传真实
+   *  modelKey(按 Claude 档位精确计价);兼容传 bucket(旧调用,gemini/gpt 不变、
+   *  Claude 桶名落 Opus)。详见 quotaWeightFor。 */
   static weightedCost(
-    bucket: string,
+    modelOrBucket: string,
     inputTokens: number,
     outputTokens: number,
     cachedInputTokens: number,
   ): number {
-    const w = QUOTA_WEIGHTS[bucketFamily(bucket) as Family] || QUOTA_WEIGHTS.gemini;
+    const w = quotaWeightFor(modelOrBucket);
     // inputTokens 为 gross(含 cached,经 normalizeUsageToGross 归一)。取 netInput 去掉
     // 缓存部分,避免缓存被 input 权重 + cache 权重双算(Gemini 之前 1.25x)。
     const netInput = Math.max(0, inputTokens - cachedInputTokens);
@@ -139,11 +175,22 @@ export class FairShareTracker {
     inputTokens: number,
     outputTokens: number,
     cachedInputTokens: number,
+    modelKey?: string,
   ): void {
-    const tracker = this.getOrCreate(accountId, bucket);
-    this.ensureWindow(tracker, this.nowFn());
-    const cost = FairShareTracker.weightedCost(bucket, inputTokens, outputTokens, cachedInputTokens);
-    tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
+    // 自动补全(tab_* / flash_lite)不消耗额度:直接不计入任何窗口。
+    if (modelKey && claudeModelTier(modelKey) === "autocomplete") return;
+    // 桶名仍是 tracker 的 key(同账号 Claude 共享一个预算/窗口);权重则按真实 modelKey
+    // 取档位单价。未传 modelKey 时退回 bucket(向后兼容,与历史行为一致)。
+    const cost = FairShareTracker.weightedCost(modelKey || bucket, inputTokens, outputTokens, cachedInputTokens);
+    if (cost <= 0) return;
+    const now = this.nowFn();
+    // 记入 5h 窗口;若启用周窗口,同一笔成本也累计到周窗口(独立 key、独立预算/reset)。
+    const keys = this.trackWeekly ? [bucket, weeklyBucketKey(bucket)] : [bucket];
+    for (const key of keys) {
+      const tracker = this.getOrCreate(accountId, key);
+      this.ensureWindow(tracker, now);
+      tracker.perCard.set(cardId, (tracker.perCard.get(cardId) || 0) + cost);
+    }
     this.dirty = true;
   }
 
@@ -156,7 +203,7 @@ export class FairShareTracker {
    */
   syncWindow(accountId: number, bucket: string, resetTimeMs: number): void {
     const tracker = this.getOrCreate(accountId, bucket);
-    const windowStart = resetTimeMs - WINDOW_MS;
+    const windowStart = resetTimeMs - tracker.windowMs;
     // Only reset if the window start actually changed (> 60s drift tolerance)
     if (Math.abs(windowStart - tracker.windowStart) > 60_000) {
       tracker.windowStart = windowStart;
@@ -227,9 +274,23 @@ export class FairShareTracker {
     }
   }
 
-  /** Check if a card is within its fair share. Called before granting a lease. */
+  /** Check if a card is within its fair share. Called before granting a lease.
+   *  同时校验 5h 与周(若启用)两个窗口,任一超额即拦;remainingFraction 取两者较小。 */
   checkFairShare(accountId: number, cardId: string, bucket: string): FairShareCheck {
-    const tracker = this.trackers.get(accountId)?.get(bucket);
+    const short = this.checkWindow(accountId, cardId, bucket);
+    if (!this.trackWeekly) return short;
+    const weekly = this.checkWindow(accountId, cardId, weeklyBucketKey(bucket));
+    const blocking = !short.allowed ? short : !weekly.allowed ? weekly : null;
+    if (blocking) return { allowed: false, reason: blocking.reason, remainingFraction: 0 };
+    return {
+      allowed: true,
+      remainingFraction: Math.min(short.remainingFraction ?? 1, weekly.remainingFraction ?? 1),
+    };
+  }
+
+  /** 单个窗口(5h 或周)的公平份额判定。 */
+  private checkWindow(accountId: number, cardId: string, key: string): FairShareCheck {
+    const tracker = this.trackers.get(accountId)?.get(key);
     if (!tracker) {
       return { allowed: true, remainingFraction: 1.0 };
     }
@@ -251,13 +312,31 @@ export class FairShareTracker {
     const remainingFraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
 
     if (myUsage >= perCardBudget) {
+      const label = isWeeklyBucketKey(key) ? "本周公平限额" : "公平限额";
       return {
         allowed: false,
-        reason: `公平限额已用完 (已用 ${formatTokens(myUsage)}/${formatTokens(perCardBudget)} 加权单元)`,
+        reason: `${label}已用完 (已用 ${formatTokens(myUsage)}/${formatTokens(perCardBudget)} 加权单元)`,
         remainingFraction: 0,
       };
     }
     return { allowed: true, remainingFraction };
+  }
+
+  // ── 周窗口的喂数据 / 确认(仅 trackWeekly 时生效;内部复用同名 5h 方法 + 周 key)──
+  /** 用上游 weeklyPercent(剩余 fraction)反推周预算。 */
+  updateWeeklyBudgetEstimate(accountId: number, bucket: string, fraction: number): void {
+    if (!this.trackWeekly) return;
+    this.updateBudgetEstimate(accountId, weeklyBucketKey(bucket), fraction);
+  }
+  /** 对齐上游周 reset 边界。 */
+  syncWeeklyWindow(accountId: number, bucket: string, resetTimeMs: number): void {
+    if (!this.trackWeekly) return;
+    this.syncWindow(accountId, weeklyBucketKey(bucket), resetTimeMs);
+  }
+  /** 撞到「周」429 时,把周预算钉到当前周已用(最准信号)。 */
+  confirmWeeklyBudget(accountId: number, bucket: string): void {
+    if (!this.trackWeekly) return;
+    this.confirmBudget(accountId, weeklyBucketKey(bucket));
   }
 
   /**
@@ -275,8 +354,9 @@ export class FairShareTracker {
     const out: Record<string, { fraction: number; resetAt: number }> = {};
 
     for (const [bucket, tracker] of bucketTrackers) {
+      if (isWeeklyBucketKey(bucket)) continue; // 血条只展示 5h 窗口(周窗口内部计,不混入)
       this.ensureWindow(tracker, now);
-      const resetAt = tracker.windowStart + WINDOW_MS;
+      const resetAt = tracker.windowStart + tracker.windowMs;
 
       // When upstream reports ≥90% remaining, we don't know the real budget.
       // Show the upstream fraction directly so the blood bar stays full
@@ -307,13 +387,19 @@ export class FairShareTracker {
     }
     let tracker = bucketMap.get(bucket);
     if (!tracker) {
+      const isWeekly = isWeeklyBucketKey(bucket);
+      const baseBucket = baseBucketOf(bucket);
       const planType = (this.opts.getAccountPlanType(accountId) || 'free').toLowerCase();
-      const family = bucketFamily(bucket);
-      // Prefer learned budget from QuotaProfileTracker over hardcoded defaults
-      const learned = this.opts.getLearnedBudget?.(planType, bucket) || 0;
+      const family = bucketFamily(baseBucket);
       const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
-      const defaultBudget = defaults[family] || defaults.gemini || 50_000;
+      const base5h = defaults[family] || defaults.gemini || 50_000;
+      // Prefer learned budget from QuotaProfileTracker over hardcoded defaults.
+      const learned = isWeekly
+        ? this.opts.getLearnedWeeklyBudget?.(planType, baseBucket) || 0
+        : this.opts.getLearnedBudget?.(planType, baseBucket) || 0;
+      const defaultBudget = isWeekly ? base5h * WEEKLY_BUDGET_MULTIPLIER : base5h;
       tracker = {
+        windowMs: isWeekly ? WEEKLY_WINDOW_MS : WINDOW_MS,
         windowStart: this.nowFn(),
         estimatedBudget: learned > 0 ? learned : defaultBudget,
         confidence: learned > 0 ? 'estimated' : 'default',
@@ -326,7 +412,7 @@ export class FairShareTracker {
   }
 
   private ensureWindow(tracker: BucketTracker, now: number): void {
-    if (now - tracker.windowStart >= WINDOW_MS) {
+    if (now - tracker.windowStart >= tracker.windowMs) {
       tracker.windowStart = now;
       tracker.perCard.clear();
       // Retain estimated budget across windows, but downgrade confidence
@@ -372,8 +458,10 @@ export class FairShareTracker {
       const first = groupRows[0];
       const accountId = Number(first.accountId);
       const bucket = String(first.bucket);
+      // 窗口长度由 key 的周后缀决定(持久化不存 windowMs,用后缀编码 scope)。
+      const windowMs = isWeeklyBucketKey(bucket) ? WEEKLY_WINDOW_MS : WINDOW_MS;
       const windowStart = Number(first.windowStart);
-      const expired = now - windowStart >= WINDOW_MS;
+      const expired = now - windowStart >= windowMs;
       let confidence = (String(first.confidence) as BucketTracker["confidence"]) || "default";
       if (expired && confidence === "confirmed") confidence = "estimated";
       const perCard = new Map<string, number>();
@@ -383,6 +471,7 @@ export class FairShareTracker {
       let bucketMap = this.trackers.get(accountId);
       if (!bucketMap) this.trackers.set(accountId, (bucketMap = new Map()));
       bucketMap.set(bucket, {
+        windowMs,
         windowStart: expired ? now : windowStart,
         estimatedBudget: Number(first.estimatedBudget) || 0,
         confidence,
@@ -426,7 +515,8 @@ export class FairShareTracker {
     if (!bucketMap) return 0;
     const now = this.nowFn();
     let total = 0;
-    for (const tracker of bucketMap.values()) {
+    for (const [key, tracker] of bucketMap) {
+      if (isWeeklyBucketKey(key)) continue; // 仅 5h 窗口求和,避免与周窗口双算
       this.ensureWindow(tracker, now);
       total += tracker.perCard.get(cardId) || 0;
     }
