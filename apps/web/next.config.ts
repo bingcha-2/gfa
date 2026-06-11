@@ -27,6 +27,35 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "20mb",
     },
   },
+  // Legacy portal URL shim.
+  //
+  // The toC user-center lived under /app/* before the marketing / account /
+  // console split renamed it to /account/* (commit f4ccf54). Already-delivered
+  // emails (verify-email / password-reset links) and desktop client builds
+  // deployed before the rename still point at /app/*, so keep a permanent
+  // (308) redirect in place. Query strings (?token=...) are preserved
+  // automatically.
+  //
+  // ⚠️  This CANNOT shadow the desktop-client API at /api/app/* — redirect
+  //     sources are rooted at "/", so "/app/:path*" matches only "/app" and
+  //     "/app/...", never "/api/app/...". Do not "simplify" the source to a
+  //     non-rooted pattern.
+  async redirects() {
+    return [
+      // Bare /app → /account (also covered by :path* below since the `*`
+      // modifier matches zero segments — kept explicit for clarity).
+      {
+        source: "/app",
+        destination: "/account",
+        permanent: true,
+      },
+      {
+        source: "/app/:path*",
+        destination: "/account/:path*",
+        permanent: true,
+      },
+    ];
+  },
   // Proxy FAQ images and admin API to the backend API server.
   //
   // ⚠️  DO NOT add /api/web or /api/web-session to this rewrite list.
