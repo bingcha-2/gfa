@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useDict } from "@/lib/i18n/client";
 
 /** 在首屏 paint 前同步初始主题，避免闪烁。注入到 <body> 顶部。 */
 export const themeInitScript = `(function(){try{var k='mkt-theme';var s=localStorage.getItem(k);var d=s?s==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.mkt=d?'dark':'light';}catch(e){document.documentElement.dataset.mkt='light';}})();`;
@@ -18,6 +19,7 @@ const Sun = () => (
 );
 
 export function ThemeToggle() {
+  const t = useDict();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -37,8 +39,8 @@ export function ThemeToggle() {
       type="button"
       className="mkt-iconbtn"
       onClick={toggle}
-      aria-label="切换深浅色主题"
-      title="切换深浅色主题"
+      aria-label={t.nav.toggleTheme}
+      title={t.nav.toggleTheme}
     >
       {mounted ? (
         <>

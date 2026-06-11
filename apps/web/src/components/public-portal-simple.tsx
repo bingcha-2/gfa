@@ -15,12 +15,14 @@ import { RedeemForm, type RedeemSuccessPayload } from "./redeem-form";
 import { StatusLookupForm } from "./status-lookup-form";
 import { SwapAccountForm, type SwapSuccessPayload } from "./swap-account-form";
 import { MigrationCheckForm } from "./migration-check-form";
+import { useDict } from "@/lib/i18n/client";
 
 type SimplePortalProps = {
   defaultTab?: "submit" | "track" | "swap" | "migrate";
 };
 
 export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps) {
+  const t = useDict();
   const [activeTab, setActiveTab] = useState<"submit" | "track" | "swap" | "migrate">(defaultTab);
   const [recentOrders, setRecentOrders] = useState<PublicOrderRecord[]>([]);
   const [trackedOrderNo, setTrackedOrderNo] = useState<string | null>(null);
@@ -120,7 +122,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           role="tab"
           type="button"
         >
-          邀请进组
+          {t.portal.tabSubmit}
         </button>
         <button
           aria-selected={activeTab === "swap"}
@@ -129,7 +131,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           role="tab"
           type="button"
         >
-          无限额度
+          {t.portal.tabSwapUnlimited}
         </button>
         <button
           aria-selected={activeTab === "migrate"}
@@ -138,7 +140,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           role="tab"
           type="button"
         >
-          自助售后
+          {t.portal.tabMigrate}
         </button>
         <button
           aria-selected={activeTab === "track"}
@@ -147,7 +149,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           role="tab"
           type="button"
         >
-          查询进度
+          {t.portal.tabTrack}
         </button>
       </div>
 
@@ -157,7 +159,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           <RedeemForm
             onSuccess={handleSubmitSuccess}
             secondaryHref="/status"
-            secondaryLabel="切到查询"
+            secondaryLabel={t.portal.simpleSwitchToTrack}
           />
         ) : activeTab === "swap" ? (
           <SwapAccountForm onSuccess={handleSwapSuccess} />
@@ -170,9 +172,9 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
 
               {activeRecord ? (
                 <div className="notice" style={{ background: 'rgba(234, 88, 12, 0.1)', border: '1px solid rgba(234, 88, 12, 0.3)' }}>
-                  当前查询卡密: <span className="mono strong">{activeRecord.code}</span>
+                  {t.portal.simpleCurrentCode} <span className="mono strong">{activeRecord.code}</span>
                   {" · "}
-                  订单号: <span className="mono strong">{activeRecord.orderNo}</span>
+                  {t.portal.simpleOrderNo} <span className="mono strong">{activeRecord.orderNo}</span>
                 </div>
               ) : null}
             </div>
@@ -185,14 +187,14 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
           <OrderStatusPanel orderNo={trackedOrderNo} onOrderLoaded={handleOrderLoaded} />
         ) : activeTab === "track" ? (
           <div className="empty-state">
-            输入卡密后，这里会显示订单实时状态。
+            {t.portal.simpleTrackEmpty}
           </div>
         ) : null}
 
         {/* Compact recent orders (only on track tab) */}
         {activeTab === "track" && recentOrders.length > 0 ? (
           <div className="simple-recent">
-            <p className="label" style={{ marginBottom: '8px' }}>最近记录</p>
+            <p className="label" style={{ marginBottom: '8px' }}>{t.portal.simpleRecent}</p>
             {recentOrders.slice(0, 5).map((item) => (
               <button
                 className={`simple-recent-item${item.orderNo === trackedOrderNo ? " active" : ""}`}
@@ -204,7 +206,7 @@ export function PublicPortalSimple({ defaultTab = "submit" }: SimplePortalProps)
                 type="button"
               >
                 <span className="mono" style={{ fontSize: '12px' }}>{item.code}</span>
-                <span className="status-pill" style={{ fontSize: '11px' }}>{item.status}</span>
+                <span className="status-pill" style={{ fontSize: '11px' }}>{t.statusLabels[item.status] ?? item.status}</span>
               </button>
             ))}
           </div>

@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { MarketingShell } from "../_marketing/shell";
 import { FaqList } from "../_marketing/faq-list";
+import { getDict } from "@/lib/i18n/server";
 
-export const metadata: Metadata = {
-  title: "常见问题 — 冰茶AI",
-  description: "冰茶AI 使用中的常见问题解答：家庭组进组、客户端接管、卡密与额度等。",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getDict();
+  return { title: t.meta.faqTitle, description: t.meta.faqDescription };
+}
 
 type FaqItem = { id: string; category: string; question: string; answer: string; sortOrder: number };
 
@@ -32,15 +33,15 @@ async function fetchSettings(): Promise<Record<string, string>> {
 }
 
 export default async function FaqRoute() {
-  const [faqs, settings] = await Promise.all([fetchFaqs(), fetchSettings()]);
+  const [faqs, settings, t] = await Promise.all([fetchFaqs(), fetchSettings(), getDict()]);
   return (
     <MarketingShell anim={false}>
       <section className="mkt-section mkt-section--tight">
         <div className="mkt-wrap">
           <div className="mkt-pagehead">
-            <span className="mkt-pagehead__eyebrow">/ 常见问题</span>
-            <h1>常见问题</h1>
-            <p>使用中遇到问题？在这里找到解答，或添加客服微信。</p>
+            <span className="mkt-pagehead__eyebrow">{t.faqPage.eyebrow}</span>
+            <h1>{t.faqPage.title}</h1>
+            <p>{t.faqPage.sub}</p>
           </div>
           <FaqList faqs={faqs} contactWechat={settings.contact_wechat} contactQrcodeUrl={settings.contact_qrcode_url} />
         </div>

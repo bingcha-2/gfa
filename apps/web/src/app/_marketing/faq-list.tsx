@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { fmt } from "@/lib/i18n";
+import { useDict } from "@/lib/i18n/client";
 
 type FaqItem = { id: string; category: string; question: string; answer: string; sortOrder: number };
 
@@ -13,6 +15,7 @@ export function FaqList({
   contactWechat?: string;
   contactQrcodeUrl?: string;
 }) {
+  const t = useDict();
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [closedCats, setClosedCats] = useState<Set<string>>(new Set());
@@ -47,21 +50,21 @@ export function FaqList({
       {(contactWechat || contactQrcodeUrl) && (
         <div className="mkt-faq__contact">
           <div>
-            <div className="mkt-faq__contact-t">售后客服</div>
-            <div className="mkt-faq__contact-d">需要人工协助？添加客服微信。</div>
+            <div className="mkt-faq__contact-t">{t.faqPage.contactTitle}</div>
+            <div className="mkt-faq__contact-d">{t.faqPage.contactDesc}</div>
             {contactWechat && (
               <div className="mkt-faq__wechat">
                 <code>{contactWechat}</code>
                 <button type="button" className="mkt-faq__copy" onClick={copyWechat}>
-                  {copied ? "已复制" : "复制"}
+                  {copied ? t.faqPage.copied : t.faqPage.copy}
                 </button>
               </div>
             )}
           </div>
           {contactQrcodeUrl && (
             <div className="mkt-faq__qr">
-              <img src={contactQrcodeUrl} alt="客服微信二维码" />
-              扫码添加
+              <img src={contactQrcodeUrl} alt={t.faqPage.qrAlt} />
+              {t.faqPage.scanToAdd}
             </div>
           )}
         </div>
@@ -70,14 +73,14 @@ export function FaqList({
       <input
         className="mkt-faq__search"
         type="search"
-        placeholder="搜索问题…"
+        placeholder={t.faqPage.searchPlaceholder}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        aria-label="搜索常见问题"
+        aria-label={t.faqPage.searchAria}
       />
 
       {grouped.length === 0 ? (
-        <div className="mkt-faq__empty">{searching ? "没有匹配的问题。" : "暂无常见问题。"}</div>
+        <div className="mkt-faq__empty">{searching ? t.faqPage.noMatch : t.faqPage.empty}</div>
       ) : (
         grouped.map(([category, items]) => {
           const open = searching || !closedCats.has(category);
@@ -96,7 +99,7 @@ export function FaqList({
                 aria-expanded={open}
               >
                 <span>{category}</span>
-                <span className="mkt-faq__count">{items.length} 个问题</span>
+                <span className="mkt-faq__count">{fmt(t.faqPage.questionCount, { n: items.length })}</span>
                 <span className="mkt-faq__chev">{open ? "▾" : "▸"}</span>
               </button>
               {open &&

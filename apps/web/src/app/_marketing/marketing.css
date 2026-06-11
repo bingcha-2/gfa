@@ -174,6 +174,7 @@ html[data-mkt="dark"] .mkt {
 .mkt-nav__link {
   padding: 0.45rem 0.7rem; border-radius: 0.5rem; font-size: 0.9375rem;
   color: var(--ink-muted); transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
 }
 .mkt-nav__link:hover { color: var(--ink); background: var(--surface-2); }
 .mkt-nav__link[data-active="true"] { color: var(--primary-text); font-weight: 600; }
@@ -540,4 +541,26 @@ a.mkt-dlcard:hover { border-color: var(--line-strong); box-shadow: var(--shadow-
   .mkt-mock__stats { grid-template-columns: repeat(2, 1fr); }
   .mkt-mock__cols { grid-template-columns: 1fr; }
   .mkt-footer__inner { grid-template-columns: 1fr; }
+}
+
+/* ───────── 语言切换器 ───────── */
+.mkt-lang { position: relative; display: inline-flex; }
+.mkt-lang__btn { width: auto; padding: 0 0.6rem; gap: 0.4rem; }
+.mkt-lang__current { font-size: 0.8rem; font-weight: 500; white-space: nowrap; }
+.mkt-lang__menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-modal);
+  min-width: 9.5rem; margin: 0; padding: 0.35rem; list-style: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 0.75rem;
+  box-shadow: var(--shadow-md);
+}
+.mkt-lang__item {
+  display: block; width: 100%; padding: 0.45rem 0.7rem; border: 0; border-radius: 0.5rem;
+  background: transparent; color: var(--ink-muted); font-size: 0.82rem; text-align: left;
+  cursor: pointer; transition: color 0.12s, background 0.12s;
+}
+.mkt-lang__item:hover { color: var(--ink); background: var(--surface-2); }
+.mkt-lang__item[data-active="true"] { color: var(--ink); font-weight: 600; }
+@media (max-width: 1100px) {
+  .mkt-lang__current { display: none; }
+  .mkt-lang__btn { width: 40px; padding: 0; }
 }

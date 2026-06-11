@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { normalizeRedeemCode } from "../lib/public-orders";
+import { useDict } from "@/lib/i18n/client";
 
 type StatusLookupFormProps = {
   compact?: boolean;
@@ -18,6 +19,7 @@ export function StatusLookupForm({
   buttonLabel,
   onLookup
 }: StatusLookupFormProps) {
+  const t = useDict();
   const router = useRouter();
   const [value, setValue] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -42,13 +44,11 @@ export function StatusLookupForm({
   }
 
   const fieldId = compact ? `status-lookup-${kind}-compact` : `status-lookup-${kind}`;
-  const label = kind === "code" ? "输入卡密" : "输入订单号";
+  const label = kind === "code" ? t.lookupForm.codeLabel : t.lookupForm.orderLabel;
   const placeholder =
-    kind === "code" ? "例如 JZ...，或者 HH / CX 开头卡密" : "例如 GFA-MA3L7Q-9K2W";
+    kind === "code" ? t.lookupForm.codePlaceholder : t.lookupForm.orderPlaceholder;
   const helperText =
-    kind === "code"
-      ? "当前公开查询会直接按卡密读取订单状态，支持跨浏览器和跨设备查询。"
-      : "订单号在提交卡密成功后返回，复制完整号码即可查询。";
+    kind === "code" ? t.lookupForm.codeHelper : t.lookupForm.orderHelper;
 
   return (
     <form className="field-grid" onSubmit={onSubmit}>
@@ -68,8 +68,8 @@ export function StatusLookupForm({
       <div className="field-actions">
         <button className="button" disabled={isPending} type="submit">
           {isPending
-            ? "查询中..."
-            : buttonLabel ?? (kind === "code" ? "按卡密查询进度" : "查询订单状态")}
+            ? t.lookupForm.searching
+            : buttonLabel ?? (kind === "code" ? t.lookupForm.searchByCode : t.lookupForm.searchByOrder)}
         </button>
       </div>
     </form>

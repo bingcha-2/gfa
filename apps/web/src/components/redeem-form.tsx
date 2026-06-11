@@ -5,6 +5,7 @@ import { useState, useTransition, useEffect, useRef, useCallback } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { normalizeRedeemCode } from "../lib/public-orders";
+import { useDict } from "@/lib/i18n/client";
 
 type RedeemResponse = {
   orderNo: string;
@@ -38,8 +39,9 @@ function parseEmailFromCredential(line: string): string {
 export function RedeemForm({
   onSuccess,
   secondaryHref = "/",
-  secondaryLabel = "返回概览"
+  secondaryLabel
 }: RedeemFormProps) {
+  const t = useDict();
   const [code, setCode] = useState("");
   const [email, setEmail] = useState("");         // used when autoAccept is OFF
   const [credentialLine, setCredentialLine] = useState(""); // used when autoAccept is ON
@@ -90,7 +92,7 @@ export function RedeemForm({
       : email.trim().toLowerCase();
 
     if (!normalizedEmail) {
-      setError(autoAccept ? "请输入完整凭据（邮箱----密码----TOTP密钥）" : "请输入邮箱");
+      setError(autoAccept ? t.redeemForm.errNeedCredential : t.redeemForm.errNeedEmail);
       return;
     }
 
@@ -121,7 +123,7 @@ export function RedeemForm({
             const credTotp = (credParts[2] || "").trim();
 
             if (!credEmail || !credPassword) {
-              setAcceptError("凭据格式不正确，需要至少包含 邮箱----密码");
+              setAcceptError(t.redeemForm.errBadCredential);
               setIsAccepting(false);
               return;
             }
@@ -171,17 +173,17 @@ export function RedeemForm({
 
         <form className="field-grid" onSubmit={onSubmit}>
           <div className="field">
-            <label htmlFor="redeem-code">卡密</label>
+            <label htmlFor="redeem-code">{t.redeemForm.codeLabel}</label>
             <input
               id="redeem-code"
               autoComplete="off"
               className="mono"
-              placeholder="例如 JZ12345678..."
+              placeholder={t.redeemForm.codePlaceholder}
               required
               value={code}
               onChange={(event) => setCode(event.target.value.toUpperCase())}
             />
-            <small>每个卡密只能消耗一次，对应一次新的邀请任务。</small>
+            <small>{t.redeemForm.codeHint}</small>
           </div>
 
           {/* Auto-accept toggle */}
@@ -195,9 +197,9 @@ export function RedeemForm({
               }}
             >
               <span className="autojoin-toggle-copy">
-                <span className="autojoin-toggle-label">🤖 自动进组</span>
+                <span className="autojoin-toggle-label">{t.redeemForm.autoJoinLabel}</span>
                 <span className="autojoin-toggle-hint">
-                  {autoAccept ? "已开启 — 提交后将自动接受家庭组邀请" : "关闭 — 系统发送邀请后需手动去确认家庭组"}
+                  {autoAccept ? t.redeemForm.autoJoinOn : t.redeemForm.autoJoinOff}
                 </span>
               </span>
               <span className="autojoin-toggle-track">
@@ -209,25 +211,25 @@ export function RedeemForm({
           {/* Conditional: normal email OR credential input */}
           {autoAccept ? (
             <div className="autojoin-credential-form">
-              <label htmlFor="redeem-credential">进组账号凭据</label>
+              <label htmlFor="redeem-credential">{t.redeemForm.credentialLabel}</label>
               <input
                 id="redeem-credential"
                 autoComplete="off"
                 className="mono"
-                placeholder="邮箱----密码----TOTP密钥"
+                placeholder={t.redeemForm.credentialPlaceholder}
                 required
                 value={credentialLine}
                 onChange={(event) => setCredentialLine(event.target.value)}
               />
               <small style={{ lineHeight: 1.6 }}>
-                格式：<code style={{ background: 'rgba(234, 88, 12, 0.1)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>账号邮箱----密码----TOTP密钥</code>
+                {t.redeemForm.credentialFormatLabel}<code style={{ background: 'rgba(234, 88, 12, 0.1)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>{t.redeemForm.credentialFormatCode}</code>
                 <br />
-                开启后系统会在邀请发送成功后自动登录该账号并接受邀请，无需手动操作。
+                {t.redeemForm.credentialNote}
               </small>
             </div>
           ) : (
             <div className="field">
-              <label htmlFor="user-email">接收邀请的 Google 邮箱</label>
+              <label htmlFor="user-email">{t.redeemForm.emailLabel}</label>
               <input
                 id="user-email"
                 autoComplete="email"
@@ -253,9 +255,9 @@ export function RedeemForm({
                   <svg className="animate-spin" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                     <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
                   </svg>
-                  <span>正在排队处理中...</span>
+                  <span>{t.redeemForm.submitQueueing}</span>
                 </>
-              ) : "立即提交"}
+              ) : t.redeemForm.submit}
             </button>
           </div>
         </form>
@@ -266,7 +268,7 @@ export function RedeemForm({
         {/* Auto-accept task status */}
         {acceptTask && (
           <div className="autojoin-log">
-            <p className="label" style={{ marginBottom: '6px' }}>自动进组</p>
+            <p className="label" style={{ marginBottom: '6px' }}>{t.redeemForm.autoJoinSection}</p>
             <details open={!TERMINAL.includes(acceptTask.status)} style={{ marginBottom: '4px' }}>
               <summary className="autojoin-log-summary">
                 {!TERMINAL.includes(acceptTask.status) ? (
@@ -277,7 +279,7 @@ export function RedeemForm({
               </summary>
               <div className="autojoin-log-body">
                 {acceptTask.logs.length === 0 ? (
-                  <div style={{ padding: '8px', color: 'rgba(31,26,23,0.3)', fontSize: '11px' }}>等待执行…</div>
+                  <div style={{ padding: '8px', color: 'rgba(31,26,23,0.3)', fontSize: '11px' }}>{t.redeemForm.waitingExec}</div>
                 ) : (
                   acceptTask.logs.map((log, i) => (
                     <div key={i} className={`autojoin-log-line${log.level === "ERROR" ? " error" : ""}`}>
@@ -300,17 +302,17 @@ export function RedeemForm({
                 <span style={{ fontSize: '24px' }}>🎉</span>
                 <div>
                   <div style={{ fontSize: '13px', color: 'var(--accent-strong)', fontWeight: 700, letterSpacing: '0.05em' }}>SUCCESS</div>
-                  <strong style={{ fontSize: '1.2rem', color: 'var(--foreground)' }}>订单已成功排队并创建</strong>
+                  <strong style={{ fontSize: '1.2rem', color: 'var(--foreground)' }}>{t.redeemForm.successTitle}</strong>
                 </div>
               </div>
               <div style={{ background: 'white', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="muted">您的专属追踪订单号:</span>
+                <span className="muted">{t.redeemForm.successOrderNo}</span>
                 <span className="mono strong" style={{ color: 'var(--accent)', fontSize: '1.1rem' }}>{result.orderNo}</span>
               </div>
               <div className="muted" style={{ lineHeight: 1.6 }}>{result.message}</div>
               <div className="inline-actions" style={{ justifyContent: "flex-start", marginTop: '8px' }}>
                 <Link className="button premium-primary" href={`/status/${result.orderNo}`} style={{ minHeight: '40px' }}>
-                  查看实时追踪进度 →
+                  {t.redeemForm.viewProgress}
                 </Link>
               </div>
             </div>

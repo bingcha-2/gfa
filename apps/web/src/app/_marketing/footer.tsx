@@ -1,35 +1,38 @@
-/** 营销站统一页脚（首页与所有子页共用）。 */
+"use client";
+
+import { useDict } from "@/lib/i18n/client";
+
+/** 营销站统一页脚(首页与所有子页共用)。 */
 export function MarketingFooter() {
+  const t = useDict();
   return (
     <footer className="mkt-footer">
       <div className="mkt-footer__inner">
         <div className="mkt-footer__brand">
           <a href="/" className="mkt-brand">
-            <img className="mkt-brand__mark" src="/bcai-icon.png" alt="冰茶AI" width={30} height={30} />
-            冰茶AI
+            <img className="mkt-brand__mark" src="/bcai-icon.png" alt={t.common.brandName} width={30} height={30} />
+            {t.common.brandName}
           </a>
-          <p className="mkt-footer__desc">
-            主流 AI 编程工具的官方账号接管工具。官方直连，不做中间人。
-          </p>
+          <p className="mkt-footer__desc">{t.footer.desc}</p>
         </div>
         <div className="mkt-footer__col">
-          <h4>产品</h4>
-          <a href="/download">下载客户端</a>
-          <a href="/features">客户端功能</a>
-          <a href="/quickstart">快速开始</a>
-          <a href="/how-it-works">工作原理</a>
+          <h4>{t.footer.product}</h4>
+          <a href="/download">{t.footer.download}</a>
+          <a href="/features">{t.footer.features}</a>
+          <a href="/quickstart">{t.footer.quickstart}</a>
+          <a href="/how-it-works">{t.footer.howItWorks}</a>
         </div>
         <div className="mkt-footer__col">
-          <h4>帮助</h4>
-          <a href="/faq">常见问题</a>
-          <a href="https://bcai.store" target="_blank" rel="noopener noreferrer">冰茶商店 ↗</a>
-          <a href="https://bcai.online" target="_blank" rel="noopener noreferrer">冰茶 API ↗</a>
-          <a href="https://bcai.lol" target="_blank" rel="noopener noreferrer">冰茶终端 ↗</a>
+          <h4>{t.footer.help}</h4>
+          <a href="/faq">{t.footer.faq}</a>
+          <a href="https://bcai.store" target="_blank" rel="noopener noreferrer">{t.footer.store}</a>
+          <a href="https://bcai.online" target="_blank" rel="noopener noreferrer">{t.footer.api}</a>
+          <a href="https://bcai.lol" target="_blank" rel="noopener noreferrer">{t.footer.terminal}</a>
         </div>
       </div>
       <div className="mkt-footer__bottom">
-        <span>© 2026 冰茶AI · BingchaAI</span>
-        <span>官方直连 · 不做中间人 · 代码不经过我们</span>
+        <span>{t.footer.copyright}</span>
+        <span>{t.footer.tagline}</span>
       </div>
     </footer>
   );

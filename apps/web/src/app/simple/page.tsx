@@ -17,7 +17,7 @@ function SimplePortalContent() {
 
 export default function SimplePortalPage() {
   return (
-    <Suspense fallback={<div style={{ padding: 16 }}>加载中...</div>}>
+    <Suspense fallback={<div style={{ padding: 16 }}>…</div>}>
       <SimplePortalContent />
     </Suspense>
   );

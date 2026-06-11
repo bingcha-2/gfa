@@ -6,6 +6,7 @@ import { useState, useTransition, useEffect, useRef, useCallback } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
 import { normalizeRedeemCode } from "../lib/public-orders";
+import { useDict } from "@/lib/i18n/client";
 
 type SwapResponse = {
   orderNo: string;
@@ -36,6 +37,7 @@ function parseEmailFromCredential(line: string): string {
 }
 
 export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
+  const t = useDict();
   const [swapCode, setSwapCode] = useState("");
   const [originalEmail, setOriginalEmail] = useState("");
   const [newEmail, setNewEmail] = useState("");         // used when autoAccept is OFF
@@ -89,13 +91,13 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
       : newEmail.trim().toLowerCase();
 
     if (!normalizedNewEmail) {
-      setError(autoAccept ? "请输入完整凭据（邮箱----密码----TOTP密钥）" : "请输入新邮箱");
+      setError(autoAccept ? t.redeemForm.errNeedCredential : t.swapForm.errNeedNewEmail);
       return;
     }
 
     // Guard: new email must differ
     if (normalizedOriginalEmail === normalizedNewEmail) {
-      setError("新邮箱不能与原邮箱相同，请重新填写。");
+      setError(t.swapForm.errSameEmail);
       return;
     }
 
@@ -130,7 +132,7 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
             const credTotp = (credParts[2] || "").trim();
 
             if (!credEmail || !credPassword) {
-              setAcceptError("凭据格式不正确，需要至少包含 邮箱----密码");
+              setAcceptError(t.redeemForm.errBadCredential);
               setIsAccepting(false);
               return;
             }
@@ -180,21 +182,21 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
 
         <form className="field-grid" onSubmit={onSubmit} style={{ marginTop: '16px' }}>
           <div className="field">
-            <label htmlFor="swap-code">换号卡密</label>
+            <label htmlFor="swap-code">{t.swapForm.codeLabel}</label>
             <input
               id="swap-code"
               autoComplete="off"
               className="mono"
-              placeholder="例如 HH1234... 或 CX5678..."
+              placeholder={t.swapForm.codePlaceholder}
               required
               value={swapCode}
               onChange={(event) => setSwapCode(event.target.value.toUpperCase())}
             />
-            <small>换号卡密是专属类型，普通邀请卡密无法使用此功能。</small>
+            <small>{t.swapForm.codeHint}</small>
           </div>
 
           <div className="field">
-            <label htmlFor="swap-original-email">原账号邮箱</label>
+            <label htmlFor="swap-original-email">{t.swapForm.originalEmailLabel}</label>
             <input
               id="swap-original-email"
               autoComplete="email"
@@ -205,7 +207,7 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
               value={originalEmail}
               onChange={(event) => setOriginalEmail(event.target.value.trimStart())}
             />
-            <small>之前兑换进组时使用的 Google 账号邮箱。</small>
+            <small>{t.swapForm.originalEmailHint}</small>
           </div>
 
           {/* Auto-accept toggle */}
@@ -219,9 +221,9 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
               }}
             >
               <span className="autojoin-toggle-copy">
-                <span className="autojoin-toggle-label">🤖 自动进组</span>
+                <span className="autojoin-toggle-label">{t.redeemForm.autoJoinLabel}</span>
                 <span className="autojoin-toggle-hint">
-                  {autoAccept ? "已开启 — 换号后将自动接受家庭组邀请" : "关闭 — 系统发送邀请后需手动去确认家庭组"}
+                  {autoAccept ? t.swapForm.autoJoinOn : t.redeemForm.autoJoinOff}
                 </span>
               </span>
               <span className="autojoin-toggle-track">
@@ -233,25 +235,25 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
           {/* Conditional: normal new email OR credential input */}
           {autoAccept ? (
             <div className="autojoin-credential-form">
-              <label htmlFor="swap-credential">新账号凭据</label>
+              <label htmlFor="swap-credential">{t.swapForm.credentialLabel}</label>
               <input
                 id="swap-credential"
                 autoComplete="off"
                 className="mono"
-                placeholder="邮箱----密码----TOTP密钥"
+                placeholder={t.redeemForm.credentialPlaceholder}
                 required
                 value={credentialLine}
                 onChange={(event) => setCredentialLine(event.target.value)}
               />
               <small style={{ lineHeight: 1.6 }}>
-                格式：<code style={{ background: 'rgba(234, 88, 12, 0.1)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>账号邮箱----密码----TOTP密钥</code>
+                {t.redeemForm.credentialFormatLabel}<code style={{ background: 'rgba(234, 88, 12, 0.1)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>{t.redeemForm.credentialFormatCode}</code>
                 <br />
-                开启后系统会在换号完成后自动登录新账号并接受邀请，无需手动操作。
+                {t.swapForm.credentialNote}
               </small>
             </div>
           ) : (
             <div className="field">
-              <label htmlFor="swap-new-email">新 Google 邮箱</label>
+              <label htmlFor="swap-new-email">{t.swapForm.newEmailLabel}</label>
               <input
                 id="swap-new-email"
                 autoComplete="email"
@@ -262,7 +264,7 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
                 value={newEmail}
                 onChange={(event) => setNewEmail(event.target.value.trimStart())}
               />
-              <small>邀请将发送到此新邮箱，请确认邮箱拼写正确。</small>
+              <small>{t.swapForm.newEmailHint}</small>
             </div>
           )}
 
@@ -274,12 +276,12 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
                     <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
                     <path d="M12 2v4"></path>
                   </svg>
-                  <span>正在提交换号任务...</span>
+                  <span>{t.swapForm.submitting}</span>
                 </>
-              ) : "提交换号请求"}
+              ) : t.swapForm.submit}
             </button>
             <Link className="button secondary" href="/status" style={{ padding: '8px 16px' }}>
-              查询订单
+              {t.swapForm.lookupOrder}
             </Link>
           </div>
         </form>
@@ -290,7 +292,7 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
         {/* Auto-accept task status */}
         {acceptTask && (
           <div className="autojoin-log">
-            <p className="label" style={{ marginBottom: '6px' }}>自动进组</p>
+            <p className="label" style={{ marginBottom: '6px' }}>{t.redeemForm.autoJoinSection}</p>
             <details open={!TERMINAL.includes(acceptTask.status)} style={{ marginBottom: '4px' }}>
               <summary className="autojoin-log-summary">
                 {!TERMINAL.includes(acceptTask.status) ? (
@@ -301,7 +303,7 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
               </summary>
               <div className="autojoin-log-body">
                 {acceptTask.logs.length === 0 ? (
-                  <div style={{ padding: '8px', color: 'rgba(31,26,23,0.3)', fontSize: '11px' }}>等待执行…</div>
+                  <div style={{ padding: '8px', color: 'rgba(31,26,23,0.3)', fontSize: '11px' }}>{t.redeemForm.waitingExec}</div>
                 ) : (
                   acceptTask.logs.map((log, i) => (
                     <div key={i} className={`autojoin-log-line${log.level === "ERROR" ? " error" : ""}`}>
@@ -322,16 +324,16 @@ export function SwapAccountForm({ onSuccess }: SwapAccountFormProps) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '18px' }}>⚡</span>
               <div>
-                <strong style={{ fontSize: '14px', color: 'var(--foreground)' }}>换号任务已排队</strong>
+                <strong style={{ fontSize: '14px', color: 'var(--foreground)' }}>{t.swapForm.queuedTitle}</strong>
               </div>
             </div>
             <div style={{ background: '#010409', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span className="muted" style={{ fontSize: '12px' }}>订单号</span>
+              <span className="muted" style={{ fontSize: '12px' }}>{t.swapForm.orderNo}</span>
               <span className="mono strong" style={{ color: 'var(--accent)', fontSize: '13px' }}>{result.orderNo}</span>
             </div>
             <div className="muted">{result.message}</div>
             <Link className="button" href={`/status/${result.orderNo}`} style={{ alignSelf: 'flex-start' }}>
-              查看换号执行进度
+              {t.swapForm.viewProgress}
             </Link>
           </div>
         ) : null}

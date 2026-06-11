@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useDict } from "@/lib/i18n/client";
 
 type SwapStep = "form" | "polling" | "done" | "failed" | "error";
 
@@ -21,6 +22,7 @@ type SwapStatus = {
 };
 
 export default function SwapPage() {
+  const t = useDict();
   const [step, setStep] = useState<SwapStep>("form");
   const [form, setForm] = useState({ originalEmail: "", swapCode: "", newEmail: "" });
   const [result, setResult] = useState<{ orderNo: string; status: string; message: string } | null>(null);
@@ -29,6 +31,9 @@ export default function SwapPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+
+  const statusLabel = (s: string | undefined | null) =>
+    s ? (t.statusLabels[s] ?? s) : s;
 
   // Poll swap status
   const pollStatus = useCallback(async (orderNo: string) => {
@@ -76,7 +81,7 @@ export default function SwapPage() {
     setErrorMsg(null);
 
     if (form.originalEmail.trim().toLowerCase() === form.newEmail.trim().toLowerCase()) {
-      setErrorMsg("新邮箱不能与原邮箱相同，请重新填写。");
+      setErrorMsg(t.swapPage.sameEmailError);
       setStep("error");
       setIsSubmitting(false);
       return;
@@ -129,23 +134,23 @@ export default function SwapPage() {
     <main className="public-shell">
       <header className="public-header">
         <div className="brand-mark">GO</div>
-        <h1 className="brand-title">Google One Family</h1>
-        <p className="brand-sub">账号换绑服务</p>
+        <h1 className="brand-title">{t.swapPage.brandTitle}</h1>
+        <p className="brand-sub">{t.swapPage.brandSub}</p>
       </header>
 
       <section className="public-card">
         {step === "form" && (
           <form className="form-card panel-stack" onSubmit={handleSubmit}>
             <div className="section-copy">
-              <p className="label">Account Swap</p>
-              <h2 className="panel-title">自助换号</h2>
+              <p className="label">{t.swapPage.formLabel}</p>
+              <h2 className="panel-title">{t.swapPage.formTitle}</h2>
               <p className="muted">
-                如原账号被封禁，填写原邮箱、换号卡密和新账号邮箱即可完成自动换绑。
+                {t.swapPage.formDesc}
               </p>
             </div>
 
             <div className="field">
-              <label htmlFor="swap-originalEmail">原账号邮箱</label>
+              <label htmlFor="swap-originalEmail">{t.swapPage.originalEmailLabel}</label>
               <input
                 autoComplete="off"
                 id="swap-originalEmail"
@@ -155,11 +160,11 @@ export default function SwapPage() {
                 value={form.originalEmail}
                 onChange={(e) => setForm((f) => ({ ...f, originalEmail: e.target.value }))}
               />
-              <p className="field-hint">之前兑换进组时使用的 Google 账号邮箱。</p>
+              <p className="field-hint">{t.swapPage.originalEmailHint}</p>
             </div>
 
             <div className="field">
-              <label htmlFor="swap-code">换号卡密</label>
+              <label htmlFor="swap-code">{t.swapPage.swapCodeLabel}</label>
               <input
                 autoComplete="off"
                 id="swap-code"
@@ -169,11 +174,11 @@ export default function SwapPage() {
                 value={form.swapCode}
                 onChange={(e) => setForm((f) => ({ ...f, swapCode: e.target.value }))}
               />
-              <p className="field-hint">换号卡密（ACCOUNT_SWAP 类型），每张只能使用一次。</p>
+              <p className="field-hint">{t.swapPage.swapCodeHint}</p>
             </div>
 
             <div className="field">
-              <label htmlFor="swap-newEmail">新账号邮箱</label>
+              <label htmlFor="swap-newEmail">{t.swapPage.newEmailLabel}</label>
               <input
                 autoComplete="off"
                 id="swap-newEmail"
@@ -183,11 +188,11 @@ export default function SwapPage() {
                 value={form.newEmail}
                 onChange={(e) => setForm((f) => ({ ...f, newEmail: e.target.value }))}
               />
-              <p className="field-hint">将加入家庭组的新 Google 账号，确认拼写无误。</p>
+              <p className="field-hint">{t.swapPage.newEmailHint}</p>
             </div>
 
             <button className="button" disabled={isSubmitting} type="submit">
-              {isSubmitting ? "提交中..." : "提交换号申请"}
+              {isSubmitting ? t.swapPage.submitting : t.swapPage.submit}
             </button>
           </form>
         )}
@@ -195,32 +200,32 @@ export default function SwapPage() {
         {step === "polling" && (
           <div className="panel-stack">
             <div className="section-copy">
-              <p className="label notice-ok">⏳ 执行中</p>
-              <h2 className="panel-title">换号任务进行中</h2>
-              <p className="muted">系统正在自动处理，通常需要 1–3 分钟。请勿关闭此页面。</p>
+              <p className="label notice-ok">{t.swapPage.pollingLabel}</p>
+              <h2 className="panel-title">{t.swapPage.pollingTitle}</h2>
+              <p className="muted">{t.swapPage.pollingDesc}</p>
             </div>
 
             {result && (
               <div className="info-block">
                 <div className="info-row">
-                  <span className="label">订单号</span>
+                  <span className="label">{t.swapPage.orderNo}</span>
                   <span className="strong mono">{result.orderNo}</span>
                 </div>
                 <div className="info-row">
-                  <span className="label">订单状态</span>
-                  <span className="strong">{swapStatus?.status ?? result.status}</span>
+                  <span className="label">{t.swapPage.orderStatus}</span>
+                  <span className="strong">{statusLabel(swapStatus?.status ?? result.status)}</span>
                 </div>
                 {swapStatus?.task && (
                   <div className="info-row">
-                    <span className="label">任务状态</span>
-                    <span className="strong">{swapStatus.task.status}</span>
+                    <span className="label">{t.swapPage.taskStatus}</span>
+                    <span className="strong">{statusLabel(swapStatus.task.status)}</span>
                   </div>
                 )}
                 {swapStatus?.isRetrying && (
                   <div className="info-row">
-                    <span className="label">提示</span>
+                    <span className="label">{t.swapPage.hint}</span>
                     <span className="muted">
-                      {swapStatus.task?.errorHint ?? "系统正在自动重试，请耐心等待..."}
+                      {swapStatus.task?.errorHint ?? t.swapPage.retryingHint}
                     </span>
                   </div>
                 )}
@@ -236,29 +241,29 @@ export default function SwapPage() {
         {step === "done" && (
           <div className="panel-stack">
             <div className="section-copy">
-              <p className="label notice-ok">✓ 换号成功</p>
-              <h2 className="panel-title">邀请已发出</h2>
-              <p className="muted">系统已将旧账号踢出并向您的新账号发送了邀请。</p>
+              <p className="label notice-ok">{t.swapPage.doneLabel}</p>
+              <h2 className="panel-title">{t.swapPage.doneTitle}</h2>
+              <p className="muted">{t.swapPage.doneDesc}</p>
             </div>
 
             {result && (
               <div className="info-block">
                 <div className="info-row">
-                  <span className="label">订单号</span>
+                  <span className="label">{t.swapPage.orderNo}</span>
                   <span className="strong mono">{result.orderNo}</span>
                 </div>
                 <div className="info-row">
-                  <span className="label">状态</span>
-                  <span className="strong notice-ok">已完成</span>
+                  <span className="label">{t.swapPage.status}</span>
+                  <span className="strong notice-ok">{t.swapPage.completed}</span>
                 </div>
               </div>
             )}
 
             <p className="muted">
-              请登录新账号邮箱，接受 Google Family 邀请即可。
+              {t.swapPage.doneNote}
             </p>
             <button className="button secondary" onClick={reset} type="button">
-              再次换号
+              {t.swapPage.swapAgain}
             </button>
           </div>
         )}
@@ -266,28 +271,28 @@ export default function SwapPage() {
         {step === "failed" && (
           <div className="panel-stack">
             <div className="section-copy">
-              <p className="label notice-error">✕ 换号失败</p>
-              <h2 className="panel-title">任务未能完成</h2>
+              <p className="label notice-error">{t.swapPage.failedLabel}</p>
+              <h2 className="panel-title">{t.swapPage.failedTitle}</h2>
             </div>
 
             <div className="notice error">
-              {swapStatus?.task?.errorHint ?? swapStatus?.resultMessage ?? "系统多次重试后仍未成功，请重新提交。"}
+              {swapStatus?.task?.errorHint ?? swapStatus?.resultMessage ?? t.swapPage.failedFallback}
             </div>
 
             {result && (
               <div className="info-block">
                 <div className="info-row">
-                  <span className="label">订单号</span>
+                  <span className="label">{t.swapPage.orderNo}</span>
                   <span className="strong mono">{result.orderNo}</span>
                 </div>
               </div>
             )}
 
             <p className="muted">
-              您可以直接使用相同的卡密重新提交换号申请，系统将重新执行。
+              {t.swapPage.failedNote}
             </p>
             <button className="button" onClick={retryWithSameInfo} type="button">
-              重新提交换号
+              {t.swapPage.resubmit}
             </button>
           </div>
         )}
@@ -295,12 +300,12 @@ export default function SwapPage() {
         {step === "error" && (
           <div className="panel-stack">
             <div className="section-copy">
-              <p className="label notice-error">✕ 提交失败</p>
-              <h2 className="panel-title">提交遇到问题</h2>
+              <p className="label notice-error">{t.swapPage.errorLabel}</p>
+              <h2 className="panel-title">{t.swapPage.errorTitle}</h2>
             </div>
             <div className="notice error">{errorMsg}</div>
             <button className="button" onClick={reset} type="button">
-              重新填写
+              {t.swapPage.refill}
             </button>
           </div>
         )}

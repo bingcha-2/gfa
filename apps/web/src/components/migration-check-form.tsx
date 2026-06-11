@@ -4,6 +4,7 @@ import React from "react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { apiRequest, getErrorMessage } from "../lib/client-api";
+import { useDict, useLocale } from "@/lib/i18n/client";
 
 type CheckMigrationResponse = {
   eligible: boolean;
@@ -27,6 +28,8 @@ type SelfMigrateResponse = {
 };
 
 export function MigrationCheckForm() {
+  const t = useDict();
+  const locale = useLocale();
   const [email, setEmail] = useState("");
   const [checkResult, setCheckResult] = useState<CheckMigrationResponse | null>(null);
   const [migrateResult, setMigrateResult] = useState<SelfMigrateResponse | null>(null);
@@ -142,7 +145,7 @@ export function MigrationCheckForm() {
       <div className="panel-stack">
         <form className="field-grid" onSubmit={onCheck} style={{ marginTop: '16px' }}>
           <div className="field">
-            <label htmlFor="migrate-email">邮箱地址</label>
+            <label htmlFor="migrate-email">{t.migrateForm.emailLabel}</label>
             <input
               id="migrate-email"
               autoComplete="email"
@@ -153,7 +156,7 @@ export function MigrationCheckForm() {
               value={email}
               onChange={(event) => setEmail(event.target.value.trimStart())}
             />
-            <small>输入开通会员时使用的 Gmail 邮箱，系统将自动检测您所在家庭组的母号状态。</small>
+            <small>{t.migrateForm.emailHint}</small>
           </div>
 
           <div className="field-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
@@ -169,7 +172,7 @@ export function MigrationCheckForm() {
                     <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
                     <path d="M12 2v4"></path>
                   </svg>
-                  <span>正在检测...</span>
+                  <span>{t.migrateForm.checking}</span>
                 </>
               ) : isSyncing ? (
                 <>
@@ -177,9 +180,9 @@ export function MigrationCheckForm() {
                     <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
                     <path d="M12 2v4"></path>
                   </svg>
-                  <span>正在同步母号状态...</span>
+                  <span>{t.migrateForm.syncing}</span>
                 </>
-              ) : "开始检测"}
+              ) : t.migrateForm.check}
             </button>
           </div>
         </form>
@@ -194,26 +197,26 @@ export function MigrationCheckForm() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '18px' }}>{checkResult.needsMigration ? '⚠️' : checkResult.reason === 'NORMAL' ? '✅' : 'ℹ️'}</span>
                 <strong style={{ fontSize: '14px', color: 'var(--foreground)' }}>
-                  {checkResult.needsMigration ? '检测到异常' : checkResult.reason === 'NORMAL' ? '母号状态正常' : '检测结果'}
+                  {checkResult.needsMigration ? t.migrateForm.abnormalTitle : checkResult.reason === 'NORMAL' ? t.migrateForm.normalTitle : t.migrateForm.resultTitle}
                 </strong>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {info.groupName ? (
                   <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="muted" style={{ fontSize: '12px' }}>家庭组</span>
+                    <span className="muted" style={{ fontSize: '12px' }}>{t.migrateForm.groupLabel}</span>
                     <span className="mono strong" style={{ fontSize: '13px' }}>{info.groupName}</span>
                   </div>
                 ) : null}
                 {info.expiresAt ? (
                   <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="muted" style={{ fontSize: '12px' }}>到期时间</span>
-                    <span className="mono strong" style={{ fontSize: '13px' }}>{new Date(info.expiresAt).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}</span>
+                    <span className="muted" style={{ fontSize: '12px' }}>{t.migrateForm.expiresLabel}</span>
+                    <span className="mono strong" style={{ fontSize: '13px' }}>{new Date(info.expiresAt).toLocaleDateString(locale, { year: "numeric", month: "2-digit", day: "2-digit" })}</span>
                   </div>
                 ) : null}
                 <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span className="muted" style={{ fontSize: '12px' }}>母号状态</span>
-                  <span className="mono strong" style={{ fontSize: '13px', color: checkResult.needsMigration ? '#ef4444' : '#22c55e' }}>{info.accountStatus}</span>
+                  <span className="muted" style={{ fontSize: '12px' }}>{t.migrateForm.ownerStatusLabel}</span>
+                  <span className="mono strong" style={{ fontSize: '13px', color: checkResult.needsMigration ? '#ef4444' : '#22c55e' }}>{t.statusLabels[info.accountStatus] ?? info.accountStatus}</span>
                 </div>
               </div>
 
@@ -245,12 +248,12 @@ export function MigrationCheckForm() {
                     <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
                     <path d="M12 2v4"></path>
                   </svg>
-                  <span>正在执行迁移...</span>
+                  <span>{t.migrateForm.migrating}</span>
                 </>
-              ) : "一键迁移到正常组"}
+              ) : t.migrateForm.migrate}
             </button>
             <small className="muted" style={{ display: 'block', marginTop: '8px', textAlign: 'center' }}>
-              迁移不会影响您的到期时间，成功后请注意查收新的家庭组邀请邮件。
+              {t.migrateForm.migrateNote}
             </small>
           </div>
         ) : null}
@@ -261,13 +264,13 @@ export function MigrationCheckForm() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '18px' }}>{migrateResult.success ? '✅' : '❌'}</span>
               <strong style={{ fontSize: '14px', color: 'var(--foreground)' }}>
-                {migrateResult.success ? '迁移成功' : '迁移失败'}
+                {migrateResult.success ? t.migrateForm.migrateOk : t.migrateForm.migrateFail}
               </strong>
             </div>
             <div className="muted">{migrateResult.message}</div>
             {migrateResult.success && migrateResult.targetGroupName ? (
               <div style={{ background: 'rgba(31, 26, 23, 0.05)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(31, 26, 23, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="muted" style={{ fontSize: '12px' }}>新家庭组</span>
+                <span className="muted" style={{ fontSize: '12px' }}>{t.migrateForm.newGroupLabel}</span>
                 <span className="mono strong" style={{ color: '#22c55e', fontSize: '13px' }}>{migrateResult.targetGroupName}</span>
               </div>
             ) : null}

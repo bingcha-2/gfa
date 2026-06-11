@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { getDict } from "@/lib/i18n/server";
 
-export const metadata: Metadata = {
-  title: "下载冰茶AI客户端",
-  description: "下载冰茶AI续杯客户端，支持 Windows 和 macOS",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getDict();
+  return { title: t.meta.downloadTitle, description: t.meta.downloadDescription };
+}
 
 export default function DownloadLayout({ children }: { children: ReactNode }) {
   return children;
