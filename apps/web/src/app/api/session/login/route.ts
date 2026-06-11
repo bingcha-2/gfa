@@ -5,8 +5,8 @@ import {
   CONSOLE_AUTH_COOKIE,
   CONSOLE_AUTH_MAX_AGE,
   shouldUseSecureConsoleCookie
-} from "../../../../lib/auth-cookie";
-import { AuthSession } from "../../../../lib/types";
+} from "@/lib/console/auth-cookie";
+import { AuthSession } from "@/lib/console/types";
 
 const BACKEND_BASE_URL =
   process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api";

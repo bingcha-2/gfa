@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { CONSOLE_AUTH_COOKIE } from "../../../../lib/auth-cookie";
+import { CONSOLE_AUTH_COOKIE } from "@/lib/console/auth-cookie";
 
 export async function POST() {
   const cookieStore = await cookies();

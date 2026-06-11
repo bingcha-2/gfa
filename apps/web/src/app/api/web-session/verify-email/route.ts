@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getBackendBaseUrl, safeParseJson } from "../../../../lib/backend-url";
+import { getBackendBaseUrl, safeParseJson } from "@/lib/backend-url";
 
 /**
  * Email verification — unauthenticated by design: the user clicks the link

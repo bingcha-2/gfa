@@ -13,8 +13,8 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { USER_AUTH_COOKIE } from "../../../../lib/user-auth-cookie";
-import { getBackendBaseUrl } from "../../../../lib/backend-url";
+import { USER_AUTH_COOKIE } from "@/lib/account/user-auth-cookie";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 const ALLOWED_METHODS = new Set(["GET", "POST", "PATCH", "DELETE"]);
 

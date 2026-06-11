@@ -5,9 +5,9 @@ import {
   USER_AUTH_COOKIE,
   USER_AUTH_MAX_AGE,
   shouldUseSecureUserCookie,
-} from "../../../../lib/user-auth-cookie";
-import { getBackendBaseUrl, safeParseJson } from "../../../../lib/backend-url";
-import type { PortalSession } from "../../../../lib/user-types";
+} from "@/lib/account/user-auth-cookie";
+import { getBackendBaseUrl, safeParseJson } from "@/lib/backend-url";
+import type { AccountSession } from "@/lib/account/user-types";
 
 export async function POST(request: NextRequest) {
   const payload = await request.json();
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(errorBody, { status: response.status });
   }
 
-  const session = data as PortalSession | null;
+  const session = data as AccountSession | null;
   if (!session?.accessToken || !session.customer) {
     return NextResponse.json(
       { error: "SERVICE_UNAVAILABLE", message: "Malformed backend response" },

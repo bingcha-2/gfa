@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CONSOLE_AUTH_COOKIE } from "./lib/auth-cookie";
-import { USER_AUTH_COOKIE } from "./lib/user-auth-cookie";
+import { CONSOLE_AUTH_COOKIE } from "./lib/console/auth-cookie";
+import { USER_AUTH_COOKIE } from "./lib/account/user-auth-cookie";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getBackendBaseUrl, safeParseJson } from "../../../../lib/backend-url";
+import { getBackendBaseUrl, safeParseJson } from "@/lib/backend-url";
 
 export async function POST(request: NextRequest) {
   const payload = await request.json();
