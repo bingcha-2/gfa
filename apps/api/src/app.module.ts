@@ -31,6 +31,7 @@ import { RemoteCodexModule } from "./remote-codex/remote-codex.module";
 import { RemoteAnthropicModule } from "./remote-anthropic/remote-anthropic.module";
 import { RemoteStatsModule } from "./remote-stats/remote-stats.module";
 import { Bulk2faModule } from "./bulk-2fa/bulk-2fa.module";
+import { MailModule } from "./mail/mail.module";
 import { WebModule } from "./web/web.module";
 import { AppSurfaceModule } from "./app/app-surface.module";
 
@@ -81,6 +82,7 @@ import { AppSurfaceModule } from "./app/app-surface.module";
     RemoteStatsModule,
     RosettaModule,
     Bulk2faModule,
+    MailModule,
     WebModule,
     AppSurfaceModule,
   ],

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  HttpCode,
   Post,
   UseGuards
 } from "@nestjs/common";
@@ -14,6 +15,9 @@ import { CustomerUser } from "./customer-jwt.strategy";
 import { RegisterDto } from "./dto/register.dto";
 import { CustomerLoginDto } from "./dto/login.dto";
 import { CustomerChangePasswordDto } from "./dto/change-password.dto";
+import { ForgotPasswordDto } from "./dto/forgot-password.dto";
+import { ResetPasswordDto } from "./dto/reset-password.dto";
+import { VerifyEmailDto } from "./dto/verify-email.dto";
 
 /**
  * CustomerAuthController — all endpoints are @Public() to skip the global
@@ -26,8 +30,10 @@ export class CustomerAuthController {
   /**
    * POST /api/web/auth/register
    * Rate limited: 5 requests per 60 seconds per IP.
+   * Returns HTTP 201 (Created) on success.
    */
   @Public()
+  @HttpCode(201)
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post("register")
   register(@Body() dto: RegisterDto) {
@@ -73,5 +79,49 @@ export class CustomerAuthController {
   @Post("refresh")
   refresh(@CurrentCustomer() customer: CustomerUser) {
     return this.authService.refresh(customer.customerId, 0 /* unused */);
+  }
+
+  /**
+   * POST /api/web/auth/forgot-password
+   * Rate limited: 3 requests per 60 seconds per IP.
+   * ALWAYS returns {ok:true} — no account enumeration.
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @Post("forgot-password")
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  /**
+   * POST /api/web/auth/reset-password
+   * Consumes a RESET_PASSWORD token; bumps tokenVersion to revoke all sessions.
+   */
+  @Public()
+  @Post("reset-password")
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.password);
+  }
+
+  /**
+   * POST /api/web/auth/request-verify-email
+   * Requires a valid customer session. Rate limited: 3 requests per 60 seconds.
+   */
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @Post("request-verify-email")
+  requestVerifyEmail(@CurrentCustomer() customer: CustomerUser) {
+    return this.authService.requestVerifyEmail(customer.customerId);
+  }
+
+  /**
+   * POST /api/web/auth/verify-email
+   * Consumes a VERIFY_EMAIL token; sets emailVerified=true.
+   */
+  @Public()
+  @Post("verify-email")
+  verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto.token);
   }
 }

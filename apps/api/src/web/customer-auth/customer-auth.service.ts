@@ -1,19 +1,25 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import * as bcrypt from "bcrypt";
+import { CustomerEmailTokenPurpose } from "@prisma/client";
 
 import { PrismaService } from "../../prisma/prisma.service";
 import { CustomerTokenService } from "./customer-token.service";
+import { CustomerEmailTokenService } from "./customer-email-token.service";
+import { MailService } from "../../mail/mail.service";
 
 // bcrypt cost factor — 10 as spec'd
 const BCRYPT_ROUNDS = 10;
 
-// Referral code alphabet: A-Z plus 2-9 (excludes 0/O and 1/I for legibility)
+// Referral code alphabet: A-Z plus 2-9 — Crockford-style: intentionally excludes I/O
+// (visually ambiguous with 1 and 0) to prevent transcription errors by users.
 const REFERRAL_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REFERRAL_CODE_LENGTH = 8;
 
@@ -59,11 +65,19 @@ function generateReferralCode(): string {
   return code;
 }
 
+function webBaseUrl(): string {
+  return process.env.WEB_BASE_URL ?? "https://bcai.lol";
+}
+
 @Injectable()
 export class CustomerAuthService {
+  private readonly logger = new Logger(CustomerAuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly tokenService: CustomerTokenService
+    private readonly tokenService: CustomerTokenService,
+    private readonly emailTokenService: CustomerEmailTokenService,
+    private readonly mailService: MailService
   ) {}
 
   async register(dto: {
@@ -124,6 +138,9 @@ export class CustomerAuthService {
         tokenVersion: customer.tokenVersion
       });
 
+      // Best-effort: send verification email — must not block or fail registration
+      this.sendVerificationEmailBestEffort(customer.id, customer.email);
+
       return {
         accessToken,
         customer: sanitizeCustomer(customer)
@@ -138,6 +155,27 @@ export class CustomerAuthService {
       }
       throw err;
     }
+  }
+
+  /** Fire-and-forget: issue a VERIFY_EMAIL token and send the email. Never throws. */
+  private sendVerificationEmailBestEffort(customerId: string, email: string): void {
+    const ttlMs = 24 * 60 * 60 * 1000; // 24h
+    // Use Promise chaining — intentionally not awaited by the caller
+    this.emailTokenService
+      .issueToken(customerId, CustomerEmailTokenPurpose.VERIFY_EMAIL, ttlMs)
+      .then((plaintext) => {
+        const link = `${webBaseUrl()}/app/verify-email?token=${plaintext}`;
+        return this.mailService.sendMail({
+          to: email,
+          subject: "Verify your email address",
+          text: `Please verify your email address by clicking the link below:\n\n${link}\n\nThis link expires in 24 hours.`
+        });
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `[customer-auth] best-effort verify email failed for ${email}: ${err?.message}`
+        );
+      });
   }
 
   async login(dto: { email: string; password: string }) {
@@ -285,6 +323,144 @@ export class CustomerAuthService {
     });
 
     return sanitizeCustomer(customer);
+  }
+
+  /**
+   * POST web/auth/forgot-password
+   * Always returns {ok:true} to prevent account enumeration.
+   * If customer exists: issues RESET_PASSWORD token (30min) + sends mail.
+   */
+  async forgotPassword(email: string): Promise<{ ok: true }> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const customer = await this.prisma.customer.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true }
+    });
+
+    if (customer) {
+      // Await token persistence, but treat mail as fire-and-forget on error
+      const plaintext = await this.emailTokenService.issueToken(
+        customer.id,
+        CustomerEmailTokenPurpose.RESET_PASSWORD,
+        30 * 60 * 1000
+      );
+
+      const link = `${webBaseUrl()}/app/reset?token=${plaintext}`;
+      // Fire-and-forget the mail send — do not await failure into the response
+      this.mailService
+        .sendMail({
+          to: customer.email,
+          subject: "Reset your password",
+          text: `You requested a password reset. Click the link below to reset your password:\n\n${link}\n\nThis link expires in 30 minutes. If you did not request this, please ignore this email.`
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `[customer-auth] forgot-password mail failed for ${customer.email}: ${err?.message}`
+          );
+        });
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * POST web/auth/reset-password
+   * Consumes a RESET_PASSWORD token and sets a new password.
+   * Increments tokenVersion to revoke all existing sessions.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<{ ok: true }> {
+    const customerId = await this.emailTokenService.consumeToken(
+      token,
+      CustomerEmailTokenPurpose.RESET_PASSWORD
+    );
+
+    if (!customerId) {
+      throw new BadRequestException({
+        error: "INVALID_TOKEN",
+        message: "链接无效或已过期"
+      });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+    await this.prisma.customer.update({
+      where: { id: customerId },
+      data: {
+        passwordHash: newHash,
+        tokenVersion: { increment: 1 }
+      }
+    });
+
+    return { ok: true };
+  }
+
+  /**
+   * POST web/auth/request-verify-email (requires CustomerJwtGuard)
+   * Issues a VERIFY_EMAIL token and sends a verification email.
+   * If already verified, returns {ok:true, alreadyVerified:true} immediately.
+   */
+  async requestVerifyEmail(customerId: string): Promise<{ ok: true; alreadyVerified?: true }> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, email: true, emailVerified: true }
+    });
+
+    if (!customer) {
+      throw new UnauthorizedException({
+        error: "SESSION_INVALID",
+        message: "Customer not found"
+      });
+    }
+
+    if (customer.emailVerified) {
+      return { ok: true, alreadyVerified: true };
+    }
+
+    const plaintext = await this.emailTokenService.issueToken(
+      customer.id,
+      CustomerEmailTokenPurpose.VERIFY_EMAIL,
+      24 * 60 * 60 * 1000 // 24h
+    );
+
+    const link = `${webBaseUrl()}/app/verify-email?token=${plaintext}`;
+    this.mailService
+      .sendMail({
+        to: customer.email,
+        subject: "Verify your email address",
+        text: `Please verify your email address by clicking the link below:\n\n${link}\n\nThis link expires in 24 hours.`
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `[customer-auth] request-verify-email mail failed for ${customer.email}: ${err?.message}`
+        );
+      });
+
+    return { ok: true };
+  }
+
+  /**
+   * POST web/auth/verify-email
+   * Consumes a VERIFY_EMAIL token and marks the customer's email as verified.
+   */
+  async verifyEmail(token: string): Promise<{ ok: true }> {
+    const customerId = await this.emailTokenService.consumeToken(
+      token,
+      CustomerEmailTokenPurpose.VERIFY_EMAIL
+    );
+
+    if (!customerId) {
+      throw new BadRequestException({
+        error: "INVALID_TOKEN",
+        message: "链接无效或已过期"
+      });
+    }
+
+    await this.prisma.customer.update({
+      where: { id: customerId },
+      data: { emailVerified: true }
+    });
+
+    return { ok: true };
   }
 
   sanitize = sanitizeCustomer;

@@ -99,6 +99,9 @@ importers:
       nanoid:
         specifier: ^3.3.11
         version: 3.3.11
+      nodemailer:
+        specifier: ^8.0.10
+        version: 8.0.10
       passport:
         specifier: ^0.7.0
         version: 0.7.0
@@ -124,6 +127,9 @@ importers:
       '@types/node':
         specifier: ^22.15.17
         version: 22.19.15
+      '@types/nodemailer':
+        specifier: ^6.4.17
+        version: 6.4.24
       '@types/passport-jwt':
         specifier: ^4.0.1
         version: 4.0.1
@@ -1749,6 +1755,9 @@ packages:
 
   '@types/node@22.19.15':
     resolution: {integrity: sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg==}
+
+  '@types/nodemailer@6.4.24':
+    resolution: {integrity: sha512-Ww4u0rT9wQNXh4JiQaIwx3QWdcOFXzOjQA2zc+jtFYNmQiT4mIUqcDin51bDFdkzKubFnQCZNK7FIHlPKQ/q9w==}
 
   '@types/passport-jwt@4.0.1':
     resolution: {integrity: sha512-Y0Ykz6nWP4jpxgEUYq8NoVZeCQPo1ZndJLfapI249g1jHChvRfZRO/LS3tqu26YgAS/laI1qx98sYGz0IalRXQ==}
@@ -5480,6 +5489,10 @@ snapshots:
   '@types/node@22.19.15':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/nodemailer@6.4.24':
+    dependencies:
+      '@types/node': 22.19.15
 
   '@types/passport-jwt@4.0.1':
     dependencies:

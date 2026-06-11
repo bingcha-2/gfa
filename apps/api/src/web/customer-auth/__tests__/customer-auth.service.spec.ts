@@ -110,7 +110,24 @@ function makeService(customerStore: ReturnType<typeof makeCustomer>[] = []) {
   process.env.CUSTOMER_JWT_SECRET = "test-customer-secret-that-is-32-chars-long!!";
 
   const tokenService = new CustomerTokenService(jwtService);
-  const service = new CustomerAuthService(prisma as any, tokenService);
+
+  // Stub email-token service (M3 additions) — no-op for M2 tests
+  const emailTokenService = {
+    issueToken: vi.fn(async () => "plaintext-stub"),
+    consumeToken: vi.fn(async () => null)
+  };
+
+  // Stub mail service — no-op for M2 tests
+  const mailService = {
+    sendMail: vi.fn(async () => ({ ok: true }))
+  };
+
+  const service = new CustomerAuthService(
+    prisma as any,
+    tokenService,
+    emailTokenService as any,
+    mailService as any
+  );
 
   return { service, tokenService, prisma };
 }

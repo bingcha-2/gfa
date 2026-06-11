@@ -4,6 +4,7 @@ import { PassportModule } from "@nestjs/passport";
 
 import { CustomerAuthService } from "./customer-auth.service";
 import { CustomerTokenService } from "./customer-token.service";
+import { CustomerEmailTokenService } from "./customer-email-token.service";
 import { CustomerJwtStrategy } from "./customer-jwt.strategy";
 import { CustomerJwtGuard } from "./customer-jwt.guard";
 import { CustomerAuthController } from "./customer-auth.controller";
@@ -18,6 +19,8 @@ import { CustomerProfileController } from "./customer-profile.controller";
  *
  * Exports: CustomerAuthService, CustomerTokenService, CustomerJwtGuard, CustomerJwtStrategy
  * so AppAuthModule can reuse them without re-registering.
+ *
+ * MailModule is @Global() so MailService is available here without an explicit import.
  */
 @Module({
   imports: [
@@ -34,12 +37,14 @@ import { CustomerProfileController } from "./customer-profile.controller";
   providers: [
     CustomerAuthService,
     CustomerTokenService,
+    CustomerEmailTokenService,
     CustomerJwtStrategy,
     CustomerJwtGuard
   ],
   exports: [
     CustomerAuthService,
     CustomerTokenService,
+    CustomerEmailTokenService,
     CustomerJwtGuard,
     CustomerJwtStrategy
   ]
