@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyColumnsToConfig } from "./subscription-config";
+import { legacyColumnsToConfig, subscriptionToLimitRecord } from "./subscription-config";
 
 describe("legacyColumnsToConfig — 老订阅列收敛成 config", () => {
   it("号池(bindings 空)→ line=pool,含用量上限,不含 levels/bindings", () => {
@@ -61,5 +61,74 @@ describe("legacyColumnsToConfig — 老订阅列收敛成 config", () => {
     });
 
     expect(config.line).toBe("pool");
+  });
+});
+
+describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子)", () => {
+  const expiresAt = new Date("2026-07-01T00:00:00.000Z");
+
+  it("号池订阅 → record 含 bucketLimits/weeklyTokenLimit,status=active", () => {
+    const record = subscriptionToLimitRecord({
+      id: "sub-1",
+      status: "ACTIVE",
+      expiresAt,
+      config: {
+        line: "pool",
+        products: ["anthropic"],
+        bucketLimits: { "anthropic-claude": 50000 },
+        weeklyTokenLimit: 250000,
+        deviceLimit: 2,
+        windowMs: 18000000,
+      },
+    });
+
+    expect(record).toEqual({
+      id: "sub-1",
+      status: "active",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 50000 },
+      weeklyTokenLimit: 250000,
+      windowMs: 18000000,
+      keyExpiresAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
+
+  it("绑定订阅 → record 含 bindings/weight、requiresBinding=true,不含用量上限", () => {
+    const record = subscriptionToLimitRecord({
+      id: "sub-2",
+      status: "ACTIVE",
+      expiresAt,
+      config: {
+        line: "bind",
+        products: ["anthropic"],
+        levels: { anthropic: "max-20x" },
+        bindings: { anthropic: 1234 },
+        weight: 8,
+        deviceLimit: 1,
+        windowMs: 18000000,
+      },
+    });
+
+    expect(record).toEqual({
+      id: "sub-2",
+      status: "active",
+      products: ["anthropic"],
+      bindings: { anthropic: 1234 },
+      weight: 8,
+      requiresBinding: true,
+      windowMs: 18000000,
+      keyExpiresAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
+
+  it("非 ACTIVE 状态 → record.status 非 active(引擎据此拒绝)", () => {
+    const record = subscriptionToLimitRecord({
+      id: "sub-3",
+      status: "EXPIRED",
+      expiresAt,
+      config: { line: "pool", products: ["anthropic"], bucketLimits: {}, weeklyTokenLimit: 0, deviceLimit: 1, windowMs: 18000000 },
+    });
+
+    expect(record.status).not.toBe("active");
   });
 });

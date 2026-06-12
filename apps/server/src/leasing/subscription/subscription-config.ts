@@ -40,6 +40,32 @@ export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknow
   };
 }
 
+export interface SubscriptionRow {
+  id: string;
+  status: string;
+  expiresAt: Date | null;
+  config: Record<string, any>;
+}
+
+/**
+ * 运行时:把订阅(已解析 config)转成限额引擎认的 record(去影子核心)。
+ * 只产出配置字段;用量(tokenUsageEvents/窗口)由引擎按 id 从内存窗口存储单独挂载。
+ */
+export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, unknown> {
+  const config = sub.config;
+  const base: Record<string, unknown> = {
+    id: sub.id,
+    status: sub.status === "ACTIVE" ? "active" : "expired",
+    products: config.products,
+    windowMs: config.windowMs,
+    keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : undefined,
+  };
+  if (config.line === "bind") {
+    return { ...base, bindings: config.bindings, weight: config.weight, requiresBinding: true };
+  }
+  return { ...base, bucketLimits: config.bucketLimits, weeklyTokenLimit: config.weeklyTokenLimit };
+}
+
 function parseArray(json: string | null): string[] {
   try {
     const v = JSON.parse(json || "[]");
