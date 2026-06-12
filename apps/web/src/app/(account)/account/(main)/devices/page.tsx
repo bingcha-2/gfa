@@ -6,43 +6,14 @@ import { toast } from "sonner";
 import { PencilIcon, Trash2Icon } from "lucide-react";
 
 import { PageHeader } from "@/components/account/page-header";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
+  AccountButton,
+  AccountEmpty,
+  AccountInput,
+  AccountPill,
+  AccountSkeleton,
+} from "@/components/account/account-ui";
+import { AccountStatusBadge } from "@/components/account/account-status-badge";
 import { getDevices, renameDevice, revokeDevice } from "@/lib/account/user-api";
 import type { AccountDevice } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
@@ -135,134 +106,143 @@ export default function DevicesPage() {
     data?.devices.filter((dev) => dev.status === "ACTIVE").length ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="account-devices" data-testid="account-devices">
       <PageHeader
         title={t.pages.devicesTitle}
         actions={
           data && (
-            <Badge variant="outline" className="tabular-nums">
+            <AccountPill tone={activeCount >= data.deviceLimit ? "warning" : "info"}>
               {fmt(d.countBadge, { n: activeCount, limit: data.deviceLimit })}
-            </Badge>
+            </AccountPill>
           )
         }
       />
 
       {loadError && (
-        <p className="text-sm text-destructive">{d.loadFailed}</p>
+        <p className="account-form-error">{d.loadFailed}</p>
       )}
 
       {data === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 rounded-lg" />
-          <Skeleton className="h-14 rounded-lg" />
-          <Skeleton className="h-14 rounded-lg" />
+        <div className="account-skeleton-stack">
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
         </div>
       ) : data.devices.length === 0 ? (
-        <Empty className="border min-h-[280px]">
-          <EmptyHeader>
-            <EmptyTitle>{d.empty}</EmptyTitle>
-            <EmptyDescription>{d.emptyDesc}</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
+        <AccountEmpty title={d.empty} description={d.emptyDesc}>
             <Link
               href="/account/download"
-              className="text-sm text-accent underline-offset-4 hover:underline"
+              className="account-link"
             >
               {d.emptyDownload}
             </Link>
-          </EmptyContent>
-        </Empty>
+        </AccountEmpty>
       ) : (
-        <div className="rounded-xl border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{d.colName}</TableHead>
-                <TableHead>{d.colPlatform}</TableHead>
-                <TableHead>{d.colStatus}</TableHead>
-                <TableHead>{d.colLastSeen}</TableHead>
-                <TableHead>{d.colLastIp}</TableHead>
-                <TableHead className="text-right">{d.colActions}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="account-data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>{d.colName}</th>
+                <th>{d.colPlatform}</th>
+                <th>{d.colStatus}</th>
+                <th>{d.colLastSeen}</th>
+                <th>{d.colLastIp}</th>
+                <th className="account-data-table__number">{d.colActions}</th>
+              </tr>
+            </thead>
+            <tbody>
               {data.devices.map((device) => {
                 const revoked = device.status === "REVOKED";
                 return (
-                  <TableRow
+                  <tr
                     key={device.id}
-                    className={cn(revoked && "opacity-50")}
+                    data-revoked={revoked || undefined}
                   >
-                    <TableCell
+                    <td
                       className={cn(
-                        "font-medium",
-                        !device.name?.trim() && "font-mono text-xs"
+                        "account-data-table__strong",
+                        !device.name?.trim() && "account-data-table__mono"
                       )}
                     >
                       {deviceLabel(device, d.unnamed)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
+                    </td>
+                    <td className="account-data-table__muted">
                       {device.platform}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={revoked ? "ghost" : "secondary"}>
+                    </td>
+                    <td>
+                      <AccountStatusBadge tone={revoked ? "muted" : "success"}>
                         {revoked ? d.statusRevoked : d.statusActive}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
+                      </AccountStatusBadge>
+                    </td>
+                    <td className="account-data-table__muted">
                       {device.lastSeenAt
                         ? formatDateTime(device.lastSeenAt)
                         : "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
+                    </td>
+                    <td className="account-data-table__mono account-data-table__muted">
                       {device.lastIp ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
+                    </td>
+                    <td>
                       {!revoked && (
-                        <div className="flex justify-end gap-1.5">
-                          <Button
+                        <div className="account-row-actions">
+                          <AccountButton
                             variant="ghost"
-                            size="sm"
+                            className="account-btn--compact"
                             onClick={() => openRename(device)}
                           >
                             <PencilIcon data-icon="inline-start" />
                             {d.rename}
-                          </Button>
-                          <Button
+                          </AccountButton>
+                          <AccountButton
                             variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
+                            className="account-btn--compact account-btn--danger"
                             onClick={() => setRevokeTarget(device)}
                           >
                             <Trash2Icon data-icon="inline-start" />
                             {d.revoke}
-                          </Button>
+                          </AccountButton>
                         </div>
                       )}
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 );
               })}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       )}
 
-      {/* ── 重命名弹窗 ──────────────────────────────────────────────────── */}
-      <Dialog
-        open={!!renameTarget}
-        onOpenChange={(open) => {
-          if (!open) setRenameTarget(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{d.renameTitle}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleRename} className="space-y-4">
-            <Field>
-              <FieldLabel>{d.renameLabel}</FieldLabel>
-              <Input
+      {renameTarget && (
+        <div className="account-dialog" role="presentation">
+          <button
+            type="button"
+            className="account-dialog__backdrop"
+            aria-label="关闭重命名弹窗"
+            onClick={() => setRenameTarget(null)}
+          />
+          <section
+            className="account-dialog__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-device-rename-title"
+          >
+            <header className="account-dialog__header">
+              <div>
+                <h2 id="account-device-rename-title">{d.renameTitle}</h2>
+                <p>{deviceLabel(renameTarget, d.unnamed)}</p>
+              </div>
+              <button
+                type="button"
+                className="account-dialog__close"
+                aria-label="关闭重命名弹窗"
+                onClick={() => setRenameTarget(null)}
+              >
+                x
+              </button>
+            </header>
+            <form onSubmit={handleRename} className="account-form-stack">
+              <AccountInput
+                label={d.renameLabel}
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 placeholder={d.renamePlaceholder}
@@ -271,49 +251,64 @@ export default function DevicesPage() {
                 disabled={renaming}
                 autoFocus
               />
-            </Field>
-            <DialogFooter>
-              <Button type="submit" disabled={renaming || !renameValue.trim()}>
+              <div className="account-form-actions">
+                <AccountButton type="submit" disabled={renaming || !renameValue.trim()}>
                 {renaming ? d.renaming : d.renameSave}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+                </AccountButton>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
-      {/* ── 移除设备确认 ────────────────────────────────────────────────── */}
-      <AlertDialog
-        open={!!revokeTarget}
-        onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{d.revokeConfirmTitle}</AlertDialogTitle>
-            <AlertDialogDescription>
+      {revokeTarget && (
+        <div className="account-dialog" role="presentation">
+          <button
+            type="button"
+            className="account-dialog__backdrop"
+            aria-label="关闭移除设备确认"
+            onClick={() => setRevokeTarget(null)}
+          />
+          <section
+            className="account-dialog__panel account-dialog__panel--narrow"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="account-device-revoke-title"
+          >
+            <header className="account-dialog__header">
+              <div>
+                <h2 id="account-device-revoke-title">{d.revokeConfirmTitle}</h2>
+                <p>
               {revokeTarget && (
-                <span className="font-medium text-foreground">
+                    <strong>
                   {deviceLabel(revokeTarget, d.unnamed)}
-                </span>
+                    </strong>
               )}{" "}
               {d.revokeConfirmDesc}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={revoking}>
+                </p>
+              </div>
+            </header>
+            <div className="account-form-actions">
+              <AccountButton
+                type="button"
+                variant="secondary"
+                disabled={revoking}
+                onClick={() => setRevokeTarget(null)}
+              >
               {d.cancel}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={handleRevoke}
-              disabled={revoking}
-            >
+              </AccountButton>
+              <AccountButton
+                type="button"
+                className="account-btn--danger"
+                onClick={handleRevoke}
+                disabled={revoking}
+              >
               {revoking ? d.revoking : d.revokeConfirm}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              </AccountButton>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

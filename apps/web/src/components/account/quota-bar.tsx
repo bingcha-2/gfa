@@ -1,11 +1,10 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { AccountPill } from "./account-ui";
 import { formatTokens } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useDict } from "@/lib/i18n/client";
 import type { SubscriptionQuota } from "@/lib/account/user-types";
-import { cn } from "@/lib/utils";
 
 export type QuotaLevel = "ok" | "warn" | "critical";
 
@@ -41,14 +40,6 @@ export function formatResetText(
   return fmt(templates.minutesOnly, { m: minutes });
 }
 
-const LEVEL_BAR_CLASS: Record<QuotaLevel, string> = {
-  // Emerald/amber/destructive mirror the repo's status hues (.status-emerald,
-  // amber accent, semantic destructive token).
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
-  critical: "bg-destructive",
-};
-
 function Bar({
   label,
   used,
@@ -64,10 +55,10 @@ function Bar({
   const level = quotaLevel(used, limit);
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2 text-xs">
-        <span className="font-medium">{label}</span>
-        <span className="tabular-nums text-muted-foreground">
+    <div className="account-quota-bar">
+      <div className="account-quota-bar__meta">
+        <span>{label}</span>
+        <span>
           {formatTokens(used)} / {formatTokens(limit)}
         </span>
       </div>
@@ -77,20 +68,15 @@ function Bar({
         aria-valuemin={0}
         aria-valuemax={100}
         data-level={level}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        className="account-quota-bar__track"
       >
         <div
-          className={cn(
-            "h-full rounded-full transition-all duration-200",
-            LEVEL_BAR_CLASS[level]
-          )}
+          className="account-quota-bar__fill"
           style={{ width: `${pct}%` }}
         />
       </div>
       {resetText && (
-        <div className="text-[11px] text-muted-foreground tabular-nums">
-          {resetText}
-        </div>
+        <div className="account-quota-bar__reset">{resetText}</div>
       )}
     </div>
   );
@@ -103,9 +89,9 @@ export function QuotaBar({ quota }: { quota: SubscriptionQuota }) {
 
   if (quota.quotaMode === "unlimited") {
     return (
-      <div className="flex items-center gap-2">
-        <Badge variant="secondary">{q.unlimited}</Badge>
-        <span className="text-xs text-muted-foreground tabular-nums">
+      <div className="account-quota-inline">
+        <AccountPill tone="success">{q.unlimited}</AccountPill>
+        <span>
           {fmt(q.windowUsed, { tokens: formatTokens(quota.recentWindowTokens) })}
         </span>
       </div>
@@ -122,13 +108,13 @@ export function QuotaBar({ quota }: { quota: SubscriptionQuota }) {
   });
 
   return (
-    <div className="space-y-3">
+    <div className="account-quota-stack">
       {quota.quotaMode === "dynamic" && (
-        <Badge variant="outline">{q.dynamicBadge}</Badge>
+        <AccountPill tone="info">{q.dynamicBadge}</AccountPill>
       )}
 
       {quota.buckets.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{q.noBuckets}</p>
+        <p className="account-muted-note">{q.noBuckets}</p>
       ) : (
         quota.buckets.map((bucket) => (
           <Bar

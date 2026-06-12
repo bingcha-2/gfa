@@ -86,6 +86,7 @@ describe("OrderQrFlow", () => {
     // QR rendered straight from the data URI
     const img = screen.getByAltText("支付二维码");
     expect(img).toHaveAttribute("src", "data:image/png;base64,FAKEQR");
+    expect(document.querySelector(".account-order-flow")).toBeInTheDocument();
 
     // Amount + mobile pay link
     expect(screen.getByText("¥99")).toBeInTheDocument();

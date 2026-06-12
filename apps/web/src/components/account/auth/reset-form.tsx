@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { resetPassword } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -37,17 +35,16 @@ export function ResetForm() {
 
   if (!token) {
     return (
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="account-auth-state">
         {t.errors.invalidResetToken}
       </p>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Field>
-        <FieldLabel>{t.form.newPasswordLabel}</FieldLabel>
-        <Input
+    <form onSubmit={handleSubmit} className="account-login-form">
+      <AccountInput
+          label={t.form.newPasswordLabel}
           type="password"
           autoComplete="new-password"
           placeholder={t.form.newPasswordPlaceholder}
@@ -57,13 +54,12 @@ export function ResetForm() {
           minLength={8}
           disabled={loading}
         />
-      </Field>
 
-      {error && <FieldError>{error}</FieldError>}
+      {error && <p className="account-form-error">{error}</p>}
 
-      <Button type="submit" className="w-full" disabled={loading}>
+      <AccountButton type="submit" disabled={loading}>
         {loading ? t.form.resetting : t.actions.resetPassword}
-      </Button>
+      </AccountButton>
     </form>
   );
 }

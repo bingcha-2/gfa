@@ -5,32 +5,13 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { PlusIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Field, FieldLabel } from "@/components/ui/field";
+  AccountButton,
+  AccountEmpty,
+  AccountInput,
+  AccountSkeleton,
+  AccountTextarea,
+} from "@/components/account/account-ui";
 import { TicketStatusBadge } from "@/components/account/ticket-status-badge";
 import { createTicket, getTickets } from "@/lib/account/user-api";
 import type { TicketSummary } from "@/lib/account/user-types";
@@ -82,86 +63,101 @@ export function TicketsList() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setDialogOpen(true)}>
+    <div className="account-ticket-center" data-testid="account-ticket-center">
+      <div className="account-list-toolbar">
+        <AccountButton onClick={() => setDialogOpen(true)}>
           <PlusIcon data-icon="inline-start" />
           {t.newTicket}
-        </Button>
+        </AccountButton>
       </div>
 
-      {loadError && <p className="text-sm text-destructive">{t.loadFailed}</p>}
+      {loadError && <p className="account-form-error">{t.loadFailed}</p>}
 
       {tickets === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
+        <div className="account-skeleton-stack">
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
         </div>
       ) : tickets.length === 0 ? (
-        <Empty className="border min-h-[280px]">
-          <EmptyHeader>
-            <EmptyTitle>{t.empty}</EmptyTitle>
-            <EmptyDescription>{t.emptyDesc}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <AccountEmpty title={t.empty} description={t.emptyDesc} />
       ) : (
-        <div className="rounded-xl border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t.colSubject}</TableHead>
-                <TableHead>{t.colStatus}</TableHead>
-                <TableHead>{t.colCreatedAt}</TableHead>
-                <TableHead>{t.colUpdatedAt}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="account-data-table">
+          <table>
+            <thead>
+              <tr>
+                <th>{t.colSubject}</th>
+                <th>{t.colStatus}</th>
+                <th>{t.colCreatedAt}</th>
+                <th>{t.colUpdatedAt}</th>
+              </tr>
+            </thead>
+            <tbody>
               {tickets.map((ticket) => (
-                <TableRow key={ticket.id}>
-                  <TableCell>
+                <tr key={ticket.id}>
+                  <td>
                     <Link
                       href={`/account/tickets/${ticket.id}`}
-                      className="font-medium underline-offset-4 hover:underline"
+                      className="account-link"
                     >
                       {ticket.subject}
                     </Link>
-                  </TableCell>
-                  <TableCell>
+                  </td>
+                  <td>
                     <TicketStatusBadge status={ticket.status} />
-                  </TableCell>
-                  <TableCell className="tabular-nums text-muted-foreground">
+                  </td>
+                  <td className="account-data-table__muted">
                     {formatDateTime(ticket.createdAt)}
-                  </TableCell>
-                  <TableCell className="tabular-nums text-muted-foreground">
+                  </td>
+                  <td className="account-data-table__muted">
                     {formatDateTime(ticket.updatedAt)}
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               ))}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       )}
 
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open);
-          // Reset the form when the dialog is dismissed (Escape / backdrop / close).
-          if (!open) {
-            setSubject("");
-            setBody("");
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.newTicket}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <Field>
-              <FieldLabel>{t.subjectLabel}</FieldLabel>
-              <Input
+      {dialogOpen && (
+        <div className="account-dialog" role="presentation">
+          <button
+            type="button"
+            className="account-dialog__backdrop"
+            aria-label="关闭工单弹窗"
+            onClick={() => {
+              setDialogOpen(false);
+              setSubject("");
+              setBody("");
+            }}
+          />
+          <section
+            className="account-dialog__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-ticket-dialog-title"
+          >
+            <header className="account-dialog__header">
+              <div>
+                <h2 id="account-ticket-dialog-title">{t.newTicket}</h2>
+                <p>{t.bodyPlaceholder}</p>
+              </div>
+              <button
+                type="button"
+                className="account-dialog__close"
+                aria-label="关闭工单弹窗"
+                onClick={() => {
+                  setDialogOpen(false);
+                  setSubject("");
+                  setBody("");
+                }}
+              >
+                x
+              </button>
+            </header>
+            <form onSubmit={handleCreate} className="account-form-stack">
+              <AccountInput
+                label={t.subjectLabel}
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder={t.subjectPlaceholder}
@@ -169,10 +165,8 @@ export function TicketsList() {
                 required
                 disabled={submitting}
               />
-            </Field>
-            <Field>
-              <FieldLabel>{t.bodyLabel}</FieldLabel>
-              <Textarea
+              <AccountTextarea
+                label={t.bodyLabel}
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 placeholder={t.bodyPlaceholder}
@@ -180,18 +174,18 @@ export function TicketsList() {
                 required
                 disabled={submitting}
               />
-            </Field>
-            <DialogFooter>
-              <Button
+              <div className="account-form-actions">
+                <AccountButton
                 type="submit"
                 disabled={submitting || !subject.trim() || !body.trim()}
               >
                 {submitting ? t.submitting : t.submit}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+                </AccountButton>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

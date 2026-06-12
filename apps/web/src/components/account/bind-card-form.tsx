@@ -3,10 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Badge } from "@/components/ui/badge";
+import { AccountButton, AccountInput, AccountPill } from "./account-ui";
 import { bindCard, UserApiError } from "@/lib/account/user-api";
 import type { BindCardResult } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
@@ -63,53 +60,47 @@ export function BindCardForm({ onBound }: { onBound?: () => void }) {
   const sub = result?.subscription;
 
   return (
-    <div className="space-y-4">
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <Field>
-          <FieldLabel>{t.cardKeyLabel}</FieldLabel>
-          <Input
-            className="font-mono"
-            placeholder={t.cardKeyPlaceholder}
-            value={cardKey}
-            onChange={(e) => setCardKey(e.target.value)}
-            required
-            disabled={pending}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
+    <div className="account-bind-card">
+      <form onSubmit={handleSubmit} className="account-bind-card__form">
+        <AccountInput
+          label={t.cardKeyLabel}
+          className="account-input--mono"
+          placeholder={t.cardKeyPlaceholder}
+          value={cardKey}
+          onChange={(e) => setCardKey(e.target.value)}
+          required
+          disabled={pending}
+          autoComplete="off"
+          spellCheck={false}
+        />
 
-        {error && <FieldError>{error}</FieldError>}
+        {error && <p className="account-field__error">{error}</p>}
 
-        <Button type="submit" disabled={pending || !cardKey.trim()}>
+        <AccountButton type="submit" disabled={pending || !cardKey.trim()}>
           {pending ? t.binding : t.bindSubmit}
-        </Button>
+        </AccountButton>
       </form>
 
       {result && sub && (
-        <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
-          <div className="font-medium">
+        <div className="account-bind-card__result">
+          <div className="account-bind-card__result-title">
             {result.alreadyBound ? t.bindAlreadyBound : t.bindSuccessTitle}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="account-bind-card__products">
             {sub.products.map((p) => (
-              <Badge key={p} variant="secondary">
-                {p}
-              </Badge>
+              <AccountPill key={p} tone="info">{p}</AccountPill>
             ))}
           </div>
-          <div className="grid gap-1 text-muted-foreground">
+          <div className="account-bind-card__meta">
             <span>
               {t.expiresLabel}:{" "}
-              <span className="tabular-nums text-foreground">
+              <strong>
                 {sub.expiresAt ? formatDateTime(sub.expiresAt) : t.neverExpires}
-              </span>
+              </strong>
             </span>
             <span>
               {t.deviceLimitLabel}:{" "}
-              <span className="tabular-nums text-foreground">
-                {fmt(t.deviceLimitValue, { n: sub.deviceLimit })}
-              </span>
+              <strong>{fmt(t.deviceLimitValue, { n: sub.deviceLimit })}</strong>
             </span>
           </div>
         </div>

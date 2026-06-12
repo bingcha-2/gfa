@@ -4,16 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2Icon, XCircleIcon, RotateCcwIcon } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AccountButton, AccountSkeleton } from "./account-ui";
 import { useOrderStatus } from "@/lib/account/use-order-status";
 import { createBillingOrder } from "@/lib/account/user-api";
 import type { BillingOrderCreated, PayChannel, Plan } from "@/lib/account/user-types";
@@ -102,10 +93,10 @@ export function OrderQrFlow({
 
   if (status?.status === "PAID") {
     return (
-      <div className="flex flex-col items-center gap-3 py-8 text-center">
-        <CheckCircle2Icon className="size-10 text-emerald-600 dark:text-emerald-400" />
-        <div className="text-base font-semibold">{t.paidTitle}</div>
-        <p className="text-sm text-muted-foreground">{t.paidDesc}</p>
+      <div className="account-order-flow account-order-flow--terminal">
+        <CheckCircle2Icon />
+        <div>{t.paidTitle}</div>
+        <p>{t.paidDesc}</p>
       </div>
     );
   }
@@ -113,14 +104,12 @@ export function OrderQrFlow({
   if (status?.status === "FAILED" || status?.status === "REFUNDED") {
     const failed = status.status === "FAILED";
     return (
-      <div className="flex flex-col items-center gap-3 py-8 text-center">
-        <XCircleIcon className="size-10 text-destructive" />
-        <div className="text-base font-semibold">
+      <div className="account-order-flow account-order-flow--terminal">
+        <XCircleIcon />
+        <div>
           {failed ? t.failedTitle : t.refundedTitle}
         </div>
-        <p className="text-sm text-muted-foreground">
-          {failed ? t.failedDesc : t.refundedDesc}
-        </p>
+        <p>{failed ? t.failedDesc : t.refundedDesc}</p>
       </div>
     );
   }
@@ -130,13 +119,13 @@ export function OrderQrFlow({
 
   if (expired) {
     return (
-      <div className="flex flex-col items-center gap-3 py-8 text-center">
-        <RotateCcwIcon className="size-10 text-muted-foreground" />
-        <div className="text-base font-semibold">{t.expiredTitle}</div>
-        <p className="text-sm text-muted-foreground">{t.expiredDesc}</p>
-        <Button onClick={() => void createOrder(channel)} disabled={creating}>
+      <div className="account-order-flow account-order-flow--terminal">
+        <RotateCcwIcon />
+        <div>{t.expiredTitle}</div>
+        <p>{t.expiredDesc}</p>
+        <AccountButton onClick={() => void createOrder(channel)} disabled={creating}>
           {t.regenerate}
-        </Button>
+        </AccountButton>
       </div>
     );
   }
@@ -144,72 +133,73 @@ export function OrderQrFlow({
   // ── Active purchase view ────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      <ToggleGroup
-        multiple={false}
-        value={[channel]}
-        onValueChange={(value) => {
-          const next = value[0] as PayChannel | undefined;
-          if (next && next !== channel) setChannel(next);
-        }}
-        variant="outline"
-        disabled={creating}
-      >
-        <ToggleGroupItem value="ALIPAY">{t.channelAlipay}</ToggleGroupItem>
-        <ToggleGroupItem value="WXPAY">{t.channelWxpay}</ToggleGroupItem>
-      </ToggleGroup>
+    <div className="account-order-flow">
+      <div className="account-pay-channel" role="group" aria-label="支付方式">
+        {(["ALIPAY", "WXPAY"] as const).map((ch) => (
+          <button
+            key={ch}
+            type="button"
+            aria-pressed={channel === ch}
+            disabled={creating}
+            onClick={() => {
+              if (ch !== channel) setChannel(ch);
+            }}
+          >
+            {ch === "ALIPAY" ? t.channelAlipay : t.channelWxpay}
+          </button>
+        ))}
+      </div>
 
       {creating && (
-        <div className="flex flex-col items-center gap-3 py-2">
-          <Skeleton className="size-44 rounded-lg" />
-          <p className="text-sm text-muted-foreground">{t.dialogCreating}</p>
+        <div className="account-order-flow__loading">
+          <AccountSkeleton className="account-skeleton--qr" />
+          <p>{t.dialogCreating}</p>
         </div>
       )}
 
       {!creating && createError && (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <XCircleIcon className="size-8 text-destructive" />
-          <div className="text-sm font-medium">{t.dialogCreateFailed}</div>
-          <p className="text-xs text-muted-foreground break-all">
-            {createError}
-          </p>
-          <Button
-            variant="outline"
-            onClick={() => void createOrder(channel)}
-          >
+        <div className="account-order-flow account-order-flow--terminal">
+          <XCircleIcon />
+          <div>{t.dialogCreateFailed}</div>
+          <p>{createError}</p>
+          <AccountButton variant="secondary" onClick={() => void createOrder(channel)}>
             {t.retryCreate}
-          </Button>
+          </AccountButton>
         </div>
       )}
 
       {!creating && order && (
-        <>
+        <div className="account-order-flow__active">
           {/* qrDataUri is a backend-issued data:image/png — render directly */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={order.qrDataUri}
             alt={t.qrAlt}
-            className="size-44 rounded-lg border bg-white p-1.5"
+            className="account-order-flow__qr"
           />
 
-          <p className="text-xs text-muted-foreground">
-            {fmt(t.scanHint, { channel: channelLabel })}
-          </p>
+          <p>{fmt(t.scanHint, { channel: channelLabel })}</p>
 
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs text-muted-foreground">
-              {t.amountLabel}
-            </span>
-            <span className="text-xl font-semibold tabular-nums">
-              {formatPriceCents(order.amountCents)}
-            </span>
+          {order.feeCents > 0 && (
+            <div className="account-order-flow__amount">
+              <span>{t.baseLabel}</span>
+              <strong>{formatPriceCents(order.baseCents)}</strong>
+            </div>
+          )}
+          {order.feeCents > 0 && (
+            <div className="account-order-flow__amount">
+              <span>{t.feeLabel}</span>
+              <strong>{formatPriceCents(order.feeCents)}</strong>
+            </div>
+          )}
+          <div className="account-order-flow__amount">
+            <span>{t.amountLabel}</span>
+            <strong>{formatPriceCents(order.amountCents)}</strong>
           </div>
 
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">{t.countdownLabel}</span>
-            <span className="font-mono tabular-nums font-medium">
-              {formatCountdown(remainingMs)}
-            </span>
+          <div className="account-order-flow__countdown">
+            <span>{t.countdownLabel}</span>
+            <strong>{formatCountdown(remainingMs)}</strong>
           </div>
 
           {/* 移动端无法扫码自己 — 提供直达支付链接;桌面端同样可用 */}
@@ -217,11 +207,11 @@ export function OrderQrFlow({
             href={order.payUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-sm text-accent underline-offset-4 transition-colors duration-200 hover:underline"
+            className="account-link"
           >
             {t.openPayUrl}
           </a>
-        </>
+        </div>
       )}
     </div>
   );
@@ -245,21 +235,42 @@ export function OrderQrDialog({
   const dict = useDict();
   const t = dict.portalApp.billing;
 
+  if (!open || !plan) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t.dialogTitle}</DialogTitle>
-          {plan && <DialogDescription>{plan.name}</DialogDescription>}
-        </DialogHeader>
-        {open && plan && (
-          <OrderQrFlow
-            plan={plan}
-            onPaid={onPaid}
-            onRequestClose={() => onOpenChange(false)}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+    <div className="account-dialog" role="presentation">
+      <button
+        type="button"
+        className="account-dialog__backdrop"
+        aria-label="关闭支付弹窗"
+        onClick={() => onOpenChange(false)}
+      />
+      <section
+        className="account-dialog__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-order-dialog-title"
+      >
+        <header className="account-dialog__header">
+          <div>
+            <h2 id="account-order-dialog-title">{t.dialogTitle}</h2>
+            <p>{plan.name}</p>
+          </div>
+          <button
+            type="button"
+            className="account-dialog__close"
+            aria-label="关闭支付弹窗"
+            onClick={() => onOpenChange(false)}
+          >
+            ✕
+          </button>
+        </header>
+        <OrderQrFlow
+          plan={plan}
+          onPaid={onPaid}
+          onRequestClose={() => onOpenChange(false)}
+        />
+      </section>
+    </div>
   );
 }

@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { userApi } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -40,10 +38,9 @@ export function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
-      <Field>
-        <FieldLabel>{t.form.currentPasswordLabel}</FieldLabel>
-        <Input
+    <form onSubmit={handleSubmit} className="account-form-stack account-form-stack--narrow">
+      <AccountInput
+          label={t.form.currentPasswordLabel}
           type="password"
           autoComplete="current-password"
           placeholder={t.form.currentPasswordPlaceholder}
@@ -52,11 +49,9 @@ export function ChangePasswordForm() {
           required
           disabled={loading}
         />
-      </Field>
 
-      <Field>
-        <FieldLabel>{t.form.newPasswordLabel}</FieldLabel>
-        <Input
+      <AccountInput
+          label={t.form.newPasswordLabel}
           type="password"
           autoComplete="new-password"
           placeholder={t.form.newPasswordPlaceholder}
@@ -66,20 +61,17 @@ export function ChangePasswordForm() {
           minLength={8}
           disabled={loading}
         />
-      </Field>
 
-      {error && <FieldError>{error}</FieldError>}
+      {error && <p className="account-form-error">{error}</p>}
       {success && (
-        // No --success design token in globals.css yet; emerald matches the
-        // repo's existing success hue (.status-emerald). Swap to token when added.
-        <p className="text-sm text-emerald-600 dark:text-emerald-400">
+        <p className="account-form-success">
           {t.settings.changePwdSuccess}
         </p>
       )}
 
-      <Button type="submit" disabled={loading}>
+      <AccountButton type="submit" disabled={loading}>
         {loading ? t.form.saving : t.actions.changePassword}
-      </Button>
+      </AccountButton>
     </form>
   );
 }

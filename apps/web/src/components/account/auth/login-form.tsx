@@ -4,9 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { loginUser } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -36,54 +34,44 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Field>
-        <FieldLabel>{t.form.emailLabel}</FieldLabel>
-        <Input
-          type="email"
-          autoComplete="email"
-          placeholder={t.form.emailPlaceholder}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          disabled={loading}
-        />
-      </Field>
+    <form onSubmit={handleSubmit} className="account-login-form">
+      <AccountInput
+        label={t.form.emailLabel}
+        type="email"
+        autoComplete="email"
+        placeholder={t.form.emailPlaceholder}
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+        disabled={loading}
+      />
 
-      <Field>
-        <FieldLabel>{t.form.passwordLabel}</FieldLabel>
-        <Input
-          type="password"
-          autoComplete="current-password"
-          placeholder={t.form.passwordPlaceholder}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          disabled={loading}
-        />
-      </Field>
+      <AccountInput
+        label={t.form.passwordLabel}
+        type="password"
+        autoComplete="current-password"
+        placeholder={t.form.passwordPlaceholder}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+        disabled={loading}
+      />
 
       {error && (
-        <FieldError>
+        <p className="account-form-error" role="alert">
           {error}
-        </FieldError>
+        </p>
       )}
 
-      <Button type="submit" className="w-full" disabled={loading}>
+      <AccountButton type="submit" disabled={loading}>
         {loading ? t.form.loggingIn : t.actions.login}
-      </Button>
+      </AccountButton>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <Link
-          href="/account/forgot"
-          className="hover:text-foreground transition-colors"
-        >
+      <div className="account-login-links">
+        <Link href="/account/forgot" className="account-link">
           {t.actions.forgotPassword}
         </Link>
-        <Link
-          href="/account/register"
-          className="hover:text-foreground transition-colors"
-        >
+        <Link href="/account/register" className="account-link">
           {t.actions.register}
         </Link>
       </div>

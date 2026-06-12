@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2Icon, XCircleIcon } from "lucide-react";
 
-import { Skeleton } from "@/components/ui/skeleton";
+import { AccountSkeleton } from "@/components/account/account-ui";
 import { verifyEmailToken } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -44,12 +44,12 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
 
   if (state === "missing") {
     return (
-      <div className="flex flex-col items-center gap-3 py-6 text-center">
-        <XCircleIcon className="size-10 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">{t.missingToken}</p>
+      <div className="account-auth-state">
+        <XCircleIcon />
+        <p>{t.missingToken}</p>
         <Link
           href="/account"
-          className="text-sm text-accent underline-offset-4 hover:underline"
+          className="account-link"
         >
           {t.goPortal}
         </Link>
@@ -59,22 +59,22 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
 
   if (state === "verifying") {
     return (
-      <div className="flex flex-col items-center gap-3 py-6">
-        <Skeleton className="size-10 rounded-full" />
-        <p className="text-sm text-muted-foreground">{t.verifying}</p>
+      <div className="account-auth-state">
+        <AccountSkeleton className="account-skeleton--avatar" />
+        <p>{t.verifying}</p>
       </div>
     );
   }
 
   if (state === "success") {
     return (
-      <div className="flex flex-col items-center gap-3 py-6 text-center">
-        <CheckCircle2Icon className="size-10 text-emerald-600 dark:text-emerald-400" />
-        <div className="text-base font-semibold">{t.successTitle}</div>
-        <p className="text-sm text-muted-foreground">{t.successDesc}</p>
+      <div className="account-auth-state" data-tone="success">
+        <CheckCircle2Icon />
+        <div>{t.successTitle}</div>
+        <p>{t.successDesc}</p>
         <Link
           href="/account"
-          className="text-sm text-accent underline-offset-4 hover:underline"
+          className="account-link"
         >
           {t.goPortal}
         </Link>
@@ -83,13 +83,13 @@ export function VerifyEmailFlow({ token }: { token: string | null }) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 py-6 text-center">
-      <XCircleIcon className="size-10 text-destructive" />
-      <div className="text-base font-semibold">{t.invalidTitle}</div>
-      <p className="text-sm text-muted-foreground">{t.invalidDesc}</p>
+    <div className="account-auth-state" data-tone="danger">
+      <XCircleIcon />
+      <div>{t.invalidTitle}</div>
+      <p>{t.invalidDesc}</p>
       <Link
         href="/account"
-        className="text-sm text-accent underline-offset-4 hover:underline"
+        className="account-link"
       >
         {t.goPortal}
       </Link>

@@ -8,7 +8,7 @@ export default async function UsagePage() {
   const dict = await getDict();
   const t = dict.portalApp;
   return (
-    <div className="space-y-6">
+    <div className="account-page">
       <PageHeader title={t.pages.usageTitle} />
       <UsageTable />
     </div>

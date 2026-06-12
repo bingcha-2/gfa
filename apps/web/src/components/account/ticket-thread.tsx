@@ -5,9 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { LockIcon, SendIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
+import { AccountButton, AccountSkeleton } from "@/components/account/account-ui";
 import { TicketStatusBadge } from "@/components/account/ticket-status-badge";
 import { getTicket, replyTicket, UserApiError } from "@/lib/account/user-api";
 import type { TicketDetail } from "@/lib/account/user-types";
@@ -76,11 +74,11 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
 
   if (loadState === "notFound") {
     return (
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">{t.notFound}</p>
+      <div className="account-state-panel">
+        <p>{t.notFound}</p>
         <Link
           href="/account/tickets"
-          className="text-sm text-accent underline-offset-4 hover:underline"
+          className="account-link"
         >
           {t.backToList}
         </Link>
@@ -90,15 +88,15 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
 
   if (loadState === "error") {
     return (
-      <div className="space-y-4">
-        <p className="text-sm text-destructive">{t.threadLoadFailed}</p>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => void load()}>
+      <div className="account-state-panel">
+        <p className="account-state-panel__error">{t.threadLoadFailed}</p>
+        <div>
+          <AccountButton variant="secondary" onClick={() => void load()}>
             {t.retry}
-          </Button>
+          </AccountButton>
           <Link
             href="/account/tickets"
-            className="text-sm text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
+            className="account-link"
           >
             {t.backToList}
           </Link>
@@ -109,10 +107,10 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
 
   if (loadState === "loading" || detail === null) {
     return (
-      <div className="space-y-3">
-        <Skeleton className="h-6 w-64 rounded" />
-        <Skeleton className="h-20 rounded-xl" />
-        <Skeleton className="h-20 rounded-xl ml-12" />
+      <div className="account-skeleton-stack">
+        <AccountSkeleton className="account-skeleton--heading" />
+        <AccountSkeleton className="account-skeleton--message" />
+        <AccountSkeleton className="account-skeleton--message account-skeleton--indent" />
       </div>
     );
   }
@@ -120,48 +118,41 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
   const closed = detail.ticket.status === "CLOSED";
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div className="space-y-2">
+    <div className="account-ticket-thread" data-testid="account-ticket-thread">
+      <div className="account-ticket-thread__header">
         <Link
           href="/account/tickets"
-          className="text-xs text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
+          className="account-link"
         >
           {t.backToList}
         </Link>
-        <div className="flex items-center gap-3">
-          <h3 className="text-base font-semibold">{detail.ticket.subject}</h3>
+        <div>
+          <h3>{detail.ticket.subject}</h3>
           <TicketStatusBadge status={detail.ticket.status} />
         </div>
-        <p className="text-xs text-muted-foreground tabular-nums">
+        <p>
           {formatDateTime(detail.ticket.createdAt)}
         </p>
       </div>
 
-      <ul className="space-y-3">
+      <ul className="account-thread-list">
         {detail.messages.map((message) => {
           const mine = message.authorType === "CUSTOMER";
           return (
             <li
               key={message.id}
-              className={cn("flex", mine ? "justify-end" : "justify-start")}
+              className={cn("account-thread-message", mine && "account-thread-message--mine")}
             >
-              <div
-                className={cn(
-                  "max-w-[85%] rounded-xl border p-3 space-y-1.5",
-                  mine
-                    ? "bg-accent/10 border-accent/20"
-                    : "bg-card"
-                )}
-              >
-                <div className="flex items-baseline gap-2 text-[11px] text-muted-foreground">
-                  <span className="font-medium">
+              <div>
+                <div className="account-thread-message__meta">
+                  <span>
                     {mine ? t.authorCustomer : t.authorAdmin}
                   </span>
-                  <span className="tabular-nums">
+                  <time dateTime={message.createdAt}>
                     {formatDateTime(message.createdAt)}
-                  </span>
+                  </time>
                 </div>
-                <p className="text-sm whitespace-pre-line">{message.body}</p>
+                <p>{message.body}</p>
               </div>
             </li>
           );
@@ -169,13 +160,14 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
       </ul>
 
       {closed ? (
-        <div className="flex items-center gap-2 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-          <LockIcon className="size-4 shrink-0" />
+        <div className="account-closed-notice">
+          <LockIcon />
           {t.closedNotice}
         </div>
       ) : (
-        <form onSubmit={handleSend} className="space-y-3">
-          <Textarea
+        <form onSubmit={handleSend} className="account-reply-form">
+          <textarea
+            className="account-textarea"
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             placeholder={t.replyPlaceholder}
@@ -183,11 +175,11 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
             disabled={sending}
             required
           />
-          <div className="flex justify-end">
-            <Button type="submit" disabled={sending || !reply.trim()}>
+          <div className="account-form-actions">
+            <AccountButton type="submit" disabled={sending || !reply.trim()}>
               <SendIcon data-icon="inline-start" />
               {sending ? t.sending : t.send}
-            </Button>
+            </AccountButton>
           </div>
         </form>
       )}

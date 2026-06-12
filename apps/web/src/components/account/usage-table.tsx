@@ -2,24 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DataPagination } from "@/components/account/data-pagination";
+import { AccountEmpty, AccountPill, AccountSkeleton } from "@/components/account/account-ui";
+import { AccountStatusBadge } from "@/components/account/account-status-badge";
 import { getUsage } from "@/lib/account/user-api";
 import type { UsageDays, UsagePage } from "@/lib/account/user-types";
 import { formatDateTime, formatTokens } from "@/lib/format";
@@ -65,93 +50,84 @@ export function UsageTable() {
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   return (
-    <div className="space-y-4">
-      <ToggleGroup
-        multiple={false}
-        value={[String(days)]}
-        onValueChange={(value) => {
-          const next = Number(value[0]) as UsageDays | undefined;
-          if (next && next !== days) handleDaysChange(next);
-        }}
-        variant="outline"
-      >
-        <ToggleGroupItem value="1">{u.daysToday}</ToggleGroupItem>
-        <ToggleGroupItem value="7">{u.days7}</ToggleGroupItem>
-        <ToggleGroupItem value="30">{u.days30}</ToggleGroupItem>
-      </ToggleGroup>
+    <div className="account-usage" data-testid="account-usage">
+      <div className="account-segmented-control" role="group" aria-label="使用记录时间范围">
+        {[
+          [1, u.daysToday],
+          [7, u.days7],
+          [30, u.days30],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={days === value}
+            onClick={() => handleDaysChange(value as UsageDays)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-      {loadError && <p className="text-sm text-destructive">{u.loadFailed}</p>}
+      {loadError && <p className="account-form-error">{u.loadFailed}</p>}
 
       {data === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
+        <div className="account-skeleton-stack">
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
+          <AccountSkeleton className="account-skeleton--row" />
         </div>
       ) : data.records.length === 0 ? (
-        <Empty className="border min-h-[280px]">
-          <EmptyHeader>
-            <EmptyTitle>{u.empty}</EmptyTitle>
-            <EmptyDescription>{u.emptyDesc}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <AccountEmpty title={u.empty} description={u.emptyDesc} />
       ) : (
-        <div className="space-y-3">
-          <div className="rounded-xl border overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{u.colTime}</TableHead>
-                  <TableHead>{u.colModel}</TableHead>
-                  <TableHead>{u.colBucket}</TableHead>
-                  <TableHead>{u.colStatus}</TableHead>
-                  <TableHead className="text-right">{u.colInput}</TableHead>
-                  <TableHead className="text-right">{u.colOutput}</TableHead>
-                  <TableHead className="text-right">{u.colTotal}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+        <div className="account-data-section">
+          <div className="account-data-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>{u.colTime}</th>
+                  <th>{u.colModel}</th>
+                  <th>{u.colBucket}</th>
+                  <th>{u.colStatus}</th>
+                  <th className="account-data-table__number">{u.colInput}</th>
+                  <th className="account-data-table__number">{u.colOutput}</th>
+                  <th className="account-data-table__number">{u.colTotal}</th>
+                </tr>
+              </thead>
+              <tbody>
                 {data.records.map((record) => (
-                  <TableRow key={record.id}>
-                    <TableCell className="tabular-nums text-muted-foreground">
+                  <tr key={record.id}>
+                    <td className="account-data-table__muted">
                       {formatDateTime(record.timestamp)}
-                    </TableCell>
-                    <TableCell
-                      className="font-mono text-xs max-w-[180px] truncate"
-                      title={record.modelKey}
-                    >
+                    </td>
+                    <td className="account-data-table__mono" title={record.modelKey}>
                       {record.modelKey}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{record.bucket}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          isSuccessStatus(record.status)
-                            ? "secondary"
-                            : "destructive"
-                        }
+                    </td>
+                    <td>
+                      <AccountPill tone="info">{record.bucket}</AccountPill>
+                    </td>
+                    <td>
+                      <AccountStatusBadge
+                        tone={isSuccessStatus(record.status) ? "success" : "destructive"}
                       >
                         {isSuccessStatus(record.status)
                           ? u.statusSuccess
                           : record.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                      </AccountStatusBadge>
+                    </td>
+                    <td className="account-data-table__number">
                       {formatTokens(record.inputTokens)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    </td>
+                    <td className="account-data-table__number">
                       {formatTokens(record.outputTokens)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
+                    </td>
+                    <td className="account-data-table__number account-data-table__strong">
                       {formatTokens(record.totalTokens)}
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
 
           <DataPagination

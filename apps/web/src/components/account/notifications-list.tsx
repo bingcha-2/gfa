@@ -11,14 +11,7 @@ import {
   MessageSquareIcon,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import { AccountButton, AccountEmpty, AccountPill, AccountSkeleton } from "@/components/account/account-ui";
 import { DataPagination } from "@/components/account/data-pagination";
 import {
   getNotifications,
@@ -31,16 +24,15 @@ import type {
 } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
-import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 20;
 
 const TYPE_ICONS: Record<NotificationType, React.ReactNode> = {
-  SYSTEM: <InfoIcon className="size-4" />,
-  BILLING: <CreditCardIcon className="size-4" />,
-  TICKET: <MessageSquareIcon className="size-4" />,
-  REFERRAL: <GiftIcon className="size-4" />,
-  MIGRATION: <ArrowRightLeftIcon className="size-4" />,
+  SYSTEM: <InfoIcon />,
+  BILLING: <CreditCardIcon />,
+  TICKET: <MessageSquareIcon />,
+  REFERRAL: <GiftIcon />,
+  MIGRATION: <ArrowRightLeftIcon />,
 };
 
 export function NotificationsList() {
@@ -122,89 +114,73 @@ export function NotificationsList() {
 
   if (data === null) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-16 rounded-xl" />
-        <Skeleton className="h-16 rounded-xl" />
-        <Skeleton className="h-16 rounded-xl" />
+      <div className="account-skeleton-stack">
+        <AccountSkeleton className="account-skeleton--message" />
+        <AccountSkeleton className="account-skeleton--message" />
+        <AccountSkeleton className="account-skeleton--message" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="account-notifications" data-testid="account-notifications">
       {loadError && (
-        <p className="text-sm text-destructive">{n.loadFailed}</p>
+        <p className="account-form-error">{n.loadFailed}</p>
       )}
 
       {data.notifications.length > 0 && (
-        <div className="flex justify-end">
-          <Button
-            variant="outline"
-            size="sm"
+        <div className="account-list-toolbar">
+          <AccountButton
+            variant="secondary"
             onClick={handleMarkAll}
             disabled={!hasUnread}
           >
             <CheckCheckIcon data-icon="inline-start" />
             {n.markAllRead}
-          </Button>
+          </AccountButton>
         </div>
       )}
 
       {data.notifications.length === 0 ? (
-        <Empty className="border min-h-[280px]">
-          <EmptyHeader>
-            <EmptyTitle>{n.empty}</EmptyTitle>
-            <EmptyDescription>{n.emptyDesc}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <AccountEmpty title={n.empty} description={n.emptyDesc} />
       ) : (
-        <ul className="space-y-2">
+        <ul className="account-message-list">
           {data.notifications.map((item) => {
             const read = !!item.readAt;
             return (
               <li
                 key={item.id}
                 data-read={read}
-                className={cn(
-                  "rounded-xl border bg-card p-4 flex items-start gap-3 transition-opacity duration-200",
-                  read && "opacity-60"
-                )}
+                className="account-message-item"
               >
-                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <span className="account-message-item__icon">
                   {TYPE_ICONS[item.type]}
                 </span>
 
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-center gap-2">
+                <div className="account-message-item__body">
+                  <div className="account-message-item__top">
                     {!read && (
                       <span
                         aria-hidden
-                        className="size-1.5 shrink-0 rounded-full bg-accent"
+                        className="account-message-item__unread"
                       />
                     )}
-                    <span className="truncate text-sm font-medium">
-                      {item.title}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+                    <span>{item.title}</span>
+                    <time dateTime={item.createdAt}>
                       {formatDateTime(item.createdAt)}
-                    </span>
+                    </time>
                   </div>
-                  <p className="text-sm text-muted-foreground whitespace-pre-line">
-                    {item.body}
-                  </p>
-                  <div className="flex items-center gap-2 pt-0.5">
-                    <span className="text-[11px] text-muted-foreground">
-                      {n.types[item.type]}
-                    </span>
+                  <p>{item.body}</p>
+                  <div className="account-message-item__footer">
+                    <AccountPill tone="muted">{n.types[item.type]}</AccountPill>
                     {!read && (
-                      <Button
+                      <AccountButton
                         variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs ml-auto"
+                        className="account-btn--compact"
                         onClick={() => void handleMarkRead(item.id)}
                       >
                         {n.markRead}
-                      </Button>
+                      </AccountButton>
                     )}
                   </div>
                 </div>

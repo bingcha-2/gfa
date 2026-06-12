@@ -1,12 +1,5 @@
 "use client";
 
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
 import { fmt } from "@/lib/i18n";
 
 export type DataPaginationLabels = {
@@ -38,38 +31,28 @@ export function DataPagination({
   const atEnd = page >= totalPages;
 
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-xs text-muted-foreground tabular-nums">
+    <div className="account-pagination">
+      <span>
         {fmt(labels.pageInfo, { page, pages: totalPages })}
       </span>
-      <Pagination className="mx-0 w-auto justify-end">
-        <PaginationContent>
-          <PaginationItem>
-            <PaginationPrevious
-              href="#"
-              text={labels.prevPage}
-              aria-disabled={atStart}
-              className={atStart ? "pointer-events-none opacity-50" : ""}
-              onClick={(e) => {
-                e.preventDefault();
-                if (!atStart) onPage(page - 1);
-              }}
-            />
-          </PaginationItem>
-          <PaginationItem>
-            <PaginationNext
-              href="#"
-              text={labels.nextPage}
-              aria-disabled={atEnd}
-              className={atEnd ? "pointer-events-none opacity-50" : ""}
-              onClick={(e) => {
-                e.preventDefault();
-                if (!atEnd) onPage(page + 1);
-              }}
-            />
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
+      <div className="account-pagination__actions">
+        <button
+          type="button"
+          className="account-btn account-btn--secondary"
+          disabled={atStart}
+          onClick={() => onPage(page - 1)}
+        >
+          {labels.prevPage}
+        </button>
+        <button
+          type="button"
+          className="account-btn account-btn--secondary"
+          disabled={atEnd}
+          onClick={() => onPage(page + 1)}
+        >
+          {labels.nextPage}
+        </button>
+      </div>
     </div>
   );
 }

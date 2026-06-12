@@ -1,0 +1,119 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+
+import { NotificationsList } from "@/components/account/notifications-list";
+import { TicketsList } from "@/components/account/tickets-list";
+import { UsageTable } from "@/components/account/usage-table";
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("account content design contracts", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("usage history renders with account table controls instead of shadcn table/toggle slots", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          records: [
+            {
+              id: "u1",
+              timestamp: "2026-06-10T00:00:00.000Z",
+              modelKey: "claude-sonnet-4",
+              bucket: "claude",
+              status: "success",
+              inputTokens: 1000,
+              outputTokens: 2000,
+              totalTokens: 3000,
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        })
+      )
+    );
+
+    const { container } = render(<UsageTable />);
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-sonnet-4")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".account-usage")).toBeInTheDocument();
+    expect(container.querySelector(".account-data-table")).toBeInTheDocument();
+    expect(container.querySelector("[data-slot='table']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-slot='toggle-group']")).not.toBeInTheDocument();
+  });
+
+  it("notifications render as an account message center without shadcn buttons or empty slots", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          notifications: [
+            {
+              id: "n1",
+              type: "SYSTEM",
+              title: "维护公告",
+              body: "今晚维护",
+              readAt: null,
+              createdAt: "2026-06-10T00:00:00.000Z",
+            },
+          ],
+          total: 1,
+          unread: 1,
+        })
+      )
+    );
+
+    const { container } = render(<NotificationsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("维护公告")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".account-notifications")).toBeInTheDocument();
+    expect(container.querySelector(".account-message-list")).toBeInTheDocument();
+    expect(container.querySelector("[data-slot='button']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-slot='empty']")).not.toBeInTheDocument();
+  });
+
+  it("tickets list renders account support center and custom dialog surface", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          tickets: [
+            {
+              id: "t1",
+              subject: "无法登录",
+              status: "OPEN",
+              createdAt: "2026-06-09T00:00:00.000Z",
+              updatedAt: "2026-06-09T01:00:00.000Z",
+            },
+          ],
+        })
+      )
+    );
+
+    const { container } = render(<TicketsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("无法登录")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".account-ticket-center")).toBeInTheDocument();
+    expect(container.querySelector(".account-data-table")).toBeInTheDocument();
+    expect(container.querySelector("[data-slot='table']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-slot='button']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-slot='dialog-content']")).not.toBeInTheDocument();
+  });
+});

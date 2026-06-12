@@ -1,7 +1,7 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { LogOutIcon } from "lucide-react";
+import { AccountButton } from "./account-ui";
 import { useAccount } from "./account-provider";
 import { useDict } from "@/lib/i18n/client";
 
@@ -11,13 +11,9 @@ export function LogoutButton() {
   const t = dict.portalApp.actions;
 
   return (
-    <Button
-      variant="outline"
-      onClick={handleLogout}
-      className="gap-2"
-    >
-      <LogOutIcon className="size-4" />
+    <AccountButton variant="secondary" onClick={handleLogout}>
+      <LogOutIcon data-icon="inline-start" />
       {t.logout}
-    </Button>
+    </AccountButton>
   );
 }

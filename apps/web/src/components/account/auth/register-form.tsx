@@ -4,9 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { registerUser } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -18,7 +16,6 @@ export function RegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [referralCode, setReferralCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -31,7 +28,7 @@ export function RegisterForm() {
         email,
         password,
         displayName || undefined,
-        referralCode || undefined
+        undefined
       );
       router.push("/account");
       router.refresh();
@@ -43,10 +40,9 @@ export function RegisterForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Field>
-        <FieldLabel>{t.form.emailLabel}</FieldLabel>
-        <Input
+    <form onSubmit={handleSubmit} className="account-login-form">
+      <AccountInput
+          label={t.form.emailLabel}
           type="email"
           autoComplete="email"
           placeholder={t.form.emailPlaceholder}
@@ -55,11 +51,9 @@ export function RegisterForm() {
           required
           disabled={loading}
         />
-      </Field>
 
-      <Field>
-        <FieldLabel>{t.form.displayNameLabel}</FieldLabel>
-        <Input
+      <AccountInput
+          label={t.form.displayNameLabel}
           type="text"
           autoComplete="name"
           placeholder={t.form.displayNamePlaceholder}
@@ -67,11 +61,9 @@ export function RegisterForm() {
           onChange={(e) => setDisplayName(e.target.value)}
           disabled={loading}
         />
-      </Field>
 
-      <Field>
-        <FieldLabel>{t.form.passwordLabel}</FieldLabel>
-        <Input
+      <AccountInput
+          label={t.form.passwordLabel}
           type="password"
           autoComplete="new-password"
           placeholder={t.form.newPasswordPlaceholder}
@@ -80,28 +72,16 @@ export function RegisterForm() {
           required
           disabled={loading}
         />
-      </Field>
 
-      <Field>
-        <FieldLabel>{t.form.referralCodeLabel}</FieldLabel>
-        <Input
-          type="text"
-          placeholder={t.form.referralCodePlaceholder}
-          value={referralCode}
-          onChange={(e) => setReferralCode(e.target.value)}
-          disabled={loading}
-        />
-      </Field>
+      {error && <p className="account-form-error">{error}</p>}
 
-      {error && <FieldError>{error}</FieldError>}
-
-      <Button type="submit" className="w-full" disabled={loading}>
+      <AccountButton type="submit" disabled={loading}>
         {loading ? t.form.registering : t.actions.register}
-      </Button>
+      </AccountButton>
 
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="account-login-links">
         {t.form.haveAccount}{" "}
-        <Link href="/account/login" className="hover:text-foreground transition-colors underline-offset-4 hover:underline">
+        <Link href="/account/login" className="account-link">
           {t.actions.login}
         </Link>
       </p>

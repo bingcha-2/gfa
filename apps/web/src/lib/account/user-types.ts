@@ -41,6 +41,10 @@ export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED"
 export type BillingOrderCreated = {
   outTradeNo: string;
   amountCents: number;
+  /** 套餐基准价（分）。amountCents = baseCents + feeCents。 */
+  baseCents: number;
+  /** 支付通道手续费（分），由用户承担。0 表示未加价。 */
+  feeCents: number;
   expiresAt: string;
   payUrl: string;
   /** data:image/png;base64 — render directly in <img>, no QR library. */

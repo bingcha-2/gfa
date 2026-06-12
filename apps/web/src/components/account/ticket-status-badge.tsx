@@ -1,20 +1,20 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { AccountStatusBadge } from "@/components/account/account-status-badge";
 import { useDict } from "@/lib/i18n/client";
 import type { TicketStatus } from "@/lib/account/user-types";
 
 function statusVariant(
   status: TicketStatus
-): "secondary" | "outline" | "ghost" {
+): "success" | "warning" | "muted" {
   switch (status) {
     case "ANSWERED":
-      return "secondary";
+      return "success";
     case "OPEN":
-      return "outline";
+      return "warning";
     case "CLOSED":
     default:
-      return "ghost";
+      return "muted";
   }
 }
 
@@ -22,8 +22,8 @@ function statusVariant(
 export function TicketStatusBadge({ status }: { status: TicketStatus }) {
   const dict = useDict();
   return (
-    <Badge variant={statusVariant(status)}>
+    <AccountStatusBadge tone={statusVariant(status)}>
       {dict.portalApp.tickets.status[status]}
-    </Badge>
+    </AccountStatusBadge>
   );
 }

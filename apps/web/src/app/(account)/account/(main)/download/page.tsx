@@ -4,8 +4,7 @@ import { DownloadIcon, InfoIcon } from "lucide-react";
 
 import { getDict } from "@/lib/i18n/server";
 import { PageHeader } from "@/components/account/page-header";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { AccountPill } from "@/components/account/account-ui";
 import { fmt } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
@@ -67,25 +66,21 @@ function AssetCard({
   sha256Label: string;
 }) {
   return (
-    <div className="rounded-xl border bg-card p-5 flex flex-col gap-3">
-      <div className="font-medium">{title}</div>
-      <p className="text-sm text-muted-foreground">{description}</p>
-      <div className="text-xs text-muted-foreground space-y-1">
-        <div className="tabular-nums">
+    <div className="account-download-card">
+      <div>{title}</div>
+      <p>{description}</p>
+      <div className="account-download-card__meta">
+        <div>
           {fmt(sizeTemplate, { size: toMb(asset.size) })}
         </div>
-        <div className="font-mono break-all" title={asset.sha256}>
+        <div title={asset.sha256}>
           {sha256Label}: {asset.sha256.slice(0, 16)}…
         </div>
       </div>
-      <Button
-        className="mt-auto w-fit"
-        nativeButton={false}
-        render={<a href={asset.url} download />}
-      >
+      <a className="account-btn account-btn--primary" href={asset.url} download>
         <DownloadIcon data-icon="inline-start" />
         {downloadLabel}
-      </Button>
+      </a>
     </div>
   );
 }
@@ -98,14 +93,14 @@ export default async function AccountDownloadPage() {
   const release = await fetchLatestRelease();
 
   return (
-    <div className="space-y-6">
+    <div className="account-download" data-testid="account-download">
       <PageHeader
         title={t.pages.downloadTitle}
         actions={
           release && (
-            <Badge variant="outline" className="tabular-nums">
+            <AccountPill tone="info">
               {fmt(d.versionLabel, { version: release.version })}
-            </Badge>
+            </AccountPill>
           )
         }
       />
@@ -113,13 +108,13 @@ export default async function AccountDownloadPage() {
       {release ? (
         <>
           {release.changelog && (
-            <div className="rounded-xl border bg-muted/30 p-4 text-sm">
-              <span className="font-medium">{d.changelogLabel}:</span>{" "}
-              <span className="text-muted-foreground">{release.changelog}</span>
+            <div className="account-download-changelog">
+              <span>{d.changelogLabel}:</span>{" "}
+              <span>{release.changelog}</span>
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="account-download-grid">
             <AssetCard
               title={d.winPortable}
               description={d.winPortableDesc}
@@ -183,22 +178,22 @@ export default async function AccountDownloadPage() {
           </div>
         </>
       ) : (
-        <div className="rounded-xl border border-dashed p-6 text-center space-y-3">
-          <p className="text-sm text-muted-foreground">{d.loadFailedNotice}</p>
+        <div className="account-empty">
+          <strong>{d.loadFailedNotice}</strong>
           <Link
             href="/download"
-            className="inline-block text-sm text-accent underline-offset-4 hover:underline"
+            className="account-link"
           >
             {d.goMarketingDownload}
           </Link>
         </div>
       )}
 
-      <div className="flex items-start gap-3 rounded-xl border bg-muted/30 p-4">
-        <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="space-y-0.5 text-sm">
-          <div className="font-medium">{d.usageHintTitle}</div>
-          <p className="text-muted-foreground">{d.usageHintBody}</p>
+      <div className="account-download-hint">
+        <InfoIcon />
+        <div>
+          <div>{d.usageHintTitle}</div>
+          <p>{d.usageHintBody}</p>
         </div>
       </div>
     </div>

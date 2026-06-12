@@ -1,11 +1,13 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { AccountSkeleton } from "./account-ui";
 import { cn } from "@/lib/utils";
+import type { AccountStatusTone } from "./account-status-badge";
 
 export type StatCardProps = {
   label: string;
   value?: string | number | null;
   sub?: string;
   icon?: React.ReactNode;
+  tone?: AccountStatusTone | "primary";
   loading?: boolean;
   className?: string;
 };
@@ -15,38 +17,36 @@ export function StatCard({
   value,
   sub,
   icon,
+  tone = "muted",
   loading = false,
   className,
 }: StatCardProps) {
   return (
     <div
-      className={cn(
-        "rounded-xl border bg-card p-5 flex flex-col gap-3 transition-colors",
-        className
-      )}
+      data-slot="stat-card"
+      data-tone={tone}
+      className={cn("account-stat-card", className)}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {label}
-        </span>
+      <div className="account-stat-card__top">
+        <span data-slot="stat-label">{label}</span>
         {icon && (
-          <span className="text-muted-foreground [&_svg]:size-4">{icon}</span>
+          <span data-slot="stat-icon" className="account-stat-card__icon">
+            {icon}
+          </span>
         )}
       </div>
 
       {loading ? (
-        <div className="space-y-1.5">
-          <Skeleton className="h-7 w-28" />
-          {sub !== undefined && <Skeleton className="h-4 w-20" />}
+        <div className="account-stat-card__loading">
+          <AccountSkeleton className="account-skeleton--stat-value" />
+          {sub !== undefined && <AccountSkeleton className="account-skeleton--stat-sub" />}
         </div>
       ) : (
-        <div className="space-y-0.5">
-          <div className="text-2xl font-semibold tabular-nums tracking-tight">
+        <div className="account-stat-card__body">
+          <div data-slot="stat-value">
             {value ?? "—"}
           </div>
-          {sub && (
-            <div className="text-xs text-muted-foreground">{sub}</div>
-          )}
+          {sub && <div>{sub}</div>}
         </div>
       )}
     </div>

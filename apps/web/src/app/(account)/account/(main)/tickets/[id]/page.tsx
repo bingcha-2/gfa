@@ -14,7 +14,7 @@ export default async function TicketDetailPage({
   const t = dict.portalApp;
 
   return (
-    <div className="space-y-6">
+    <div className="account-page">
       <PageHeader title={t.pages.ticketsTitle} />
       <TicketThread ticketId={id} />
     </div>

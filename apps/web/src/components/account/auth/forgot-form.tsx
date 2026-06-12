@@ -3,9 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { AccountButton, AccountInput } from "@/components/account/account-ui";
 import { forgotPassword } from "@/lib/account/user-api";
 import { useDict } from "@/lib/i18n/client";
 
@@ -32,11 +30,11 @@ export function ForgotForm() {
 
   if (sent) {
     return (
-      <div className="space-y-4 text-center">
-        <p className="text-sm text-muted-foreground">{t.form.forgotSent}</p>
+      <div className="account-auth-state">
+        <p>{t.form.forgotSent}</p>
         <Link
           href="/account/login"
-          className="text-sm text-accent hover:underline"
+          className="account-link"
         >
           {t.actions.backToLogin}
         </Link>
@@ -45,10 +43,9 @@ export function ForgotForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Field>
-        <FieldLabel>{t.form.emailLabel}</FieldLabel>
-        <Input
+    <form onSubmit={handleSubmit} className="account-login-form">
+      <AccountInput
+          label={t.form.emailLabel}
           type="email"
           autoComplete="email"
           placeholder={t.form.emailPlaceholder}
@@ -57,16 +54,15 @@ export function ForgotForm() {
           required
           disabled={loading}
         />
-      </Field>
 
-      <Button type="submit" className="w-full" disabled={loading}>
+      <AccountButton type="submit" disabled={loading}>
         {loading ? t.form.sending : t.actions.sendResetLink}
-      </Button>
+      </AccountButton>
 
-      <p className="text-center text-sm">
+      <p className="account-login-links">
         <Link
           href="/account/login"
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="account-link"
         >
           {t.actions.backToLogin}
         </Link>
