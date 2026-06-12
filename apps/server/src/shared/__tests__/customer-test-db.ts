@@ -10,7 +10,8 @@ import { PrismaClient } from "@prisma/client";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
-const repoRoot = resolve(__dirname, "../../../..");
+// repo root: this file sits at apps/server/src/shared/__tests__/ (5 levels deep)
+const repoRoot = resolve(__dirname, "../../../../..");
 const databaseUrl =
   process.env.DATABASE_URL ??
   `file:${resolve(repoRoot, "prisma/test.db").replace(/\\/g, "/")}`;
