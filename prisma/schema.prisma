@@ -662,6 +662,10 @@ model Subscription {
   startsAt            DateTime           @default(now())
   expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
   activatedFromOrderId String?           // PlanOrder.id that created/last extended this sub — exact order→sub link for reconcile + refund
+  // 去影子:限额配置单一真相源(JSON 字符串;SQLite 无 Json,与 bucketLimits 等一致)。
+  // 购买时快照展开的实际值(含显式 line),运行时直读它喂限额引擎、判号池/绑定。见 spec §4.2 / §6。
+  config              String?
+  catalogVersion      Int?               // 买时的 PlanCatalog 版本(溯源 / 价格锁定);Plan 路径无目录 → null
   // Purchase-time snapshots decoupled from Plan
   productEntitlements String
   bucketLimits        String?

@@ -108,6 +108,18 @@ describe("SubscriptionService.createFromPlan / activateOrExtend", () => {
     expect(Math.abs(sub.expiresAt!.getTime() - expectedExpiry)).toBeLessThan(60_000);
     // Auto-assigned seat persisted onto the row snapshot.
     expect(JSON.parse(sub.bindings!)).toEqual({ antigravity: expect.any(Number) });
+    // 去影子:下单激活时把限额配置快照进 Subscription.config(单一真相源,含 line)。
+    // 该 plan(有 levels、bindings 已分配真实号)→ 绑定线。
+    const config = JSON.parse(sub.config!);
+    expect(config).toMatchObject({
+      line: "bind",
+      products: ["antigravity"],
+      levels: { antigravity: "ultra" },
+      weight: plan.weight,
+      deviceLimit: plan.deviceLimit,
+      windowMs: plan.windowMs,
+    });
+    expect(config.bindings).toEqual({ antigravity: expect.any(Number) });
 
     const record = readKeys().find((k) => k.id === sub.id);
     expect(record).toBeTruthy();

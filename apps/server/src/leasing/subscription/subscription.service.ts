@@ -23,6 +23,7 @@ import type { Plan, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { EntitlementSyncService } from "./entitlement-sync.service";
+import { legacyColumnsToConfig } from "./subscription-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -72,7 +73,8 @@ export class SubscriptionService {
         },
       });
       await this.entitlementSync.syncSubscription(extended, { customerEmail: customer.email });
-      return (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
+      const resynced = (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
+      return this.persistConfigSnapshot(resynced);
     }
 
     // (b) Cancel overlapping plan-backed subs. Migrated card subs (planId null)
@@ -107,7 +109,32 @@ export class SubscriptionService {
     });
     await this.entitlementSync.syncSubscription(sub, { customerEmail: customer.email });
     // Re-read: the sync persists auto-assigned seat bindings onto the row.
-    return (await this.prisma.subscription.findUnique({ where: { id: sub.id } }))!;
+    const synced = (await this.prisma.subscription.findUnique({ where: { id: sub.id } }))!;
+    return this.persistConfigSnapshot(synced);
+  }
+
+  /**
+   * 去影子:把订阅的限额配置快照进 Subscription.config(单一真相源,含显式 line)。
+   * 在 syncSubscription 之后调用 —— 那时绑定线的座位已分配并回写 bindings,
+   * legacyColumnsToConfig 才能据真实 accountId 判定 line=bind;号池则 bindings 空 → line=pool。
+   * 与 boot 的 loadActiveSubscriptions(同一 converter)口径一致。catalogVersion 由 Plan
+   * 路径无目录 → 保持 null(真正的目录下单链路记目录版本)。
+   */
+  private async persistConfigSnapshot(sub: Subscription): Promise<Subscription> {
+    const config = legacyColumnsToConfig({
+      productEntitlements: sub.productEntitlements,
+      bucketLimits: sub.bucketLimits,
+      bindings: sub.bindings,
+      levels: sub.levels,
+      weight: sub.weight,
+      deviceLimit: sub.deviceLimit,
+      weeklyTokenLimit: sub.weeklyTokenLimit,
+      windowMs: sub.windowMs,
+    });
+    return this.prisma.subscription.update({
+      where: { id: sub.id },
+      data: { config: JSON.stringify(config) },
+    });
   }
 
   /** Natural expiry: status EXPIRED + shadow record expired (usage retained). */
