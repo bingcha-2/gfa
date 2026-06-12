@@ -113,11 +113,10 @@ func startServicesForUser(cfg Config) {
 	token := cfg.UserToken
 	deviceId := cfg.DeviceId
 
-	// Activate and start auto-lease (antigravity path).
-	// On failure, log but don't block — same pattern as the old card path.
-	if _, err := GetLeaser().Activate(token, deviceId, ""); err != nil {
-		Log("[auth] 启动时 Activate 失败(不阻塞): %v", err)
-	}
+	// Start auto-lease (antigravity path). Session accounts lease directly with
+	// the JWT — the old card /api/activate handshake is gone (server stubbed it
+	// fail-closed after the force-upgrade; products now arrive with each lease
+	// response's accessKeyStatus).
 	GetLeaser().StartAutoLease(token, deviceId, "")
 
 	// HTTP proxy always starts.

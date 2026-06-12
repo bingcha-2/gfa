@@ -273,22 +273,6 @@ func stringsSplit(s, sep string) []string {
 }
 
 // API structs
-type CommonResp struct {
-	Success bool            `json:"success"`
-	Code    string          `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data"`
-}
-
-type ActivateData struct {
-	AccountCard struct {
-		ExpiresAt string `json:"expiresAt"`
-	} `json:"accountCard"`
-	// 服务端 activate 即返回权威 accessKeyStatus(含 products) —— 客户端据此知道这张卡
-	// 开通了哪些产品(codex / antigravity / 空=池子卡),无需等一次成功租号才能得知。
-	AccessKeyStatus map[string]interface{} `json:"accessKeyStatus"`
-}
-
 type LeaseTokenResp struct {
 	Success              *bool           `json:"success"` // omitted on success; only present when false
 	Ok                   *bool           `json:"ok"`      // remote-token-server uses "ok" field
@@ -329,56 +313,6 @@ func parseAccountId(raw json.RawMessage) int {
 		return n
 	}
 	return 0
-}
-
-func (l *Leaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
-	payload := map[string]string{
-		"accountCard": card,
-		"deviceId":    deviceId,
-	}
-
-	Log("[token-leaser] Activating account card: %s...", card)
-	body, _, err := postBcaiWithFallback("/api/activate", payload, "", upstreamProxy)
-	if err != nil {
-		l.mu.Lock()
-		l.lastError = err.Error()
-		l.mu.Unlock()
-		Log("[token-leaser] Activate network error: %v", err)
-		return "", err
-	}
-
-	var resp CommonResp
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("invalid response json: %w", err)
-	}
-
-	if !resp.Success {
-		errMsg := getApiErrorMessage(resp.Code)
-		l.mu.Lock()
-		l.lastError = errMsg
-		l.mu.Unlock()
-		Log("[token-leaser] Activate failed: %s - %s", resp.Code, errMsg)
-		return "", errors.New(errMsg)
-	}
-
-	var actData ActivateData
-	if err := json.Unmarshal(resp.Data, &actData); err != nil {
-		// Try parsing directly as success
-		return "Activated (unknown expiry)", nil
-	}
-
-	l.mu.Lock()
-	l.cardExpires = actData.AccountCard.ExpiresAt
-	l.lastError = ""
-	l.mu.Unlock()
-
-	// 存下权威 accessKeyStatus → CardProducts() 立即可用,决定哪个产品自动租号/显示血条。
-	if actData.AccessKeyStatus != nil {
-		l.syncFromServer(actData.AccessKeyStatus)
-	}
-
-	Log("[token-leaser] Activated OK, expires at: %s (products=%v)", actData.AccountCard.ExpiresAt, l.CardProducts())
-	return actData.AccountCard.ExpiresAt, nil
 }
 
 func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error) {
@@ -619,7 +553,7 @@ func (l *Leaser) LeaseTokenToLease(card, deviceId string, upstream string) (*Tok
 
 // coversAntigravity 当前卡是否需要跑 antigravity 自动租号:池子卡(products 空)
 // 或开通了 antigravity 的卡 → true;只绑了 codex 等其它产品的卡 → false。
-// products 由 Activate / 成功租号写入 accessKeyStatus(见 CardProducts)。
+// products 由成功租号写入 accessKeyStatus(见 CardProducts)。
 func (l *Leaser) coversAntigravity() bool {
 	return cardCoversProduct(l.CardProducts(), "antigravity")
 }

@@ -92,8 +92,8 @@ func (l *ClaudeLeaser) LatestClaudeQuota() *ClaudeQuotaWindow {
 	return l.lastQuota
 }
 
-// setLastError / LastError 用 l.mu 保护 lastError —— LeaseToken/Activate 每个入站代理
-// 请求各调用一次,可能跨 goroutine 并发(其余字段都已加锁,lastError 也必须加锁,
+// setLastError / LastError 用 l.mu 保护 lastError —— LeaseToken 每个入站代理
+// 请求调用一次,可能跨 goroutine 并发(其余字段都已加锁,lastError 也必须加锁,
 // 否则 `go test -race` 会报未同步读写)。
 func (l *ClaudeLeaser) setLastError(msg string) {
 	l.mu.Lock()
@@ -122,33 +122,6 @@ func postClaudeBcai(path string, payload interface{}, secret string, upstreamPro
 		return respBody, status, fmt.Errorf("remote claude status %d: %s", status, string(respBody))
 	}
 	return respBody, status, nil
-}
-
-func (l *ClaudeLeaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
-	payload := map[string]string{"accountCard": card, "deviceId": deviceId}
-	body, _, err := postClaudeBcai("/api/activate", payload, "", upstreamProxy)
-	if err != nil {
-		l.setLastError(err.Error())
-		return "", err
-	}
-	var resp CommonResp
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", err
-	}
-	if !resp.Success {
-		message := resp.Message
-		if message == "" {
-			message = getApiErrorMessage(resp.Code)
-		}
-		l.setLastError(message)
-		return "", errors.New(message)
-	}
-	var actData ActivateData
-	if err := json.Unmarshal(resp.Data, &actData); err != nil {
-		return "Activated (unknown expiry)", nil
-	}
-	l.setLastError("")
-	return actData.AccountCard.ExpiresAt, nil
 }
 
 func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*ClaudeTokenLease, error) {

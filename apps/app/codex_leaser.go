@@ -77,8 +77,8 @@ func GetCodexLeaser() *CodexLeaser {
 	return globalCodexLeaser
 }
 
-// setLastError / LastError guard lastError with l.mu. LeaseToken/Activate run once
-// per inbound proxy request and are therefore called concurrently across goroutines;
+// setLastError / LastError guard lastError with l.mu. LeaseToken runs once
+// per inbound proxy request and is therefore called concurrently across goroutines;
 // every other CodexLeaser field is mutex-guarded, so lastError must be too (otherwise
 // `go test -race` flags an unsynchronized write/read on a shared string).
 func (l *CodexLeaser) setLastError(msg string) {
@@ -108,36 +108,6 @@ func postCodexBcai(path string, payload interface{}, secret string, upstreamProx
 		return respBody, status, fmt.Errorf("remote codex status %d: %s", status, string(respBody))
 	}
 	return respBody, status, nil
-}
-
-func (l *CodexLeaser) Activate(card, deviceId string, upstreamProxy string) (string, error) {
-	payload := map[string]string{
-		"accountCard": card,
-		"deviceId":    deviceId,
-	}
-	body, _, err := postCodexBcai("/api/activate", payload, "", upstreamProxy)
-	if err != nil {
-		l.setLastError(err.Error())
-		return "", err
-	}
-	var resp CommonResp
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", err
-	}
-	if !resp.Success {
-		message := resp.Message
-		if message == "" {
-			message = getApiErrorMessage(resp.Code)
-		}
-		l.setLastError(message)
-		return "", errors.New(message)
-	}
-	var actData ActivateData
-	if err := json.Unmarshal(resp.Data, &actData); err != nil {
-		return "Activated (unknown expiry)", nil
-	}
-	l.setLastError("")
-	return actData.AccountCard.ExpiresAt, nil
 }
 
 func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*CodexTokenLease, error) {

@@ -151,29 +151,6 @@ func TestClaudeTempLimitReturnsPlainErrorAndDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestClaudeActivateSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/activate" {
-			t.Errorf("unexpected path %s", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"data":    map[string]interface{}{"accountCard": map[string]interface{}{"expiresAt": "2026-12-31T00:00:00Z"}},
-		})
-	}))
-	defer srv.Close()
-	withClaudeAPIBase(t, srv.URL)
-
-	l := &ClaudeLeaser{}
-	exp, err := l.Activate("card-1", "dev-1", "")
-	if err != nil {
-		t.Fatalf("Activate: %v", err)
-	}
-	if exp != "2026-12-31T00:00:00Z" {
-		t.Fatalf("unexpected expiry %q", exp)
-	}
-}
-
 func TestClaudeReportRetryQueuesThenFlushes(t *testing.T) {
 	var mu sync.Mutex
 	fail := true

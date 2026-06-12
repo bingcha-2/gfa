@@ -94,7 +94,7 @@ func (l *Leaser) ClearCache() {
 }
 
 // ClearAccessKeyStatus 清空缓存的卡密状态(含 products)。换卡时调用,避免旧卡的
-// products 被新卡复用 —— 新卡 products 由下一次 Activate/成功租号重新写入。
+// products 被新卡复用 —— 新卡 products 由下一次成功租号重新写入。
 func (l *Leaser) ClearAccessKeyStatus() {
 	l.mu.Lock()
 	l.accessKeyStatus = nil
