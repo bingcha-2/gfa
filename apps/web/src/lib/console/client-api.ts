@@ -7,8 +7,22 @@ type ApiRequestOptions = {
   search?: Record<string, string | number | boolean | undefined>;
 };
 
+/**
+ * Admin API paths live ONLY under the console surface (/api/console/*) since
+ * the legacy bare aliases (/api/rosetta, /api/accounts, …) were removed
+ * server-side. Callers keep passing resource paths ("rosetta/accounts",
+ * "orders?…"); the console/ prefix is applied centrally here. Paths already
+ * starting with console/ are passed through unchanged.
+ */
+function withConsolePrefix(path: string): string {
+  const rel = path.replace(/^\/+/, "");
+  return rel === "console" || rel.startsWith("console/")
+    ? rel
+    : `console/${rel}`;
+}
+
 function buildUrl(path: string, search?: ApiRequestOptions["search"]) {
-  const targetPath = `/api/${path.replace(/^\/+/, "")}`;
+  const targetPath = `/api/${withConsolePrefix(path)}`;
 
   if (!search) {
     return targetPath;

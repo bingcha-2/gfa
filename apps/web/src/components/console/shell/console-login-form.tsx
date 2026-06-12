@@ -51,7 +51,7 @@ export function ConsoleLoginForm() {
     const normalizedEmail = email.trim().toLowerCase();
 
     try {
-      const response = await fetch("/api/session/login", {
+      const response = await fetch("/api/console-session/login", {
         method: "POST",
         headers: {
           accept: "application/json",

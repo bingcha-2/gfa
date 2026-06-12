@@ -126,12 +126,12 @@ describe("ADMIN_HOST unset (single-domain baseline)", () => {
   it("serves the root /login console page and session API publicly", async () => {
     const middleware = await loadMiddleware({});
     expectPassThrough(middleware(makeRequest("https://example.com/login")));
-    expectPassThrough(middleware(makeRequest("https://example.com/api/session/login")));
+    expectPassThrough(middleware(makeRequest("https://example.com/api/console-session/login")));
   });
 
   it("passes customer and console APIs through", async () => {
     const middleware = await loadMiddleware({});
-    expectPassThrough(middleware(makeRequest("https://example.com/api/web/portal")));
+    expectPassThrough(middleware(makeRequest("https://example.com/api/account/portal")));
     expectPassThrough(middleware(makeRequest("https://example.com/api/console/orders")));
     expectPassThrough(middleware(makeRequest("https://example.com/api/app/heartbeat")));
   });
@@ -187,18 +187,33 @@ describe("ADMIN_HOST set — requests on the admin host", () => {
 
   it("404s customer API namespaces", async () => {
     const middleware = await loadMiddleware(env);
-    expectNotFound(middleware(makeRequest(adminUrl("/api/web/portal"))));
-    expectNotFound(middleware(makeRequest(adminUrl("/api/web-session/login"))));
+    expectNotFound(middleware(makeRequest(adminUrl("/api/account/portal"))));
+    expectNotFound(middleware(makeRequest(adminUrl("/api/account-session/login"))));
     expectNotFound(middleware(makeRequest(adminUrl("/api/app/heartbeat"))));
     expectNotFound(middleware(makeRequest(adminUrl("/api/epay/notify"))));
   });
 
   it("passes the console session API and admin backend APIs", async () => {
     const middleware = await loadMiddleware(env);
-    expectPassThrough(middleware(makeRequest(adminUrl("/api/session/login"))));
-    expectPassThrough(middleware(makeRequest(adminUrl("/api/accounts"))));
+    expectPassThrough(middleware(makeRequest(adminUrl("/api/console-session/login"))));
+    expectPassThrough(middleware(makeRequest(adminUrl("/api/console/accounts"))));
     expectPassThrough(middleware(makeRequest(adminUrl("/api/console/orders"))));
-    expectPassThrough(middleware(makeRequest(adminUrl("/api/rosetta/keys"))));
+    expectPassThrough(middleware(makeRequest(adminUrl("/api/console/rosetta/keys"))));
+  });
+
+  it("passes the lease-pool ops under /api/app/lease (console pages use them)", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(
+      middleware(makeRequest(adminUrl("/api/app/lease/antigravity/status")))
+    );
+    expectPassThrough(
+      middleware(makeRequest(adminUrl("/api/app/lease/antigravity/announcement")))
+    );
+    expectPassThrough(
+      middleware(makeRequest(adminUrl("/api/app/lease/codex/reload-access-keys")))
+    );
+    // …while the rest of the desktop-client surface stays customer-only.
+    expectNotFound(middleware(makeRequest(adminUrl("/api/app/heartbeat"))));
   });
 
   it("ignores a :port suffix when matching the admin host", async () => {
@@ -216,14 +231,14 @@ describe("ADMIN_HOST set — requests on the admin host", () => {
     });
     // Blocked IP: every admin-host path 404s, including login + backend APIs.
     expectNotFound(middleware(makeRequest(adminUrl("/console/login"), { ip: "9.9.9.9" })));
-    expectNotFound(middleware(makeRequest(adminUrl("/api/accounts"), { ip: "9.9.9.9" })));
+    expectNotFound(middleware(makeRequest(adminUrl("/api/console/accounts"), { ip: "9.9.9.9" })));
     expectNotFound(middleware(makeRequest(adminUrl("/login"), { ip: "9.9.9.9" })));
     // Allowed IP: normal behavior.
     expectPassThrough(
       middleware(makeRequest(adminUrl("/console/login"), { ip: "10.1.2.3" }))
     );
     expectPassThrough(
-      middleware(makeRequest(adminUrl("/api/accounts"), { ip: "10.1.2.3" }))
+      middleware(makeRequest(adminUrl("/api/console/accounts"), { ip: "10.1.2.3" }))
     );
   });
 
@@ -261,7 +276,7 @@ describe("ADMIN_HOST set — requests on the customer host", () => {
       )
     );
     expectNotFound(middleware(makeRequest(mainUrl("/login"))));
-    expectNotFound(middleware(makeRequest(mainUrl("/api/session/login"))));
+    expectNotFound(middleware(makeRequest(mainUrl("/api/console-session/login"))));
     expectNotFound(middleware(makeRequest(mainUrl("/api/console/orders"))));
   });
 
@@ -289,8 +304,8 @@ describe("ADMIN_HOST set — requests on the customer host", () => {
         })
       )
     );
-    expectPassThrough(middleware(makeRequest(mainUrl("/api/web/portal"))));
-    expectPassThrough(middleware(makeRequest(mainUrl("/api/web-session/login"))));
+    expectPassThrough(middleware(makeRequest(mainUrl("/api/account/portal"))));
+    expectPassThrough(middleware(makeRequest(mainUrl("/api/account-session/login"))));
     expectPassThrough(middleware(makeRequest(mainUrl("/api/app/heartbeat"))));
   });
 

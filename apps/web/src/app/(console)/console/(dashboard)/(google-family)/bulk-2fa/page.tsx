@@ -68,7 +68,7 @@ export default function Bulk2faPage() {
   // Fetch recent jobs history
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch("/api/bulk-2fa/jobs");
+      const res = await fetch("/api/console/bulk-2fa/jobs");
       if (!res.ok) throw new Error("Failed to fetch history");
       const data = await res.json();
       setJobsHistory(data);
@@ -83,7 +83,7 @@ export default function Bulk2faPage() {
   // Fetch active job status
   const fetchJobStatus = useCallback(async (jobId: string) => {
     try {
-      const res = await fetch(`/api/bulk-2fa/jobs/${jobId}`);
+      const res = await fetch(`/api/console/bulk-2fa/jobs/${jobId}`);
       if (!res.ok) throw new Error("Failed to fetch job details");
       const job: BulkJob = await res.json();
       setActiveJob(job);
@@ -121,7 +121,7 @@ export default function Bulk2faPage() {
       pollTimerRef.current = null;
     }
     try {
-      const res = await fetch(`/api/bulk-2fa/jobs/${jobId}`);
+      const res = await fetch(`/api/console/bulk-2fa/jobs/${jobId}`);
       if (!res.ok) throw new Error("Failed to fetch job details");
       const job: BulkJob = await res.json();
       setActiveJob(job);
@@ -162,7 +162,7 @@ export default function Bulk2faPage() {
     if (!activeJob) return;
     setDownloading(type);
     try {
-      const res = await fetch(`/api/bulk-2fa/jobs/${activeJob.id}/download?type=${type}`);
+      const res = await fetch(`/api/console/bulk-2fa/jobs/${activeJob.id}/download?type=${type}`);
       if (!res.ok) throw new Error("Download request failed");
       const content = await res.text();
       const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -189,7 +189,7 @@ export default function Bulk2faPage() {
     }
     setSubmitting(true);
     try {
-      const res = await fetch("/api/bulk-2fa/jobs", {
+      const res = await fetch("/api/console/bulk-2fa/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: inputText }),

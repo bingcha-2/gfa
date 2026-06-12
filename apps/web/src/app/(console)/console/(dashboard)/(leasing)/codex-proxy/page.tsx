@@ -170,7 +170,7 @@ export default function CodexProxyPage() {
   const fetchStatus = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const res = await fetch("/api/remote-codex/status", { cache: "no-store" });
+      const res = await fetch("/api/app/lease/codex/status", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStatus(await res.json());
     } catch (error) {
@@ -196,7 +196,7 @@ export default function CodexProxyPage() {
   async function reloadAccessKeys() {
     setRefreshing(true);
     try {
-      const res = await fetch("/api/remote-codex/reload-access-keys", { method: "POST" });
+      const res = await fetch("/api/app/lease/codex/reload-access-keys", { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // The reload endpoint returns { ok, reloaded }, not a status payload —
       // re-fetch the real status instead of blanking the dashboard with undefined.

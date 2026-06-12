@@ -14,7 +14,8 @@ const BACKEND_BASE_URL =
 export async function POST(request: NextRequest) {
   const payload = await request.json();
 
-  const response = await fetch(`${BACKEND_BASE_URL}/auth/login`, {
+  // Admin auth lives ONLY under the console surface: /api/console/auth/login.
+  const response = await fetch(`${BACKEND_BASE_URL}/console/auth/login`, {
     method: "POST",
     headers: {
       accept: "application/json",

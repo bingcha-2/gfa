@@ -89,7 +89,7 @@ export function ConsoleProvider({
   );
 
   const handleLogout = useCallback(async () => {
-    await fetch("/api/session/logout", {
+    await fetch("/api/console-session/logout", {
       method: "POST",
       cache: "no-store",
     });

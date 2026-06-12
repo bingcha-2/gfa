@@ -32,17 +32,18 @@ const IP_ALLOWLIST: string[] = RAW_ALLOWLIST
 //   SET (split-domain deploy; see Caddyfile.migration):
 //     · Requests whose Host equals ADMIN_HOST get ONLY the admin surface:
 //       /console/* (or the ADMIN_PATH_PREFIX alias), the root /login page,
-//       /api/session/* (console cookie login/logout, Next route handlers)
-//       and the admin backend APIs (/api/auth, /api/console, /api/accounts,
-//       … — proxied to NestJS by next.config.ts rewrites). Marketing pages,
-//       /account/* and customer APIs return 404 there — a deliberate
+//       /api/console-session/* (console cookie login/logout, Next route
+//       handlers) and the admin backend API (/api/console/* — proxied to
+//       NestJS by next.config.ts rewrites). Marketing pages, /account/* and
+//       customer APIs return 404 there — a deliberate
 //       "not here": the middleware only knows the admin hostname, so it
 //       cannot redirect to the customer domain, and a bare 404 reveals
 //       nothing about what lives where.
 //     · Requests on ANY other host (customer domain, fallback domains, raw
 //       IP) get everything EXCEPT the console surface: /console/*, the
-//       ADMIN_PATH_PREFIX alias, /login, /api/session/* and /api/console/*
-//       return 404. Marketing, /account/* and customer APIs are untouched.
+//       ADMIN_PATH_PREFIX alias, /login, /api/console-session/* and
+//       /api/console/* return 404. Marketing, /account/* and customer APIs
+//       are untouched.
 //
 // The reverse proxy must forward the original Host header unchanged —
 // Caddy's reverse_proxy does this by default. Host gating is routing-level
@@ -54,9 +55,9 @@ const ADMIN_HOST = (process.env.ADMIN_HOST ?? "")
   .replace(/:\d+$/, "");
 
 // Customer-facing API namespaces that must NOT exist on the admin host:
-// /api/web (portal cookie→Bearer proxy), /api/web-session (portal cookie
-// login), /api/app (desktop client), /api/epay (payment callbacks).
-const CUSTOMER_API_PREFIXES = ["/api/web", "/api/web-session", "/api/app", "/api/epay"];
+// /api/account (portal cookie→Bearer proxy), /api/account-session (portal
+// cookie login), /api/app (desktop client), /api/epay (payment callbacks).
+const CUSTOMER_API_PREFIXES = ["/api/account", "/api/account-session", "/api/app", "/api/epay"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -92,7 +93,8 @@ function getRequestHost(request: NextRequest): string {
 }
 
 /** Exact-segment prefix match: matches `prefix` itself and `prefix/...`,
- *  but not sibling paths (e.g. "/api/web" must not match "/api/web-session"). */
+ *  but not sibling paths (e.g. "/api/account" must not match
+ *  "/api/account-session"). */
 function matchesPathPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
 }
@@ -111,7 +113,7 @@ function applyHostIsolation(request: NextRequest, pathname: string): NextRespons
   const isConsolePath = matchesPathPrefix(pathname, "/console");
   const isAdminPrefixPath = matchesPathPrefix(pathname, `/${ADMIN_PREFIX}`);
   const isConsoleLoginPath = matchesPathPrefix(pathname, "/login");
-  const isConsoleSessionApi = matchesPathPrefix(pathname, "/api/session");
+  const isConsoleSessionApi = matchesPathPrefix(pathname, "/api/console-session");
   const isApiPath = matchesPathPrefix(pathname, "/api");
 
   if (getRequestHost(request) === ADMIN_HOST) {
@@ -136,6 +138,13 @@ function applyHostIsolation(request: NextRequest, pathname: string): NextRespons
     }
 
     if (isApiPath) {
+      // Lease-pool ops (status / announcement / reload-access-keys) live
+      // under the desktop-client surface /api/app/lease/* but are consumed
+      // by the console lease pages — keep them reachable on the admin host
+      // (they were never host-gated when they lived at /api/remote-*).
+      if (matchesPathPrefix(pathname, "/api/app/lease")) {
+        return null;
+      }
       // Customer API namespaces do not exist on the admin host; every other
       // /api/* path is admin surface (console session routes handled by
       // Next, admin Bearer APIs proxied to the backend by next.config.ts).
@@ -222,8 +231,8 @@ export function middleware(request: NextRequest) {
 
   // ── 1. Determine what kind of request this is ─────────────────────────────
 
-  // Admin API routes: /api/session/* (login / logout) — always protected
-  const isAdminApiRoute = pathname.startsWith("/api/session/");
+  // Admin API routes: /api/console-session/* (login / logout) — always protected
+  const isAdminApiRoute = pathname.startsWith("/api/console-session/");
 
   // Admin page routes: /{prefix}/* (the public-facing URL)
   const isAdminPageRoute =

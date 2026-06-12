@@ -182,7 +182,7 @@ export default function RosettaKeysPage() {
     async (key: AccessKeyListItem) => {
       const next = key.status === "active" ? "disabled" : "active";
       try {
-        const res = await fetch("/api/rosetta/access-key-update", {
+        const res = await fetch("/api/console/rosetta/access-key-update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: key.id, status: next }),
@@ -205,7 +205,7 @@ export default function RosettaKeysPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch("/api/rosetta/access-key-delete", {
+      const res = await fetch("/api/console/rosetta/access-key-delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: deleteTarget.id }),
@@ -228,8 +228,8 @@ export default function RosettaKeysPage() {
     setCleaning(true);
     const path =
       cleanupKind === "expired"
-        ? "/api/rosetta/cleanup-expired-keys"
-        : "/api/rosetta/cleanup-unbound-keys";
+        ? "/api/console/rosetta/cleanup-expired-keys"
+        : "/api/console/rosetta/cleanup-unbound-keys";
     const label = cleanupKind === "expired" ? "过期" : "未绑定设备的";
     try {
       const res = await fetch(path, { method: "POST" });

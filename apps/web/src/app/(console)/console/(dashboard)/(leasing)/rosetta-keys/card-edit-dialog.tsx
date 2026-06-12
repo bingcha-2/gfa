@@ -6,9 +6,9 @@
 // 不放删除(删除只在行内 + AlertDialog 二次确认),避免重复。
 //
 // 保存 = 两次调用,顺序为先 update 再 set-bindings(绑定变更影响份额占用):
-//   1. POST /api/rosetta/access-key-update —— { id, name, status, durationMs, windowMs,
+//   1. POST /api/console/rosetta/access-key-update —— { id, name, status, durationMs, windowMs,
 //      weight, bucketLimits }。
-//   2. POST /api/rosetta/access-key-set-bindings —— { id, bindings }(整张映射;
+//   2. POST /api/console/rosetta/access-key-set-bindings —— { id, bindings }(整张映射;
 //      换绑/解绑/增开/切池都走这张映射)。
 // 失败时弹窗保持打开 + 内联错误;成功后回调父刷新列表 + 账号份额。
 
@@ -135,7 +135,7 @@ export function CardEditDialog({
         if (Number(lim) > 0) bucketLimits[bucket] = Math.floor(Number(lim));
       }
 
-      const updateRes = await fetch("/api/rosetta/access-key-update", {
+      const updateRes = await fetch("/api/console/rosetta/access-key-update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -162,7 +162,7 @@ export function CardEditDialog({
           throw new Error("绑定卡请至少为一个产品绑定账号(或切换为万能卡)");
         }
       }
-      const bindRes = await fetch("/api/rosetta/access-key-set-bindings", {
+      const bindRes = await fetch("/api/console/rosetta/access-key-set-bindings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: card.id, bindings }),

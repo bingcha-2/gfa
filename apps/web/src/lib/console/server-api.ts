@@ -45,8 +45,22 @@ export async function getConsoleTokenFromCookie() {
   return cookieStore.get(CONSOLE_AUTH_COOKIE)?.value ?? null;
 }
 
+/**
+ * Admin API paths live ONLY under the console surface (/api/console/*) since
+ * the legacy bare aliases (/auth, /stats, …) were removed server-side.
+ * Callers keep passing resource paths ("auth/me", "stats"); the console/
+ * prefix is applied centrally here. Paths already starting with console/ are
+ * passed through unchanged.
+ */
+function withConsolePrefix(path: string): string {
+  const rel = path.replace(/^\/+/, "");
+  return rel === "console" || rel.startsWith("console/")
+    ? rel
+    : `console/${rel}`;
+}
+
 export async function serverApiRequest<T>(path: string, token: string) {
-  const response = await fetch(`${getBackendBaseUrl()}/${path.replace(/^\/+/, "")}`, {
+  const response = await fetch(`${getBackendBaseUrl()}/${withConsolePrefix(path)}`, {
     headers: {
       accept: "application/json",
       authorization: `Bearer ${token}`

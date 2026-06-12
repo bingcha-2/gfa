@@ -27,9 +27,9 @@ export interface UseLeaseAccountsResult {
 
 // 三个号池的 API 路径(与旧 page.tsx 一致):codex / antigravity / anthropic。
 const ENDPOINTS = {
-  codex: "/api/rosetta/codex-accounts",
-  antigravity: "/api/rosetta/accounts",
-  anthropic: "/api/rosetta/anthropic-accounts",
+  codex: "/api/console/rosetta/codex-accounts",
+  antigravity: "/api/console/rosetta/accounts",
+  anthropic: "/api/console/rosetta/anthropic-accounts",
 } as const;
 
 // 某池里非空 planType 去重升序。

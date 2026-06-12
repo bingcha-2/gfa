@@ -144,7 +144,7 @@ export default function UsageStatsPage() {
     try {
       const [statsRes, todayRes] = await Promise.all([
         fetch("/api/remote-stats", { cache: "no-store" }),
-        fetch("/api/rosetta/token-usage-today", { cache: "no-store" }),
+        fetch("/api/console/rosetta/token-usage-today", { cache: "no-store" }),
       ]);
       if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
       const data = await statsRes.json();
@@ -159,7 +159,7 @@ export default function UsageStatsPage() {
 
   const fetchTrend = useCallback(async (days: number) => {
     try {
-      const res = await fetch(`/api/rosetta/token-usage-trend?days=${days}`, { cache: "no-store" });
+      const res = await fetch(`/api/console/rosetta/token-usage-trend?days=${days}`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setTrend(Array.isArray(data.daily) ? data.daily : []);

@@ -43,7 +43,7 @@ export default function RosettaEmployeesPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/rosetta/employees");
+      const res = await fetch("/api/console/rosetta/employees");
       const data = await res.json();
       setEmployees(data.employees || []);
       setAccounts(data.accounts || []);

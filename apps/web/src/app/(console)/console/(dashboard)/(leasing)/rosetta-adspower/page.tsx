@@ -144,7 +144,7 @@ export default function RosettaAdspowerPage() {
     async (id: string) => {
       try {
         const res = await fetch(
-          `/api/rosetta/adspower-import-status?batchId=${id}`
+          `/api/console/rosetta/adspower-import-status?batchId=${id}`
         );
         if (!res.ok) return;
         const data: BatchProgress = await res.json();
@@ -181,7 +181,7 @@ export default function RosettaAdspowerPage() {
   useEffect(() => {
     async function loadHistory() {
       try {
-        const res = await fetch("/api/rosetta/adspower-import-history");
+        const res = await fetch("/api/console/rosetta/adspower-import-history");
         if (!res.ok) return;
         const data = await res.json();
         if (data?.ok && data.batchId && data.total > 0) {
@@ -213,7 +213,7 @@ export default function RosettaAdspowerPage() {
 
     setImporting(true);
     try {
-      const res = await fetch("/api/rosetta/adspower-import", {
+      const res = await fetch("/api/console/rosetta/adspower-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credentials }),

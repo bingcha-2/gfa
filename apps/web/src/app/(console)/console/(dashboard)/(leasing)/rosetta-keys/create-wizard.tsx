@@ -9,10 +9,10 @@
 //   ③ 生成数量 + 生成 → 结果面板(列出全部卡密 + 「全部复制」)。
 //
 // 创建接口对齐旧 page.tsx handleCreate:
-//   - POST /api/rosetta/access-key 接受 { name, durationMs, windowMs, count, weight,
+//   - POST /api/console/rosetta/access-key 接受 { name, durationMs, windowMs, count, weight,
 //     products[], levels{product:level}, accountIds{product:id} }。
 //   - 注意:create 接口不接受 bucketLimits;若用户在向导里设了模型限额,创建成功后
-//     对每张返回的卡再调用 /api/rosetta/access-key-update 写入 bucketLimits(逐卡)。
+//     对每张返回的卡再调用 /api/console/rosetta/access-key-update 写入 bucketLimits(逐卡)。
 //   - 绑定卡的 products/levels/accountIds 由 card-config-form 的 bindings(product→accountId)
 //     联表 accounts 推导:planType 作为 level;accountId 作为手动指定账号。
 
@@ -176,7 +176,7 @@ export function CreateWizard({
         payload.weight = Math.max(1, Math.min(8, Number(config.weight) || 1));
       }
 
-      const res = await fetch("/api/rosetta/access-key", {
+      const res = await fetch("/api/console/rosetta/access-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -200,7 +200,7 @@ export function CreateWizard({
             .map((k) => k.id)
             .filter((id): id is string => Boolean(id))
             .map((id) =>
-              fetch("/api/rosetta/access-key-update", {
+              fetch("/api/console/rosetta/access-key-update", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ id, bucketLimits: limits }),

@@ -56,55 +56,40 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Proxy FAQ images and admin API to the backend API server.
+  // Proxy the surviving backend API surfaces to the NestJS server.
   //
-  // ⚠️  DO NOT add /api/web or /api/web-session to this rewrite list.
-  //     Those paths are handled by Next.js route handlers in src/app/api/web/
-  //     and src/app/api/web-session/ which perform cookie→Bearer conversion for
-  //     the customer portal.  Adding them here would bypass the route handlers
-  //     and send unauthenticated requests directly to the NestJS backend.
+  // The legacy bare prefixes (auth, rosetta, accounts, family-groups, orders,
+  // tasks, stats, remote-token, remote-codex, remote-anthropic, …) were
+  // removed server-side — everything admin now lives under /api/console/*,
+  // everything toC under /api/account/* and the desktop client under
+  // /api/app/*.
+  //
+  // ⚠️  DO NOT add /api/account, /api/account-session or /api/console-session
+  //     to this rewrite list. Those paths are handled by Next.js route
+  //     handlers in src/app/api/{account,account-session,console-session}/
+  //     which perform cookie→Bearer (and cookie set/clear) conversion.
+  //     Adding them here would bypass the route handlers and send
+  //     unauthenticated requests directly to the NestJS backend.
   async rewrites() {
     const backendPrefixes = [
-      "auth",
-      "stats",
-      "family-groups",
-      "orders",
-      "tasks",
-      "accounts",
-      "agent-accounts",
-      "redeem-codes",
-      "scheduler",
-      "queue",
-      "admin",
-      "expire-scan",
-      "audit-logs",
-      "users",
-      "public",
-      "automation",
-      "faq",
-      "phone-pool",
-      "remote-token",
-      "remote-codex",
-      "remote-anthropic",
-      "remote-stats",
-      "rosetta",
-      "bulk-2fa",
-      // The console-namespaced admin API (dual-mounted in NestJS next to the
-      // legacy prefixes above). Required for the split-domain deploy: the
+      // Admin Bearer/cookie API. Required for the split-domain deploy: the
       // admin subdomain (Caddyfile.migration) proxies ONLY to Next.js, so
       // /api/console/* must flow NestJS-ward through this rewrite.
       "console",
+      // Desktop-client surface; the console lease pages also consume the
+      // @Public lease-pool ops at /api/app/lease/* (status / announcement /
+      // reload-access-keys).
+      "app",
+      // Payment provider callbacks.
+      "epay",
+      // Backend health check.
+      "health",
+      // @Public usage dashboard (bare backend path, not console-namespaced),
+      // consumed by /console/usage-stats.
+      "remote-stats",
     ];
 
     return [
-      {
-        source: "/remote-token/:path*",
-        destination: `${apiOrigin}/api/remote-token/:path*`,
-      },
-      {
-        source: "/remote-codex/:path*",
-        destination: `${apiOrigin}/api/remote-codex/:path*`,
-      },
       {
         source: "/api/faq-images/:path*",
         destination: `${apiOrigin}/api/faq-images/:path*`,

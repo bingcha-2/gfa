@@ -18,7 +18,7 @@ export default function AnnouncementPage() {
 
   const fetchAnnouncement = useCallback(async () => {
     try {
-      const res = await fetch("/api/remote-token/announcement");
+      const res = await fetch("/api/app/lease/antigravity/announcement");
       const content = await res.text();
       setText(content);
       setSavedText(content);
@@ -36,7 +36,7 @@ export default function AnnouncementPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/remote-token/announcement", {
+      const res = await fetch("/api/app/lease/antigravity/announcement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text.trim() }),
@@ -57,7 +57,7 @@ export default function AnnouncementPage() {
   const handleClear = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/remote-token/announcement", {
+      const res = await fetch("/api/app/lease/antigravity/announcement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: "" }),

@@ -187,8 +187,8 @@ export default function RosettaAccountsPage() {
     setLoading(true);
     try {
       const [accountsRes, statusRes] = await Promise.all([
-        fetch("/api/rosetta/accounts"),
-        fetch("/api/remote-token/status").catch(() => null),
+        fetch("/api/console/rosetta/accounts"),
+        fetch("/api/app/lease/antigravity/status").catch(() => null),
       ]);
       const data = await accountsRes.json();
       if (!data.ok) throw new Error(data.error || "加载失败");
@@ -297,7 +297,7 @@ export default function RosettaAccountsPage() {
     }
     setAddSubmitting(true);
     try {
-      const res = await fetch("/api/rosetta/add-account", {
+      const res = await fetch("/api/console/rosetta/add-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -323,7 +323,7 @@ export default function RosettaAccountsPage() {
   async function handleOAuthStart() {
     setOauthStarting(true);
     try {
-      const res = await fetch("/api/rosetta/google-oauth-start", {
+      const res = await fetch("/api/console/rosetta/google-oauth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -354,7 +354,7 @@ export default function RosettaAccountsPage() {
     setOauthSubmitting(true);
     setOauthStatusText("");
     try {
-      const res = await fetch("/api/rosetta/google-oauth-submit", {
+      const res = await fetch("/api/console/rosetta/google-oauth-submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId: oauthLoginId, input }),
@@ -384,7 +384,7 @@ export default function RosettaAccountsPage() {
     setOauthCallbackInput("");
     if (!loginId) return;
     try {
-      await fetch("/api/rosetta/google-oauth-cancel", {
+      await fetch("/api/console/rosetta/google-oauth-cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId }),
@@ -397,7 +397,7 @@ export default function RosettaAccountsPage() {
   async function handleToggle(accountId: string) {
     setTogglingId(accountId);
     try {
-      const res = await fetch("/api/rosetta/toggle-account", {
+      const res = await fetch("/api/console/rosetta/toggle-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -418,7 +418,7 @@ export default function RosettaAccountsPage() {
   async function handleTogglePool(accountId: string) {
     setTogglingId(accountId);
     try {
-      const res = await fetch("/api/rosetta/toggle-account-pool", {
+      const res = await fetch("/api/console/rosetta/toggle-account-pool", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -440,7 +440,7 @@ export default function RosettaAccountsPage() {
   async function handleRefresh(accountId: string) {
     setBusyId(accountId);
     try {
-      const res = await fetch("/api/rosetta/refresh-account-quota", {
+      const res = await fetch("/api/console/rosetta/refresh-account-quota", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -460,7 +460,7 @@ export default function RosettaAccountsPage() {
   async function handleReactivate(accountId: string) {
     setBusyId(accountId);
     try {
-      const res = await fetch("/api/rosetta/reactivate-account", {
+      const res = await fetch("/api/console/rosetta/reactivate-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -484,7 +484,7 @@ export default function RosettaAccountsPage() {
   async function handleSaveProxy(account: RosettaAccount) {
     setProxySaving(true);
     try {
-      const res = await fetch("/api/rosetta/account-set-proxy", {
+      const res = await fetch("/api/console/rosetta/account-set-proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: "antigravity", accountId: account.id, proxyUrl: proxyEditVal.trim() }),
@@ -503,7 +503,7 @@ export default function RosettaAccountsPage() {
 
   async function handleDelete(accountId: string) {
     try {
-      const res = await fetch("/api/rosetta/delete-account", {
+      const res = await fetch("/api/console/rosetta/delete-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -525,7 +525,7 @@ export default function RosettaAccountsPage() {
     let successCount = 0;
     for (const id of ids) {
       try {
-        const res = await fetch("/api/rosetta/delete-account", {
+        const res = await fetch("/api/console/rosetta/delete-account", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ accountId: id }),
@@ -772,7 +772,7 @@ export default function RosettaAccountsPage() {
           </CardHeader>
           <CardContent className="text-2xl font-semibold text-amber-600">{tokenCount}</CardContent>
         </Card>
-        <QuotaProfilesCard product="antigravity" statusUrl="/api/remote-token/status" />
+        <QuotaProfilesCard product="antigravity" statusUrl="/api/app/lease/antigravity/status" />
       </div>
 
       {/* Main Table Card */}

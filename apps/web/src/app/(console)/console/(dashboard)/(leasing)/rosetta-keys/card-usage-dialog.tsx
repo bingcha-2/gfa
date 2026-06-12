@@ -110,9 +110,9 @@ export function CardUsageDialog({
     setLoading(true);
     try {
       const [summaryRes, recordsRes] = await Promise.all([
-        fetch(`/api/rosetta/card-token-usage-summary?cardId=${encodeURIComponent(cardId)}&days=${days}`),
+        fetch(`/api/console/rosetta/card-token-usage-summary?cardId=${encodeURIComponent(cardId)}&days=${days}`),
         fetch(
-          `/api/rosetta/card-token-usage?cardId=${encodeURIComponent(cardId)}&days=${days}&page=${page}&pageSize=${PAGE_SIZE}`,
+          `/api/console/rosetta/card-token-usage?cardId=${encodeURIComponent(cardId)}&days=${days}&page=${page}&pageSize=${PAGE_SIZE}`,
         ),
       ]);
       const summary = await summaryRes.json();

@@ -1,6 +1,6 @@
 "use client";
 
-// 卡密列表取数 hook —— GET /api/rosetta/access-keys(沿用旧 page.tsx 的取数接口路径)。
+// 卡密列表取数 hook —— GET /api/console/rosetta/access-keys(沿用旧 page.tsx 的取数接口路径)。
 // 返回 { ok, keys, totalAll?, totalActive? };keys 形状对齐 types.ts 的 AccessKeyListItem
 // (服务端 listAccessKeys 重设计后追加 cardType/buckets/bindingsDetail/fairShare 摘要)。
 //
@@ -49,7 +49,7 @@ export function useAccessKeys(search = "", auto = true): UseAccessKeysResult {
       const term = (override ?? searchRef.current).trim();
       if (term) params.set("search", term);
       const res = await fetch(
-        `/api/rosetta/access-keys${params.toString() ? `?${params}` : ""}`,
+        `/api/console/rosetta/access-keys${params.toString() ? `?${params}` : ""}`,
       );
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "加载卡密失败");

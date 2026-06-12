@@ -103,7 +103,7 @@ export default function RosettaLoadPage() {
   const fetchStatus = useCallback(async (silent = false) => {
     if (!silent) setRefreshingStatus(true);
     try {
-      const res = await fetch("/api/remote-token/status");
+      const res = await fetch("/api/app/lease/antigravity/status");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: StatusData = await res.json();
       setStatus(data);
@@ -132,7 +132,7 @@ export default function RosettaLoadPage() {
   async function handleRefreshQuota() {
     setRefreshingQuota(true);
     try {
-      const res = await fetch("/api/rosetta/refresh-quota", { method: "POST" });
+      const res = await fetch("/api/console/rosetta/refresh-quota", { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       toast.success(
@@ -148,7 +148,7 @@ export default function RosettaLoadPage() {
 
   async function handleUnblockLocation() {
     try {
-      const res = await fetch("/api/rosetta/unblock-location", { method: "POST" });
+      const res = await fetch("/api/console/rosetta/unblock-location", { method: "POST" });
       const data = await res.json();
       if (data.ok) {
         toast.success(`已解封 ${data.unblocked || 0} 个账号`);
@@ -165,7 +165,7 @@ export default function RosettaLoadPage() {
     setTogglingIds((prev) => new Set(prev).add(accountId));
     const action = currentlyEnabled ? "禁用" : "解封";
     try {
-      const res = await fetch("/api/rosetta/toggle-account", {
+      const res = await fetch("/api/console/rosetta/toggle-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: Number(accountId), enabled: !currentlyEnabled }),

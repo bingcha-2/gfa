@@ -101,7 +101,7 @@ export default function ExpirePage() {
   async function loadExpiredMembers() {
     setIsLoadingMembers(true);
     try {
-      const res = await apiRequest<ExpiredMember[]>("admin/expire-scan/expired-members");
+      const res = await apiRequest<ExpiredMember[]>("expire-scan/expired-members");
       setExpiredMembers(res);
       setSelectedIds(new Set()); // clear selection on reload
     } catch { /* ignore */ }
@@ -119,7 +119,7 @@ export default function ExpirePage() {
 
   async function loadStatus() {
     try {
-      const data = await apiRequest<ScanStatus>("admin/expire-scan/status");
+      const data = await apiRequest<ScanStatus>("expire-scan/status");
       setStatus(data);
       setError(null);
     } catch (err) { setError(getErrorMessage(err)); }
@@ -127,7 +127,7 @@ export default function ExpirePage() {
 
   async function loadConfig() {
     try {
-      const data = await apiRequest<ScanConfig>("admin/expire-scan/config");
+      const data = await apiRequest<ScanConfig>("expire-scan/config");
       setConfig(data);
       setSelectedInterval(data.intervalMinutes);
     } catch { /* ignore */ }
@@ -137,7 +137,7 @@ export default function ExpirePage() {
     if (selectedInterval === null) return;
     startConfigTransition(async () => {
       try {
-        const data = await apiRequest<ScanConfig>("admin/expire-scan/config", {
+        const data = await apiRequest<ScanConfig>("expire-scan/config", {
           method: "POST",
           body: { intervalMinutes: selectedInterval },
         });
@@ -160,10 +160,10 @@ export default function ExpirePage() {
   function triggerScan() {
     startScanTransition(async () => {
       try {
-        const result = await apiRequest<RunResult>("admin/expire-scan/run", { method: "POST" });
+        const result = await apiRequest<RunResult>("expire-scan/run", { method: "POST" });
         setRunResult(result);
         toast.success(`扫描完成，处理了 ${result.processedCount} 条`);
-        const s = await apiRequest<ScanStatus>("admin/expire-scan/status");
+        const s = await apiRequest<ScanStatus>("expire-scan/status");
         setStatus(s);
         setError(null);
         await loadExpiredMembers();
