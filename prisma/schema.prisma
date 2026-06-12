@@ -683,6 +683,20 @@ model Subscription {
   @@index([activatedFromOrderId])
 }
 
+/// Versioned plan catalog: global pricing / level / usage rules, published to clients.
+/// `config` is a JSON string (sqlite has no Json type) holding
+/// products/levels/usageTiers/pricing/durationDays/windowMs — see spec §4.1.
+model PlanCatalog {
+  id          String    @id @default(cuid())
+  version     Int       @unique
+  status      String    @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  config      String
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status])
+}
+
 /// Plan purchase order (distinct from the existing family-group Order).
 model PlanOrder {
   id             String         @id @default(cuid())

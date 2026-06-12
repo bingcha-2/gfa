@@ -78,7 +78,7 @@
 | `id` | String @id | |
 | `version` | Int | 版本号,递增 |
 | `status` | String | **DRAFT / PUBLISHED / ARCHIVED**(同时至多一条 PUBLISHED) |
-| `config` | Json | 全局规则(见下) |
+| `config` | String | 全局规则 JSON 字符串(SQLite 无 Json 类型,与现有字段一致) |
 | `publishedAt` | DateTime? | |
 | `createdAt` | DateTime | |
 
@@ -120,7 +120,7 @@
 | `startsAt` / `expiresAt` | DateTime | 有效期 |
 | `catalogVersion` | Int | 买时的目录版本(溯源 / 价格锁定) |
 | `activatedFromOrderId` | String? | 退款对账 |
-| `config` | Json | **这条订阅的限额配置(用啥放啥,无 null)** |
+| `config` | String | **限额配置 JSON 字符串**(用啥放啥、无 null;SQLite 存 String) |
 | `createdAt` / `updatedAt` | DateTime | |
 
 **移除的旧列**(并入 `config` 或删除):`planId`、`productEntitlements`、`bucketLimits`、`levels`、`bindings`、`weight`、`deviceLimit`、`weeklyTokenLimit`、`windowMs`、`backingKeyValue`。
