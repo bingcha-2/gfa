@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as api from '@/services/wails'
+import { LanguageMenu } from '@/components/LanguageMenu'
 import { useT } from '@/i18n'
 
 export function LoginPage() {
@@ -41,7 +42,9 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[var(--bg-primary)]">
+    <div className="relative flex items-center justify-center min-h-screen bg-[var(--bg-primary)]">
+      {/* 语言切换:登录页右上角,默认简体中文 */}
+      <LanguageMenu className="absolute top-4 right-4" />
       <Card className="w-full max-w-[360px] mx-4">
         <CardContent className="pt-6 pb-6">
           {/* Logo / Title */}

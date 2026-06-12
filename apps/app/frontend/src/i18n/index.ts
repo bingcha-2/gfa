@@ -2,7 +2,7 @@
  * 应用多语言。九种语言,简体中文为源语言/兜底。
  * - useT():组件内取翻译函数,语言切换时自动重渲(配合 App 根部 key={locale} 整树刷新)。
  * - t():非组件代码(lib/工具函数)直接调用,按当前语言取值。
- * - 语言持久化在 localStorage('bcai_locale'),首次启动按系统语言匹配,兜底简中。
+ * - 语言持久化在 localStorage('bcai_locale'),默认简体中文;仅当用户手动切换后才改变。
  */
 
 import { create } from 'zustand'
@@ -66,14 +66,12 @@ export function matchLocale(tag: string | undefined | null): Locale | null {
 }
 
 function detectLocale(): Locale {
+  // 产品默认简体中文:只认用户手动切换后写入的 localStorage 选择,
+  // 不按系统语言(navigator.language)自动匹配 —— 避免英文系统/webview 把首启误判成英文。
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (isLocale(stored)) return stored
   } catch { /* 无 localStorage 时忽略 */ }
-  try {
-    const fromNav = matchLocale(navigator.language)
-    if (fromNav) return fromNav
-  } catch { /* 非浏览器环境忽略 */ }
   return 'zh-CN'
 }
 
