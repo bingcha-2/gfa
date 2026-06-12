@@ -175,6 +175,7 @@ export function ConsoleSidebar({
       items: [
         { id: "usage-stats", title: "用量与剩余", url: `/${prefix}/usage-stats`, icon: <ActivityIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
         { id: "rosetta-keys", title: "卡密管理", url: `/${prefix}/rosetta-keys`, icon: <KeyIcon />, permKey: "codes", roleGuard: () => isAdminOrOps },
+        { id: "plan-catalog", title: "套餐配置", url: `/${prefix}/plan-catalog`, icon: <PackageIcon />, permKey: "plans", roleGuard: () => isAdminOrOps },
       ],
     },
   ];
