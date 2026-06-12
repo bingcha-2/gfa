@@ -99,6 +99,9 @@ importers:
       nanoid:
         specifier: ^3.3.11
         version: 3.3.11
+      otpauth:
+        specifier: ^9.5.0
+        version: 9.5.0
       passport:
         specifier: ^0.7.0
         version: 0.7.0
