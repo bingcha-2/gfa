@@ -2,7 +2,8 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { resolve } from "node:path";
 
-const projectRoot = resolve(__dirname, "../../../../");
+// repo root: this file sits at apps/server/src/shared/prisma/ (5 levels deep)
+const projectRoot = resolve(__dirname, "../../../../../");
 
 function resolveDatabaseUrl() {
   const rawUrl = process.env.DATABASE_URL ?? "file:./dev.db";
