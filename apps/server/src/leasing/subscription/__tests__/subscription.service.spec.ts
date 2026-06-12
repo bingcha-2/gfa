@@ -341,6 +341,134 @@ describe("SubscriptionService.createFromCatalog / activateForOrder (catalog 下�
     expect(record.bindings).toEqual({ antigravity: expect.any(Number) });
   });
 
+  it("同配置再买(号池)→ 延长同一订阅 expiresAt(+目录 durationDays),不新建、不多 record(spec §8)", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 1);
+    const poolConfig = {
+      line: "pool",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 150000 },
+      weeklyTokenLimit: 750000,
+      deviceLimit: 2,
+      windowMs: 18_000_000,
+    };
+    const mkOrder = (id: string) => ({
+      id,
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(poolConfig),
+      catalogVersion: 1,
+    });
+
+    const first = await service.activateForOrder(mkOrder("catalog-order-1"));
+    // 第二单 config 等价(键序不同也算同):延长复用。
+    const second = await service.activateForOrder(
+      mkOrder("catalog-order-2"),
+    );
+
+    expect(second.id).toBe(first.id);
+    expect(second.expiresAt!.getTime() - first.expiresAt!.getTime()).toBe(30 * DAY_MS);
+    expect(await prisma.subscription.count({ where: { customerId: customer.id } })).toBe(1);
+    expect(readKeys()).toHaveLength(1);
+    expect(readKeys()[0].keyExpiresAt).toBe(second.expiresAt!.toISOString());
+    // 续费把订单链移到最新一单(对账/退款)。
+    expect(second.activatedFromOrderId).toBe("catalog-order-2");
+  });
+
+  it("过期订阅不参与续费去重:同配置但已 EXPIRED → 新建,不延长", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 1);
+    const poolConfig = {
+      line: "pool",
+      products: ["codex"],
+      bucketLimits: { "codex-codex": 40000 },
+      weeklyTokenLimit: 200000,
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    };
+    const first = await service.activateForOrder({
+      id: "catalog-order-old",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(poolConfig),
+      catalogVersion: 1,
+    });
+    await service.expireSubscription(first.id);
+
+    const second = await service.activateForOrder({
+      id: "catalog-order-new",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(poolConfig),
+      catalogVersion: 1,
+    });
+
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe("ACTIVE");
+    expect(await prisma.subscription.count({ where: { customerId: customer.id } })).toBe(2);
+  });
+
+  it("不同配置再买 → 新建并存(不同 deviceLimit 不算同配置)", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 1);
+    const base = {
+      line: "pool",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 150000 },
+      weeklyTokenLimit: 750000,
+      windowMs: 18_000_000,
+    };
+    const first = await service.activateForOrder({
+      id: "catalog-order-a",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify({ ...base, deviceLimit: 1 }),
+      catalogVersion: 1,
+    });
+    const second = await service.activateForOrder({
+      id: "catalog-order-b",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify({ ...base, deviceLimit: 3 }),
+      catalogVersion: 1,
+    });
+
+    expect(second.id).not.toBe(first.id);
+    expect(await prisma.subscription.count({ where: { customerId: customer.id, status: "ACTIVE" } })).toBe(2);
+    expect(readKeys().filter((k) => k.status === "active")).toHaveLength(2);
+  });
+
+  it("同配置再买(绑定)→ 延长复用,座位不重分配(仍占同号同份额,不新增占用)", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 2);
+    const bindConfig = {
+      line: "bind",
+      products: ["antigravity"],
+      levels: { antigravity: "ultra" },
+      bindings: {},
+      weight: 2,
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    };
+    const mkOrder = (id: string) => ({
+      id,
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(bindConfig),
+      catalogVersion: 2,
+    });
+
+    const first = await service.activateForOrder(mkOrder("catalog-bind-1"));
+    const firstAccountId = JSON.parse(first.config!).bindings.antigravity;
+    const second = await service.activateForOrder(mkOrder("catalog-bind-2"));
+
+    expect(second.id).toBe(first.id);
+    expect(second.expiresAt!.getTime() - first.expiresAt!.getTime()).toBe(30 * DAY_MS);
+    expect(await prisma.subscription.count({ where: { customerId: customer.id } })).toBe(1);
+    // 续期复用同号(座位不重分配),占用份额不变(同号同 weight)。
+    expect(JSON.parse(second.config!).bindings.antigravity).toBe(firstAccountId);
+  });
+
   it("activateForOrder 路由:plan 订单(planId 非空)走 createFromPlan(catalogVersion 留 null)", async () => {
     const customer = await createTestCustomer();
     const plan = await createPlan();

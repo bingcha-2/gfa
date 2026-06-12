@@ -25,6 +25,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { EntitlementSyncService } from "./entitlement-sync.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
 import { planColumnsToInitialConfig } from "./subscription-config";
+import { sameConfigFingerprint } from "./config-fingerprint";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,13 +95,39 @@ export class SubscriptionService {
     const durationDays = await this.resolveDurationDays(order.catalogVersion);
 
     const now = new Date();
+    const durationMs = durationDays * DAY_MS;
+
+    // 同配置续费(spec §8):命中一条 config 等价的 ACTIVE 订阅 → 延长 expiresAt 复用,
+    // 不新建。判断键 = sameConfigFingerprint(line + 排序后 products + deviceLimit +
+    // 用量/levels+weight),排除 bindings(座位分配结果)与 windowMs(锁死)。绑定线续期
+    // 走 syncSubscription:它对已绑产品短路复用,不重分配座位、不占新份额。
+    const actives = await this.prisma.subscription.findMany({
+      where: { customerId: order.customerId, status: "ACTIVE" },
+    });
+    const same = actives.find((s) => sameConfigFingerprint(parseConfig(s.config), config));
+    if (same) {
+      const base = Math.max(now.getTime(), same.expiresAt ? same.expiresAt.getTime() : now.getTime());
+      const extended = await this.prisma.subscription.update({
+        where: { id: same.id },
+        data: {
+          expiresAt: new Date(base + durationMs),
+          catalogVersion: order.catalogVersion,
+          // 订单链移到最新一单(对账/退款)。
+          activatedFromOrderId: order.id,
+        },
+      });
+      await this.entitlementSync.syncSubscription(extended, { customerEmail: customer.email });
+      const resynced = (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
+      return this.mirrorBindingsFromConfig(resynced);
+    }
+
     const sub = await this.prisma.subscription.create({
       data: {
         customerId: order.customerId,
         planId: null,
         status: "ACTIVE",
         startsAt: now,
-        expiresAt: new Date(now.getTime() + durationDays * DAY_MS),
+        expiresAt: new Date(now.getTime() + durationMs),
         config: order.config, // computePurchase 快照,单一真相源
         catalogVersion: order.catalogVersion,
         // Legacy 列从 config 派生:productEntitlements 为 NOT NULL,其余供 lease-service 仍读的镜像。
@@ -266,5 +293,15 @@ function parseProducts(json: string | null): string[] {
     return Array.isArray(parsed) ? parsed.map((p) => String(p)) : [];
   } catch {
     return [];
+  }
+}
+
+/** Parse a subscription's config JSON into an object (empty on malformed). */
+function parseConfig(json: string | null): Record<string, any> {
+  try {
+    const parsed = JSON.parse(String(json || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }
