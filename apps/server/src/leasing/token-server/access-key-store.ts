@@ -168,6 +168,8 @@ export class AccessKeyStore {
   // early-exit byte comparison against the stored secret).
   private byId = new Map<string, AccessKeyRecord>();
   private byKey = new Map<string, AccessKeyRecord>();
+  // 去影子:订阅 record 独立于文件 cache —— 不进 access-keys.json,reload 碰不到它们。
+  private subscriptionById = new Map<string, AccessKeyRecord>();
 
   constructor(
     private readonly filePath: string,
@@ -235,6 +237,7 @@ export class AccessKeyStore {
       if (prev.tokenUsageEvents) k.tokenUsageEvents = prev.tokenUsageEvents;
       if (prev.weeklyTokenUsageEvents) k.weeklyTokenUsageEvents = prev.weeklyTokenUsageEvents;
     }
+    // 订阅 record 在 subscriptionById(独立于文件),reload 天然不碰,无需任何保留逻辑。
   }
 
   /**
@@ -243,11 +246,11 @@ export class AccessKeyStore {
    * 绝不能清零限额)。boot 批量加载 + 订阅激活时调用,使限额引擎无需文件影子即可服务订阅。
    */
   loadSubscriptionRecords(records: Array<Partial<AccessKeyRecord> & { id: string }>): void {
-    this.readAll();
     for (const rec of records) {
       if (!rec?.id) continue;
-      const existing = this.byId.get(rec.id);
+      const existing = this.subscriptionById.get(rec.id);
       if (existing) {
+        // 已存在 → 只刷新配置,保留用量/窗口状态(配置变更绝不能清零限额)。
         const usage = {
           usageEvents: existing.usageEvents,
           tokenUsageEvents: existing.tokenUsageEvents,
@@ -258,10 +261,7 @@ export class AccessKeyStore {
         };
         Object.assign(existing, rec, usage);
       } else {
-        const next = { ...rec } as AccessKeyRecord;
-        this.cache!.keys.push(next);
-        this.byId.set(next.id, next);
-        if (next.key) this.byKey.set(this.keyHash(next.key), next);
+        this.subscriptionById.set(rec.id, { ...rec } as AccessKeyRecord);
       }
     }
   }
@@ -295,7 +295,7 @@ export class AccessKeyStore {
     this.readAll();
     for (const row of rows) {
       if (!row?.accessKeyId) continue;
-      const record = this.byId.get(row.accessKeyId);
+      const record = this.byId.get(row.accessKeyId) || this.subscriptionById.get(row.accessKeyId);
       if (!record) continue;
       const bucket = String(row.bucket || '');
       const product = row.product != null
@@ -395,7 +395,8 @@ export class AccessKeyStore {
   findById(cardId: string): AccessKeyRecord | null {
     if (!cardId) return null;
     this.readAll();
-    return this.byId.get(cardId) || null;
+    // 文件卡(byId)优先,其次订阅 record(subscriptionById)。
+    return this.byId.get(cardId) || this.subscriptionById.get(cardId) || null;
   }
 
   findByKey(keyValue: string): AccessKeyRecord | null {
@@ -490,7 +491,7 @@ export class AccessKeyStore {
     if (!this.sessionResolver) return sessionResolverUnavailable();
     const resolved = await this.sessionResolver.resolve(bearer, { product: options.product });
     if (!resolved.ok) return sessionResolveFailure(resolved);
-    const record = this.byId.get(resolved.cardId) || null;
+    const record = this.byId.get(resolved.cardId) || this.subscriptionById.get(resolved.cardId) || null;
     if (!record) return missingShadowRecord();
     // Migrated never-used card: no absolute expiry AND not yet armed.
     const unarmed = !record.keyExpiresAt && !record.firstUsedAt;
