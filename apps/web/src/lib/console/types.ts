@@ -158,3 +158,67 @@ export type PublicOrder = {
   createdAt: string;
   updatedAt: string;
 };
+
+// ── Bulk operation result types (family-groups bulk endpoints) ──
+
+export type CrossInviteResult = {
+  allocated: { groupId: string; accountId: string; queued: string[] }[];
+  unplaceable: string[];
+  alreadyActive: string[];
+  reason?: string;
+};
+
+export type CrossRemoveResult = {
+  queued: string[];
+  notFound: string[];
+  alreadyRemoved: string[];
+  failed: string[];
+};
+
+export type BulkGroupInviteResult = {
+  queued: string[];
+  rejected: string[];
+  reason?: string;
+};
+
+export type BulkGroupRemoveResult = {
+  queued: string[];
+  notFound: string[];
+  alreadyRemoved: string[];
+  failed: string[];
+};
+
+export type TransferBatchResult = {
+  batchId: string;
+  phase: string;
+  totalMembers: number;
+  memberEmails: string[];
+  removeTaskIds: string[];
+};
+
+export type TransferStatusResult = {
+  id: string;
+  phase: string;
+  sourceGroupId: string;
+  targetGroupId: string;
+  sourceGroupName: string;
+  targetGroupName: string;
+  totalMembers: number;
+  removes: { success: number; failed: number; pending: number };
+  invites: { sent: number; failed: number; pending: number };
+  memberDetails: { email: string; removeStatus: string; inviteStatus?: string }[];
+  errorDetail: { email: string; error: string }[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MigrateResult = {
+  removedFromGroupId: string;
+  removedFromGroupName: string;
+  inviteResult: {
+    targetGroupId: string;
+    targetGroupName: string;
+    taskId: string;
+  } | null;
+  error?: string;
+};

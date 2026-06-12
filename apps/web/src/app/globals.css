@@ -457,7 +457,6 @@ img {
   text-transform: uppercase;
 }
 
-.pill-link,
 .button {
   display: inline-flex;
   align-items: center;
@@ -479,7 +478,6 @@ img {
   cursor: pointer;
 }
 
-.pill-link:hover,
 .button:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 28px rgba(56, 39, 30, 0.1);
@@ -540,8 +538,7 @@ img {
   to   { opacity: 0.8; transform: scale(1.04); }
 }
 
-.button.small,
-.pill-link.small {
+.button.small {
   min-height: 30px;
   padding: 0 12px;
   font-size: 13px;
@@ -555,8 +552,7 @@ img {
   box-shadow: none;
 }
 
-.hero-card,
-.glass-panel {
+.hero-card {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -570,8 +566,7 @@ img {
   padding: 36px;
 }
 
-.hero-card::before,
-.glass-panel::before {
+.hero-card::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -748,10 +743,6 @@ img {
   margin-top: 10px;
   color: var(--foreground-muted);
   line-height: 1.7;
-}
-
-.glass-panel {
-  padding: 24px;
 }
 
 .panel-stack {
@@ -1220,8 +1211,7 @@ img {
   width: 22%;
 }
 
-.account-primary,
-.account-stats {
+.account-primary {
   display: grid;
   gap: 6px;
 }
@@ -1339,7 +1329,6 @@ img {
   }
 
   .hero-card,
-  .glass-panel,
   .form-card,
   .public-frame {
     padding: 20px;
@@ -1390,17 +1379,6 @@ img {
   to { transform: rotate(360deg); }
 }
 
-@keyframes gfa-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -1410,50 +1388,6 @@ img {
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-/* ── Global toast ────────────────────────────────────────────── */
-.gfa-toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 240px;
-  max-width: 380px;
-  padding: 12px 18px;
-  border-radius: 14px;
-  color: #fff;
-  font-size: 0.875rem;
-  font-weight: 600;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
-  animation: gfa-toast-in 0.22s ease both;
-  pointer-events: none;
-}
-
-.gfa-toast.success { background: #0f766e; }
-.gfa-toast.error   { background: #dc2626; }
-.gfa-toast.info    { background: #374151; }
-
-/* ── Global action overlay (used by console-app during runAction) ── */
-.gfa-loading-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent), rgba(15,118,110,0.4), var(--accent));
-  background-size: 200% 100%;
-  animation: gfa-loading-bar 1.4s linear infinite;
-  z-index: 10000;
-  pointer-events: none;
-}
-
-@keyframes gfa-loading-bar {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
 }
 
 /* ── Order table ── */
@@ -1596,12 +1530,7 @@ img {
 /* ── Input Enhancement ─────────────────────────────────────────── */
 .table-wrap input[type="text"],
 .table-wrap input[type="search"],
-.table-wrap .search-field,
-.glass-panel input[type="text"],
-.glass-panel input[type="search"],
-.glass-panel input[type="password"],
-.glass-panel input[type="email"],
-.glass-panel input[type="date"] {
+.table-wrap .search-field {
   min-height: 38px;
   padding: 8px 14px;
   border-radius: 12px;
@@ -1613,19 +1542,13 @@ img {
 }
 
 .table-wrap input[type="text"]:focus,
-.table-wrap input[type="search"]:focus,
-.glass-panel input[type="text"]:focus,
-.glass-panel input[type="search"]:focus,
-.glass-panel input[type="password"]:focus,
-.glass-panel input[type="email"]:focus,
-.glass-panel input[type="date"]:focus {
+.table-wrap input[type="search"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
 }
 
 /* Search with icon padding */
-.table-wrap input[type="text"][style*="paddingLeft"],
-.glass-panel input[type="text"][style*="paddingLeft"] {
+.table-wrap input[type="text"][style*="paddingLeft"] {
   padding-left: 32px;
 }
 
@@ -1647,31 +1570,6 @@ img {
   vertical-align: middle;
 }
 
-/* Allow account panel content (especially buttons) to not be clipped
-   by the glass-panel's overflow: hidden */
-.account-panel {
-  overflow: visible;
-}
-
-.account-panel::before {
-  /* Re-clip the decorative gradient so it doesn't bleed out */
-  border-radius: inherit;
-}
-
-.account-stats {
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-.account-stats .muted {
-  font-size: 11px;
-}
-
-.account-stats .status-badge {
-  margin-top: 4px;
-}
-
 /* ── Compact Buttons in Tables ───────────────────────────────── */
 .data-table .button {
   min-height: 32px;
@@ -1688,7 +1586,6 @@ img {
 }
 
 /* ── Select Dropdowns Enhancement ────────────────────────────── */
-.glass-panel select,
 .table-wrap select {
   min-height: 36px;
   padding: 6px 12px;
@@ -1708,7 +1605,6 @@ img {
   padding-right: 30px;
 }
 
-.glass-panel select:focus,
 .table-wrap select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
@@ -2179,7 +2075,6 @@ button[title="修改到期时间"]:hover {
 }
 
 /* ── Select Dropdowns Enhancement ────────────────────────────── */
-.glass-panel select,
 .table-wrap select {
   min-height: 36px;
   padding: 6px 12px;
@@ -2199,7 +2094,6 @@ button[title="修改到期时间"]:hover {
   padding-right: 30px;
 }
 
-.glass-panel select:focus,
 .table-wrap select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
@@ -3181,11 +3075,6 @@ button[title="修改到期时间"]:hover {
 }
 
 .simple-content .form-card {
-  border-radius: 16px;
-  padding: 16px;
-}
-
-.simple-content .glass-panel {
   border-radius: 16px;
   padding: 16px;
 }

@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useConsole } from "@/components/console/shell/console-provider";
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
-import type { AccountSummary, FamilyGroupSummary } from "@/lib/console/types";
 import type {
+  AccountSummary, FamilyGroupSummary,
   CrossInviteResult, CrossRemoveResult, BulkGroupInviteResult, BulkGroupRemoveResult,
   TransferBatchResult, TransferStatusResult, MigrateResult,
-} from "@/components/console/google-family/console-app";
+} from "@/lib/console/types";
 import { toast } from "sonner";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
