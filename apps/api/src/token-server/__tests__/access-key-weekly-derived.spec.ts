@@ -50,13 +50,12 @@ function resolve(s: AccessKeyStore, weeklyRatio: (rec: any) => number) {
 describe("派生周上限 = 5h上限 × R(anthropic/codex)", () => {
   const base = { id: "k", key: "ks", status: "active", provider: "anthropic" };
 
-  it("池子卡:5h 未超但周超(R=2 → 周=5h×2=2000)即拦", () => {
+  it("weeklyRatio below 3 is floored, so 2000 CU is allowed against a derived 3000 CU weekly cap", () => {
     const s = makeStore({ ...base, windowStartedAt: nowVal, weeklyWindowStartedAt: nowVal, bucketLimits: { "anthropic-claude": 1000 } });
     build4Windows(s); // 周=2000, 5h=500
     const res = resolve(s, () => 2);
-    expect(res.record).toBeNull();
-    expect(res.limitExceeded).toBe(true);
-    expect(res.error).toContain("weekly");
+    expect(res.record).not.toBeNull();
+    expect(res.limitExceeded).toBeFalsy();
   });
 
   it("卡设置框 weeklyRatio 覆盖(R=10 → 周=10000)→ 同样用量不拦", () => {

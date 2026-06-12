@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (例如 9.5.0)'
+        description: '版本号 (例如 9.5.1)'
         required: true
-        default: '9.5.0'
+        default: '9.5.1'
       changelog:
         description: '更新日志 (用字面 \n 分行,客户端按行渲染为列表)'
         required: false

@@ -218,6 +218,15 @@ func (a *App) ActivateCard(card string) (string, error) {
 	return expiresAt, nil
 }
 
+func refreshCardProductsForTakeover(card, deviceId, upstreamProxy string) []string {
+	if strings.TrimSpace(card) != "" {
+		if _, err := GetLeaser().Activate(card, deviceId, upstreamProxy); err != nil {
+			Log("[takeover] refresh card products before gate failed: %v", err)
+		}
+	}
+	return GetLeaser().CardProducts()
+}
+
 // GetStats returns combined proxy and leaser metrics
 func (a *App) GetStats() map[string]interface{} {
 	proxyStats := GetProxy().GetStats()
@@ -405,7 +414,7 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 
 	// 绑定卡:只能接管它开通的产品。codex 卡开 antigravity 接管 → 直接拒绝。
 	// 池子卡(products 为空)不限制。
-	products := GetLeaser().CardProducts()
+	products := refreshCardProductsForTakeover(cfg.AccountCard, cfg.DeviceId, "")
 
 	var results []string
 	for _, raw := range targets {

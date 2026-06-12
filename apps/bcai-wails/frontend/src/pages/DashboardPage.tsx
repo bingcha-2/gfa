@@ -81,7 +81,7 @@ export function DashboardPage() {
       const wk = cardWeeklyBuckets?.[bar.bucket]
       if (wk && wk.limit > 0) {
         return [staticBar('mine-5h', '5h', used, limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined),
-                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined)]
+                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, wk.resetMs)]
       }
       return [(
         <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}

@@ -6,7 +6,7 @@ import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
-import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO } from "./quota-profile-tracker";
+import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
@@ -217,7 +217,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     );
     this.now = options.now || Date.now;
     this.randomId = options.randomId || (() => crypto.randomUUID());
-    this.minClientVersion = options.minClientVersion ?? "9.5.0";
+    this.minClientVersion = options.minClientVersion ?? "9.5.1";
     this.leaseTtlMs = Number(options.leaseTtlMs || DEFAULT_LEASE_TTL_MS);
     this.affinityTtlMs = Number(options.affinityTtlMs || DEFAULT_AFFINITY_TTL_MS);
     this.tokenUsageTracker = options.tokenUsageTracker || null;
@@ -460,7 +460,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         error: sessionCheck.error,
         sessionClientId: sessionCheck.sessionClientId,
         sessionExpiresAt: sessionCheck.sessionExpiresAt,
-        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       });
     }
 
@@ -578,12 +578,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       sessionId: accessKeySessionId,
       sessionExpiresAt: auth.record.sessionExpiresAt || "",
       // 绑定卡:把账号对齐的窗口 reset 下发,客户端本地额度窗口据此与服务端对齐(号池卡为 0,不改)。
-      accessKeyStatus: this.accessKeyStore.publicStatus(
-        auth.record,
-        this.boundAccountResetAt(auth.record, modelKey),
-        // 派生周上限(池子卡周血条)用的按桶 R:卡设置框 > 学习 > 全局默认。
-        (bucket: string) => this.weeklyRatioForFamily(auth.record, familyOfBucket(bucket)),
-      ),
+      accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       accountId: account.id,
       emailHint: maskEmail(account.email),
       // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
@@ -636,7 +631,28 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!boundId) return 0;
     const account = this.readAccounts().find((a) => a.id === boundId);
     if (!account) return 0;
+    const hourlyResetAt = this.boundAccountHourlyResetAt(account as any);
+    if (hourlyResetAt > 0) return hourlyResetAt;
+    if (this.provider.id === "anthropic" || this.provider.id === "codex") return 0;
     return getModelQuotaResetAt(account as any, modelKey);
+  }
+
+  private boundAccountHourlyResetAt(account: any): number {
+    const raw = this.provider.id === "anthropic"
+      ? account?.claudeHourlyResetTime
+      : this.provider.id === "codex"
+        ? account?.codexHourlyResetTime
+        : "";
+    const parsed = Date.parse(String(raw || ""));
+    return Number.isFinite(parsed) && parsed > this.now() ? parsed : 0;
+  }
+
+  private publicAccessKeyStatus(record: any, modelKey: string): any {
+    return this.accessKeyStore.publicStatus(
+      record,
+      this.boundAccountResetAt(record, modelKey),
+      (bucket: string) => this.weeklyRatioForFamily(record, familyOfBucket(bucket)),
+    );
   }
 
   /**
@@ -650,7 +666,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   /** 按家族解析 R(供 enforce 与 publicStatus 共用)。family = claude|gpt|gemini。 */
   private weeklyRatioForFamily(record: any, family: string): number {
     const cardR = Number(record?.weeklyRatio || 0);
-    if (cardR > 0) return cardR;
+    if (cardR > 0) return clampWeeklyRatio(cardR);
     const topPlan = family === "gpt" ? "pro" : "max";
     let plan = topPlan;
     const boundId = this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
@@ -658,7 +674,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const acct = this.readAccounts().find((a) => a.id === boundId) as any;
       plan = String(acct?.planType || "").trim() || topPlan;
     }
-    return this.quotaProfileTracker?.getWeeklyToShortRatio(this.provider.id, plan, family) ?? DEFAULT_WEEKLY_RATIO;
+    return clampWeeklyRatio(this.quotaProfileTracker?.getWeeklyToShortRatio(this.provider.id, plan, family) ?? DEFAULT_WEEKLY_RATIO);
   }
 
   private boundUnavailableMessage(boundAccountId: number): string {
@@ -865,7 +881,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!reportId && success && lease?.successfulReportSeen) {
       return {
         ok: true, ignored: true, reason: "already_reported",
-        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       };
     }
     const usage = this.usageForBilling(payload);
@@ -873,7 +889,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (!wasNew) {
       return {
         ok: true, ignored: true, reason: "already_reported",
-        accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+        accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       };
     }
 
@@ -1017,7 +1033,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     return {
       ok: true,
-      accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
+      accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
     };
   }
 

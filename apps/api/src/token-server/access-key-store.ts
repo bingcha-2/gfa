@@ -39,7 +39,7 @@ import {
   bucketsForProducts,
   productOfBucket,
 } from '../lease-core/product-bucket';
-import { DEFAULT_WEEKLY_RATIO } from '../lease-core/quota-profile-tracker';
+import { DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from '../lease-core/quota-profile-tracker';
 
 /** Bucket key for the model a request is asking for, scoped to the product
  *  serving it. Falls back to bare family when product is unknown (legacy path). */
@@ -499,7 +499,7 @@ export class AccessKeyStore {
             const rawR = typeof options.weeklyRatio === 'function'
               ? Number(options.weeklyRatio(record))
               : Number(options.weeklyRatio);
-            const ratio = Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO;
+            const ratio = clampWeeklyRatio(Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO);
             weeklyCap = cap5h * ratio;
           }
         }
@@ -565,6 +565,15 @@ export class AccessKeyStore {
    *  fixed-period (pool). Sums the bucket's events with `at >= window start`. */
   private bucketUsageInWindow(record: any, bucket: string, now: number, alignedResetAt: number): number {
     const windowStart = bucketWindowStart(record, bucket, now, alignedResetAt, Number(record.windowMs) || undefined);
+    return this.bucketUsageSince(record, bucket, windowStart);
+  }
+
+  private bucketUsageInWindowReadonly(record: any, bucket: string, now: number, alignedResetAt: number): number {
+    const windowStart = bucketWindowStart(record, bucket, now, alignedResetAt, Number(record.windowMs) || undefined, false);
+    return this.bucketUsageSince(record, bucket, windowStart);
+  }
+
+  private bucketUsageSince(record: any, bucket: string, windowStart: number): number {
     let used = 0;
     for (const item of record.tokenUsageEvents || []) {
       if (Number(item?.at || 0) < windowStart) continue;
@@ -733,9 +742,9 @@ export class AccessKeyStore {
   publicStatus(record: AccessKeyRecord, alignedResetAt = 0, weeklyRatio?: number | ((bucket: string) => number)): any {
     if (!record) return null;
     const now = Date.now();
-    resetWindowIfExpired(record, now);
-    const recentTokens = recentTokenUsage(record, now);
-    const bucketUsage = recentBucketUsage(record, now);
+    const aligned = Number(alignedResetAt || 0) > 0;
+    if (!aligned) resetWindowIfExpired(record, now);
+    const recentTokens = aligned ? null : recentTokenUsage(record, now);
     // Bound cards align their window to the account's upstream reset; the client
     // back-derives its local-quota window end from this, so it must match the
     // server's aligned window rather than the global fixed-period one.
@@ -748,7 +757,7 @@ export class AccessKeyStore {
     const wkLimit = weeklyTokenLimit(record);
     const ratioForBucket = (bucket: string): number => {
       const r = typeof weeklyRatio === 'function' ? Number(weeklyRatio(bucket)) : Number(weeklyRatio);
-      return Number.isFinite(r) && r > 0 ? r : DEFAULT_WEEKLY_RATIO;
+      return clampWeeklyRatio(Number.isFinite(r) && r > 0 ? r : DEFAULT_WEEKLY_RATIO);
     };
     const weeklyCapFor = (bucket: string): number => {
       if (wkLimit > 0) return this.billing.bucketLimit(wkLimit, bucket, record);
@@ -779,6 +788,10 @@ export class AccessKeyStore {
     // Composite product-family buckets this card can use. Sum usage by family for
     // the legacy flat fields below (kept until clients consume `buckets` directly).
     const enumBuckets = bucketsForProducts(products);
+    const bucketUsage = aligned
+      ? new Map(enumBuckets.map((bucket) => [bucket, this.bucketUsageInWindowReadonly(record, bucket, now, alignedResetAt)]))
+      : recentBucketUsage(record, now);
+    const recentTotalTokens = [...bucketUsage.values()].reduce((sum, v) => sum + v, 0);
     const familyUsed = (family: string): number => {
       let sum = 0;
       for (const [k, v] of bucketUsage) if (bucketFamily(k) === family) sum += v;
@@ -819,7 +832,7 @@ export class AccessKeyStore {
       totalCachedInputTokens: Number(record.totalCachedInputTokens || 0),
       totalRawTokensUsed: Number(record.totalRawTokensUsed || 0),
       totalTokensUsed: Number(record.totalTokensUsed || 0),
-      recentWindowTokens: recentTokens.totalTokens,
+      recentWindowTokens: aligned ? recentTotalTokens : recentTokens!.totalTokens,
       // Legacy flat fields (older client contract). Each is the sum across the
       // composite buckets of that family — kept until clients read `buckets`
       // directly. opus≈claude family, gemini, codex≈gpt family.
@@ -847,6 +860,8 @@ export class AccessKeyStore {
         bucket: b.bucket,
         used: wkBucketUsage.get(b.bucket) || 0,
         limit: b.limit,
+        weeklyWindowResetMs: wkResetMs,
+        weeklyWindowResetAt: wkResetMs > 0 ? new Date(now + wkResetMs).toISOString() : '',
       })),
       hasActiveSession: Boolean(
         record.activeSessionId && !isAccessKeySessionExpired(record, now),

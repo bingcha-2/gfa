@@ -31,6 +31,7 @@ export interface ModelLimitsEditorProps {
   onChange: (next: Record<string, number>) => void;
   /** 是否禁用(保存/加载中)。 */
   disabled?: boolean;
+  blankLimitBehavior?: "unlimited" | "disabled";
 }
 
 export function ModelLimitsEditor({
@@ -38,6 +39,7 @@ export function ModelLimitsEditor({
   value,
   onChange,
   disabled,
+  blankLimitBehavior = "unlimited",
 }: ModelLimitsEditorProps) {
   // 「一键全部设为 X」输入框的本地值(不进父 value,仅作批量动作来源)。
   const [bulkValue, setBulkValue] = useState("");
@@ -68,6 +70,14 @@ export function ModelLimitsEditor({
 
   // 已设上限的桶数,用于「无封顶」警示(一个都没设 = 完全无封顶)。
   const setCount = buckets.filter((b) => Number(value[b.bucket] || 0) > 0).length;
+  const blankMeansDisabled = blankLimitBehavior === "disabled";
+  const blankHint = blankMeansDisabled
+    ? "留空 = 1, 代表该模型不可用"
+    : "留空 = 该模型无限制";
+  const emptyWarning = blankMeansDisabled
+    ? "新增万能卡提交时, 未填写的模型会自动写入 1, 代表不可用。"
+    : "当前未设任何模型限额 - 该卡无任何 token 封顶(万能卡尤其需谨慎)。";
+  const rowPlaceholder = blankMeansDisabled ? "留空 = 1 / 不可用" : "留空 = 无限";
 
   if (buckets.length === 0) {
     return (
@@ -82,7 +92,7 @@ export function ModelLimitsEditor({
       {/* 说明 + 一键全部 */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">
-          为每个模型设置每窗口 token 上限,<strong>留空 = 该模型无限制</strong>。这是绝对封顶。
+          为每个模型设置每窗口 token 上限,<strong>{blankHint}</strong>。这是绝对封顶。
         </p>
         <div className="flex items-center gap-1.5">
           <span className="whitespace-nowrap text-xs text-muted-foreground">
@@ -113,8 +123,7 @@ export function ModelLimitsEditor({
       {/* 一个都没设的警示(完全无封顶)。 */}
       {setCount === 0 && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          当前未设任何模型限额 ——
-          <strong>该卡无任何 token 封顶</strong>(万能卡尤其需谨慎)。
+          {emptyWarning}
         </div>
       )}
 
@@ -182,7 +191,7 @@ export function ModelLimitsEditor({
                   type="number"
                   min={0}
                   className="h-8 text-sm"
-                  placeholder="留空 = 无限"
+                  placeholder={rowPlaceholder}
                   value={editVal}
                   disabled={disabled}
                   onChange={(e) => setBucketLimit(b.bucket, e.target.value)}

@@ -312,6 +312,33 @@ describe("LeaseService (generic core)", () => {
     expect(refreshToken).not.toHaveBeenCalled();
   });
 
+  it("accepts a card after adding a binding for this pool and reloading access keys", async () => {
+    refreshToken.mockResolvedValue("tok");
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000,
+        bindings: { anthropic: 2 },
+      }],
+    });
+    const service = makeBoundService();
+
+    await expect(
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000,
+        bindings: { anthropic: 2, fake: 1 },
+      }],
+    });
+    service.reloadAccessKeys();
+
+    const lease = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+    expect(lease.accountId).toBe(1);
+  });
+
   it("a bound account on cooldown re-leases the SAME account (ignores cooldown, never switches)", async () => {
     // 绑定卡只有这一个号、无号可换 → 429/503 冷却对它毫无意义,预先拦只会害卡白白不可用。
     // 所以绑定卡一律忽略冷却,直接重租同一个号去试真上游;绝不切到 acct 2(无 failover)。
@@ -468,6 +495,104 @@ describe("LeaseService (generic core)", () => {
     ).rejects.toMatchObject({ statusCode: 429 });
   });
 
+  it("aligns a bound Claude card's 5h token window to the hourly reset, not the weekly binding reset", async () => {
+    refreshToken.mockResolvedValue("tok");
+    const now = Date.now();
+    const hourlyReset = new Date(now + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(now + 100 * 60 * 60 * 1000).toISOString();
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "a@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        claudeHourlyResetTime: hourlyReset,
+        claudeWeeklyResetTime: weeklyReset,
+        modelQuotaResetTimes: { claude: weeklyReset },
+      }],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { anthropic: 1 } }],
+    });
+    const service = new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "anthropic"),
+      { accessKeysFilePath, now: () => now, randomId: () => "lease-fixed", minClientVersion: "" },
+    );
+
+    const r: any = await service.leaseToken(REQ, { clientId: "c1", modelKey: "claude-opus-4-8" });
+
+    expect(r.accessKeyStatus.tokenWindowResetMs).toBeGreaterThan(3.9 * 60 * 60 * 1000);
+    expect(r.accessKeyStatus.tokenWindowResetMs).toBeLessThanOrEqual(4 * 60 * 60 * 1000);
+  });
+
+  it("keeps the bound Claude hourly reset in report-result accessKeyStatus", async () => {
+    refreshToken.mockResolvedValue("tok");
+    const now = Date.now();
+    const hourlyReset = new Date(now + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(now + 100 * 60 * 60 * 1000).toISOString();
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "a@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        claudeHourlyResetTime: hourlyReset,
+        claudeWeeklyResetTime: weeklyReset,
+        modelQuotaResetTimes: { claude: weeklyReset },
+      }],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { anthropic: 1 } }],
+    });
+    const service = new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "anthropic"),
+      { accessKeysFilePath, now: () => now, randomId: () => "lease-fixed", minClientVersion: "" },
+    );
+
+    const lease: any = await service.leaseToken(REQ, { clientId: "c1", modelKey: "claude-opus-4-8" });
+    const report: any = await service.reportResult(REQ, {
+      leaseId: lease.leaseId,
+      reportId: "r1",
+      status: 200,
+      modelKey: "claude-opus-4-8",
+      inputTokens: 100,
+      outputTokens: 50,
+    });
+
+    expect(report.accessKeyStatus.tokenWindowResetMs).toBeGreaterThan(3.9 * 60 * 60 * 1000);
+    expect(report.accessKeyStatus.tokenWindowResetMs).toBeLessThanOrEqual(4 * 60 * 60 * 1000);
+  });
+
+  it("ignores expired Claude hourly resets instead of aligning 5h status to a stale or weekly reset", async () => {
+    refreshToken.mockResolvedValue("tok");
+    const now = Date.now();
+    const expiredHourlyReset = new Date(now - 60 * 1000).toISOString();
+    const weeklyReset = new Date(now + 100 * 60 * 60 * 1000).toISOString();
+    writeJson(accountsFilePath, {
+      accounts: [{
+        id: 1,
+        email: "a@example.com",
+        refreshToken: "rt-1",
+        enabled: true,
+        claudeHourlyResetTime: expiredHourlyReset,
+        claudeWeeklyResetTime: weeklyReset,
+        modelQuotaResetTimes: { claude: weeklyReset },
+      }],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { anthropic: 1 } }],
+    });
+    const service = new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken, "anthropic"),
+      { accessKeysFilePath, now: () => now, randomId: () => "lease-fixed", minClientVersion: "" },
+    );
+
+    const r: any = await service.leaseToken(REQ, { clientId: "c1", modelKey: "claude-opus-4-8" });
+
+    expect(r.accessKeyStatus.tokenWindowResetMs).toBeGreaterThan(4.9 * 60 * 60 * 1000);
+    expect(r.accessKeyStatus.tokenWindowResetMs).toBeLessThanOrEqual(5 * 60 * 60 * 1000);
+  });
+
   it("leases normally for a bound card under its cap (cap set but not exceeded)", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accessKeysFilePath, {
@@ -500,13 +625,13 @@ describe("LeaseService (generic core)", () => {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
     });
 
-    // Below the in-code floor (now 9.5.0) must be rejected (426 upgrade required) —
+    // Below the in-code floor (now 9.5.1) must be rejected (426 upgrade required) —
     // even the previous floor 9.4.0 is now below the new minimum…
     await expect(
       service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.4.0" }),
     ).rejects.toThrow();
     // …while the floor version is accepted.
-    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.5.0" });
+    const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.5.1" });
     expect(ok.ok).toBe(true);
   });
 

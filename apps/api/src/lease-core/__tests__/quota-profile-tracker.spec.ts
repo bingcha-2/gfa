@@ -155,5 +155,12 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
       tracker.recordExhaustion("anthropic", "max", "claude", 9000000, 0.1, true);   // weekly = 10,000,000 → 比值 100
       expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(30); // 夹到 30
     });
+    it("learned ratios below 3 are floored so weekly quota is never smaller than 3x 5h", () => {
+      const tracker = new QuotaProfileTracker();
+      active = tracker;
+      tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false);  // 5h = 100000
+      tracker.recordExhaustion("anthropic", "max", "claude", 160000, 0.2, true);  // weekly = 200000 => R=2
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(3);
+    });
   });
 });

@@ -49,8 +49,8 @@ const MIN_SAMPLE_THRESHOLD = 10_000;
 // (weekly/5h) > 全局默认。全局默认 = env BCAI_WEEKLY_RATIO_DEFAULT,缺省 5。
 /** 全局默认 R(env 可配,缺省 5)。 */
 export const DEFAULT_WEEKLY_RATIO = Math.max(1, Number(process.env.BCAI_WEEKLY_RATIO_DEFAULT || 5));
-/** R 的合理夹取区间:周窗口至少 2 个 5h、至多 30 个 5h(一周 ≈ 33.6 个 5h)。 */
-export const MIN_WEEKLY_RATIO = 2;
+/** R 的合理夹取区间:周窗口至少 3 个 5h、至多 30 个 5h(一周 ≈ 33.6 个 5h)。 */
+export const MIN_WEEKLY_RATIO = 3;
 export const MAX_WEEKLY_RATIO = 30;
 /** 夹取 R;非法/非正 → 全局默认。 */
 export function clampWeeklyRatio(ratio: number): number {

@@ -9,11 +9,21 @@ import {
 } from "../../token-server/token-billing";
 import * as crypto from "crypto";
 
-/** A card's share weight (份额): 1..4, default 1 (拼车). */
+/** A card's **card-level default** share weight (份额): 1..capacity, default 1 (拼车). */
 export function cardWeight(key: any): number {
   const w = Math.floor(Number(key?.weight || 0));
   if (!Number.isFinite(w) || w < 1) return 1;
   return Math.min(ACCOUNT_SHARE_CAPACITY, w);
+}
+
+/** A card's share weight (份额) **for a specific product**. Per-product override
+ *  `weights[provider]` (>0) wins; otherwise falls back to the card-level `weight`.
+ *  Lets one card carry different shares per product (如 anthropic 1 份、codex 2 份)。
+ *  老卡只有 `weight` → 各产品一律回退它,行为不变。 */
+export function cardWeightFor(key: any, provider: string): number {
+  const per = Math.floor(Number(key?.weights?.[provider] || 0));
+  if (Number.isFinite(per) && per >= 1) return Math.min(ACCOUNT_SHARE_CAPACITY, per);
+  return cardWeight(key);
 }
 
 export function maskKey(value: unknown): string {

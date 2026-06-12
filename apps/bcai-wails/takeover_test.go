@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestTargetRequiredProduct(t *testing.T) {
 	cases := map[string]string{
@@ -14,6 +18,31 @@ func TestTargetRequiredProduct(t *testing.T) {
 		if got := targetRequiredProduct(in); got != want {
 			t.Fatalf("targetRequiredProduct(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestRefreshCardProductsForTakeoverUsesLatestActivationStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"accountCard": {"expiresAt": "2027-01-01T00:00:00Z"},
+				"accessKeyStatus": {"products": ["anthropic", "codex"]}
+			}
+		}`))
+	}))
+	defer srv.Close()
+	oldBase := API_BASE
+	API_BASE = srv.URL
+	t.Cleanup(func() { API_BASE = oldBase })
+
+	GetLeaser().syncFromServer(map[string]interface{}{
+		"products": []interface{}{"anthropic"},
+	})
+
+	products := refreshCardProductsForTakeover("card-1", "dev-1", "")
+	if !cardCoversProduct(products, "codex") {
+		t.Fatalf("expected refreshed products to cover codex, got %v", products)
 	}
 }
 

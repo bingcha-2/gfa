@@ -75,8 +75,10 @@ export interface AccessKeyListItem {
   bindings: Record<string, number>;
   /** 每桶 token 上限(0/缺省 = 无限)。 */
   bucketLimits: Record<string, number>;
-  /** 份额 1..capacity(默认 1;updateAccessKey 可改)。 */
+  /** 卡级默认份额 1..capacity(默认 1;updateAccessKey 可改)。 */
   weight: number;
+  /** 按产品份额覆盖 { product: 份额 };缺省该产品走卡级 weight。 */
+  weights?: Record<string, number>;
   /** 账号份额容量(全局常量;绑定卡「份额 n/N」的 N)。 */
   shareCapacity: number;
   boundAccountId: number;
@@ -137,8 +139,10 @@ export interface CardConfigValue {
   windowUnit: "h" | "d";
   /** 整张绑定映射 { product: accountId };{} = 万能卡。 */
   bindings: Record<string, number>;
-  /** 卡级份额 1..8(作用于本卡所有绑定)。 */
+  /** 卡级默认份额 1..8(未单独设置的产品用此值)。 */
   weight: number;
+  /** 按产品份额覆盖 { product: 份额 };缺省走卡级 weight。 */
+  weights?: Record<string, number>;
   /** 每桶 token 上限 { bucket: number };缺省/0 = 无限。 */
   bucketLimits: Record<string, number>;
 }
