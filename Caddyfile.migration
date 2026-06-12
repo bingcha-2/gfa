@@ -1,98 +1,164 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# GFA Caddy config — split-domain deploy (admin console isolated on a subdomain)
+# GFA Caddy config — Stage 3 split-domain deploy: one subdomain per audience.
 #
-# Two sites:
-#   1) admin.bcai.space  → ADMIN surface only (proxied ONLY to Next.js :3000)
-#   2) bcai.space        → customer surface (marketing + /account + client APIs)
+# Four sites (hostnames below are PLACEHOLDERS — replace with the real domains):
+#   1) bcai.lol          MARKETING → Next.js :3000   官网 + /updates 升级源
+#   2) my.bcai.lol       ACCOUNT   → Next.js :3000   toC 用户中心
+#   3) console.bcai.lol  CONSOLE   → Next.js :3000   toB 管理后台
+#   4) api.bcai.lol      API       → NestJS  :3001   machine clients — NO Next.js
+#
+# Path prefixes are KEPT (no root-strip): the portal is my.bcai.lol/account/*,
+# the console is console.bcai.lol/console/*. URLs stay 1:1 with the code.
 #
 # ── What the operator MUST configure before applying ──────────────────────────
-#   • Hostnames ...... "admin.bcai.space" / "bcai.space" below are PLACEHOLDERS
-#     — replace with the real domains. Additional customer-facing domains
-#     (e.g. the bcai.lol fallback baked into deployed desktop clients) belong
-#     on the MAIN site's address line, comma-separated — NEVER on the admin
-#     site.
-#   • DNS ............ A/AAAA record for the admin subdomain → this server.
-#     Prefer a plain (non-CDN-proxied) record so the remote_ip allowlist hook
-#     below sees real client IPs.
-#   • TLS ............ Caddy auto-provisions certificates per site address via
-#     ACME once DNS resolves and ports 80/443 are reachable. For an internal
-#     CA or custom certs, add a `tls` directive inside the site block.
-#   • Next.js env .... set ADMIN_HOST=admin.bcai.space (exactly the admin
-#     hostname, no scheme/port) for the Next.js process and restart it. The
-#     middleware (apps/web/src/middleware.ts) enforces the same split
-#     host-side. Caddy and ADMIN_HOST must be switched over TOGETHER: this
-#     file 404s the console on the main domain, so applying it while
-#     ADMIN_HOST is still unset leaves the console reachable only via the
-#     admin subdomain anyway — and setting ADMIN_HOST without this file
-#     leaves Caddy serving console paths the middleware will 404. Do both,
-#     then verify.
-#   • IP allowlist ... enable the @blockedAdminIp hook below AND set
+#   • Hostnames ...... replace the four placeholder hostnames. www → apex:
+#     either add www.bcai.lol to the marketing address line (comma-separated)
+#     or enable the optional redirect site at the bottom of this file.
+#   • DNS ............ one A/AAAA record per subdomain (apex/@, my, console,
+#     api) → this server. Prefer a plain (non-CDN-proxied) record for the
+#     console subdomain so the remote_ip allowlist hook sees real client IPs.
+#   • TLS ............ Caddy auto-provisions an ACME certificate PER site
+#     address once its DNS record resolves and ports 80/443 are reachable
+#     (4 hostnames = 4 certs, automatic). For an internal CA or custom certs
+#     add a `tls` directive inside the relevant site block.
+#   • Next.js env .... ONE Next process (:3000) serves sites 1–3; the
+#     middleware (apps/web/src/middleware.ts) tells the surfaces apart by
+#     Host header. Set for that process, then restart it:
+#         MARKETING_HOST=bcai.lol
+#         ACCOUNT_HOST=my.bcai.lol
+#         CONSOLE_HOST=console.bcai.lol      # legacy alias: ADMIN_HOST
+#         ACCOUNT_COOKIE_DOMAIN=my.bcai.lol
+#         CONSOLE_COOKIE_DOMAIN=console.bcai.lol
+#         ADMIN_IP_ALLOWLIST=…               # optional, unchanged semantics
+#     With ALL host envs unset the middleware is a no-op (single-domain dev
+#     behavior) — so Caddy and the env must be switched over TOGETHER: this
+#     file 404s cross-surface paths per host, and the middleware does the
+#     same once the envs are set (defense in depth — either layer alone
+#     already blocks). The cookie-domain envs scope each session cookie to
+#     its OWN subdomain; NEVER set them to the parent domain (".bcai.lol") —
+#     that would share cookies across subdomains and defeat the isolation.
+#   • NestJS env ..... payment URLs must point at the new hosts
+#     (apps/server/src/leasing/account/billing/billing.service.ts):
+#         EPAY_NOTIFY_URL=https://api.bcai.lol/api/epay/notify
+#         EPAY_RETURN_URL=https://my.bcai.lol/account/billing
+#   • IP allowlist ... enable the @blockedConsoleIp hook below AND set
 #     ADMIN_IP_ALLOWLIST for the Next.js process (the middleware check reads
 #     X-Forwarded-For, so it keeps working even behind an extra proxy hop).
+#   • Desktop client . Stage 4 points clients at https://api.bcai.lol (the
+#     machine API). The auto-update FEED stays on the apex forever:
+#     https://bcai.lol/updates/latest-wails.json (apps/app/updater.go
+#     UpdateCheckURL; the marketing /download page links there too).
 #   • Validate ....... run `caddy validate --config <this file>` (and
 #     optionally `caddy adapt`) on the server BEFORE reloading — this file
 #     was written offline and has not been run through caddy.
 #
-# Traffic map (who talks to which domain):
-#   admins (browser)        → admin.bcai.space  /console, /login, /api/session/*,
-#                                               admin /api/* (auth/rosetta/orders/
-#                                               family-groups/… + /api/console/*)
-#   customers (browser)     → bcai.space        /, marketing pages, /account/*,
-#                                               /api/web/*, /api/web-session/*
-#   desktop clients         → bcai.space (+ fallback domain)  /api/app/*,
-#                                               legacy /remote-*, /updates/*
-#   payment provider (epay) → bcai.space        /api/epay/*
+# Traffic map (who talks to which subdomain):
+#   visitors (browser)      → bcai.lol          marketing pages, /updates/*,
+#                                               /api/faq-images/* (FAQ 配图)
+#   customers (browser)     → my.bcai.lol       /account/*, /api/account/*,
+#                                               /api/account-session/*
+#   admins (browser)        → console.bcai.lol  /console/*, /login,
+#                                               /api/console/*,
+#                                               /api/console-session/*, plus
+#                                               console-consumed ops APIs (see
+#                                               the site block)
+#   desktop clients         → api.bcai.lol      /api/app/*
+#   payment provider (epay) → api.bcai.lol      /api/epay/*
+#   uptime checks           → api.bcai.lol      /api/health
+#
+# Removed vs the previous (M12c) revision:
+#   • the bcai.space hostnames — single primary domain, no fallback (clients
+#     are force-upgraded, see latest-wails.json minVersion)
+#   • the legacy /remote-token|/remote-codex|/remote-anthropic rewrite block —
+#     Stage 1 deleted those backend routes; 9.5.0+ clients call /api/app/*
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1) ADMIN CONSOLE — isolated subdomain. PLACEHOLDER hostname, see header.
+# 1) MARKETING — apex domain. PLACEHOLDER hostname, see header.
 #
-# Single upstream by design: ONLY Next.js (localhost:3000). Admin Bearer APIs
-# (/api/auth, /api/console, /api/accounts, /api/rosetta, …) reach NestJS
-# through Next's rewrites (apps/web/next.config.ts backendPrefixes), never
-# directly from here — the NestJS port (:3001) is intentionally absent from
-# this site block.
+# Serves the public 官网 only. The toC portal and the console do NOT exist
+# here; the only /api/* namespace is the FAQ images. /updates/* is served
+# straight from disk so publishing a client release needs no Next.js rebuild.
 # ──────────────────────────────────────────────────────────────────────────────
-admin.bcai.space {
-	# The admin surface must never be indexed.
-	header X-Robots-Tag "noindex, nofollow"
+bcai.lol {
+	# 客户端自动升级 feed + 安装包下载 (latest-wails.json, .exe/.dmg/.tar.gz).
+	# Keep this on the APEX forever — deployed desktop clients poll
+	# https://bcai.lol/updates/latest-wails.json (apps/app/updater.go).
+	handle /updates/* {
+		root * C:/Users/Administrator/Desktop/GFA/apps/web/public/updates
+		uri strip_prefix /updates
+		file_server
+	}
 
-	# ── OPTIONAL: proxy-level IP allowlist (recommended) ──────────────────────
-	# Uncomment and list operator IPs/CIDRs. Keep this handle FIRST: handles
-	# with non-path matchers keep their source order, so it must appear before
-	# @adminSurface to win. remote_ip matches the direct TCP peer — if a CDN
-	# is ever put in front of this subdomain this stops being the client IP;
-	# in that case rely on the middleware's ADMIN_IP_ALLOWLIST (reads
-	# X-Forwarded-For) as the authoritative check. Set both in any case:
-	# this hook and ADMIN_IP_ALLOWLIST are two layers of the same fence.
+	# FAQ 配图 — the ONLY /api/* namespace on the marketing host. The FAQ text
+	# itself is server-rendered (Next fetches the backend origin directly,
+	# never through /api/*), but the images embedded in FAQ answers are
+	# browser-loaded from /api/faq-images/* and flow through Next's rewrite
+	# to NestJS. Path-matched handles sort longest-first, so this reliably
+	# beats the named-matcher deny below (named matchers sort as length 0).
+	handle /api/faq-images/* {
+		reverse_proxy localhost:3000
+	}
+
+	# Surfaces that do NOT exist on the apex → 404 ("not here" — reveals
+	# nothing about which subdomain hosts what):
+	#   /account/*            → my.bcai.lol
+	#   /console/*, /login/*  → console.bcai.lol
+	#   every other /api/*    → my./console./api. as appropriate
+	@notMarketing path /account /account/* /console /console/* /login /login/* /api/*
+	handle @notMarketing {
+		respond 404
+	}
+
+	# OPTIONAL instead of the /account 404 above: old portal deep links land
+	# on the apex (verify-email / password-reset emails delivered before the
+	# split, and the legacy /app/* → /account/* 308 shim in next.config.ts).
+	# To keep those emails working, bounce them to the account host — and
+	# remove "/account /account/*" from @notMarketing:
 	#
-	# @blockedAdminIp not remote_ip 203.0.113.10 198.51.100.0/24
-	# handle @blockedAdminIp {
-	#     respond 404
+	# handle /account/* {
+	#	redir https://my.bcai.lol{uri} 308
+	# }
+	# handle /account {
+	#	redir https://my.bcai.lol/account 308
 	# }
 
-	# ── The ONLY paths that exist on this host ─────────────────────────────────
-	#   /console, /console/*  console UI. If you configure a custom
-	#                         ADMIN_PATH_PREFIX, add /<prefix> and /<prefix>/*
-	#                         here (the middleware rewrites them to /console).
-	#   /login, /login/*      root console login page
-	#   /api/*                · /api/session/* — console cookie login/logout
-	#                           (Next.js route handlers)
-	#                         · admin Bearer APIs — proxied to NestJS by Next
-	#                           rewrites, incl. the new /api/console/* namespace
-	#                         MINUS the customer namespaces excluded below
-	#   /_next/*, /favicon.ico, /bcai-icon.png
-	#                         static assets the console UI needs
-	#
-	# Everything else (marketing pages, /account/*, /updates/*, customer APIs)
-	# does not exist on this host → 404. The Next.js middleware enforces the
-	# same rules host-side when ADMIN_HOST is set (defense in depth — either
-	# layer alone already blocks).
-	@adminSurface {
-		path /console /console/* /login /login/* /api/* /_next/* /favicon.ico /bcai-icon.png
-		not path /api/web /api/web/* /api/web-session /api/web-session/* /api/app /api/app/* /api/epay /api/epay/*
+	# Everything else → Next.js: marketing pages (/, /about, /features,
+	# /how-it-works, /quickstart, /faq, /download), /_next/*, public/ assets
+	# (bcai-icon.png, logos/, product-shots/, …). The middleware enforces the
+	# same allow/deny when MARKETING_HOST is set (defense in depth).
+	handle {
+		reverse_proxy localhost:3000
 	}
-	handle @adminSurface {
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) ACCOUNT — toC 用户中心 subdomain. PLACEHOLDER hostname, see header.
+#
+# Single upstream by design: ONLY Next.js. /api/account/* is the cookie→Bearer
+# proxy (a Next route handler) — it must NOT shortcut to :3001, the httpOnly
+# gfa.user.token cookie is converted server-side in Next.
+# ──────────────────────────────────────────────────────────────────────────────
+my.bcai.lol {
+	# User-private area — keep it out of search indexes.
+	header X-Robots-Tag "noindex, nofollow"
+
+	# ── The ONLY paths that exist on this host (positive allowlist) ───────────
+	#   /                        convenience redirect → /account (middleware)
+	#   /account, /account/*     portal pages (login/register/billing/devices/…)
+	#   /api/account/*           cookie→Bearer proxy → backend /api/account/*
+	#                            (Next route handler src/app/api/account/)
+	#   /api/account-session/*   login/register/logout/forgot/reset — Next
+	#                            route handlers that set/clear gfa.user.token
+	#   /_next/*, /favicon.ico, /bcai-icon.png
+	#                            build assets + the app icon the root layout
+	#                            references on every surface
+	#
+	# Marketing pages, /console/*, /login, /api/console*, machine APIs
+	# (/api/app/*, /api/epay/*), /updates/*: not here → 404. The middleware
+	# enforces the same surface when ACCOUNT_HOST is set.
+	@accountSurface path / /account /account/* /api/account /api/account/* /api/account-session /api/account-session/* /_next/* /favicon.ico /bcai-icon.png
+	handle @accountSurface {
 		reverse_proxy localhost:3000
 	}
 
@@ -103,82 +169,94 @@ admin.bcai.space {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 2) MAIN (customer) domain — marketing, /account portal, desktop-client and
-#    payment APIs. PLACEHOLDER hostname, see header. Fallback customer domains
-#    go on this address line, comma-separated:  bcai.space, bcai.lol {
+# 3) CONSOLE — toB 管理后台 subdomain. PLACEHOLDER hostname, see header.
+#    (Replaces the M12c admin.bcai.space block.)
+#
+# Single upstream by design: ONLY Next.js. Admin Bearer APIs (/api/console/*)
+# reach NestJS through Next's rewrites (apps/web/next.config.ts), never
+# directly from here — :3001 is intentionally absent from this site block.
 # ──────────────────────────────────────────────────────────────────────────────
-bcai.space {
-	# ── Console surface REMOVED from the customer domain ──────────────────────
-	# The admin console lives exclusively on the admin subdomain above.
-	# (Path-matched handles sort longest-first, so these specific /api/…
-	# handles reliably beat the /api/* catch-all further down.)
+console.bcai.lol {
+	# The admin surface must never be indexed.
+	header X-Robots-Tag "noindex, nofollow"
+
+	# ── OPTIONAL: proxy-level IP allowlist (recommended) ──────────────────────
+	# Uncomment and list operator IPs/CIDRs. Keep this handle FIRST among the
+	# named-matcher handles: handles with non-path matchers keep their source
+	# order, so it must appear before @consoleSurface to win. remote_ip
+	# matches the direct TCP peer — if a CDN ever fronts this subdomain that
+	# stops being the client IP; then rely on the middleware's
+	# ADMIN_IP_ALLOWLIST (reads X-Forwarded-For) as the authoritative check.
+	# Set BOTH in any case: this hook and ADMIN_IP_ALLOWLIST are two layers
+	# of the same fence.
 	#
-	# Console cookie login/logout (Next route handlers) — gone from main.
-	# (NOTE: /api/session may be renamed later — if the Next console session
-	# routes move, update this handle and the admin-block comments in sync.)
-	handle /api/session/* {
-		respond 404
-	}
-	# Console-namespaced backend API (dual-mounted in NestJS) — admins use it
-	# via the admin subdomain only. NOTE: legacy admin prefixes (/api/auth,
-	# /api/accounts, /api/orders, …) remain reachable here for now — they are
-	# Bearer-JWT protected in NestJS and some non-console traffic still shares
-	# them; tighten by 404-ing them here once the console UI has fully moved
-	# to /api/console/*.
-	handle /api/console/* {
-		respond 404
-	}
-	# Console pages + the root /login console page. The Next.js middleware
-	# also 404s these when ADMIN_HOST is set; this is defense in depth.
-	@consolePages path /console /console/* /login /login/*
-	handle @consolePages {
-		respond 404
-	}
+	# @blockedConsoleIp not remote_ip 203.0.113.10 198.51.100.0/24
+	# handle @blockedConsoleIp {
+	#     respond 404
+	# }
 
-	# Next.js customer portal session routes (login/register/logout/forgot/reset).
-	# These handlers set/clear the gfa.user.token httpOnly cookie and must NOT
-	# be forwarded to the NestJS backend — they live in Next.js route handlers
-	# under src/app/api/web-session/*.
-	handle /api/web-session/* {
+	# ── The ONLY paths that exist on this host (positive allowlist) ───────────
+	#   /                        convenience redirect → /console (middleware;
+	#                            with a custom ADMIN_PATH_PREFIX it 404s
+	#                            instead so the secret prefix cannot leak)
+	#   /console, /console/*     console UI. With a custom ADMIN_PATH_PREFIX,
+	#                            add /<prefix> and /<prefix>/* here (the
+	#                            middleware rewrites them to /console)
+	#   /login, /login/*         root console login page
+	#   /api/console-session/*   console cookie login/logout (Next handlers)
+	#   /api/console/*           admin Bearer API (Next rewrite → NestJS)
+	#   /api/app/lease/*         lease-pool ops (status/announcement/
+	#                            reload-access-keys) consumed by the console
+	#                            lease pages; the REST of /api/app/* is the
+	#                            desktop-client surface → api.bcai.lol only
+	#   /api/remote-stats/*      usage dashboard (console/usage-stats page)
+	#   /api/faq-images/*        FAQ image upload/preview (console FAQ editor)
+	#   /_next/*, /favicon.ico, /bcai-icon.png
+	#                            build assets + the shared app icon
+	#
+	# Everything else (marketing pages, /account/*, customer session APIs,
+	# /api/app/* outside lease, /api/epay/*) → 404. The middleware enforces
+	# the same surface when CONSOLE_HOST (or legacy ADMIN_HOST) is set.
+	@consoleSurface path / /console /console/* /login /login/* /api/console /api/console/* /api/console-session /api/console-session/* /api/app/lease /api/app/lease/* /api/remote-stats /api/remote-stats/* /api/faq-images /api/faq-images/* /_next/* /favicon.ico /bcai-icon.png
+	handle @consoleSurface {
 		reverse_proxy localhost:3000
 	}
 
-	# Next.js generic authenticated portal proxy.
-	# Reads gfa.user.token cookie, forwards as Bearer to backend /web/*.
-	# Must route through Next.js (not directly to :3001) so cookie→Bearer
-	# conversion happens server-side. See src/app/api/web/[...path]/route.ts.
-	handle /api/web/* {
-		reverse_proxy localhost:3000
-	}
-
-	# NestJS API — every other /api/* path goes directly to the backend:
-	# /api/app/* (desktop client login/heartbeat/lease — clients target THIS
-	# host, never the admin subdomain), /api/epay/* (payment callbacks),
-	# /api/public/*, /api/health, legacy /api/remote-*, …
-	handle /api/* {
-		reverse_proxy localhost:3001
-	}
-
-	# Legacy 兜底:/api 前缀化之前发布的老客户端会用不带 /api 的 /remote-*/* 路径
-	# (remote-token / remote-codex / remote-anthropic)。新客户端已统一改打
-	# /api/remote-*(见 bcai-wails 的 ANTHROPIC_REMOTE_BASE / CODEX_API_BASE / API_BASE)。
-	# 这里把所有旧路径 rewrite 到 /api{uri},保证已发布的老客户端不落到 Next.js 404。
-	@legacyRemote path /remote-token/* /remote-codex/* /remote-anthropic/*
-	handle @legacyRemote {
-		rewrite * /api{uri}
-		reverse_proxy localhost:3001
-	}
-
-	# 客户端自动升级 + 下载(直接从文件夹 serve,无需 Next.js 重建)
-	handle /updates/* {
-		root * C:/Users/Administrator/Desktop/GFA/apps/web/public/updates
-		uri strip_prefix /updates
-		file_server
-	}
-
-	# Everything else → Next.js (marketing pages, /account portal, static
-	# assets, and the legacy /app/* → /account/* 308 redirect shim).
+	# Anything not explicitly allowed above: pretend it does not exist.
 	handle {
-		reverse_proxy localhost:3000
+		respond 404
 	}
 }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) API — machine subdomain. PLACEHOLDER hostname, see header.
+#
+# Proxied DIRECTLY to NestJS (:3001). Next.js is intentionally absent: no
+# pages, no cookies — and therefore the Next middleware host-gate never runs
+# for this host. Auth is Bearer JWT (desktop clients) / MD5 signature (epay)
+# inside NestJS. The NestJS global prefix is /api, so paths map 1:1.
+# ──────────────────────────────────────────────────────────────────────────────
+api.bcai.lol {
+	# Machine APIs only:
+	#   /api/app/*           desktop client (login/heartbeat/lease/…) —
+	#                        Stage 4 clients target THIS host
+	#   /api/epay/*          payment provider callbacks (notify)
+	#   /api/health          uptime checks
+	#   /api/remote-stats/*  @Public stats endpoints (bare backend namespace)
+	@machineSurface path /api/app /api/app/* /api/epay /api/epay/* /api/health /api/remote-stats /api/remote-stats/*
+	handle @machineSurface {
+		reverse_proxy localhost:3001
+	}
+
+	# No pages, no /updates, no other API namespaces on this host.
+	handle {
+		respond 404
+	}
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OPTIONAL: www → apex (uncomment after adding a DNS record for www).
+# ──────────────────────────────────────────────────────────────────────────────
+# www.bcai.lol {
+#	redir https://bcai.lol{uri} 301
+# }
