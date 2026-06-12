@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 整池都租不到时的文案:若主因是 503 容量冷却(cooling)→ 明说【官方上游抽风】,
@@ -35,7 +36,7 @@ function makeProvider(id: string, accountsFilePath: string): Provider<any> {
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 const MODEL = "gemini-2.5-pro";
 
 let tempDir: string;
@@ -58,11 +59,11 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function makeService(id: string) {
-  return new LeaseService(makeProvider(id, accountsFilePath), {
+  return withSessionResolver(new LeaseService(makeProvider(id, accountsFilePath), {
     accessKeysFilePath,
     minClientVersion: "",
     now: () => clock,
-  });
+  }));
 }
 
 // 把全池打成 503 容量冷却(cooling),再租一次拿到整池不可用文案。

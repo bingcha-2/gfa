@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -69,15 +70,15 @@ describe("LeaseService (generic core)", () => {
   });
 
   function makeService() {
-    return new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+    return withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath,
       now: () => Date.now(),
       randomId: () => "lease-fixed",
       minClientVersion: "",
-    });
+    }));
   }
 
-  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+  const REQ = sessionReqFor("card-1");
 
   it("leases a token from a projectId-less account", async () => {
     refreshToken.mockResolvedValue("access-token-1");
@@ -122,9 +123,9 @@ describe("LeaseService (generic core)", () => {
       accounts: [{ id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, proxyUrl: "socks5://res:1080" }],
     });
     const provider = { ...makeFakeProvider(accountsFilePath, refreshToken), egressPolicy: "required" as const };
-    const service = new LeaseService(provider, {
+    const service = withSessionResolver(new LeaseService(provider, {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "",
-    });
+    }));
     const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
 
     expect(result.ok).toBe(true);
@@ -177,13 +178,13 @@ describe("LeaseService (generic core)", () => {
   // ── Static account binding (no fallback) ─────────────────────────────────
 
   function makeBoundService(busyMessage?: string) {
-    return new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+    return withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath,
       now: () => Date.now(),
       randomId: () => "lease-fixed",
       minClientVersion: "",
       busyMessage,
-    });
+    }));
   }
 
   it("leases only from the account the card is bound to", async () => {
@@ -416,10 +417,10 @@ describe("LeaseService (generic core)", () => {
     writeJson(accessKeysFilePath, {
       keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60 * 60 * 1000, bindings: { anthropic: 1 } }],
     });
-    const service = new LeaseService(
+    const service = withSessionResolver(new LeaseService(
       makeFakeProvider(accountsFilePath, refreshToken, "anthropic"),
       { accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
-    );
+    ));
     const r: any = await service.leaseToken(REQ, { clientId: "c1" });
     expect(r.accountBuckets["anthropic-claude"].fraction).toBeCloseTo(0.3, 5);
     // The old flat "opus" key and the other product's bucket must NOT appear.
@@ -440,9 +441,9 @@ describe("LeaseService (generic core)", () => {
         provider: "fake", boundAccountId: 2,
       }],
     });
-    const service = new LeaseService(provider, {
+    const service = withSessionResolver(new LeaseService(provider, {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "",
-    });
+    }));
 
     const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
     expect(r.boundAccount).toEqual({ id: 2, fraction: 0.42, resetAt: 1_900_000_000_000 });
@@ -496,9 +497,9 @@ describe("LeaseService (generic core)", () => {
       }],
     });
     // No minClientVersion option → falls back to the in-code default floor.
-    const service = new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
+    const service = withSessionResolver(new LeaseService(makeFakeProvider(accountsFilePath, refreshToken), {
       accessKeysFilePath, now: () => Date.now(), randomId: () => "lease-fixed",
-    });
+    }));
 
     // Below the in-code floor (now 9.5.0) must be rejected (426 upgrade required) —
     // even the previous floor 9.2.0 is now below the new minimum…

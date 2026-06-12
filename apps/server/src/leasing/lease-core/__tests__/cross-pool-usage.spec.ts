@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
 import { AccessKeyStore } from "../../token-server/access-key-store";
+import { cardIdSessionResolver, sessionReqFor } from "../../token-server/__tests__/session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -31,7 +32,7 @@ function makeProvider(id: string, accountsFilePath: string): Provider<any> {
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 
 /**
  * One universal pool card is used across multiple product pools (codex +
@@ -64,6 +65,7 @@ describe("shared AccessKeyStore accumulates usage across product pools", () => {
 
   it("a card used on codex then anthropic shows the SUM, not just the last pool", async () => {
     const sharedStore = new AccessKeyStore(accessKeysFilePath);
+    sharedStore.setSessionResolver(cardIdSessionResolver);
     const codex = new LeaseService(makeProvider("codex", codexAccounts), {
       accessKeyStore: sharedStore,
       minClientVersion: "",

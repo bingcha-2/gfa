@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 import { AccessKeyStore } from '../access-key-store';
+import { cardIdSessionResolver, sessionReqFor } from './session-test-util';
 
 let tmpDir: string;
 let accessKeysPath: string;
@@ -19,7 +20,11 @@ afterEach(() => {
 
 function makeStore(keys: any[] = []) {
   fs.writeFileSync(accessKeysPath, JSON.stringify({ keys, updatedAt: '' }));
-  return new AccessKeyStore(accessKeysPath);
+  const store = new AccessKeyStore(accessKeysPath);
+  // The session JWT is the only runtime credential — specs drive
+  // resolveFromRequest through the stub resolver (token.cardId → record id).
+  store.setSessionResolver(cardIdSessionResolver);
+  return store;
 }
 
 // ── computeUsageDetail 口径归一 ───────────────────────────────────────────────
@@ -94,65 +99,62 @@ describe('AccessKeyStore', () => {
     });
   });
 
-  // ── Key resolution (the core auth flow) ──────────────────────────────────
+  // ── Credential resolution (the core auth flow) ───────────────────────────
 
   describe('resolveFromRequest', () => {
-    it('should resolve active key from x-access-key header', async () => {
+    it('resolves an active record from a session JWT (the only runtime credential)', async () => {
+      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
+      const result = await store.resolveFromRequest(sessionReqFor('k1'), {});
+      expect(result.record?.id).toBe('k1');
+      expect(result.viaSession).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('ignores the legacy x-access-key header (card credential removed)', async () => {
       const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
       const result = await store.resolveFromRequest(
         { headers: { 'x-access-key': 'secret1' } } as any,
         {},
       );
-      expect(result.record?.id).toBe('k1');
-      expect(result.error).toBeUndefined();
-    });
-
-    it('should resolve from payload.accessKey', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
-      const result = await store.resolveFromRequest(
-        { headers: {} } as any,
-        { accessKey: 'secret1' },
-      );
-      expect(result.record?.id).toBe('k1');
-    });
-
-    it('should resolve from Bearer token', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
-      const result = await store.resolveFromRequest(
-        { headers: { authorization: 'Bearer secret1' } } as any,
-        {},
-      );
-      expect(result.record?.id).toBe('k1');
-    });
-
-    it('should return error for missing key', async () => {
-      const store = makeStore([]);
-      const result = await store.resolveFromRequest({ headers: {} } as any, {});
       expect(result.record).toBeNull();
       expect(result.error).toBe('Missing access key');
     });
 
-    it('should return error for invalid key', async () => {
+    it('ignores the legacy x-token-server-secret header and payload key fields', async () => {
       const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'wrong' } } as any,
+        { headers: { 'x-token-server-secret': 'secret1' } } as any,
+        { accessKey: 'secret1', accountCard: 'secret1', cardKey: 'secret1', key: 'secret1' },
+      );
+      expect(result.record).toBeNull();
+      expect(result.error).toBe('Missing access key');
+    });
+
+    it('rejects a card-value Bearer (no longer a credential)', async () => {
+      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
+      const result = await store.resolveFromRequest(
+        { headers: { authorization: 'Bearer secret1' } } as any,
         {},
       );
       expect(result.record).toBeNull();
       expect(result.error).toBe('Invalid access key');
     });
 
-    it('should return error for disabled key', async () => {
+    it('should return error for missing credential', async () => {
+      const store = makeStore([]);
+      const result = await store.resolveFromRequest({ headers: {} } as any, {});
+      expect(result.record).toBeNull();
+      expect(result.error).toBe('Missing access key');
+    });
+
+    it('should return error for disabled record (session path)', async () => {
       const store = makeStore([{ id: 'k1', key: 'secret1', status: 'disabled' }]);
-      const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
-        {},
-      );
+      const result = await store.resolveFromRequest(sessionReqFor('k1'), {});
       expect(result.record).toBeNull();
       expect(result.error).toBe('Access key disabled');
     });
 
-    it('should mark key as expired if past duration', async () => {
+    it('should mark record as expired if past duration (session path)', async () => {
       const store = makeStore([{
         id: 'k1',
         key: 'secret1',
@@ -160,10 +162,7 @@ describe('AccessKeyStore', () => {
         firstUsedAt: '2020-01-01T00:00:00.000Z',
         durationMs: 1000,
       }]);
-      const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
-        {},
-      );
+      const result = await store.resolveFromRequest(sessionReqFor('k1'), {});
       expect(result.record).toBeNull();
       expect(result.error).toBe('Access key expired');
     });
@@ -187,39 +186,6 @@ describe('AccessKeyStore', () => {
     it('should not throw for unknown cardId', async () => {
       const store = makeStore([]);
       expect(() => store.recordUsage('unknown', 200, {}, '')).not.toThrow();
-    });
-  });
-
-  // ── Session management ─────────────────────────────────────────────────
-
-  describe('session management', () => {
-    it('should create a session on first access', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        usageEvents: [], tokenUsageEvents: [],
-      }]);
-      const record = store.findById('k1')!;
-      const validation = store.validateSession(record, { clientId: 'client-1' });
-      expect(validation.ok).toBe(true);
-      expect(validation.action).toBe('create');
-    });
-
-    it('should reject session from different device', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_existing',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date().toISOString(),
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-        usageEvents: [], tokenUsageEvents: [],
-      }]);
-      const record = store.findById('k1')!;
-      const validation = store.validateSession(record, {
-        sessionId: 'sess_other',
-        clientId: 'client-2',
-      });
-      expect(validation.ok).toBe(false);
-      expect(validation.statusCode).toBe(409);
     });
   });
 
@@ -363,7 +329,7 @@ describe('AccessKeyStore', () => {
         { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
       ]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
       );
@@ -384,7 +350,7 @@ describe('AccessKeyStore', () => {
         ],
       }]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
       );
@@ -399,7 +365,7 @@ describe('AccessKeyStore', () => {
         { at: Date.now(), inputTokens: 1_500_000, outputTokens: 1_000_001, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
       ]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
       );
@@ -412,7 +378,7 @@ describe('AccessKeyStore', () => {
         { at: Date.now(), inputTokens: 100, outputTokens: 50, modelKey: 'claude-sonnet-4-6' },
       ]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'claude-sonnet-4-6' },
       );
@@ -445,7 +411,7 @@ describe('AccessKeyStore', () => {
       // 核心回归:antigravity-gemini 是 0/10000 满额,预热绝不能被 anthropic 的耗尽连累。
       const store = makeFourBucketCard();
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true }, // 无 modelKey(预热)
       );
@@ -456,7 +422,7 @@ describe('AccessKeyStore', () => {
     it('claude request (with modelKey) is still precisely rejected — only the exhausted bucket', async () => {
       const store = makeFourBucketCard();
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'claude-opus-4-8', product: 'anthropic' },
       );
@@ -467,7 +433,7 @@ describe('AccessKeyStore', () => {
     it('antigravity gemini (with modelKey) is allowed — its own bucket has headroom (0/10000)', async () => {
       const store = makeFourBucketCard();
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
       );
@@ -482,7 +448,7 @@ describe('AccessKeyStore', () => {
         { at: Date.now(), inputTokens: 300_000, outputTokens: 200_001, modelKey: 'gpt-5-codex' },
       ]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true },
       );
@@ -496,7 +462,7 @@ describe('AccessKeyStore', () => {
         { at: Date.now(), inputTokens: 100, outputTokens: 50, modelKey: 'gemini-2.5-pro' },
       ]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { enforceLimit: true },
       );
@@ -513,7 +479,7 @@ describe('AccessKeyStore', () => {
         windowStartedAt: Date.now(), usageEvents: [], ...extra,
       }]);
     }
-    const claudeReq = { headers: { 'x-access-key': 'secret1' } } as any;
+    const claudeReq = sessionReqFor('k1');
     const opts = { enforceLimit: true, modelKey: 'claude-sonnet-4-6', product: 'anthropic' };
 
     it('enforces a bucketLimits cap even without a global tokenWindowLimit', async () => {
@@ -638,40 +604,13 @@ describe('AccessKeyStore', () => {
     });
   });
 
-  // ── Key extraction from various sources ──────────────────────────────────
+  // ── Activation arming (firstUsedAt) on the session path ──────────────────
 
-  describe('resolveFromRequest — key extraction', () => {
-    it('should resolve from payload.accountCard', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
-      const result = await store.resolveFromRequest(
-        { headers: {} } as any,
-        { accountCard: 'secret1' },
-      );
-      expect(result.record?.id).toBe('k1');
-    });
-
-    it('should resolve from payload.cardKey', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
-      const result = await store.resolveFromRequest(
-        { headers: {} } as any,
-        { cardKey: 'secret1' },
-      );
-      expect(result.record?.id).toBe('k1');
-    });
-
-    it('should resolve from payload.key', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
-      const result = await store.resolveFromRequest(
-        { headers: {} } as any,
-        { key: 'secret1' },
-      );
-      expect(result.record?.id).toBe('k1');
-    });
-
+  describe('resolveFromRequest — activate', () => {
     it('should set firstUsedAt on activate', async () => {
       const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { activate: true },
       );
@@ -685,155 +624,11 @@ describe('AccessKeyStore', () => {
         firstUsedAt: originalDate, durationMs: 10 * 365 * 24 * 3600 * 1000,
       }]);
       const result = await store.resolveFromRequest(
-        { headers: { 'x-access-key': 'secret1' } } as any,
+        sessionReqFor('k1'),
         {},
         { activate: true },
       );
       expect(result.record?.firstUsedAt).toBe(originalDate);
-    });
-  });
-
-  // ── Session validation (comprehensive) ──────────────────────────────────
-
-  describe('validateSession — comprehensive', () => {
-    it('should allow refresh when same sessionId and same clientId', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_abc',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date().toISOString(),
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const result = store.validateSession(record, {
-        sessionId: 'sess_abc',
-        clientId: 'client-1',
-      });
-      expect(result.ok).toBe(true);
-      expect(result.action).toBe('refresh');
-    });
-
-    it('should reject when same sessionId but different clientId', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_abc',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date().toISOString(),
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const result = store.validateSession(record, {
-        sessionId: 'sess_abc',
-        clientId: 'client-2',
-      });
-      expect(result.ok).toBe(false);
-      expect(result.statusCode).toBe(409);
-      expect(result.error).toContain('another client');
-    });
-
-    it('should reject when same sessionId but no clientId', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_abc',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date().toISOString(),
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const result = store.validateSession(record, {
-        sessionId: 'sess_abc',
-        // no clientId
-      });
-      expect(result.ok).toBe(false);
-      expect(result.statusCode).toBe(409);
-    });
-
-    it('should allow creating new session when existing session is expired', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_old',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date(Date.now() - 3600000).toISOString(),
-        sessionExpiresAt: new Date(Date.now() - 1000).toISOString(), // expired
-      }]);
-      const record = store.findById('k1')!;
-      const result = store.validateSession(record, {
-        clientId: 'client-2',
-      });
-      expect(result.ok).toBe(true);
-      expect(result.action).toBe('create');
-    });
-
-    it('should allow same clientId reuse without sessionId', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_abc',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date().toISOString(),
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const result = store.validateSession(record, {
-        clientId: 'client-1',
-        // no sessionId — same client reconnecting
-      });
-      expect(result.ok).toBe(true);
-      expect(result.sameClientSessionReuse).toBe(true);
-    });
-  });
-
-  // ── Session refresh modes ──────────────────────────────────────────────
-
-  describe('refreshSession', () => {
-    it('should create new sessionId in create mode', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_old',
-        sessionClientId: 'client-1',
-      }]);
-      const record = store.findById('k1')!;
-      const newSessionId = store.refreshSession(record, { clientId: 'client-2' }, Date.now(), { create: true });
-      expect(newSessionId).not.toBe('sess_old');
-      expect(record.sessionClientId).toBe('client-2');
-    });
-
-    it('should rotate sessionId in rotate mode', async () => {
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_old',
-        sessionClientId: 'client-1',
-        sessionExpiresAt: new Date(Date.now() + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const newSessionId = store.refreshSession(record, { clientId: 'client-1' }, Date.now(), { rotate: true });
-      expect(newSessionId).not.toBe('sess_old');
-      expect(record.sessionClientId).toBe('client-1');
-    });
-
-    it('should keep existing sessionId in normal refresh mode', async () => {
-      const now = Date.now();
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        activeSessionId: 'sess_existing',
-        sessionClientId: 'client-1',
-        sessionStartedAt: new Date(now).toISOString(),
-        sessionExpiresAt: new Date(now + 600000).toISOString(),
-      }]);
-      const record = store.findById('k1')!;
-      const sessionId = store.refreshSession(record, { clientId: 'client-1' }, now);
-      expect(sessionId).toBe('sess_existing');
-    });
-
-    it('should set sessionExpiresAt on refresh', async () => {
-      const now = Date.now();
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-      }]);
-      const record = store.findById('k1')!;
-      store.refreshSession(record, { clientId: 'client-1' }, now, { create: true });
-      expect(record.sessionExpiresAt).toBeTruthy();
-      const expiresAt = Date.parse(record.sessionExpiresAt!);
-      expect(expiresAt).toBeGreaterThan(now);
     });
   });
 

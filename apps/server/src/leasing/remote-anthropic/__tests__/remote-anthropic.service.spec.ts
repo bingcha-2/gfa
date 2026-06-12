@@ -5,6 +5,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RemoteAnthropicService } from "../service/remote-anthropic.service";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -56,14 +57,14 @@ describe("RemoteAnthropicService", () => {
   });
 
   function makeService() {
-    return new RemoteAnthropicService({
+    return withSessionResolver(new RemoteAnthropicService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => currentTime,
       randomId: () => "claude-lease-fixed",
       minClientVersion: "",
-    });
+    }));
   }
 
   it("returns independent claude account and card status", () => {
@@ -79,7 +80,7 @@ describe("RemoteAnthropicService", () => {
     expect(status.models.some((m: any) => m.key === MODEL)).toBe(true);
   });
 
-  it("rejects lease-token when the claude card is invalid", async () => {
+  it("rejects lease-token when the claude card header credential is presented (removed)", async () => {
     const service = makeService();
 
     await expect(
@@ -87,7 +88,7 @@ describe("RemoteAnthropicService", () => {
         { headers: { "x-token-server-secret": "bad-card" } },
         { clientId: "client-a", modelKey: MODEL },
       ),
-    ).rejects.toMatchObject({ statusCode: 401, message: "Invalid access key" });
+    ).rejects.toMatchObject({ statusCode: 401, message: "Missing access key" });
     expect(tokenProvider).not.toHaveBeenCalled();
   });
 
@@ -96,7 +97,7 @@ describe("RemoteAnthropicService", () => {
     const service = makeService();
 
     const result = await service.leaseToken(
-      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      sessionReqFor("claude-card-1"),
       { clientId: "client-a", modelKey: MODEL, bodyBytes: 2500 },
     );
 
@@ -117,12 +118,12 @@ describe("RemoteAnthropicService", () => {
     tokenProvider.mockResolvedValue("claude-access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      sessionReqFor("claude-card-1"),
       { clientId: "client-a", modelKey: MODEL },
     );
 
     const report = await service.reportResult(
-      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      sessionReqFor("claude-card-1"),
       {
         leaseId: "claude-lease-fixed",
         status: 200,
@@ -145,19 +146,19 @@ describe("RemoteAnthropicService", () => {
     tokenProvider.mockResolvedValue("claude-access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      sessionReqFor("claude-card-1"),
       { clientId: "client-a", modelKey: MODEL },
     );
 
     await service.reportResult(
-      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      sessionReqFor("claude-card-1"),
       { leaseId: "claude-lease-fixed", status: 429, modelKey: MODEL },
     );
 
     tokenProvider.mockClear();
     await expect(
       service.leaseToken(
-        { headers: { "x-token-server-secret": "claude-secret-card" } },
+        sessionReqFor("claude-card-1"),
         { clientId: "client-a", modelKey: MODEL },
       ),
     ).rejects.toMatchObject({ statusCode: 503, message: "No available Claude accounts" });

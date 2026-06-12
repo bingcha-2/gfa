@@ -2,11 +2,12 @@
  * access-key-store.ts — In-memory access key cache with debounced disk persistence.
  *
  * Extracted from remote-token-server/index.js (L325-L868).
- * Encapsulates all access key state: cache, session, usage recording.
+ * Encapsulates all access key state: cache, usage recording, and the
+ * session-JWT runtime credential resolution (resolveFromRequest).
  */
 
 import * as crypto from 'crypto';
-import { readJsonFile, writeJsonFile, constantTimeEqual } from './data-store';
+import { readJsonFile, writeJsonFile } from './data-store';
 import {
   readTokenCount,
   billableTokenUsageTotal,
@@ -26,9 +27,7 @@ import {
   UNIVERSAL_BILLING,
   ProviderBilling,
   keyExpiresAt,
-  accessKeySessionTtlMs,
   isAccessKeySessionExpired,
-  ACCESS_KEY_BINDING_GRACE_MS,
   ACCOUNT_SHARE_CAPACITY,
 } from './token-billing';
 import {
@@ -139,18 +138,6 @@ export interface ResolveResult {
   /** Machine-readable session failure (SESSION_INVALID / DEVICE_REVOKED /
    * SUBSCRIPTION_EXPIRED) for the client's fatal-error matching. */
   sessionError?: { statusCode: number; code: string };
-}
-
-export interface SessionValidation {
-  ok: boolean;
-  action?: string;
-  error?: string;
-  statusCode?: number;
-  requestedSessionId?: string;
-  sessionClientId?: string;
-  sessionExpiresAt?: string;
-  sameClientSessionReuse?: boolean;
-  sameClientGrace?: boolean;
 }
 
 // ── AccessKeyStore ───────────────────────────────────────────────────────────
@@ -427,23 +414,6 @@ export class AccessKeyStore {
 
   // ── Request resolution ─────────────────────────────────────────────────
 
-
-  /** Extract access key from an HTTP request. */
-  static extractKeyFromRequest(req: any, payload: any): string {
-    const auth = String(req.headers?.authorization || '');
-    const bearer = auth.replace(/^Bearer\s+/i, '').trim();
-    return String(
-      req.headers?.['x-token-server-secret'] ||
-      req.headers?.['x-access-key'] ||
-      payload?.accessKey ||
-      payload?.accountCard ||
-      payload?.cardKey ||
-      payload?.key ||
-      bearer ||
-      '',
-    ).trim();
-  }
-
   /** Injected session-JWT → subscription resolver (see SessionResolverLike). */
   private sessionResolver: SessionResolverLike | null = null;
 
@@ -454,61 +424,63 @@ export class AccessKeyStore {
   }
 
   /**
-   * Resolve an access key from a request, checking validity and limits.
+   * Resolve the runtime credential from a request, checking validity and limits.
    *
-   * Two auth shapes share this entry point:
-   *   • Card key (legacy): any of the extractKeyFromRequest sources → byKey
-   *     lookup. Behavior is byte-equivalent to the historical sync version.
-   *   • Customer session JWT: an Authorization bearer that LOOKS like a
-   *     user-session token routes to the injected SessionTokenResolver, which
-   *     verifies it and maps it to the customer's ACTIVE Subscription — whose id
-   *     IS the shadow record id. The record then runs the exact same validation
-   *     pipeline (status/expiry/window/bucket/weekly) as a card key.
+   * The ONLY runtime credential is the customer session JWT: an Authorization
+   * bearer that LOOKS like a user-session token routes to the injected
+   * SessionTokenResolver, which verifies it and maps it to the customer's
+   * ACTIVE Subscription — whose id IS the shadow record id. The record then
+   * runs the shared validation pipeline (status/expiry/window/bucket/weekly).
+   *
+   * Card-string credentials (x-token-server-secret / x-access-key / payload
+   * key fields) were removed with the force-upgrade — clients below 9.5.0 are
+   * upgraded away and no longer served. Card VALUES still resolve via
+   * findByKey() for the bind-card redemption flow (card-migration.service),
+   * which converts a legacy card into a Subscription; they just can no longer
+   * LEASE directly.
    */
   async resolveFromRequest(
     req: any,
-    payload: any,
+    _payload: any,
     options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
   ): Promise<ResolveResult> {
     const authHeader = String(req?.headers?.authorization || '');
     const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
-    if (looksLikeUserSessionToken(bearer)) {
-      const data = this.readAll();
-      if (!this.sessionResolver) return sessionResolverUnavailable();
-      const resolved = await this.sessionResolver.resolve(bearer, { product: options.product });
-      if (!resolved.ok) return sessionResolveFailure(resolved);
-      const record = this.byId.get(resolved.cardId) || null;
-      if (!record) return missingShadowRecord();
-      // Migrated never-used card: no absolute expiry AND not yet armed.
-      const unarmed = !record.keyExpiresAt && !record.firstUsedAt;
-      const result: ResolveResult = { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
-      // This lease just armed firstUsedAt → tell the resolver the record's
-      // now-effective expiry so Subscription.expiresAt gets resynced. Fires at
-      // most ONCE per record (firstUsedAt persists) and is NOT awaited — zero
-      // added latency on the hot path; the hook owns its errors.
-      if (unarmed && result.record && record.firstUsedAt) {
-        const effective = keyExpiresAt(record);
-        if (effective) this.sessionResolver.onShadowRecordFirstUse?.(record.id, effective);
-      }
-      // Record-level expiry/disabled on the session path → SUBSCRIPTION_EXPIRED
-      // machine code (the sub row was ACTIVE but the record can't serve).
-      return shadowRecordValidationFailure(result);
+    if (!looksLikeUserSessionToken(bearer)) {
+      return {
+        key: '',
+        record: null,
+        error: bearer ? 'Invalid access key' : 'Missing access key',
+      };
     }
 
-    const keyValue = AccessKeyStore.extractKeyFromRequest(req, payload);
-    if (!keyValue) return { key: keyValue, record: null, error: 'Missing access key' };
-
     const data = this.readAll();
-    const record = this.byKey.get(this.keyHash(keyValue)) || null;
-    if (!record) return { key: keyValue, record: null, error: 'Invalid access key' };
-    return this.validateRecord(keyValue, record, data, options);
+    if (!this.sessionResolver) return sessionResolverUnavailable();
+    const resolved = await this.sessionResolver.resolve(bearer, { product: options.product });
+    if (!resolved.ok) return sessionResolveFailure(resolved);
+    const record = this.byId.get(resolved.cardId) || null;
+    if (!record) return missingShadowRecord();
+    // Migrated never-used card: no absolute expiry AND not yet armed.
+    const unarmed = !record.keyExpiresAt && !record.firstUsedAt;
+    const result: ResolveResult = { ...this.validateRecord(String(record.key || ''), record, data, options), viaSession: true };
+    // This lease just armed firstUsedAt → tell the resolver the record's
+    // now-effective expiry so Subscription.expiresAt gets resynced. Fires at
+    // most ONCE per record (firstUsedAt persists) and is NOT awaited — zero
+    // added latency on the hot path; the hook owns its errors.
+    if (unarmed && result.record && record.firstUsedAt) {
+      const effective = keyExpiresAt(record);
+      if (effective) this.sessionResolver.onShadowRecordFirstUse?.(record.id, effective);
+    }
+    // Record-level expiry/disabled on the session path → SUBSCRIPTION_EXPIRED
+    // machine code (the sub row was ACTIVE but the record can't serve).
+    return shadowRecordValidationFailure(result);
   }
 
   /**
    * Shared validation pipeline for a looked-up record: status → activation →
    * expiry → window resets → per-bucket caps (429 w/ resetMs) → weekly window.
-   * Extracted verbatim from the historical resolveFromRequest body so the card
-   * path stays byte-equivalent and the session path reuses it unduplicated.
+   * Extracted verbatim from the historical resolveFromRequest body; the
+   * session path runs records through it unchanged.
    */
   private validateRecord(
     keyValue: string,
@@ -710,99 +682,12 @@ export class AccessKeyStore {
     return true;
   }
 
-  // ── Session management ─────────────────────────────────────────────────
-
-  private static makeSessionId(): string {
-    return `sess_${Date.now().toString(36)}_${crypto.randomBytes(12).toString('hex')}`;
-  }
-
-  private static normalizeSessionId(value: unknown): string {
-    return String(value || '').trim();
-  }
-
-  /** Validate whether a session request is allowed. */
-  validateSession(record: AccessKeyRecord, payload: any, now = Date.now()): SessionValidation {
-    const requestedSessionId = AccessKeyStore.normalizeSessionId(
-      payload?.sessionId || payload?.accessKeySessionId || payload?.relayProxySessionId,
-    );
-    const requestedClientId = String(payload?.clientId || payload?.client || '').trim();
-    const activeSessionId = AccessKeyStore.normalizeSessionId(record.activeSessionId);
-
-    if (!activeSessionId || isAccessKeySessionExpired(record, now)) {
-      return { ok: true, action: 'create', requestedSessionId };
-    }
-    if (requestedSessionId && constantTimeEqual(requestedSessionId, activeSessionId)) {
-      const activeClientId = String(record.sessionClientId || '').trim();
-      if (!requestedClientId) {
-        return {
-          ok: false, error: 'Access key session requires client identity',
-          statusCode: 409, sessionClientId: activeClientId,
-          sessionExpiresAt: record.sessionExpiresAt || '',
-        };
-      }
-      if (activeClientId && requestedClientId !== activeClientId) {
-        return {
-          ok: false, error: 'Access key session belongs to another client',
-          statusCode: 409, sessionClientId: activeClientId,
-          sessionExpiresAt: record.sessionExpiresAt || '',
-        };
-      }
-      return { ok: true, action: 'refresh', requestedSessionId };
-    }
-
-    const activeClientId = String(record.sessionClientId || '').trim();
-    if (requestedClientId && activeClientId && requestedClientId === activeClientId) {
-      return { ok: true, action: 'reuse', requestedSessionId, sameClientSessionReuse: true };
-    }
-
-    const sessionStartedAt = Date.parse(record.sessionStartedAt || '');
-    const withinGrace =
-      Number.isFinite(sessionStartedAt) &&
-      now - sessionStartedAt >= 0 &&
-      now - sessionStartedAt <= ACCESS_KEY_BINDING_GRACE_MS;
-    if (!requestedSessionId && requestedClientId && activeClientId &&
-        requestedClientId === activeClientId && withinGrace) {
-      return { ok: true, action: 'reuse', requestedSessionId, sameClientGrace: true };
-    }
-
-    return {
-      ok: false, error: 'Access key is already active on another device',
-      statusCode: 409, sessionClientId: record.sessionClientId || '',
-      sessionExpiresAt: record.sessionExpiresAt || '',
-    };
-  }
-
-  /** Refresh or create a session for a record. */
-  refreshSession(
-    record: AccessKeyRecord,
-    payload: any,
-    now = Date.now(),
-    options: { create?: boolean; rotate?: boolean } = {},
-  ): string {
-    const ttlMs = accessKeySessionTtlMs(record);
-    const clientId = String(payload?.clientId || payload?.client || '').trim();
-    const hasLiveSession =
-      AccessKeyStore.normalizeSessionId(record.activeSessionId) &&
-      !isAccessKeySessionExpired(record, now);
-    const shouldCreate = Boolean(options.create) || !hasLiveSession;
-    const shouldRotate = Boolean(options.rotate);
-
-    if (shouldCreate || shouldRotate) {
-      record.activeSessionId = AccessKeyStore.makeSessionId();
-      record.sessionStartedAt = new Date(now).toISOString();
-      record.sessionClientId = clientId;
-    } else {
-      record.activeSessionId =
-        AccessKeyStore.normalizeSessionId(record.activeSessionId) || AccessKeyStore.makeSessionId();
-      if (!record.sessionClientId && clientId) record.sessionClientId = clientId;
-      record.sessionStartedAt = record.sessionStartedAt || new Date(now).toISOString();
-    }
-    record.sessionLastSeenAt = new Date(now).toISOString();
-    record.sessionExpiresAt = new Date(now + ttlMs).toISOString();
-    record.sessionTtlMs = ttlMs;
-    this.markDirty();
-    return record.activeSessionId!;
-  }
+  // ── Public status ────────────────────────────────────────────────────────
+  // The per-card single-session machinery (validateSession/refreshSession) was
+  // removed with the card-string runtime credential: session-JWT leases govern
+  // multi-device via Device rows + Subscription.deviceLimit instead. The
+  // record's session* fields remain as historical data; publicStatus still
+  // surfaces hasActiveSession from them for old records.
 
   /** Get public-safe status for an access key. */
   publicStatus(record: AccessKeyRecord, alignedResetAt = 0): any {

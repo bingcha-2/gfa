@@ -1,10 +1,13 @@
 /**
- * session-resolution.spec.ts — AccessKeyStore session-JWT branch.
+ * session-resolution.spec.ts — AccessKeyStore session-JWT resolution.
  *
- * The lease hot path accepts a customer session JWT (typ "user-session") in the
- * Authorization header instead of a card key. The store routes such bearers to
- * an injected SessionResolver which maps token → ACTIVE Subscription id, then
- * validates the shadow record through the SAME pipeline as card keys.
+ * The lease hot path accepts ONLY a customer session JWT (typ "user-session")
+ * in the Authorization header — the card-string runtime credential was removed
+ * (force-upgrade). The store routes such bearers to an injected SessionResolver
+ * which maps token → ACTIVE Subscription id, then validates the shadow record
+ * through the shared validateRecord pipeline. Card strings presented as
+ * credentials are rejected outright (card VALUES still resolve via findByKey
+ * for bind-card redemption).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
@@ -53,7 +56,7 @@ describe('AccessKeyStore — session-JWT routing', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('does NOT route an opaque card-key bearer to the resolver (card path untouched)', async () => {
+  it('an opaque card-key bearer is rejected WITHOUT hitting the resolver (card credential removed)', async () => {
     const store = makeStore([{ id: 'k1', key: 'BCAI-AAAA-BBBB', status: 'active' }]);
     const resolve = vi.fn();
     store.setSessionResolver({ resolve });
@@ -61,8 +64,8 @@ describe('AccessKeyStore — session-JWT routing', () => {
     const result = await store.resolveFromRequest(sessionReq('BCAI-AAAA-BBBB'), {});
 
     expect(resolve).not.toHaveBeenCalled();
-    expect(result.record?.id).toBe('k1');
-    expect(result.viaSession).toBeUndefined();
+    expect(result.record).toBeNull();
+    expect(result.error).toBe('Invalid access key');
   });
 
   it('does NOT route a non-user-session JWT (admin token) to the resolver', async () => {
@@ -75,11 +78,11 @@ describe('AccessKeyStore — session-JWT routing', () => {
     const result = await store.resolveFromRequest(sessionReq(adminJwt), {});
 
     expect(resolve).not.toHaveBeenCalled();
-    // Falls through to the card path, where the JWT is just an invalid key.
+    // Not a user-session token → rejected as an invalid credential.
     expect(result.error).toBe('Invalid access key');
   });
 
-  it('card-key requests via x-access-key bypass the resolver entirely', async () => {
+  it('x-access-key requests are ignored entirely (no resolver, no record)', async () => {
     const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active' }]);
     const resolve = vi.fn();
     store.setSessionResolver({ resolve });
@@ -87,7 +90,8 @@ describe('AccessKeyStore — session-JWT routing', () => {
     const result = await store.resolveFromRequest({ headers: { 'x-access-key': 'secret1' } } as any, {});
 
     expect(resolve).not.toHaveBeenCalled();
-    expect(result.record?.id).toBe('k1');
+    expect(result.record).toBeNull();
+    expect(result.error).toBe('Missing access key');
   });
 
   it('returns a clean error when the resolver is unset', async () => {
@@ -177,20 +181,6 @@ describe('AccessKeyStore — session-JWT routing', () => {
     expect(result.sessionError).toEqual({ statusCode: 403, code: 'SUBSCRIPTION_EXPIRED' });
   });
 
-  it('the CARD path keeps its generic expiry error — no sessionError machine code', async () => {
-    const store = makeStore([{
-      id: 'k1', key: 'secret1', status: 'active',
-      keyExpiresAt: new Date(Date.now() - 1000).toISOString(),
-    }]);
-    store.setSessionResolver({ resolve: vi.fn() });
-
-    const result = await store.resolveFromRequest({ headers: { 'x-access-key': 'secret1' } } as any, {});
-
-    expect(result.record).toBeNull();
-    expect(result.error).toBe('Access key expired');
-    expect(result.viaSession).toBeUndefined();
-    expect(result.sessionError).toBeUndefined();
-  });
 });
 
 describe('first-use expiry resync hook (onShadowRecordFirstUse)', () => {
@@ -293,12 +283,13 @@ describe('keyExpiresAt — absolute expiry for shadow records', () => {
     expect(status.remainingMs).toBeGreaterThan(0);
   });
 
-  it('card-path expiry semantics are unchanged (firstUsedAt + durationMs)', async () => {
+  it('relative expiry semantics (firstUsedAt + durationMs) hold on the session path', async () => {
     const store = makeStore([{
       id: 'k1', key: 'secret1', status: 'active',
       firstUsedAt: '2020-01-01T00:00:00.000Z', durationMs: 1000,
     }]);
-    const result = await store.resolveFromRequest({ headers: { 'x-access-key': 'secret1' } } as any, {});
+    store.setSessionResolver({ resolve: vi.fn().mockResolvedValue({ ok: true, cardId: 'k1' }) });
+    const result = await store.resolveFromRequest(sessionReq(fakeSessionJwt()), {});
     expect(result.record).toBeNull();
     expect(result.error).toBe('Access key expired');
   });

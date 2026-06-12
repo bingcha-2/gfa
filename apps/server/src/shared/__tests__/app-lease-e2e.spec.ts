@@ -5,17 +5,17 @@
  * Prisma test db.  Covers:
  *
  *  (a) Session lease across all three providers  — proven for antigravity via a
- *      real TokenServerService call; codex and anthropic aliases are verified
- *      via Reflect.getMetadata (alias path registered correctly) + a
+ *      real TokenServerService call; codex and anthropic paths are verified
+ *      via Reflect.getMetadata (canonical app/lease/* path) + a
  *      session-resolver-resolves check against each provider's service.
  *  (b) report-result attribution to subscription.id (accessKeyId == sub.id).
- *  (c) Multi-device / no single-session lock — two clientIds lease concurrently;
- *      card regression: same card + second clientId → 409.
- *  (d) Card regression — legacy card key through the dual-registered engine.
+ *  (c) Multi-device / no single-session lock — two clientIds lease concurrently.
+ *  (d) Card-string credentials no longer lease (removed with the
+ *      force-upgrade); card redemption lives at /api/account/bind-card.
  *  (e) Session rejection cases: revoked device, expired sub, web token.
  *
- * Controller alias proof (metadata-level) lives in
- * src/__tests__/surface-routes.spec.ts alongside the other dual-path assertions.
+ * Controller path proof (metadata-level) lives in
+ * src/shared/__tests__/surface-routes.spec.ts alongside the other assertions.
  */
 
 import "reflect-metadata";
@@ -289,31 +289,9 @@ describe("M7 — antigravity session lease (full engine path)", () => {
     expect(record.activeSessionId).toBeUndefined();
   });
 
-  // ── (c) Card regression: same card + second clientId → 409 ─────────────
+  // ── (d) Card-string credentials no longer lease (force-upgrade) ─────────
 
-  it("(c-card-regression) second clientId on a CARD key still gets 409", async () => {
-    writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "secret-card", status: "active", durationMs: 60_000, windowLimit: 100 }],
-    });
-    // No session resolver needed
-    const service = makeService(null);
-
-    await service.leaseToken(
-      { headers: { "x-token-server-secret": "secret-card" } },
-      { clientId: "client-A", modelKey: "gemini-2.5-pro", bodyBytes: 100 },
-    );
-
-    await expect(
-      service.leaseToken(
-        { headers: { "x-token-server-secret": "secret-card" } },
-        { clientId: "client-B", modelKey: "gemini-2.5-pro", bodyBytes: 100 },
-      ),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  // ── (d) Card path regression: legacy card key through dual-registered engine
-
-  it("(d) card-key lease still works through the same (now alias-registered) engine", async () => {
+  it("(d) a card key presented as a runtime credential is rejected — it no longer leases", async () => {
     writeJson(accessKeysFilePath, {
       keys: [{
         id: "card-legacy",
@@ -325,16 +303,27 @@ describe("M7 — antigravity session lease (full engine path)", () => {
     });
     const service = makeService(null);
 
-    const result = await service.leaseToken(
-      { headers: { "x-token-server-secret": "legacy-secret" } },
-      { clientId: "client-A", modelKey: "gemini-2.5-pro", bodyBytes: 500 },
-    );
+    // Legacy header credential → ignored entirely.
+    await expect(
+      service.leaseToken(
+        { headers: { "x-token-server-secret": "legacy-secret" } },
+        { clientId: "client-A", modelKey: "gemini-2.5-pro", bodyBytes: 500 },
+      ),
+    ).rejects.toMatchObject({ statusCode: 401 });
 
-    expect(result.ok).toBe(true);
-    expect(result.accessToken).toBe("upstream-access-token");
-    // Card path: session lock was minted
-    const record = (service as any).accessKeyStore.findById("card-legacy");
-    expect(record.activeSessionId).toBeTruthy();
+    // Card value as Bearer → rejected as an invalid credential.
+    await expect(
+      service.leaseToken(
+        { headers: { authorization: "Bearer legacy-secret" } },
+        { clientId: "client-A", modelKey: "gemini-2.5-pro", bodyBytes: 500 },
+      ),
+    ).rejects.toMatchObject({ statusCode: 401 });
+
+    // The record itself is untouched and still REDEEMABLE: findByKey (the
+    // bind-card lookup, see card-migration.service) keeps resolving the value.
+    const record = (service as any).accessKeyStore.findByKey("legacy-secret");
+    expect(record?.id).toBe("card-legacy");
+    expect(record.activeSessionId).toBeUndefined();
   });
 
   // ── (e) Rejection cases on the session path ─────────────────────────────

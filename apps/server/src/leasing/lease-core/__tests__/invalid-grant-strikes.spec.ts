@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 import {
   TOKEN_DEATH_STRIKE_THRESHOLD,
   TOKEN_DEATH_FIRST_COOLDOWN_MS,
@@ -46,7 +47,7 @@ function makeProvider(
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 const PAYLOAD = { clientId: "c1", modelKey: "gpt-5-codex" };
 const INVALID_GRANT = '400 {"error":"invalid_grant","error_description":"refresh token revoked"}';
 
@@ -71,7 +72,7 @@ afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function makeService(refresh: (a: any) => Promise<string>) {
   const provider = makeProvider(accountsFilePath, refresh);
-  const svc = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "", now: () => clock });
+  const svc = withSessionResolver(new LeaseService(provider, { accessKeysFilePath, minClientVersion: "", now: () => clock }));
   return { svc, refresh: provider.refreshToken as unknown as Mock };
 }
 

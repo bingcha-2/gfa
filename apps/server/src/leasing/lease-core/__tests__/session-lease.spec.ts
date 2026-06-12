@@ -111,16 +111,22 @@ describe("LeaseService — session-JWT leases", () => {
     expect(second.accessKeySessionId).toBe("sess:client-B");
   });
 
-  it("card path regression: second clientId still 409s on a card-key lease", async () => {
+  it("card-string credentials no longer lease: x-access-key header is ignored (401)", async () => {
     const { service } = makeService(null);
     const cardReq = { headers: { "x-access-key": "sub_backing_value" } };
 
-    const first = await service.leaseToken(cardReq, { clientId: "client-A", modelKey: "gpt-5-codex" });
-    expect(first.ok).toBe(true);
+    await expect(
+      service.leaseToken(cardReq, { clientId: "client-A", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({ statusCode: 401, message: "Missing access key" });
+  });
+
+  it("card-string credentials no longer lease: a card-value Bearer is rejected (401)", async () => {
+    const { service } = makeService(null);
+    const cardBearer = { headers: { authorization: "Bearer sub_backing_value" } };
 
     await expect(
-      service.leaseToken(cardReq, { clientId: "client-B", modelKey: "gpt-5-codex" }),
-    ).rejects.toMatchObject({ statusCode: 409 });
+      service.leaseToken(cardBearer, { clientId: "client-A", modelKey: "gpt-5-codex" }),
+    ).rejects.toMatchObject({ statusCode: 401, message: "Invalid access key" });
   });
 
   it.each([
@@ -182,20 +188,23 @@ describe("LeaseService — session-JWT leases", () => {
     });
   });
 
-  it("card path with an expired key keeps the generic 401 (no machine code)", async () => {
+  it("relative expiry (firstUsedAt+durationMs) on the session path → 403 SUBSCRIPTION_EXPIRED", async () => {
     writeJson(accessKeysFilePath, {
       keys: [{
-        id: "card-1", key: "card_secret", status: "active",
+        id: "sub-1", key: "sub_backing_value", status: "active",
         firstUsedAt: "2020-01-01T00:00:00.000Z", durationMs: 1000,
       }],
     });
-    const { service } = makeService(null);
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
 
     await expect(
-      service.leaseToken({ headers: { "x-access-key": "card_secret" } }, { clientId: "c1", modelKey: "gpt-5-codex" }),
+      service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
     ).rejects.toMatchObject({
-      statusCode: 401,
+      statusCode: 403,
       message: "Access key expired",
+      body: { ok: false, error: "SUBSCRIPTION_EXPIRED" },
     });
   });
 
@@ -240,26 +249,27 @@ describe("LeaseService — session-JWT leases", () => {
     expect(lease.bound).toBe(true);
   });
 
-  it("legacy POOL card (no requiresBinding, no bindings) still leases from the dynamic pool — regression guard", async () => {
-    const { service } = makeService(null);
+  it("legacy POOL record (no requiresBinding, no bindings) still leases from the dynamic pool — regression guard", async () => {
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
 
-    const lease = await service.leaseToken(
-      { headers: { "x-access-key": "sub_backing_value" } },
-      { clientId: "c1", modelKey: "gpt-5-codex" },
-    );
+    const lease = await service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
     expect(lease.ok).toBe(true);
     expect(lease.bound).toBe(false);
     expect(refreshToken).toHaveBeenCalled(); // pool lease really happened
   });
 
-  it("card bound for a DIFFERENT pool only keeps the unchanged wrong-product 409", async () => {
+  it("record bound for a DIFFERENT pool only keeps the unchanged wrong-product 409", async () => {
     writeJson(accessKeysFilePath, {
-      keys: [{ id: "card-1", key: "card_secret", status: "active", bindings: { otherpool: 3 } }],
+      keys: [{ id: "sub-1", key: "sub_backing_value", status: "active", bindings: { otherpool: 3 } }],
     });
-    const { service } = makeService(null);
+    const { service } = makeService({
+      resolve: vi.fn().mockResolvedValue({ ok: true, cardId: "sub-1" }),
+    });
 
     await expect(
-      service.leaseToken({ headers: { "x-access-key": "card_secret" } }, { clientId: "c1", modelKey: "gpt-5-codex" }),
+      service.leaseToken(SESSION_REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
     ).rejects.toMatchObject({
       statusCode: 409,
       message: "此卡未开通该服务，请联系客服",

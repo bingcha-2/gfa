@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 import {
   TOKEN_DEATH_STRIKE_THRESHOLD,
   TOKEN_DEATH_FIRST_COOLDOWN_MS,
@@ -37,7 +38,7 @@ function makeProvider(
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 
 /**
  * A dead account (invalid_grant / repeated refresh failure) must have its
@@ -70,7 +71,7 @@ describe("dead account status persistence", () => {
     const provider = makeProvider(accountsFilePath, async () => {
       throw new Error('400 {"error":"invalid_grant","error_description":"refresh token revoked"}');
     });
-    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "", now: () => clock });
+    const service = withSessionResolver(new LeaseService(provider, { accessKeysFilePath, minClientVersion: "", now: () => clock }));
 
     // A single invalid_grant now only soft-cools (not persisted) — a transient blip
     // shouldn't bench a live account for 24h. Only the N-th consecutive strike, with
@@ -107,7 +108,7 @@ describe("dead account status persistence", () => {
     });
     // Refresh WOULD succeed — proving the skip is driven by persisted status, not a live failure.
     const provider = makeProvider(accountsFilePath, async () => "access-token");
-    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" });
+    const service = withSessionResolver(new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" }));
     await service.onModuleInit();
 
     await expect(
@@ -131,7 +132,7 @@ describe("dead account status persistence", () => {
       ],
     });
     const provider = makeProvider(accountsFilePath, async () => "access-token"); // re-auth fixed it
-    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" });
+    const service = withSessionResolver(new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" }));
     await service.onModuleInit();
 
     const res = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });

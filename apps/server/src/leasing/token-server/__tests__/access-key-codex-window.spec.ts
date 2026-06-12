@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { AccessKeyStore } from "../access-key-store";
+import { cardIdSessionResolver, sessionReqFor } from "./session-test-util";
 import { CODEX_BILLING } from "../../remote-codex/codex.provider";
 
 let tmpDir: string;
@@ -30,7 +31,9 @@ describe("AccessKeyStore — codex billing bucket", () => {
       keys: [{ id: "c", key: "cs", status: "active", provider: "codex", durationMs: 365 * DAY, bucketLimits: { "codex-gpt": codexLimit } }],
       updatedAt: "",
     }));
-    return new AccessKeyStore(accessKeysPath, CODEX_BILLING);
+    const store = new AccessKeyStore(accessKeysPath, CODEX_BILLING);
+    store.setSessionResolver(cardIdSessionResolver);
+    return store;
   }
 
   it("bills codex usage under the composite codex-gpt bucket, not claude", async () => {
@@ -50,7 +53,7 @@ describe("AccessKeyStore — codex billing bucket", () => {
     store.recordUsage("c", 200, { totalTokens: 200 }, "gpt-5-codex", "r1", "codex");
 
     const res = await store.resolveFromRequest(
-      { headers: { "x-access-key": "cs" } } as any,
+      sessionReqFor("c"),
       {},
       { enforceLimit: true, modelKey: "gpt-5-codex", product: "codex" },
     );

@@ -5,6 +5,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RemoteCodexService } from "../service/remote-codex.service";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -54,14 +55,14 @@ describe("RemoteCodexService", () => {
   });
 
   function makeService() {
-    return new RemoteCodexService({
+    return withSessionResolver(new RemoteCodexService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => currentTime,
       randomId: () => "codex-lease-fixed",
       minClientVersion: "",
-    });
+    }));
   }
 
   it("returns independent codex account and card status", () => {
@@ -77,7 +78,7 @@ describe("RemoteCodexService", () => {
     expect(status.models.some((m: any) => m.key === "gpt-5-codex")).toBe(true);
   });
 
-  it("rejects lease-token when the codex card is invalid", async () => {
+  it("rejects lease-token when the codex card header credential is presented (removed)", async () => {
     const service = makeService();
 
     await expect(
@@ -85,7 +86,7 @@ describe("RemoteCodexService", () => {
         { headers: { "x-token-server-secret": "bad-card" } },
         { clientId: "client-a", modelKey: "gpt-5-codex" },
       ),
-    ).rejects.toMatchObject({ statusCode: 401, message: "Invalid access key" });
+    ).rejects.toMatchObject({ statusCode: 401, message: "Missing access key" });
     expect(tokenProvider).not.toHaveBeenCalled();
   });
 
@@ -94,7 +95,7 @@ describe("RemoteCodexService", () => {
     const service = makeService();
 
     const result = await service.leaseToken(
-      { headers: { "x-token-server-secret": "codex-secret-card" } },
+      sessionReqFor("codex-card-1"),
       { clientId: "client-a", modelKey: "gpt-5-codex", bodyBytes: 2500 },
     );
 
@@ -113,12 +114,12 @@ describe("RemoteCodexService", () => {
     tokenProvider.mockResolvedValue("codex-access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "codex-secret-card" } },
+      sessionReqFor("codex-card-1"),
       { clientId: "client-a", modelKey: "gpt-5-codex" },
     );
 
     const report = await service.reportResult(
-      { headers: { "x-token-server-secret": "codex-secret-card" } },
+      sessionReqFor("codex-card-1"),
       {
         leaseId: "codex-lease-fixed",
         status: 200,
@@ -141,19 +142,19 @@ describe("RemoteCodexService", () => {
     tokenProvider.mockResolvedValue("codex-access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "codex-secret-card" } },
+      sessionReqFor("codex-card-1"),
       { clientId: "client-a", modelKey: "gpt-5-codex" },
     );
 
     await service.reportResult(
-      { headers: { "x-token-server-secret": "codex-secret-card" } },
+      sessionReqFor("codex-card-1"),
       { leaseId: "codex-lease-fixed", status: 429, modelKey: "gpt-5-codex" },
     );
 
     tokenProvider.mockClear();
     await expect(
       service.leaseToken(
-        { headers: { "x-token-server-secret": "codex-secret-card" } },
+        sessionReqFor("codex-card-1"),
         { clientId: "client-a", modelKey: "gpt-5-codex" },
       ),
     ).rejects.toMatchObject({ statusCode: 503, message: "No available Codex accounts" });
@@ -170,7 +171,7 @@ describe("RemoteCodexService — inherited multi-account behavior", () => {
   let currentTime: number;
   let leaseCounter: number;
 
-  const REQ = { headers: { "x-token-server-secret": "codex-secret-card" } };
+  const REQ = sessionReqFor("codex-card-1");
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-remote-codex-multi-"));
@@ -195,10 +196,10 @@ describe("RemoteCodexService — inherited multi-account behavior", () => {
   afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
   function makeService() {
-    return new RemoteCodexService({
+    return withSessionResolver(new RemoteCodexService({
       accountsFilePath, accessKeysFilePath, tokenProvider,
       now: () => currentTime, randomId: () => `codex-lease-${++leaseCounter}`, minClientVersion: "",
-    });
+    }));
   }
 
   it("retries the next Codex account when the first token refresh fails", async () => {

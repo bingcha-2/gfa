@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -64,10 +65,10 @@ describe("flushAccounts merge-on-external-change", () => {
   });
 
   function makeService() {
-    return new LeaseService(makeProvider(accountsFilePath), {
+    return withSessionResolver(new LeaseService(makeProvider(accountsFilePath), {
       accessKeysFilePath,
       minClientVersion: "",
-    });
+    }));
   }
 
   it("keeps the in-memory rotated refreshToken AND the external field after flush", () => {
@@ -132,10 +133,10 @@ describe("leaseToken persists a rotated refreshToken immediately", () => {
       account.accessTokenExpiresAt = Date.now() + 60 * 60 * 1000;
       return "access-token";
     });
-    const service = new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" });
+    const service = withSessionResolver(new LeaseService(provider, { accessKeysFilePath, minClientVersion: "" }));
 
     const res = await service.leaseToken(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       { clientId: "c1", modelKey: "gpt-5-codex" },
     );
     expect(res.ok).toBe(true);

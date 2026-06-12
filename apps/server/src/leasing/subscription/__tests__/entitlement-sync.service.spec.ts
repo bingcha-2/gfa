@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EntitlementSyncService } from "../entitlement-sync.service";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
+import { cardIdSessionResolver, sessionReqFor } from "../../token-server/__tests__/session-test-util";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -69,6 +70,7 @@ describe("EntitlementSyncService", () => {
 
     rosetta = new RosettaService({ dataDir: tmpDir });
     store = new AccessKeyStore(accessKeysPath);
+    store.setSessionResolver(cardIdSessionResolver);
     reloads = {
       tokenServer: { reloadAccessKeys: vi.fn(() => store.reload()) },
       remoteCodex: { reloadAccessKeys: vi.fn() },
@@ -218,10 +220,8 @@ describe("EntitlementSyncService", () => {
     expect(record.key).toBe(sub.backingKeyValue);
     expect(reloads.tokenServer.reloadAccessKeys).toHaveBeenCalledTimes(1);
 
-    // An expired shadow record no longer resolves.
-    const resolved = await store.resolveFromRequest(
-      { headers: { "x-access-key": sub.backingKeyValue } } as any, {},
-    );
+    // An expired shadow record no longer resolves (session path).
+    const resolved = await store.resolveFromRequest(sessionReqFor(sub.id), {});
     expect(resolved.record).toBeNull();
   });
 
@@ -275,9 +275,7 @@ describe("EntitlementSyncService", () => {
 
     // The expired record whose seat was reassigned can NEVER serve again
     // (status gates the resolve path).
-    const resolved = await store.resolveFromRequest(
-      { headers: { "x-access-key": subA.backingKeyValue } } as any, {},
-    );
+    const resolved = await store.resolveFromRequest(sessionReqFor(subA.id), {});
     expect(resolved.record).toBeNull();
   });
 

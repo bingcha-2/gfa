@@ -136,7 +136,7 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(afterRest).toEqual(beforeRest);
   });
 
-  it("old key string no longer resolves; the new backing key does (byKey re-index)", async () => {
+  it("old key string no longer finds the record; the new backing key does (byKey re-index)", async () => {
     writeKeys([usedCard()]);
     store.reload();
     const customer = await createTestCustomer();
@@ -144,12 +144,17 @@ describe("CardMigrationService.bindCard — migration", () => {
     await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
     const backing = readKeys()[0].key;
 
+    // findByKey is the bind-card redemption lookup — it must keep working
+    // (the card-string RUNTIME credential is gone; key VALUES still index).
     expect(store.findByKey("BCAI-AAAA-BBBB")).toBeNull();
     expect(store.findByKey(backing)?.id).toBe("card-legacy-1");
+    // Neither key string is a runtime lease credential anymore.
     const oldAuth = await store.resolveFromRequest({ headers: { "x-access-key": "BCAI-AAAA-BBBB" } } as any, {});
-    expect(oldAuth.error).toBe("Invalid access key");
-    const newAuth = await store.resolveFromRequest({ headers: { "x-access-key": backing } } as any, {});
-    expect(newAuth.record?.id).toBe("card-legacy-1");
+    expect(oldAuth.record).toBeNull();
+    expect(oldAuth.error).toBe("Missing access key");
+    const newAuth = await store.resolveFromRequest({ headers: { authorization: `Bearer ${backing}` } } as any, {});
+    expect(newAuth.record).toBeNull();
+    expect(newAuth.error).toBe("Invalid access key");
   });
 
   it("expiresAt == keyExpiresAt(record) for a used card; null for a never-used card", async () => {
@@ -454,10 +459,9 @@ describe("CardMigrationService.bindCard — idempotency and errors", () => {
     // …WITHOUT losing the usage the stale flush carried (42 base + 1 interim).
     expect(after.totalRequests).toBe(43);
 
-    // Old key is dead in the reloaded index; the backing key resolves.
+    // Old key is dead in the reloaded index; the backing key still indexes
+    // (bind-card redemption path — findByKey).
     expect(store.findByKey("BCAI-AAAA-BBBB")).toBeNull();
-    const oldAuth = await store.resolveFromRequest({ headers: { "x-access-key": "BCAI-AAAA-BBBB" } } as any, {});
-    expect(oldAuth.error).toBe("Invalid access key");
     expect(store.findByKey(after.key)?.id).toBe("card-legacy-1");
   });
 

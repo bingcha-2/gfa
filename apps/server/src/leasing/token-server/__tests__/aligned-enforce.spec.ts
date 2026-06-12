@@ -4,6 +4,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AccessKeyStore } from "../access-key-store";
+import { cardIdSessionResolver, sessionReqFor } from "./session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -30,10 +31,12 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
 
   function makeStore(card: any) {
     writeJson(filePath, { keys: [card] });
-    return new AccessKeyStore(filePath);
+    const store = new AccessKeyStore(filePath);
+    store.setSessionResolver(cardIdSessionResolver);
+    return store;
   }
 
-  const REQ = { headers: { "x-access-key": "secret1" } } as any;
+  const REQ = sessionReqFor("k1");
 
   it("counts usage inside the current aligned window → over limit", async () => {
     const now = Date.now();

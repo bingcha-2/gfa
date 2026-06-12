@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 import {
   TOKEN_DEATH_STRIKE_THRESHOLD,
   TOKEN_DEATH_FIRST_COOLDOWN_MS,
@@ -46,7 +47,7 @@ function makeProvider(accountsFilePath: string, refresh: (a: any) => Promise<str
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 const MODEL = "gpt-5-codex";
 const MIN = 60 * 1000;
 
@@ -70,11 +71,11 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function makeService(refresh: (a: any) => Promise<string> = async () => "access-token-ok") {
-  const svc = new LeaseService(makeProvider(accountsFilePath, refresh), {
+  const svc = withSessionResolver(new LeaseService(makeProvider(accountsFilePath, refresh), {
     accessKeysFilePath,
     minClientVersion: "",
     now: () => clock,
-  });
+  }));
   (svc as any).provider.refreshToken = vi.fn(refresh);
   return svc;
 }

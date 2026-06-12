@@ -4,6 +4,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TokenServerService } from "../token-server.service";
+import { sessionReqFor, withSessionResolver } from "./session-test-util";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -59,14 +60,14 @@ describe("TokenServerService", () => {
   });
 
   function makeService() {
-    return new TokenServerService({
+    return withSessionResolver(new TokenServerService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => Date.now(),
       randomId: () => "lease-fixed",
       minClientVersion: "",
-    });
+    }));
   }
 
   it("onModuleInit replays per-card windows from the CardTokenUsage log (restart-safe)", async () => {
@@ -79,11 +80,11 @@ describe("TokenServerService", () => {
         rawTotalTokens: 120, totalTokens: 120, timestamp: new Date(now - 1000),
       },
     ]);
-    const service = new TokenServerService({
+    const service = withSessionResolver(new TokenServerService({
       accountsFilePath, accessKeysFilePath, tokenProvider,
       now: () => now, randomId: () => "lease-fixed", minClientVersion: "",
       prisma: { cardTokenUsage: { findMany } },
-    });
+    }));
 
     const store = (service as any).accessKeyStore;
     // Cold start: window empty before replay.
@@ -112,12 +113,24 @@ describe("TokenServerService", () => {
     expect(status.quota.accounts[0].modelQuotaRefreshedAt).toBe(1779800000000);
   });
 
-  it("rejects lease-token when the access key is invalid", async () => {
+  it("rejects lease-token when the credential is a legacy card header (removed)", async () => {
     const service = makeService();
 
     await expect(
       service.leaseToken(
         { headers: { "x-token-server-secret": "bad-card" } },
+        { clientId: "client-a", modelKey: "gemini" },
+      ),
+    ).rejects.toMatchObject({ statusCode: 401, message: "Missing access key" });
+    expect(tokenProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects lease-token when the Bearer is a card value, not a session JWT", async () => {
+    const service = makeService();
+
+    await expect(
+      service.leaseToken(
+        { headers: { authorization: "Bearer secret-card" } },
         { clientId: "client-a", modelKey: "gemini" },
       ),
     ).rejects.toMatchObject({ statusCode: 401, message: "Invalid access key" });
@@ -129,7 +142,7 @@ describe("TokenServerService", () => {
     const service = makeService();
 
     const result = await service.leaseToken(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       { clientId: "client-a", modelKey: "gemini", bodyBytes: 1000 },
     );
 
@@ -149,12 +162,12 @@ describe("TokenServerService", () => {
     tokenProvider.mockResolvedValue("access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       { clientId: "client-a", modelKey: "gemini", bodyBytes: 1000 },
     );
 
     const report = await service.reportResult(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       {
         leaseId: "lease-fixed",
         status: 200,
@@ -180,12 +193,12 @@ describe("TokenServerService", () => {
     tokenProvider.mockResolvedValue("access-token-alpha");
     const service = makeService();
     await service.leaseToken(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       { clientId: "client-a", modelKey: "gemini", bodyBytes: 500 },
     );
 
     await service.reportResult(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       {
         leaseId: "lease-fixed",
         status: 200,
@@ -224,7 +237,7 @@ describe("TokenServerService", () => {
     expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
   });
 
-  it("activates a Wails accountCard and binds it to the device session", async () => {
+  it("api/activate fails closed: card activation was removed with the force-upgrade", async () => {
     const service = makeService();
 
     const result = await service.activateAccessKey(
@@ -232,14 +245,14 @@ describe("TokenServerService", () => {
       { accountCard: "secret-card", deviceId: "device-a" },
     );
 
-    expect(result.success).toBe(true);
-    expect(result.code).toBe("OK");
-    expect(result.data.accountCard.expiresAt).toBeTruthy();
-    expect(result.data.accessKeyStatus.hasActiveSession).toBe(true);
+    // Same shape/code the (non-blocking) client already tolerates; the record
+    // is untouched — redemption happens via /api/account/bind-card instead.
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("ACCOUNT_CARD_NOT_FOUND");
 
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].firstUsedAt).toBeTruthy();
-    expect(stored.keys[0].sessionClientId).toBe("device-a");
+    expect(stored.keys[0].firstUsedAt).toBeUndefined();
+    expect(stored.keys[0].sessionClientId).toBeUndefined();
   });
 
   it("rejects activation when accountCard is missing", async () => {
@@ -257,7 +270,7 @@ describe("TokenServerService", () => {
     const service = makeService();
 
     const result = await service.shadowReport(
-      { headers: { "x-token-server-secret": "secret-card" } },
+      sessionReqFor("card-1"),
       { lid: "lease-fixed", it: 10, ot: 5, rt: 15 },
     );
 
@@ -277,7 +290,7 @@ describe("TokenServerService — account cooling and retry", () => {
   let currentTime: number;
   let leaseCounter: number;
 
-  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+  const REQ = sessionReqFor("card-1");
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-token-cool-"));
@@ -310,14 +323,14 @@ describe("TokenServerService — account cooling and retry", () => {
   });
 
   function makeService() {
-    return new TokenServerService({
+    return withSessionResolver(new TokenServerService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
       minClientVersion: "",
-    });
+    }));
   }
 
   function leasePayload(modelKey = "claude-opus-4-6-thinking") {
@@ -1165,7 +1178,7 @@ describe("TokenServerService — accountQuota in report-result", () => {
   const tokenProvider = vi.fn();
   let leaseCounter: number;
 
-  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+  const REQ = sessionReqFor("card-1");
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-quota-sync-"));
@@ -1195,14 +1208,14 @@ describe("TokenServerService — accountQuota in report-result", () => {
   });
 
   function makeService() {
-    return new TokenServerService({
+    return withSessionResolver(new TokenServerService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => Date.now(),
       randomId: () => `lease-${++leaseCounter}`,
       minClientVersion: "",
-    });
+    }));
   }
 
   it("report-result with accountQuota updates planType and modelQuotaFractions", async () => {
@@ -1243,11 +1256,11 @@ describe("TokenServerService — accountQuota in report-result", () => {
   it("report-result with accountQuota records per-model water-level snapshots", async () => {
     tokenProvider.mockResolvedValue("access-token-ok");
     const recorded: any[] = [];
-    const service = new TokenServerService({
+    const service = withSessionResolver(new TokenServerService({
       accountsFilePath, accessKeysFilePath, tokenProvider,
       now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "",
       accountQuotaSnapshotTracker: { record: (i: any) => recorded.push(i) },
-    });
+    }));
 
     const result = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gemini", bodyBytes: 100 });
     await service.reportResult(REQ, {
@@ -1298,7 +1311,7 @@ describe("TokenServerService — quota-priority account selection", () => {
   let currentTime: number;
   let leaseCounter: number;
 
-  const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+  const REQ = sessionReqFor("card-1");
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-quota-prio-"));
@@ -1324,14 +1337,14 @@ describe("TokenServerService — quota-priority account selection", () => {
   });
 
   function makeService() {
-    return new TokenServerService({
+    return withSessionResolver(new TokenServerService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
       minClientVersion: "",
-    });
+    }));
   }
 
   it("prefers account with remaining 5h quota over account with zero quota", async () => {
@@ -1494,9 +1507,7 @@ describe("TokenServerService — session and key lifecycle", () => {
   let currentTime: number;
   let leaseCounter: number;
 
-  const REQ = (key = "secret-card") => ({
-    headers: { "x-token-server-secret": key },
-  });
+  const REQ = () => sessionReqFor("card-1");
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-session-"));
@@ -1528,33 +1539,32 @@ describe("TokenServerService — session and key lifecycle", () => {
   });
 
   function makeService() {
-    return new TokenServerService({
+    return withSessionResolver(new TokenServerService({
       accountsFilePath,
       accessKeysFilePath,
       tokenProvider,
       now: () => currentTime,
       randomId: () => `lease-${++leaseCounter}`,
       minClientVersion: "",
-    });
+    }));
   }
 
-  it("rejects lease-token from different clientId (session conflict)", async () => {
+  it("allows a second clientId to lease concurrently (no per-card session lock for sessions)", async () => {
     const service = makeService();
 
-    // First lease establishes session
-    await service.leaseToken(REQ(), {
+    const first = await service.leaseToken(REQ(), {
       clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
     });
+    const second = await service.leaseToken(REQ(), {
+      clientId: "device-B", modelKey: "gemini", bodyBytes: 100,
+    });
 
-    // Second lease from different device should fail
-    try {
-      await service.leaseToken(REQ(), {
-        clientId: "device-B", modelKey: "gemini", bodyBytes: 100,
-      });
-      expect.unreachable("should have thrown");
-    } catch (err: any) {
-      expect(err.status || err.statusCode || 409).toBe(409);
-    }
+    // Multi-device is governed by Device rows + Subscription.deviceLimit at
+    // login — the lease engine no longer 409s a second client.
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.accessKeySessionId).toBe("sess:device-A");
+    expect(second.accessKeySessionId).toBe("sess:device-B");
   });
 
   it("allows same clientId to reconnect (session reuse)", async () => {
@@ -1576,7 +1586,7 @@ describe("TokenServerService — session and key lifecycle", () => {
     expect(second.ok).toBe(true);
   });
 
-  it("rejects lease-token when key is expired", async () => {
+  it("rejects lease-token when the record is expired (403 SUBSCRIPTION_EXPIRED on the session path)", async () => {
     // Create key with very short duration, already expired
     writeJson(accessKeysFilePath, {
       keys: [{
@@ -1589,17 +1599,17 @@ describe("TokenServerService — session and key lifecycle", () => {
     });
     const service = makeService();
 
-    try {
-      await service.leaseToken(REQ(), {
+    await expect(
+      service.leaseToken(REQ(), {
         clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
-      });
-      expect.unreachable("should have thrown");
-    } catch (err: any) {
-      expect(err.status || err.statusCode || 401).toBe(401);
-    }
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      body: { ok: false, error: "SUBSCRIPTION_EXPIRED" },
+    });
   });
 
-  it("rejects lease-token when key is disabled", async () => {
+  it("rejects lease-token when the record is disabled (403 SUBSCRIPTION_EXPIRED on the session path)", async () => {
     writeJson(accessKeysFilePath, {
       keys: [{
         id: "card-1",
@@ -1609,14 +1619,14 @@ describe("TokenServerService — session and key lifecycle", () => {
     });
     const service = makeService();
 
-    try {
-      await service.leaseToken(REQ(), {
+    await expect(
+      service.leaseToken(REQ(), {
         clientId: "device-A", modelKey: "gemini", bodyBytes: 100,
-      });
-      expect.unreachable("should have thrown");
-    } catch (err: any) {
-      expect(err.status || err.statusCode || 401).toBe(401);
-    }
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      body: { ok: false, error: "SUBSCRIPTION_EXPIRED" },
+    });
   });
 
   it("counts distinct successful reports for a cached lease", async () => {

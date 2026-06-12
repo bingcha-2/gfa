@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 复现问题 2：换号逻辑 —— 死号没被及时排除，把换号预算快速耗尽
@@ -46,7 +47,7 @@ function makeProvider(
   } as unknown as Provider<any>;
 }
 
-const REQ = { headers: { "x-token-server-secret": "secret-card" } };
+const REQ = sessionReqFor("card-1");
 
 let tempDir: string;
 let accountsFilePath: string;
@@ -76,10 +77,10 @@ describe("复现#2 换号预算被死号耗尽", () => {
     const refresh = vi.fn(async () => {
       throw new Error("503 upstream temporarily unavailable"); // 瞬时错误,非 invalid_grant
     });
-    const service = new LeaseService(makeProvider(accountsFilePath, refresh), {
+    const service = withSessionResolver(new LeaseService(makeProvider(accountsFilePath, refresh), {
       accessKeysFilePath,
       minClientVersion: "",
-    });
+    }));
     // 把 provider 上被 vi.fn 包裹的 refreshToken 也指过来统计调用次数
     (service as any).provider.refreshToken = refresh;
 
@@ -99,10 +100,10 @@ describe("复现#2 换号预算被死号耗尽", () => {
     const refresh = vi.fn(async () => {
       throw new Error("500 internal error"); // 非永久错误
     });
-    const service = new LeaseService(makeProvider(accountsFilePath, refresh), {
+    const service = withSessionResolver(new LeaseService(makeProvider(accountsFilePath, refresh), {
       accessKeysFilePath,
       minClientVersion: "",
-    });
+    }));
     (service as any).provider.refreshToken = refresh;
 
     // 连发 4 个请求
@@ -126,11 +127,11 @@ describe("复现#2 换号预算被死号耗尽", () => {
     });
     const refresh = vi.fn(async () => "access-token-ok"); // token 刷新成功(死在生成阶段)
     let clock = 1_000_000;
-    const service = new LeaseService(makeProvider(accountsFilePath, refresh), {
+    const service = withSessionResolver(new LeaseService(makeProvider(accountsFilePath, refresh), {
       accessKeysFilePath,
       minClientVersion: "",
       now: () => clock,
-    });
+    }));
     (service as any).provider.refreshToken = refresh;
 
     const l1: any = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });

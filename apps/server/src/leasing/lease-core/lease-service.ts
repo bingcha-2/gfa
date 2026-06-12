@@ -472,31 +472,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
 
     const clientId = String(payload?.clientId || payload?.client || "").trim();
-    let accessKeySessionId: string;
-    if (auth.viaSession) {
-      // Subscription session lease: multi-device is governed by Device rows +
-      // Subscription.deviceLimit (enforced at login), NOT the per-card
-      // single-session lock — so validateSession/refreshSession are skipped
-      // entirely and concurrent clients may lease the same shadow record. The
-      // lease still needs a stable non-empty session id for its bookkeeping.
-      accessKeySessionId = `sess:${clientId || "session"}`;
-    } else {
-      const sessionCheck = this.accessKeyStore.validateSession(auth.record, payload, this.now());
-      if (!sessionCheck.ok) {
-        throw this.fail(sessionCheck.statusCode || 409, sessionCheck.error || "Access key session conflict", {
-          ok: false,
-          error: sessionCheck.error,
-          sessionClientId: sessionCheck.sessionClientId,
-          sessionExpiresAt: sessionCheck.sessionExpiresAt,
-          accessKeyStatus: this.accessKeyStore.publicStatus(auth.record),
-        });
-      }
-
-      accessKeySessionId = this.accessKeyStore.refreshSession(auth.record, { clientId }, this.now(), {
-        create: sessionCheck.action === "create",
-        rotate: sessionCheck.action === "refresh",
-      });
-    }
+    // Session lease (the only runtime credential): multi-device is governed by
+    // Device rows + Subscription.deviceLimit (enforced at login), NOT a
+    // per-card single-session lock — concurrent clients may lease the same
+    // shadow record. The lease still needs a stable non-empty session id for
+    // its bookkeeping.
+    const accessKeySessionId = `sess:${clientId || "session"}`;
 
     const tokenFailedIds: number[] = [];
     let lastError: Error | null = null;
@@ -807,12 +788,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     const accountId = lease?.accountId ?? 0;
     const retryAfterMs = Number(payload?.retryAfterMs || 0);
 
-    // Session leases never touch the per-card session machinery (see leaseToken);
-    // usage attribution below still works because record.id == lease.accessKeyId
+    // Session leases have no per-card session machinery (see leaseToken);
+    // usage attribution below works because record.id == lease.accessKeyId
     // == Subscription.id.
-    if (!auth.viaSession) {
-      this.accessKeyStore.refreshSession(auth.record, { clientId: lease?.clientId }, this.now());
-    }
     if (accountId && payload?.accountQuota && typeof payload.accountQuota === "object") {
       this.applyAccountQuotaSnapshot(accountId, payload.accountQuota);
       // Fair-share: push updated quota fractions into the tracker.
@@ -1017,8 +995,19 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
   }
 
-  async activateAccessKey(req: any, payload: any) {
-    const accountCard = AccessKeyStore.extractKeyFromRequest(req, payload);
+  /**
+   * Fail-closed stub: card activation was removed with the card-string runtime
+   * credential (force-upgrade). The 9.5.0 client still POSTs api/activate
+   * non-blockingly at startup (its session JWT rides in payload.accountCard
+   * with NO Authorization header) and has always tolerated a failure here —
+   * session leases need no activation. Card redemption lives at
+   * /api/account/bind-card (card-migration.service), which converts a legacy
+   * card into a Subscription.
+   */
+  async activateAccessKey(_req: any, payload: any) {
+    const accountCard = String(
+      payload?.accountCard || payload?.accessKey || payload?.cardKey || payload?.key || "",
+    ).trim();
     const clientId = String(payload?.deviceId || payload?.clientId || payload?.client || "").trim();
 
     if (!accountCard) {
@@ -1036,49 +1025,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       };
     }
 
-    // Card-only flow: activation predates the account system and stays keyed to
-    // physical cards (session-JWT clients never call activate).
-    const auth = await this.accessKeyStore.resolveFromRequest(req, { ...payload, accessKey: accountCard }, { activate: true });
-    if (!auth.record) {
-      return {
-        success: false,
-        code: this.activationErrorCode(auth.error),
-        message: auth.error || "Account card activation failed",
-      };
-    }
-
-    const sessionPayload = { ...payload, clientId };
-    const sessionCheck = this.accessKeyStore.validateSession(auth.record, sessionPayload, this.now());
-    if (!sessionCheck.ok) {
-      return {
-        success: false,
-        code: "DEVICE_BOUND_TO_ANOTHER_CLIENT",
-        message: sessionCheck.error || "Account card is already active on another device",
-        data: {
-          sessionClientId: sessionCheck.sessionClientId,
-          sessionExpiresAt: sessionCheck.sessionExpiresAt,
-        },
-      };
-    }
-
-    this.accessKeyStore.refreshSession(auth.record, sessionPayload, this.now(), {
-      create: sessionCheck.action === "create",
-      rotate: sessionCheck.action === "refresh",
-    });
-    this.accessKeyStore.flush();
-
-    const accessKeyStatus = this.accessKeyStore.publicStatus(auth.record);
     return {
-      success: true,
-      code: "OK",
-      message: "Activated",
-      data: {
-        accountCard: {
-          id: auth.record.id,
-          expiresAt: accessKeyStatus.expiresAt || "",
-        },
-        accessKeyStatus,
-      },
+      success: false,
+      code: "ACCOUNT_CARD_NOT_FOUND",
+      message: "卡密激活已下线，请在用户中心绑定卡密后登录客户端使用",
     };
   }
 
@@ -1734,14 +1684,5 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.totalErrors++;
     this.lastError = message;
     return new this.errorClass(statusCode, message, body);
-  }
-
-  private activationErrorCode(error?: string) {
-    if (!error) return "ACCOUNT_CARD_NOT_FOUND";
-    if (error.includes("Missing")) return "ACCOUNT_CARD_REQUIRED";
-    if (error.includes("Invalid")) return "ACCOUNT_CARD_NOT_FOUND";
-    if (error.includes("disabled")) return "ACCOUNT_CARD_INACTIVE";
-    if (error.includes("expired")) return "ACCOUNT_CARD_EXPIRED";
-    return "ACCOUNT_CARD_NOT_FOUND";
   }
 }

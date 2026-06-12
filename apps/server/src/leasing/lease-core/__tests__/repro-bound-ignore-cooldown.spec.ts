@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeaseService } from "../lease-service";
 import type { Provider } from "../provider";
 import { TOKEN_DEATH_STRIKE_THRESHOLD } from "../../token-server/token-billing";
+import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
 // ════════════════════════════════════════════════════════════════════════════
 // 绑定卡忽略冷却:绑定卡只有这一个号、无号可换,429/503 这类【可恢复冷却】对它
@@ -42,8 +43,8 @@ function makeProvider(
 }
 
 // 两张卡共用同一个号 acct 1:绑定卡(钉死 acct1) + 池子卡(动态池,池里也只有 acct1)。
-const BOUND_REQ = { headers: { "x-token-server-secret": "bound-card" } };
-const POOL_REQ = { headers: { "x-token-server-secret": "pool-card" } };
+const BOUND_REQ = sessionReqFor("bound-1");
+const POOL_REQ = sessionReqFor("pool-1");
 const OPUS = "claude-opus-4-6";
 const HAIKU = "claude-haiku-4-5";
 
@@ -70,11 +71,11 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function makeService(id: string, refreshToken?: (account: any) => Promise<string>) {
-  return new LeaseService(makeProvider(id, accountsFilePath, refreshToken), {
+  return withSessionResolver(new LeaseService(makeProvider(id, accountsFilePath, refreshToken), {
     accessKeysFilePath,
     minClientVersion: "",
     now: () => clock,
-  });
+  }));
 }
 
 // 把 acct1 对某 model 打成指定封禁(503=cooling / 429=exhausted)。
