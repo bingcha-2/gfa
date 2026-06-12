@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   USER_AUTH_COOKIE,
   USER_AUTH_MAX_AGE,
+  getUserCookieDomain,
   shouldUseSecureUserCookie,
 } from "@/lib/account/user-auth-cookie";
 
@@ -60,5 +61,26 @@ describe("user-auth-cookie", () => {
     };
     expect(shouldUseSecureUserCookie(request)).toBe(false);
     process.env.USER_COOKIE_SECURE = original;
+  });
+
+  describe("getUserCookieDomain (ACCOUNT_COOKIE_DOMAIN)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("returns undefined when the env is unset (host-only cookie — dev behavior)", () => {
+      vi.stubEnv("ACCOUNT_COOKIE_DOMAIN", undefined);
+      expect(getUserCookieDomain()).toBeUndefined();
+    });
+
+    it("returns undefined when the env is empty/whitespace", () => {
+      vi.stubEnv("ACCOUNT_COOKIE_DOMAIN", "   ");
+      expect(getUserCookieDomain()).toBeUndefined();
+    });
+
+    it("returns the env value when set (split-domain deploys)", () => {
+      vi.stubEnv("ACCOUNT_COOKIE_DOMAIN", "my.bcai.lol");
+      expect(getUserCookieDomain()).toBe("my.bcai.lol");
+    });
   });
 });

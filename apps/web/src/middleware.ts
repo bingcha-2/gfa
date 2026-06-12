@@ -21,40 +21,73 @@ const IP_ALLOWLIST: string[] = RAW_ALLOWLIST
 
 // ─── Host-based isolation (split-domain deploys) ──────────────────────────────
 //
-// ADMIN_HOST: hostname of the dedicated admin/console subdomain, e.g.
-// "admin.example.com" (hostname only — scheme is ignored, a :port suffix is
-// stripped). Drives two mutually exclusive serving modes:
+// Three host envs — one per Next-served audience surface (hostname only:
+// scheme is ignored, a :port suffix is stripped, case-insensitive):
 //
-//   UNSET (default — local dev and the current single-domain deploy):
+//   MARKETING_HOST  e.g. "bcai.lol"          官网 marketing pages
+//   ACCOUNT_HOST    e.g. "my.bcai.lol"       toC 用户中心 (/account/*)
+//   CONSOLE_HOST    e.g. "console.bcai.lol"  toB 管理后台 (/console/*)
+//
+// CONSOLE_HOST is canonical; ADMIN_HOST is honored as a legacy alias (the
+// M12c single-subdomain deploy set it). When both are set, CONSOLE_HOST wins.
+//
+// The fourth subdomain of the split, api.<domain> (machine clients: desktop
+// app, epay callbacks), is proxied by Caddy DIRECTLY to NestJS and never
+// reaches Next.js — so this middleware deliberately knows nothing about it.
+//
+// Modes:
+//
+//   ALL UNSET (default — local dev and the single-domain deploy):
 //     No host checks at all. One domain serves marketing + /account +
-//     /console exactly as before. Nothing below this comment runs.
+//     /console exactly as before. applyHostIsolation() is a no-op.
 //
-//   SET (split-domain deploy; see Caddyfile.migration):
-//     · Requests whose Host equals ADMIN_HOST get ONLY the admin surface:
-//       /console/* (or the ADMIN_PATH_PREFIX alias), the root /login page,
-//       /api/console-session/* (console cookie login/logout, Next route
-//       handlers) and the admin backend API (/api/console/* — proxied to
-//       NestJS by next.config.ts rewrites). Marketing pages, /account/* and
-//       customer APIs return 404 there — a deliberate
-//       "not here": the middleware only knows the admin hostname, so it
-//       cannot redirect to the customer domain, and a bare 404 reveals
-//       nothing about what lives where.
-//     · Requests on ANY other host (customer domain, fallback domains, raw
-//       IP) get everything EXCEPT the console surface: /console/*, the
-//       ADMIN_PATH_PREFIX alias, /login, /api/console-session/* and
-//       /api/console/* return 404. Marketing, /account/* and customer APIs
-//       are untouched.
+//   ANY SET (split-domain deploy; see Caddyfile.migration):
+//     The gate is active. Each configured host serves ONLY its surface
+//     (matching order: console → account → marketing, so the envs must point
+//     at distinct hostnames):
+//       · CONSOLE_HOST  → /console/* (or the ADMIN_PATH_PREFIX alias), the
+//         root /login page, /api/console-session/*, /api/console/*, plus the
+//         console-consumed ops APIs (/api/app/lease/*, /api/remote-stats/*,
+//         /api/faq-images/*). The ADMIN_IP_ALLOWLIST applies to this WHOLE
+//         host. Everything else → 404.
+//       · ACCOUNT_HOST  → /account/*, /api/account/*, /api/account-session/*.
+//         The bare root redirects to /account. Everything else (marketing
+//         pages, console surface, machine APIs) → 404.
+//       · MARKETING_HOST→ marketing pages and static assets; the only /api/*
+//         namespace is /api/faq-images/* (FAQ pages embed those images —
+//         the FAQ text itself is fetched server-side from the backend
+//         origin, not through /api/*). /account/*, the console surface and
+//         every other /api/* → 404.
+//     Requests on a host that matches NONE of the configured hosts (fallback
+//     domains, raw IPs, localhost smoke tests) get the legacy combined
+//     CUSTOMER surface: marketing + /account + customer APIs, with the
+//     console surface 404'd. The console therefore fails CLOSED: once any
+//     host env is set, it is served only on CONSOLE_HOST (set it — or the
+//     ADMIN_HOST alias — whenever the gate is active).
+//
+//     404 (not redirect) is deliberate everywhere: "not here" reveals
+//     nothing about which surface lives on which hostname.
 //
 // The reverse proxy must forward the original Host header unchanged —
 // Caddy's reverse_proxy does this by default. Host gating is routing-level
 // isolation; authentication remains the cookie/Bearer guards plus the IP
-// allowlist (which, on the admin host, applies to the whole host).
-const ADMIN_HOST = (process.env.ADMIN_HOST ?? "")
-  .trim()
-  .toLowerCase()
-  .replace(/:\d+$/, "");
+// allowlist. Per-subdomain cookie scoping is configured separately via
+// ACCOUNT_COOKIE_DOMAIN / CONSOLE_COOKIE_DOMAIN (see lib/account/
+// user-auth-cookie.ts and lib/console/auth-cookie.ts).
 
-// Customer-facing API namespaces that must NOT exist on the admin host:
+/** Normalize a host env value: trim, lowercase, strip a :port suffix. */
+function parseHostEnv(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/:\d+$/, "");
+}
+
+const MARKETING_HOST = parseHostEnv(process.env.MARKETING_HOST);
+const ACCOUNT_HOST = parseHostEnv(process.env.ACCOUNT_HOST);
+const CONSOLE_HOST =
+  parseHostEnv(process.env.CONSOLE_HOST) || parseHostEnv(process.env.ADMIN_HOST);
+
+const HOST_GATE_ACTIVE = Boolean(MARKETING_HOST || ACCOUNT_HOST || CONSOLE_HOST);
+
+// Customer-facing API namespaces that must NOT exist on the console host:
 // /api/account (portal cookie→Bearer proxy), /api/account-session (portal
 // cookie login), /api/app (desktop client), /api/epay (payment callbacks).
 const CUSTOMER_API_PREFIXES = ["/api/account", "/api/account-session", "/api/app", "/api/epay"];
@@ -99,88 +132,158 @@ function matchesPathPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
 }
 
+/** The console page surface: /console/*, the ADMIN_PATH_PREFIX alias and the
+ *  root /login console login page. */
+function isConsoleSurfacePath(pathname: string): boolean {
+  return (
+    matchesPathPrefix(pathname, "/console") ||
+    matchesPathPrefix(pathname, `/${ADMIN_PREFIX}`) ||
+    matchesPathPrefix(pathname, "/login")
+  );
+}
+
+/** Assets every Next-served host needs: /bcai-icon.png (the icon the root
+ *  layout declares on every surface) and /_next/* (only the non-static
+ *  /_next paths reach the middleware — _next/static, _next/image and
+ *  favicon.ico are excluded by config.matcher, as is /updates/*). */
+function isSharedAssetPath(pathname: string): boolean {
+  return pathname === "/bcai-icon.png" || matchesPathPrefix(pathname, "/_next");
+}
+
+// ─── Per-host gates (only run when HOST_GATE_ACTIVE) ──────────────────────────
+
+/** CONSOLE_HOST: only the console surface exists here. */
+function gateConsoleHost(request: NextRequest, pathname: string): NextResponse | null {
+  // The IP allowlist covers the WHOLE host (login page, session API, static
+  // assets and backend-proxied admin APIs included), not just console pages.
+  if (IP_ALLOWLIST.length > 0 && !isIpAllowed(getClientIp(request))) {
+    return notFound();
+  }
+
+  // Convenience: the bare console domain lands on the console (whose auth
+  // guard then bounces to its login page). Only safe with the default
+  // prefix — a custom ADMIN_PATH_PREFIX is a secret and must not leak via
+  // a redirect, so the root stays a 404 in that case.
+  if (pathname === "/") {
+    if (ADMIN_PREFIX === "console") {
+      const consoleUrl = request.nextUrl.clone();
+      consoleUrl.pathname = "/console";
+      return NextResponse.redirect(consoleUrl);
+    }
+    return notFound();
+  }
+
+  if (isSharedAssetPath(pathname)) {
+    return null;
+  }
+
+  if (matchesPathPrefix(pathname, "/api")) {
+    // Lease-pool ops (status / announcement / reload-access-keys) live
+    // under the desktop-client surface /api/app/lease/* but are consumed
+    // by the console lease pages — keep them reachable on the console host
+    // (they were never host-gated when they lived at /api/remote-*).
+    if (matchesPathPrefix(pathname, "/api/app/lease")) {
+      return null;
+    }
+    // Customer API namespaces do not exist on the console host; every other
+    // /api/* path is console surface (console session routes handled by
+    // Next, admin Bearer APIs proxied to the backend by next.config.ts,
+    // plus /api/remote-stats/* and /api/faq-images/* used by console pages).
+    const isCustomerApi = CUSTOMER_API_PREFIXES.some((prefix) =>
+      matchesPathPrefix(pathname, prefix)
+    );
+    return isCustomerApi ? notFound() : null;
+  }
+
+  if (isConsoleSurfacePath(pathname)) {
+    // Continue into the normal console pipeline below (custom-prefix
+    // rewrite, the /console-404 rule when a custom prefix is configured,
+    // and the console cookie auth guard).
+    return null;
+  }
+
+  // Marketing pages, /account/*, and anything else: "not here".
+  return notFound();
+}
+
+/** ACCOUNT_HOST: only the toC portal surface exists here. */
+function gateAccountHost(request: NextRequest, pathname: string): NextResponse | null {
+  // Convenience: the bare account domain lands on the portal (whose cookie
+  // guard below then bounces to /account/login). Unlike a custom
+  // ADMIN_PATH_PREFIX, /account is not a secret, so this never leaks.
+  if (pathname === "/") {
+    const accountUrl = request.nextUrl.clone();
+    accountUrl.pathname = "/account";
+    return NextResponse.redirect(accountUrl);
+  }
+
+  if (isSharedAssetPath(pathname)) {
+    return null;
+  }
+
+  if (
+    matchesPathPrefix(pathname, "/account") ||
+    matchesPathPrefix(pathname, "/api/account") ||
+    matchesPathPrefix(pathname, "/api/account-session")
+  ) {
+    // Continue into the portal pipeline below (auth-page exemptions and the
+    // cookie redirect).
+    return null;
+  }
+
+  // Marketing pages, the console surface, machine APIs (and /api/faq-images,
+  // which no account page uses): "not here".
+  return notFound();
+}
+
+/** MARKETING_HOST: only the marketing surface exists here. */
+function gateMarketingHost(pathname: string): NextResponse | null {
+  if (matchesPathPrefix(pathname, "/account")) {
+    return notFound();
+  }
+  if (isConsoleSurfacePath(pathname)) {
+    return notFound();
+  }
+  if (matchesPathPrefix(pathname, "/api")) {
+    // The FAQ images embedded in marketing FAQ content are the only /api/*
+    // namespace the marketing pages load from the browser (the FAQ text is
+    // fetched server-side from the backend origin, not via /api/*).
+    return matchesPathPrefix(pathname, "/api/faq-images") ? null : notFound();
+  }
+  // Marketing pages, /_next/*, public/ static assets: pass through.
+  return null;
+}
+
+/** Any host that matches none of the configured hosts (fallback domains, raw
+ *  IPs, localhost): the legacy combined customer surface — marketing +
+ *  /account + customer APIs — with the console surface 404'd. */
+function gateUnmatchedHost(pathname: string): NextResponse | null {
+  if (
+    isConsoleSurfacePath(pathname) ||
+    matchesPathPrefix(pathname, "/api/console-session") ||
+    matchesPathPrefix(pathname, "/api/console")
+  ) {
+    return notFound();
+  }
+  return null;
+}
+
 /**
  * Host-isolation gate. Returns a terminal response (404 / redirect) when the
  * requested path does not belong on the requested host, or null to let the
  * request continue into the normal pipeline below.
  *
- * Inactive (always null) when ADMIN_HOST is unset — single-domain behavior
- * is byte-for-byte the pre-ADMIN_HOST behavior in that case.
+ * Inactive (always null) when no host env is set — single-domain behavior
+ * is byte-for-byte the pre-split behavior in that case.
  */
 function applyHostIsolation(request: NextRequest, pathname: string): NextResponse | null {
-  if (!ADMIN_HOST) return null; // single-domain mode — gate disabled
+  if (!HOST_GATE_ACTIVE) return null; // single-domain mode — gate disabled
 
-  const isConsolePath = matchesPathPrefix(pathname, "/console");
-  const isAdminPrefixPath = matchesPathPrefix(pathname, `/${ADMIN_PREFIX}`);
-  const isConsoleLoginPath = matchesPathPrefix(pathname, "/login");
-  const isConsoleSessionApi = matchesPathPrefix(pathname, "/api/console-session");
-  const isApiPath = matchesPathPrefix(pathname, "/api");
-
-  if (getRequestHost(request) === ADMIN_HOST) {
-    // ── Admin host: only the console surface exists here. ──────────────────
-    // The IP allowlist covers the WHOLE host (login page, session API and
-    // backend-proxied admin APIs included), not just the console page paths.
-    if (IP_ALLOWLIST.length > 0 && !isIpAllowed(getClientIp(request))) {
-      return notFound();
-    }
-
-    // Convenience: the bare admin domain lands on the console (whose auth
-    // guard then bounces to its login page). Only safe with the default
-    // prefix — a custom ADMIN_PATH_PREFIX is a secret and must not leak via
-    // a redirect, so the root stays a 404 in that case.
-    if (pathname === "/") {
-      if (ADMIN_PREFIX === "console") {
-        const consoleUrl = request.nextUrl.clone();
-        consoleUrl.pathname = "/console";
-        return NextResponse.redirect(consoleUrl);
-      }
-      return notFound();
-    }
-
-    if (isApiPath) {
-      // Lease-pool ops (status / announcement / reload-access-keys) live
-      // under the desktop-client surface /api/app/lease/* but are consumed
-      // by the console lease pages — keep them reachable on the admin host
-      // (they were never host-gated when they lived at /api/remote-*).
-      if (matchesPathPrefix(pathname, "/api/app/lease")) {
-        return null;
-      }
-      // Customer API namespaces do not exist on the admin host; every other
-      // /api/* path is admin surface (console session routes handled by
-      // Next, admin Bearer APIs proxied to the backend by next.config.ts).
-      const isCustomerApi = CUSTOMER_API_PREFIXES.some((prefix) =>
-        matchesPathPrefix(pathname, prefix)
-      );
-      return isCustomerApi ? notFound() : null;
-    }
-
-    if (isConsolePath || isAdminPrefixPath || isConsoleLoginPath) {
-      // Continue into the normal console pipeline below (custom-prefix
-      // rewrite, the /console-404 rule when a custom prefix is configured,
-      // and the console cookie auth guard).
-      return null;
-    }
-
-    // Marketing pages, /account/*, and anything else: "not here".
-    return notFound();
-  }
-
-  // ── Customer host(s): the console surface does not exist here. ───────────
-  // This includes the canonical /console paths, the ADMIN_PATH_PREFIX alias,
-  // the root /login page, the console cookie session API, and the
-  // console-namespaced backend API.
-  if (
-    isConsolePath ||
-    isAdminPrefixPath ||
-    isConsoleLoginPath ||
-    isConsoleSessionApi ||
-    matchesPathPrefix(pathname, "/api/console")
-  ) {
-    return notFound();
-  }
-
-  // Marketing + /account/* + customer APIs — continue unchanged.
-  return null;
+  const host = getRequestHost(request);
+  if (CONSOLE_HOST && host === CONSOLE_HOST) return gateConsoleHost(request, pathname);
+  if (ACCOUNT_HOST && host === ACCOUNT_HOST) return gateAccountHost(request, pathname);
+  if (MARKETING_HOST && host === MARKETING_HOST) return gateMarketingHost(pathname);
+  return gateUnmatchedHost(pathname);
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -205,7 +308,7 @@ function isPortalAuthPage(pathname: string): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // ── 0. Host isolation (no-op unless ADMIN_HOST is set) ────────────────────
+  // ── 0. Host isolation (no-op unless a host env is set) ────────────────────
   const hostGateResponse = applyHostIsolation(request, pathname);
   if (hostGateResponse) {
     return hostGateResponse;

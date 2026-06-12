@@ -1,7 +1,8 @@
 /**
- * Middleware host-isolation tests (ADMIN_HOST).
+ * Middleware host-isolation tests (MARKETING_HOST / ACCOUNT_HOST /
+ * CONSOLE_HOST, with ADMIN_HOST as the legacy alias for CONSOLE_HOST).
  *
- * The middleware reads its env configuration (ADMIN_HOST, ADMIN_PATH_PREFIX,
+ * The middleware reads its env configuration (host envs, ADMIN_PATH_PREFIX,
  * ADMIN_IP_ALLOWLIST) at module scope, so every scenario stubs the env and
  * re-imports the module via vi.resetModules().
  *
@@ -20,6 +21,9 @@ import { USER_AUTH_COOKIE } from "@/lib/account/user-auth-cookie";
 type MiddlewareFn = (request: NextRequest) => Response;
 
 async function loadMiddleware(env: {
+  MARKETING_HOST?: string;
+  ACCOUNT_HOST?: string;
+  CONSOLE_HOST?: string;
   ADMIN_HOST?: string;
   ADMIN_PATH_PREFIX?: string;
   ADMIN_IP_ALLOWLIST?: string;
@@ -28,6 +32,9 @@ async function loadMiddleware(env: {
   // next.config.ts always injects a normalized ADMIN_PATH_PREFIX at build
   // time (default "console"), so mirror that default here.
   vi.stubEnv("ADMIN_PATH_PREFIX", env.ADMIN_PATH_PREFIX ?? "console");
+  vi.stubEnv("MARKETING_HOST", env.MARKETING_HOST);
+  vi.stubEnv("ACCOUNT_HOST", env.ACCOUNT_HOST);
+  vi.stubEnv("CONSOLE_HOST", env.CONSOLE_HOST);
   vi.stubEnv("ADMIN_HOST", env.ADMIN_HOST);
   vi.stubEnv("ADMIN_IP_ALLOWLIST", env.ADMIN_IP_ALLOWLIST);
   const mod = await import("@/middleware");
@@ -81,9 +88,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// ─── Baseline: ADMIN_HOST unset → single-domain behavior unchanged ───────────
+// ─── Baseline: all host envs unset → single-domain behavior unchanged ────────
 
-describe("ADMIN_HOST unset (single-domain baseline)", () => {
+describe("all host envs unset (single-domain baseline)", () => {
   it("serves marketing pages on any host", async () => {
     const middleware = await loadMiddleware({});
     expectPassThrough(middleware(makeRequest("https://example.com/")));
@@ -146,9 +153,9 @@ describe("ADMIN_HOST unset (single-domain baseline)", () => {
   });
 });
 
-// ─── Admin host: only the console surface exists ──────────────────────────────
+// ─── Console host (via the legacy ADMIN_HOST alias): only the console surface ─
 
-describe("ADMIN_HOST set — requests on the admin host", () => {
+describe("ADMIN_HOST set (legacy alias) — requests on the admin host", () => {
   const env = { ADMIN_HOST: "admin.example.com" };
   const adminUrl = (path: string) => `https://admin.example.com${path}`;
 
@@ -224,6 +231,11 @@ describe("ADMIN_HOST set — requests on the admin host", () => {
     expectPassThrough(response);
   });
 
+  it("serves the shared app icon (root layout references it on every surface)", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(adminUrl("/bcai-icon.png"))));
+  });
+
   it("applies the IP allowlist to the whole host", async () => {
     const middleware = await loadMiddleware({
       ...env,
@@ -258,9 +270,10 @@ describe("ADMIN_HOST set — requests on the admin host", () => {
   });
 });
 
-// ─── Customer host: the console surface does not exist ────────────────────────
+// ─── Unmatched host while only the console host is configured: the legacy ─────
+// ─── combined customer surface (marketing + /account), console 404'd ──────────
 
-describe("ADMIN_HOST set — requests on the customer host", () => {
+describe("ADMIN_HOST set — requests on an unmatched (customer) host", () => {
   const env = { ADMIN_HOST: "admin.example.com" };
   const mainUrl = (path: string) => `https://example.com${path}`;
 
@@ -314,5 +327,267 @@ describe("ADMIN_HOST set — requests on the customer host", () => {
     expectNotFound(middleware(makeRequest("https://fallback.test/console")));
     expectPassThrough(middleware(makeRequest("https://fallback.test/about")));
     expectNotFound(middleware(makeRequest("http://203.0.113.7/console")));
+  });
+});
+
+// ─── CONSOLE_HOST: the canonical env name (and its precedence over the alias) ─
+
+describe("CONSOLE_HOST set (canonical env)", () => {
+  it("behaves exactly like ADMIN_HOST", async () => {
+    const middleware = await loadMiddleware({ CONSOLE_HOST: "console.example.com" });
+    const consoleUrl = (path: string) => `https://console.example.com${path}`;
+    expectPassThrough(middleware(makeRequest(consoleUrl("/console/login"))));
+    expectRedirectTo(middleware(makeRequest(consoleUrl("/"))), "/console");
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/console/orders"))));
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/app/lease/codex/status"))));
+    expectNotFound(middleware(makeRequest(consoleUrl("/account/billing"))));
+    expectNotFound(middleware(makeRequest(consoleUrl("/api/app/heartbeat"))));
+    // …and the console surface is gone from every other host.
+    expectNotFound(middleware(makeRequest("https://example.com/console")));
+    expectPassThrough(middleware(makeRequest("https://example.com/about")));
+  });
+
+  it("wins over a simultaneously set ADMIN_HOST alias", async () => {
+    const middleware = await loadMiddleware({
+      CONSOLE_HOST: "console.example.com",
+      ADMIN_HOST: "admin.example.com",
+    });
+    expectPassThrough(
+      middleware(makeRequest("https://console.example.com/console/login"))
+    );
+    // The alias hostname is just another customer host now.
+    expectNotFound(middleware(makeRequest("https://admin.example.com/console/login")));
+    expectPassThrough(middleware(makeRequest("https://admin.example.com/about")));
+  });
+});
+
+// ─── Full split: MARKETING_HOST + ACCOUNT_HOST + CONSOLE_HOST ─────────────────
+
+describe("full split (all three host envs set)", () => {
+  const env = {
+    MARKETING_HOST: "example.com",
+    ACCOUNT_HOST: "my.example.com",
+    CONSOLE_HOST: "console.example.com",
+  };
+  const marketingUrl = (path: string) => `https://example.com${path}`;
+  const accountUrl = (path: string) => `https://my.example.com${path}`;
+  const consoleUrl = (path: string) => `https://console.example.com${path}`;
+
+  // ── Marketing host ──────────────────────────────────────────────────────────
+  it("marketing host serves marketing pages and static assets", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(marketingUrl("/"))));
+    expectPassThrough(middleware(makeRequest(marketingUrl("/about"))));
+    expectPassThrough(middleware(makeRequest(marketingUrl("/download"))));
+    expectPassThrough(middleware(makeRequest(marketingUrl("/bcai-icon.png"))));
+    expectPassThrough(middleware(makeRequest(marketingUrl("/logos/wordmark.svg"))));
+  });
+
+  it("marketing host serves /api/faq-images (FAQ content embeds them) but no other API", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(marketingUrl("/api/faq-images/x.png"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/account/portal"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/account-session/login"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/console/orders"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/console-session/login"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/app/heartbeat"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/epay/notify"))));
+    expectNotFound(middleware(makeRequest(marketingUrl("/api/health"))));
+  });
+
+  it("marketing host 404s the account and console surfaces — even with cookies", async () => {
+    const middleware = await loadMiddleware(env);
+    expectNotFound(
+      middleware(
+        makeRequest(marketingUrl("/account/billing"), {
+          cookies: { [USER_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectNotFound(middleware(makeRequest(marketingUrl("/account"))));
+    expectNotFound(
+      middleware(
+        makeRequest(marketingUrl("/console"), {
+          cookies: { [CONSOLE_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectNotFound(middleware(makeRequest(marketingUrl("/login"))));
+  });
+
+  // ── Account host ────────────────────────────────────────────────────────────
+  it("account host serves the portal (auth pages public, rest cookie-gated)", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(accountUrl("/account/login"))));
+    expectRedirectTo(
+      middleware(makeRequest(accountUrl("/account/billing"))),
+      "/account/login"
+    );
+    expectPassThrough(
+      middleware(
+        makeRequest(accountUrl("/account/billing"), {
+          cookies: { [USER_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectPassThrough(middleware(makeRequest(accountUrl("/api/account/portal"))));
+    expectPassThrough(middleware(makeRequest(accountUrl("/api/account-session/login"))));
+    expectPassThrough(middleware(makeRequest(accountUrl("/bcai-icon.png"))));
+  });
+
+  it("account host redirects the bare root to /account", async () => {
+    const middleware = await loadMiddleware(env);
+    expectRedirectTo(middleware(makeRequest(accountUrl("/"))), "/account");
+  });
+
+  it("account host 404s marketing pages, the console surface and machine APIs", async () => {
+    const middleware = await loadMiddleware(env);
+    expectNotFound(middleware(makeRequest(accountUrl("/about"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/download"))));
+    expectNotFound(
+      middleware(
+        makeRequest(accountUrl("/console"), {
+          cookies: { [CONSOLE_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectNotFound(middleware(makeRequest(accountUrl("/login"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/console/orders"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/console-session/login"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/app/heartbeat"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/app/lease/codex/status"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/epay/notify"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/remote-stats"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/api/faq-images/x.png"))));
+  });
+
+  it("account host does not let /api/account leak the console namespace (exact-segment match)", async () => {
+    const middleware = await loadMiddleware(env);
+    // sibling-prefix probe: /api/account-evil is neither /api/account nor
+    // /api/account-session.
+    expectNotFound(middleware(makeRequest(accountUrl("/api/account-evil/x"))));
+  });
+
+  // ── Console host ────────────────────────────────────────────────────────────
+  it("console host serves the console surface and its ops APIs", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(consoleUrl("/console/login"))));
+    expectRedirectTo(middleware(makeRequest(consoleUrl("/console"))), "/console/login");
+    expectPassThrough(
+      middleware(
+        makeRequest(consoleUrl("/console/orders"), {
+          cookies: { [CONSOLE_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectPassThrough(middleware(makeRequest(consoleUrl("/login"))));
+    expectRedirectTo(middleware(makeRequest(consoleUrl("/"))), "/console");
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/console-session/login"))));
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/console/orders"))));
+    // Console-consumed ops APIs outside /api/console:
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/app/lease/codex/status"))));
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/remote-stats/dashboard"))));
+    expectPassThrough(middleware(makeRequest(consoleUrl("/api/faq-images/x.png"))));
+    expectPassThrough(middleware(makeRequest(consoleUrl("/bcai-icon.png"))));
+  });
+
+  it("console host 404s the customer and marketing surfaces", async () => {
+    const middleware = await loadMiddleware(env);
+    expectNotFound(middleware(makeRequest(consoleUrl("/about"))));
+    expectNotFound(
+      middleware(
+        makeRequest(consoleUrl("/account/billing"), {
+          cookies: { [USER_AUTH_COOKIE]: "token" },
+        })
+      )
+    );
+    expectNotFound(middleware(makeRequest(consoleUrl("/api/account/portal"))));
+    expectNotFound(middleware(makeRequest(consoleUrl("/api/account-session/login"))));
+    expectNotFound(middleware(makeRequest(consoleUrl("/api/app/heartbeat"))));
+    expectNotFound(middleware(makeRequest(consoleUrl("/api/epay/notify"))));
+  });
+
+  // ── Unmatched host ──────────────────────────────────────────────────────────
+  it("unmatched hosts (raw IP, localhost) keep the legacy customer surface, console denied", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest("http://localhost:3000/about")));
+    expectRedirectTo(
+      middleware(makeRequest("http://localhost:3000/account/billing")),
+      "/account/login"
+    );
+    expectPassThrough(middleware(makeRequest("http://localhost:3000/api/account/portal")));
+    expectNotFound(middleware(makeRequest("http://localhost:3000/console")));
+    expectNotFound(middleware(makeRequest("http://203.0.113.7/api/console/orders")));
+    expectNotFound(middleware(makeRequest("http://203.0.113.7/login")));
+  });
+
+  // ── Cross-host hygiene ──────────────────────────────────────────────────────
+  it("matches hosts case-insensitively and ignores :port suffixes", async () => {
+    const middleware = await loadMiddleware({
+      ...env,
+      ACCOUNT_HOST: "MY.Example.com:443",
+    });
+    expectRedirectTo(
+      middleware(makeRequest("http://my.example.com:3000/")),
+      "/account"
+    );
+    expectNotFound(middleware(makeRequest("https://my.example.com/about")));
+  });
+
+  it("applies the IP allowlist only to the console host", async () => {
+    const middleware = await loadMiddleware({
+      ...env,
+      ADMIN_IP_ALLOWLIST: "10.1.2.3",
+    });
+    expectNotFound(
+      middleware(makeRequest(consoleUrl("/console/login"), { ip: "9.9.9.9" }))
+    );
+    expectPassThrough(
+      middleware(makeRequest(consoleUrl("/console/login"), { ip: "10.1.2.3" }))
+    );
+    // Customer surfaces are not IP-fenced.
+    expectPassThrough(middleware(makeRequest(accountUrl("/account/login"), { ip: "9.9.9.9" })));
+    expectPassThrough(middleware(makeRequest(marketingUrl("/about"), { ip: "9.9.9.9" })));
+  });
+
+  it("hides a custom ADMIN_PATH_PREFIX on every non-console host", async () => {
+    const middleware = await loadMiddleware({
+      ...env,
+      ADMIN_PATH_PREFIX: "manage-x7k2p",
+    });
+    expectNotFound(middleware(makeRequest(marketingUrl("/manage-x7k2p/login"))));
+    expectNotFound(middleware(makeRequest(accountUrl("/manage-x7k2p/login"))));
+    // …while the console host still rewrites the alias internally.
+    const rewritten = middleware(makeRequest(consoleUrl("/manage-x7k2p/login")));
+    const rewriteTarget = rewritten.headers.get("x-middleware-rewrite");
+    expect(rewriteTarget).toBeTruthy();
+    expect(new URL(rewriteTarget as string).pathname).toBe("/console/login");
+  });
+});
+
+// ─── Partial config: the gate activates with ANY host env; console fails closed ─
+
+describe("partial host config", () => {
+  it("ACCOUNT_HOST alone isolates the portal; other hosts keep marketing but lose the console", async () => {
+    const middleware = await loadMiddleware({ ACCOUNT_HOST: "my.example.com" });
+    // Account host: portal only.
+    expectRedirectTo(middleware(makeRequest("https://my.example.com/")), "/account");
+    expectPassThrough(middleware(makeRequest("https://my.example.com/account/login")));
+    expectNotFound(middleware(makeRequest("https://my.example.com/about")));
+    // Unmatched host: marketing + account still served (legacy surface)…
+    expectPassThrough(middleware(makeRequest("https://example.com/about")));
+    expectPassThrough(middleware(makeRequest("https://example.com/account/login")));
+    // …but the console fails closed until CONSOLE_HOST (or ADMIN_HOST) is set.
+    expectNotFound(middleware(makeRequest("https://example.com/console")));
+    expectNotFound(middleware(makeRequest("https://my.example.com/console")));
+  });
+
+  it("MARKETING_HOST alone isolates marketing; unmatched hosts keep the customer surface", async () => {
+    const middleware = await loadMiddleware({ MARKETING_HOST: "example.com" });
+    expectPassThrough(middleware(makeRequest("https://example.com/about")));
+    expectNotFound(middleware(makeRequest("https://example.com/account/login")));
+    expectNotFound(middleware(makeRequest("https://example.com/api/account/portal")));
+    expectPassThrough(middleware(makeRequest("https://other.test/account/login")));
+    expectNotFound(middleware(makeRequest("https://other.test/console")));
   });
 });

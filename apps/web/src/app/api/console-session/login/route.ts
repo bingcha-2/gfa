@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   CONSOLE_AUTH_COOKIE,
   CONSOLE_AUTH_MAX_AGE,
+  getConsoleCookieDomain,
   shouldUseSecureConsoleCookie
 } from "@/lib/console/auth-cookie";
 import { AuthSession } from "@/lib/console/types";
@@ -35,12 +36,15 @@ export async function POST(request: NextRequest) {
   const session = data as AuthSession;
   const cookieStore = await cookies();
 
+  const cookieDomain = getConsoleCookieDomain();
   cookieStore.set(CONSOLE_AUTH_COOKIE, session.accessToken, {
     httpOnly: true,
     sameSite: "lax",
     secure: shouldUseSecureConsoleCookie(request),
     path: "/",
-    maxAge: CONSOLE_AUTH_MAX_AGE
+    maxAge: CONSOLE_AUTH_MAX_AGE,
+    // Unset env → no Domain attribute (host-only cookie, dev behavior).
+    ...(cookieDomain ? { domain: cookieDomain } : {})
   });
 
   return NextResponse.json({

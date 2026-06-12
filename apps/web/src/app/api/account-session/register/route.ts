@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   USER_AUTH_COOKIE,
   USER_AUTH_MAX_AGE,
+  getUserCookieDomain,
   shouldUseSecureUserCookie,
 } from "@/lib/account/user-auth-cookie";
 import { getBackendBaseUrl, safeParseJson } from "@/lib/backend-url";
@@ -54,12 +55,15 @@ export async function POST(request: NextRequest) {
   }
 
   const cookieStore = await cookies();
+  const cookieDomain = getUserCookieDomain();
   cookieStore.set(USER_AUTH_COOKIE, session.accessToken, {
     httpOnly: true,
     sameSite: "lax",
     secure: shouldUseSecureUserCookie(request),
     path: "/",
     maxAge: USER_AUTH_MAX_AGE,
+    // Unset env → no Domain attribute (host-only cookie, dev behavior).
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
 
   return NextResponse.json({ customer: session.customer });

@@ -3,7 +3,7 @@
  *   src/app/api/account-session/login/route.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Track cookie.set calls ────────────────────────────────────────────────────
 const mockCookieSet = vi.fn();
@@ -47,6 +47,10 @@ describe("api/account-session/login", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("sets the gfa.user.token cookie and returns customer on 200", async () => {
     const customer = {
       id: "cust-1",
@@ -88,6 +92,33 @@ describe("api/account-session/login", () => {
     expect(options.sameSite).toBe("lax");
     // 30 days
     expect(options.maxAge).toBe(60 * 60 * 24 * 30);
+    // ACCOUNT_COOKIE_DOMAIN unset → host-only cookie: no Domain attribute.
+    expect("domain" in options).toBe(false);
+  });
+
+  it("scopes the cookie to ACCOUNT_COOKIE_DOMAIN when the env is set", async () => {
+    vi.stubEnv("ACCOUNT_COOKIE_DOMAIN", "my.bcai.lol");
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accessToken: "tok",
+          customer: { id: "c1", email: "a@b.com", displayName: "", emailVerified: false, referralCode: "", creditCents: 0, status: "ACTIVE", createdAt: "" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", mockFetch);
+
+    await POST(makeLoginRequest({ email: "a@b.com", password: "pw" }));
+
+    expect(mockCookieSet).toHaveBeenCalledOnce();
+    const [, , options] = mockCookieSet.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
+    expect(options.domain).toBe("my.bcai.lol");
   });
 
   it("passes through 401 error without setting cookie", async () => {
