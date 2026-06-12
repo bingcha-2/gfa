@@ -82,6 +82,80 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     expect(snap.claudeQuota?.hourlyPercent).toBe(90);
   });
 
+  // 绑定线要区分 Max 5x / Max 20x(spec §3.1/§4.1 levels=["pro","max-5x","max-20x"]),而
+  // organization_type 只给粗粒度 "claude_max"。Claude Code 把细档存在 rate_limit_tier
+  // (~/.claude/.credentials.json 的 default_claude_max_5x / default_claude_max_20x),它来自
+  // OAuth profile。优先用 rate_limit_tier 映射出细档,使探测出的 planType 直接对齐 catalog 档名。
+  it("maps fine-grained rate_limit_tier (default_claude_max_20x → max-20x)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(
+            JSON.stringify({
+              organization: { organization_type: "claude_max" },
+              account: { rate_limit_tier: "default_claude_max_20x" },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("max-20x");
+  });
+
+  it("maps default_claude_max_5x → max-5x", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(
+            JSON.stringify({ rate_limit_tier: "default_claude_max_5x" }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("max-5x");
+  });
+
+  it("maps default_claude_ai (Pro tier) → pro", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(
+            JSON.stringify({
+              organization: { organization_type: "claude_pro", rate_limit_tier: "default_claude_ai" },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("pro");
+  });
+
+  it("falls back to organization_type when no rate_limit_tier is present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(JSON.stringify({ organization: { organization_type: "claude_pro" } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("pro");
+  });
+
   it("surfaces an error on a non-ok response", async () => {
     mockUsage(401, "unauthorized");
     const snap = await fetchClaudeQuotaUpstream("token");

@@ -36,6 +36,32 @@ const ORG_TYPE_TO_PLAN: Record<string, string> = {
   claude_enterprise: "enterprise",
   claude_team: "team",
 };
+// rate_limit_tier → 细档套餐名。绑定线要区分 Max 5x / Max 20x(spec §3.1 levels=
+// ["pro","max-5x","max-20x"]),而 organization_type 只给粗粒度 "claude_max"。Claude Code
+// 把细档存在 rate_limit_tier(~/.claude/.credentials.json 的 default_claude_max_5x /
+// default_claude_max_20x,来自 OAuth profile)。优先用它映射出与 catalog 档名一致的 planType,
+// 这样探测出的等级 ↔ account.planType ↔ 绑定匹配天然对齐(根除"档名对不上→绑不上")。
+const RATE_LIMIT_TIER_TO_PLAN: Record<string, string> = {
+  default_claude_max_20x: "max-20x",
+  default_claude_max_5x: "max-5x",
+  default_claude_pro: "pro",
+  default_claude_ai: "pro",
+};
+
+/**
+ * Read rate_limit_tier defensively from the profile payload. The exact nesting is
+ * not publicly documented — observed in Claude Code's credentials as a flat
+ * `rateLimitTier`, but on the wire it may sit at top level, under `account`, or
+ * under `organization`. Probe all three (first non-empty wins).
+ */
+function extractRateLimitTier(data: any): string {
+  return String(
+    data?.rate_limit_tier ||
+      data?.account?.rate_limit_tier ||
+      data?.organization?.rate_limit_tier ||
+      "",
+  ).trim();
+}
 // Claude Code sends `claude-code/<version>`; the endpoint is lenient but we
 // mirror the shape. Overridable if Anthropic ever gates on a specific version.
 const CLAUDE_CODE_UA = process.env.BCAI_CLAUDE_USER_AGENT || "claude-code/2.1.162";
@@ -96,8 +122,10 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
 }
 
 /**
- * Read the account's 套餐 from GET /api/oauth/profile (no quota cost). Maps
- * organization.organization_type → max/pro/enterprise/team. "" on any failure.
+ * Read the account's 套餐 from GET /api/oauth/profile (no quota cost). Prefer the
+ * fine-grained rate_limit_tier (default_claude_max_5x → max-5x / …_20x → max-20x)
+ * so the detected planType matches the binding-line catalog levels; fall back to
+ * organization.organization_type (coarse max/pro/enterprise/team). "" on any failure.
  */
 async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Promise<string> {
   try {
@@ -112,6 +140,9 @@ async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Prom
     });
     if (!res.ok) return "";
     const data: any = await res.json();
+    // Fine-grained tier first (distinguishes Max 5x vs 20x); coarse org_type as fallback.
+    const tier = extractRateLimitTier(data);
+    if (tier && RATE_LIMIT_TIER_TO_PLAN[tier]) return RATE_LIMIT_TIER_TO_PLAN[tier];
     const orgType = String(data?.organization?.organization_type || "").trim();
     return ORG_TYPE_TO_PLAN[orgType] || "";
   } catch {
