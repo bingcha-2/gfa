@@ -369,6 +369,33 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
 .mkt-cta p { color: var(--ink-muted); max-width: 46ch; }
 .mkt-cta__btns { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
 
+/* ───────── 用户中心入口 ───────── */
+.mkt-portal {
+  display: grid; grid-template-columns: 1.05fr 0.95fr; gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+  padding: clamp(1.75rem, 4vw, 2.75rem); border-radius: 20px;
+  background:
+    radial-gradient(120% 130% at 100% 0%, var(--primary-soft), transparent 58%),
+    var(--surface);
+  border: 1px solid var(--line); box-shadow: var(--shadow-sm);
+}
+.mkt-portal__copy { display: grid; gap: 1rem; justify-items: start; }
+.mkt-portal__copy .mkt-btn { margin-top: 0.4rem; }
+.mkt-portal__grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+.mkt-portal__item {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.9rem 1rem; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--line);
+  transition: transform 0.18s var(--ease-quint), border-color 0.18s, box-shadow 0.18s;
+}
+.mkt-portal__item:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: var(--shadow-sm); }
+.mkt-portal__icon {
+  width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--primary-soft); color: var(--primary); flex-shrink: 0;
+}
+.mkt-portal__icon svg { width: 19px; height: 19px; }
+.mkt-portal__label { font-weight: 600; font-size: 0.9375rem; color: var(--ink); line-height: 1.3; }
+
 /* ───────── 页脚 ───────── */
 .mkt-footer { border-top: 1px solid var(--line); background: var(--surface-2); }
 .mkt-footer__inner {
@@ -529,12 +556,13 @@ a.mkt-dlcard:hover { border-color: var(--line-strong); box-shadow: var(--shadow-
 @media (max-width: 900px) {
   .mkt-hero__grid { grid-template-columns: 1fr; }
   .mkt-mock { max-width: 540px; }
+  .mkt-portal { grid-template-columns: 1fr; }
   .mkt-footer__inner { grid-template-columns: 1fr 1fr; }
   .mkt-footer__brand { grid-column: 1 / -1; }
 }
 @media (max-width: 680px) {
   .mkt-nav__links { display: none; }
-  .mkt-nav__buy { display: none; }
+  .mkt-nav__account { display: none; }
   .mkt-menubtn { display: inline-flex; }
   .mkt-mobile { display: flex; }
   .mkt-hero__sub { max-width: none; }

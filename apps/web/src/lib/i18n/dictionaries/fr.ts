@@ -25,7 +25,7 @@ export const fr: DeepPartialDict = {
 
   common: {
     downloadClient: "Télécharger le client",
-    buyCard: "Obtenir une carte d'accès ↗",
+    userCenter: "Mon compte",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const fr: DeepPartialDict = {
     howItWorks: "Fonctionnement",
     help: "Aide",
     faq: "FAQ",
-    store: "Boutique Bingcha ↗",
+    account: "Mon compte",
     api: "API Bingcha ↗",
     terminal: "Terminal Bingcha ↗",
     copyright: "© 2026 BingchaAI",
@@ -178,8 +178,13 @@ export const fr: DeepPartialDict = {
         s: "Le code part directement vers les serveurs officiels. Bingcha n'est pas un proxy intermédiaire et ne conserve rien.",
       },
     ],
+    portalTitle: "Un seul espace, tout votre univers Bingcha",
+    portalLead:
+      "Achetez vos forfaits, liez vos cartes de recharge, consultez vos appareils et votre usage — tout se fait dans Mon compte, sur le web, que vous ouvriez ou non le client de bureau.",
+    portalCta: "Ouvrir mon compte",
+    portalItems: ["Forfaits et cartes", "Appareils", "Utilisation", "Parrainage"],
     ctaTitle: "Prêt pour une recharge ?",
-    ctaSub: "Téléchargez le client BingchaAI, ou commencez par prendre une carte d'accès en boutique — vous coderez comme d'habitude dans 30 secondes.",
+    ctaSub: "Téléchargez le client BingchaAI, ou connectez-vous à Mon compte pour acheter un forfait et lier votre carte — vous coderez comme d'habitude dans 30 secondes.",
   },
 
   download: {
@@ -366,7 +371,7 @@ export const fr: DeepPartialDict = {
       },
       {
         t: "Saisissez votre carte d'accès",
-        d: "Lancez le client, saisissez votre carte d'accès de recharge (format AI…) dans « Carte de compte », puis cliquez sur « Vérifier et activer ». Les cartes sont en vente sur bcai.store.",
+        d: "Lancez le client, saisissez votre carte d'accès de recharge (format AI…) dans « Carte de compte », puis cliquez sur « Vérifier et activer ». Achetez ou liez vos cartes dans Mon compte.",
       },
       {
         t: "Prenez le contrôle en un clic",
@@ -397,7 +402,7 @@ export const fr: DeepPartialDict = {
       ["Claude Desktop", "Prise en contrôle transparente sur macOS et Windows"],
     ],
     ctaTitle: "Pas encore de carte d'accès ?",
-    ctaSub: "Procurez-vous-en une à la boutique Bingcha — plusieurs formules disponibles.",
+    ctaSub: "Rendez-vous dans Mon compte pour acheter une carte de recharge ; plusieurs forfaits disponibles.",
   },
 
   faqPage: {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingShell } from "@/components/marketing/shell";
 import { getDict } from "@/lib/i18n/server";
+import { ACCOUNT_URL } from "@/lib/account/portal-url";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getDict();
@@ -20,7 +21,7 @@ export default async function QuickstartPage() {
       t.quickstart.cardBuyLabel,
       <>
         {t.quickstart.cardBuyPre}
-        <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" style={{ color: "var(--primary-text)", fontWeight: 600 }}>bcai.store</a>
+        <a href={ACCOUNT_URL} style={{ color: "var(--primary-text)", fontWeight: 600 }}>{t.common.userCenter}</a>
         {t.quickstart.cardBuyPost}
       </>,
     ],
@@ -94,7 +95,7 @@ export default async function QuickstartPage() {
             <h2>{t.quickstart.ctaTitle}</h2>
             <p>{t.quickstart.ctaSub}</p>
             <div className="mkt-cta__btns">
-              <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--primary">{t.common.buyCard}</a>
+              <a href={ACCOUNT_URL} className="mkt-btn mkt-btn--primary">{t.common.userCenter}</a>
               <a href="/download" className="mkt-btn mkt-btn--ghost">{t.common.downloadClient}</a>
             </div>
           </div>

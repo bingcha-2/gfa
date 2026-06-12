@@ -25,7 +25,7 @@ export const ko: DeepPartialDict = {
 
   common: {
     downloadClient: "클라이언트 다운로드",
-    buyCard: "카드 구매 ↗",
+    userCenter: "마이페이지",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const ko: DeepPartialDict = {
     howItWorks: "작동 원리",
     help: "도움말",
     faq: "자주 묻는 질문",
-    store: "Bingcha 스토어 ↗",
+    account: "마이페이지",
     api: "Bingcha API ↗",
     terminal: "Bingcha 터미널 ↗",
     copyright: "© 2026 BingchaAI",
@@ -167,8 +167,13 @@ export const ko: DeepPartialDict = {
       { b: "IDE 설정을 바꾸지 않음", s: "에디터, 플러그인, 워크플로는 그대로 유지되며 언제든 원클릭으로 끌 수 있습니다." },
       { b: "코드를 수집하지 않음", s: "코드 데이터는 공식 서버로 직접 전송됩니다. Bingcha는 중개 프록시를 하지 않으며 아무것도 보관하지 않습니다." },
     ],
+    portalTitle: "하나의 마이페이지로 전부 관리하세요",
+    portalLead:
+      "요금제 구매, 리필 카드 바인딩, 기기와 사용량 확인까지 모두 웹 마이페이지에서 끝납니다. 클라이언트를 열든 안 열든 관리할 수 있습니다.",
+    portalCta: "마이페이지로",
+    portalItems: ["요금제 및 카드", "기기 관리", "사용량", "추천 리워드"],
     ctaTitle: "리필할 준비 되셨나요?",
-    ctaSub: "BingchaAI 클라이언트를 다운로드하거나 스토어에서 카드를 먼저 구매하세요. 30초 뒤면 평소처럼 코딩할 수 있습니다.",
+    ctaSub: "BingchaAI 클라이언트를 다운로드하거나, 마이페이지에 로그인해 요금제를 구매하고 카드를 바인딩하세요. 30초 뒤면 평소처럼 코딩할 수 있습니다.",
   },
 
   download: {
@@ -355,7 +360,7 @@ export const ko: DeepPartialDict = {
       },
       {
         t: "카드 입력",
-        d: "클라이언트 실행 후 “계정 카드” 섹션에 리필 카드(형식 AI…)를 입력하고 “확인 및 활성화”를 클릭하세요. 카드는 bcai.store에서 구매할 수 있습니다.",
+        d: "클라이언트 실행 후 “계정 카드” 섹션에 리필 카드(형식 AI…)를 입력하고 “확인 및 활성화”를 클릭하세요. 카드는 마이페이지에서 구매하거나 바인딩할 수 있습니다.",
       },
       {
         t: "원클릭 테이크오버",
@@ -386,7 +391,7 @@ export const ko: DeepPartialDict = {
       ["Claude Desktop", "macOS / Windows 양 플랫폼 데스크톱 투명 테이크오버"],
     ],
     ctaTitle: "아직 카드가 없으신가요?",
-    ctaSub: "Bingcha 스토어에서 리필 카드를 구매하세요. 다양한 플랜이 준비되어 있습니다.",
+    ctaSub: "마이페이지에서 리필 카드를 구매하세요. 다양한 요금제를 선택할 수 있습니다.",
   },
 
   faqPage: {

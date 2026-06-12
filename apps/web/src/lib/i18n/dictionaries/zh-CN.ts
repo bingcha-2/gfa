@@ -27,7 +27,7 @@ export const zhCN = {
 
   common: {
     downloadClient: "下载客户端",
-    buyCard: "购买卡密 ↗",
+    userCenter: "用户中心",
     brandName: "冰茶AI",
   },
 
@@ -50,7 +50,7 @@ export const zhCN = {
     howItWorks: "工作原理",
     help: "帮助",
     faq: "常见问题",
-    store: "冰茶商店 ↗",
+    account: "用户中心",
     api: "冰茶 API ↗",
     terminal: "冰茶终端 ↗",
     copyright: "© 2026 冰茶AI · BingchaAI",
@@ -169,8 +169,13 @@ export const zhCN = {
       { b: "不改 IDE 配置", s: "你的编辑器、插件、工作流维持原样,随时可一键停用。" },
       { b: "不收集代码", s: "代码数据直发官方服务器,冰茶不做中间人代理、不留存。" },
     ],
+    portalTitle: "一个用户中心,管好你的全部",
+    portalLead:
+      "购买套餐、绑定续杯卡密、查看设备与用量,都在网页端用户中心完成,打不打开客户端都能管。",
+    portalCta: "进入用户中心",
+    portalItems: ["套餐与卡密", "设备管理", "用量统计", "推荐返利"],
     ctaTitle: "准备好续杯了?",
-    ctaSub: "下载冰茶AI 客户端,或先到商店买一张卡密,30 秒后就能照常写代码。",
+    ctaSub: "下载冰茶AI 客户端,或登录用户中心买套餐、绑卡密,30 秒后照常写代码。",
   },
 
   download: {
@@ -357,7 +362,7 @@ export const zhCN = {
       },
       {
         t: "输入卡密",
-        d: "启动客户端后,在「账号卡配置」输入续杯卡密(格式 AI…),点击「验证激活」。卡密可在 bcai.store 购买。",
+        d: "启动客户端后,在「账号卡配置」输入续杯卡密(格式 AI…),点击「验证激活」。卡密可在用户中心购买或绑定。",
       },
       {
         t: "一键接管",
@@ -388,7 +393,7 @@ export const zhCN = {
       ["Claude Desktop", "macOS / Windows 双平台桌面端透明接管"],
     ],
     ctaTitle: "还没有卡密?",
-    ctaSub: "前往冰茶商店购买续杯卡,多种套餐可选。",
+    ctaSub: "前往用户中心购买续杯卡,多种套餐可选。",
   },
 
   faqPage: {

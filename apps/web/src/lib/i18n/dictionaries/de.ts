@@ -25,7 +25,7 @@ export const de: DeepPartialDict = {
 
   common: {
     downloadClient: "Client herunterladen",
-    buyCard: "Zugangskarte kaufen ↗",
+    userCenter: "Benutzerkonto",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const de: DeepPartialDict = {
     howItWorks: "Funktionsweise",
     help: "Hilfe",
     faq: "FAQ",
-    store: "Bingcha Store ↗",
+    account: "Benutzerkonto",
     api: "Bingcha API ↗",
     terminal: "Bingcha Terminal ↗",
     copyright: "© 2026 BingchaAI",
@@ -178,8 +178,13 @@ export const de: DeepPartialDict = {
         s: "Code geht direkt an offizielle Server. Bingcha ist kein Mittelsmann-Proxy und speichert nichts.",
       },
     ],
+    portalTitle: "Ein Benutzerkonto, alles im Griff",
+    portalLead:
+      "Tarife kaufen, Nachfüllkarten einlösen, Geräte und Nutzung einsehen — alles im Web-Benutzerkonto, ob Sie den Desktop-Client öffnen oder nicht.",
+    portalCta: "Zum Benutzerkonto",
+    portalItems: ["Tarife & Karten", "Geräteverwaltung", "Nutzungsstatistik", "Empfehlungsprämien"],
     ctaTitle: "Bereit zum Nachfüllen?",
-    ctaSub: "Laden Sie den BingchaAI-Client herunter oder holen Sie sich zuerst eine Zugangskarte im Store — in 30 Sekunden coden Sie wie gewohnt.",
+    ctaSub: "Laden Sie den BingchaAI-Client herunter oder melden Sie sich im Benutzerkonto an, um einen Tarif zu kaufen oder eine Karte einzulösen — in 30 Sekunden coden Sie wie gewohnt.",
   },
 
   download: {
@@ -366,7 +371,7 @@ export const de: DeepPartialDict = {
       },
       {
         t: "Zugangskarte eingeben",
-        d: "Starten Sie den Client, geben Sie unter „Zugangskarte“ Ihre Karte zum Nachfüllen ein (Format AI…) und klicken Sie auf „Prüfen & aktivieren“. Karten gibt es auf bcai.store.",
+        d: "Starten Sie den Client, geben Sie unter „Zugangskarte“ Ihre Karte zum Nachfüllen ein (Format AI…) und klicken Sie auf „Prüfen & aktivieren“. Karten können Sie im Benutzerkonto kaufen oder einlösen.",
       },
       {
         t: "Mit einem Klick übernehmen",
@@ -379,8 +384,8 @@ export const de: DeepPartialDict = {
     cardWhat:
       "Die Zugangskarte ist Ihr BingchaAI-Berechtigungsnachweis im Format AI…. Jede Karte hat eine feste Laufzeit und Produktabdeckung; zum Verlängern kaufen Sie nach Ablauf einfach eine neue.",
     cardBuyLabel: "Wo kaufen",
-    cardBuyPre: "Karten gibt es auf ",
-    cardBuyPost: ".",
+    cardBuyPre: "Karten kaufen oder binden Sie im Benutzerkonto: ",
+    cardBuyPost: "",
     cardExpiryLabel: "Ablauf prüfen",
     cardExpiry: "Nach der Aktivierung zeigt der Client das Ablaufdatum an.",
     cardRenewLabel: "Verlängerung",
@@ -397,7 +402,7 @@ export const de: DeepPartialDict = {
       ["Claude Desktop", "Transparente Übernahme auf macOS und Windows"],
     ],
     ctaTitle: "Noch keine Zugangskarte?",
-    ctaSub: "Holen Sie sich eine im Bingcha Store — mehrere Tarife verfügbar.",
+    ctaSub: "Gehen Sie ins Benutzerkonto, um eine Nachfüllkarte zu kaufen — mehrere Tarife verfügbar.",
   },
 
   faqPage: {

@@ -2,6 +2,7 @@ import { MarketingShell } from "@/components/marketing/shell";
 import { ClientMock } from "@/components/marketing/client-mock";
 import { fmt } from "@/lib/i18n";
 import { getDict } from "@/lib/i18n/server";
+import { ACCOUNT_URL } from "@/lib/account/portal-url";
 
 /* ───────── 图标 ───────── */
 const I = {
@@ -59,10 +60,28 @@ const I = {
       <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
     </svg>
   ),
+  card: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20M6 15h4" />
+    </svg>
+  ),
+  device: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  ),
+  gift: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 12v9H4v-9M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7m0 0h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7" />
+    </svg>
+  ),
 };
 
 const ECO_LOGOS = ["/logos/antigravity.svg", "/logos/codex.svg", "/logos/claude.svg"];
 const CAP_ICONS = [I.sliders, I.users, I.shield, I.chart, I.zap];
+const PORTAL_ICONS = [I.card, I.device, I.chart, I.gift];
 
 export default async function HomePage() {
   const t = await getDict();
@@ -86,8 +105,9 @@ export default async function HomePage() {
                   {I.download}
                   {t.common.downloadClient}
                 </a>
-                <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--ghost">
-                  {t.common.buyCard}
+                <a href={ACCOUNT_URL} className="mkt-btn mkt-btn--ghost">
+                  {I.users}
+                  {t.common.userCenter}
                 </a>
               </div>
               <div className="mkt-hero__trust mkt-reveal" data-d="4">
@@ -237,6 +257,30 @@ export default async function HomePage() {
           </div>
         </section>
 
+        {/* ════ 用户中心 ════ */}
+        <section className="mkt-section" id="account">
+          <div className="mkt-wrap">
+            <div className="mkt-portal">
+              <div className="mkt-portal__copy">
+                <h2 className="mkt-h2">{t.home.portalTitle}</h2>
+                <p className="mkt-lead">{t.home.portalLead}</p>
+                <a href={ACCOUNT_URL} className="mkt-btn mkt-btn--primary">
+                  {I.users}
+                  {t.home.portalCta}
+                </a>
+              </div>
+              <div className="mkt-portal__grid">
+                {t.home.portalItems.map((label, i) => (
+                  <div className="mkt-portal__item" key={label}>
+                    <span className="mkt-portal__icon">{PORTAL_ICONS[i]}</span>
+                    <span className="mkt-portal__label">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* ════ 底部 CTA ════ */}
         <section className="mkt-section mkt-section--tight">
           <div className="mkt-wrap">
@@ -246,7 +290,7 @@ export default async function HomePage() {
               <p>{t.home.ctaSub}</p>
               <div className="mkt-cta__btns">
                 <a href="/download" className="mkt-btn mkt-btn--primary">{I.download}{t.common.downloadClient}</a>
-                <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--ghost">{t.common.buyCard}</a>
+                <a href={ACCOUNT_URL} className="mkt-btn mkt-btn--ghost">{I.users}{t.common.userCenter}</a>
               </div>
             </div>
           </div>

@@ -25,7 +25,7 @@ export const zhTW: DeepPartialDict = {
 
   common: {
     downloadClient: "下載用戶端",
-    buyCard: "購買卡密 ↗",
+    userCenter: "用戶中心",
     brandName: "冰茶AI",
   },
 
@@ -48,7 +48,7 @@ export const zhTW: DeepPartialDict = {
     howItWorks: "運作原理",
     help: "說明",
     faq: "常見問題",
-    store: "冰茶商店 ↗",
+    account: "用戶中心",
     api: "冰茶 API ↗",
     terminal: "冰茶終端 ↗",
     copyright: "© 2026 冰茶AI · BingchaAI",
@@ -167,8 +167,13 @@ export const zhTW: DeepPartialDict = {
       { b: "不改 IDE 設定", s: "你的編輯器、外掛、工作流程維持原樣,隨時可一鍵停用。" },
       { b: "不收集程式碼", s: "程式碼資料直送官方伺服器,冰茶不做中間人代理、不留存。" },
     ],
+    portalTitle: "一個用戶中心,管好你的全部",
+    portalLead:
+      "購買套餐、綁定續杯卡密、查看裝置與用量,都在網頁端用戶中心完成,開不開用戶端都能管。",
+    portalCta: "進入用戶中心",
+    portalItems: ["套餐與卡密", "裝置管理", "用量統計", "推薦返利"],
     ctaTitle: "準備好續杯了嗎?",
-    ctaSub: "下載冰茶AI 用戶端,或先到商店買一張卡密,30 秒後就能照常寫程式。",
+    ctaSub: "下載冰茶AI 用戶端,或登入用戶中心買套餐、綁卡密,30 秒後照常寫程式。",
   },
 
   download: {
@@ -355,7 +360,7 @@ export const zhTW: DeepPartialDict = {
       },
       {
         t: "輸入卡密",
-        d: "啟動用戶端後,在「帳號卡設定」輸入續杯卡密(格式 AI…),點擊「驗證啟用」。卡密可在 bcai.store 購買。",
+        d: "啟動用戶端後,在「帳號卡設定」輸入續杯卡密(格式 AI…),點擊「驗證啟用」。卡密可在用戶中心購買或綁定。",
       },
       {
         t: "一鍵接管",
@@ -386,7 +391,7 @@ export const zhTW: DeepPartialDict = {
       ["Claude Desktop", "macOS / Windows 雙平台桌面版透明接管"],
     ],
     ctaTitle: "還沒有卡密?",
-    ctaSub: "前往冰茶商店購買續杯卡,多種方案可選。",
+    ctaSub: "前往用戶中心購買續杯卡,多種方案可選。",
   },
 
   faqPage: {

@@ -5,10 +5,18 @@ import { usePathname } from "next/navigation";
 import { ThemeToggle } from "./theme-toggle";
 import { LocaleSwitcher } from "./locale-switcher";
 import { useDict } from "@/lib/i18n/client";
+import { ACCOUNT_URL } from "@/lib/account/portal-url";
 
 const DownloadIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
   </svg>
 );
 
@@ -56,12 +64,11 @@ export function MarketingNav() {
           <LocaleSwitcher />
           <ThemeToggle />
           <a
-            href="https://bcai.store"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mkt-btn mkt-btn--ghost mkt-btn--sm mkt-nav__buy"
+            href={ACCOUNT_URL}
+            className="mkt-btn mkt-btn--ghost mkt-btn--sm mkt-nav__account"
           >
-            {t.common.buyCard}
+            <UserIcon />
+            {t.common.userCenter}
           </a>
           <a href="/download" className="mkt-btn mkt-btn--primary mkt-btn--sm">
             <DownloadIcon />
@@ -89,13 +96,11 @@ export function MarketingNav() {
             </a>
           ))}
           <a
-            href="https://bcai.store"
-            target="_blank"
-            rel="noopener noreferrer"
+            href={ACCOUNT_URL}
             className="mkt-nav__link"
             onClick={() => setOpen(false)}
           >
-            {t.common.buyCard}
+            {t.common.userCenter}
           </a>
         </div>
       )}

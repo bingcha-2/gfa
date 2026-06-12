@@ -25,7 +25,7 @@ export const en: DeepPartialDict = {
 
   common: {
     downloadClient: "Download Client",
-    buyCard: "Get an Access Card ↗",
+    userCenter: "User Center",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const en: DeepPartialDict = {
     howItWorks: "How It Works",
     help: "Help",
     faq: "FAQ",
-    store: "Bingcha Store ↗",
+    account: "User Center",
     api: "Bingcha API ↗",
     terminal: "Bingcha Terminal ↗",
     copyright: "© 2026 BingchaAI",
@@ -178,8 +178,13 @@ export const en: DeepPartialDict = {
         s: "Code goes straight to official servers. Bingcha is not a middleman proxy and stores nothing.",
       },
     ],
+    portalTitle: "One account, everything in one place",
+    portalLead:
+      "Buy plans, bind refill cards, check your devices and usage — all in the web User Center. No need to open the desktop client.",
+    portalCta: "Open User Center",
+    portalItems: ["Plans & cards", "Devices", "Usage", "Referrals"],
     ctaTitle: "Ready for a refill?",
-    ctaSub: "Download the BingchaAI client, or grab an access card from the store first — you'll be coding as usual in 30 seconds.",
+    ctaSub: "Download the BingchaAI client, or sign in to the User Center to buy a plan or bind a card — you'll be coding as usual in 30 seconds.",
   },
 
   download: {
@@ -366,7 +371,7 @@ export const en: DeepPartialDict = {
       },
       {
         t: "Enter your access card",
-        d: "Launch the client, enter your refill access card (format AI…) under “Account Card”, and click “Verify & Activate”. Cards are sold at bcai.store.",
+        d: "Launch the client, enter your refill access card (format AI…) under “Account Card”, and click “Verify & Activate”. Buy or bind cards in the User Center.",
       },
       {
         t: "Take over with one click",
@@ -397,7 +402,7 @@ export const en: DeepPartialDict = {
       ["Claude Desktop", "Transparent takeover on macOS and Windows"],
     ],
     ctaTitle: "No access card yet?",
-    ctaSub: "Pick one up at the Bingcha store — multiple plans available.",
+    ctaSub: "Head to the User Center to buy a refill card — several plans to choose from.",
   },
 
   faqPage: {

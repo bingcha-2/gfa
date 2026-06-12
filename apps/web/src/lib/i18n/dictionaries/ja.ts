@@ -25,7 +25,7 @@ export const ja: DeepPartialDict = {
 
   common: {
     downloadClient: "クライアントをダウンロード",
-    buyCard: "カードを購入 ↗",
+    userCenter: "マイページ",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const ja: DeepPartialDict = {
     howItWorks: "仕組み",
     help: "ヘルプ",
     faq: "よくある質問",
-    store: "Bingcha ストア ↗",
+    account: "マイページ",
     api: "Bingcha API ↗",
     terminal: "Bingcha ターミナル ↗",
     copyright: "© 2026 BingchaAI",
@@ -167,8 +167,13 @@ export const ja: DeepPartialDict = {
       { b: "IDE の設定を変えない", s: "エディタ・プラグイン・ワークフローはそのまま。いつでもワンクリックで停止できます。" },
       { b: "コードを収集しない", s: "コードデータは公式サーバーへ直接送信されます。BingchaAI は中間者プロキシを行わず、何も保存しません。" },
     ],
+    portalTitle: "1 つのマイページで、すべてを管理",
+    portalLead:
+      "プランの購入、おかわりカードのバインド、デバイスと利用状況の確認——すべて Web のマイページで完結。クライアントを開いても開かなくても管理できます。",
+    portalCta: "マイページへ",
+    portalItems: ["プランとカード", "デバイス管理", "利用状況", "紹介特典"],
     ctaTitle: "おかわりの準備はできましたか?",
-    ctaSub: "BingchaAI クライアントをダウンロードするか、まずストアでカードを 1 枚購入してください。30 秒後にはいつも通りコーディングできます。",
+    ctaSub: "BingchaAI クライアントをダウンロードするか、マイページにログインしてプランを購入・カードをバインド。30 秒後にはいつも通りコーディングできます。",
   },
 
   download: {
@@ -355,7 +360,7 @@ export const ja: DeepPartialDict = {
       },
       {
         t: "カードを入力",
-        d: "クライアントを起動し、「アカウントカード設定」におかわりカード(形式 AI…)を入力して「認証して有効化」をクリックします。カードは bcai.store で購入できます。",
+        d: "クライアントを起動し、「アカウントカード設定」におかわりカード(形式 AI…)を入力して「認証して有効化」をクリックします。カードはマイページで購入またはバインドできます。",
       },
       {
         t: "ワンクリックで引き継ぎ",
@@ -386,7 +391,7 @@ export const ja: DeepPartialDict = {
       ["Claude Desktop", "macOS / Windows 両プラットフォームのデスクトップ版を透過的に引き継ぎ"],
     ],
     ctaTitle: "カードをまだお持ちでない方は?",
-    ctaSub: "Bingcha ストアでおかわりカードを購入できます。複数のプランからお選びください。",
+    ctaSub: "マイページでおかわりカードを購入できます。複数のプランからお選びください。",
   },
 
   faqPage: {

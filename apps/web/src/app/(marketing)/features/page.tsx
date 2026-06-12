@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingShell } from "@/components/marketing/shell";
 import { getDict } from "@/lib/i18n/server";
+import { ACCOUNT_URL } from "@/lib/account/portal-url";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getDict();
@@ -130,7 +131,7 @@ export default async function FeaturesPage() {
             <p>{t.features.ctaSub}</p>
             <div className="mkt-cta__btns">
               <a href="/download" className="mkt-btn mkt-btn--primary">{t.common.downloadClient}</a>
-              <a href="https://bcai.store" target="_blank" rel="noopener noreferrer" className="mkt-btn mkt-btn--ghost">{t.common.buyCard}</a>
+              <a href={ACCOUNT_URL} className="mkt-btn mkt-btn--ghost">{t.common.userCenter}</a>
             </div>
           </div>
         </div>

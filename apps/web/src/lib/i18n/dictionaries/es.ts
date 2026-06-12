@@ -25,7 +25,7 @@ export const es: DeepPartialDict = {
 
   common: {
     downloadClient: "Descargar cliente",
-    buyCard: "Comprar tarjeta de acceso ↗",
+    userCenter: "Mi cuenta",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const es: DeepPartialDict = {
     howItWorks: "Cómo funciona",
     help: "Ayuda",
     faq: "Preguntas frecuentes",
-    store: "Tienda Bingcha ↗",
+    account: "Mi cuenta",
     api: "Bingcha API ↗",
     terminal: "Terminal Bingcha ↗",
     copyright: "© 2026 BingchaAI",
@@ -178,8 +178,13 @@ export const es: DeepPartialDict = {
         s: "El código va directo a los servidores oficiales. Bingcha no es un proxy intermediario y no almacena nada.",
       },
     ],
+    portalTitle: "Una sola cuenta para gestionarlo todo",
+    portalLead:
+      "Compra planes, vincula tarjetas de recarga y consulta tus dispositivos y tu uso, todo desde Mi cuenta en la web — abras o no el cliente de escritorio.",
+    portalCta: "Ir a Mi cuenta",
+    portalItems: ["Planes y tarjetas", "Dispositivos", "Uso", "Referidos"],
     ctaTitle: "¿Listo para recargar?",
-    ctaSub: "Descarga el cliente de BingchaAI o consigue primero una tarjeta de acceso en la tienda — en 30 segundos estarás programando como siempre.",
+    ctaSub: "Descarga el cliente de BingchaAI, o inicia sesión en Mi cuenta para comprar un plan o vincular una tarjeta — en 30 segundos estarás programando como siempre.",
   },
 
   download: {
@@ -366,7 +371,7 @@ export const es: DeepPartialDict = {
       },
       {
         t: "Ingresa tu tarjeta de acceso",
-        d: "Inicia el cliente, ingresa tu tarjeta de acceso de recarga (formato AI…) en “Tarjeta de cuenta” y haz clic en “Verificar y activar”. Las tarjetas se venden en bcai.store.",
+        d: "Inicia el cliente, ingresa tu tarjeta de acceso de recarga (formato AI…) en “Tarjeta de cuenta” y haz clic en “Verificar y activar”. Las tarjetas se compran o vinculan en Mi cuenta.",
       },
       {
         t: "Toma el control con un clic",
@@ -397,7 +402,7 @@ export const es: DeepPartialDict = {
       ["Claude Desktop", "Toma de control transparente en macOS y Windows"],
     ],
     ctaTitle: "¿Aún sin tarjeta de acceso?",
-    ctaSub: "Consigue una en la tienda Bingcha — hay varios planes disponibles.",
+    ctaSub: "Ve a Mi cuenta para comprar una tarjeta de recarga; varios planes disponibles.",
   },
 
   faqPage: {

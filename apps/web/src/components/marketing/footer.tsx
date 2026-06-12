@@ -1,6 +1,7 @@
 "use client";
 
 import { useDict } from "@/lib/i18n/client";
+import { ACCOUNT_URL } from "@/lib/account/portal-url";
 
 /** 营销站统一页脚(首页与所有子页共用)。 */
 export function MarketingFooter() {
@@ -25,7 +26,7 @@ export function MarketingFooter() {
         <div className="mkt-footer__col">
           <h4>{t.footer.help}</h4>
           <a href="/faq">{t.footer.faq}</a>
-          <a href="https://bcai.store" target="_blank" rel="noopener noreferrer">{t.footer.store}</a>
+          <a href={ACCOUNT_URL}>{t.footer.account}</a>
           <a href="https://bcai.online" target="_blank" rel="noopener noreferrer">{t.footer.api}</a>
           <a href="https://bcai.lol" target="_blank" rel="noopener noreferrer">{t.footer.terminal}</a>
         </div>

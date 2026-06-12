@@ -25,7 +25,7 @@ export const vi: DeepPartialDict = {
 
   common: {
     downloadClient: "Tải ứng dụng",
-    buyCard: "Mua thẻ truy cập ↗",
+    userCenter: "Tài khoản",
     brandName: "BingchaAI",
   },
 
@@ -48,7 +48,7 @@ export const vi: DeepPartialDict = {
     howItWorks: "Cách hoạt động",
     help: "Trợ giúp",
     faq: "Câu hỏi thường gặp",
-    store: "Cửa hàng Bingcha ↗",
+    account: "Tài khoản",
     api: "Bingcha API ↗",
     terminal: "Bingcha Terminal ↗",
     copyright: "© 2026 BingchaAI",
@@ -167,8 +167,13 @@ export const vi: DeepPartialDict = {
       { b: "Không sửa cấu hình IDE", s: "Trình soạn thảo, plugin và quy trình làm việc của bạn giữ nguyên, có thể tắt bằng một cú nhấp bất cứ lúc nào." },
       { b: "Không thu thập mã nguồn", s: "Dữ liệu mã nguồn gửi thẳng tới máy chủ chính thức — Bingcha không làm proxy trung gian, không lưu trữ gì." },
     ],
+    portalTitle: "Một tài khoản, quản lý tất cả",
+    portalLead:
+      "Mua gói, gắn thẻ tiếp thêm, xem thiết bị và mức dùng — tất cả làm trong tài khoản trên web, mở hay không mở ứng dụng đều quản được.",
+    portalCta: "Vào tài khoản",
+    portalItems: ["Gói & thẻ", "Thiết bị", "Mức dùng", "Giới thiệu"],
     ctaTitle: "Sẵn sàng tiếp thêm chưa?",
-    ctaSub: "Tải ứng dụng BingchaAI, hoặc mua trước một thẻ truy cập tại cửa hàng — 30 giây sau là viết code như thường.",
+    ctaSub: "Tải ứng dụng BingchaAI, hoặc đăng nhập tài khoản để mua gói, gắn thẻ truy cập — 30 giây sau là viết code như thường.",
   },
 
   download: {
@@ -355,7 +360,7 @@ export const vi: DeepPartialDict = {
       },
       {
         t: "Nhập thẻ truy cập",
-        d: "Mở ứng dụng, nhập thẻ truy cập tiếp thêm (định dạng AI…) tại mục “Cấu hình thẻ tài khoản”, rồi nhấn “Xác minh kích hoạt”. Thẻ bán tại bcai.store.",
+        d: "Mở ứng dụng, nhập thẻ truy cập tiếp thêm (định dạng AI…) tại mục “Cấu hình thẻ tài khoản”, rồi nhấn “Xác minh kích hoạt”. Bạn có thể mua hoặc gắn thẻ trong tài khoản.",
       },
       {
         t: "Tiếp quản một cú nhấp",
@@ -386,7 +391,7 @@ export const vi: DeepPartialDict = {
       ["Claude Desktop", "Tiếp quản trong suốt trên cả macOS / Windows"],
     ],
     ctaTitle: "Chưa có thẻ truy cập?",
-    ctaSub: "Đến cửa hàng Bingcha mua thẻ tiếp thêm — nhiều gói để chọn.",
+    ctaSub: "Vào tài khoản để mua thẻ tiếp thêm; có nhiều gói để chọn.",
   },
 
   faqPage: {
