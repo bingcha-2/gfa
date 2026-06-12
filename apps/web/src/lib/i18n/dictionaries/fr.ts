@@ -182,7 +182,7 @@ export const fr: DeepPartialDict = {
     portalLead:
       "Achetez vos forfaits, liez vos cartes de recharge, consultez vos appareils et votre usage — tout se fait dans Mon compte, sur le web, que vous ouvriez ou non le client de bureau.",
     portalCta: "Ouvrir mon compte",
-    portalItems: ["Forfaits et cartes", "Appareils", "Utilisation", "Parrainage"],
+    portalItems: ["Forfaits et cartes", "Appareils", "Utilisation", "Assistance"],
     ctaTitle: "Prêt pour une recharge ?",
     ctaSub: "Téléchargez le client BingchaAI, ou connectez-vous à Mon compte pour acheter un forfait et lier votre carte — vous coderez comme d'habitude dans 30 secondes.",
   },

@@ -182,7 +182,7 @@ export const en: DeepPartialDict = {
     portalLead:
       "Buy plans, bind refill cards, check your devices and usage — all in the web User Center. No need to open the desktop client.",
     portalCta: "Open User Center",
-    portalItems: ["Plans & cards", "Devices", "Usage", "Referrals"],
+    portalItems: ["Plans & cards", "Devices", "Usage", "Support"],
     ctaTitle: "Ready for a refill?",
     ctaSub: "Download the BingchaAI client, or sign in to the User Center to buy a plan or bind a card — you'll be coding as usual in 30 seconds.",
   },

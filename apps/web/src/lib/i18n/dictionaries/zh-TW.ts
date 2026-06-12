@@ -171,7 +171,7 @@ export const zhTW: DeepPartialDict = {
     portalLead:
       "購買套餐、綁定續杯卡密、查看裝置與用量,都在網頁端用戶中心完成,開不開用戶端都能管。",
     portalCta: "進入用戶中心",
-    portalItems: ["套餐與卡密", "裝置管理", "用量統計", "推薦返利"],
+    portalItems: ["套餐與卡密", "裝置管理", "用量統計", "工單支援"],
     ctaTitle: "準備好續杯了嗎?",
     ctaSub: "下載冰茶AI 用戶端,或登入用戶中心買套餐、綁卡密,30 秒後照常寫程式。",
   },

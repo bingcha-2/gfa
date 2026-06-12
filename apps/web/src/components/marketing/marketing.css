@@ -289,7 +289,7 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
   background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm);
   transition: transform 0.18s cubic-bezier(0.22,1,0.36,1), box-shadow 0.18s, border-color 0.18s;
 }
-.mkt-eco:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: var(--line-strong); }
+.mkt-eco:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: color-mix(in oklch, var(--primary) 34%, var(--line)); }
 .mkt-eco__logo {
   width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
   background: #fff; border: 1px solid var(--line);
@@ -356,6 +356,20 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
 .mkt-trust__point b { font-size: 0.95rem; display: inline-flex; align-items: center; gap: 0.45rem; }
 .mkt-trust__point b svg { width: 1rem; height: 1rem; color: var(--ok); flex-shrink: 0; }
 .mkt-trust__point span { font-size: 0.875rem; color: var(--ink-muted); line-height: 1.6; }
+
+/* 直连架构流向图:你的工具 → 冰茶(仅注入 Token)→ 官方服务器 */
+.mkt-flow { display: flex; align-items: center; justify-content: center; gap: clamp(0.55rem, 3vw, 1.6rem); flex-wrap: wrap; padding: clamp(1.5rem, 3.5vw, 2.5rem) 0 clamp(0.25rem, 1.5vw, 0.75rem); }
+.mkt-flow__group { display: flex; gap: 0.55rem; }
+.mkt-flow__node { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow-sm); flex-shrink: 0; }
+/* 三方工具 logo 统一用白底徽章承托(与上方 .mkt-eco__logo 一致),保证黑色商标(codex)在深色下也清晰。 */
+.mkt-flow__group .mkt-flow__node { background: #fff; box-shadow: var(--shadow-sm), inset 0 1px 0 oklch(1 0 0 / 0.7); }
+.mkt-flow__node img { width: 26px; height: 26px; object-fit: contain; }
+.mkt-flow__node--brand { width: 62px; height: 62px; border-radius: 16px; border-color: color-mix(in oklch, var(--primary) 42%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 26%, transparent), 0 10px 26px var(--glow); }
+.mkt-flow__node--brand img { width: 34px; height: 34px; border-radius: 9px; }
+.mkt-flow__node--official { color: var(--ink-muted); }
+.mkt-flow__node--official svg { width: 26px; height: 26px; }
+.mkt-flow__wire { position: relative; width: clamp(24px, 6vw, 64px); height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--line), color-mix(in oklch, var(--primary) 55%, var(--line))); flex-shrink: 0; }
+.mkt-flow__wire::after { content: ""; position: absolute; right: -1px; top: 50%; transform: translateY(-50%); border-left: 6px solid color-mix(in oklch, var(--primary) 65%, var(--line)); border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
 
 /* ───────── 底部 CTA ───────── */
 .mkt-cta {
@@ -550,6 +564,10 @@ a.mkt-dlcard:hover { border-color: var(--line-strong); box-shadow: var(--shadow-
   /* 光晕缓入 */
   .mkt-anim .mkt-hero__glow { animation: mkt-glow-in 1.5s var(--ease-quint) 0.05s both; }
   @keyframes mkt-glow-in { from { opacity: 0; } to { opacity: 1; } }
+
+  /* 直连流向图:Token 光点沿线流动 */
+  .mkt-flow__wire::before { content: ""; position: absolute; top: 50%; left: 2px; width: 9px; height: 4px; transform: translateY(-50%); border-radius: 3px; background: var(--primary); box-shadow: 0 0 8px var(--glow); animation: mkt-flow-dot 2.2s var(--ease-quint) infinite; }
+  @keyframes mkt-flow-dot { 0% { left: 2px; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { left: calc(100% - 9px); opacity: 0; } }
 }
 
 /* ───────── 响应式 ───────── */
@@ -562,13 +580,17 @@ a.mkt-dlcard:hover { border-color: var(--line-strong); box-shadow: var(--shadow-
 }
 @media (max-width: 680px) {
   .mkt-nav__links { display: none; }
-  .mkt-nav__account { display: none; }
+  /* 顶栏不再塞下载/用户中心按钮(会顶破视口);移到抽屉,Hero 也有显眼的下载 CTA */
+  .mkt-nav__actions .mkt-btn { display: none; }
   .mkt-menubtn { display: inline-flex; }
   .mkt-mobile { display: flex; }
   .mkt-hero__sub { max-width: none; }
   .mkt-mock__stats { grid-template-columns: repeat(2, 1fr); }
   .mkt-mock__cols { grid-template-columns: 1fr; }
   .mkt-footer__inner { grid-template-columns: 1fr; }
+  /* 对比表窄屏自适应:收紧到能放下,而不是强制横滑(overflow-x 仍作兜底) */
+  .mkt-compare table { min-width: 0; font-size: 0.78rem; }
+  .mkt-compare th, .mkt-compare td { padding: 0.6rem 0.4rem; }
 }
 
 /* ───────── 语言切换器 ───────── */

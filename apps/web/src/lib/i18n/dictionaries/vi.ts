@@ -171,7 +171,7 @@ export const vi: DeepPartialDict = {
     portalLead:
       "Mua gói, gắn thẻ tiếp thêm, xem thiết bị và mức dùng — tất cả làm trong tài khoản trên web, mở hay không mở ứng dụng đều quản được.",
     portalCta: "Vào tài khoản",
-    portalItems: ["Gói & thẻ", "Thiết bị", "Mức dùng", "Giới thiệu"],
+    portalItems: ["Gói & thẻ", "Thiết bị", "Mức dùng", "Hỗ trợ"],
     ctaTitle: "Sẵn sàng tiếp thêm chưa?",
     ctaSub: "Tải ứng dụng BingchaAI, hoặc đăng nhập tài khoản để mua gói, gắn thẻ truy cập — 30 giây sau là viết code như thường.",
   },

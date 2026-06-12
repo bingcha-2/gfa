@@ -173,7 +173,7 @@ export const zhCN = {
     portalLead:
       "购买套餐、绑定续杯卡密、查看设备与用量,都在网页端用户中心完成,打不打开客户端都能管。",
     portalCta: "进入用户中心",
-    portalItems: ["套餐与卡密", "设备管理", "用量统计", "推荐返利"],
+    portalItems: ["套餐与卡密", "设备管理", "用量统计", "工单支持"],
     ctaTitle: "准备好续杯了?",
     ctaSub: "下载冰茶AI 客户端,或登录用户中心买套餐、绑卡密,30 秒后照常写代码。",
   },
@@ -645,6 +645,8 @@ export const zhCN = {
       retryCreate: "重试创建",
       qrAlt: "支付二维码",
       amountLabel: "支付金额",
+      baseLabel: "套餐价",
+      feeLabel: "手续费",
       countdownLabel: "剩余支付时间",
       openPayUrl: "打开支付",
       scanHint: "使用{channel}扫码完成支付",

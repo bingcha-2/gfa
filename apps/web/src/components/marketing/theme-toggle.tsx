@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useDict } from "@/lib/i18n/client";
 
 /** 在首屏 paint 前同步初始主题，避免闪烁。注入到 <body> 顶部。 */
-export const themeInitScript = `(function(){try{var k='mkt-theme';var s=localStorage.getItem(k);var d=s?s==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.mkt=d?'dark':'light';}catch(e){document.documentElement.dataset.mkt='light';}})();`;
+// 深色优先:与用户中心(account)一致,新访客默认深色;尊重已存的选择,浅色一键可切。
+export const themeInitScript = `(function(){try{var k='mkt-theme';var s=localStorage.getItem(k);var d=s?s==='dark':true;document.documentElement.dataset.mkt=d?'dark':'light';}catch(e){document.documentElement.dataset.mkt='dark';}})();`;
 
 const Moon = () => (
   <svg className="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

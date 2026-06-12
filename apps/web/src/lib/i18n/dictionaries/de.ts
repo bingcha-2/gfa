@@ -182,7 +182,7 @@ export const de: DeepPartialDict = {
     portalLead:
       "Tarife kaufen, Nachfüllkarten einlösen, Geräte und Nutzung einsehen — alles im Web-Benutzerkonto, ob Sie den Desktop-Client öffnen oder nicht.",
     portalCta: "Zum Benutzerkonto",
-    portalItems: ["Tarife & Karten", "Geräteverwaltung", "Nutzungsstatistik", "Empfehlungsprämien"],
+    portalItems: ["Tarife & Karten", "Geräteverwaltung", "Nutzungsstatistik", "Support"],
     ctaTitle: "Bereit zum Nachfüllen?",
     ctaSub: "Laden Sie den BingchaAI-Client herunter oder melden Sie sich im Benutzerkonto an, um einen Tarif zu kaufen oder eine Karte einzulösen — in 30 Sekunden coden Sie wie gewohnt.",
   },

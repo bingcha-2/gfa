@@ -102,6 +102,13 @@ export function MarketingNav() {
           >
             {t.common.userCenter}
           </a>
+          <a
+            href="/download"
+            className="mkt-nav__link"
+            onClick={() => setOpen(false)}
+          >
+            {t.common.downloadClient}
+          </a>
         </div>
       )}
     </header>

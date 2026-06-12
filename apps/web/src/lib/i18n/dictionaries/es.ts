@@ -182,7 +182,7 @@ export const es: DeepPartialDict = {
     portalLead:
       "Compra planes, vincula tarjetas de recarga y consulta tus dispositivos y tu uso, todo desde Mi cuenta en la web — abras o no el cliente de escritorio.",
     portalCta: "Ir a Mi cuenta",
-    portalItems: ["Planes y tarjetas", "Dispositivos", "Uso", "Referidos"],
+    portalItems: ["Planes y tarjetas", "Dispositivos", "Uso", "Soporte"],
     ctaTitle: "¿Listo para recargar?",
     ctaSub: "Descarga el cliente de BingchaAI, o inicia sesión en Mi cuenta para comprar un plan o vincular una tarjeta — en 30 segundos estarás programando como siempre.",
   },

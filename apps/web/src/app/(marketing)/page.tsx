@@ -77,11 +77,16 @@ const I = {
       <path d="M20 12v9H4v-9M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7m0 0h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7" />
     </svg>
   ),
+  support: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  ),
 };
 
 const ECO_LOGOS = ["/logos/antigravity.svg", "/logos/codex.svg", "/logos/claude.svg"];
 const CAP_ICONS = [I.sliders, I.users, I.shield, I.chart, I.zap];
-const PORTAL_ICONS = [I.card, I.device, I.chart, I.gift];
+const PORTAL_ICONS = [I.card, I.device, I.chart, I.support];
 
 export default async function HomePage() {
   const t = await getDict();
@@ -245,6 +250,27 @@ export default async function HomePage() {
                   </p>
                 </div>
               </div>
+
+              <div className="mkt-flow" aria-hidden>
+                <div className="mkt-flow__group">
+                  {ECO_LOGOS.map((src) => (
+                    <span className="mkt-flow__node" key={src}>
+                      <img src={src} alt="" width={26} height={26} loading="lazy" />
+                    </span>
+                  ))}
+                </div>
+                <span className="mkt-flow__wire" />
+                <span className="mkt-flow__node mkt-flow__node--brand">
+                  <img src="/bcai-icon.png" alt="" width={34} height={34} />
+                </span>
+                <span className="mkt-flow__wire" />
+                <span className="mkt-flow__node mkt-flow__node--official">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6.5 19h11z" />
+                  </svg>
+                </span>
+              </div>
+
               <div className="mkt-trust__points">
                 {t.home.trustPoints.map((p) => (
                   <div className="mkt-trust__point" key={p.b}>
