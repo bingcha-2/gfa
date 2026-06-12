@@ -41,6 +41,7 @@ export const ko: DeepPartialDict = {
     proxyDown: '프록시 미실행',
     error: '오류 · {error}',
     leasing: '계정 임대 중...',
+    needCard: '계정에 로그인하세요',
     ok: '서비스 정상 · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const ko: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: '구독/세션이 만료되어 기능이 중지되었습니다',
+    cardUnusableBody: '현재 로그인 세션 또는 구독이 더 이상 유효하지 않습니다 (세션 만료/구독 종료/기기 제거). 다시 로그인하거나 웹에서 구독과 결제를 관리하세요.',
+    cardUnusableRelogin: '다시 로그인',
+    cardUnusableBilling: '구독 및 결제 ↗',
     activateTitle: '계정 카드 활성화',
     activateIntro: '카드를 입력하면 공식 모델에 바로 연결됩니다 — API Key 설정 불필요, 코드 데이터는 공식 서버로 직접 전송되며 Bingcha는 로컬에서 인증 토큰만 주입합니다.',
     cardPlaceholder: '계정 카드 입력 (AI...)',
@@ -181,6 +186,8 @@ export const ko: DeepPartialDict = {
     permissionBody: '{message}\n\n“시스템 설정 → 개인정보 보호 및 보안 → 앱 관리”에서 BingchaAI 권한을 켠 다음 다시 시도해 주세요.',
     opFailed: '작업 실패',
     egressBlockedTitle: '⚠ 테이크오버 차단됨 · 출구 검증 실패',
+    needCardTitle: '로그인이 필요합니다',
+    needCardBody: '{product} 테이크오버에는 로그인이 필요합니다. 먼저 로그인 페이지에서 로그인한 후 활성화하세요.',
     desktopConfirmTitle: 'Claude Desktop 테이크오버',
     desktopConfirmBody: '⚠ Chat과 Cowork은 테이크오버로 사용할 수 없습니다. 데스크톱의 Code 기능을 사용해 주세요!\n\n테이크오버 시 Claude Desktop이 재시작되며, 실행 중인 Cowork 세션이 중단됩니다. 계속할까요?',
     hubPermission1: 'Hub 테이크오버는 앱 파일을 수정하므로 ',
@@ -254,6 +261,40 @@ export const ko: DeepPartialDict = {
     changelogLabel: '업데이트 내역',
     changelogBtn: '보기',
     changelogModalTitle: 'v{version} 업데이트 내용',
+  },
+
+  login: {
+    title: 'BingchaAI 로그인',
+    emailLabel: '이메일',
+    emailPlaceholder: '가입한 이메일 입력',
+    passwordLabel: '비밀번호',
+    passwordPlaceholder: '비밀번호 입력',
+    submit: '로그인',
+    submitting: '로그인 중...',
+    registerLink: '계정 만들기',
+    forgotLink: '비밀번호 찾기',
+    buyLink: '플랜 구매',
+    bindCard: '카드 연동',
+    deviceLimitTitle: '기기 수가 한도에 도달했습니다',
+    deviceLimitBody: '이 계정은 기기 한도에 도달했습니다. 기기를 관리해 주세요.',
+    manageDevices: '기기 관리',
+    errorInvalidCreds: '이메일 또는 비밀번호가 올바르지 않습니다. 다시 시도해 주세요.',
+    errorDisabled: '계정이 비활성화되었습니다. 고객센터에 문의해 주세요.',
+    errorGeneric: '로그인 실패: {error}',
+  },
+
+  account: {
+    title: '계정',
+    email: '이메일',
+    plan: '플랜',
+    planExpiry: '만료일',
+    deviceName: '기기 이름',
+    noSubscription: '유효한 플랜이 없습니다',
+    logout: '로그아웃',
+    manageDevices: '기기 관리',
+    sessionExpired: '세션이 만료되었습니다. 다시 로그인해 주세요',
+    logoutConfirmTitle: '로그아웃',
+    logoutConfirmBody: '현재 계정에서 로그아웃할까요?',
   },
 
   modal: {

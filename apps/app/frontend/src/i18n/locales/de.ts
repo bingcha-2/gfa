@@ -41,6 +41,7 @@ export const de: DeepPartialDict = {
     proxyDown: 'Proxy läuft nicht',
     error: 'Fehler · {error}',
     leasing: 'Lease wird abgerufen...',
+    needCard: 'Bitte melden Sie sich an',
     ok: 'Dienst läuft · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const de: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: 'Abo/Sitzung ungültig — Funktionen deaktiviert',
+    cardUnusableBody: 'Ihre Sitzung oder Ihr Abo ist nicht mehr gültig (Sitzung abgelaufen/Abo beendet/Gerät entfernt). Melden Sie sich erneut an oder verwalten Sie Abo und Rechnungen im Web.',
+    cardUnusableRelogin: 'Erneut anmelden',
+    cardUnusableBilling: 'Abo & Rechnungen ↗',
     activateTitle: 'Zugangskarte aktivieren',
     activateIntro: 'Karte eingeben und direkt mit offiziellen Modellen verbinden — kein API-Schlüssel nötig, Code geht direkt an offizielle Server, Bingcha injiziert nur lokal das Autorisierungs-Token.',
     cardPlaceholder: 'Zugangskarte eingeben (AI...)',
@@ -181,6 +186,8 @@ export const de: DeepPartialDict = {
     permissionBody: '{message}\n\nAktivieren Sie BingchaAI unter „Systemeinstellungen → Datenschutz & Sicherheit → App-Verwaltung“ und versuchen Sie es erneut.',
     opFailed: 'Aktion fehlgeschlagen',
     egressBlockedTitle: '⚠ Übernahme blockiert · Ausgangsprüfung fehlgeschlagen',
+    needCardTitle: 'Anmeldung erforderlich',
+    needCardBody: 'Die Übernahme von {product} erfordert ein angemeldetes Konto — bitte melden Sie sich zuerst auf der Anmeldeseite an.',
     desktopConfirmTitle: 'Claude Desktop übernehmen',
     desktopConfirmBody: '⚠ Chat und Cowork funktionieren über die Übernahme nicht — nutzen Sie die Code-Funktion der Desktop-App!\n\nDie Übernahme startet Claude Desktop neu — eine laufende Cowork-Sitzung wird dadurch unterbrochen. Fortfahren?',
     hubPermission1: 'Die Übernahme des Hub ändert App-Dateien und benötigt die Berechtigung ',
@@ -254,6 +261,40 @@ export const de: DeepPartialDict = {
     changelogLabel: 'Änderungsprotokoll',
     changelogBtn: 'Anzeigen',
     changelogModalTitle: 'Neuerungen in v{version}',
+  },
+
+  login: {
+    title: 'Bei BingchaAI anmelden',
+    emailLabel: 'E-Mail',
+    emailPlaceholder: 'Registrierte E-Mail eingeben',
+    passwordLabel: 'Passwort',
+    passwordPlaceholder: 'Passwort eingeben',
+    submit: 'Anmelden',
+    submitting: 'Anmeldung...',
+    registerLink: 'Konto erstellen',
+    forgotLink: 'Passwort vergessen',
+    buyLink: 'Tarif kaufen',
+    bindCard: 'Karte binden',
+    deviceLimitTitle: 'Gerätelimit erreicht',
+    deviceLimitBody: 'Dieses Konto hat sein Gerätelimit erreicht. Bitte verwalten Sie Ihre Geräte.',
+    manageDevices: 'Geräte verwalten',
+    errorInvalidCreds: 'E-Mail oder Passwort falsch. Bitte erneut versuchen.',
+    errorDisabled: 'Konto deaktiviert. Bitte kontaktieren Sie den Support.',
+    errorGeneric: 'Anmeldung fehlgeschlagen: {error}',
+  },
+
+  account: {
+    title: 'Konto',
+    email: 'E-Mail',
+    plan: 'Tarif',
+    planExpiry: 'Läuft ab',
+    deviceName: 'Gerätename',
+    noSubscription: 'Kein aktiver Tarif',
+    logout: 'Abmelden',
+    manageDevices: 'Geräte verwalten',
+    sessionExpired: 'Sitzung abgelaufen — bitte erneut anmelden',
+    logoutConfirmTitle: 'Abmelden',
+    logoutConfirmBody: 'Möchten Sie sich wirklich abmelden?',
   },
 
   modal: {

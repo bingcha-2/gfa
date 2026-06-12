@@ -41,6 +41,7 @@ export const fr: DeepPartialDict = {
     proxyDown: 'Proxy à l\'arrêt',
     error: 'Erreur · {error}',
     leasing: 'Location de compte en cours...',
+    needCard: 'Connectez-vous à votre compte',
     ok: 'Service opérationnel · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const fr: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: 'Abonnement/session invalide — fonctions désactivées',
+    cardUnusableBody: 'Votre session ou votre abonnement n\'est plus valide (session expirée/abonnement terminé/appareil retiré). Reconnectez-vous ou gérez votre abonnement et vos factures sur le web.',
+    cardUnusableRelogin: 'Se reconnecter',
+    cardUnusableBilling: 'Abonnement et factures ↗',
     activateTitle: 'Activer la carte de compte',
     activateIntro: 'Saisissez votre carte pour vous connecter directement aux modèles officiels — sans clé API, le code part directement vers les serveurs officiels, Bingcha n\'injecte que le jeton d\'autorisation en local.',
     cardPlaceholder: 'Saisir la carte de compte (AI...)',
@@ -181,6 +186,8 @@ export const fr: DeepPartialDict = {
     permissionBody: '{message}\n\nActivez BingchaAI dans « Réglages Système → Confidentialité et sécurité → Gestion des apps », puis réessayez.',
     opFailed: 'Échec de l\'opération',
     egressBlockedTitle: '⚠ Prise en contrôle bloquée · échec du contrôle de sortie',
+    needCardTitle: 'Connexion requise',
+    needCardBody: 'La prise en contrôle de {product} nécessite un compte connecté — connectez-vous d\'abord sur la page de connexion.',
     desktopConfirmTitle: 'Prendre le contrôle de Claude Desktop',
     desktopConfirmBody: '⚠ Chat et Cowork ne peuvent pas être utilisés via la prise en contrôle — utilisez la fonction Code du client de bureau !\n\nLa prise en contrôle redémarre Claude Desktop, ce qui interrompt toute session Cowork en cours. Continuer ?',
     hubPermission1: 'La prise en contrôle du Hub modifie des fichiers de l\'application et nécessite l\'autorisation ',
@@ -254,6 +261,40 @@ export const fr: DeepPartialDict = {
     changelogLabel: 'Journal des modifications',
     changelogBtn: 'Voir',
     changelogModalTitle: 'Nouveautés de la v{version}',
+  },
+
+  login: {
+    title: 'Connexion à BingchaAI',
+    emailLabel: 'E-mail',
+    emailPlaceholder: 'Saisissez votre e-mail',
+    passwordLabel: 'Mot de passe',
+    passwordPlaceholder: 'Saisissez votre mot de passe',
+    submit: 'Se connecter',
+    submitting: 'Connexion...',
+    registerLink: 'Créer un compte',
+    forgotLink: 'Mot de passe oublié',
+    buyLink: 'Acheter une formule',
+    bindCard: 'Lier une carte',
+    deviceLimitTitle: 'Limite d\'appareils atteinte',
+    deviceLimitBody: 'Ce compte a atteint sa limite d\'appareils. Veuillez gérer vos appareils.',
+    manageDevices: 'Gérer les appareils',
+    errorInvalidCreds: 'E-mail ou mot de passe incorrect.',
+    errorDisabled: 'Compte désactivé. Contactez le support.',
+    errorGeneric: 'Échec de la connexion : {error}',
+  },
+
+  account: {
+    title: 'Compte',
+    email: 'E-mail',
+    plan: 'Formule',
+    planExpiry: 'Expire le',
+    deviceName: 'Appareil',
+    noSubscription: 'Aucun abonnement actif',
+    logout: 'Se déconnecter',
+    manageDevices: 'Gérer les appareils',
+    sessionExpired: 'Session expirée — reconnectez-vous',
+    logoutConfirmTitle: 'Se déconnecter',
+    logoutConfirmBody: 'Voulez-vous vraiment vous déconnecter ?',
   },
 
   modal: {

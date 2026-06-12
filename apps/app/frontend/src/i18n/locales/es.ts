@@ -41,6 +41,7 @@ export const es: DeepPartialDict = {
     proxyDown: 'Proxy detenido',
     error: 'Error · {error}',
     leasing: 'Asignando cuenta...',
+    needCard: 'Inicia sesión en tu cuenta',
     ok: 'Servicio operativo · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const es: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: 'Suscripción/sesión no válida — funciones desactivadas',
+    cardUnusableBody: 'Tu sesión o suscripción ya no es válida (sesión caducada/suscripción vencida/dispositivo eliminado). Inicia sesión de nuevo o gestiona tu suscripción y pagos en la web.',
+    cardUnusableRelogin: 'Iniciar sesión de nuevo',
+    cardUnusableBilling: 'Suscripción y pagos ↗',
     activateTitle: 'Activar tarjeta de cuenta',
     activateIntro: 'Ingresa tu tarjeta y conéctate directo a los modelos oficiales — sin API Key, el código va directo a los servidores oficiales y Bingcha solo inyecta el token de autorización en local.',
     cardPlaceholder: 'Ingresa la tarjeta de cuenta (AI...)',
@@ -181,6 +186,8 @@ export const es: DeepPartialDict = {
     permissionBody: '{message}\n\nActiva el permiso de BingchaAI en “Configuración del Sistema → Privacidad y seguridad → Gestión de apps” y reintenta.',
     opFailed: 'Operación fallida',
     egressBlockedTitle: '⚠ Toma de control bloqueada · falló la verificación de salida',
+    needCardTitle: 'Se requiere iniciar sesión',
+    needCardBody: 'Tomar el control de {product} requiere una cuenta con sesión iniciada — inicia sesión primero y vuelve a activarlo.',
     desktopConfirmTitle: 'Tomar el control de Claude Desktop',
     desktopConfirmBody: '⚠ Chat y Cowork no se pueden usar con la toma de control — ¡usa la función Code del escritorio!\n\nLa toma de control reinicia Claude Desktop, lo que interrumpe cualquier sesión de Cowork en curso. ¿Continuar?',
     hubPermission1: 'Tomar el control del Hub modifica archivos de la app y necesita el permiso de ',
@@ -254,6 +261,40 @@ export const es: DeepPartialDict = {
     changelogLabel: 'Registro de cambios',
     changelogBtn: 'Ver',
     changelogModalTitle: 'Novedades de v{version}',
+  },
+
+  login: {
+    title: 'Inicia sesión en BingchaAI',
+    emailLabel: 'Correo electrónico',
+    emailPlaceholder: 'Introduce tu correo',
+    passwordLabel: 'Contraseña',
+    passwordPlaceholder: 'Introduce tu contraseña',
+    submit: 'Iniciar sesión',
+    submitting: 'Iniciando sesión...',
+    registerLink: 'Crear cuenta',
+    forgotLink: 'Olvidé mi contraseña',
+    buyLink: 'Comprar un plan',
+    bindCard: 'Vincular tarjeta',
+    deviceLimitTitle: 'Límite de dispositivos alcanzado',
+    deviceLimitBody: 'Esta cuenta alcanzó su límite de dispositivos. Gestiona tus dispositivos.',
+    manageDevices: 'Gestionar dispositivos',
+    errorInvalidCreds: 'Correo o contraseña incorrectos.',
+    errorDisabled: 'La cuenta está deshabilitada. Contacta con soporte.',
+    errorGeneric: 'Error al iniciar sesión: {error}',
+  },
+
+  account: {
+    title: 'Cuenta',
+    email: 'Correo',
+    plan: 'Plan',
+    planExpiry: 'Vence',
+    deviceName: 'Dispositivo',
+    noSubscription: 'Sin suscripción activa',
+    logout: 'Cerrar sesión',
+    manageDevices: 'Gestionar dispositivos',
+    sessionExpired: 'Sesión caducada — inicia sesión de nuevo',
+    logoutConfirmTitle: 'Cerrar sesión',
+    logoutConfirmBody: '¿Seguro que quieres cerrar la sesión?',
   },
 
   modal: {

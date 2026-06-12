@@ -41,6 +41,7 @@ export const vi: DeepPartialDict = {
     proxyDown: 'Proxy chưa chạy',
     error: 'Lỗi · {error}',
     leasing: 'Đang lấy phiên thuê...',
+    needCard: 'Vui lòng đăng nhập tài khoản',
     ok: 'Dịch vụ bình thường · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const vi: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: 'Gói/phiên đăng nhập đã hết hiệu lực, tính năng đã tạm dừng',
+    cardUnusableBody: 'Phiên đăng nhập hoặc gói hiện tại đã hết hiệu lực (phiên hết hạn/gói hết hạn/thiết bị bị gỡ). Vui lòng đăng nhập lại, hoặc vào trang web để quản lý gói và thanh toán.',
+    cardUnusableRelogin: 'Đăng nhập lại',
+    cardUnusableBilling: 'Gói & thanh toán ↗',
     activateTitle: 'Kích hoạt thẻ tài khoản',
     activateIntro: 'Nhập thẻ là kết nối thẳng mô hình chính thức — không cần cấu hình API Key, dữ liệu mã nguồn gửi thẳng tới chính thức, Bingcha chỉ chèn token ủy quyền tại máy bạn.',
     cardPlaceholder: 'Nhập thẻ tài khoản (AI...)',
@@ -181,6 +186,8 @@ export const vi: DeepPartialDict = {
     permissionBody: '{message}\n\nHãy bật quyền cho BingchaAI trong “Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Quản lý ứng dụng”, rồi thử lại.',
     opFailed: 'Thao tác thất bại',
     egressBlockedTitle: '⚠ Tiếp quản bị chặn · kiểm tra đầu ra không đạt',
+    needCardTitle: 'Cần đăng nhập tài khoản',
+    needCardBody: 'Tiếp quản {product} cần tài khoản đã đăng nhập — vui lòng đăng nhập trước rồi bật lại.',
     desktopConfirmTitle: 'Tiếp quản Claude Desktop',
     desktopConfirmBody: '⚠ Chat và Cowork không dùng được qua tiếp quản — hãy dùng tính năng Code trên bản desktop!\n\nTiếp quản sẽ khởi động lại Claude bản desktop — việc này làm gián đoạn phiên Cowork đang chạy. Tiếp tục?',
     hubPermission1: 'Tiếp quản Hub cần sửa tệp ứng dụng, do đó phải cấp quyền ',
@@ -254,6 +261,40 @@ export const vi: DeepPartialDict = {
     changelogLabel: 'Nhật ký cập nhật',
     changelogBtn: 'Xem',
     changelogModalTitle: 'Nội dung cập nhật v{version}',
+  },
+
+  login: {
+    title: 'Đăng nhập BingchaAI',
+    emailLabel: 'Email',
+    emailPlaceholder: 'Nhập email đã đăng ký',
+    passwordLabel: 'Mật khẩu',
+    passwordPlaceholder: 'Nhập mật khẩu',
+    submit: 'Đăng nhập',
+    submitting: 'Đang đăng nhập...',
+    registerLink: 'Tạo tài khoản',
+    forgotLink: 'Quên mật khẩu',
+    buyLink: 'Mua gói',
+    bindCard: 'Liên kết thẻ',
+    deviceLimitTitle: 'Đã đạt giới hạn thiết bị',
+    deviceLimitBody: 'Tài khoản này đã đạt giới hạn thiết bị. Vui lòng quản lý thiết bị của bạn.',
+    manageDevices: 'Quản lý thiết bị',
+    errorInvalidCreds: 'Email hoặc mật khẩu không đúng. Vui lòng thử lại.',
+    errorDisabled: 'Tài khoản đã bị vô hiệu hóa. Vui lòng liên hệ hỗ trợ.',
+    errorGeneric: 'Đăng nhập thất bại: {error}',
+  },
+
+  account: {
+    title: 'Tài khoản',
+    email: 'Email',
+    plan: 'Gói',
+    planExpiry: 'Hết hạn',
+    deviceName: 'Tên thiết bị',
+    noSubscription: 'Chưa có gói còn hiệu lực',
+    logout: 'Đăng xuất',
+    manageDevices: 'Quản lý thiết bị',
+    sessionExpired: 'Phiên đã hết hạn, vui lòng đăng nhập lại',
+    logoutConfirmTitle: 'Đăng xuất',
+    logoutConfirmBody: 'Bạn có chắc muốn đăng xuất tài khoản hiện tại?',
   },
 
   modal: {

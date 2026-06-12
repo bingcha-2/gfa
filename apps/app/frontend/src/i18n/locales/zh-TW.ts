@@ -41,6 +41,7 @@ export const zhTW: DeepPartialDict = {
     proxyDown: '代理未啟動',
     error: '錯誤 · {error}',
     leasing: '取得租約中...',
+    needCard: '請登入帳號',
     ok: '服務正常 · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const zhTW: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: '訂閱/工作階段已失效,功能已停用',
+    cardUnusableBody: '目前的登入工作階段或訂閱已失效(工作階段過期/訂閱到期/裝置被移除)。請重新登入,或前往網頁端處理訂閱與帳單。',
+    cardUnusableRelogin: '重新登入',
+    cardUnusableBilling: '訂閱與帳單 ↗',
     activateTitle: '啟用帳號卡',
     activateIntro: '輸入卡密即可直連官方模型 —— 無需設定 API Key,程式碼資料直送官方,冰茶只在本機注入授權權杖。',
     cardPlaceholder: '輸入帳號卡 (AI...)',
@@ -181,6 +186,8 @@ export const zhTW: DeepPartialDict = {
     permissionBody: '{message}\n\n請在「系統設定 → 隱私權與安全性 → App 管理」中開啟冰茶AI 的權限,然後重試。',
     opFailed: '操作失敗',
     egressBlockedTitle: '⚠ 接管已攔截 · 出口未通過',
+    needCardTitle: '需要登入帳號',
+    needCardBody: '{product} 接管需要登入帳號,請先在登入頁登入後再開啟。',
     desktopConfirmTitle: '接管 Claude Desktop',
     desktopConfirmBody: '⚠ Chat 和 Cowork 無法接管使用,請使用桌面版 Code 功能!\n\n接管會重啟 Claude 桌面版 —— 這會中斷目前正在執行的 Cowork 工作階段。是否繼續?',
     hubPermission1: '接管 Hub 需修改應用程式檔案,需授予 ',
@@ -254,6 +261,40 @@ export const zhTW: DeepPartialDict = {
     changelogLabel: '更新日誌',
     changelogBtn: '檢視',
     changelogModalTitle: 'v{version} 更新內容',
+  },
+
+  login: {
+    title: '登入冰茶AI',
+    emailLabel: '電子郵件',
+    emailPlaceholder: '輸入註冊電子郵件',
+    passwordLabel: '密碼',
+    passwordPlaceholder: '輸入密碼',
+    submit: '登入',
+    submitting: '登入中...',
+    registerLink: '註冊帳號',
+    forgotLink: '忘記密碼',
+    buyLink: '購買方案',
+    bindCard: '綁定卡密',
+    deviceLimitTitle: '裝置數量已達上限',
+    deviceLimitBody: '此帳號已達裝置上限,請管理您的裝置。',
+    manageDevices: '管理裝置',
+    errorInvalidCreds: '電子郵件或密碼不正確,請再試一次。',
+    errorDisabled: '帳號已被停用,請聯絡客服。',
+    errorGeneric: '登入失敗: {error}',
+  },
+
+  account: {
+    title: '帳號',
+    email: '電子郵件',
+    plan: '方案',
+    planExpiry: '到期時間',
+    deviceName: '裝置名稱',
+    noSubscription: '暫無有效方案',
+    logout: '登出',
+    manageDevices: '管理裝置',
+    sessionExpired: '工作階段已過期,請重新登入',
+    logoutConfirmTitle: '登出',
+    logoutConfirmBody: '確定要登出目前帳號嗎?',
   },
 
   modal: {

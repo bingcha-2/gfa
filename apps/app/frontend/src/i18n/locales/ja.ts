@@ -41,6 +41,7 @@ export const ja: DeepPartialDict = {
     proxyDown: 'プロキシが未起動',
     error: 'エラー · {error}',
     leasing: 'リースを取得中...',
+    needCard: 'アカウントにログインしてください',
     ok: 'サービス正常 · 127.0.0.1:{port}',
   },
 
@@ -63,6 +64,10 @@ export const ja: DeepPartialDict = {
   },
 
   dashboard: {
+    cardUnusableTitle: 'サブスクリプション/セッションが無効のため、機能を停止しました',
+    cardUnusableBody: '現在のログインセッションまたはサブスクリプションが無効です(セッション期限切れ/サブスクリプション終了/デバイス削除)。再ログインするか、Web でサブスクリプションと請求を管理してください。',
+    cardUnusableRelogin: '再ログイン',
+    cardUnusableBilling: 'プランと請求 ↗',
     activateTitle: 'アカウントカードを有効化',
     activateIntro: 'カードを入力するだけで公式モデルに直結 —— API Key の設定は不要。コードデータは公式へ直接送信され、BingchaAI はローカルで認証トークンを注入するだけです。',
     cardPlaceholder: 'アカウントカードを入力 (AI...)',
@@ -181,6 +186,8 @@ export const ja: DeepPartialDict = {
     permissionBody: '{message}\n\n「システム設定 → プライバシーとセキュリティ → アプリ管理」で BingchaAI の権限を有効にしてから、もう一度お試しください。',
     opFailed: '操作に失敗しました',
     egressBlockedTitle: '⚠ 引き継ぎをブロック · エグレスチェック未通過',
+    needCardTitle: 'ログインが必要です',
+    needCardBody: '{product} の引き継ぎにはログインが必要です。先にログインページでログインしてから有効にしてください。',
     desktopConfirmTitle: 'Claude Desktop を引き継ぐ',
     desktopConfirmBody: '⚠ Chat と Cowork は引き継ぎでは利用できません。デスクトップ版の Code 機能をご利用ください!\n\n引き継ぎ時に Claude デスクトップ版を再起動します —— 実行中の Cowork セッションは中断されます。続行しますか?',
     hubPermission1: 'Hub の引き継ぎではアプリファイルを変更するため、「',
@@ -254,6 +261,40 @@ export const ja: DeepPartialDict = {
     changelogLabel: '更新履歴',
     changelogBtn: '表示',
     changelogModalTitle: 'v{version} の更新内容',
+  },
+
+  login: {
+    title: 'BingchaAI にログイン',
+    emailLabel: 'メールアドレス',
+    emailPlaceholder: '登録メールアドレスを入力',
+    passwordLabel: 'パスワード',
+    passwordPlaceholder: 'パスワードを入力',
+    submit: 'ログイン',
+    submitting: 'ログイン中...',
+    registerLink: 'アカウント登録',
+    forgotLink: 'パスワードを忘れた場合',
+    buyLink: 'プランを購入',
+    bindCard: 'カードをバインド',
+    deviceLimitTitle: 'デバイス数が上限に達しました',
+    deviceLimitBody: 'このアカウントはデバイス上限に達しています。デバイスを管理してください。',
+    manageDevices: 'デバイスを管理',
+    errorInvalidCreds: 'メールアドレスまたはパスワードが正しくありません。',
+    errorDisabled: 'アカウントが無効化されています。サポートにお問い合わせください。',
+    errorGeneric: 'ログインに失敗しました: {error}',
+  },
+
+  account: {
+    title: 'アカウント',
+    email: 'メールアドレス',
+    plan: 'プラン',
+    planExpiry: '有効期限',
+    deviceName: 'デバイス名',
+    noSubscription: '有効なプランがありません',
+    logout: 'ログアウト',
+    manageDevices: 'デバイスを管理',
+    sessionExpired: 'セッションの有効期限が切れました。再ログインしてください',
+    logoutConfirmTitle: 'ログアウト',
+    logoutConfirmBody: '現在のアカウントからログアウトしますか?',
   },
 
   modal: {
