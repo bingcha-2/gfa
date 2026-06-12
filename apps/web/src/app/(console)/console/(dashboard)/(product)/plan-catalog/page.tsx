@@ -45,6 +45,7 @@ import {
   type PlanCatalogForm,
 } from "@/lib/console/plan-catalog-form";
 import { usePlanCatalog } from "./use-plan-catalog";
+import { useAccountLevels } from "./use-account-levels";
 import { DEFAULT_CONFIG } from "./catalog-defaults";
 import { ProductsSection } from "./products-section";
 import { PricingSection } from "./pricing-section";
@@ -82,6 +83,14 @@ export default function PlanCatalogPage() {
     () => (form ? form.products.filter((p) => p.enabled).map((p) => p.product) : []),
     [form],
   );
+
+  // 全部产品(含停用)的等级候选:从各产品账号池实际 planType 拉(绑定线等级从这里选,
+  // 账号池里没有的等级选不了)。停用产品也拉,便于重新启用时仍能选档。
+  const allProducts = useMemo(
+    () => (form ? form.products.map((p) => p.product) : []),
+    [form],
+  );
+  const { levels: availableLevels } = useAccountLevels(allProducts);
 
   // 校验错误(实时,用于禁用发布 + 提示)。
   const validationErrors = useMemo(() => (form ? validateForm(form) : []), [form]);
@@ -226,13 +235,15 @@ export default function PlanCatalogPage() {
             <CardHeader>
               <CardTitle>产品与等级</CardTitle>
               <CardDescription>
-                每个产品的启用开关与绑定线等级档(等级 = 绑定线可选档)。
+                每个产品的启用开关与绑定线等级档。等级从该产品账号池实际存在的会员等级里选
+                (账号池里没有的等级选不了,保证下单后能绑到号)。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <ProductsSection
                 value={form.products}
                 onChange={(products) => patchForm({ products })}
+                availableLevels={availableLevels}
                 disabled={busy}
               />
             </CardContent>
