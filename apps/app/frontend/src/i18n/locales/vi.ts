@@ -265,6 +265,11 @@ export const vi: DeepPartialDict = {
 
   login: {
     title: 'Đăng nhập BingchaAI',
+    memberCenter: 'Trung tâm thành viên',
+    lead: 'Sau khi đăng nhập, tiếp quản Codex, Claude Code và Antigravity — quản lý gói, thiết bị và hạn mức ở cùng một nơi.',
+    trust1: 'Chỉ tiêm token cục bộ',
+    trust2: 'Yêu cầu đi thẳng đến nguồn',
+    trust3: 'Một tài khoản, một nơi xem',
     emailLabel: 'Email',
     emailPlaceholder: 'Nhập email đã đăng ký',
     passwordLabel: 'Mật khẩu',

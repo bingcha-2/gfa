@@ -265,6 +265,11 @@ export const de: DeepPartialDict = {
 
   login: {
     title: 'Bei BingchaAI anmelden',
+    memberCenter: 'Mitgliederbereich',
+    lead: 'Nach der Anmeldung übernimmst du Codex, Claude Code und Antigravity – Abo, Geräte und Kontingent an einem Ort.',
+    trust1: 'Nur lokale Token-Injektion',
+    trust2: 'Anfragen gehen direkt zum Anbieter',
+    trust3: 'Ein Konto, ein Überblick',
     emailLabel: 'E-Mail',
     emailPlaceholder: 'Registrierte E-Mail eingeben',
     passwordLabel: 'Passwort',

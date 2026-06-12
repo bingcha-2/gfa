@@ -1,11 +1,29 @@
 import { useState } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import * as api from '@/services/wails'
 import { LanguageMenu } from '@/components/LanguageMenu'
 import { useT } from '@/i18n'
+import { Check } from 'lucide-react'
+import bcaiIcon from '@/assets/images/bcai-icon.png'
+
+/** 品牌徽标:玻璃杯图标 + 琥珀光晕(记忆点),登录与侧栏一致。 */
+function BrandMark({ size = 48 }: { size?: number }) {
+  return (
+    <span
+      className="relative grid place-items-center rounded-[14px] bg-[var(--bg-card)] border border-[var(--border-light)] shadow-[var(--shadow-sm)] shrink-0"
+      style={{ width: size, height: size }}
+    >
+      <span
+        className="pointer-events-none absolute -inset-1.5 rounded-[18px] opacity-70"
+        style={{ background: 'radial-gradient(circle at 50% 40%, var(--glow), transparent 70%)' }}
+        aria-hidden
+      />
+      <img src={bcaiIcon} alt="" className="relative rounded-[9px]" style={{ width: size * 0.66, height: size * 0.66 }} />
+    </span>
+  )
+}
 
 export function LoginPage() {
   const t = useT()
@@ -41,21 +59,69 @@ export function LoginPage() {
     }
   }
 
+  const trustPoints = [t('login.trust1'), t('login.trust2'), t('login.trust3')]
+
   return (
-    <div className="relative flex items-center justify-center min-h-screen bg-[var(--bg-primary)]">
-      {/* 语言切换:登录页右上角,默认简体中文 */}
-      <LanguageMenu className="absolute top-4 right-4" />
-      <Card className="w-full max-w-[360px] mx-4">
-        <CardContent className="pt-6 pb-6">
-          {/* Logo / Title */}
-          <div className="text-center mb-5">
-            <div className="text-[20px] font-bold text-[var(--text-primary)] mb-1">冰茶AI</div>
-            <div className="text-[13px] text-[var(--text-muted)]">{t('login.title')}</div>
+    <div className="relative flex items-center justify-center min-h-screen bg-[var(--bg-primary)] px-4">
+      <LanguageMenu className="absolute top-4 right-4 z-10" />
+
+      <div className="w-full max-w-[760px] grid sm:grid-cols-[1.05fr_1fr] rounded-[20px] overflow-hidden border border-[var(--border-light)] bg-[var(--bg-card)] shadow-[var(--shadow-lg)]">
+        {/* ── 品牌 / 信任 侧栏(窄窗折叠)── */}
+        <aside className="relative hidden sm:flex flex-col gap-6 p-8 bg-[var(--sidebar-bg)] border-r border-[var(--border-light)] overflow-hidden">
+          <div
+            className="pointer-events-none absolute -top-20 -left-16 w-64 h-64 rounded-full"
+            style={{ background: 'radial-gradient(circle, var(--glow), transparent 70%)' }}
+            aria-hidden
+          />
+
+          {/* eyebrow */}
+          <div className="relative flex items-center gap-2 text-[10.5px] font-semibold tracking-[0.12em] text-[var(--text-muted)] uppercase">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] dot-pulse" />
+            MEMBERSHIP · 冰茶AI
+          </div>
+
+          {/* brand lockup */}
+          <div className="relative flex items-center gap-3">
+            <BrandMark size={48} />
+            <div>
+              <div className="text-[19px] font-bold text-[var(--text-primary)] tracking-tight leading-none">冰茶AI</div>
+              <div className="text-[12px] text-[var(--text-muted)] mt-1">{t('login.memberCenter')}</div>
+            </div>
+          </div>
+
+          {/* lead */}
+          <p className="relative text-[13px] leading-[1.75] text-[var(--text-secondary)] max-w-[34ch]">
+            {t('login.lead')}
+          </p>
+
+          {/* trust points */}
+          <div className="relative flex flex-col gap-2.5 mt-auto">
+            {trustPoints.map((point) => (
+              <div key={point} className="flex items-center gap-2 text-[12.5px] text-[var(--text-secondary)]">
+                <span className="grid place-items-center w-4 h-4 rounded-full bg-[var(--primary-light)] text-[var(--primary)] shrink-0">
+                  <Check size={11} strokeWidth={3} />
+                </span>
+                {point}
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* ── 表单面板 ── */}
+        <section className="p-7 sm:p-8 flex flex-col justify-center">
+          {/* 窄窗下补一个紧凑品牌行(侧栏已折叠) */}
+          <div className="flex sm:hidden items-center gap-2.5 mb-5">
+            <BrandMark size={38} />
+            <span className="text-[16px] font-bold text-[var(--text-primary)] tracking-tight">冰茶AI</span>
+          </div>
+
+          <div className="mb-5">
+            <h1 className="text-[19px] font-bold text-[var(--text-primary)] tracking-tight">{t('login.title')}</h1>
           </div>
 
           {/* Device limit error */}
           {deviceLimitReached && (
-            <div className="mb-3 rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2.5">
+            <div className="mb-3 rounded-[10px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2.5">
               <div className="text-[12px] font-semibold text-[var(--danger)] mb-1">
                 {t('login.deviceLimitTitle')}
               </div>
@@ -73,15 +139,15 @@ export function LoginPage() {
 
           {/* Generic error */}
           {error && !deviceLimitReached && (
-            <div className="mb-3 rounded-[8px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)]">
+            <div className="mb-3 rounded-[10px] border border-[var(--danger)] bg-[var(--danger)]/5 px-3 py-2 text-[12px] text-[var(--danger)]">
               {error}
             </div>
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
             <div>
-              <label htmlFor="login-email" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
+              <label htmlFor="login-email" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1.5 block">
                 {t('login.emailLabel')}
               </label>
               <Input
@@ -91,11 +157,11 @@ export function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t('login.emailPlaceholder')}
                 autoComplete="email"
-                className="h-9"
+                className="h-10"
               />
             </div>
             <div>
-              <label htmlFor="login-password" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 block">
+              <label htmlFor="login-password" className="text-[11px] font-medium text-[var(--text-secondary)] mb-1.5 block">
                 {t('login.passwordLabel')}
               </label>
               <Input
@@ -105,20 +171,20 @@ export function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t('login.passwordPlaceholder')}
                 autoComplete="current-password"
-                className="h-9"
+                className="h-10"
               />
             </div>
             <Button
               type="submit"
               disabled={submitting || !email.trim() || !password.trim()}
-              className="w-full h-10 mt-1"
+              className="w-full h-11 mt-1.5"
             >
               {submitting ? t('login.submitting') : t('login.submit')}
             </Button>
           </form>
 
           {/* Portal links */}
-          <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-4">
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-5">
             <button
               onClick={() => api.openURL(api.PORTAL_URLS.register)}
               className="text-[11px] text-[var(--text-muted)] hover:text-[var(--primary-strong)] transition-colors"
@@ -144,8 +210,8 @@ export function LoginPage() {
               {t('login.bindCard')}
             </button>
           </div>
-        </CardContent>
-      </Card>
+        </section>
+      </div>
     </div>
   )
 }

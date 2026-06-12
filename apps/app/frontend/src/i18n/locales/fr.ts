@@ -265,6 +265,11 @@ export const fr: DeepPartialDict = {
 
   login: {
     title: 'Connexion à BingchaAI',
+    memberCenter: 'Espace membre',
+    lead: 'Après connexion, prenez en main Codex, Claude Code et Antigravity — abonnement, appareils et quota au même endroit.',
+    trust1: 'Injection locale du token uniquement',
+    trust2: 'Les requêtes vont directement à la source',
+    trust3: 'Un compte, une vue',
     emailLabel: 'E-mail',
     emailPlaceholder: 'Saisissez votre e-mail',
     passwordLabel: 'Mot de passe',

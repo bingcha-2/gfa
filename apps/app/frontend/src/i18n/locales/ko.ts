@@ -265,6 +265,11 @@ export const ko: DeepPartialDict = {
 
   login: {
     title: 'BingchaAI 로그인',
+    memberCenter: '멤버 센터',
+    lead: '로그인 후 Codex·Claude Code·Antigravity를 연동해 구독·기기·할당량을 한곳에서 관리하세요.',
+    trust1: '토큰은 로컬 주입만',
+    trust2: '요청은 공식 서버로 직결',
+    trust3: '같은 계정에서 한눈에',
     emailLabel: '이메일',
     emailPlaceholder: '가입한 이메일 입력',
     passwordLabel: '비밀번호',

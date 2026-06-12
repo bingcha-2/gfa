@@ -265,6 +265,11 @@ export const zhTW: DeepPartialDict = {
 
   login: {
     title: '登入冰茶AI',
+    memberCenter: '會員中心',
+    lead: '登入後接管 Codex、Claude Code 與 Antigravity,統一管理訂閱、裝置與額度。',
+    trust1: '本地只注入 Token',
+    trust2: '請求直連官方',
+    trust3: '同帳戶核對',
     emailLabel: '電子郵件',
     emailPlaceholder: '輸入註冊電子郵件',
     passwordLabel: '密碼',

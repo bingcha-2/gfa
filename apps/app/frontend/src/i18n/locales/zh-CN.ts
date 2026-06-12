@@ -266,6 +266,11 @@ export const zhCN = {
 
   login: {
     title: '登录冰茶AI',
+    memberCenter: '会员中心',
+    lead: '登录后接管 Codex、Claude Code 与 Antigravity,统一管理订阅、设备与额度。',
+    trust1: '本地只注入 Token',
+    trust2: '请求直连官方',
+    trust3: '同账户核对',
     emailLabel: '邮箱',
     emailPlaceholder: '输入注册邮箱',
     passwordLabel: '密码',
