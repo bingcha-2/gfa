@@ -28,9 +28,10 @@ import { BillingReconcileService } from "./billing-reconcile.service";
 import { CustomerAuthModule } from "../customer-auth/customer-auth.module";
 import { SubscriptionModule } from "../../subscription/subscription.module";
 import { PlanCatalogModule } from "../../plan-catalog/plan-catalog.module";
+import { RosettaModule } from "../../rosetta/rosetta.module";
 
 @Module({
-  imports: [CustomerAuthModule, SubscriptionModule, PlanCatalogModule],
+  imports: [CustomerAuthModule, SubscriptionModule, PlanCatalogModule, RosettaModule],
   controllers: [BillingController, EpayController],
   providers: [BillingService, EpayCallbackService, OrderExpiryService, BillingReconcileService],
   exports: [BillingService],

@@ -17,6 +17,8 @@ import {
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
+import { RosettaService } from "../../rosetta/rosetta.service";
+import { occupiedSharesByAccount, type SubConfig } from "../../subscription/seat";
 import { signParams } from "./epay.sign";
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
@@ -58,6 +60,16 @@ export function generateOutTradeNo(): string {
   return `gfa${ts}${rand}`;
 }
 
+/** Parse a subscription's config JSON into an object (empty on malformed). */
+function parseConfig(json: string | null): Record<string, any> {
+  try {
+    const parsed = JSON.parse(String(json || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Human-ish epay order name for a catalog selection (shown on the pay page). */
 function orderName(selection: Selection): string {
   const products =
@@ -75,6 +87,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly planCatalog: PlanCatalogService,
+    private readonly rosetta: RosettaService,
   ) {}
 
   /**
@@ -128,6 +141,10 @@ export class BillingService {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
 
+    // 座位预检(spec §10):绑定线下单前确认每个 product+level 有可用座位,无 → 拒绝下单
+    // (避免用户付钱拿不到号)。号池线不预检(运行时动态调度,无座位概念)。
+    await this.assertBindSeatsAvailable(config);
+
     const referrerId = await this.resolveReferrerId(customerId);
 
     return this.buildPaymentAndPersist({
@@ -143,6 +160,44 @@ export class BillingService {
         config: JSON.stringify(config),
       },
     });
+  }
+
+  /**
+   * 下单前座位预检(spec §10):仅对绑定线 config,逐 product 确认该等级还有可用座位
+   * (任一上游号剩 ≥ 本单 weight 份),无 → 抛 BadRequest 拒绝下单。占用份额从 DB ACTIVE
+   * 订阅的 config 按 weight 汇总(单一真相源,不读 access-keys.json 文件,避免停写文件后
+   * 从文件数会超卖的陷阱)。一次查全部 ACTIVE 订阅,逐 product 复算占用。号池线无座位概念,
+   * 直接放行 —— 运行时由 selectAccount 动态调度。
+   */
+  private async assertBindSeatsAvailable(config: Record<string, unknown>): Promise<void> {
+    if (config?.line !== "bind") return; // 号池线不预检
+
+    const products: string[] = Array.isArray(config.products) ? (config.products as string[]) : [];
+    if (products.length === 0) return;
+    const weight = Math.max(1, Math.floor(Number(config.weight) || 1));
+    const levels = (config.levels && typeof config.levels === "object" ? config.levels : {}) as Record<string, string>;
+
+    // 一次读全部 ACTIVE 订阅的 config(座位真相源),逐 product 复算占用份额。
+    const rows = await this.prisma.subscription.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, config: true },
+    });
+    const configs: Array<SubConfig & { id: string }> = rows.map(
+      (r: { id: string; config: string | null }) => ({ id: r.id, ...parseConfig(r.config) }),
+    );
+
+    for (const product of products) {
+      const level = String(levels[product] || "").trim();
+      if (!level) {
+        throw new BadRequestException(`绑定线缺少 ${product} 的会员等级,无法下单`);
+      }
+      const occupied = occupiedSharesByAccount(configs, product);
+      if (!this.rosetta.hasAvailableSeatFromShares(product, weight, level, occupied)) {
+        throw new BadRequestException(
+          `${product}(${level})暂无可用座位(无配额充足且份额足够的号),请稍后重试或联系客服`,
+        );
+      }
+    }
   }
 
   /** Snapshot referrerId = customer.invitedById at order-create time. */

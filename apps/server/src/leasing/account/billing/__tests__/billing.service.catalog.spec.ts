@@ -36,6 +36,8 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
   return {
     customer: { findUnique: vi.fn() },
     planOrder: { create: vi.fn() },
+    // 绑定线下单前座位预检要读 DB ACTIVE 订阅的 config 算占用份额(默认无订阅)。
+    subscription: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides,
   } as any;
 }
@@ -44,11 +46,17 @@ function makeCatalog(published: any = { version: 2, config: CATALOG_CONFIG }) {
   return { getPublished: vi.fn().mockResolvedValue(published) } as any;
 }
 
+/** Mock RosettaService:默认每个产品都有可用座位(预检放行);测试可按需改 mock。 */
+function makeRosetta(hasSeat = true) {
+  return { hasAvailableSeatFromShares: vi.fn().mockReturnValue(hasSeat) } as any;
+}
+
 const fixedCustomer = { id: "cust-1", invitedById: "referrer-1" };
 
 describe("BillingService.createCatalogOrder", () => {
   let prisma: ReturnType<typeof makeMockPrisma>;
   let catalog: any;
+  let rosetta: any;
   let service: BillingService;
 
   beforeEach(() => {
@@ -57,7 +65,8 @@ describe("BillingService.createCatalogOrder", () => {
     vi.stubEnv("EPAY_KEY", "test-key");
     prisma = makeMockPrisma();
     catalog = makeCatalog();
-    service = new BillingService(prisma, catalog);
+    rosetta = makeRosetta();
+    service = new BillingService(prisma, catalog, rosetta);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -158,5 +167,114 @@ describe("BillingService.createCatalogOrder", () => {
     expect(data.amountCents).toBe(11124); // 10800 + 324
     expect(result.baseCents).toBe(10800);
     expect(result.feeCents).toBe(324);
+  });
+});
+
+// 下单前座位预检(spec §10):绑定线下单前确认每个 product+level 有可用座位,
+// 无座位 → 拒绝下单(避免用户付钱拿不到号)。号池线不预检。
+describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)", () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let catalog: any;
+  let rosetta: any;
+  let service: BillingService;
+
+  beforeEach(() => {
+    vi.stubEnv("EPAY_FEE_PERCENT", "0");
+    vi.stubEnv("EPAY_PID", "1001");
+    vi.stubEnv("EPAY_KEY", "test-key");
+    prisma = makeMockPrisma();
+    catalog = makeCatalog();
+    rosetta = makeRosetta();
+    service = new BillingService(prisma, catalog, rosetta);
+
+    prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
+    prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
+      id: "catalog-order-1",
+      outTradeNo: data.outTradeNo,
+      amountCents: data.amountCents,
+      payChannel: data.payChannel,
+      status: "PENDING",
+      expiresAt: data.expiresAt,
+      referrerId: data.referrerId,
+      createdAt: new Date(),
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  const bindSelection = {
+    line: "bind",
+    items: [{ product: "anthropic", level: "max-20x" }],
+    shareUsers: 2, // → weight 4
+    deviceLimit: 1,
+  };
+
+  it("有可用座位 → 放行建单;按 (product, weight=config.weight, level, occupiedShares) 预检", async () => {
+    await service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY");
+
+    expect(rosetta.hasAvailableSeatFromShares).toHaveBeenCalledOnce();
+    const [product, weight, level, occupied] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
+    expect(product).toBe("anthropic");
+    expect(weight).toBe(4); // capacity 8 / 2 人,与 config.weight 一致
+    expect(level).toBe("max-20x");
+    expect(occupied).toBeInstanceOf(Map);
+    expect(prisma.planOrder.create).toHaveBeenCalledOnce();
+  });
+
+  it("无可用座位 → BadRequest 拒绝下单,不建订单(避免付钱拿不到号)", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+
+    await expect(
+      service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY"),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("多产品:任一产品无座位 → 整单拒绝", async () => {
+    const multi = {
+      line: "bind",
+      items: [
+        { product: "anthropic", level: "pro" },
+        { product: "codex", level: "plus" },
+      ],
+      shareUsers: 1,
+      deviceLimit: 1,
+    };
+    // anthropic 有座位,codex 没有。
+    rosetta.hasAvailableSeatFromShares.mockImplementation((p: string) => p !== "codex");
+
+    await expect(service.createCatalogOrder("cust-1", multi as any, "ALIPAY")).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("号池线不预检:不调 hasAvailableSeatFromShares,直接建单", async () => {
+    await service.createCatalogOrder(
+      "cust-1",
+      { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any,
+      "ALIPAY",
+    );
+    expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled();
+    expect(prisma.planOrder.create).toHaveBeenCalledOnce();
+  });
+
+  it("占用份额从 DB ACTIVE 订阅 config 算(按 product 汇总 weight),传给预检", async () => {
+    // 一条已绑 anthropic #7、weight 4 的 ACTIVE 订阅 → 该号已占 4 份。
+    prisma.subscription.findMany.mockResolvedValue([
+      { id: "sub-existing", config: JSON.stringify({ line: "bind", bindings: { anthropic: 7 }, weight: 4 }) },
+    ]);
+
+    await service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY");
+
+    const [, , , occupied] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
+    expect(occupied.get(7)).toBe(4);
+    // 只查 ACTIVE 订阅。
+    expect(prisma.subscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "ACTIVE" } }),
+    );
   });
 });
