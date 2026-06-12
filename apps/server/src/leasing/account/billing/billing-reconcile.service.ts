@@ -115,7 +115,9 @@ export class BillingReconcileService {
     id: string;
     outTradeNo: string;
     customerId: string;
-    planId: string;
+    planId: string | null;
+    config: string | null;
+    catalogVersion: number | null;
     paidAt: Date | null;
   }): Promise<void> {
     if (!order.paidAt) {
@@ -144,17 +146,20 @@ export class BillingReconcileService {
     // 2) LEGACY fallback — pre-link-column activations only: an ACTIVE
     //    (customer, plan) sub touched at/after paidAt that carries NO order
     //    link at all. Subs linked to a DIFFERENT order are NOT evidence for
-    //    this one (see module doc).
-    const legacy = await this.prisma.subscription.findFirst({
-      where: {
-        customerId: order.customerId,
-        planId: order.planId,
-        status: "ACTIVE",
-        updatedAt: { gte: order.paidAt },
-        activatedFromOrderId: null,
-      },
-      orderBy: { updatedAt: "desc" },
-    });
+    //    this one (see module doc). Catalog orders (planId null) post-date the
+    //    link column entirely, so this heuristic never applies to them.
+    const legacy = order.planId
+      ? await this.prisma.subscription.findFirst({
+          where: {
+            customerId: order.customerId,
+            planId: order.planId,
+            status: "ACTIVE",
+            updatedAt: { gte: order.paidAt },
+            activatedFromOrderId: null,
+          },
+          orderBy: { updatedAt: "desc" },
+        })
+      : null;
     if (legacy) {
       await this.prisma.planOrder.update({
         where: { id: order.id },
@@ -166,12 +171,9 @@ export class BillingReconcileService {
       return;
     }
 
-    // 3) No activation evidence → drive it now, then link.
-    const sub = await this.subscriptionService.activateOrExtend(
-      order.customerId,
-      order.planId,
-      { orderId: order.id },
-    );
+    // 3) No activation evidence → drive it now, then link. activateForOrder
+    //    branches on plan vs catalog (config snapshot) internally.
+    const sub = await this.subscriptionService.activateForOrder(order);
     await this.prisma.planOrder.update({
       where: { id: order.id },
       data: { subscriptionId: sub.id },

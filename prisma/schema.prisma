@@ -702,10 +702,14 @@ model PlanCatalog {
 }
 
 /// Plan purchase order (distinct from the existing family-group Order).
+/// Two ordering paths coexist:
+///  - Plan-based  : planId set, catalog columns null (legacy).
+///  - Catalog-based: planId null, catalogVersion/selection/config set —
+///    config is the computePurchase snapshot written into Subscription on activation. See spec §8.
 model PlanOrder {
   id             String         @id @default(cuid())
   customerId     String
-  planId         String
+  planId         String?        // null for catalog-based orders (selection-driven)
   subscriptionId String?        // filled on activation
   amountCents    Int
   payChannel     PayChannel
@@ -715,12 +719,16 @@ model PlanOrder {
   notifyRaw      String?
   paidAt         DateTime?
   referrerId     String?        // Customer id of inviter at purchase time
+  // Catalog-based purchase snapshot (null for plan-based orders):
+  catalogVersion Int?           // PUBLISHED PlanCatalog version priced against (price lock / 溯源)
+  selection      String?        // JSON of the customer's selection (audit / re-pricing)
+  config         String?        // JSON config from computePurchase → written into Subscription.config on activation
   expiresAt      DateTime       // pending-payment TTL
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
   customer  Customer  @relation(fields: [customerId], references: [id])
-  plan      Plan      @relation(fields: [planId], references: [id])
+  plan      Plan?     @relation(fields: [planId], references: [id])
 
   @@index([customerId])
   @@index([planId])

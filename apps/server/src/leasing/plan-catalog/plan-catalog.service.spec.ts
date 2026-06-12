@@ -92,3 +92,28 @@ describe("PlanCatalogService.getPublished", () => {
     expect(await service.getPublished()).toBeNull();
   });
 });
+
+describe("PlanCatalogService.getByVersion", () => {
+  it("按版本号取该版(config 解析为对象)—— 激活时按订单 catalogVersion 溯源不变的 durationDays", async () => {
+    const { prisma, service } = makeService({
+      planCatalog: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "c1",
+          version: 5,
+          status: "ARCHIVED",
+          config: '{"durationDays":30}',
+        }),
+      },
+    });
+
+    const result = await service.getByVersion(5);
+
+    expect(prisma.planCatalog.findUnique).toHaveBeenCalledWith({ where: { version: 5 } });
+    expect(result).toEqual(expect.objectContaining({ version: 5, config: { durationDays: 30 } }));
+  });
+
+  it("该版本不存在 → null", async () => {
+    const { service } = makeService(); // findUnique 默认 null
+    expect(await service.getByVersion(999)).toBeNull();
+  });
+});

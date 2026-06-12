@@ -185,7 +185,7 @@ export class BillingService {
     return {
       orders: orders.map((o) => ({
         outTradeNo: o.outTradeNo,
-        planName: o.plan.name,
+        planName: o.plan?.name ?? null, // catalog-based orders have no Plan row
         amountCents: o.amountCents,
         payChannel: o.payChannel,
         status: o.status,

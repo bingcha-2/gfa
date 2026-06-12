@@ -23,12 +23,22 @@ import type { Plan, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { EntitlementSyncService } from "./entitlement-sync.service";
+import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
 import { planColumnsToInitialConfig } from "./subscription-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function newBackingKeyValue(): string {
   return `sub_${crypto.randomBytes(24).toString("hex")}`; // sub_ + 48 hex chars
+}
+
+/** The PlanOrder fields activation needs — works for both plan-based and catalog-based orders. */
+export interface OrderForActivation {
+  id: string;
+  customerId: string;
+  planId: string | null;
+  config: string | null;
+  catalogVersion: number | null;
 }
 
 @Injectable()
@@ -38,13 +48,90 @@ export class SubscriptionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlementSync: EntitlementSyncService,
+    private readonly planCatalog: PlanCatalogService,
   ) {}
+
+  /**
+   * Activate a paid order. Branches on the ordering path:
+   *  - catalog-based (planId null) → createFromCatalog using the order's config snapshot;
+   *  - plan-based    (planId set)  → activateOrExtend(planId) (legacy).
+   * Single entry point so epay-callback and billing-reconcile route uniformly. See spec §8.
+   */
+  async activateForOrder(order: OrderForActivation): Promise<Subscription> {
+    if (order.planId == null) {
+      return this.createFromCatalog(order);
+    }
+    return this.activateOrExtend(order.customerId, order.planId, { orderId: order.id });
+  }
 
   /** Convenience for M8: resolve the plan, then createFromPlan. */
   async activateOrExtend(customerId: string, planId: string, opts: { orderId?: string } = {}): Promise<Subscription> {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan) throw new NotFoundException(`Plan "${planId}" not found`);
     return this.createFromPlan(customerId, plan, opts);
+  }
+
+  /**
+   * Catalog-based activation (spec §8): the order already carries the
+   * computePurchase config snapshot (含显式 line) + catalogVersion. We write that
+   * config verbatim into Subscription.config (single source of truth), resolve the
+   * validity window from the catalog version's durationDays, mint a backing key,
+   * then sync (bind line assigns seats → config.bindings; pool line skips seats).
+   *
+   * 不同配置再买默认并存(新建订阅);"同配置续费"(config 指纹去重延长)留后,见 spec §8。
+   */
+  async createFromCatalog(order: OrderForActivation): Promise<Subscription> {
+    if (!order.config) {
+      throw new NotFoundException(`Catalog order "${order.id}" has no config snapshot`);
+    }
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: order.customerId },
+      select: { id: true, email: true },
+    });
+    if (!customer) throw new NotFoundException(`Customer "${order.customerId}" not found`);
+
+    const config = JSON.parse(order.config) as Record<string, any>;
+    const durationDays = await this.resolveDurationDays(order.catalogVersion);
+
+    const now = new Date();
+    const sub = await this.prisma.subscription.create({
+      data: {
+        customerId: order.customerId,
+        planId: null,
+        status: "ACTIVE",
+        startsAt: now,
+        expiresAt: new Date(now.getTime() + durationDays * DAY_MS),
+        config: order.config, // computePurchase 快照,单一真相源
+        catalogVersion: order.catalogVersion,
+        // Legacy 列从 config 派生:productEntitlements 为 NOT NULL,其余供 lease-service 仍读的镜像。
+        productEntitlements: JSON.stringify(Array.isArray(config.products) ? config.products : []),
+        bucketLimits: config.bucketLimits ? JSON.stringify(config.bucketLimits) : null,
+        levels: config.levels ? JSON.stringify(config.levels) : null,
+        weight: Number.isFinite(config.weight) ? Number(config.weight) : 1,
+        deviceLimit: Number.isFinite(config.deviceLimit) ? Number(config.deviceLimit) : 1,
+        weeklyTokenLimit: Number.isFinite(config.weeklyTokenLimit) ? Number(config.weeklyTokenLimit) : null,
+        windowMs: Number.isFinite(config.windowMs) ? Number(config.windowMs) : 18_000_000,
+        backingKeyValue: newBackingKeyValue(),
+        activatedFromOrderId: order.id,
+      },
+    });
+    await this.entitlementSync.syncSubscription(sub, { customerEmail: customer.email });
+    // sync 在 config 里写入了分配到的 bindings(绑定线);镜像回 legacy bindings 列供 lease-service。
+    const synced = (await this.prisma.subscription.findUnique({ where: { id: sub.id } }))!;
+    return this.mirrorBindingsFromConfig(synced);
+  }
+
+  /** 解析该版 catalog 的 durationDays(版本不可变,溯源稳定);缺则抛错(无法确定有效期)。 */
+  private async resolveDurationDays(catalogVersion: number | null): Promise<number> {
+    if (catalogVersion == null) {
+      throw new NotFoundException(`Catalog order missing catalogVersion — cannot resolve duration`);
+    }
+    const catalog = await this.planCatalog.getByVersion(catalogVersion);
+    const days = catalog?.config?.durationDays;
+    if (!Number.isFinite(days) || days <= 0) {
+      throw new NotFoundException(`PlanCatalog version ${catalogVersion} has no valid durationDays`);
+    }
+    return Number(days);
   }
 
   async createFromPlan(customerId: string, plan: Plan, opts: { orderId?: string } = {}): Promise<Subscription> {

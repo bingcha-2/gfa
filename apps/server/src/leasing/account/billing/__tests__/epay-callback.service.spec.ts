@@ -57,8 +57,9 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
 }
 
 function makeSubscriptionService(sub: any = { id: "sub-1", planId: "plan-1" }) {
+  // Phase-2 activation goes through activateForOrder (routes plan vs catalog order).
   return {
-    activateOrExtend: vi.fn().mockResolvedValue(sub),
+    activateForOrder: vi.fn().mockResolvedValue(sub),
   } as any;
 }
 
@@ -129,12 +130,14 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     expect(result).toBe("success");
   });
 
-  it("calls activateOrExtend with correct customerId and planId", async () => {
+  it("calls activateForOrder with the order (customerId/planId/id carried through)", async () => {
     await service.handleNotify(validBody());
-    expect(subService.activateOrExtend).toHaveBeenCalledWith(
-      pendingOrder.customerId,
-      pendingOrder.planId,
-      expect.objectContaining({ orderId: expect.any(String) }),
+    expect(subService.activateForOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: pendingOrder.id,
+        customerId: pendingOrder.customerId,
+        planId: pendingOrder.planId,
+      }),
     );
   });
 
@@ -150,9 +153,9 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     );
   });
 
-  it("calls activateOrExtend AFTER the transaction commits (post-commit activation)", async () => {
-    // Design: Phase 1 = fast tx (PAID + notification + reward), Phase 2 = activateOrExtend outside tx.
-    // Verify activateOrExtend is called AFTER $transaction resolves.
+  it("calls activateForOrder AFTER the transaction commits (post-commit activation)", async () => {
+    // Design: Phase 1 = fast tx (PAID + notification + reward), Phase 2 = activateForOrder outside tx.
+    // Verify activateForOrder is called AFTER $transaction resolves.
     const callOrder: string[] = [];
     prisma.$transaction.mockImplementation(async (fn: any) => {
       // Preserve the callback's return value (the CAS "claimed" boolean) so the
@@ -163,7 +166,7 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     });
     // Also need planOrder.update for the subscriptionId linkage
     prisma.planOrder.update = vi.fn().mockResolvedValue({});
-    subService.activateOrExtend.mockImplementation(async () => {
+    subService.activateForOrder.mockImplementation(async () => {
       callOrder.push("activate-called");
       return { id: "sub-1", planId: "plan-1" };
     });
@@ -205,7 +208,7 @@ describe("EpayCallbackService.handleNotify — idempotency", () => {
     expect(result).toBe("success");
     // No transaction should have been started
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
     expect(syncService.syncSubscription).not.toHaveBeenCalled();
   });
 
@@ -221,7 +224,7 @@ describe("EpayCallbackService.handleNotify — idempotency", () => {
 
     const result = await service.handleNotify(validBody());
     expect(result).toBe("success"); // Not "fail" — P2002 swallowed
-    expect(subService.activateOrExtend).toHaveBeenCalledOnce();
+    expect(subService.activateForOrder).toHaveBeenCalledOnce();
   });
 });
 
@@ -338,7 +341,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
     const result = await service.handleNotify(body);
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'fail' for wrong pid", async () => {
@@ -354,7 +357,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
     })();
     const result = await service.handleNotify(bodyWithBadPid);
     expect(result).toBe("fail");
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'fail' for amount mismatch (fraud signal)", async () => {
@@ -371,14 +374,14 @@ describe("EpayCallbackService.handleNotify — security", () => {
     })();
     const result = await service.handleNotify(fraudBody);
     expect(result).toBe("fail");
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'fail' for unknown out_trade_no", async () => {
     prisma.planOrder.findUnique.mockResolvedValue(null);
     const result = await service.handleNotify(validBody());
     expect(result).toBe("fail");
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'success' (ack) for validly-signed non-TRADE_SUCCESS status", async () => {
@@ -395,13 +398,13 @@ describe("EpayCallbackService.handleNotify — security", () => {
     })();
     const result = await service.handleNotify(closedBody);
     expect(result).toBe("success");
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
-  it("activateOrExtend failure after tx commit does NOT cause 'fail' (money already captured)", async () => {
-    // Design: Phase 1 (tx) commits PAID, Phase 2 (activateOrExtend) fails.
+  it("activateForOrder failure after tx commit does NOT cause 'fail' (money already captured)", async () => {
+    // Design: Phase 1 (tx) commits PAID, Phase 2 (activateForOrder) fails.
     // Since payment is durably captured, we still return "success" to stop epay retries.
-    subService.activateOrExtend.mockRejectedValue(new Error("seat assignment failed"));
+    subService.activateForOrder.mockRejectedValue(new Error("seat assignment failed"));
     const result = await service.handleNotify(validBody());
     // Payment was captured; activation failed; must still return "success" to avoid duplicate charge
     expect(result).toBe("success");
@@ -413,7 +416,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
     const result = await service.handleNotify(body);
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 });
 
@@ -451,7 +454,7 @@ describe("EpayCallbackService.handleNotify — fail-closed on missing config", (
     const result = await service.handleNotify(forged);
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'fail' and does nothing when EPAY_PID is empty (pid= bypass)", async () => {
@@ -469,7 +472,7 @@ describe("EpayCallbackService.handleNotify — fail-closed on missing config", (
     const result = await service.handleNotify(body);
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 });
 
@@ -502,7 +505,7 @@ describe("EpayCallbackService.handleNotify — concurrent CAS", () => {
     expect(result).toBe("success");
     // No side effects: notification not created, activation not run.
     expect(prisma._txProxy.notification.create).not.toHaveBeenCalled();
-    expect(subService.activateOrExtend).not.toHaveBeenCalled();
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("winner of the CAS (count===1) proceeds to notify + activate", async () => {
@@ -511,7 +514,7 @@ describe("EpayCallbackService.handleNotify — concurrent CAS", () => {
     const result = await service.handleNotify(validBody());
     expect(result).toBe("success");
     expect(prisma._txProxy.notification.create).toHaveBeenCalledOnce();
-    expect(subService.activateOrExtend).toHaveBeenCalledOnce();
+    expect(subService.activateForOrder).toHaveBeenCalledOnce();
   });
 
   it("CAS WHERE clause restricts to PENDING|EXPIRED statuses", async () => {

@@ -170,13 +170,19 @@ export class BillingAdminService {
       }),
     ]);
 
-    const planIds = planGroups.map((g) => g.planId);
+    // Catalog-based orders have planId=null (selection-driven, no Plan row) and
+    // group under the null key — label them collectively rather than looking up a Plan.
+    const planIds = planGroups.map((g) => g.planId).filter((id): id is string => id != null);
     const plans = planIds.length
       ? await this.prisma.plan.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } })
       : [];
     const nameMap = new Map(plans.map((p) => [p.id, p.name]));
     const planDistribution = planGroups
-      .map((g) => ({ planId: g.planId, planName: nameMap.get(g.planId) ?? g.planId, count: g._count }))
+      .map((g) => ({
+        planId: g.planId,
+        planName: g.planId == null ? "目录套餐" : (nameMap.get(g.planId) ?? g.planId),
+        count: g._count,
+      }))
       .sort((a, b) => b.count - a.count);
 
     return {

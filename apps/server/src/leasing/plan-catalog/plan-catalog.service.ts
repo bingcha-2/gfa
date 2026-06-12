@@ -37,4 +37,14 @@ export class PlanCatalogService {
     if (!row) return null;
     return { ...row, config: JSON.parse(row.config) };
   }
+
+  /**
+   * 按版本号取目录(config 解析为对象);无则 null。版本一经创建其 config 不再变更
+   * (改价=发新版),故激活时按订单的 catalogVersion 溯源稳定的 durationDays 等全局规则。
+   */
+  async getByVersion(version: number) {
+    const row = await this.prisma.planCatalog.findUnique({ where: { version } });
+    if (!row) return null;
+    return { ...row, config: JSON.parse(row.config) };
+  }
 }

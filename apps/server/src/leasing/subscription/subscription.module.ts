@@ -7,6 +7,7 @@ import { TokenServerModule } from "../token-server/token-server.module";
 import { RemoteCodexModule } from "../remote-codex/remote-codex.module";
 import { RemoteAnthropicModule } from "../remote-anthropic/remote-anthropic.module";
 import { RosettaModule } from "../rosetta/rosetta.module";
+import { PlanCatalogModule } from "../plan-catalog/plan-catalog.module";
 
 /**
  * SubscriptionModule — subscription lifecycle + entitlement sync into the
@@ -17,7 +18,7 @@ import { RosettaModule } from "../rosetta/rosetta.module";
  * access-keys.json writer. PrismaModule is @Global.
  */
 @Module({
-  imports: [TokenServerModule, RemoteCodexModule, RemoteAnthropicModule, RosettaModule],
+  imports: [TokenServerModule, RemoteCodexModule, RemoteAnthropicModule, RosettaModule, PlanCatalogModule],
   providers: [SubscriptionService, EntitlementSyncService, SubscriptionExpiryService],
   exports: [SubscriptionService, EntitlementSyncService, SubscriptionExpiryService],
 })

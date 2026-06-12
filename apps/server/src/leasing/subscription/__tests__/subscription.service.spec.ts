@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { SubscriptionService } from "../subscription.service";
 import { EntitlementSyncService } from "../entitlement-sync.service";
+import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
 import {
@@ -79,7 +80,8 @@ beforeEach(async () => {
     { reloadAccessKeys: vi.fn() } as any,
     prisma as any,
   );
-  service = new SubscriptionService(prisma as any, sync);
+  const planCatalog = new PlanCatalogService(prisma as any);
+  service = new SubscriptionService(prisma as any, sync, planCatalog);
 });
 
 afterEach(() => {
@@ -249,5 +251,123 @@ describe("SubscriptionService.createFromPlan / activateOrExtend", () => {
     const sub = await service.activateOrExtend(customer.id, plan.id);
 
     expect(sub.activatedFromOrderId).toBeNull();
+  });
+});
+
+describe("SubscriptionService.createFromCatalog / activateForOrder (catalog 下单激活)", () => {
+  // catalog 路径:订单已带 computePurchase 生成的 config + catalogVersion,激活把它原样写进
+  // Subscription.config(单一真相源,含显式 line),expiresAt 用该版 catalog 的 durationDays。
+  async function publishCatalog(durationDays = 30, version = 1) {
+    await prisma.planCatalog.deleteMany();
+    return prisma.planCatalog.create({
+      data: {
+        version,
+        status: "PUBLISHED",
+        config: JSON.stringify({ durationDays, windowMs: 18_000_000 }),
+        publishedAt: new Date(),
+      },
+    });
+  }
+
+  afterEach(async () => {
+    await prisma.planCatalog.deleteMany();
+  });
+
+  it("号池线 catalog 订单 → ACTIVE 订阅,config 原样、catalogVersion 记录、expiresAt = now + 目录 durationDays,有 record", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 1);
+    const poolConfig = {
+      line: "pool",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 150000 },
+      weeklyTokenLimit: 750000,
+      deviceLimit: 2,
+      windowMs: 18_000_000,
+    };
+    const order = {
+      id: "catalog-order-1",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(poolConfig),
+      catalogVersion: 1,
+    };
+
+    const sub = await service.activateForOrder(order);
+
+    expect(sub.status).toBe("ACTIVE");
+    expect(sub.planId).toBeNull();
+    expect(sub.catalogVersion).toBe(1);
+    expect(sub.activatedFromOrderId).toBe("catalog-order-1");
+    expect(sub.backingKeyValue).toMatch(/^sub_[0-9a-f]{48}$/);
+    // config 原样落库(号池线:无座位分配,bindings 不写)。
+    expect(JSON.parse(sub.config!)).toEqual(poolConfig);
+    const expectedExpiry = Date.now() + 30 * DAY_MS;
+    expect(Math.abs(sub.expiresAt!.getTime() - expectedExpiry)).toBeLessThan(60_000);
+    // 号池线:运行时 record 在内存,按用量限额(不要求 binding)。
+    const record = readKeys().find((k) => k.id === sub.id);
+    expect(record).toBeTruthy();
+    expect(record.status).toBe("active");
+    expect(record.bucketLimits).toEqual(poolConfig.bucketLimits);
+  });
+
+  it("绑定线 catalog 订单 → sync 分配座位写回 config.bindings,record 带 bindings", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 2);
+    const bindConfig = {
+      line: "bind",
+      products: ["antigravity"],
+      levels: { antigravity: "ultra" },
+      bindings: {},
+      weight: 2,
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    };
+    const order = {
+      id: "catalog-order-bind",
+      customerId: customer.id,
+      planId: null,
+      config: JSON.stringify(bindConfig),
+      catalogVersion: 2,
+    };
+
+    const sub = await service.activateForOrder(order);
+
+    expect(sub.status).toBe("ACTIVE");
+    const config = JSON.parse(sub.config!);
+    expect(config.line).toBe("bind");
+    // 绑定线:sync 在写锁内分配真实号写回 config.bindings(单一真相源)。
+    expect(config.bindings).toEqual({ antigravity: expect.any(Number) });
+    const record = readKeys().find((k) => k.id === sub.id);
+    expect(record.bindings).toEqual({ antigravity: expect.any(Number) });
+  });
+
+  it("activateForOrder 路由:plan 订单(planId 非空)走 createFromPlan(catalogVersion 留 null)", async () => {
+    const customer = await createTestCustomer();
+    const plan = await createPlan();
+
+    const sub = await service.activateForOrder({
+      id: "plan-order-1",
+      customerId: customer.id,
+      planId: plan.id,
+      config: null,
+      catalogVersion: null,
+    });
+
+    expect(sub.planId).toBe(plan.id);
+    expect(sub.catalogVersion).toBeNull();
+    expect(sub.activatedFromOrderId).toBe("plan-order-1");
+  });
+
+  it("catalog 订单缺 config → 报错(契约:catalog 订单必带 computePurchase 的 config)", async () => {
+    const customer = await createTestCustomer();
+    await expect(
+      service.activateForOrder({
+        id: "bad-order",
+        customerId: customer.id,
+        planId: null,
+        config: null,
+        catalogVersion: 1,
+      }),
+    ).rejects.toThrow();
   });
 });

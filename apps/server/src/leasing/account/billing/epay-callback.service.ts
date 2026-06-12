@@ -219,13 +219,10 @@ export class EpayCallbackService {
 
     // Step 5 — Phase 2: activate subscription (outside tx — includes file I/O via sync).
     // activateOrExtend internally calls entitlementSync.syncSubscription.
-    let updatedSub: Awaited<ReturnType<SubscriptionService["activateOrExtend"]>>;
+    // Catalog-based orders (planId null, config snapshot set) take the config path; see activateForOrder.
+    let updatedSub: Awaited<ReturnType<SubscriptionService["activateForOrder"]>>;
     try {
-      updatedSub = await this.subscriptionService.activateOrExtend(
-        order.customerId,
-        order.planId,
-        { orderId: order.id },
-      );
+      updatedSub = await this.subscriptionService.activateForOrder(order);
       // Link subscription id back to the order.
       await this.prisma.planOrder.update({
         where: { id: order.id },
