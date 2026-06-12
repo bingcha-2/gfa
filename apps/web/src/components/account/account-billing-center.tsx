@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import {
+  ArrowRightIcon,
   CreditCardIcon,
   KeyRoundIcon,
   PackageCheckIcon,
   ReceiptTextIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 import { AccountButton, AccountPill, AccountSkeleton } from "./account-ui";
@@ -175,6 +178,20 @@ export function AccountBillingCenter({
           </div>
           <CreditCardIcon />
         </div>
+
+        <Link href="/account/billing/plans" className="account-catalog-entry">
+          <span className="account-catalog-entry__icon">
+            <SparklesIcon />
+          </span>
+          <span className="account-catalog-entry__text">
+            <strong>{b.catalog.entryTitle}</strong>
+            <span>{b.catalog.entryDesc}</span>
+          </span>
+          <span className="account-catalog-entry__cta">
+            {b.catalog.entryCta}
+            <ArrowRightIcon />
+          </span>
+        </Link>
 
         {plans === null ? (
           <div className="account-plan-grid">

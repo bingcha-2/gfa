@@ -18,6 +18,7 @@ import type {
   NotificationsPage,
   PayChannel,
   Plan,
+  PlanCatalogResponse,
   AccountDevice,
   AccountOverview,
   ReferralInfo,
@@ -28,6 +29,7 @@ import type {
   UsageDays,
   UsagePage,
 } from "./user-types";
+import type { Selection } from "./catalog-pricing";
 
 type RequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -198,6 +200,43 @@ export async function createBillingOrder(planId: string, channel: PayChannel) {
   return userApi<BillingOrderCreated>("billing/orders", {
     method: "POST",
     body: { planId, channel },
+  });
+}
+
+/**
+ * Public plan catalog (spec §7.2) — drives the two-line purchase page.
+ * Goes through /api/plan-catalog (public route handler), NOT the /api/account
+ * proxy: the catalog is unauthenticated and lives at the backend root.
+ */
+export async function getPlanCatalog(): Promise<PlanCatalogResponse> {
+  const resp = await fetch("/api/plan-catalog", {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  });
+
+  const rawText = await resp.text();
+  const payload = rawText ? safeJson(rawText) : null;
+
+  if (!resp.ok) {
+    throw new UserApiError(
+      extractMessage(payload, rawText || `Request failed with status ${resp.status}`),
+      resp.status,
+      extractCode(payload)
+    );
+  }
+
+  return payload as PlanCatalogResponse;
+}
+
+/**
+ * Catalog-driven order (spec §8). Submits a selection (号池/绑定 line + knobs);
+ * the backend recomputes the price authoritatively and returns the same
+ * BillingOrderCreated shape (payUrl + qrDataUri) as the legacy plan order.
+ */
+export async function createCatalogOrder(selection: Selection, channel: PayChannel) {
+  return userApi<BillingOrderCreated>("billing/catalog-orders", {
+    method: "POST",
+    body: { selection, channel },
   });
 }
 

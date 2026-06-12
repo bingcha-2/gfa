@@ -33,6 +33,14 @@ export type Plan = {
   sortOrder: number;
 };
 
+// ─── Plan catalog (spec §7.2 — two-line pure selection) ───────────────────────
+
+/** GET /api/plan-catalog response. config is null until a catalog is published. */
+export type PlanCatalogResponse = {
+  version: number | null;
+  config: import("./catalog-pricing").CatalogConfig | null;
+};
+
 export type PayChannel = "ALIPAY" | "WXPAY";
 
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED";
