@@ -29,7 +29,6 @@ type RosettaServiceOptions = {
   dataDir?: string;
   codexOAuthPort?: number;
   codexOAuthFetch?: typeof fetch;
-  claudeOAuthFetch?: typeof fetch;
   /** Shared AccessKeyStore — the authoritative in-memory source of per-card
    *  window usage. When set, the admin list reads usage from it instead of the
    *  (event-free) JSON file. */
@@ -51,7 +50,6 @@ export class RosettaService {
   private readonly dataDir: string;
   private readonly codexOAuthPort: number;
   private readonly codexOAuthFetch: typeof fetch;
-  private readonly claudeOAuthFetch: typeof fetch;
   private readonly logger = new Logger(RosettaService.name);
   /** In-memory access_token cache: accountId → { accessToken, expiresAt }. */
   private readonly tokenCache = new Map<number, CachedToken>();
@@ -84,7 +82,6 @@ export class RosettaService {
     migrateClaudeProductToAnthropic(this.dataDir);
     this.codexOAuthPort = Number(options.codexOAuthPort ?? CODEX_OAUTH_DEFAULT_CALLBACK_PORT);
     this.codexOAuthFetch = options.codexOAuthFetch || fetch;
-    this.claudeOAuthFetch = options.claudeOAuthFetch || fetch;
     this.accessKeysFile = new CachedJsonFile(path.join(this.dataDir, "access-keys.json"), { keys: [] });
     this.accountsFile = new CachedJsonFile(path.join(this.dataDir, "accounts.json"), { accounts: [] });
 
@@ -95,7 +92,6 @@ export class RosettaService {
       accessKeysFile: this.accessKeysFile,
       accountsFile: this.accountsFile,
       codexOAuthFetch: this.codexOAuthFetch,
-      claudeOAuthFetch: this.claudeOAuthFetch,
       codexOAuthPort: this.codexOAuthPort,
       automation: this.automation,
       agentAccounts: this.agentAccounts,

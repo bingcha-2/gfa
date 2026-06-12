@@ -6,15 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RosettaService, migrateClaudeProductToAnthropic } from "../rosetta.service";
 import { AccessKeyStore } from "../../token-server/access-key-store";
+import { proxyRequiredFetch } from "../../lease-core/egress";
 
-// The anthropic refresh/probe path is fail-closed (proxyRequiredFetch); codex/
-// gemini route through proxyAwareFetch. These tests drive the network via
-// vi.stubGlobal("fetch"), so send the egress wrappers back to the (stubbed)
-// global fetch. The proxy/fail-closed layer itself is covered in egress.spec.ts.
+// The anthropic refresh/probe/OAuth-exchange paths are fail-closed
+// (proxyRequiredFetch); codex/gemini route through proxyAwareFetch. These tests
+// drive the network via vi.stubGlobal("fetch"), so send the egress wrappers back
+// to the (stubbed) global fetch — as spies, so tests can assert the routing.
+// The proxy/fail-closed layer itself is covered in egress.spec.ts.
 vi.mock("../../lease-core/egress", async (orig) => ({
   ...(await (orig as any)()),
-  proxyRequiredFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
-  proxyAwareFetch: (_p: unknown, url: string, init: any) => fetch(url, init),
+  proxyRequiredFetch: vi.fn((_p: unknown, url: string, init: any) => fetch(url, init)),
+  proxyAwareFetch: vi.fn((_p: unknown, url: string, init: any) => fetch(url, init)),
 }));
 
 function writeJson(filePath: string, value: unknown) {
@@ -511,6 +513,9 @@ describe("RosettaService", () => {
   });
 
   it("starts Claude OAuth, exchanges the pasted code, and saves the account", async () => {
+    // The anthropic code→token exchange is fail-closed (proxyRequiredFetch), so
+    // the network is driven via the stubbed global fetch (see the egress mock at
+    // the top of this file), not a constructor-injected fetch.
     const tokenFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body || "{}"));
       expect(body.grant_type).toBe("authorization_code");
@@ -525,7 +530,8 @@ describe("RosettaService", () => {
         organization: { name: "Max Org" },
       }), { status: 200 });
     }) as typeof fetch;
-    const svc = new RosettaService({ dataDir: tempDir, claudeOAuthFetch: tokenFetch });
+    vi.stubGlobal("fetch", tokenFetch);
+    const svc = new RosettaService({ dataDir: tempDir });
 
     const started = await svc.startClaudeOAuthLogin();
     expect(started.ok).toBe(true);
@@ -536,9 +542,17 @@ describe("RosettaService", () => {
     expect(started.redirectUri).toBe("https://platform.claude.com/oauth/code/callback");
 
     const state = authUrl.searchParams.get("state");
+    const exchangeCallsBefore = vi.mocked(proxyRequiredFetch).mock.calls.length;
     // Claude's manual flow returns "code#state" — the submit must parse that form too.
     const submit = await svc.submitClaudeOAuthCallback(started.loginId, `auth-code-123#${state}`);
     expect(submit).toMatchObject({ ok: true, status: "completed", email: "max-user@example.com" });
+    expect(tokenFetch).toHaveBeenCalledTimes(1);
+    // Egress policy: the exchange must leave through the fail-closed wrapper
+    // (proxy required in production — covered in egress.spec.ts), never a
+    // direct datacenter-IP fetch.
+    const exchangeCalls = vi.mocked(proxyRequiredFetch).mock.calls.slice(exchangeCallsBefore);
+    expect(exchangeCalls).toHaveLength(1);
+    expect(String(exchangeCalls[0][1])).toContain("/v1/oauth/token");
 
     const stored = JSON.parse(fs.readFileSync(path.join(tempDir, "anthropic-accounts.json"), "utf8"));
     expect(stored.accounts[0]).toMatchObject({

@@ -19,7 +19,6 @@ export type RosettaContext = {
   accessKeysFile: CachedJsonFile;
   accountsFile: CachedJsonFile;
   codexOAuthFetch: typeof fetch;
-  claudeOAuthFetch: typeof fetch;
   codexOAuthPort: number;
   automation?: AutomationService;
   agentAccounts?: AgentAccountService;

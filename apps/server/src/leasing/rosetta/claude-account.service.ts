@@ -1,7 +1,9 @@
 // Claude (Anthropic 订阅号池) domain: account CRUD, OAuth manual-paste login flow,
 // proxy config, quota refresh. Extracted from RosettaService — behavior-preserving
-// (method bodies verbatim, this.dataDir/this.claudeOAuthFetch rebound to the shared
-// RosettaContext; binding-accounting calls routed through AccessKeyService).
+// (method bodies verbatim, this.dataDir rebound to the shared RosettaContext;
+// binding-accounting calls routed through AccessKeyService). All Anthropic
+// egress here is fail-closed: token-bearing calls go through proxyRequiredFetch,
+// never an injectable/direct fetch (see lease-core/egress.ts).
 //
 // 注:产品键/文件名是 "anthropic"(承载 "claude" 模型),方法名保留历史 "Claude" 拼写。
 
