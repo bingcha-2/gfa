@@ -8,7 +8,17 @@
  * ConsoleJwtGuard + @Roles("ADMIN","OPERATIONS") at class level, every
  * mutation audit-logged with the operator id.
  */
-import { Controller, Param, Post, Request, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  DefaultValuePipe,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
 
 import { ConsoleJwtGuard } from "../../../shared/auth/console-jwt.guard";
 import { Roles } from "../../../shared/auth/roles.decorator";
@@ -23,6 +33,32 @@ export class BillingAdminController {
     private readonly billingAdmin: BillingAdminService,
     private readonly auditLog: AuditLogService,
   ) {}
+
+  @Get("plan-orders")
+  listOrders(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("pageSize", new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
+    @Query("status") status?: string,
+    @Query("payChannel") payChannel?: string,
+    @Query("search") search?: string,
+  ) {
+    return this.billingAdmin.listOrders({ page, pageSize, status, payChannel, search });
+  }
+
+  @Get("subscriptions")
+  listSubscriptions(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("pageSize", new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+  ) {
+    return this.billingAdmin.listSubscriptions({ page, pageSize, status, search });
+  }
+
+  @Get("billing-stats")
+  billingStats() {
+    return this.billingAdmin.billingStats();
+  }
 
   @Post("plan-orders/:id/refund")
   async refundOrder(@Param("id") id: string, @Request() req: any) {

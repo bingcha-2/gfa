@@ -38,6 +38,9 @@ import { AppSurfaceModule } from "./leasing/app/app-surface.module";
 import { PlanModule } from "./leasing/plan/plan.module";
 import { SubscriptionModule } from "./leasing/subscription/subscription.module";
 import { BillingAdminModule } from "./leasing/console/billing-admin/billing-admin.module";
+import { CustomerAdminModule } from "./leasing/console/customer-admin/customer-admin.module";
+import { TicketAdminModule } from "./leasing/console/ticket-admin/ticket-admin.module";
+import { ReferralAdminModule } from "./leasing/console/referral-admin/referral-admin.module";
 import { CardMigrationModule } from "./leasing/account/card-migration/card-migration.module";
 import { BillingModule } from "./leasing/account/billing/billing.module";
 import { PortalModule } from "./leasing/account/portal/portal.module";
@@ -98,6 +101,9 @@ import { ReferralModule } from "./leasing/account/referral/referral.module";
     PlanModule,
     SubscriptionModule,
     BillingAdminModule,
+    CustomerAdminModule,
+    TicketAdminModule,
+    ReferralAdminModule,
     CardMigrationModule,
     BillingModule,
     PortalModule,
