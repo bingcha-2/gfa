@@ -41,6 +41,14 @@ function resolveReturnUrl(): string {
   return process.env.EPAY_RETURN_URL ?? `${web}/account/billing`;
 }
 
+/** 支付通道手续费率（%），由用户承担。留空/非法/0 → 不加价（默认）。范围 [0,100)。 */
+function resolveFeePercent(): number {
+  const raw = process.env.EPAY_FEE_PERCENT;
+  if (!raw) return 0;
+  const pct = parseFloat(raw);
+  return isNaN(pct) || pct < 0 || pct >= 100 ? 0 : pct;
+}
+
 /** Collision-resistant trade number: "gfa" + timestamp + 12 random hex chars. */
 export function generateOutTradeNo(): string {
   const ts = Date.now().toString();
@@ -75,7 +83,12 @@ export class BillingService {
 
     const outTradeNo = generateOutTradeNo();
     const expiresAt = new Date(Date.now() + THIRTY_MIN_MS);
-    const money = (plan.priceCents / 100).toFixed(2);
+    // 手续费由用户承担：基准价上加 EPAY_FEE_PERCENT%（向上取整到分）。
+    // amountCents 存「实付毛额」，与 epay 回调上报的 money 天然一致。
+    const baseCents = plan.priceCents;
+    const feeCents = Math.ceil((baseCents * resolveFeePercent()) / 100);
+    const amountCents = baseCents + feeCents;
+    const money = (amountCents / 100).toFixed(2);
     const type = channel === "ALIPAY" ? "alipay" : "wxpay";
 
     const pid = resolveEpayPid();
@@ -107,7 +120,7 @@ export class BillingService {
       data: {
         customerId,
         planId,
-        amountCents: plan.priceCents,
+        amountCents,
         payChannel: channel,
         outTradeNo,
         status: "PENDING",
@@ -121,6 +134,8 @@ export class BillingService {
     return {
       outTradeNo: order.outTradeNo,
       amountCents: order.amountCents,
+      baseCents,
+      feeCents,
       expiresAt: order.expiresAt.toISOString(),
       payUrl,
       qrDataUri,

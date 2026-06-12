@@ -175,8 +175,8 @@ export class EpayCallbackService {
           },
         });
 
-        // Referral reward.
-        if (order.referrerId) {
+        // Referral reward — disabled when EPAY_REFERRAL_PERCENT=0 (no invite payouts).
+        if (order.referrerId && referralPercent > 0) {
           const rewardCents = Math.floor(order.amountCents * referralPercent / 100);
           try {
             await tx.referralReward.create({
