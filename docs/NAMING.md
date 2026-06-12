@@ -86,12 +86,23 @@ When two things could share a name, the more specific one wins; generic terms ar
 
 ---
 
-## Residual Normalization Flags (decide later)
+## Subdomain Plan (DECIDED — under rollout)
 
-These inconsistencies are known; they are **not** blocking but should be resolved in a future milestone:
+Single primary domain **`bcai.lol`**; each audience gets its own subdomain. No `bcai.space` fallback (force-upgrade model, see below). Browser surfaces serve their API **same-origin** (httpOnly cookie → Bearer via the Next.js proxy); only the cookie-less machine API gets a dedicated host.
 
-**(a) Console frontend uses legacy bare API paths** — The admin console frontend (`apps/web/src/app/console/`) still calls bare legacy paths (`/rosetta`, `/accounts`, etc.) instead of `/api/console/*`. Plan: migrate frontend calls to `/api/console/*`, then drop the bare aliases. Target: M13.
+| Subdomain | Audience | Serves | Pages (method B: root-stripped) | Same-origin API | Cookie (Domain-scoped) |
+|---|---|---|---|---|---|
+| `bcai.lol` (apex, `www`→301) | Visitor · 官网 marketing | Next `(marketing)` | `/`, `/about`, `/features`, `/how-it-works`, `/quickstart`, `/faq`, `/download` | — | none |
+| `my.bcai.lol` | toC end user · 用户中心 | Next `(account)` | `/billing`, `/devices`, `/usage`, `/notifications`, `/tickets`, `/referral`, `/settings`, `/login`, … | `/api/account/*`, `/api/account-session/*` | `gfa.user.token` |
+| `console.bcai.lol` | toB admin · 管理后台 | Next `(console)` | `/groups`, `/orders`, `/codes`, `/rosetta-keys`, … | `/api/console/*`, `/api/console-session/*` | `gfa.console.token` |
+| `api.bcai.lol` | machine · desktop client / payment | NestJS direct (:3001) | — | `/api/app/*`, `/api/epay/*` | none (Bearer / MD5) |
 
-**(b) API surface vs. page route asymmetry** — The toC API surface is `/api/web/*` while the toC page group is `/account/*`. For perfect symmetry these should both be `account`; renaming `/api/web/*` → `/api/account/*` has caller churn (desktop client, web frontend). Decide whether to rename before M13 freezes the API.
+**Method B (root-strip):** on `my.`/`console.` the `/account` · `/console` path prefix is internally rewritten away (reusing the `ADMIN_PATH_PREFIX` mechanism), so users see `my.bcai.lol/billing` not `/account/billing`. Internal code keeps the `account` / `console` naming everywhere (route groups, `lib/`, components, cookies) — domain stays friendly, code stays unambiguous. In local dev (no subdomain) the prefixed paths `localhost:3000/account`, `/console` still work.
 
-**(c) Session route naming** — `/api/session/*` (console login proxy) vs. `/api/web-session/*` (customer session). Consider renaming `/api/session/*` → `/api/console-session/*` for symmetry with `web-session`. Low-urgency; decide alongside (b).
+### Naming normalization being applied during rollout
+- **(a) Admin frontend → `/api/console/*`** — drop the legacy bare aliases (`/rosetta`, `/accounts`, …) entirely (no migration period).
+- **(b) `/api/web/*` → `/api/account/*`** — full symmetry with the `account` surface; server dir `leasing/web/` → `leasing/account/` too.
+- **(c) `/api/session/*` → `/api/console-session/*`**, `/api/web-session/*` → `/api/account-session/*`.
+
+### Force-upgrade (no legacy compatibility)
+There are **no old clients to support** — clients are force-upgraded. Therefore, during rollout: remove `/remote-*` legacy lease routes, remove the card-string **runtime lease** branch in `access-key-store` (bind-card redemption via `findByKey` **stays** — that is how upgraded users convert an old card into a subscription), and raise `minClientVersion` + `latest-wails.json` `minVersion` to `9.5.0`. Deploy order: publish the 9.5.0 client → clients auto-update → then deploy the server with legacy removed.
