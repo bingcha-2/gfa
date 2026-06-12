@@ -3,7 +3,8 @@
  *
  * Verifies that all admin controllers expose both legacy and console/ paths,
  * that legacy remote-token/remote-codex/remote-anthropic paths are untouched,
- * that the OrderController split is correct, and that web/app surface skeletons exist.
+ * that the admin OrderController paths are correct, and that web/app surface
+ * skeletons exist.
  *
  * Uses Reflect.getMetadata() to inspect NestJS decorator metadata without
  * booting the full AppModule (which requires Redis).
@@ -36,9 +37,8 @@ import { TokenServerController } from "../../leasing/token-server/token-server.c
 import { RemoteCodexController } from "../../leasing/remote-codex/controller/remote-codex.controller";
 import { RemoteAnthropicController } from "../../leasing/remote-anthropic/controller/remote-anthropic.controller";
 
-// ---- Order split ----
+// ---- Order (admin) ----
 import { OrderController } from "../../google-family/order/order.controller";
-import { OrderPublicController } from "../../google-family/order/order-public.controller";
 
 // ---- Surface skeletons ----
 import { WebSurfaceController } from "../../leasing/web/web-surface.controller";
@@ -131,52 +131,13 @@ describe("Surface route normalization — controller path metadata", () => {
     ]);
   });
 
-  // ---- OrderController split ----
+  // ---- OrderController (admin) ----
 
   it("OrderController (admin) is registered on ['orders', 'console/orders']", () => {
     expect(Reflect.getMetadata("path", OrderController)).toEqual([
       "orders",
       "console/orders",
     ]);
-  });
-
-  it("OrderPublicController is registered on 'public'", () => {
-    expect(Reflect.getMetadata("path", OrderPublicController)).toBe("public");
-  });
-
-  // Final URLs under controller "public" must be identical to the legacy
-  // method-level "public/..." paths on the old combined controller.
-  it.each([
-    ["redeem", "redeem"],
-    ["findByOrderNo", "orders/:orderNo"],
-    ["findByRedeemCode", "orders/by-code/:code"],
-    ["swapAccount", "swap-account"],
-    ["swapByEmail", "swap-by-email"],
-    ["findSwapStatus", "swap-status/:orderNo"],
-    ["subscriptionSwap", "subscription-swap"],
-    ["checkMigration", "check-migration"],
-    ["selfMigrate", "self-migrate"],
-  ] as const)(
-    "OrderPublicController.%s method path is '%s'",
-    (method, expectedPath) => {
-      const proto = OrderPublicController.prototype as Record<string, any>;
-      expect(Reflect.getMetadata("path", proto[method])).toBe(expectedPath);
-    }
-  );
-
-  it.each([
-    ["redeem"],
-    ["findByOrderNo"],
-    ["findByRedeemCode"],
-    ["swapAccount"],
-    ["swapByEmail"],
-    ["findSwapStatus"],
-    ["subscriptionSwap"],
-    ["checkMigration"],
-    ["selfMigrate"],
-  ] as const)("OrderPublicController.%s is marked @Public()", (method) => {
-    const proto = OrderPublicController.prototype as Record<string, any>;
-    expect(Reflect.getMetadata(IS_PUBLIC_KEY, proto[method])).toBe(true);
   });
 
   // Final admin URLs under ["orders", "console/orders"] must be identical to
