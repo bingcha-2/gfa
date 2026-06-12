@@ -39,6 +39,7 @@ type ClaudeAccount = {
   claudeWeeklyResetTime: string;
   modelQuotaRefreshedAt: number;
   proxyUrl: string;
+  adspowerProfileId: string;
   hasMailPassword?: boolean;
   quotaStatus?: string;
   quotaStatusReason?: string;
@@ -83,6 +84,8 @@ export default function ClaudeAccountsPage() {
   const [planType, setPlanType] = useState("");
   const [alias, setAlias] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
+  const [adspowerProfileId, setAdspowerProfileId] = useState("k1bvbavq");
+  const [importProxyUrl, setImportProxyUrl] = useState("");
   const [adding, setAdding] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAccount | null>(null);
@@ -96,6 +99,10 @@ export default function ClaudeAccountsPage() {
   const [pwEditId, setPwEditId] = useState<number | null>(null);
   const [pwEditVal, setPwEditVal] = useState("");
   const [pwSaving, setPwSaving] = useState(false);
+  // 指纹浏览器号行内编辑。
+  const [adspowerEditId, setAdspowerEditId] = useState<number | null>(null);
+  const [adspowerEditVal, setAdspowerEditVal] = useState("");
+  const [adspowerSaving, setAdspowerSaving] = useState(false);
 
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
@@ -106,9 +113,9 @@ export default function ClaudeAccountsPage() {
   const [oauthStatusText, setOauthStatusText] = useState("");
   const [oauthSubmitting, setOauthSubmitting] = useState(false);
 
-  // 一键导入：email----password----sessionKey----proxyUrl
+  // 一键导入：email----password----sessionKey----proxyUrl----adspowerProfileId
   const [importLine, setImportLine] = useState("");
-  const [importParsed, setImportParsed] = useState<{ email: string; password: string; sessionKey: string; proxyUrl: string } | null>(null);
+  const [importParsed, setImportParsed] = useState<{ email: string; password: string; sessionKey: string; proxyUrl: string; adspowerProfileId?: string } | null>(null);
   const [imapFetching, setImapFetching] = useState(false);
   const [imapResult, setImapResult] = useState<{ url?: string; error?: string; date?: string } | null>(null);
   const [followingLink, setFollowingLink] = useState(false);
@@ -150,12 +157,19 @@ export default function ClaudeAccountsPage() {
       const res = await fetch("/api/console/rosetta/anthropic-add-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), refreshToken: refreshToken.trim(), planType: planType.trim(), alias: alias.trim(), proxyUrl: proxyUrl.trim() }),
+        body: JSON.stringify({
+          email: email.trim(),
+          refreshToken: refreshToken.trim(),
+          planType: planType.trim(),
+          alias: alias.trim(),
+          proxyUrl: proxyUrl.trim(),
+          adspowerProfileId: adspowerProfileId.trim(),
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "添加失败");
       toast.success(data.isUpdate ? "已更新账号" : "已添加账号");
-      setEmail(""); setRefreshToken(""); setPlanType(""); setAlias(""); setProxyUrl("");
+      setEmail(""); setRefreshToken(""); setPlanType(""); setAlias(""); setProxyUrl(""); setAdspowerProfileId("");
       fetchAccounts();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "添加失败");
@@ -252,30 +266,31 @@ export default function ClaudeAccountsPage() {
   function parseImportLine(line: string) {
     const parts = line.trim().split("----");
     if (parts.length < 3) return null;
-    // last separator might be --- (3 dashes) for proxy
-    let proxyUrl = "";
-    if (parts.length >= 4) {
-      proxyUrl = parts[3].trim();
+
+    let email = parts[0]?.trim() || "";
+    let password = parts[1]?.trim() || "";
+    let sessionKey = "";
+
+    // Support the format: NaylorAshleyddb@programmer.net----Okj5nWGj6d92----4a86b48f50bcc241a6e60e1d0b2f73c5----6321e855-a0af-40ca-95c3-bacfcfd43637----sk-ant-sid02-...
+    if (parts.length >= 5 && parts[4].trim().startsWith("sk-ant-")) {
+      sessionKey = parts[4].trim();
     } else {
-      const last = parts[parts.length - 1];
-      const idx = last.lastIndexOf("---");
-      if (idx > 0) {
-        parts[parts.length - 1] = last.slice(0, idx);
-        proxyUrl = last.slice(idx + 3).trim();
-      }
+      sessionKey = parts[2]?.trim() || "";
     }
+
     return {
-      email: parts[0]?.trim() || "",
-      password: parts[1]?.trim() || "",
-      sessionKey: parts[2]?.trim() || "",
-      proxyUrl: toSocks5(proxyUrl),
+      email,
+      password,
+      sessionKey,
+      proxyUrl: toSocks5(importProxyUrl),
+      adspowerProfileId: "k1bvbavq", // 固定选择 k1bvbavq
     };
   }
 
   function handleImportParse() {
     const parsed = parseImportLine(importLine);
     if (!parsed || !parsed.email || !parsed.password) {
-      toast.error("格式不对，需要: 邮箱----密码----sessionKey----代理URL");
+      toast.error("格式不对，必须至少包含：邮箱----密码----sessionKey");
       return;
     }
     setImportParsed(parsed);
@@ -358,8 +373,8 @@ export default function ClaudeAccountsPage() {
       toast.error("请先粘贴并解析账号行");
       return;
     }
-    if (!importParsed.proxyUrl) {
-      toast.error("全自动需要 SOCKS5 代理");
+    if (!importParsed.proxyUrl && !importParsed.adspowerProfileId) {
+      toast.error("全自动需要 SOCKS5 代理（或使用指纹浏览器号）");
       return;
     }
     if (!importParsed.password) {
@@ -378,6 +393,7 @@ export default function ClaudeAccountsPage() {
           email: importParsed.email,
           password: importParsed.password,
           proxyUrl: importParsed.proxyUrl,
+          adspowerProfileId: importParsed.adspowerProfileId,
           sessionKey: importParsed.sessionKey,
         }),
       });
@@ -605,6 +621,31 @@ export default function ClaudeAccountsPage() {
     }
   }
 
+  function startEditAdspower(account: ClaudeAccount) {
+    setAdspowerEditId(account.id);
+    setAdspowerEditVal(account.adspowerProfileId || "");
+  }
+
+  async function handleSaveAdspower(account: ClaudeAccount) {
+    setAdspowerSaving(true);
+    try {
+      const res = await fetch("/api/rosetta/anthropic-set-adspower-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id, adspowerProfileId: adspowerEditVal.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败");
+      toast.success(adspowerEditVal.trim() ? `#${account.id} AdsPower 浏览器号已设置` : `#${account.id} AdsPower 浏览器号已清除`);
+      setAdspowerEditId(null);
+      fetchAccounts(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setAdspowerSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[360px] items-center justify-center">
@@ -645,18 +686,27 @@ export default function ClaudeAccountsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            粘贴账号行（格式: <code className="rounded bg-muted px-1">邮箱----密码----sessionKey----代理URL</code>），自动解析后登录 mail.com 网页邮箱抓取 Anthropic 登录链接（无需开 IMAP）。
+            粘贴账号行（支持 3 段或 5 段格式，中间 2 段为无效内容，代理在右侧单独框填入），自动解析后使用 AdsPower (k1bvbavq) 与出口代理抓取 Anthropic 登录并换绑 token。
           </p>
 
           {/* Step 1: 粘贴解析 */}
-          <div className="flex items-end gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Field className="flex-1">
-              <FieldLabel>账号行</FieldLabel>
+              <FieldLabel>账号行 (5段或3段)</FieldLabel>
               <Input
-                placeholder="email----password----sk-ant-xxx----http://proxy"
+                placeholder="邮箱----密码----[其它无效段]----[其它无效段]----sessionKey"
                 value={importLine}
                 onChange={(e) => setImportLine(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleImportParse(); }}
+              />
+            </Field>
+            <Field className="sm:w-80">
+              <FieldLabel>代理 URL (单独填入)</FieldLabel>
+              <Input
+                placeholder="http://user:pass@ip:port 或 qhBGD...:443"
+                value={importProxyUrl}
+                onChange={(e) => setImportProxyUrl(e.target.value)}
+                onBlur={() => { if (importLine) handleImportParse(); }}
               />
             </Field>
             <Button variant="outline" onClick={handleImportParse}>解析</Button>
@@ -668,6 +718,9 @@ export default function ClaudeAccountsPage() {
                 <span>邮箱: <span className="text-foreground">{importParsed.email}</span></span>
                 <span>密码: <span className="text-foreground">***</span></span>
                 <span>代理: <span className="text-foreground">{importParsed.proxyUrl || "无"}</span></span>
+                {importParsed.adspowerProfileId ? (
+                  <span>浏览器号: <span className="text-foreground">{importParsed.adspowerProfileId}</span></span>
+                ) : null}
               </div>
 
               {/* Full auto: Playwright headless browser through SOCKS5 */}
@@ -805,6 +858,10 @@ export default function ClaudeAccountsPage() {
             <Field className="min-w-[240px] flex-1">
               <FieldLabel>出口代理(可选,每号粘性)</FieldLabel>
               <Input placeholder="socks5://user:pass@host:1080" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} />
+            </Field>
+            <Field className="min-w-[140px]">
+              <FieldLabel>浏览器号(可选)</FieldLabel>
+              <Input placeholder="AdsPower ID" value={adspowerProfileId} onChange={(e) => setAdspowerProfileId(e.target.value)} />
             </Field>
             <Button onClick={handleAdd} disabled={adding}>
               {adding ? <Spinner data-icon className="size-4" /> : <PlusIcon data-icon className="size-4" />}

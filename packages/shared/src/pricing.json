@@ -1,5 +1,12 @@
 {
   "claude": { "inputPerM": 5, "outputPerM": 25, "cacheReadPerM": 0.50 },
   "gemini": { "inputPerM": 2, "outputPerM": 12, "cacheReadPerM": 0.50 },
-  "gpt": { "inputPerM": 1.25, "outputPerM": 10, "cacheReadPerM": 0.125 }
+  "gpt": { "inputPerM": 1.25, "outputPerM": 10, "cacheReadPerM": 0.125 },
+  "claudeTiers": {
+    "opus": { "inputPerM": 5, "outputPerM": 25, "cacheReadPerM": 0.50 },
+    "sonnet": { "inputPerM": 3, "outputPerM": 15, "cacheReadPerM": 0.30 },
+    "haiku": { "inputPerM": 1, "outputPerM": 5, "cacheReadPerM": 0.10 },
+    "fable": { "inputPerM": 10, "outputPerM": 50, "cacheReadPerM": 1.00 },
+    "autocomplete": { "inputPerM": 0.10, "outputPerM": 0.40, "cacheReadPerM": 0.025 }
+  }
 }

@@ -12,6 +12,7 @@ import {
   tokenWindowResetMs,
   keyExpiresAt,
   accessKeySessionTtlMs,
+  DEFAULT_KEY_SESSION_TTL_MS,
   isAccessKeySessionExpired,
   validateClientVersion,
   decodeJwtExpMs,
@@ -20,7 +21,7 @@ import {
 // ── Constants used in tests ──────────────────────────────────────────────────
 
 const DEFAULT_KEY_WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours
-const DEFAULT_KEY_SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+// DEFAULT_KEY_SESSION_TTL_MS 从模块导入(env 可调,缺省 30s),不再本地写死。
 
 // ── readTokenCount ───────────────────────────────────────────────────────────
 

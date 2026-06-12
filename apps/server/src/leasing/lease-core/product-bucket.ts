@@ -14,6 +14,8 @@
  * cross-counts. Nothing outside this module may re-implement model classification.
  */
 
+import { QUOTA_WEIGHTS, CLAUDE_TIER_WEIGHTS, type QuotaWeight } from "@gfa/shared";
+
 export type Product = "antigravity" | "codex" | "anthropic";
 export type Family = "gemini" | "claude" | "gpt";
 
@@ -34,6 +36,43 @@ export function modelFamily(modelKey: unknown): Family {
   if (isGeminiModel(modelKey)) return "gemini";
   if (isCodexModel(modelKey)) return "gpt";
   return "claude";
+}
+
+/** Claude 计费档位:用真实上报的 modelKey 区分单价(Opus/Sonnet/Haiku/Fable),
+ *  避免所有 Claude 模型挤进同一权重。命中顺序很重要:
+ *   1) 自动补全 / 非 Claude(tab_*、flash_lite)先拦,否则会被 modelFamily 的 claude
+ *      兜底当成 Opus 计(自动补全本是 Flash-Lite 档,近零)。
+ *   2) fable 特殊高价(= 2× Opus)。
+ *   3) 档位词子串匹配 —— 天然忽略版本/日期/`-thinking` 后缀
+ *      (claude-opus-4-6-thinking → opus;claude-haiku-4-5-20251001 → haiku)。
+ *   4) 兜底 unknown:由计价侧按 Opus 计(防止用未收录别名套低价)并打日志。
+ *  注:`-thinking` 不需单独倍率 —— 思考 token 已在上游 usage.output_tokens 里按输出计。 */
+export type ClaudeTierKey = "opus" | "sonnet" | "haiku" | "fable" | "autocomplete" | "unknown";
+
+export function claudeModelTier(modelKey: unknown): ClaudeTierKey {
+  const k = String(modelKey || "").toLowerCase();
+  if (k.startsWith("tab_") || k.includes("flash_lite") || k.includes("flash-lite") || k.includes("autocomplete"))
+    return "autocomplete";
+  if (k.includes("fable")) return "fable";
+  if (k.includes("opus")) return "opus";
+  if (k.includes("sonnet")) return "sonnet";
+  if (k.includes("haiku")) return "haiku";
+  return "unknown";
+}
+
+/**
+ * 一次请求的 fair-share / 计费权重(CU,各家族自归一)。优先用真实 modelKey 区分 Claude
+ * 档位单价;也兼容只传 bucket(如 "anthropic-claude" / "codex-gpt")的旧调用 —— 经
+ * modelFamily 仍归到正确 family(gemini/gpt 不变),Claude 桶名落 unknown→Opus(与历史权重一致)。
+ *   gemini/gpt:沿用 family 权重(单家族,以自身输入为基准)。
+ *   claude:    按 claudeModelTier 取档位权重(以 Opus 输入为内部基准);unknown 兜底 Opus。
+ * 注:`-thinking` 无需单独倍率 —— 思考 token 已在上游 usage.output_tokens 里按输出计。
+ */
+export function quotaWeightFor(modelOrBucket: string): QuotaWeight {
+  const fam = modelFamily(modelOrBucket);
+  if (fam !== "claude") return QUOTA_WEIGHTS[fam] || QUOTA_WEIGHTS.gemini;
+  const tier = claudeModelTier(modelOrBucket);
+  return CLAUDE_TIER_WEIGHTS[tier as keyof typeof CLAUDE_TIER_WEIGHTS] || CLAUDE_TIER_WEIGHTS.opus;
 }
 
 /** Build the composite billing bucket key for a model under a product.

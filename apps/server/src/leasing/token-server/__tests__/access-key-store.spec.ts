@@ -288,9 +288,10 @@ describe('AccessKeyStore', () => {
       ]);
 
       const status = store.publicStatus(store.findById('k1')!);
-      expect(status.recentWindowTokens).toBe(150);
+      expect(status.recentWindowTokens).toBe(150); // 原始 Token 计数(展示用)不变
       const bucket = status.buckets.find((b: any) => b.bucket === 'anthropic-claude');
-      expect(bucket.used).toBe(150);
+      // anthropic 桶额度口径改为 CU(加权):claude-opus 100×1 + 50×5 = 350(原始为 150)。
+      expect(bucket.used).toBe(350);
     });
 
     it('ignores rows for cards not present in the cache', async () => {

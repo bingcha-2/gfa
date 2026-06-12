@@ -13,6 +13,7 @@ import {
   GetIDEStatus,
   OpenSystemPermissionSettings as _OpenSystemPermissionSettings,
   OpenCACertForTrust as _OpenCACertForTrust,
+  InstallStandaloneClaude as _InstallStandaloneClaude,
   InjectSelected as _InjectSelected,
   RestoreSelected as _RestoreSelected,
   SetClaudeDesktopMockLogin as _SetClaudeDesktopMockLogin,
@@ -91,6 +92,9 @@ export interface StatsResponse {
     accountResetMs?: Record<string, number>
     myFractions?: Record<string, number>
     myResetMs?: Record<string, number>
+    // 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)
+    myWeeklyFractions?: Record<string, number>
+    myWeeklyResetMs?: Record<string, number>
     codexQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     claudeQuota?: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number }
     boundAccounts?: BoundAccountInfo[]
@@ -107,7 +111,8 @@ export interface StatsResponse {
       tokenWindowResetAt?: string
       weight?: number          // 本卡 fair-share 份额权重(份额 X/Y 的 X)
       shareCapacity?: number   // 号总份数(份额 X/Y 的 Y)
-      buckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶服务端真实用量/上限(static「我的卡」真相源)
+      buckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h)
+      weeklyBuckets?: { bucket: string; used: number; limit: number }[]  // 每复合桶·周(显式或派生 5h×R)
     }
     localQuota?: {
       opusTokensUsed?: number
@@ -171,6 +176,12 @@ export async function openSystemPermissionSettings(): Promise<void> {
 // 仅在自动安装(CA_FAILED)失败后兜底用 —— 省掉用户找隐藏目录 ~/.bcai 的麻烦。
 export async function openCACertForTrust(): Promise<void> {
   return _OpenCACertForTrust()
+}
+
+// 「一键安装独立版」:winget 从社区源静默装官方独立版 Claude Desktop。winget 不存在/失败
+// 会抛错,调用方据此回退到打开下载页。
+export async function installStandaloneClaude(): Promise<void> {
+  return _InstallStandaloneClaude()
 }
 
 export async function injectSelected(targets: string[]): Promise<string> {

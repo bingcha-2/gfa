@@ -74,6 +74,10 @@ export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
 }
 
+export function InstallStandaloneClaude() {
+  return window['go']['main']['App']['InstallStandaloneClaude']();
+}
+
 export function OpenCACertForTrust() {
   return window['go']['main']['App']['OpenCACertForTrust']();
 }

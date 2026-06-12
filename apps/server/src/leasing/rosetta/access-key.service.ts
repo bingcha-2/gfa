@@ -114,6 +114,8 @@ export class AccessKeyService {
           recentWindowTokens: recentTokenUsage(authRecord),
           windowMs: Number(key.windowMs || key.tokenWindowMs || DEFAULT_KEY_WINDOW_MS),
           weeklyTokenLimit: Number(key.weeklyTokenLimit || 0),
+          // 周/5h 换算比设置框(0 = 留空 → 走「后台学习 > 全局默认」)。
+          weeklyRatio: Number(key.weeklyRatio || 0),
           durationMs: Number(key.durationMs || 0),
           provider: String(key.provider || ""),
           boundAccountId: Number(key.boundAccountId || 0),
@@ -236,6 +238,8 @@ export class AccessKeyService {
         windowMs: Math.max(0, Number(payload?.windowMs || 0)) || DEFAULT_KEY_WINDOW_MS,
         // Weekly (long) window limit — second tier of rate limiting (0 = unlimited).
         weeklyTokenLimit: Math.max(0, Number(payload?.weeklyTokenLimit || 0)),
+        // 周/5h 换算比覆盖(0 = 留空,走后台学习/全局默认 R)。派生周上限 = 5h上限 × R。
+        weeklyRatio: Math.max(0, Number(payload?.weeklyRatio || 0)),
         weight,
         ...(products.length ? { bindings } : {}),
         // Universal cards can also select products (restrict available services).
@@ -260,10 +264,11 @@ export class AccessKeyService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
-    for (const field of ["name", "status", "durationMs", "windowMs", "weeklyTokenLimit"]) {
-      if (payload[field] !== undefined) record[field] = field.endsWith("Ms") || field.endsWith("Limit")
-        ? Number(payload[field])
-        : String(payload[field]);
+    for (const field of ["name", "status", "durationMs", "windowMs", "weeklyTokenLimit", "weeklyRatio"]) {
+      if (payload[field] !== undefined) record[field] =
+        (field.endsWith("Ms") || field.endsWith("Limit") || field === "weeklyRatio")
+          ? Number(payload[field])
+          : String(payload[field]);
     }
     // 份额(weight):支持编辑改份额;clamp 1..ACCOUNT_SHARE_CAPACITY(=8),复用 cardWeight。
     if (payload.weight !== undefined) record.weight = cardWeight({ weight: payload.weight });

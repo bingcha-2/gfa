@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (例如 5.2.1)'
+        description: '版本号 (例如 9.5.0)'
         required: true
-        default: '5.2.1'
+        default: '9.5.0'
       changelog:
-        description: '更新日志 (简短描述本次更新)'
+        description: '更新日志 (用字面 \n 分行,客户端按行渲染为列表)'
         required: false
-        default: '性能优化和问题修复'
+        default: '-解决了用户提出的问题。\n-解决了提出问题的用户。\n-更新了最新的版本号'
 
 permissions:
   contents: write
@@ -65,7 +65,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache-dependency-path: ${{ env.WAILS_DIR }}/go.sum
 
       - name: Setup Node.js

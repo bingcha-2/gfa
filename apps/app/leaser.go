@@ -525,6 +525,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 	l.cachedToken = lease
 	l.leaseCount++
 	l.lastError = ""
+	l.cardUnusable = false
 	if leaseResp.ActivationExpiresAt != "" {
 		l.cardExpires = leaseResp.ActivationExpiresAt
 	}

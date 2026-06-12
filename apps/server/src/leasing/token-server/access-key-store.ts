@@ -11,6 +11,7 @@ import { readJsonFile, writeJsonFile } from './data-store';
 import {
   readTokenCount,
   billableTokenUsageTotal,
+  eventUsageForLimit,
   normalizeUsageToGross,
   resetWindowIfExpired,
   resetWeeklyWindowIfExpired,
@@ -35,7 +36,9 @@ import {
   modelFamily,
   bucketFamily,
   bucketsForProducts,
+  productOfBucket,
 } from '../lease-core/product-bucket';
+import { DEFAULT_WEEKLY_RATIO } from '../lease-core/quota-profile-tracker';
 import {
   looksLikeUserSessionToken,
   missingShadowRecord,
@@ -442,7 +445,7 @@ export class AccessKeyStore {
   async resolveFromRequest(
     req: any,
     _payload: any,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number) } = {},
   ): Promise<ResolveResult> {
     const authHeader = String(req?.headers?.authorization || '');
     const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
@@ -486,7 +489,7 @@ export class AccessKeyStore {
     keyValue: string,
     record: AccessKeyRecord,
     data: AccessKeysData,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number) } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number) } = {},
   ): ResolveResult {
     if (record.status && record.status !== 'active') {
       return { key: keyValue, record: null, error: 'Access key disabled' };
@@ -546,26 +549,42 @@ export class AccessKeyStore {
     }
 
     // ── Weekly window check (second tier) ──────────────────────────────────
+    // 周上限两种来源:① 显式 weeklyTokenLimit(手填,优先,兼容老逻辑);
+    // ② 否则对 anthropic/codex 桶按「5h 上限 × R」自动派生(池子卡也由此获得周限额)。
+    // R = 卡设置框 > 后台学习 > 全局默认,由调用方经 options.weeklyRatio(回调)解析。
     resetWeeklyWindowIfExpired(record, now);
-    const wLimit = weeklyTokenLimit(record);
-    if (options.enforceLimit && wLimit > 0) {
+    if (options.enforceLimit) {
       const modelKeyStr = String(options.modelKey || '').trim();
-      const weeklyUsage = recentWeeklyBucketUsage(record, now);
-
+      // 无 modelKey(预热/探活)不消费具体桶 → 不拦截(理由同 5h 窗口)。
       if (modelKeyStr) {
         const bucket = requestBucket(options.product, modelKeyStr);
-        const used = weeklyUsage.get(bucket) || 0;
-        const limit = this.billing.bucketLimit(wLimit, bucket, record);
-        if (limit > 0 && used >= limit) {
-          this.writeCache();
-          return {
-            key: keyValue, record: null,
-            limitExceeded: true, resetMs: weeklyWindowResetMs(record, now),
-            error: `Access key ${this.billing.bucketLabel(bucket)} weekly token limit exceeded (${used}/${limit} tokens/week)`,
-          };
+        const explicitWeekly = weeklyTokenLimit(record);
+        let weeklyCap = 0;
+        if (explicitWeekly > 0) {
+          weeklyCap = this.billing.bucketLimit(explicitWeekly, bucket, record);
+        } else {
+          const cap5h = this.billing.bucketLimit(0, bucket, record); // = bucketLimits[bucket] 或 0
+          const product = productOfBucket(bucket);
+          if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) {
+            const rawR = typeof options.weeklyRatio === 'function'
+              ? Number(options.weeklyRatio(record))
+              : Number(options.weeklyRatio);
+            const ratio = Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO;
+            weeklyCap = cap5h * ratio;
+          }
+        }
+        if (weeklyCap > 0) {
+          const used = recentWeeklyBucketUsage(record, now).get(bucket) || 0;
+          if (used >= weeklyCap) {
+            this.writeCache();
+            return {
+              key: keyValue, record: null,
+              limitExceeded: true, resetMs: weeklyWindowResetMs(record, now),
+              error: `Access key ${this.billing.bucketLabel(bucket)} weekly token limit exceeded (${used}/${weeklyCap} tokens/week)`,
+            };
+          }
         }
       }
-      // 无 modelKey:weekly 窗口同理不做拦截(理由同 token 窗口 —— 预热不消费具体桶)。
     }
 
     if (options.activate) this.writeCache();
@@ -620,7 +639,8 @@ export class AccessKeyStore {
     for (const item of record.tokenUsageEvents || []) {
       if (Number(item?.at || 0) < windowStart) continue;
       if (requestBucket(String(item?.product || ''), String(item?.modelKey || '')) !== bucket) continue;
-      used += billableTokenUsageTotal(item, String(item?.modelKey || ''));
+      // anthropic/codex → CU(加权);antigravity → 原始。与 recentBucketUsage 口径一致。
+      used += eventUsageForLimit(item);
     }
     return used;
   }
@@ -689,8 +709,9 @@ export class AccessKeyStore {
   // record's session* fields remain as historical data; publicStatus still
   // surfaces hasActiveSession from them for old records.
 
-  /** Get public-safe status for an access key. */
-  publicStatus(record: AccessKeyRecord, alignedResetAt = 0): any {
+  /** Get public-safe status for an access key. `weeklyRatio` 用于派生周上限(5h×R)的展示;
+   *  传回调(按桶解析 R)或数字;省略 → 仅在显式 weeklyTokenLimit 时有周数据。 */
+  publicStatus(record: AccessKeyRecord, alignedResetAt = 0, weeklyRatio?: number | ((bucket: string) => number)): any {
     if (!record) return null;
     const now = Date.now();
     resetWindowIfExpired(record, now);
@@ -702,11 +723,21 @@ export class AccessKeyStore {
     const resetMs = alignedResetAt > 0 ? Math.max(0, alignedResetAt - now) : tokenWindowResetMs(record, now);
     const expiresAt = keyExpiresAt(record);
 
-    // Weekly window
+    // Weekly window:显式 weeklyTokenLimit,或对 anthropic/codex 桶按「5h上限 × R」派生
+    // (与 resolveFromRequest 的 enforce 口径一致),让池子卡也能显示「周血条」。
     resetWeeklyWindowIfExpired(record, now);
     const wkLimit = weeklyTokenLimit(record);
-    const wkBucketUsage = wkLimit > 0 ? recentWeeklyBucketUsage(record, now) : new Map<string, number>();
-    const wkResetMs = wkLimit > 0 ? weeklyWindowResetMs(record, now) : 0;
+    const ratioForBucket = (bucket: string): number => {
+      const r = typeof weeklyRatio === 'function' ? Number(weeklyRatio(bucket)) : Number(weeklyRatio);
+      return Number.isFinite(r) && r > 0 ? r : DEFAULT_WEEKLY_RATIO;
+    };
+    const weeklyCapFor = (bucket: string): number => {
+      if (wkLimit > 0) return this.billing.bucketLimit(wkLimit, bucket, record);
+      const cap5h = this.billing.bucketLimit(0, bucket, record);
+      const product = productOfBucket(bucket);
+      if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) return cap5h * ratioForBucket(bucket);
+      return 0;
+    };
 
     // 是否设了每模型上限(bucketLimits 中有任何 >0 的桶)。
     const hasBucketCaps =
@@ -746,6 +777,14 @@ export class AccessKeyStore {
       return max;
     };
 
+    // 周桶(显式或派生);任一桶有周上限即视为有周窗口,据此算用量与 reset。
+    const weeklyBucketsOut = enumBuckets
+      .map((bucket) => ({ bucket, limit: weeklyCapFor(bucket) }))
+      .filter((b) => b.limit > 0);
+    const hasWeekly = weeklyBucketsOut.length > 0;
+    const wkBucketUsage = hasWeekly ? recentWeeklyBucketUsage(record, now) : new Map<string, number>();
+    const wkResetMs = hasWeekly ? weeklyWindowResetMs(record, now) : 0;
+
     return {
       id: record.id,
       name: record.name || '',
@@ -780,18 +819,16 @@ export class AccessKeyStore {
       tokenWindowMs: tokenWindowMs(record),
       tokenWindowResetMs: resetMs,
       tokenWindowResetAt: resetMs > 0 ? new Date(now + resetMs).toISOString() : '',
-      // Weekly window status — only present when weeklyTokenLimit > 0.
+      // Weekly window status — 显式 weeklyTokenLimit 或派生(5h×R, anthropic/codex)时有数据。
       weeklyTokenLimit: wkLimit,
-      weeklyWindowMs: wkLimit > 0 ? weeklyWindowMsFn(record) : 0,
+      weeklyWindowMs: hasWeekly ? weeklyWindowMsFn(record) : 0,
       weeklyWindowResetMs: wkResetMs,
       weeklyWindowResetAt: wkResetMs > 0 ? new Date(now + wkResetMs).toISOString() : '',
-      weeklyBuckets: wkLimit > 0
-        ? enumBuckets.map((bucket) => ({
-            bucket,
-            used: wkBucketUsage.get(bucket) || 0,
-            limit: this.billing.bucketLimit(wkLimit, bucket, record),
-          }))
-        : [],
+      weeklyBuckets: weeklyBucketsOut.map((b) => ({
+        bucket: b.bucket,
+        used: wkBucketUsage.get(b.bucket) || 0,
+        limit: b.limit,
+      })),
       hasActiveSession: Boolean(
         record.activeSessionId && !isAccessKeySessionExpired(record, now),
       ),

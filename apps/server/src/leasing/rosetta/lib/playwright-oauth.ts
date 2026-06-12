@@ -17,11 +17,13 @@
 import * as net from "net";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { SocksClient } from "socks";
+import { AdsPowerClient } from "./adspower-client";
 
 export type PlaywrightOAuthOpts = {
   authorizeUrl: string;
   email: string;
-  proxyUrl: string; // socks5://user:pass@host:port
+  proxyUrl?: string; // socks5://user:pass@host:port
+  adspowerProfileId?: string;
 };
 
 export type TriggerResult = {
@@ -154,8 +156,9 @@ export class PlaywrightOAuthSession {
   constructor(
     private browser: Browser,
     private context: BrowserContext,
-    private page: Page,
-    private relay: RelayHandle,
+    public page: Page,
+    private relay?: RelayHandle,
+    private adspowerOpts?: { client: AdsPowerClient; profileId: string },
   ) {}
 
   async consumeMagicLink(magicLinkUrl: string, timeoutMs = 60_000): Promise<ConsumeResult> {
@@ -213,7 +216,10 @@ export class PlaywrightOAuthSession {
   async close() {
     try { await this.context.close(); } catch {}
     try { await this.browser.close(); } catch {}
-    this.relay.close();
+    if (this.relay) this.relay.close();
+    if (this.adspowerOpts) {
+      await this.adspowerOpts.client.closeProfile(this.adspowerOpts.profileId).catch(() => {});
+    }
   }
 }
 
@@ -229,45 +235,138 @@ function parseUpstream(proxyUrl: string) {
   };
 }
 
+function parseProxyToAdsPowerConfig(proxyUrl: string): any {
+  if (!proxyUrl) return null;
+  try {
+    const url = new URL(proxyUrl);
+    const type = url.protocol.replace(":", "");
+    if (!["http", "https", "socks5"].includes(type)) {
+      return null;
+    }
+    const config: any = {
+      proxy_soft: "other",
+      proxy_type: type,
+      proxy_host: url.hostname,
+      proxy_port: String(url.port || (type === "socks5" ? 1080 : 80)),
+    };
+    if (url.username) {
+      config.proxy_user = decodeURIComponent(url.username);
+    }
+    if (url.password) {
+      config.proxy_password = decodeURIComponent(url.password);
+    }
+    return config;
+  } catch {
+    return null;
+  }
+}
+
 export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Promise<TriggerResult> {
   let relay: RelayHandle | null = null;
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
+  let adspowerOpts: { client: AdsPowerClient; profileId: string } | undefined;
 
   try {
-    // 1. Start local SOCKS5 relay
-    const upstream = parseUpstream(opts.proxyUrl);
-    relay = await startLocalSocksRelay(upstream);
-    console.log(`[playwright-oauth] local SOCKS5 relay on 127.0.0.1:${relay.port} → ${upstream.host}:${upstream.port}`);
+    let page: Page;
 
-    // 2. Launch Chromium — headed so the user can see (and CF trusts it more)
-    browser = await chromium.launch({
-      headless: false,
-      proxy: { server: `socks5://127.0.0.1:${relay.port}` },
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-      ],
-    });
+    if (opts.adspowerProfileId) {
+      const host = process.env.ADSPOWER_HOST || "http://127.0.0.1:50325";
+      const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
+      const client = new AdsPowerClient({ baseUrl: host, apiKey });
 
-    context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-      viewport: { width: 1280, height: 800 },
-      locale: "en-US",
-      timezoneId: "America/New_York",
-    });
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      console.log(`[playwright-oauth] Connecting to AdsPower Profile: ${opts.adspowerProfileId} with proxyUrl: ${opts.proxyUrl || "profile default"}`);
 
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => false });
-    });
+      const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
+      adspowerOpts = { client, profileId: opts.adspowerProfileId };
 
-    const page = await context.newPage();
+      browser = await chromium.connectOverCDP(openRes.debugUrl);
+      context = browser.contexts()[0];
+      if (!context) {
+        throw new Error("未在 AdsPower 浏览器实例中找到上下文");
+      }
 
-    // 3. Navigate to authorize URL — Cloudflare JS challenge runs in-browser
+      await context.clearCookies().catch(() => {});
+      page = context.pages()[0] || await context.newPage();
+    } else {
+      if (!opts.proxyUrl) {
+        throw new Error("未提供 SOCKS5 代理 URL，且未使用指纹浏览器");
+      }
+      const upstream = parseUpstream(opts.proxyUrl);
+      relay = await startLocalSocksRelay(upstream);
+      console.log(`[playwright-oauth] local SOCKS5 relay on 127.0.0.1:${relay.port} → ${upstream.host}:${upstream.port}`);
+
+      browser = await chromium.launch({
+        headless: false,
+        proxy: { server: `socks5://127.0.0.1:${relay.port}` },
+        ignoreDefaultArgs: ["--enable-automation"],
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--no-sandbox",
+        ],
+      });
+
+      context = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York",
+      });
+
+      await context.addInitScript(() => {
+        // 1. Overwrite navigator.webdriver to false
+        Object.defineProperty(navigator, "webdriver", { get: () => false });
+
+        // 2. Mock window.chrome
+        (window as any).chrome = {
+          runtime: {},
+          loadTimes: function() {},
+          csi: function() {},
+          app: {},
+        };
+
+        // 3. Mock navigator.plugins
+        const pdfViewer = {
+          name: "Chrome PDF Viewer",
+          filename: "internal-pdf-viewer",
+          description: "Portable Document Format",
+        };
+        Object.defineProperty(navigator, "plugins", {
+          get: () => [pdfViewer],
+        });
+
+        // 4. Overwrite navigator.permissions.query safely
+        const originalQuery = navigator.permissions.query;
+        navigator.permissions.query = (parameters: any) => {
+          try {
+            if (parameters && parameters.name === "notifications") {
+              const permission = (window as any).Notification ? (window as any).Notification.permission : "default";
+              return Promise.resolve({
+                state: permission,
+                addEventListener: () => {},
+                removeEventListener: () => {},
+                onchange: null,
+              } as any);
+            }
+            return originalQuery.call(navigator.permissions, parameters);
+          } catch {
+            return Promise.resolve({
+              state: "default",
+              addEventListener: () => {},
+              removeEventListener: () => {},
+              onchange: null,
+            } as any);
+          }
+        };
+      });
+
+      page = await context.newPage();
+    }
+
     console.log("[playwright-oauth] navigating to authorize URL...");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-    // 4. Wait for login form to appear (after CF challenge resolves)
     console.log("[playwright-oauth] waiting for login page...");
     const emailInput = await waitForEmailInput(page, 45_000);
     if (!emailInput) {
@@ -279,7 +378,6 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
       };
     }
 
-    // 5. Fill email and submit
     console.log(`[playwright-oauth] filling email: ${opts.email}`);
     await emailInput.fill(opts.email);
     await clickEmailSubmit(page);
@@ -288,12 +386,15 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
     const bodyText = await page.textContent("body").catch(() => "");
     console.log(`[playwright-oauth] after submit, page text: ${(bodyText || "").slice(0, 200)}`);
 
-    const session = new PlaywrightOAuthSession(browser, context, page, relay);
+    const session = new PlaywrightOAuthSession(browser, context, page, relay || undefined, adspowerOpts);
     return { ok: true, session };
   } catch (err: any) {
-    if (context) try { await context.close(); } catch {}
+    if (context && !opts.adspowerProfileId) try { await context.close(); } catch {}
     if (browser) try { await browser.close(); } catch {}
     if (relay) relay.close();
+    if (adspowerOpts) {
+      await adspowerOpts.client.closeProfile(adspowerOpts.profileId).catch(() => {});
+    }
     return { ok: false, error: `浏览器自动化失败: ${err?.message || err}` };
   }
 }

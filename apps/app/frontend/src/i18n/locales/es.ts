@@ -176,7 +176,7 @@ export const es: DeepPartialDict = {
     caFailedTitle: 'Inferencia bajo control · Max pendiente',
     caRetakeBtn: 'Retomar · instalar certificado',
     storeClaudeTitle: '⚠ La versión de la tienda no admite la toma de control',
-    storeClaudeBtn: 'Descargar el instalador independiente',
+    storeClaudeBtn: 'Instalar versión independiente',
     permissionTitle: 'Se requiere permiso del sistema',
     permissionBody: '{message}\n\nActiva el permiso de BingchaAI en “Configuración del Sistema → Privacidad y seguridad → Gestión de apps” y reintenta.',
     opFailed: 'Operación fallida',

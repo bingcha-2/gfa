@@ -176,7 +176,7 @@ export const ja: DeepPartialDict = {
     caFailedTitle: '推論は引き継ぎ済み · Max は有効化待ち',
     caRetakeBtn: '再引き継ぎ · 証明書をインストール',
     storeClaudeTitle: '⚠ ストア版は引き継げません',
-    storeClaudeBtn: 'スタンドアロン版インストーラーをダウンロード',
+    storeClaudeBtn: 'スタンドアロン版をワンクリック導入',
     permissionTitle: 'システム権限が必要です',
     permissionBody: '{message}\n\n「システム設定 → プライバシーとセキュリティ → アプリ管理」で BingchaAI の権限を有効にしてから、もう一度お試しください。',
     opFailed: '操作に失敗しました',

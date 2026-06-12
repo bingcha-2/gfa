@@ -502,9 +502,9 @@ describe("LeaseService (generic core)", () => {
     }));
 
     // Below the in-code floor (now 9.5.0) must be rejected (426 upgrade required) —
-    // even the previous floor 9.2.0 is now below the new minimum…
+    // even the previous floor 9.4.0 is now below the new minimum…
     await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.2.0" }),
+      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.4.0" }),
     ).rejects.toThrow();
     // …while the floor version is accepted.
     const ok = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex", clientVersion: "9.5.0" });

@@ -150,6 +150,9 @@ func (a *App) GetStats() map[string]interface{} {
 	leaserStatus["accountResetMs"] = snapshotAccountResets(nowMs)
 	leaserStatus["myFractions"] = snapshotMyFractions()
 	leaserStatus["myResetMs"] = snapshotMyResets(nowMs)
+	// 我的份额·周窗口(5h 之外的第二条血条;仅 codex/anthropic 绑卡有数据)。
+	leaserStatus["myWeeklyFractions"] = snapshotMyWeeklyFractions()
+	leaserStatus["myWeeklyResetMs"] = snapshotMyWeeklyResets(nowMs)
 	// Codex / Anthropic 都是账号级双窗口(5h + 周),像后台一样分两条显示。
 	if cq := codexQuotaStatus(GetCodexLeaser().LatestCodexQuota(), time.Now().UnixMilli()); cq != nil {
 		leaserStatus["codexQuota"] = cq
@@ -392,6 +395,24 @@ func (a *App) OpenSystemPermissionSettings() error {
 // 程序静默信任根 CA,但能替用户把证书直接打开,省掉找隐藏目录 ~/.bcai + 导航。前端在 CA_FAILED 时调用。
 func (a *App) OpenCACertForTrust() error {
 	return mitmOpenCACertForTrust()
+}
+
+// InstallStandaloneClaude 用 winget 从社区源(--source winget,非微软商店 msstore)静默安装官方
+// 独立版 Claude Desktop —— 装出可被接管的独立安装器版,替代商店 MSIX 版。前端「一键安装独立版」
+// 按钮调用。在可见控制台里跑 winget(用户能看下载/安装进度),立即返回不阻塞 UI。winget 不存在时
+// 返回 winget_not_found,前端据此回退到打开官网下载页。仅 Windows。
+func (a *App) InstallStandaloneClaude() error {
+	if goruntime.GOOS != "windows" {
+		return fmt.Errorf("仅 Windows 支持 winget 一键安装")
+	}
+	if _, err := exec.LookPath("winget"); err != nil {
+		return fmt.Errorf("winget_not_found")
+	}
+	// cmd /c start 开一个新控制台跑 winget(可见进度);hideCmd 只藏掉这个发起的 cmd 自身,
+	// 避免闪一个空窗口。winget 自带的控制台窗口照常显示。
+	return hideCmd("cmd", "/c", "start", "", "winget", "install",
+		"--id", "Anthropic.Claude", "--source", "winget", "-e",
+		"--accept-source-agreements", "--accept-package-agreements").Start()
 }
 
 // IsIDERunningCheck 检测 IDE 是否正在运行（前端用于提示重启）

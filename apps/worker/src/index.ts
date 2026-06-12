@@ -47,7 +47,7 @@ const hostname = (() => { try { return require("os").hostname(); } catch { retur
 const workerId = process.env.WORKER_NAME ?? `gfa-worker-${hostname}`;
 const adspowerHost =
   process.env.ADSPOWER_HOST ?? "http://localhost:50325";
-const adspowerApiKey = process.env.ADSPOWER_API_KEY ?? "";
+const adspowerApiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
 
 // ---- Infrastructure ----
 

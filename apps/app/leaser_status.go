@@ -212,12 +212,20 @@ func recordFairShareQuota(body []byte) {
 			Fraction float64 `json:"fraction"`
 			ResetAt  int64   `json:"resetAt"`
 		} `json:"fairShareQuota"`
+		// 周血条:与 fairShareQuota 平行,同 bucket 键(仅 codex/anthropic 下发;旧服务端无此字段)。
+		WeeklyFairShareQuota map[string]struct {
+			Fraction float64 `json:"fraction"`
+			ResetAt  int64   `json:"resetAt"`
+		} `json:"weeklyFairShareQuota"`
 	}
-	if json.Unmarshal(body, &resp) != nil || len(resp.FairShareQuota) == 0 {
+	if json.Unmarshal(body, &resp) != nil {
 		return
 	}
 	for bucket, q := range resp.FairShareQuota {
 		recordMyBucketFraction(bucket, q.Fraction, q.ResetAt)
+	}
+	for bucket, q := range resp.WeeklyFairShareQuota {
+		recordMyWeeklyBucketFraction(bucket, q.Fraction, q.ResetAt)
 	}
 }
 

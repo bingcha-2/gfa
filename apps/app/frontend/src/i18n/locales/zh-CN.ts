@@ -182,7 +182,7 @@ export const zhCN = {
     caFailedTitle: '推理已接管 · Max 待启用',
     caRetakeBtn: '重新接管 · 装证书',
     storeClaudeTitle: '⚠ 商店版无法接管',
-    storeClaudeBtn: '去下载独立安装器',
+    storeClaudeBtn: '一键安装独立版',
     permissionTitle: '需要系统权限',
     permissionBody: '{message}\n\n请在「系统设置 → 隐私与安全性 → App 管理」中开启冰茶AI 的权限,然后重试。',
     opFailed: '操作失败',
