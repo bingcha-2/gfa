@@ -1,6 +1,11 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
 import { useConsole } from "@/components/console/shell/console-provider";
+import { apiRequest } from "@/lib/console/client-api";
+import { fmtYuan } from "@/lib/console/format";
+import type { BillingStats } from "@/lib/console/types";
 import {
   Card,
   CardContent,
@@ -25,6 +30,10 @@ import {
   KeyIcon,
   ShoppingCartIcon,
   InboxIcon,
+  UserPlusIcon,
+  RefreshCwIcon,
+  CoinsIcon,
+  Undo2Icon,
 } from "lucide-react";
 
 function statusVariant(
@@ -54,6 +63,22 @@ export default function OverviewPage() {
   const activeOrders = stats?.activeOrders ?? 0;
   const recentOrders = stats?.recentOrders ?? [];
   const reviewQueue = stats?.reviewQueue ?? [];
+
+  const [billing, setBilling] = useState<BillingStats | null>(null);
+  useEffect(() => {
+    apiRequest<BillingStats>("billing-stats")
+      .then(setBilling)
+      .catch(() => setBilling(null)); // 无权限（非 ADMIN/OPERATIONS）时静默隐藏
+  }, []);
+
+  const customerMetrics = billing
+    ? [
+        { title: "今日新增客户", value: String(billing.todayNewCustomers), desc: "今日注册的客户数", icon: <UserPlusIcon /> },
+        { title: "活跃订阅", value: String(billing.activeSubscriptions), desc: "当前生效中的订阅", icon: <RefreshCwIcon /> },
+        { title: "今日收入", value: fmtYuan(billing.todayPaidCents), desc: `${billing.todayPaidCount} 笔已支付`, icon: <CoinsIcon /> },
+        { title: "30天退款率", value: `${(billing.refundRate30d * 100).toFixed(1)}%`, desc: "近 30 天退款/成交占比", icon: <Undo2Icon /> },
+      ]
+    : [];
 
   const metrics = [
     {
@@ -113,6 +138,44 @@ export default function OverviewPage() {
           </Card>
         ))}
       </div>
+
+      {/* 客户业务 KPIs */}
+      {billing && (
+        <div className="space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground">客户业务</h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {customerMetrics.map((m) => (
+              <Card key={m.title}>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardDescription>{m.title}</CardDescription>
+                  <span className="text-muted-foreground">{m.icon}</span>
+                </CardHeader>
+                <CardContent>
+                  <CardTitle className="text-2xl tabular-nums">{m.value}</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">{m.desc}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          {billing.planDistribution.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>套餐分布</CardTitle>
+                <CardDescription>按已支付订单数统计</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2">
+                  {billing.planDistribution.map((p) => (
+                    <Badge key={p.planId} variant="secondary" className="text-sm">
+                      {p.planName} · {p.count}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Recent Orders + Review Queue */}
       <div className="grid gap-4 lg:grid-cols-2">

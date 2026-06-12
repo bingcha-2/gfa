@@ -22,7 +22,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Loader2, KeyRound, Shield, Pencil, Trash2, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, Lock } from "lucide-react";
 
 type ManagedUser = {
   id: string; email: string; displayName: string; role: string;
@@ -36,6 +36,10 @@ const ALL_PERMISSIONS = [
   { key: "codes", label: "卡密" }, { key: "expire", label: "到期扫描" },
   { key: "scheduler", label: "自动维护" }, { key: "lookup", label: "成员管理" },
   { key: "agent_service", label: "代理服务" },
+  // 用户管理（客户业务）域
+  { key: "customers", label: "客户账户" }, { key: "plans", label: "套餐配置" },
+  { key: "billing_orders", label: "客户订单" }, { key: "subscriptions", label: "订阅" },
+  { key: "tickets", label: "工单" }, { key: "referrals", label: "返佣" },
 ];
 
 const ROLE_LABELS: Record<string, string> = { SUPER_ADMIN: "超级管理员", ADMIN: "管理员", OPERATIONS: "运营", SUPPORT: "客服" };

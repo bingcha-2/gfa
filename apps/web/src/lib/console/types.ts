@@ -159,6 +159,206 @@ export type PublicOrder = {
   updatedAt: string;
 };
 
+// ── 用户管理（客户业务）域类型 ────────────────────────────────────
+// 后端 console/plans 返回原始 Plan 行：productEntitlements / bucketLimits /
+// levels 均为 JSON 字符串（bucketLimits、levels 可空）。
+export type ConsolePlan = {
+  id: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  durationDays: number;
+  productEntitlements: string;
+  bucketLimits: string | null;
+  levels: string | null;
+  weight: number;
+  deviceLimit: number;
+  weeklyTokenLimit: number | null;
+  windowMs: number;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// 客户列表行（含聚合）
+export type ConsoleCustomerListItem = {
+  id: string;
+  email: string;
+  status: string;
+  emailVerified: boolean;
+  displayName: string | null;
+  referralCode: string;
+  creditCents: number;
+  createdAt: string;
+  invitedById: string | null;
+  orderCount: number;
+  activeSubscriptions: number;
+  totalPaidCents: number;
+  deviceCount: number;
+};
+export type ConsoleCustomerList = {
+  customers: ConsoleCustomerListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type ConsoleSubscriptionLite = {
+  id: string;
+  planId: string | null;
+  status: string;
+  startsAt: string;
+  expiresAt: string | null;
+  productEntitlements: string;
+  weight: number;
+  deviceLimit: number;
+  createdAt: string;
+  plan: { name: string } | null;
+};
+export type ConsoleOrderLite = {
+  id: string;
+  outTradeNo: string;
+  amountCents: number;
+  payChannel: string;
+  status: string;
+  paidAt: string | null;
+  createdAt: string;
+  plan: { name: string } | null;
+};
+export type ConsoleDeviceLite = {
+  id: string;
+  deviceId: string;
+  name: string | null;
+  platform: string | null;
+  status: string;
+  lastSeenAt: string | null;
+  lastIp: string | null;
+  createdAt: string;
+};
+export type ConsoleCustomerDetail = {
+  id: string;
+  email: string;
+  status: string;
+  emailVerified: boolean;
+  displayName: string | null;
+  referralCode: string;
+  creditCents: number;
+  invitedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  subscriptions: ConsoleSubscriptionLite[];
+  planOrders: ConsoleOrderLite[];
+  devices: ConsoleDeviceLite[];
+};
+
+// 客户订单（含套餐名 + 客户邮箱）
+export type ConsolePlanOrder = {
+  id: string;
+  customerId: string;
+  planId: string;
+  subscriptionId: string | null;
+  amountCents: number;
+  payChannel: string;
+  outTradeNo: string;
+  status: string;
+  paidAt: string | null;
+  createdAt: string;
+  plan: { name: string } | null;
+  customer: { email: string } | null;
+};
+export type ConsolePlanOrderList = {
+  orders: ConsolePlanOrder[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+// 订阅（含套餐名 + 客户邮箱）
+export type ConsoleSubscription = {
+  id: string;
+  customerId: string;
+  planId: string | null;
+  status: string;
+  startsAt: string;
+  expiresAt: string | null;
+  productEntitlements: string;
+  weight: number;
+  deviceLimit: number;
+  createdAt: string;
+  plan: { name: string } | null;
+  customer: { email: string } | null;
+};
+export type ConsoleSubscriptionList = {
+  subscriptions: ConsoleSubscription[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+// 工单
+export type ConsoleTicketListItem = {
+  id: string;
+  subject: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  customer: { email: string } | null;
+  _count: { messages: number };
+};
+export type ConsoleTicketList = {
+  tickets: ConsoleTicketListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+export type ConsoleTicketMessage = {
+  id: string;
+  authorType: string;
+  body: string;
+  createdAt: string;
+};
+export type ConsoleTicketDetail = {
+  id: string;
+  customerId: string;
+  subject: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  customer: { email: string } | null;
+  messages: ConsoleTicketMessage[];
+};
+
+// 返佣记录
+export type ConsoleReferralReward = {
+  id: string;
+  status: string;
+  amountCents: number;
+  createdAt: string;
+  referrerId: string;
+  referrerEmail: string | null;
+  inviteeId: string;
+  inviteeEmail: string | null;
+  planOrderId: string;
+  outTradeNo: string | null;
+};
+export type ConsoleReferralRewardList = {
+  rewards: ConsoleReferralReward[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+// 计费看板
+export type BillingStats = {
+  todayNewCustomers: number;
+  activeSubscriptions: number;
+  todayPaidCents: number;
+  todayPaidCount: number;
+  refundRate30d: number;
+  planDistribution: { planId: string; planName: string; count: number }[];
+};
+
 // ── Bulk operation result types (family-groups bulk endpoints) ──
 
 export type CrossInviteResult = {
