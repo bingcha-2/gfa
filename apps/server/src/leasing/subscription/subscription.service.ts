@@ -23,7 +23,7 @@ import type { Plan, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { EntitlementSyncService } from "./entitlement-sync.service";
-import { legacyColumnsToConfig } from "./subscription-config";
+import { planColumnsToInitialConfig } from "./subscription-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -73,8 +73,9 @@ export class SubscriptionService {
         },
       });
       await this.entitlementSync.syncSubscription(extended, { customerEmail: customer.email });
+      // sync 可能在 config 里更新了 bindings(绑定线);镜像回 legacy 列供 lease-service。
       const resynced = (await this.prisma.subscription.findUnique({ where: { id: extended.id } }))!;
-      return this.persistConfigSnapshot(resynced);
+      return this.mirrorBindingsFromConfig(resynced);
     }
 
     // (b) Cancel overlapping plan-backed subs. Migrated card subs (planId null)
@@ -89,6 +90,19 @@ export class SubscriptionService {
     }
 
     // (c) Create the new subscription with purchase-time plan snapshots.
+    // 去影子:下单即把限额配置快照进 config(单一真相源,含显式 line)。line 据 plan 意图定
+    // (配 levels=绑定线、否则号池线),绑定线 bindings 留空待 sync 分配座位 —— 必须在 sync 前写
+    // config,因为 syncSubscription 读 config.line 决定走绑定还是号池。catalogVersion:Plan 路径无目录 → null。
+    const initialConfig = planColumnsToInitialConfig({
+      productEntitlements: plan.productEntitlements,
+      bucketLimits: plan.bucketLimits,
+      bindings: null,
+      levels: plan.levels,
+      weight: plan.weight,
+      deviceLimit: plan.deviceLimit,
+      weeklyTokenLimit: plan.weeklyTokenLimit,
+      windowMs: plan.windowMs,
+    });
     const sub = await this.prisma.subscription.create({
       data: {
         customerId,
@@ -96,6 +110,7 @@ export class SubscriptionService {
         status: "ACTIVE",
         startsAt: now,
         expiresAt: new Date(now.getTime() + durationMs),
+        config: JSON.stringify(initialConfig),
         productEntitlements: plan.productEntitlements,
         bucketLimits: plan.bucketLimits,
         levels: plan.levels,
@@ -108,32 +123,32 @@ export class SubscriptionService {
       },
     });
     await this.entitlementSync.syncSubscription(sub, { customerEmail: customer.email });
-    // Re-read: the sync persists auto-assigned seat bindings onto the row.
+    // sync 在 config 里写入了分配到的 bindings(绑定线);镜像回 legacy bindings 列供 lease-service
+    // (它仍据 boundAccountId/bindings 列区分号池/绑定,本任务不动它)。
     const synced = (await this.prisma.subscription.findUnique({ where: { id: sub.id } }))!;
-    return this.persistConfigSnapshot(synced);
+    return this.mirrorBindingsFromConfig(synced);
   }
 
   /**
-   * 去影子:把订阅的限额配置快照进 Subscription.config(单一真相源,含显式 line)。
-   * 在 syncSubscription 之后调用 —— 那时绑定线的座位已分配并回写 bindings,
-   * legacyColumnsToConfig 才能据真实 accountId 判定 line=bind;号池则 bindings 空 → line=pool。
-   * 与 boot 的 loadActiveSubscriptions(同一 converter)口径一致。catalogVersion 由 Plan
-   * 路径无目录 → 保持 null(真正的目录下单链路记目录版本)。
+   * 把 config.bindings(sync 写入的座位结果,单一真相源)镜像回 legacy bindings 列。
+   * lease-service 仍读 bindings 列判号池/绑定(本任务不动它),故下单后保持两者一致。
+   * 号池线 config 无 bindings → 列写 null(保持号池语义)。
    */
-  private async persistConfigSnapshot(sub: Subscription): Promise<Subscription> {
-    const config = legacyColumnsToConfig({
-      productEntitlements: sub.productEntitlements,
-      bucketLimits: sub.bucketLimits,
-      bindings: sub.bindings,
-      levels: sub.levels,
-      weight: sub.weight,
-      deviceLimit: sub.deviceLimit,
-      weeklyTokenLimit: sub.weeklyTokenLimit,
-      windowMs: sub.windowMs,
-    });
+  private async mirrorBindingsFromConfig(sub: Subscription): Promise<Subscription> {
+    let bindings: Record<string, number> = {};
+    try {
+      const config = JSON.parse(String(sub.config || "{}"));
+      if (config?.line === "bind" && config.bindings && typeof config.bindings === "object") {
+        bindings = config.bindings;
+      }
+    } catch {
+      // malformed config → leave bindings empty (pool semantics).
+    }
+    const mirrored = Object.keys(bindings).length > 0 ? JSON.stringify(bindings) : null;
+    if (mirrored === (sub.bindings ?? null)) return sub; // no change
     return this.prisma.subscription.update({
       where: { id: sub.id },
-      data: { config: JSON.stringify(config) },
+      data: { bindings: mirrored },
     });
   }
 

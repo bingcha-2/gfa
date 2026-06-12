@@ -267,6 +267,14 @@ export class AccessKeyStore {
   }
 
   /**
+   * 去影子:列出所有已注册的订阅 record(subscriptionById 的快照)。
+   * 运行时限额从内存读、不读文件 —— 测试与诊断据此核验注册状态,无需触碰 access-keys.json。
+   */
+  listSubscriptionRecords(): AccessKeyRecord[] {
+    return [...this.subscriptionById.values()];
+  }
+
+  /**
    * Rebuild in-memory rate-limit windows from the durable CardTokenUsage log.
    * Called ONCE on boot: window events are not persisted to access-keys.json
    * (see serializable()), so without this a restart would reset every card's

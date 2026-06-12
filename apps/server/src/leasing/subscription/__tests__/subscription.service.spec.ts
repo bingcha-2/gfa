@@ -28,8 +28,12 @@ let accessKeysPath: string;
 let store: AccessKeyStore;
 let service: SubscriptionService;
 
+/**
+ * 去影子:运行时限额从内存订阅 record 读,不读 access-keys.json。早先用 readKeys(文件),
+ * 现改读 store.listSubscriptionRecords()(内存),口径与生产一致。
+ */
 function readKeys(): any[] {
-  return JSON.parse(fs.readFileSync(accessKeysPath, "utf8")).keys;
+  return store.listSubscriptionRecords();
 }
 
 async function createPlan(overrides: Partial<Record<string, any>> = {}) {
@@ -121,11 +125,12 @@ describe("SubscriptionService.createFromPlan / activateOrExtend", () => {
     });
     expect(config.bindings).toEqual({ antigravity: expect.any(Number) });
 
+    // 去影子:运行时 record 在内存,以 id(=订阅 id,会话 JWT 解析到它)为键,不再带卡 key/name。
     const record = readKeys().find((k) => k.id === sub.id);
     expect(record).toBeTruthy();
-    expect(record.key).toBe(sub.backingKeyValue);
+    expect(record.status).toBe("active");
     expect(record.keyExpiresAt).toBe(sub.expiresAt!.toISOString());
-    expect(record.name).toContain(customer.email);
+    expect(record.bindings).toEqual({ antigravity: expect.any(Number) });
   });
 
   it("same plan again → EXTENDS the same sub (expiry += durationDays), no second sub or record", async () => {

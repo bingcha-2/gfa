@@ -5,6 +5,8 @@
 export interface SubConfig {
   line?: string;
   bindings?: Record<string, number>;
+  /** 该订阅占的份数(独享=8 … 拼车=1)。缺省按 1 计。 */
+  weight?: number;
 }
 
 /** 某上游号(accountId)在某产品上已被多少张「绑定订阅」占用。 */
@@ -15,4 +17,26 @@ export function countBoundSeats(configs: SubConfig[], accountId: number, product
     if (Number(c.bindings?.[product]) === accountId) n++;
   }
   return n;
+}
+
+/**
+ * 某产品下,每个上游号已被「绑定订阅」占用的份额(weight 求和)。座位分配据此判容量,
+ * 是去影子后的唯一份额真相源(从 DB 订阅 config,不从 access-keys.json 文件)。
+ * 只数 line=bind;号池(即便误带 bindings)不占座位。可传 excludeId 排除自身(resync)。
+ */
+export function occupiedSharesByAccount(
+  configs: Array<SubConfig & { id?: string }>,
+  product: string,
+  excludeId = "",
+): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const c of configs) {
+    if (c.line !== "bind") continue;
+    if (excludeId && c.id === excludeId) continue;
+    const accountId = Number(c.bindings?.[product]);
+    if (!(accountId > 0)) continue;
+    const weight = Math.max(1, Math.floor(Number(c.weight) || 1));
+    m.set(accountId, (m.get(accountId) || 0) + weight);
+  }
+  return m;
 }

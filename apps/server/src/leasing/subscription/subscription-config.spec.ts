@@ -1,6 +1,65 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyColumnsToConfig, subscriptionToLimitRecord } from "./subscription-config";
+import { legacyColumnsToConfig, planColumnsToInitialConfig, subscriptionToLimitRecord } from "./subscription-config";
+
+describe("planColumnsToInitialConfig — 下单时按 plan 意图建初始 config(座位未分配前定 line)", () => {
+  it("plan 配了 levels → 绑定线 line=bind,bindings 空(待座位分配),含 levels/weight", () => {
+    const config = planColumnsToInitialConfig({
+      productEntitlements: '["anthropic"]',
+      bucketLimits: null,
+      bindings: null, // 下单时尚未分配座位
+      levels: '{"anthropic":"max-20x"}',
+      weight: 8,
+      deviceLimit: 1,
+      weeklyTokenLimit: null,
+      windowMs: 18000000,
+    });
+    expect(config).toEqual({
+      line: "bind",
+      products: ["anthropic"],
+      levels: { anthropic: "max-20x" },
+      bindings: {},
+      weight: 8,
+      deviceLimit: 1,
+      windowMs: 18000000,
+    });
+  });
+
+  it("plan 无 levels(纯用量)→ 号池线 line=pool,含用量上限", () => {
+    const config = planColumnsToInitialConfig({
+      productEntitlements: '["anthropic"]',
+      bucketLimits: '{"anthropic-claude":50000}',
+      bindings: null,
+      levels: null,
+      weight: 1,
+      deviceLimit: 2,
+      weeklyTokenLimit: 250000,
+      windowMs: 18000000,
+    });
+    expect(config).toEqual({
+      line: "pool",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 50000 },
+      weeklyTokenLimit: 250000,
+      deviceLimit: 2,
+      windowMs: 18000000,
+    });
+  });
+
+  it("plan 配了 levels 但是空对象 → 视为号池(没有要绑的等级)", () => {
+    const config = planColumnsToInitialConfig({
+      productEntitlements: '["codex"]',
+      bucketLimits: '{"codex-codex":40000}',
+      bindings: null,
+      levels: "{}",
+      weight: 1,
+      deviceLimit: 1,
+      weeklyTokenLimit: 200000,
+      windowMs: 18000000,
+    });
+    expect(config.line).toBe("pool");
+  });
+});
 
 describe("legacyColumnsToConfig — 老订阅列收敛成 config", () => {
   it("号池(bindings 空)→ line=pool,含用量上限,不含 levels/bindings", () => {

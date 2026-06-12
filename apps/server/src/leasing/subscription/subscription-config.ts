@@ -40,6 +40,39 @@ export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknow
   };
 }
 
+/**
+ * 下单时按 plan 意图建「初始 config」(座位尚未分配,bindings 还空)。line 由 plan 意图定:
+ * 配了 levels(非空)→ 绑定线(bindings 空待分配);否则号池线(卖用量)。与 legacyColumnsToConfig
+ * 的区别:后者据已分配的 bindings 反推 line(boot/迁移用),前者据 levels 正推 line(下单用,
+ * 那时 bindings 必空,不能靠它推断)。对齐 spec §4.3「line 下单时写定,不靠 bindings 空不空推断」。
+ */
+export function planColumnsToInitialConfig(sub: LegacyColumns): Record<string, unknown> {
+  const products = parseArray(sub.productEntitlements);
+  const levels = parseObject(sub.levels);
+  const isBind = Object.keys(levels).length > 0;
+
+  if (isBind) {
+    return {
+      line: "bind",
+      products,
+      levels,
+      bindings: {},
+      weight: sub.weight,
+      deviceLimit: sub.deviceLimit,
+      windowMs: sub.windowMs,
+    };
+  }
+
+  return {
+    line: "pool",
+    products,
+    bucketLimits: parseObject(sub.bucketLimits),
+    weeklyTokenLimit: sub.weeklyTokenLimit ?? 0,
+    deviceLimit: sub.deviceLimit,
+    windowMs: sub.windowMs,
+  };
+}
+
 export interface SubscriptionRow {
   id: string;
   status: string;

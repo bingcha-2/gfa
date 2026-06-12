@@ -242,6 +242,10 @@ export class RosettaService {
   assignSeatForProduct(product: string, weight: number, level: string) {
     return this.accessKeySvc.assignSeatForProduct(product, weight, level);
   }
+  /** 去影子座位分配:占用份额按 DB ACTIVE 订阅 config 算好传入,不读文件(见 access-key.service)。 */
+  assignSeatForProductFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {
+    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares);
+  }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────
   createCaptchaUnblock(payload: any) { return this.captchaSvc.createCaptchaUnblock(payload); }

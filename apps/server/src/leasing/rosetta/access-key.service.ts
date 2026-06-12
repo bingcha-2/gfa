@@ -389,6 +389,35 @@ export class AccessKeyService {
     return seats ? seats[0] : null;
   }
 
+  /**
+   * 去影子座位分配:与 assignSeatForProduct 同样选号(等级匹配、可绑、配额未耗尽、最紧装箱),
+   * 但占用份额由调用方按「数据库 ACTIVE 订阅的 config」算好传入(occupiedShares:accountId→已用份),
+   * NOT 从 access-keys.json 文件数 —— 停写文件后文件不再含订阅 bindings,从文件数会超卖(★陷阱★)。
+   * 返回选中的 accountId,或 null(该等级无号还剩 weight 份)。
+   */
+  assignSeatForProductFromShares(
+    product: string,
+    weight: number,
+    level: string,
+    occupiedShares: Map<number, number>,
+  ): number | null {
+    if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
+    const lvl = String(level || "").trim();
+    if (!lvl) return null;
+    const need = cardWeight({ weight });
+    const pool = readJson(this.poolFileFor(product), { accounts: [] });
+    const candidates = (Array.isArray(pool.accounts) ? pool.accounts : []).filter(
+      (a: any) => this.isAccountBindable(product, a, lvl),
+    );
+    // Best-fit: tightest free first (tie-break by id) — packs 拼车 cards, keeps
+    // whole accounts free for 独享. Mirrors autoAssignSeats's selection.
+    const fit = candidates
+      .map((a: any) => ({ id: Number(a.id), free: ACCOUNT_SHARE_CAPACITY - (occupiedShares.get(Number(a.id)) || 0) }))
+      .filter((r: { id: number; free: number }) => r.free >= need)
+      .sort((a: { id: number; free: number }, b: { id: number; free: number }) => a.free - b.free || a.id - b.id)[0];
+    return fit ? fit.id : null;
+  }
+
   deleteAccessKey(payload: any) {
     const id = String(payload?.id || "");
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");
