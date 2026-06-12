@@ -40,6 +40,7 @@ import { PlanCatalogModule } from "./leasing/plan-catalog/plan-catalog.module";
 import { SubscriptionModule } from "./leasing/subscription/subscription.module";
 import { BillingAdminModule } from "./leasing/console/billing-admin/billing-admin.module";
 import { CustomerAdminModule } from "./leasing/console/customer-admin/customer-admin.module";
+import { AccountLevelsModule } from "./leasing/console/account-levels/account-levels.module";
 import { TicketAdminModule } from "./leasing/console/ticket-admin/ticket-admin.module";
 import { ReferralAdminModule } from "./leasing/console/referral-admin/referral-admin.module";
 import { CardMigrationModule } from "./leasing/account/card-migration/card-migration.module";
@@ -104,6 +105,7 @@ import { ReferralModule } from "./leasing/account/referral/referral.module";
     SubscriptionModule,
     BillingAdminModule,
     CustomerAdminModule,
+    AccountLevelsModule,
     TicketAdminModule,
     ReferralAdminModule,
     CardMigrationModule,
