@@ -40,23 +40,20 @@ func postJsonWithSecret(client *http.Client, path string, payload interface{}, s
 }
 
 func postBcaiBaseWithFallback(baseURL string, path string, payload interface{}, card string, upstreamProxy string) ([]byte, int, error) {
-	// 依次尝试主域名 → 备域名（bcai_hosts.go）；每个域名内部再做 直连 → 代理 回退。
-	// 注意：只有传输层失败（err != nil）才切换；服务器返回了 HTTP 响应（即使 4xx/5xx）
-	// 视为该域名可用，直接返回，不再切换域名。
-	var lastErr error
-	for _, base := range bcaiURLCandidates(baseURL) {
-		body, status, err := postJSONWithSecretToBase(base, createBcaiClient(), path, payload, card)
-		if err == nil {
-			return body, status, nil
-		}
-		Log("[bcai] Direct connection failed for %s (%v), retrying via proxy", base, err)
-
-		body, status, err = postJSONWithSecretToBase(base, createHttpClient(upstreamProxy), path, payload, card)
-		if err == nil {
-			return body, status, nil
-		}
-		Log("[bcai] Proxy connection failed for %s (%v)", base, err)
-		lastErr = err
+	// 单域名(api.bcai.lol);传输层做 直连 → 代理 回退。客户端 9.5.0 起强制升级,
+	// 不再有 bcai.space 备域名(host fallback 已随强升移除,见 docs/NAMING.md 子域规划)。
+	// 注意:只有传输层失败(err != nil)才回退;服务器返回了 HTTP 响应(即使 4xx/5xx)
+	// 视为成功,直接返回。
+	body, status, err := postJSONWithSecretToBase(baseURL, createBcaiClient(), path, payload, card)
+	if err == nil {
+		return body, status, nil
 	}
-	return nil, 0, lastErr
+	Log("[bcai] Direct connection failed for %s (%v), retrying via proxy", baseURL, err)
+
+	body, status, err = postJSONWithSecretToBase(baseURL, createHttpClient(upstreamProxy), path, payload, card)
+	if err == nil {
+		return body, status, nil
+	}
+	Log("[bcai] Proxy connection failed for %s (%v)", baseURL, err)
+	return nil, 0, err
 }

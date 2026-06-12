@@ -33,12 +33,14 @@ import {
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal URLs =====
+// toC 用户中心位于 my.bcai.lol（见 docs/NAMING.md 子域规划）；/account 前缀在
+// 子域上由 Next 中间件 root-strip，带前缀访问同样有效，本地 dev 也可直接复用。
 export const PORTAL_URLS = {
-  register: 'https://bcai.lol/account/register',
-  forgot: 'https://bcai.lol/account/forgot',
-  billing: 'https://bcai.lol/account/billing',
-  bind: 'https://bcai.lol/account/billing',
-  devices: 'https://bcai.lol/account/devices',
+  register: 'https://my.bcai.lol/account/register',
+  forgot: 'https://my.bcai.lol/account/forgot',
+  billing: 'https://my.bcai.lol/account/billing',
+  bind: 'https://my.bcai.lol/account/billing',
+  devices: 'https://my.bcai.lol/account/devices',
 } as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'

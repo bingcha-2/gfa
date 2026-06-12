@@ -194,7 +194,7 @@ func egressAnthropicReachable(proxyURL string) error {
 const egressGateMarker = "EGRESS_BLOCKED:"
 
 // egressInfoForTakeover 取目标产品当前账号 of 出口策略(proxyUrl + egressRequired)。
-// 走各自 leaser 的 LeaseToken(force=false,复用缓存):这是控制面请求(走 bcai.space),
+// 走各自 leaser 的 LeaseToken(force=false,复用缓存):这是控制面请求(走 api.bcai.lol),
 // 即使账号出口代理被 ban 也能拿到 —— 我们正是要先拿到 proxyUrl 才能去探它。
 func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
 	card, dev, up := cfg.UserToken, cfg.DeviceId, ""

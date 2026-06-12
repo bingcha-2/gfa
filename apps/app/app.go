@@ -483,74 +483,53 @@ func (a *App) GetAnnouncement() string {
 	client := createHttpClient("")
 	client.Timeout = 5 * time.Second
 
-	// 依次尝试主域名 → 备域名（bcai_hosts.go）
-	for _, rawURL := range bcaiURLCandidates(API_BASE + "/announcement") {
-		resp, err := client.Get(rawURL)
-		if err != nil {
-			continue // 该域名不可达，尝试下一个
-		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			continue
-		}
-		body := make([]byte, 1024) // 公告最多 1KB
-		n, _ := resp.Body.Read(body)
-		resp.Body.Close()
-		return strings.TrimSpace(string(body[:n]))
+	resp, err := client.Get(API_BASE + "/announcement")
+	if err != nil {
+		return ""
 	}
-	return ""
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return ""
+	}
+	body := make([]byte, 1024) // 公告最多 1KB
+	n, _ := resp.Body.Read(body)
+	resp.Body.Close()
+	return strings.TrimSpace(string(body[:n]))
 }
 
 // GetFaqData 从服务器获取 FAQ 数据（绕过浏览器 CORS 限制）。
-// 返回 { "items": [...], "settings": {...} }，失败返回空 map。
+// FAQ 的公开只读端点是 /api/console/faq（服务端 FaqController 的 @Public GET;
+// M12 起裸 /api/faq 别名已移除），经机器 API 域（authBaseURL = api.bcai.lol/api,
+// NestJS 直达）获取。返回 { "items": [...], "settings": {...} }，失败返回空 map。
 func (a *App) GetFaqData() map[string]interface{} {
 	client := createHttpClient("")
 	client.Timeout = 8 * time.Second
 
 	result := map[string]interface{}{}
+	faqBase := strings.TrimRight(authBaseURL, "/") + "/console/faq"
 
 	// Fetch FAQ items
-	for _, rawURL := range bcaiURLCandidates("https://" + BcaiPrimaryHost + "/api/faq") {
-		resp, err := client.Get(rawURL)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
+	if resp, err := client.Get(faqBase); err == nil {
+		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil {
-			continue
+		if resp.StatusCode == 200 && readErr == nil {
+			var items []interface{}
+			if json.Unmarshal(body, &items) == nil {
+				result["items"] = items
+			}
 		}
-		var items []interface{}
-		if json.Unmarshal(body, &items) == nil {
-			result["items"] = items
-		}
-		break
 	}
 
 	// Fetch FAQ settings
-	for _, rawURL := range bcaiURLCandidates("https://" + BcaiPrimaryHost + "/api/faq/settings") {
-		resp, err := client.Get(rawURL)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
+	if resp, err := client.Get(faqBase + "/settings"); err == nil {
+		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil {
-			continue
+		if resp.StatusCode == 200 && readErr == nil {
+			var settings map[string]interface{}
+			if json.Unmarshal(body, &settings) == nil {
+				result["settings"] = settings
+			}
 		}
-		var settings map[string]interface{}
-		if json.Unmarshal(body, &settings) == nil {
-			result["settings"] = settings
-		}
-		break
 	}
 
 	return result

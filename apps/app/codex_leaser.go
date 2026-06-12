@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
-var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://bcai.lol/api/app/lease/codex")
+// 默认走机器 API 域 api.bcai.lol（NestJS 直达,见 docs/NAMING.md;9.5.0 强升后无备域名）
+var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://api.bcai.lol/api/app/lease/codex")
 
 type CodexTokenLease struct {
 	AccessToken string `json:"accessToken"`

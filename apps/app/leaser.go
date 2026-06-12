@@ -15,8 +15,8 @@ import (
 )
 
 // API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
-// 默认走主域名 bcai.lol，请求失败自动回退到备域名 bcai.space（见 bcai_hosts.go）
-var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://bcai.lol/api/app/lease/antigravity")
+// 默认走机器 API 域 api.bcai.lol（NestJS 直达,见 docs/NAMING.md;9.5.0 强升后无备域名）
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://api.bcai.lol/api/app/lease/antigravity")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 
@@ -348,7 +348,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		}
 	}
 
-	// 带重试的 lease-token 请求（解决 bcai.space 偶发网络波动）
+	// 带重试的 lease-token 请求（解决租号服务偶发网络波动）
 	const maxLeaseRetries = 3
 	var body []byte
 	var lastLeaseErr error

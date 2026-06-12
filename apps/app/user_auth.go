@@ -10,10 +10,11 @@ import (
 	"time"
 )
 
-// authBaseURL is the base URL for account-login API calls.
-// Set via BCAI_AUTH_BASE env; defaults to https://bcai.lol/api.
-// Overridable in tests.
-var authBaseURL = getEnvOrDefault("BCAI_AUTH_BASE", "https://bcai.lol/api")
+// authBaseURL is the machine-API base URL for account-session calls
+// (/app/login, /app/heartbeat, /app/logout) and other client API fetches.
+// Set via BCAI_AUTH_BASE env; defaults to https://api.bcai.lol/api
+// (api.bcai.lol = NestJS direct, see docs/NAMING.md). Overridable in tests.
+var authBaseURL = getEnvOrDefault("BCAI_AUTH_BASE", "https://api.bcai.lol/api")
 
 // ────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -52,44 +53,34 @@ type loginErrorResponse struct {
 	Message string `json:"message"`
 }
 
-// doAuthPost posts JSON to the auth endpoint with host fallback (primary → fallback).
+// doAuthPost posts JSON to the auth endpoint (direct, then proxy fallback —
+// transport-level resilience only; there is no alternate-host fallback).
 // It does NOT add an Authorization header (used for /app/login itself).
 func doAuthPost(path string, payload interface{}) ([]byte, int, error) {
-	base := authBaseURL
-	// Use the same bcaiURLCandidates host-fallback logic as other calls.
-	var lastErr error
-	for _, candidate := range bcaiURLCandidates(base) {
-		body, status, err := postJSONWithSecretToBase(candidate, createBcaiClient(), path, payload, "")
-		if err == nil {
-			return body, status, nil
-		}
-		Log("[auth] direct failed for %s: %v; trying proxy", candidate, err)
-		body, status, err = postJSONWithSecretToBase(candidate, createHttpClient(""), path, payload, "")
-		if err == nil {
-			return body, status, nil
-		}
-		Log("[auth] proxy also failed for %s: %v", candidate, err)
-		lastErr = err
+	body, status, err := postJSONWithSecretToBase(authBaseURL, createBcaiClient(), path, payload, "")
+	if err == nil {
+		return body, status, nil
 	}
-	return nil, 0, lastErr
+	Log("[auth] direct failed for %s: %v; trying proxy", authBaseURL, err)
+	body, status, err = postJSONWithSecretToBase(authBaseURL, createHttpClient(""), path, payload, "")
+	if err == nil {
+		return body, status, nil
+	}
+	Log("[auth] proxy also failed for %s: %v", authBaseURL, err)
+	return nil, 0, err
 }
 
 // doAuthPostWithBearer posts JSON with a Bearer token for authenticated endpoints.
 func doAuthPostWithBearer(path string, payload interface{}, token string) ([]byte, int, error) {
-	base := authBaseURL
-	var lastErr error
-	for _, candidate := range bcaiURLCandidates(base) {
-		body, status, err := postJSONWithSecretToBase(candidate, createBcaiClient(), path, payload, token)
-		if err == nil {
-			return body, status, nil
-		}
-		body, status, err = postJSONWithSecretToBase(candidate, createHttpClient(""), path, payload, token)
-		if err == nil {
-			return body, status, nil
-		}
-		lastErr = err
+	body, status, err := postJSONWithSecretToBase(authBaseURL, createBcaiClient(), path, payload, token)
+	if err == nil {
+		return body, status, nil
 	}
-	return nil, 0, lastErr
+	body, status, err = postJSONWithSecretToBase(authBaseURL, createHttpClient(""), path, payload, token)
+	if err == nil {
+		return body, status, nil
+	}
+	return nil, 0, err
 }
 
 // osHostname is a thin wrapper around os.Hostname, overridable in tests.
