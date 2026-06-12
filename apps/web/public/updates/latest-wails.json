@@ -7,7 +7,7 @@
   "installerSha256": "023E7ED23CEBC97549EF8F75E2F204E3ECC4E1AC3DC80F89B6748136ECB09A22",
   "installerSize": 11126190,
   "changelog": "桌面端体验优化与稳定性修复",
-  "minVersion": "9.4.0",
+  "minVersion": "9.5.0",
   "macOS": {
     "arm64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.4.0/BingchaAI-9.4.0-arm64.dmg",
