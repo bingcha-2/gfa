@@ -8,6 +8,8 @@
 #   ./dev-local.sh client       # 仅 Wails 客户端（连本地服务端）
 #   ./dev-local.sh remote       # 仅 Wails 客户端（连远端 bcai.site）
 #   ./dev-local.sh build        # 本地编译客户端二进制
+#
+#   EPAY_TUNNEL=0 ./dev-local.sh server   # 关掉 ngrok 穿透（默认开启，自动把 epay 回调指到本地）
 # ============================================================================
 
 set -euo pipefail
@@ -36,6 +38,7 @@ WAILS_BIN="${WAILS_BIN:-$(command -v wails 2>/dev/null || echo "$HOME/go/bin/wai
 # ── PID 追踪 ──
 SERVER_PID=""
 CLIENT_PID=""
+NGROK_PID=""
 
 # ── 环境检查 ──
 check_prerequisites() {
@@ -199,6 +202,11 @@ cleanup() {
     wait "$CLIENT_PID" 2>/dev/null || true
   fi
 
+  if [ -n "$NGROK_PID" ] && kill -0 "$NGROK_PID" 2>/dev/null; then
+    echo -e "${DIM}[shutdown] 停止 ngrok (PID $NGROK_PID)${NC}"
+    kill "$NGROK_PID" 2>/dev/null || true
+  fi
+
   # 清理残留端口占用
   lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
   lsof -ti :3001 2>/dev/null | xargs kill -9 2>/dev/null || true
@@ -207,6 +215,47 @@ cleanup() {
   exit 0
 }
 trap cleanup SIGINT SIGTERM EXIT
+
+# ── ngrok 内网穿透：给 epay 回调一个公网地址（默认开启）──
+# 关掉这次：EPAY_TUNNEL=0 ./dev-local.sh server
+# 只有 NOTIFY 需要公网（epay 服务器要 POST 进来）；RETURN 走本地浏览器即可。
+# 导出的两个变量会盖过 .env 里的生产值（@nestjs/config 不覆盖已存在的 process.env）。
+start_epay_tunnel() {
+  # 默认开启；这次想关掉用 EPAY_TUNNEL=0 ./dev-local.sh server
+  [ "${EPAY_TUNNEL:-1}" = "1" ] || return 0
+
+  if ! command -v ngrok >/dev/null 2>&1; then
+    echo -e "${YELLOW}[epay] 未装 ngrok，跳过穿透（支付回调收不到）。装：brew install ngrok 并 ngrok config add-authtoken <token>${NC}"
+    return 0
+  fi
+
+  echo -e "${BOLD}${CYAN}═══ 启动 ngrok 穿透（epay 回调用）═══${NC}"
+  ngrok http "${API_PORT:-3001}" --log=stdout >/tmp/gfa-ngrok.log 2>&1 &
+  NGROK_PID=$!
+
+  local url="" tries=0
+  while [ $tries -lt 30 ]; do
+    # ngrok 进程已退出（多半没配 authtoken）→ 早退，别傻等满 30s
+    kill -0 "$NGROK_PID" 2>/dev/null || break
+    url=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+      | sed -n 's/.*"public_url":"\(https:[^"]*\)".*/\1/p' | head -1 || true)
+    [ -n "$url" ] && break
+    sleep 1
+    tries=$((tries + 1))
+  done
+
+  if [ -z "$url" ]; then
+    echo -e "${YELLOW}[epay] 未取到 ngrok 公网地址，跳过（看 /tmp/gfa-ngrok.log，多半是没配 authtoken）${NC}"
+    return 0
+  fi
+
+  export EPAY_NOTIFY_URL="${url}/api/epay/notify"
+  export EPAY_RETURN_URL="http://localhost:3000/account/billing"
+  echo -e "  ${GREEN}✓${NC} EPAY_NOTIFY_URL = ${EPAY_NOTIFY_URL}"
+  echo -e "  ${GREEN}✓${NC} EPAY_RETURN_URL = ${EPAY_RETURN_URL}"
+  echo -e "  ${DIM}ngrok 面板: http://127.0.0.1:4040${NC}"
+  echo ""
+}
 
 # ── 启动后端 (API + Web + Worker) ──
 start_server() {
@@ -226,6 +275,9 @@ start_server() {
   export ADMIN_IP_ALLOWLIST=""
   export ADMIN_PATH_PREFIX="${ADMIN_PATH_PREFIX:-console}"
   export ROSETTA_DATA_DIR="$DATA_DIR"
+
+  # 默认起 ngrok 并把 epay 回调指到本地（EPAY_TUNNEL=0 可关）
+  start_epay_tunnel
 
   (cd "$ROOT" && pnpm dev 2>&1 | while IFS= read -r line; do
     echo -e "${MAGENTA}[server]${NC} $line"

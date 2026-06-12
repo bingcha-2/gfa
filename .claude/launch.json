@@ -4,7 +4,7 @@
     {
       "name": "gfa-web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["-C", "GFA/apps/web", "dev"],
+      "runtimeArgs": ["-C", "apps/web", "dev"],
       "port": 3000
     },
     {

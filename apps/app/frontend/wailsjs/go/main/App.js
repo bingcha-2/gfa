@@ -22,6 +22,10 @@ export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
 }
 
+export function GetAccountState() {
+  return window['go']['main']['App']['GetAccountState']();
+}
+
 export function GetAnnouncement() {
   return window['go']['main']['App']['GetAnnouncement']();
 }
@@ -62,8 +66,16 @@ export function GetUpdateStatus() {
   return window['go']['main']['App']['GetUpdateStatus']();
 }
 
+export function HeartbeatCheck() {
+  return window['go']['main']['App']['HeartbeatCheck']();
+}
+
 export function InjectSelected(arg1) {
   return window['go']['main']['App']['InjectSelected'](arg1);
+}
+
+export function InstallStandaloneClaude() {
+  return window['go']['main']['App']['InstallStandaloneClaude']();
 }
 
 export function IsHubRunningCheck() {
@@ -72,10 +84,6 @@ export function IsHubRunningCheck() {
 
 export function IsIDERunningCheck() {
   return window['go']['main']['App']['IsIDERunningCheck']();
-}
-
-export function InstallStandaloneClaude() {
-  return window['go']['main']['App']['InstallStandaloneClaude']();
 }
 
 export function OpenCACertForTrust() {
@@ -116,12 +124,4 @@ export function UserLogin(arg1, arg2) {
 
 export function UserLogout() {
   return window['go']['main']['App']['UserLogout']();
-}
-
-export function GetAccountState() {
-  return window['go']['main']['App']['GetAccountState']();
-}
-
-export function HeartbeatCheck() {
-  return window['go']['main']['App']['HeartbeatCheck']();
 }

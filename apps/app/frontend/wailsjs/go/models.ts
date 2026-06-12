@@ -1,7 +1,6 @@
 export namespace main {
 	
 	export class Config {
-	    // Legacy card fields (still in config for old file compat)
 	    accountCard: string;
 	    cardExpiry: string;
 	    deviceId: string;
@@ -10,7 +9,6 @@ export namespace main {
 	    hubPath: string;
 	    codexAppPath: string;
 	    claudeDesktopPath: string;
-	    // Account-login fields
 	    userToken: string;
 	    userTokenExpiry: string;
 	    userEmail: string;
@@ -23,11 +21,11 @@ export namespace main {
 	    codexRelayKey: string;
 	    codexRelayProtocol: string;
 	    codexModelMap: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.accountCard = source["accountCard"];

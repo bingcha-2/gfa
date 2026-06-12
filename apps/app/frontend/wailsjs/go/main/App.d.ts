@@ -12,6 +12,8 @@ export function ClearStats():Promise<boolean>;
 
 export function DownloadUpdate():Promise<void>;
 
+export function GetAccountState():Promise<Record<string, any>>;
+
 export function GetAnnouncement():Promise<string>;
 
 export function GetAppVersion():Promise<string>;
@@ -32,13 +34,15 @@ export function GetStats():Promise<Record<string, any>>;
 
 export function GetUpdateStatus():Promise<main.UpdateStatus>;
 
+export function HeartbeatCheck():Promise<Record<string, any>>;
+
 export function InjectSelected(arg1:Array<string>):Promise<string>;
+
+export function InstallStandaloneClaude():Promise<void>;
 
 export function IsHubRunningCheck():Promise<boolean>;
 
 export function IsIDERunningCheck():Promise<boolean>;
-
-export function InstallStandaloneClaude():Promise<void>;
 
 export function OpenCACertForTrust():Promise<void>;
 
@@ -59,7 +63,3 @@ export function SetClaudeDesktopMockLogin(arg1:boolean):Promise<boolean>;
 export function UserLogin(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function UserLogout():Promise<void>;
-
-export function GetAccountState():Promise<Record<string, any>>;
-
-export function HeartbeatCheck():Promise<Record<string, any>>;
