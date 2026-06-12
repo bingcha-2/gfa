@@ -86,23 +86,25 @@ When two things could share a name, the more specific one wins; generic terms ar
 
 ---
 
-## Subdomain Plan (DECIDED — under rollout)
+## Subdomain Plan (DECIDED — implemented in code; env-gated for deploy)
 
-Single primary domain **`bcai.lol`**; each audience gets its own subdomain. No `bcai.space` fallback (force-upgrade model, see below). Browser surfaces serve their API **same-origin** (httpOnly cookie → Bearer via the Next.js proxy); only the cookie-less machine API gets a dedicated host.
+Single primary domain **`bcai.lol`**; each audience gets its own subdomain. No `bcai.space` fallback (force-upgrade model). Browser surfaces serve their API **same-origin** (httpOnly cookie → Bearer via the Next.js proxy); only the cookie-less machine API gets a dedicated host (NestJS direct).
 
-| Subdomain | Audience | Serves | Pages (method B: root-stripped) | Same-origin API | Cookie (Domain-scoped) |
+| Subdomain | Audience | Serves | Pages | Same-origin API | Cookie (Domain-scoped) |
 |---|---|---|---|---|---|
-| `bcai.lol` (apex, `www`→301) | Visitor · 官网 marketing | Next `(marketing)` | `/`, `/about`, `/features`, `/how-it-works`, `/quickstart`, `/faq`, `/download` | — | none |
-| `my.bcai.lol` | toC end user · 用户中心 | Next `(account)` | `/billing`, `/devices`, `/usage`, `/notifications`, `/tickets`, `/referral`, `/settings`, `/login`, … | `/api/account/*`, `/api/account-session/*` | `gfa.user.token` |
-| `console.bcai.lol` | toB admin · 管理后台 | Next `(console)` | `/groups`, `/orders`, `/codes`, `/rosetta-keys`, … | `/api/console/*`, `/api/console-session/*` | `gfa.console.token` |
-| `api.bcai.lol` | machine · desktop client / payment | NestJS direct (:3001) | — | `/api/app/*`, `/api/epay/*` | none (Bearer / MD5) |
+| `bcai.lol` (apex, `www`→301) | Visitor · 官网 marketing | Next `(marketing)` | `/`, `/about`, `/features`, `/how-it-works`, `/quickstart`, `/faq`, `/download`; `/updates/*` (client update feed) | `/api/faq-images/*` | none |
+| `my.bcai.lol` | toC end user · 用户中心 | Next `(account)` | `/account/*` (`/account/billing`, `/account/devices`, …) | `/api/account/*`, `/api/account-session/*` | `gfa.user.token` (Domain=`my.bcai.lol`) |
+| `console.bcai.lol` | toB admin · 管理后台 | Next `(console)` | `/console/*`, `/login` | `/api/console/*`, `/api/console-session/*` | `gfa.console.token` (Domain=`console.bcai.lol`) |
+| `api.bcai.lol` | machine · desktop client / payment | NestJS direct (:3001) | — | `/api/app/*`, `/api/epay/*`, `/api/health`, `/api/remote-stats/*` | none (Bearer / MD5) |
 
-**Method B (root-strip):** on `my.`/`console.` the `/account` · `/console` path prefix is internally rewritten away (reusing the `ADMIN_PATH_PREFIX` mechanism), so users see `my.bcai.lol/billing` not `/account/billing`. Internal code keeps the `account` / `console` naming everywhere (route groups, `lib/`, components, cookies) — domain stays friendly, code stays unambiguous. In local dev (no subdomain) the prefixed paths `localhost:3000/account`, `/console` still work.
+**Method A (path prefix kept):** the `/account` · `/console` prefix stays in the URL (`my.bcai.lol/account/billing`, `console.bcai.lol/console/groups`) — standard SaaS practice (`app.example.com/dashboard/…`), zero routing risk, and the subdomain already makes the audience unambiguous. Code keeps the `account` / `console` naming end-to-end (route groups, `lib/`, components, cookies, API). Root-strip (method B) was considered and rejected: in a single multi-surface Next app, prefix-less URLs would require per-Host page routing + prefix-aware links + subdomain-based dev — high cost, low benefit.
 
-### Naming normalization being applied during rollout
-- **(a) Admin frontend → `/api/console/*`** — drop the legacy bare aliases (`/rosetta`, `/accounts`, …) entirely (no migration period).
-- **(b) `/api/web/*` → `/api/account/*`** — full symmetry with the `account` surface; server dir `leasing/web/` → `leasing/account/` too.
-- **(c) `/api/session/*` → `/api/console-session/*`**, `/api/web-session/*` → `/api/account-session/*`.
+**Deploy env (Next.js):** `MARKETING_HOST`/`ACCOUNT_HOST`/`CONSOLE_HOST` drive `middleware.ts` Host isolation (all unset = single-domain dev, unchanged); `ACCOUNT_COOKIE_DOMAIN`/`CONSOLE_COOKIE_DOMAIN` scope the cookies; `ADMIN_IP_ALLOWLIST` optional. `api.bcai.lol` is Caddy→NestJS direct (Next never sees it). See `Caddyfile.migration` (4 site blocks) and `docs/RELEASE.md` (cutover order).
 
-### Force-upgrade (no legacy compatibility)
-There are **no old clients to support** — clients are force-upgraded. Therefore, during rollout: remove `/remote-*` legacy lease routes, remove the card-string **runtime lease** branch in `access-key-store` (bind-card redemption via `findByKey` **stays** — that is how upgraded users convert an old card into a subscription), and raise `minClientVersion` + `latest-wails.json` `minVersion` to `9.5.0`. Deploy order: publish the 9.5.0 client → clients auto-update → then deploy the server with legacy removed.
+### Naming normalization — DONE
+- **(a)** Admin frontend calls `/api/console/*`; legacy bare aliases (`/rosetta`, `/accounts`, …) and `/remote-*` routes removed.
+- **(b)** `/api/web/*` → `/api/account/*` (server dir `leasing/web/` → `leasing/account/`, module/guard renamed).
+- **(c)** `/api/session/*` → `/api/console-session/*`, `/api/web-session/*` → `/api/account-session/*`.
+
+### Force-upgrade (no legacy compatibility) — DONE
+No old clients to support. Removed: `/remote-*` lease routes, the card-string **runtime lease** branch in `access-key-store` (bind-card redemption via `findByKey` **retained** — how upgraded users convert an old card into a subscription), the client `bcai.space` fallback and vestigial `/api/activate` call. `minClientVersion` + `latest-wails.json` `minVersion` = `9.5.0`. **Deploy order (see RELEASE.md): publish the 9.5.0 client first → fleet auto-updates → then deploy the server with legacy removed.** (`latest-wails.json` `version` still 9.4.0 — bump to 9.5.0 when the real build is published.)
