@@ -27,9 +27,10 @@ import { OrderExpiryService } from "./order-expiry.service";
 import { BillingReconcileService } from "./billing-reconcile.service";
 import { CustomerAuthModule } from "../customer-auth/customer-auth.module";
 import { SubscriptionModule } from "../../subscription/subscription.module";
+import { PlanCatalogModule } from "../../plan-catalog/plan-catalog.module";
 
 @Module({
-  imports: [CustomerAuthModule, SubscriptionModule],
+  imports: [CustomerAuthModule, SubscriptionModule, PlanCatalogModule],
   controllers: [BillingController, EpayController],
   providers: [BillingService, EpayCallbackService, OrderExpiryService, BillingReconcileService],
   exports: [BillingService],

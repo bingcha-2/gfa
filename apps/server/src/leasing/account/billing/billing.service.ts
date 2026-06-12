@@ -15,6 +15,8 @@ import {
 } from "@nestjs/common";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
+import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
+import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
 import { signParams } from "./epay.sign";
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
@@ -56,11 +58,24 @@ export function generateOutTradeNo(): string {
   return `gfa${ts}${rand}`;
 }
 
+/** Human-ish epay order name for a catalog selection (shown on the pay page). */
+function orderName(selection: Selection): string {
+  const products =
+    selection.line === "bind"
+      ? selection.items.map((i) => i.product)
+      : selection.products;
+  const line = selection.line === "bind" ? "绑定" : "号池";
+  return `GFA ${line}套餐 ${products.join("+") || "套餐"}`;
+}
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly planCatalog: PlanCatalogService,
+  ) {}
 
   /**
    * Create a PENDING PlanOrder, build the payUrl and qrDataUri.
@@ -75,17 +90,90 @@ export class BillingService {
     if (!plan) throw new NotFoundException(`Plan "${planId}" not found`);
     if (!plan.active) throw new BadRequestException("Plan is not available for purchase");
 
+    const referrerId = await this.resolveReferrerId(customerId);
+
+    return this.buildPaymentAndPersist({
+      customerId,
+      referrerId,
+      baseCents: plan.priceCents,
+      name: plan.name,
+      channel,
+      orderData: { planId },
+    });
+  }
+
+  /**
+   * Catalog-driven order (spec §8): price a `selection` against the PUBLISHED
+   * catalog via computePurchase, then persist a PlanOrder snapshotting the
+   * selection + generated config + catalogVersion (planId null). On activation
+   * the epay callback writes that config into the Subscription. computePurchase
+   * throws on an invalid selection (unknown tier/level) — we let it propagate so
+   * no order is created.
+   */
+  async createCatalogOrder(
+    customerId: string,
+    selection: Selection,
+    channel: "ALIPAY" | "WXPAY",
+  ) {
+    const published = await this.planCatalog.getPublished();
+    if (!published) throw new BadRequestException("No published plan catalog — purchasing is unavailable");
+
+    // computePurchase throws on an invalid selection (unknown tier/level/product) —
+    // that's a client error, surface it as 400 (never create an order).
+    let priceCents: number;
+    let config: Record<string, unknown>;
+    try {
+      ({ priceCents, config } = computePurchase(published.config as CatalogConfig, selection));
+    } catch (err: any) {
+      throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
+    }
+
+    const referrerId = await this.resolveReferrerId(customerId);
+
+    return this.buildPaymentAndPersist({
+      customerId,
+      referrerId,
+      baseCents: priceCents,
+      name: orderName(selection),
+      channel,
+      orderData: {
+        planId: null,
+        catalogVersion: published.version,
+        selection: JSON.stringify(selection),
+        config: JSON.stringify(config),
+      },
+    });
+  }
+
+  /** Snapshot referrerId = customer.invitedById at order-create time. */
+  private async resolveReferrerId(customerId: string): Promise<string | null> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
       select: { id: true, invitedById: true },
     });
     if (!customer) throw new NotFoundException(`Customer "${customerId}" not found`);
+    return customer.invitedById ?? null;
+  }
+
+  /**
+   * Shared epay flow for both ordering paths: apply the user-borne fee, build the
+   * signed payUrl + QR, persist the PENDING PlanOrder, return payment info.
+   * `orderData` carries the path-specific columns (planId, or catalog snapshot).
+   */
+  private async buildPaymentAndPersist(args: {
+    customerId: string;
+    referrerId: string | null;
+    baseCents: number;
+    name: string;
+    channel: "ALIPAY" | "WXPAY";
+    orderData: Record<string, unknown>;
+  }) {
+    const { customerId, referrerId, baseCents, name, channel, orderData } = args;
 
     const outTradeNo = generateOutTradeNo();
     const expiresAt = new Date(Date.now() + THIRTY_MIN_MS);
     // 手续费由用户承担：基准价上加 EPAY_FEE_PERCENT%（向上取整到分）。
     // amountCents 存「实付毛额」，与 epay 回调上报的 money 天然一致。
-    const baseCents = plan.priceCents;
     const feeCents = Math.ceil((baseCents * resolveFeePercent()) / 100);
     const amountCents = baseCents + feeCents;
     const money = (amountCents / 100).toFixed(2);
@@ -104,7 +192,7 @@ export class BillingService {
       out_trade_no: outTradeNo,
       notify_url: notifyUrl,
       return_url: returnUrl,
-      name: plan.name,
+      name,
       money,
       sign_type: "MD5",
     };
@@ -119,14 +207,14 @@ export class BillingService {
     const order = await this.prisma.planOrder.create({
       data: {
         customerId,
-        planId,
         amountCents,
         payChannel: channel,
         outTradeNo,
         status: "PENDING",
         expiresAt,
-        referrerId: customer.invitedById ?? null,
-      },
+        referrerId,
+        ...orderData,
+      } as any,
     });
 
     this.logger.log(`Created PlanOrder ${order.id} outTradeNo=${outTradeNo} for customer ${customerId}`);
