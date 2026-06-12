@@ -4,7 +4,7 @@ import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteCodexHttpError, RemoteCodexService } from "../service/remote-codex.service";
 
 @Public()
-@Controller(["remote-codex", "app/lease/codex"])
+@Controller("app/lease/codex")
 export class RemoteCodexController {
   constructor(private readonly remoteCodex: RemoteCodexService) {}
 

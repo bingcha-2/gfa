@@ -3,7 +3,7 @@ import { Controller, Get, Post, Body } from "@nestjs/common";
 import { Roles } from "../../shared/auth/roles.decorator";
 import { ExpireScanService, INTERVAL_OPTIONS } from "./expire-scan.service";
 
-@Controller(["admin/expire-scan", "console/expire-scan"])
+@Controller("console/expire-scan")
 @Roles("ADMIN", "OPERATIONS")
 export class ExpireScanController {
   constructor(private readonly expireScanService: ExpireScanService) {}

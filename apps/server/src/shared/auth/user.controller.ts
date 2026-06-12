@@ -14,7 +14,7 @@ const VALID_PERMISSIONS = [
   "agent_service",
 ];
 
-@Controller(["users", "console/users"])
+@Controller("console/users")
 export class UserController {
   constructor(
     private readonly prisma: PrismaService,

@@ -135,28 +135,25 @@ afterAll(async () => {
   await disconnectCustomerDb();
 });
 
-// ── Alias metadata (spec (a) — controller path arrays) ──────────────────────
+// ── Path metadata (spec (a) — canonical app/lease/* paths only) ─────────────
 
-describe("M7 — controller path aliases (Reflect.getMetadata)", () => {
-  it("TokenServerController registers ['remote-token', 'app/lease/antigravity']", () => {
-    expect(Reflect.getMetadata("path", TokenServerController)).toEqual([
-      "remote-token",
+describe("M7 — controller paths (Reflect.getMetadata)", () => {
+  it("TokenServerController registers only 'app/lease/antigravity'", () => {
+    expect(Reflect.getMetadata("path", TokenServerController)).toBe(
       "app/lease/antigravity",
-    ]);
+    );
   });
 
-  it("RemoteCodexController registers ['remote-codex', 'app/lease/codex']", () => {
-    expect(Reflect.getMetadata("path", RemoteCodexController)).toEqual([
-      "remote-codex",
+  it("RemoteCodexController registers only 'app/lease/codex'", () => {
+    expect(Reflect.getMetadata("path", RemoteCodexController)).toBe(
       "app/lease/codex",
-    ]);
+    );
   });
 
-  it("RemoteAnthropicController registers ['remote-anthropic', 'app/lease/anthropic']", () => {
-    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toEqual([
-      "remote-anthropic",
+  it("RemoteAnthropicController registers only 'app/lease/anthropic'", () => {
+    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toBe(
       "app/lease/anthropic",
-    ]);
+    );
   });
 });
 
@@ -475,9 +472,10 @@ describe("M7 — codex alias metadata + session resolver coverage", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("codex controller alias is 'app/lease/codex'", () => {
-    const paths = Reflect.getMetadata("path", RemoteCodexController);
-    expect(paths).toContain("app/lease/codex");
+  it("codex controller path is 'app/lease/codex'", () => {
+    expect(Reflect.getMetadata("path", RemoteCodexController)).toBe(
+      "app/lease/codex",
+    );
   });
 
   it("SessionTokenResolver resolves a codex subscription (product=codex)", async () => {
@@ -543,9 +541,10 @@ describe("M7 — anthropic alias metadata + session resolver coverage", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("anthropic controller alias is 'app/lease/anthropic'", () => {
-    const paths = Reflect.getMetadata("path", RemoteAnthropicController);
-    expect(paths).toContain("app/lease/anthropic");
+  it("anthropic controller path is 'app/lease/anthropic'", () => {
+    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toBe(
+      "app/lease/anthropic",
+    );
   });
 
   it("SessionTokenResolver resolves an anthropic subscription (product=anthropic)", async () => {

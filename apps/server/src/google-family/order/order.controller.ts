@@ -25,7 +25,7 @@ class ReplaceMemberDto {
   reason?: string;
 }
 
-@Controller(["orders", "console/orders"])
+@Controller("console/orders")
 export class OrderController {
   constructor(
     private readonly orderService: OrderService,

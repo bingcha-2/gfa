@@ -9,10 +9,10 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 // NOTE: intentionally NOT @Public() — these are admin-console operations
 // (account pool, access keys, Codex OAuth token import) that must be gated by the
 // global JwtAuthGuard. The web console reaches them same-origin carrying the
-// `gfa.console.token` cookie. The desktop client never calls /rosetta/* — it uses
-// the @Public() remote-token / remote-codex controllers authenticated by the
-// x-token-server-secret access key, which are unaffected by this guard.
-@Controller(["rosetta", "console/rosetta"])
+// `gfa.console.token` cookie. The desktop client never calls console/rosetta —
+// it uses the @Public() app/lease/* controllers, which are unaffected by this
+// guard.
+@Controller("console/rosetta")
 export class RosettaController {
   constructor(
     private readonly rosetta: RosettaService,

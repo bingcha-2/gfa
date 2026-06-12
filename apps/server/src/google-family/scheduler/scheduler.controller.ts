@@ -11,7 +11,7 @@ import {
 import { SchedulerService } from "./scheduler.service";
 import { Roles } from "../../shared/auth/roles.decorator";
 
-@Controller(["scheduler", "console/scheduler"])
+@Controller("console/scheduler")
 @Roles("ADMIN", "OPERATIONS")
 export class SchedulerController {
   constructor(private readonly scheduler: SchedulerService) {}

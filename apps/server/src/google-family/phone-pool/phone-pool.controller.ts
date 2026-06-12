@@ -23,7 +23,7 @@ import {
 import { Public } from "../../shared/auth/public.decorator";
 import { PhonePoolService } from "./phone-pool.service";
 
-@Controller(["phone-pool", "console/phone-pool"])
+@Controller("console/phone-pool")
 export class PhonePoolController {
   constructor(private readonly service: PhonePoolService) {}
 

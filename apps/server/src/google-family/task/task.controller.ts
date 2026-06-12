@@ -25,7 +25,7 @@ class ManualFailDto {
   reason?: string;
 }
 
-@Controller(["tasks", "console/tasks"])
+@Controller("console/tasks")
 export class TaskController {
   constructor(
     private readonly taskService: TaskService,

@@ -4,7 +4,7 @@ import { Public } from "../../../shared/auth/public.decorator";
 import { RemoteAnthropicHttpError, RemoteAnthropicService } from "../service/remote-anthropic.service";
 
 @Public()
-@Controller(["remote-anthropic", "app/lease/anthropic"])
+@Controller("app/lease/anthropic")
 export class RemoteAnthropicController {
   constructor(private readonly remoteAnthropic: RemoteAnthropicService) {}
 

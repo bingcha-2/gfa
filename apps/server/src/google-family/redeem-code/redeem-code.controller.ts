@@ -54,7 +54,7 @@ class BatchCreateDto {
   swapWindowHours?: number;
 }
 
-@Controller(["redeem-codes", "console/redeem-codes"])
+@Controller("console/redeem-codes")
 export class RedeemCodeController {
   constructor(
     private readonly redeemCodeService: RedeemCodeService,

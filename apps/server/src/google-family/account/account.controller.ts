@@ -15,7 +15,7 @@ import { AuditLogService } from "../../shared/audit-log/audit-log.service";
 import { AccountService } from "./account.service";
 import { CreateAccountDto, UpdateAccountDto, BulkImportDto } from "./dto/account.dto";
 
-@Controller(["accounts", "console/accounts"])
+@Controller("console/accounts")
 export class AccountController {
   constructor(
     private readonly accountService: AccountService,

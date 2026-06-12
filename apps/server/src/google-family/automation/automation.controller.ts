@@ -11,7 +11,7 @@ import { Public } from "../../shared/auth/public.decorator";
 import { AutomationService } from "./automation.service";
 import { StartAutomationDto, BatchOAuthDto, ConsoleStartDto, RepairAutomationDto } from "./dto/automation.dto";
 
-@Controller(["automation", "console/automation"])
+@Controller("console/automation")
 export class AutomationController {
   private readonly logger = new Logger(AutomationController.name);
 

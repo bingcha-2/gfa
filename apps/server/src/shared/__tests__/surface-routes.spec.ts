@@ -1,10 +1,11 @@
 /**
  * surface-routes.spec.ts
  *
- * Verifies that all admin controllers expose both legacy and console/ paths,
- * that legacy remote-token/remote-codex/remote-anthropic paths are untouched,
- * that the admin OrderController paths are correct, and that account/app
- * surface skeletons exist.
+ * Verifies that all admin controllers are registered ONLY under console/
+ * (legacy bare aliases removed), that the lease controllers are registered
+ * ONLY under app/lease/* (legacy /remote-* aliases removed), that the admin
+ * OrderController paths are correct, and that account/app surface skeletons
+ * exist.
  *
  * Uses Reflect.getMetadata() to inspect NestJS decorator metadata without
  * booting the full AppModule (which requires Redis).
@@ -32,7 +33,7 @@ import { QueueController } from "../../google-family/queue.controller";
 import { RosettaController } from "../../leasing/rosetta/rosetta.controller";
 import { FaqController } from "../faq/faq.controller";
 
-// ---- Remote (must stay untouched) ----
+// ---- Lease (desktop client) ----
 import { TokenServerController } from "../../leasing/token-server/token-server.controller";
 import { RemoteCodexController } from "../../leasing/remote-codex/controller/remote-codex.controller";
 import { RemoteAnthropicController } from "../../leasing/remote-anthropic/controller/remote-anthropic.controller";
@@ -48,100 +49,59 @@ import { AppSurfaceController } from "../../leasing/app/app-surface.controller";
 import { IS_PUBLIC_KEY } from "../auth/public.decorator";
 
 describe("Surface route normalization — controller path metadata", () => {
-  // ---- Admin controllers: dual-registered ----
+  // ---- Admin controllers: console/ only (bare legacy aliases removed) ----
 
   it.each([
-    ["AuthController", AuthController, ["auth", "console/auth"]],
-    ["UserController", UserController, ["users", "console/users"]],
-    ["AccountController", AccountController, ["accounts", "console/accounts"]],
-    [
-      "FamilyGroupController",
-      FamilyGroupController,
-      ["family-groups", "console/family-groups"],
-    ],
-    [
-      "RedeemCodeController",
-      RedeemCodeController,
-      ["redeem-codes", "console/redeem-codes"],
-    ],
-    ["TaskController", TaskController, ["tasks", "console/tasks"]],
-    [
-      "PhonePoolController",
-      PhonePoolController,
-      ["phone-pool", "console/phone-pool"],
-    ],
-    [
-      "SchedulerController",
-      SchedulerController,
-      ["scheduler", "console/scheduler"],
-    ],
-    [
-      "AutomationController",
-      AutomationController,
-      ["automation", "console/automation"],
-    ],
+    ["AuthController", AuthController, "console/auth"],
+    ["UserController", UserController, "console/users"],
+    ["AccountController", AccountController, "console/accounts"],
+    ["FamilyGroupController", FamilyGroupController, "console/family-groups"],
+    ["RedeemCodeController", RedeemCodeController, "console/redeem-codes"],
+    ["TaskController", TaskController, "console/tasks"],
+    ["PhonePoolController", PhonePoolController, "console/phone-pool"],
+    ["SchedulerController", SchedulerController, "console/scheduler"],
+    ["AutomationController", AutomationController, "console/automation"],
     [
       "AgentAccountController",
       AgentAccountController,
-      ["agent-accounts", "console/agent-accounts"],
+      "console/agent-accounts",
     ],
-    ["Bulk2faController", Bulk2faController, ["bulk-2fa", "console/bulk-2fa"]],
-    [
-      "ExpireScanController",
-      ExpireScanController,
-      ["admin/expire-scan", "console/expire-scan"],
-    ],
-    [
-      "AuditLogController",
-      AuditLogController,
-      ["audit-logs", "console/audit-logs"],
-    ],
-    ["StatsController", StatsController, ["stats", "console/stats"]],
-    ["QueueController", QueueController, ["debug", "console/debug"]],
-    ["RosettaController", RosettaController, ["rosetta", "console/rosetta"]],
-    ["FaqController", FaqController, ["faq", "console/faq"]],
+    ["Bulk2faController", Bulk2faController, "console/bulk-2fa"],
+    ["ExpireScanController", ExpireScanController, "console/expire-scan"],
+    ["AuditLogController", AuditLogController, "console/audit-logs"],
+    ["StatsController", StatsController, "console/stats"],
+    ["QueueController", QueueController, "console/debug"],
+    ["RosettaController", RosettaController, "console/rosetta"],
+    ["FaqController", FaqController, "console/faq"],
+    ["OrderController", OrderController, "console/orders"],
   ] as const)(
-    "%s is registered on both legacy and console/ paths",
-    (_name, Controller, expectedPaths) => {
-      const paths = Reflect.getMetadata("path", Controller);
-      expect(paths).toEqual(expectedPaths);
+    "%s is registered ONLY on its console/ path",
+    (_name, Controller, expectedPath) => {
+      expect(Reflect.getMetadata("path", Controller)).toBe(expectedPath);
     }
   );
 
-  // ---- Remote controllers: dual-registered (legacy + app/lease/<provider>) ----
+  // ---- Lease controllers: app/lease/* only (/remote-* aliases removed) ----
 
-  it("TokenServerController is registered on ['remote-token', 'app/lease/antigravity']", () => {
-    expect(Reflect.getMetadata("path", TokenServerController)).toEqual([
-      "remote-token",
-      "app/lease/antigravity",
-    ]);
+  it("TokenServerController is registered only on 'app/lease/antigravity'", () => {
+    expect(Reflect.getMetadata("path", TokenServerController)).toBe(
+      "app/lease/antigravity"
+    );
   });
 
-  it("RemoteCodexController is registered on ['remote-codex', 'app/lease/codex']", () => {
-    expect(Reflect.getMetadata("path", RemoteCodexController)).toEqual([
-      "remote-codex",
-      "app/lease/codex",
-    ]);
+  it("RemoteCodexController is registered only on 'app/lease/codex'", () => {
+    expect(Reflect.getMetadata("path", RemoteCodexController)).toBe(
+      "app/lease/codex"
+    );
   });
 
-  it("RemoteAnthropicController is registered on ['remote-anthropic', 'app/lease/anthropic']", () => {
-    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toEqual([
-      "remote-anthropic",
-      "app/lease/anthropic",
-    ]);
+  it("RemoteAnthropicController is registered only on 'app/lease/anthropic'", () => {
+    expect(Reflect.getMetadata("path", RemoteAnthropicController)).toBe(
+      "app/lease/anthropic"
+    );
   });
 
-  // ---- OrderController (admin) ----
-
-  it("OrderController (admin) is registered on ['orders', 'console/orders']", () => {
-    expect(Reflect.getMetadata("path", OrderController)).toEqual([
-      "orders",
-      "console/orders",
-    ]);
-  });
-
-  // Final admin URLs under ["orders", "console/orders"] must be identical to
-  // the legacy method-level "orders..." paths on the old combined controller.
+  // ---- OrderController (admin) method-level paths under console/orders ----
   it.each([
     ["findAll", "/"], // @Get() with no arg → Nest stores "/"
     ["findOne", ":id"],

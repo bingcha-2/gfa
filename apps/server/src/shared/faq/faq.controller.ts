@@ -17,7 +17,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 
-@Controller(['faq', 'console/faq'])
+@Controller("console/faq")
 export class FaqController {
   constructor(private readonly prisma: PrismaService) {}
 
