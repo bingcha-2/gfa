@@ -238,6 +238,35 @@ export class AccessKeyStore {
   }
 
   /**
+   * 去影子:把 DB 订阅的配置 record 注册进内存(cache + byId),不写 access-keys.json。
+   * 已存在同 id(老卡密影子或已注册)→ 只刷新配置字段、保留用量/窗口状态(配置变更
+   * 绝不能清零限额)。boot 批量加载 + 订阅激活时调用,使限额引擎无需文件影子即可服务订阅。
+   */
+  loadSubscriptionRecords(records: Array<Partial<AccessKeyRecord> & { id: string }>): void {
+    this.readAll();
+    for (const rec of records) {
+      if (!rec?.id) continue;
+      const existing = this.byId.get(rec.id);
+      if (existing) {
+        const usage = {
+          usageEvents: existing.usageEvents,
+          tokenUsageEvents: existing.tokenUsageEvents,
+          weeklyTokenUsageEvents: existing.weeklyTokenUsageEvents,
+          windowStartedAt: existing.windowStartedAt,
+          weeklyWindowStartedAt: existing.weeklyWindowStartedAt,
+          firstUsedAt: existing.firstUsedAt,
+        };
+        Object.assign(existing, rec, usage);
+      } else {
+        const next = { ...rec } as AccessKeyRecord;
+        this.cache!.keys.push(next);
+        this.byId.set(next.id, next);
+        if (next.key) this.byKey.set(this.keyHash(next.key), next);
+      }
+    }
+  }
+
+  /**
    * Rebuild in-memory rate-limit windows from the durable CardTokenUsage log.
    * Called ONCE on boot: window events are not persisted to access-keys.json
    * (see serializable()), so without this a restart would reset every card's
