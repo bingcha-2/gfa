@@ -8,6 +8,7 @@ import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
 import type { AccessKeyStore } from "./access-key-store";
+import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../subscription/subscription-config";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -113,6 +114,10 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
    */
   async onModuleInit(): Promise<void> {
     const prisma = this.bootPrisma;
+    if (!prisma) return;
+    // 去影子:先把所有 ACTIVE 订阅从 DB 加载进内存(subscriptionById),再 hydrate 用量。
+    // 顺序关键 —— 用量只会挂到已存在的 record 上(见 hydrateWindowsFromUsageLog)。
+    await this.loadActiveSubscriptions(prisma);
     if (!prisma?.cardTokenUsage?.findMany) return;
     try {
       // The weekly window is the widest (≤7d); 5h windows are a subset. Pull the
@@ -131,6 +136,32 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       );
     } catch (err: any) {
       console.error(`[token-server] window replay from CardTokenUsage failed: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * 去影子:把所有生效订阅(老列)转成限额 record,注册进 AccessKeyStore 的内存
+   * subscriptionById。boot 跑一次;新订阅激活时由 entitlement-sync 增量注册。
+   * Best-effort:失败只是该订阅冷启动,不阻塞启动。
+   */
+  private async loadActiveSubscriptions(prisma: any): Promise<void> {
+    if (!prisma?.subscription?.findMany) return;
+    try {
+      const now = new Date();
+      const subs = await prisma.subscription.findMany({
+        where: { status: "ACTIVE", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        select: {
+          id: true, status: true, expiresAt: true, productEntitlements: true,
+          bucketLimits: true, bindings: true, levels: true, weight: true,
+          deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+        },
+      });
+      const records = subs.map((s: any) =>
+        subscriptionToLimitRecord({ id: s.id, status: s.status, expiresAt: s.expiresAt, config: legacyColumnsToConfig(s) }),
+      );
+      this.accessKeyStore.loadSubscriptionRecords(records as any);
+    } catch (err: any) {
+      console.error(`[token-server] subscription load failed: ${err?.message || err}`);
     }
   }
 }
