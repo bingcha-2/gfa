@@ -4,11 +4,15 @@ import * as path from "path";
 import * as os from "os";
 
 import { AccessKeyStore } from "../access-key-store";
+import { cardIdSessionResolver, sessionReqFor } from "./session-test-util";
+
+let lastStorePath = "";
 
 function makeStore(keys: any[] = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aks-deshadow-"));
   const p = path.join(dir, "access-keys.json");
   fs.writeFileSync(p, JSON.stringify({ keys, updatedAt: "" }));
+  lastStorePath = p;
   return new AccessKeyStore(p);
 }
 
@@ -67,6 +71,41 @@ describe("AccessKeyStore.loadSubscriptionRecords (去影子:DB 订阅注册内�
     const rec = store.findById("sub-1") as any;
     expect(rec.bucketLimits).toEqual({ "anthropic-claude": 99999 }); // 配置刷新
     expect(rec.tokenUsageEvents).toEqual([{ at: 1, tokens: 5 }]); // 用量保留
+  });
+});
+
+describe("去影子运行时:限额只走 subscriptionById(record 仅在内存,文件全程不写)", () => {
+  it("仅注册进内存(文件空)的订阅 → 会话路径能 resolve、能按 bucketLimits 限额、文件始终不被写", async () => {
+    const store = makeStore([]); // 文件无任何卡
+    store.setSessionResolver(cardIdSessionResolver);
+    store.loadSubscriptionRecords([
+      {
+        id: "sub-runtime",
+        status: "active",
+        products: ["anthropic"],
+        bucketLimits: { "anthropic-claude": 100 },
+        windowMs: 18_000_000,
+      } as any,
+    ]);
+
+    // 额度内:resolve 命中内存订阅 record(byId 文件索引为空,只能来自 subscriptionById)。
+    const ok = await store.resolveFromRequest(sessionReqFor("sub-runtime"), {}, {
+      enforceLimit: true, modelKey: "claude-opus-4", product: "anthropic",
+    });
+    expect(ok.record?.id).toBe("sub-runtime");
+    expect(ok.viaSession).toBe(true);
+
+    // 把该桶用满 → 下一次同桶请求 429(限额确实从内存 record 的 bucketLimits 生效)。
+    store.recordUsage("sub-runtime", 200, { totalTokens: 100, rawTotalTokens: 100 }, "claude-opus-4", "r1", "anthropic");
+    const blocked = await store.resolveFromRequest(sessionReqFor("sub-runtime"), {}, {
+      enforceLimit: true, modelKey: "claude-opus-4", product: "anthropic",
+    });
+    expect(blocked.limitExceeded).toBe(true);
+    expect(blocked.record).toBeNull();
+
+    // 文件全程没被写(去影子:订阅 record 不进 access-keys.json)。
+    store.flush();
+    expect(JSON.parse(fs.readFileSync(lastStorePath, "utf8")).keys).toEqual([]);
   });
 });
 
