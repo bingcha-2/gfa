@@ -86,7 +86,7 @@ describe("TicketThread", () => {
       ([, init]) => (init as RequestInit | undefined)?.method === "POST"
     );
     expect(posts).toHaveLength(1);
-    expect(String(posts[0][0])).toContain("/api/web/tickets/t1/messages");
+    expect(String(posts[0][0])).toContain("/api/account/tickets/t1/messages");
     expect(JSON.parse((posts[0][1] as RequestInit).body as string)).toEqual({
       body: "截图已上传",
     });

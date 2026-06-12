@@ -54,7 +54,7 @@ describe("BindCardForm", () => {
 
     // Correct endpoint + body
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/api/web/bind-card");
+    expect(url).toContain("/api/account/bind-card");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ cardKey: "AI-TEST-123" });
 

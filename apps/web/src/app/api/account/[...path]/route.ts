@@ -1,13 +1,14 @@
 /**
  * Generic authenticated proxy for portal data endpoints.
  *
- * Forwards GET/POST/PATCH/DELETE requests to the backend /web/<path>
+ * Forwards GET/POST/PATCH/DELETE requests to the backend /account/<path>
  * using the user's httpOnly cookie as a Bearer token.
  *
- * Security: ONLY proxies to /web/* paths — never to other backend routes.
+ * Security: ONLY proxies to /account/* paths — never to other backend routes.
  *
- * NOTE: Do NOT add /api/web or /api/web-session to next.config.ts rewrites —
- * that would bypass these route handlers and break authentication entirely.
+ * NOTE: Do NOT add /api/account or /api/account-session to next.config.ts
+ * rewrites — that would bypass these route handlers and break authentication
+ * entirely.
  */
 
 import { cookies } from "next/headers";
@@ -23,7 +24,7 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PATCH", "DELETE"]);
  *
  * new URL() resolves dot segments — including percent-encoded ones ("%2e%2e"
  * is treated as ".." by the WHATWG URL parser) — so a crafted segment could
- * escape the /web/ prefix and reach e.g. /api/console. Reject any segment
+ * escape the /account/ prefix and reach e.g. /api/console. Reject any segment
  * that is empty, contains "..", "/" or "\", or decodes to any of those.
  */
 function isUnsafeSegment(segment: string): boolean {
@@ -73,15 +74,15 @@ async function handler(
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   }
 
-  // Build the backend URL — ONLY /web/* is permitted
+  // Build the backend URL — ONLY /account/* is permitted
   const backendBaseUrl = getBackendBaseUrl();
   const pathStr = path.join("/");
-  const backendUrl = new URL(`${backendBaseUrl}/web/${pathStr}`);
+  const backendUrl = new URL(`${backendBaseUrl}/account/${pathStr}`);
 
-  // Layer 2: assert the resolved pathname is still under <base>/web/.
+  // Layer 2: assert the resolved pathname is still under <base>/account/.
   // Defense in depth in case Layer 1 ever misses an encoding the URL parser
   // normalizes into a traversal.
-  const expectedPrefix = `${new URL(backendBaseUrl).pathname.replace(/\/+$/, "")}/web/`;
+  const expectedPrefix = `${new URL(backendBaseUrl).pathname.replace(/\/+$/, "")}/account/`;
   if (!backendUrl.pathname.startsWith(expectedPrefix)) {
     return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
   }

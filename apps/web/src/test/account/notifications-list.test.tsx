@@ -83,7 +83,7 @@ describe("NotificationsList", () => {
       );
       expect(posts).toHaveLength(1);
       expect(String(posts[0][0])).toContain(
-        "/api/web/notifications/n1/read"
+        "/api/account/notifications/n1/read"
       );
     });
   });
@@ -137,7 +137,7 @@ describe("NotificationsList", () => {
       );
       expect(posts).toHaveLength(1);
       expect(String(posts[0][0])).toContain(
-        "/api/web/notifications/read-all"
+        "/api/account/notifications/read-all"
       );
     });
   });

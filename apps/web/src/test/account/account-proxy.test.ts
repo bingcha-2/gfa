@@ -1,6 +1,6 @@
 /**
  * Tests for the generic authenticated portal proxy:
- *   src/app/api/web/[...path]/route.ts
+ *   src/app/api/account/[...path]/route.ts
  *
  * We import the handler functions directly after mocking next/headers and global fetch.
  */
@@ -28,7 +28,7 @@ vi.mock("next/server", async () => {
 
 // We import AFTER mocks are set up
 // eslint-disable-next-line import/first
-import { GET, POST, PATCH, DELETE } from "@/app/api/web/[...path]/route";
+import { GET, POST, PATCH, DELETE } from "@/app/api/account/[...path]/route";
 
 function makeRequest(
   method: string,
@@ -36,7 +36,7 @@ function makeRequest(
   body?: unknown,
   searchParams?: Record<string, string>
 ) {
-  const url = new URL(`http://localhost/api/web/${path.join("/")}`);
+  const url = new URL(`http://localhost/api/account/${path.join("/")}`);
   if (searchParams) {
     for (const [k, v] of Object.entries(searchParams)) {
       url.searchParams.set(k, v);
@@ -55,7 +55,7 @@ function makeRequest(
   return req as unknown as import("next/server").NextRequest;
 }
 
-describe("api/web/[...path] proxy", () => {
+describe("api/account/[...path] proxy", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockCookieValue = undefined;
@@ -92,7 +92,7 @@ describe("api/web/[...path] proxy", () => {
     expect(mockFetch).toHaveBeenCalledOnce();
 
     const [calledUrl, calledInit] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(calledUrl).toContain("/web/me");
+    expect(calledUrl).toContain("/account/me");
     expect((calledInit.headers as Headers).get("authorization")).toBe(
       "Bearer test-token-abc"
     );
@@ -120,7 +120,7 @@ describe("api/web/[...path] proxy", () => {
 
     expect(resp.status).toBe(200);
     const [calledUrl, calledInit] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(calledUrl).toContain("/web/auth/change-password");
+    expect(calledUrl).toContain("/account/auth/change-password");
     expect((calledInit.headers as Headers).get("authorization")).toBe(
       "Bearer user-token-xyz"
     );
@@ -170,7 +170,7 @@ describe("api/web/[...path] proxy", () => {
 
   // ── Path traversal protection ──────────────────────────────────────────────
   // new URL() resolves ".." (and even "%2e%2e") segments, so crafted path
-  // segments could escape the /web/ prefix and reach e.g. /api/console.
+  // segments could escape the /account/ prefix and reach e.g. /api/console.
   // Every case below must return 400 BAD_REQUEST and never touch the backend.
 
   it("rejects '..' segments with 400 and never calls fetch", async () => {

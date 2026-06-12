@@ -2,24 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getBackendBaseUrl, safeParseJson } from "@/lib/backend-url";
 
-/**
- * Email verification — unauthenticated by design: the user clicks the link
- * from their inbox and may not have a session cookie yet. No cookie is read
- * or written here; the page links to /account afterwards.
- */
 export async function POST(request: NextRequest) {
-  // Guard the body parse — a malformed JSON body must not throw a 500 that
-  // the page would surface as "invalid token".
-  const rawBody = await request.text();
-  const payload = rawBody ? safeParseJson(rawBody) : null;
-  if (!payload || typeof payload !== "object") {
-    return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
-  }
+  const payload = await request.json();
 
   let response: Response;
   let raw: string;
   try {
-    response = await fetch(`${getBackendBaseUrl()}/web/auth/verify-email`, {
+    response = await fetch(`${getBackendBaseUrl()}/account/auth/reset-password`, {
       method: "POST",
       headers: {
         accept: "application/json",
@@ -44,7 +33,7 @@ export async function POST(request: NextRequest) {
     const data = raw ? safeParseJson(raw) : null;
     // Non-JSON bodies (HTML error pages) become a structured fallback.
     const errorBody =
-      data && typeof data === "object" ? data : { error: "INVALID_TOKEN" };
+      data && typeof data === "object" ? data : { message: "Reset failed" };
     return NextResponse.json(errorBody, { status: response.status });
   }
 

@@ -1,6 +1,6 @@
 /**
  * Tests for the verify-email route handler:
- *   src/app/api/web-session/verify-email/route.ts
+ *   src/app/api/account-session/verify-email/route.ts
  *
  * Focus: a malformed JSON body must return 400 BAD_REQUEST (not a 500 that the
  * page would surface as "invalid token").
@@ -13,17 +13,17 @@ vi.mock("next/server", async () => {
   return actual;
 });
 
-import { POST } from "@/app/api/web-session/verify-email/route";
+import { POST } from "@/app/api/account-session/verify-email/route";
 
 function rawRequest(body: string) {
-  return new Request("http://localhost/api/web-session/verify-email", {
+  return new Request("http://localhost/api/account-session/verify-email", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,
   }) as unknown as import("next/server").NextRequest;
 }
 
-describe("api/web-session/verify-email", () => {
+describe("api/account-session/verify-email", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
   });
@@ -64,7 +64,7 @@ describe("api/web-session/verify-email", () => {
     expect(await resp.json()).toEqual({ ok: true });
 
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/web/auth/verify-email");
+    expect(url).toContain("/account/auth/verify-email");
     expect(JSON.parse(init.body as string)).toEqual({ token: "abc" });
   });
 

@@ -12,7 +12,7 @@ export async function getUserTokenFromCookie(): Promise<string | null> {
   return cookieStore.get(USER_AUTH_COOKIE)?.value ?? null;
 }
 
-/** Fetch a portal /web/* endpoint with Bearer auth — server component only. */
+/** Fetch a portal /account/* endpoint with Bearer auth — server component only. */
 export async function serverUserApi<T>(path: string): Promise<T> {
   const token = await getUserTokenFromCookie();
   if (!token) {
@@ -20,7 +20,7 @@ export async function serverUserApi<T>(path: string): Promise<T> {
   }
 
   const base = getBackendBaseUrl();
-  const url = `${base}/web/${path.replace(/^\/+/, "")}`;
+  const url = `${base}/account/${path.replace(/^\/+/, "")}`;
 
   const response = await fetch(url, {
     headers: {
@@ -58,7 +58,7 @@ export async function serverUserApi<T>(path: string): Promise<T> {
   return payload as T;
 }
 
-/** Convenience: fetch the current customer (/web/me). */
+/** Convenience: fetch the current customer (/account/me). */
 export async function getCustomerFromCookie(): Promise<Customer | null> {
   try {
     return await serverUserApi<Customer>("me");

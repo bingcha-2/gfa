@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   let response: Response;
   let raw: string;
   try {
-    response = await fetch(`${getBackendBaseUrl()}/web/auth/forgot-password`, {
+    response = await fetch(`${getBackendBaseUrl()}/account/auth/forgot-password`, {
       method: "POST",
       headers: {
         accept: "application/json",

@@ -4,8 +4,8 @@
  * Client-side portal API wrappers.
  *
  * All API traffic is routed through same-origin Next.js route handlers:
- *   - auth actions  → /api/web-session/*
- *   - data          → /api/web/* (generic authenticated proxy)
+ *   - auth actions  → /api/account-session/*
+ *   - data          → /api/account/* (generic authenticated proxy)
  *
  * NEVER call the backend directly from client code.
  */
@@ -41,7 +41,7 @@ function buildUrl(
   path: string,
   search?: UserApiOptions["search"]
 ) {
-  const targetPath = `/api/web/${path.replace(/^\/+/, "")}`;
+  const targetPath = `/api/account/${path.replace(/^\/+/, "")}`;
   if (!search) return targetPath;
 
   const params = new URLSearchParams();
@@ -96,7 +96,7 @@ function extractCode(payload: unknown): string | null {
   return null;
 }
 
-/** Generic portal data call through /api/web/[...path]. */
+/** Generic portal data call through /api/account/[...path]. */
 export async function userApi<T>(
   path: string,
   options: UserApiOptions = {}
@@ -129,7 +129,7 @@ export async function userApi<T>(
 
 // ─── Session helpers ──────────────────────────────────────────────────────────
 
-async function webSessionPost<T>(
+async function accountSessionPost<T>(
   action: string,
   body: unknown
 ): Promise<T> {
@@ -138,7 +138,7 @@ async function webSessionPost<T>(
     "content-type": "application/json",
   });
 
-  const resp = await fetch(`/api/web-session/${action}`, {
+  const resp = await fetch(`/api/account-session/${action}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -158,7 +158,7 @@ async function webSessionPost<T>(
 }
 
 export async function loginUser(email: string, password: string) {
-  return webSessionPost<{ customer: import("./user-types").Customer }>(
+  return accountSessionPost<{ customer: import("./user-types").Customer }>(
     "login",
     { email, password }
   );
@@ -170,22 +170,22 @@ export async function registerUser(
   displayName?: string,
   referralCode?: string
 ) {
-  return webSessionPost<{ customer: import("./user-types").Customer }>(
+  return accountSessionPost<{ customer: import("./user-types").Customer }>(
     "register",
     { email, password, displayName, referralCode }
   );
 }
 
 export async function logoutUser() {
-  return webSessionPost<{ ok: boolean }>("logout", {});
+  return accountSessionPost<{ ok: boolean }>("logout", {});
 }
 
 export async function forgotPassword(email: string) {
-  return webSessionPost<{ ok: boolean }>("forgot", { email });
+  return accountSessionPost<{ ok: boolean }>("forgot", { email });
 }
 
 export async function resetPassword(token: string, password: string) {
-  return webSessionPost<{ ok: boolean }>("reset", { token, password });
+  return accountSessionPost<{ ok: boolean }>("reset", { token, password });
 }
 
 // ─── Billing helpers (Stage 2a) ───────────────────────────────────────────────
@@ -306,13 +306,13 @@ export type VerifyEmailResult =
   | { ok: false; code: string };
 
 /**
- * Verify an email token. Goes through /api/web-session/verify-email because
+ * Verify an email token. Goes through /api/account-session/verify-email because
  * the user may NOT be logged in when clicking the link from their inbox
- * (the /api/web proxy would reject without a cookie).
+ * (the /api/account proxy would reject without a cookie).
  * Returns a discriminated result instead of throwing — the page renders states.
  */
 export async function verifyEmailToken(token: string): Promise<VerifyEmailResult> {
-  const resp = await fetch("/api/web-session/verify-email", {
+  const resp = await fetch("/api/account-session/verify-email", {
     method: "POST",
     headers: {
       accept: "application/json",

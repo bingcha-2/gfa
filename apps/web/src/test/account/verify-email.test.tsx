@@ -35,7 +35,7 @@ describe("VerifyEmailFlow", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/api/web-session/verify-email");
+    expect(url).toContain("/api/account-session/verify-email");
     expect(JSON.parse(init.body as string)).toEqual({ token: "tok-123" });
 
     // Link back into the portal

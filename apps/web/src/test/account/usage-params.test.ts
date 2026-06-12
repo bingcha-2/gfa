@@ -30,7 +30,7 @@ describe("getUsage param building", () => {
     await getUsage(2, 20, 30);
 
     const url = String(mockFetch.mock.calls[0][0]);
-    expect(url.startsWith("/api/web/usage?")).toBe(true);
+    expect(url.startsWith("/api/account/usage?")).toBe(true);
 
     const params = new URLSearchParams(url.split("?")[1]);
     expect(params.get("page")).toBe("2");

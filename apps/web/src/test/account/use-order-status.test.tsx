@@ -64,7 +64,7 @@ describe("useOrderStatus", () => {
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(String(mockFetch.mock.calls[0][0])).toContain(
-      "/api/web/billing/orders/T1"
+      "/api/account/billing/orders/T1"
     );
 
     // Every 3s thereafter
