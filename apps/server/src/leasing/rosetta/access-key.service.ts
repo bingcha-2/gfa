@@ -418,6 +418,21 @@ export class AccessKeyService {
     return fit ? fit.id : null;
   }
 
+  /**
+   * 下单前座位预检(spec §10):该 product+level 是否还有任一上游号剩 ≥ weight 份。
+   * 与 assignSeatForProductFromShares 同样的选号口径(等级匹配、可绑、配额未耗尽),占用
+   * 份额由调用方按 DB ACTIVE 订阅 config 算好传入(NOT 从文件数 —— 停写文件后会超卖)。
+   * 只回答「有没有」:不实际分配、不写文件,纯读 —— 避免用户付钱后才发现拿不到号。
+   */
+  hasAvailableSeatFromShares(
+    product: string,
+    weight: number,
+    level: string,
+    occupiedShares: Map<number, number>,
+  ): boolean {
+    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares) !== null;
+  }
+
   deleteAccessKey(payload: any) {
     const id = String(payload?.id || "");
     const filePath = path.join(this.ctx.dataDir, "access-keys.json");

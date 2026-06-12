@@ -246,6 +246,10 @@ export class RosettaService {
   assignSeatForProductFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {
     return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares);
   }
+  /** 下单前座位预检:该 product+level 有无剩 ≥ weight 份的号(占用份额按 DB 订阅 config 传入)。 */
+  hasAvailableSeatFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {
+    return this.accessKeySvc.hasAvailableSeatFromShares(product, weight, level, occupiedShares);
+  }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────
   createCaptchaUnblock(payload: any) { return this.captchaSvc.createCaptchaUnblock(payload); }
