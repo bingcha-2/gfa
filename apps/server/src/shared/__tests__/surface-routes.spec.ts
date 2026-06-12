@@ -3,8 +3,8 @@
  *
  * Verifies that all admin controllers expose both legacy and console/ paths,
  * that legacy remote-token/remote-codex/remote-anthropic paths are untouched,
- * that the admin OrderController paths are correct, and that web/app surface
- * skeletons exist.
+ * that the admin OrderController paths are correct, and that account/app
+ * surface skeletons exist.
  *
  * Uses Reflect.getMetadata() to inspect NestJS decorator metadata without
  * booting the full AppModule (which requires Redis).
@@ -41,7 +41,7 @@ import { RemoteAnthropicController } from "../../leasing/remote-anthropic/contro
 import { OrderController } from "../../google-family/order/order.controller";
 
 // ---- Surface skeletons ----
-import { WebSurfaceController } from "../../leasing/web/web-surface.controller";
+import { AccountSurfaceController } from "../../leasing/account/account-surface.controller";
 import { AppSurfaceController } from "../../leasing/app/app-surface.controller";
 
 // ---- Public decorator key ----
@@ -155,19 +155,21 @@ describe("Surface route normalization — controller path metadata", () => {
     }
   );
 
-  // ---- Web surface skeleton ----
+  // ---- Account surface skeleton ----
 
-  it("WebSurfaceController path is 'web'", () => {
-    expect(Reflect.getMetadata("path", WebSurfaceController)).toBe("web");
+  it("AccountSurfaceController path is 'account'", () => {
+    expect(Reflect.getMetadata("path", AccountSurfaceController)).toBe(
+      "account"
+    );
   });
 
-  it("WebSurfaceController.health is marked @Public()", () => {
-    const proto = WebSurfaceController.prototype;
+  it("AccountSurfaceController.health is marked @Public()", () => {
+    const proto = AccountSurfaceController.prototype;
     expect(Reflect.getMetadata(IS_PUBLIC_KEY, proto.health)).toBe(true);
   });
 
-  it("WebSurfaceController.health path is 'health'", () => {
-    const proto = WebSurfaceController.prototype;
+  it("AccountSurfaceController.health path is 'health'", () => {
+    const proto = AccountSurfaceController.prototype;
     expect(Reflect.getMetadata("path", proto.health)).toBe("health");
   });
 

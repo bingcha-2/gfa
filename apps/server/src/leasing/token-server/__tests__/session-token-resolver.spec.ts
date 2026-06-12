@@ -15,7 +15,7 @@ import { JwtService } from "@nestjs/jwt";
 
 import { SessionTokenResolver } from "../session-token-resolver";
 import { AccessKeyStore } from "../access-key-store";
-import { CustomerTokenService } from "../../web/customer-auth/customer-token.service";
+import { CustomerTokenService } from "../../account/customer-auth/customer-token.service";
 import {
   cleanCustomerTables,
   createTestCustomer,

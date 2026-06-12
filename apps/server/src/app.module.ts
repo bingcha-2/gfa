@@ -32,17 +32,18 @@ import { RemoteAnthropicModule } from "./leasing/remote-anthropic/remote-anthrop
 import { RemoteStatsModule } from "./leasing/remote-stats/remote-stats.module";
 import { Bulk2faModule } from "./google-family/bulk-2fa/bulk-2fa.module";
 import { MailModule } from "./shared/mail/mail.module";
-import { WebModule } from "./leasing/web/web.module";
+// Aliased: google-family already exports an AccountModule (Google account admin).
+import { AccountModule as AccountSurfaceModule } from "./leasing/account/account.module";
 import { AppSurfaceModule } from "./leasing/app/app-surface.module";
 import { PlanModule } from "./leasing/plan/plan.module";
 import { SubscriptionModule } from "./leasing/subscription/subscription.module";
 import { BillingAdminModule } from "./leasing/console/billing-admin/billing-admin.module";
-import { CardMigrationModule } from "./leasing/web/card-migration/card-migration.module";
-import { BillingModule } from "./leasing/web/billing/billing.module";
-import { PortalModule } from "./leasing/web/portal/portal.module";
-import { NotificationModule } from "./leasing/web/notification/notification.module";
-import { TicketModule } from "./leasing/web/ticket/ticket.module";
-import { ReferralModule } from "./leasing/web/referral/referral.module";
+import { CardMigrationModule } from "./leasing/account/card-migration/card-migration.module";
+import { BillingModule } from "./leasing/account/billing/billing.module";
+import { PortalModule } from "./leasing/account/portal/portal.module";
+import { NotificationModule } from "./leasing/account/notification/notification.module";
+import { TicketModule } from "./leasing/account/ticket/ticket.module";
+import { ReferralModule } from "./leasing/account/referral/referral.module";
 
 @Module({
   imports: [
@@ -92,7 +93,7 @@ import { ReferralModule } from "./leasing/web/referral/referral.module";
     RosettaModule,
     Bulk2faModule,
     MailModule,
-    WebModule,
+    AccountSurfaceModule,
     AppSurfaceModule,
     PlanModule,
     SubscriptionModule,

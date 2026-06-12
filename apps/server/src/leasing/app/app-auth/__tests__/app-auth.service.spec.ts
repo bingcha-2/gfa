@@ -18,9 +18,9 @@ import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 
 import { AppAuthService } from "../app-auth.service";
-import { CustomerAuthService } from "../../../web/customer-auth/customer-auth.service";
-import { CustomerTokenService } from "../../../web/customer-auth/customer-token.service";
-import { DeviceService } from "../../../web/device/device.service";
+import { CustomerAuthService } from "../../../account/customer-auth/customer-auth.service";
+import { CustomerTokenService } from "../../../account/customer-auth/customer-token.service";
+import { DeviceService } from "../../../account/device/device.service";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

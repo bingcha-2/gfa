@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 
-import { CustomerAuthModule } from "../../web/customer-auth/customer-auth.module";
-import { DeviceModule } from "../../web/device/device.module";
+import { CustomerAuthModule } from "../../account/customer-auth/customer-auth.module";
+import { DeviceModule } from "../../account/device/device.module";
 import { AppAuthService } from "./app-auth.service";
 import { AppAuthController } from "./app-auth.controller";
 

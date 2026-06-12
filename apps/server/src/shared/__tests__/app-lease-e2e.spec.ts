@@ -29,7 +29,7 @@ import { TokenServerService } from "../../leasing/token-server/token-server.serv
 import { RemoteCodexService } from "../../leasing/remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../../leasing/remote-anthropic/service/remote-anthropic.service";
 import { SessionTokenResolver } from "../../leasing/token-server/session-token-resolver";
-import { CustomerTokenService } from "../../leasing/web/customer-auth/customer-token.service";
+import { CustomerTokenService } from "../../leasing/account/customer-auth/customer-token.service";
 import { TokenServerController } from "../../leasing/token-server/token-server.controller";
 import { RemoteCodexController } from "../../leasing/remote-codex/controller/remote-codex.controller";
 import { RemoteAnthropicController } from "../../leasing/remote-anthropic/controller/remote-anthropic.controller";

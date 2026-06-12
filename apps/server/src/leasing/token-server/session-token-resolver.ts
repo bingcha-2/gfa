@@ -23,7 +23,7 @@
  */
 import { Injectable, Logger } from "@nestjs/common";
 
-import { CustomerTokenService } from "../web/customer-auth/customer-token.service";
+import { CustomerTokenService } from "../account/customer-auth/customer-token.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 
 export type SessionResolution =

@@ -8,9 +8,9 @@ import {
 import { Throttle } from "@nestjs/throttler";
 
 import { Public } from "../../../shared/auth/public.decorator";
-import { CustomerJwtGuard } from "../../web/customer-auth/customer-jwt.guard";
-import { CurrentCustomer } from "../../web/customer-auth/customer.decorator";
-import { CustomerUser } from "../../web/customer-auth/customer-jwt.strategy";
+import { CustomerJwtGuard } from "../../account/customer-auth/customer-jwt.guard";
+import { CurrentCustomer } from "../../account/customer-auth/customer.decorator";
+import { CustomerUser } from "../../account/customer-auth/customer-jwt.strategy";
 import { AppAuthService } from "./app-auth.service";
 import { AppLoginDto } from "./dto/app-login.dto";
 import { HeartbeatDto } from "./dto/heartbeat.dto";

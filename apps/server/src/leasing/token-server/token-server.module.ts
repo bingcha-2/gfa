@@ -8,7 +8,7 @@ import { AccessKeyStore } from "./access-key-store";
 import { SessionTokenResolver } from "./session-token-resolver";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { CustomerAuthModule } from "../web/customer-auth/customer-auth.module";
+import { CustomerAuthModule } from "../account/customer-auth/customer-auth.module";
 
 // ONE AccessKeyStore shared by every product pool (antigravity/codex/anthropic).
 // A universal card is used across all three; separate per-pool stores over the
