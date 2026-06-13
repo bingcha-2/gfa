@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +16,7 @@ const DefaultProxyPort = 48800
 // 监听 127.0.0.1:{port}，接收 IDE/Hub 的请求并转发到 Google API
 type LocalHTTPProxy struct {
 	mu         sync.Mutex
+	startMu    sync.Mutex // 串行化 Start,避免看门狗/启动/SaveConfig 并发重入重复绑定
 	server     *http.Server
 	listener   net.Listener
 	isRunning  bool
@@ -35,10 +37,14 @@ func GetHTTPProxy() *LocalHTTPProxy {
 }
 
 func (p *LocalHTTPProxy) Start(port int, card, deviceId, upstreamProxy string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// startMu 串行化 Start —— 看门狗、启动、SaveConfig 可能并发调用;字段读写仍走 p.mu。
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
 
-	if p.isRunning {
+	p.mu.Lock()
+	running := p.isRunning
+	p.mu.Unlock()
+	if running {
 		return nil
 	}
 
@@ -46,34 +52,34 @@ func (p *LocalHTTPProxy) Start(port int, card, deviceId, upstreamProxy string) e
 		port = DefaultProxyPort
 	}
 
+	// 绑定监听【不持有 p.mu】—— listenWithReclaim 可能重试数秒,持锁会卡住每 2s 的 GetStatus。
+	ln, actual, err := bindProxyListener(port)
+	if err != nil {
+		p.mu.Lock()
+		p.lastError = err.Error()
+		p.mu.Unlock()
+		return fmt.Errorf("监听代理端口失败: %w", err)
+	}
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.handleRequest(w, r)
+	})}
+
+	p.mu.Lock()
 	p.card = card
 	p.deviceId = deviceId
 	p.upstreamProxy = upstreamProxy
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p.handleRequest(w, r)
-	})
-
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	p.server = &http.Server{
-		Handler: handler,
-	}
-
-	ln, err := listenWithReclaim(addr)
-	if err != nil {
-		p.lastError = err.Error()
-		return fmt.Errorf("监听 %s 失败: %w", addr, err)
-	}
-
+	p.server = srv
 	p.listener = ln
-	p.listenAddr = addr
-	p.listenPort = port
+	p.listenAddr = ln.Addr().String()
+	p.listenPort = actual
 	p.isRunning = true
 	p.lastError = ""
+	p.mu.Unlock()
 
 	go func() {
-		Log("[http-proxy] HTTP 代理监听 %s", addr)
-		if err := p.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+		Log("[http-proxy] HTTP 代理监听 127.0.0.1:%d", actual)
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			Log("[http-proxy] Server error: %v", err)
 			p.mu.Lock()
 			p.isRunning = false
@@ -82,7 +88,77 @@ func (p *LocalHTTPProxy) Start(port int, card, deviceId, upstreamProxy string) e
 		}
 	}()
 
+	// 端口兜底:绑到了非首选端口(首选被外部程序占着)→ 把已接管、仍指向首选端口的集成
+	// 重指到实际端口,否则它们的请求还会发往被占的旧端口、到不了我们。
+	if actual != port {
+		Log("[http-proxy] ⚠ 首选端口 %d 被占用,已退到 %d", port, actual)
+		go reinjectActiveTargets(port, actual)
+	}
+
 	return nil
+}
+
+// bindProxyListener 绑定代理监听端口:优先首选端口(带本程序残留回收);被外部程序占住时
+// 退到一组确定性候选端口(同一占用情形 → 同一备用口 → 注入稳定),仍不行再用系统空闲端口。
+// 返回 (监听器, 实际端口, error)。
+func bindProxyListener(preferred int) (net.Listener, int, error) {
+	ln, err := listenWithReclaim(fmt.Sprintf("127.0.0.1:%d", preferred))
+	if err == nil {
+		return ln, preferred, nil
+	}
+	Log("[http-proxy] 首选端口 %d 不可用(%v),尝试备用端口", preferred, err)
+
+	// 确定性候选:首选 +10/+20/…/+90。用 net.Listen(不回收),被占就跳下一个。
+	for i := 1; i <= 9; i++ {
+		cand := preferred + i*10
+		if cand > 65535 {
+			break
+		}
+		if ln, e := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cand)); e == nil {
+			return ln, cand, nil
+		}
+	}
+
+	// 系统分配的空闲端口兜底。
+	if ln, e := net.Listen("tcp", "127.0.0.1:0"); e == nil {
+		return ln, ln.Addr().(*net.TCPAddr).Port, nil
+	}
+	return nil, 0, err
+}
+
+// reinjectActiveTargets 在 HTTP 代理退到非首选端口后,把【已接管且仍指向旧端口】的集成
+// 重新指到新端口(否则它们的请求仍发往被占的旧端口)。best-effort,逐个容错;不含 mitm 类
+// 目标(走独立 48801,与此端口无关)。
+func reinjectActiveTargets(oldPort, newPort int) {
+	defer func() {
+		if r := recover(); r != nil {
+			Log("[http-proxy] reinjectActiveTargets panic: %v", r)
+		}
+	}()
+	var moved []string
+	for _, t := range takeoverTargets {
+		if t.InjectionType() == "mitm" || !t.IsInjected(oldPort) {
+			continue
+		}
+		if _, err := t.Inject(newPort); err != nil {
+			Log("[http-proxy] 重指 %s 到端口 %d 失败: %v", t.Name(), newPort, err)
+			continue
+		}
+		moved = append(moved, t.Name())
+		Log("[http-proxy] 已把 %s 重指到端口 %d", t.Name(), newPort)
+	}
+	if len(moved) > 0 {
+		setProxyNotice(fmt.Sprintf("端口 %d 被占用,已自动切换到 %d 并重新接管:%s", oldPort, newPort, strings.Join(moved, "、")))
+	}
+}
+
+// effectiveProxyPort 返回当前应当用于注入/检测的代理端口:代理在跑就用它实际绑定的端口
+// (可能因端口兜底而非首选),否则回退到配置里的首选端口。
+func effectiveProxyPort() int {
+	if st := GetHTTPProxy().GetStatus(); st.Running && st.ListenPort > 0 {
+		return st.ListenPort
+	}
+	return LoadConfig().ProxyPort
 }
 
 func (p *LocalHTTPProxy) Stop() {

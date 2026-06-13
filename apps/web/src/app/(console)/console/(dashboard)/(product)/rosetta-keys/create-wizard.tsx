@@ -39,6 +39,7 @@ import {
   SparklesIcon,
 } from "lucide-react";
 import { CardConfigForm } from "./card-config-form";
+import { buildCreateWizardBucketLimits } from "./create-wizard-limits";
 import type {
   BindableAccount,
   CardConfigPatch,
@@ -60,6 +61,7 @@ function defaultConfig(): CardConfigValue {
     windowUnit: "h",
     bindings: {},
     weight: 1,
+    weights: {},
     bucketLimits: {},
   };
 }
@@ -175,6 +177,13 @@ export function CreateWizard({
         payload.levels = levels;
         payload.accountIds = accountIds;
         payload.weight = Math.max(1, Math.min(8, Number(config.weight) || 1));
+        // 按产品份额覆盖:只发已绑产品里显式设过的值(后端缺省回退卡级 weight)。
+        const weights: Record<string, number> = {};
+        for (const product of products) {
+          const w = Math.floor(Number((config.weights || {})[product] || 0));
+          if (w >= 1) weights[product] = Math.max(1, Math.min(8, w));
+        }
+        if (Object.keys(weights).length > 0) payload.weights = weights;
       }
 
       const res = await fetch("/api/console/rosetta/access-key", {
@@ -192,9 +201,10 @@ export function CreateWizard({
           : [];
 
       // create 接口不接受 bucketLimits;若设了模型限额,逐卡 update 写入。
-      const limits = Object.fromEntries(
-        Object.entries(config.bucketLimits).filter(([, v]) => Number(v) > 0),
-      );
+      const limits = buildCreateWizardBucketLimits({
+        cardType,
+        bucketLimits: config.bucketLimits,
+      });
       if (Object.keys(limits).length > 0) {
         await Promise.all(
           created
@@ -245,7 +255,7 @@ export function CreateWizard({
             {step === "type" && "先选择卡类型,再配置基本信息与额度。"}
             {step === "config" &&
               (cardType === "pool"
-                ? "万能卡 = 全产品开放,靠模型限额控量。"
+                ? "万能卡 = 全产品开放,靠模型限额控量。未填写的模型额度会按 1 写入,代表不可用。"
                 : "绑定卡 = 逐产品绑号,靠份额均分账号原生配额。")}
             {step === "done" &&
               "请立即复制下方卡密,关闭后将无法再次查看完整卡密。"}

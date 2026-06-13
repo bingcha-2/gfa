@@ -67,8 +67,9 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       },
       getCardWeight: (cardId: string) => {
         try {
-          const record = service.accessKeyStore.findById(cardId);
-          const w = Math.floor(Number((record as any)?.weight ?? 1));
+          const r = service.accessKeyStore.findById(cardId) as any;
+          // 按产品份额:weights[provider.id] 优先,否则回退卡级 weight。
+          const w = Math.floor(Number(r?.weights?.[provider.id] || 0) || Number(r?.weight ?? 1));
           return (Number.isFinite(w) && w >= 1) ? Math.min(w, ACCOUNT_SHARE_CAPACITY) : 1;
         } catch { return 1; }
       },

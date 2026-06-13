@@ -46,8 +46,8 @@ interface AppState {
   myWeeklyResetMs: Record<string, number>
   cardWeight: number                        // 本卡 fair-share 份额权重(份额 X/Y 的 X)
   cardShareCapacity: number                 // 号总份数(份额 X/Y 的 Y)
-  cardBuckets: Record<string, { used: number; limit: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h)
-  cardWeeklyBuckets: Record<string, { used: number; limit: number }>  // 每复合桶·周(显式或派生 5h×R)
+  cardBuckets: Record<string, { used: number; limit: number; resetMs?: number }>  // 每复合桶服务端真实用量/上限(static「我的卡」真相源·5h);resetMs=该卡 5h 窗口自身的 reset
+  cardWeeklyBuckets: Record<string, { used: number; limit: number; resetMs?: number; resetAt?: string }>  // 每复合桶·周(显式或派生 5h×R)
   codexQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   claudeQuota: { hourlyFraction: number; weeklyFraction: number; hourlyResetMs: number; weeklyResetMs: number } | null
   boundAccounts: BoundAccountInfo[]
@@ -189,10 +189,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         cardWeight: data.leaser?.accessKeyStatus?.weight || 1,
         cardShareCapacity: data.leaser?.accessKeyStatus?.shareCapacity || 8,
         cardBuckets: Object.fromEntries(
-          (data.leaser?.accessKeyStatus?.buckets || []).map((b) => [b.bucket, { used: b.used, limit: b.limit }]),
+          // resetMs 取该卡 5h 窗口自身的 reset(服务端已对齐到 hourly,绝非周);各桶共享同一 5h 窗口。
+          (data.leaser?.accessKeyStatus?.buckets || []).map((b) => [b.bucket, {
+            used: b.used,
+            limit: b.limit,
+            resetMs: data.leaser?.accessKeyStatus?.tokenWindowResetMs,
+          }]),
         ),
         cardWeeklyBuckets: Object.fromEntries(
-          (data.leaser?.accessKeyStatus?.weeklyBuckets || []).map((b) => [b.bucket, { used: b.used, limit: b.limit }]),
+          (data.leaser?.accessKeyStatus?.weeklyBuckets || []).map((b) => [b.bucket, {
+            used: b.used,
+            limit: b.limit,
+            resetMs: b.weeklyWindowResetMs,
+            resetAt: b.weeklyWindowResetAt,
+          }]),
         ),
         codexQuota: (data.leaser?.codexQuota as AppState['codexQuota']) || null,
         claudeQuota: (data.leaser?.claudeQuota as AppState['claudeQuota']) || null,

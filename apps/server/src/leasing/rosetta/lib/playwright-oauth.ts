@@ -17,14 +17,31 @@
 import * as net from "net";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { SocksClient } from "socks";
+import * as OTPAuth from "otpauth";
 import { AdsPowerClient } from "./adspower-client";
 
 export type PlaywrightOAuthOpts = {
   authorizeUrl: string;
   email: string;
+  password?: string;
+  recoveryEmail?: string;
+  totpSecret?: string;
   proxyUrl?: string; // socks5://user:pass@host:port
   adspowerProfileId?: string;
 };
+
+export function generateGoogleTOTP(secret: string): string {
+  const cleaned = secret.replace(/[\s\-=]/g, "").toUpperCase();
+  const totp = new OTPAuth.TOTP({
+    issuer: "Google",
+    label: "Account",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    secret: OTPAuth.Secret.fromBase32(cleaned),
+  });
+  return totp.generate();
+}
 
 export type TriggerResult = {
   ok: boolean;
@@ -44,7 +61,7 @@ export type ConsumeResult = {
 
 type RelayHandle = { port: number; close: () => void };
 
-function startLocalSocksRelay(upstream: { host: string; port: number; userId?: string; password?: string }): Promise<RelayHandle> {
+export function startLocalSocksRelay(upstream: { host: string; port: number; userId?: string; password?: string }): Promise<RelayHandle> {
   return new Promise((resolve, reject) => {
     const server = net.createServer((client) => {
       handleSocks5Client(client, upstream).catch(() => client.destroy());
@@ -189,7 +206,9 @@ export class PlaywrightOAuthSession {
         });
       });
 
-      await this.page.goto(magicLinkUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+      if (magicLinkUrl) {
+        await this.page.goto(magicLinkUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+      }
 
       // The SPA may show a consent screen
       try {
@@ -225,7 +244,7 @@ export class PlaywrightOAuthSession {
 
 // ── Trigger (step 1) ─────────────────────────────────────────────────────
 
-function parseUpstream(proxyUrl: string) {
+export function parseUpstream(proxyUrl: string) {
   const url = new URL(proxyUrl);
   return {
     host: url.hostname,
@@ -367,27 +386,378 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
     console.log("[playwright-oauth] navigating to authorize URL...");
     await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-    console.log("[playwright-oauth] waiting for login page...");
-    const emailInput = await waitForEmailInput(page, 45_000);
-    if (!emailInput) {
-      const currentUrl = page.url();
+    const isGmail = opts.email.toLowerCase().endsWith("@gmail.com");
+
+    if (isGmail) {
+      console.log("[playwright-oauth] Gmail account detected. Using Google Sign-in flow...");
+      
+      // Listen for popup page
+      const popupPromise = page.context().waitForEvent("page");
+
+      // 1. Click "Continue with Google" button
+      const googleBtn = page.locator('button:has-text("Continue with Google"), button:has-text("Google")').first();
+      await googleBtn.waitFor({ state: "visible", timeout: 15_000 });
+      await googleBtn.click();
+      console.log("[playwright-oauth] Clicked Continue with Google. Waiting for Google / Claude redirect...");
+      
+      // Wait to see if a popup is opened
+      let targetPage = page;
+      try {
+        const popup = await Promise.race([
+          popupPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), 5000))
+        ]);
+        if (popup) {
+          console.log("[playwright-oauth] Google sign-in opened in a popup window.");
+          targetPage = popup;
+        }
+      } catch (e) {
+        // Fall back to main page if popup wait fails
+      }
+
+      // 2. Wait for Google Account pages or Claude authorization redirect
+      const deadline = Date.now() + 300_000;
+      let loggedIn = false;
+      let accountCardClicked = false;
+      let emailSubmitted = false;
+      let passwordSubmitted = false;
+      let challengeSelectionClicked = false;
+      let lastTotpSubmitTime = 0;
+      let lastRecoverySubmitTime = 0;
+      let lastConsentSubmitTime = 0;
+      
+      while (Date.now() < deadline) {
+        if (page.isClosed()) {
+          console.log("[playwright-oauth] Main page closed. Exiting loop.");
+          break;
+        }
+
+        let mainUrl = "";
+        try {
+          mainUrl = page.url();
+        } catch (e) {
+          console.log("[playwright-oauth] Failed to get main page URL. Page might be closed.");
+          break;
+        }
+        
+        // If we are back on Claude authorize / redirect callback on the main page
+        if (mainUrl.includes("/oauth/code/callback") || mainUrl.includes("/oauth/authorize") || mainUrl.includes("claude.ai/cai/oauth/authorize")) {
+          // Check if Allow button is present or if we already have a callback code
+          const allowBtn = page.getByRole("button", { name: /allow|authorize|accept|confirm|continue|同意|授权/i }).first();
+          if (await allowBtn.isVisible().catch(() => false) || mainUrl.includes("/oauth/code/callback")) {
+            console.log("[playwright-oauth] Successfully logged in and redirected back to Claude.");
+            loggedIn = true;
+            break;
+          }
+        }
+        
+        if (targetPage.isClosed()) {
+          console.log("[playwright-oauth] Target page closed. Re-binding to main page...");
+          targetPage = page;
+        }
+
+        if (targetPage.isClosed()) {
+          break;
+        }
+
+        let url = "";
+        try {
+          url = targetPage.url();
+        } catch (e) {
+          console.log("[playwright-oauth] Failed to get target page URL. Page might be closed.");
+          break;
+        }
+        // If we are on Google login pages
+        if (url.includes("accounts.google.com")) {
+          console.log(`[playwright-oauth] Google sign-in page state: ${url}`);
+
+          // Check for Choose an account card
+          const accountCard = targetPage.locator(`[data-email="${opts.email}"], [data-email*="${opts.email}"]`).first();
+          if (!accountCardClicked && await accountCard.isVisible().catch(() => false)) {
+            console.log("[playwright-oauth] Clicking Choose an Account card...");
+            await accountCard.click();
+            accountCardClicked = true;
+            await page.waitForTimeout(2000);
+            continue;
+          }
+          
+          // Check for email input
+          const emailInput = targetPage.locator('input[type="email"], input[id="identifierId"]').first();
+          if (!emailSubmitted && await emailInput.isVisible().catch(() => false)) {
+            const val = await emailInput.inputValue().catch(() => "");
+            if (!val) {
+              console.log("[playwright-oauth] Entering Google email address...");
+              await emailInput.fill(opts.email);
+              await targetPage.keyboard.press("Enter");
+              emailSubmitted = true;
+              await page.waitForTimeout(2000);
+            }
+            continue;
+          }
+          
+          // Check for password input
+          const pwdInput = targetPage.locator('input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])').first();
+          if (!passwordSubmitted && await pwdInput.isVisible().catch(() => false)) {
+            const val = await pwdInput.inputValue().catch(() => "");
+            if (!val && opts.password) {
+              console.log("[playwright-oauth] Entering Google password...");
+              await pwdInput.fill(opts.password);
+              await targetPage.keyboard.press("Enter");
+              passwordSubmitted = true;
+              await page.waitForTimeout(2000);
+            }
+            continue;
+          }
+
+          // Check for Challenge Selection page
+          if (url.includes("/challenge/selection")) {
+            if (!challengeSelectionClicked && opts.totpSecret) {
+              const totpOption = targetPage.locator('[data-challengetype="6"]').first();
+              if (await totpOption.isVisible().catch(() => false)) {
+                console.log("[playwright-oauth] Selecting TOTP challenge option...");
+                await totpOption.click();
+                challengeSelectionClicked = true;
+                await page.waitForTimeout(2000);
+                continue;
+              }
+              const textOption = targetPage.locator('li:has-text("Google Authenticator"), li:has-text("Authenticator"), li:has-text("验证器"), li:has-text("驗證器")').first();
+              if (await textOption.isVisible().catch(() => false)) {
+                console.log("[playwright-oauth] Selecting TOTP option by text...");
+                await textOption.click();
+                challengeSelectionClicked = true;
+                await page.waitForTimeout(2000);
+                continue;
+              }
+            }
+            if (!challengeSelectionClicked && opts.recoveryEmail) {
+              const recoveryOption = targetPage.locator('li:has-text("Confirm your recovery email"), li:has-text("辅助邮箱"), li:has-text("備用電子郵件"), div[role="link"]:has-text("Confirm your recovery email"), div[role="link"]:has-text("辅助邮箱")').first();
+              if (await recoveryOption.isVisible().catch(() => false)) {
+                console.log("[playwright-oauth] Selecting Recovery Email challenge option...");
+                await recoveryOption.click();
+                challengeSelectionClicked = true;
+                await page.waitForTimeout(2000);
+                continue;
+              }
+            }
+          }
+
+          // Check for TOTP input page
+          const totpInput = targetPage.locator('input[type="tel"], input[name="totpPin"], input[id="totpPin"], input[autocomplete="one-time-code"]').first();
+          if (await totpInput.isVisible().catch(() => false)) {
+            const timeSinceLastSubmit = Date.now() - lastTotpSubmitTime;
+            if (opts.totpSecret && timeSinceLastSubmit > 15000) {
+              console.log("[playwright-oauth] Generating and entering TOTP verification code...");
+              const totpCode = generateGoogleTOTP(opts.totpSecret);
+              await totpInput.fill(totpCode);
+              await targetPage.keyboard.press("Enter");
+              lastTotpSubmitTime = Date.now();
+              await page.waitForTimeout(2000);
+            }
+            continue;
+          }
+
+          // Check for Recovery Email verification page (usually on /challenge/iap or containing recovery keywords)
+          const isRecoveryPage = url.includes("/challenge/iap") || 
+                                 await targetPage.evaluate(() => {
+                                   const text = document.body?.innerText || '';
+                                   return text.includes("recovery email") || 
+                                          text.includes("辅助邮箱") || 
+                                          text.includes("備用電子郵件") || 
+                                          text.includes("khôi phục") || 
+                                          text.includes("recuperación") || 
+                                          text.includes("récupération");
+                                 }).catch(() => false);
+
+          if (isRecoveryPage) {
+            const recoveryInput = targetPage.locator([
+              'input[name="knowledgePrereqValue"]',
+              'input[id="knowledgePrereqValue"]',
+              'input[type="email"]',
+              'input[type="text"]',
+            ].join(", ")).first();
+
+            if (await recoveryInput.isVisible().catch(() => false)) {
+              const timeSinceLastSubmit = Date.now() - lastRecoverySubmitTime;
+              if (opts.recoveryEmail && timeSinceLastSubmit > 15000) {
+                console.log("[playwright-oauth] Confirming recovery email on challenge page...");
+                await recoveryInput.fill(opts.recoveryEmail);
+                await targetPage.keyboard.press("Enter");
+                lastRecoverySubmitTime = Date.now();
+                await page.waitForTimeout(2000);
+              }
+              continue;
+            }
+          }
+
+          // Debug consent page elements and auto-check checkboxes
+          if (url.includes("signin/oauth/id") || url.includes("signin/oauth")) {
+            // Log elements for debugging
+            const elementsInfo = await targetPage.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="submit"], [role="link"]'));
+              return buttons.map(el => ({
+                tag: el.tagName,
+                id: el.id,
+                role: el.getAttribute('role'),
+                text: (el as HTMLElement).innerText?.trim() || el.getAttribute('value') || '',
+                classes: el.className,
+              })).filter(e => e.text.length > 0);
+            }).catch(() => []);
+            console.log(`[playwright-oauth] Consent Page elements: ${JSON.stringify(elementsInfo)}`);
+
+            // Auto-check all unchecked checkboxes
+            const checkedCount = await targetPage.evaluate(() => {
+              let count = 0;
+              const checkboxes = document.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
+              checkboxes.forEach((cb) => {
+                const isChecked = cb.tagName === 'INPUT'
+                  ? (cb as HTMLInputElement).checked
+                  : cb.getAttribute('aria-checked') === 'true';
+                if (!isChecked) {
+                  (cb as HTMLElement).click();
+                  count++;
+                }
+              });
+              return count;
+            }).catch(() => 0);
+            
+            if (checkedCount > 0) {
+              console.log(`[playwright-oauth] Checked ${checkedCount} unchecked consent checkboxes.`);
+              await page.waitForTimeout(1000);
+            }
+
+            // Check for Google OAuth consent screen (Allow/Continue button)
+            const consentBtn = targetPage.locator([
+              'button:has-text("Continue")',
+              'button:has-text("Allow")',
+              'button:has-text("继续")',
+              'button:has-text("允许")',
+              'button:has-text("確定")',
+              'button:has-text("同意")',
+              'button:has-text("Tiếp tục")',
+              'button:has-text("Continuar")',
+              'button:has-text("Permitir")',
+              'button:has-text("Continuer")',
+              'button:has-text("Weiter")',
+              'button:has-text("Zulassen")',
+              'button:has-text("次へ")',
+              'button:has-text("続行")',
+              'button:has-text("계속")',
+              'button:has-text("허용")',
+              'button:has-text("Next")',
+              'button:has-text("下一步")',
+              'button:has-text("繼續")',
+              'button:has-text("允許")',
+              '[role="button"]:has-text("Continue")',
+              '[role="button"]:has-text("Allow")',
+              '[role="button"]:has-text("继续")',
+              '[role="button"]:has-text("允许")',
+              '[role="button"]:has-text("確定")',
+              '[role="button"]:has-text("同意")',
+              '[role="button"]:has-text("Tiếp tục")',
+              '[role="button"]:has-text("Continuar")',
+              '[role="button"]:has-text("Permitir")',
+              '[role="button"]:has-text("Continuer")',
+              '[role="button"]:has-text("Weiter")',
+              '[role="button"]:has-text("Zulassen")',
+              '[role="button"]:has-text("次へ")',
+              '[role="button"]:has-text("続行")',
+              '[role="button"]:has-text("계속")',
+              '[role="button"]:has-text("허용")',
+              '[role="button"]:has-text("Next")',
+              '[role="button"]:has-text("下一步")',
+              '[role="button"]:has-text("繼續")',
+              '[role="button"]:has-text("允許")',
+              '#submit_approve_access',
+              '[id*="submit"]',
+            ].join(", ")).first();
+
+            const isVisible = await consentBtn.isVisible().catch(() => false);
+            const timeSinceLastSubmit = Date.now() - lastConsentSubmitTime;
+
+            if (timeSinceLastSubmit > 15000) {
+              if (isVisible) {
+                console.log("[playwright-oauth] Clicking Google OAuth consent/allow button via Playwright...");
+                await consentBtn.click();
+                lastConsentSubmitTime = Date.now();
+                await page.waitForTimeout(2000);
+                continue;
+              } else {
+                // Fallback to evaluating JS click if locator is not visible/not found
+                const clickedViaJS = await targetPage.evaluate(() => {
+                  const keywords = [
+                    "continue", "allow", "继续", "允许", "確定", "同意", "tiếp tục", 
+                    "continuar", "permitir", "continuer", "weiter", "zulassen", "次へ", "続行", 
+                    "계속", "허용", "next", "下一步", "繼續", "允許"
+                  ];
+                  const elements = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="submit"], input[type="button"]'));
+                  for (const el of elements) {
+                    const text = ((el as HTMLElement).innerText || el.getAttribute('value') || '').toLowerCase().trim();
+                    if (keywords.some(kw => text === kw || text.includes(kw))) {
+                      (el as HTMLElement).click();
+                      return true;
+                    }
+                  }
+                  // Check span/div
+                  const spans = Array.from(document.querySelectorAll('span, div'));
+                  for (const el of spans) {
+                    const text = ((el as HTMLElement).innerText || '').toLowerCase().trim();
+                    if (keywords.some(kw => text === kw)) {
+                      const className = el.className || '';
+                      if (className.includes('button') || className.includes('btn') || className.includes('VfP3Ux') || el.closest('[role="button"]') || el.closest('button')) {
+                        (el as HTMLElement).click();
+                        return true;
+                      }
+                    }
+                  }
+                  return false;
+                }).catch(() => false);
+
+                if (clickedViaJS) {
+                  console.log("[playwright-oauth] Clicking Google OAuth consent/allow button via JS Fallback...");
+                  lastConsentSubmitTime = Date.now();
+                  await page.waitForTimeout(2000);
+                  continue;
+                }
+              }
+            }
+          }
+        }
+        
+        if (page.isClosed()) {
+          break;
+        }
+        await page.waitForTimeout(2000).catch(() => {});
+      }
+      
+      if (!loggedIn) {
+        throw new Error("谷歌账号登录/授权超时，请确认是否在浏览器中完成了手动辅助验证。");
+      }
+      
+      const session = new PlaywrightOAuthSession(browser, context, page, relay || undefined, adspowerOpts);
+      return { ok: true, session };
+    } else {
+      console.log("[playwright-oauth] waiting for login page...");
+      const emailInput = await waitForEmailInput(page, 45_000);
+      if (!emailInput) {
+        const currentUrl = page.url();
+        const bodyText = await page.textContent("body").catch(() => "");
+        return {
+          ok: false,
+          error: `登录页未加载出邮箱输入框 (URL: ${currentUrl}, 页面: ${(bodyText || "").slice(0, 300)})`,
+        };
+      }
+
+      console.log(`[playwright-oauth] filling email: ${opts.email}`);
+      await emailInput.fill(opts.email);
+      await clickEmailSubmit(page);
+      await page.waitForTimeout(2000);
+
       const bodyText = await page.textContent("body").catch(() => "");
-      return {
-        ok: false,
-        error: `登录页未加载出邮箱输入框 (URL: ${currentUrl}, 页面: ${(bodyText || "").slice(0, 300)})`,
-      };
+      console.log(`[playwright-oauth] after submit, page text: ${(bodyText || "").slice(0, 200)}`);
+
+      const session = new PlaywrightOAuthSession(browser, context, page, relay || undefined, adspowerOpts);
+      return { ok: true, session };
     }
-
-    console.log(`[playwright-oauth] filling email: ${opts.email}`);
-    await emailInput.fill(opts.email);
-    await clickEmailSubmit(page);
-    await page.waitForTimeout(2000);
-
-    const bodyText = await page.textContent("body").catch(() => "");
-    console.log(`[playwright-oauth] after submit, page text: ${(bodyText || "").slice(0, 200)}`);
-
-    const session = new PlaywrightOAuthSession(browser, context, page, relay || undefined, adspowerOpts);
-    return { ok: true, session };
   } catch (err: any) {
     if (context && !opts.adspowerProfileId) try { await context.close(); } catch {}
     if (browser) try { await browser.close(); } catch {}

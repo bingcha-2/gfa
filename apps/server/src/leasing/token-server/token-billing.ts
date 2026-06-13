@@ -411,11 +411,14 @@ export function bucketWindowStart(
   now: number,
   alignedResetAt: number,
   defaultWindowMs: number = DEFAULT_KEY_WINDOW_MS,
+  mutate = true,
 ): number {
-  if (!record.bucketWindowStartedAt || typeof record.bucketWindowStartedAt !== "object") {
+  if (mutate && (!record.bucketWindowStartedAt || typeof record.bucketWindowStartedAt !== "object")) {
     record.bucketWindowStartedAt = {};
   }
-  const starts = record.bucketWindowStartedAt as Record<string, number>;
+  const starts = (record.bucketWindowStartedAt && typeof record.bucketWindowStartedAt === "object")
+    ? record.bucketWindowStartedAt as Record<string, number>
+    : {};
   let start = Number(starts[bucket] || 0);
   const resetAt = Number(alignedResetAt) || 0;
 
@@ -429,7 +432,7 @@ export function bucketWindowStart(
     start = now; // fixed-period tumbling
   }
 
-  starts[bucket] = start;
+  if (mutate) starts[bucket] = start;
   return start;
 }
 

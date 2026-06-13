@@ -159,6 +159,8 @@ export class RosettaService {
   getCodexOAuthLoginStatus(loginId: string) { return this.codexSvc.getCodexOAuthLoginStatus(loginId); }
   cancelCodexOAuthLogin(loginId: string) { return this.codexSvc.cancelCodexOAuthLogin(loginId); }
   submitCodexOAuthCallback(loginId: string, rawInput: string) { return this.codexSvc.submitCodexOAuthCallback(loginId, rawInput); }
+  startAutomatedCodexLogin(payload: any) { return this.codexSvc.startAutomatedCodexLogin(payload); }
+  getAutomatedCodexLoginStatus(jobId: string) { return this.codexSvc.getAutomatedCodexLoginStatus(jobId); }
   toggleCodexAccount(payload: any) { return this.codexSvc.toggleCodexAccount(payload); }
   toggleCodexAccountPool(payload: any) { return this.codexSvc.toggleCodexAccountPool(payload); }
   deleteCodexAccount(payload: any) { return this.codexSvc.deleteCodexAccount(payload); }

@@ -16,7 +16,7 @@ import {
   recentBucketUsage,
   resetWindowIfExpired,
 } from "../token-server/token-billing";
-import { accessKeyExpiresAt, cardWeight, maskKey, newAccessKeyValue, recentTokenUsage } from "./lib/access-key-util";
+import { accessKeyExpiresAt, cardWeight, cardWeightFor, maskKey, newAccessKeyValue, recentTokenUsage } from "./lib/access-key-util";
 import type { RosettaContext } from "./lib/context";
 import { nowIso, readJson, writeJson } from "./lib/store";
 
@@ -122,6 +122,8 @@ export class AccessKeyService {
           bindings,
           bucketLimits: customLimits,
           weight: cardWeight(key),
+          // 按产品份额覆盖映射(供前端展示/编辑;空=各产品走卡级 weight)。
+          weights: (key.weights && typeof key.weights === "object") ? key.weights : {},
           // ── 重设计新增字段(供卡密页「类型」「额度」列与绑定明细)──
           cardType,
           buckets,
@@ -179,8 +181,14 @@ export class AccessKeyService {
     // selected product. Auto-bind only considers accounts of the exact level.
     const levels: Record<string, string> =
       payload?.levels && typeof payload.levels === "object" ? payload.levels : {};
-    // Share weight (份额): 1 = 拼车 (default), 4 = 独享.
+    // Share weight (份额): 卡级默认 weight(1=拼车…8=独享);可选 weights{product:份额}
+    // 按产品覆盖,让一张卡对不同产品设不同份额(如 anthropic 1 份、codex 2 份)。
     const weight = cardWeight({ weight: payload?.weight });
+    const weightsInput: Record<string, number> =
+      payload?.weights && typeof payload.weights === "object" ? payload.weights : {};
+    // 解析每个产品的份额(回退卡级 weight),并收集要落库的 per-product 覆盖映射。
+    const weightFor = (product: string) => cardWeightFor({ weight: payload?.weight, weights: weightsInput }, product);
+    const weightsRecord: Record<string, number> = {};
     // 可选:每个产品手动指定要绑定的账号(accountIds[product] > 0)。指定后整批卡都
     // 绑到该账号(管理员显式选择,镜像 bindAccessKey 的宽松策略:只校验份额容量,不校
     // 验等级/出池/配额);留空则回退到原有的自动分配空位逻辑。
@@ -191,6 +199,9 @@ export class AccessKeyService {
       const label = product === "codex" ? "Codex" : product === "anthropic" ? "Anthropic" : "Antigravity";
       const level = String(levels[product] || "").trim();
       if (!level) return { ok: false, error: `请为 ${label} 选择会员等级` };
+      // 本产品的份额(按产品覆盖优先,否则卡级 weight);记下覆盖值以便落库。
+      const w = weightFor(product);
+      if (Number(weightsInput[product] || 0) >= 1) weightsRecord[product] = w;
       const manualId = Number(accountIds[product] || 0);
       if (manualId > 0) {
         const pool = readJson(this.poolFileFor(product), { accounts: [] });
@@ -198,9 +209,9 @@ export class AccessKeyService {
           (a: any) => Number(a.id) === manualId,
         );
         if (!account) return { ok: false, error: `所选 ${label} 账号不存在` };
-        // 整批 count 张卡都绑到这个号,合计需要 count*weight 份,不能超过容量。
+        // 整批 count 张卡都绑到这个号,合计需要 count*w 份,不能超过容量。
         const used = this.usedShares(product, manualId, "");
-        const need = count * weight;
+        const need = count * w;
         if (used + need > ACCOUNT_SHARE_CAPACITY) {
           return {
             ok: false,
@@ -209,7 +220,7 @@ export class AccessKeyService {
         }
         seatPlan[product] = new Array(count).fill(manualId);
       } else {
-        const seats = this.autoAssignSeats(product, count, weight, level);
+        const seats = this.autoAssignSeats(product, count, w, level);
         if (!seats) {
           return {
             ok: false,
@@ -241,6 +252,8 @@ export class AccessKeyService {
         // 周/5h 换算比覆盖(0 = 留空,走后台学习/全局默认 R)。派生周上限 = 5h上限 × R。
         weeklyRatio: Math.max(0, Number(payload?.weeklyRatio || 0)),
         weight,
+        // 按产品份额覆盖(仅含显式设过的产品);为空则不写,纯走卡级 weight。
+        ...(Object.keys(weightsRecord).length ? { weights: { ...weightsRecord } } : {}),
         ...(products.length ? { bindings } : {}),
         // Universal cards can also select products (restrict available services).
         // Empty products = all products available.
@@ -272,6 +285,16 @@ export class AccessKeyService {
     }
     // 份额(weight):支持编辑改份额;clamp 1..ACCOUNT_SHARE_CAPACITY(=8),复用 cardWeight。
     if (payload.weight !== undefined) record.weight = cardWeight({ weight: payload.weight });
+    // 按产品份额覆盖(编辑):合法值(≥1)写入,0/缺省删除该产品的覆盖(回退卡级 weight)。
+    if (payload.weights !== undefined && typeof payload.weights === "object") {
+      const next: Record<string, number> = { ...((record.weights && typeof record.weights === "object") ? record.weights : {}) };
+      for (const product of ["codex", "antigravity", "anthropic"]) {
+        const v = Math.floor(Number((payload.weights as any)[product] || 0));
+        if (Number.isFinite(v) && v >= 1) next[product] = Math.min(ACCOUNT_SHARE_CAPACITY, v);
+        else delete next[product];
+      }
+      record.weights = Object.keys(next).length ? next : undefined;
+    }
     // Per-bucket custom limits: merge provided values, delete keys set to 0/null.
     // Keys must be real composite <product>-<family> buckets — a bare-family key
     // ("claude") would set a cap that the enforce lookup (composite) never sees,
@@ -492,7 +515,7 @@ export class AccessKeyService {
     let used = 0;
     for (const key of keys) {
       if (this.isLiveKey(key) && String(key.id) !== excludeId && this.keyBoundAccount(key, provider) === accountId) {
-        used += cardWeight(key);
+        used += cardWeightFor(key, provider);
       }
     }
     return used;
@@ -533,7 +556,7 @@ export class AccessKeyService {
     // Count peers already bound to this (provider, account), excluding this card
     // so a re-bind / no-op is idempotent and never trips the limit.
     // Capacity is by SHARES (份): used (excluding this card) + this card's weight ≤ ACCOUNT_SHARE_CAPACITY.
-    const need = cardWeight(record);
+    const need = cardWeightFor(record, provider);
     const used = this.usedShares(provider, accountId, id);
     if (used + need > ACCOUNT_SHARE_CAPACITY) {
       return {
@@ -586,12 +609,13 @@ export class AccessKeyService {
     const record = keys.find((key: any) => String(key.id) === id);
     if (!record) return { ok: false, error: "卡密不存在" };
 
-    const need = cardWeight(record);
     const nextBindings: Record<string, number> = {};
     for (const provider of ["codex", "antigravity", "anthropic"]) {
       const accountId = Number(desired[provider] || 0);
       if (!(accountId > 0)) continue; // 该 provider → 池子模式(不绑)
-      // 份额:目标号已用(排除本卡) + 本卡份额 ≤ ACCOUNT_SHARE_CAPACITY。
+      // 份额按【产品】算:本卡在该 provider 的份额(weights[provider] ?? weight)。
+      const need = cardWeightFor(record, provider);
+      // 份额:目标号已用(排除本卡) + 本卡该产品份额 ≤ ACCOUNT_SHARE_CAPACITY。
       const used = this.usedShares(provider, accountId, id);
       if (used + need > ACCOUNT_SHARE_CAPACITY) {
         const label = provider === "codex" ? "Codex" : provider === "anthropic" ? "Claude" : "Antigravity";
@@ -649,7 +673,7 @@ export class AccessKeyService {
     for (const key of keys) {
       if (!this.isLiveKey(key)) continue;
       const acc = this.keyBoundAccount(key, provider);
-      if (acc > 0) m.set(acc, (m.get(acc) || 0) + cardWeight(key));
+      if (acc > 0) m.set(acc, (m.get(acc) || 0) + cardWeightFor(key, provider));
     }
     return m;
   }

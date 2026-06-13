@@ -75,6 +75,25 @@ describe("resolveFromRequest — aligned (bound) bucket window", () => {
     expect(poolStatus.tokenWindowResetMs).toBeGreaterThan(1_000_000);
   });
 
+  it("publicStatus with alignment is read-only and reports aligned bucket usage", () => {
+    const now = Date.now();
+    const store = makeStore({
+      id: "k1", key: "secret1", status: "active",
+      bucketLimits: { "anthropic-claude": 500_000 },
+      windowStartedAt: now - 6 * 60 * 60 * 1000,
+      bucketWindowStartedAt: { "anthropic-claude": now - 2000 },
+      tokenUsageEvents: [
+        { at: now - 1000, inputTokens: 100_000, outputTokens: 50_000, modelKey: "claude-sonnet-4-6", product: "anthropic" },
+      ],
+    });
+    const record = store.findById("k1")!;
+    const status = store.publicStatus(record, now + 100_000);
+    const bucket = status.buckets.find((b: any) => b.bucket === "anthropic-claude");
+
+    expect(bucket.used).toBe(210_000);
+    expect(record.tokenUsageEvents).toHaveLength(1);
+  });
+
   it("drops pre-boundary usage once the account window rolls → under limit again", async () => {
     const now = Date.now();
     const store = makeStore({

@@ -77,6 +77,7 @@ function cardToConfig(card: AccessKeyListItem): CardConfigValue {
     windowUnit: win.unit,
     bindings,
     weight: Math.max(1, Math.min(8, Number(card.weight) || 1)),
+    weights: (card.weights && typeof card.weights === "object") ? { ...card.weights } : {},
     bucketLimits,
   };
 }
@@ -145,6 +146,8 @@ export function CardEditDialog({
           durationMs: toMs(config.durationValue, config.durationUnit),
           windowMs: toMs(config.windowValue, config.windowUnit),
           weight: Math.max(1, Math.min(8, Number(config.weight) || 1)),
+          // 按产品份额覆盖(整张回传:后端会清掉值为 0/缺省的产品 → 回退卡级 weight)。
+          weights: config.weights || {},
           bucketLimits,
         }),
       });

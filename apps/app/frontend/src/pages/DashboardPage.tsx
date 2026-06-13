@@ -40,7 +40,7 @@ export function DashboardPage() {
   const t = useT()
   const {
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
-    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode, recoveryRemainingMs,
+    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode,
     cardBuckets, cardWeeklyBuckets,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
@@ -70,6 +70,9 @@ export function DashboardPage() {
       if (!limit || limit <= 0) return []
       const used = b?.used ?? 0
       const frac = Math.max(0, Math.min(1, (limit - used) / limit))
+      // 5h 条用该卡 5h 窗口自身的 reset(cardBuckets.resetMs),不再借 recoveryRemainingMs —— 后者是
+      // 账号级「更紧窗口」的恢复时间,周窗口更空时会变成 7d 的 reset,导致 5h 条显示成 7d。
+      const fiveHReset = b?.resetMs && b.resetMs > 0 ? b.resetMs : undefined
       // static 卡封顶条:有周上限(显式或派生 5h×R)时 → 5h + 周 双条,否则单条。
       const staticBar = (key: string, suffix: string, u: number, lim: number, resetMs?: number) => (
         <UsageBar key={key} label={`${t('dashboard.myCard')} · ${suffix}`} used={u} limit={lim}
@@ -78,13 +81,13 @@ export function DashboardPage() {
       )
       const wk = cardWeeklyBuckets?.[bar.bucket]
       if (wk && wk.limit > 0) {
-        return [staticBar('mine-5h', '5h', used, limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined),
-                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined)]
+        return [staticBar('mine-5h', '5h', used, limit, fiveHReset),
+                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, wk.resetMs)]
       }
       return [(
         <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
           fraction={accountProblem ? -1 : frac}
-          resetMs={recoveryRemainingMs > 0 ? recoveryRemainingMs : undefined} />
+          resetMs={fiveHReset} />
       )]
     }
     const myFrac = myFractions?.[bar.bucket]

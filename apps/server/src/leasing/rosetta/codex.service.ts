@@ -20,7 +20,8 @@ import {
 } from "./lib/import-parse";
 import { base64Url, codeChallenge, decodeJwtPayload } from "./lib/pkce";
 import { setAccountEnabled } from "./lib/pool";
-import { nowIso, readJson, writeJson } from "./lib/store";
+import { nowIso, readJson, writeJson, setAccountProxyInPool } from "./lib/store";
+import { runCodexBrowserLogin } from "./lib/codex-login-browser";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
 const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -43,8 +44,24 @@ type CodexOAuthPending = {
   isUpdate?: boolean;
 };
 
+/** 自动上号（接码）后台任务状态。 */
+type CodexAutoLoginJob = {
+  jobId: string;
+  status: "running" | "completed" | "failed";
+  step: string;
+  email: string;
+  error: string;
+  accountId?: number;
+  createdAt: number;
+  expiresAt: number;
+};
+
+const CODEX_AUTO_LOGIN_TTL_MS = 8 * 60 * 1000;
+
 export class CodexService {
   private codexOAuthPending: CodexOAuthPending | null = null;
+  /** jobId → 自动上号任务状态（内存态，进程级）。 */
+  private autoLoginJobs = new Map<string, CodexAutoLoginJob>();
 
   constructor(private readonly ctx: RosettaContext, private readonly accessKey: AccessKeyService) {}
 
@@ -516,6 +533,147 @@ export class CodexService {
     pending.email = email;
     pending.isUpdate = Boolean(result.isUpdate);
     return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
+  }
+
+  // ── 自动上号（接码）─────────────────────────────────────────────────
+  // 用无头浏览器（经用户填的代理）自动完成 OpenAI 登录全流程，含手机短信接码，
+  // 拿到授权 code 后复用 completeCodexOAuthLogin 换 token 落库，并写回出口代理。
+  // 不依赖 PhonePool；手机号与代理由调用方（页面）传入。
+
+  /** 构造一个独立的 codex OAuth pending（不写入全局 codexOAuthPending）。 */
+  private buildCodexOAuthPending(): CodexOAuthPending {
+    const codeVerifier = base64Url(crypto.randomBytes(32));
+    const state = base64Url(crypto.randomBytes(32));
+    const loginId = base64Url(crypto.randomBytes(18));
+    const redirectUri = `http://localhost:${this.ctx.codexOAuthPort}/auth/callback`;
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: CODEX_OAUTH_CLIENT_ID,
+      redirect_uri: redirectUri,
+      scope: CODEX_OAUTH_SCOPES,
+      code_challenge: codeChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      id_token_add_organizations: "true",
+      codex_cli_simplified_flow: "true",
+      state,
+      originator: CODEX_OAUTH_ORIGINATOR,
+    });
+    return {
+      loginId,
+      state,
+      codeVerifier,
+      redirectUri,
+      authUrl: `${CODEX_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
+      expiresAt: Date.now() + CODEX_OAUTH_TIMEOUT_MS,
+      status: "pending",
+    };
+  }
+
+  private pruneAutoLoginJobs() {
+    const now = Date.now();
+    for (const [id, job] of this.autoLoginJobs) {
+      if (now > job.expiresAt + CODEX_AUTO_LOGIN_TTL_MS) this.autoLoginJobs.delete(id);
+    }
+  }
+
+  /**
+   * 发起自动上号。校验入参 → 建独立 pending → 起后台任务跑浏览器登录 → 立即返回 jobId。
+   * payload: { email, password, totpSecret?, phoneNumber, smsUrl, proxyUrl, headless? }
+   */
+  startAutomatedCodexLogin(payload: any) {
+    const email = String(payload?.email || "").trim();
+    const password = String(payload?.password || "").trim();
+    const totpSecret = String(payload?.totpSecret || "").trim() || null;
+    const phoneNumber = String(payload?.phoneNumber || "").replace(/\D/g, "");
+    const smsUrl = String(payload?.smsUrl || "").trim();
+    const proxyUrl = String(payload?.proxyUrl || "").trim();
+
+    if (!email) return { ok: false, error: "邮箱不能为空" };
+    if (!password) return { ok: false, error: "密码不能为空" };
+    if (!phoneNumber) return { ok: false, error: "接码手机号不能为空" };
+    if (!/^https?:\/\//i.test(smsUrl)) return { ok: false, error: "接码网址格式无效" };
+    if (!proxyUrl) return { ok: false, error: "出口代理不能为空" };
+
+    this.pruneAutoLoginJobs();
+
+    const pending = this.buildCodexOAuthPending();
+    const jobId = base64Url(crypto.randomBytes(18));
+    const job: CodexAutoLoginJob = {
+      jobId,
+      status: "running",
+      step: "starting",
+      email,
+      error: "",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + CODEX_OAUTH_TIMEOUT_MS,
+    };
+    this.autoLoginJobs.set(jobId, job);
+
+    // 后台异步执行，不阻塞 HTTP 响应。
+    void this.runAutoLoginJob(job, pending, { email, password, totpSecret, phoneNumber, smsUrl, proxyUrl, headless: payload?.headless === true });
+
+    return { ok: true, jobId, expiresAt: job.expiresAt };
+  }
+
+  private async runAutoLoginJob(
+    job: CodexAutoLoginJob,
+    pending: CodexOAuthPending,
+    creds: { email: string; password: string; totpSecret: string | null; phoneNumber: string; smsUrl: string; proxyUrl: string; headless?: boolean },
+  ) {
+    try {
+      const res = await runCodexBrowserLogin({
+        authorizeUrl: pending.authUrl,
+        redirectUri: pending.redirectUri,
+        email: creds.email,
+        password: creds.password,
+        totpSecret: creds.totpSecret,
+        phoneNumber: creds.phoneNumber,
+        smsUrl: creds.smsUrl,
+        proxyUrl: creds.proxyUrl,
+        headless: creds.headless,
+        onStep: (step) => { job.step = step; },
+      });
+      if (!res.ok || !res.code) {
+        job.status = "failed";
+        job.error = res.error || "登录失败";
+        if (res.step) job.step = res.step;
+        return;
+      }
+      job.step = "exchanging_token";
+      const result = await this.completeCodexOAuthLogin(pending, res.code);
+      // 把出口代理写到该账号（运行时用），与手动「设置代理」同款归一化。
+      if (result.accountId != null) {
+        try {
+          setAccountProxyInPool(path.join(this.ctx.dataDir, "codex-accounts.json"), Number(result.accountId), creds.proxyUrl);
+        } catch {
+          // 落代理失败不影响上号本身
+        }
+      }
+      job.status = "completed";
+      job.step = "completed";
+      job.email = result.email;
+      job.accountId = result.accountId;
+    } catch (err) {
+      job.status = "failed";
+      job.error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  getAutomatedCodexLoginStatus(jobId: string) {
+    const job = this.autoLoginJobs.get(String(jobId || ""));
+    if (!job) return { ok: false, status: "missing", error: "任务不存在或已过期" };
+    if (job.status === "running" && Date.now() > job.expiresAt) {
+      job.status = "failed";
+      job.error = job.error || "自动上号超时";
+    }
+    return {
+      ok: true,
+      status: job.status,
+      step: job.step,
+      email: job.email,
+      error: job.error,
+      accountId: job.accountId,
+    };
   }
 
   private closeCodexOAuthPending(clearCompleted = true) {

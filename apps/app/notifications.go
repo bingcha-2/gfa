@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // clientHealth holds derived signals (not raw error strings) that should also
@@ -112,4 +113,27 @@ func categoryFor(low string) string {
 	default:
 		return "lease"
 	}
+}
+
+// ── 端口兜底提示 ────────────────────────────────────────────────────────────
+// HTTP 代理因首选端口被占而退到备用端口并重注入后,经此把一次性提示带给前端
+// (GetStats 读取即清,前端 toast 显示一次)。
+var (
+	proxyNoticeMu  sync.Mutex
+	proxyNoticeMsg string
+)
+
+func setProxyNotice(msg string) {
+	proxyNoticeMu.Lock()
+	proxyNoticeMsg = msg
+	proxyNoticeMu.Unlock()
+}
+
+// takeProxyNotice 返回并清空待发的端口兜底提示(无则返回空串)。
+func takeProxyNotice() string {
+	proxyNoticeMu.Lock()
+	defer proxyNoticeMu.Unlock()
+	m := proxyNoticeMsg
+	proxyNoticeMsg = ""
+	return m
 }

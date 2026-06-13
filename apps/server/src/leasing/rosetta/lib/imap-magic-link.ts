@@ -9,6 +9,7 @@ export type ImapCredentials = {
   port?: number;
   email: string;
   password: string;
+  proxyUrl?: string;
 };
 
 export type MagicLinkResult = {
@@ -55,11 +56,11 @@ function decodeEntities(s: string): string {
 
 // imapflow 把真正的失败原因塞在错误对象的多个字段里,而不是 .message
 // (.message 常常只是笼统的 "Command failed")。把它们全挖出来拼成可诊断信息。
+// 服务器原文响应 / 状态码 —— 最有用,直接是 mail.com 的拒绝理由
 function describeImapError(err: any): string {
   const parts: string[] = [];
   const base = String(err?.message || err || "未知错误");
   parts.push(base);
-  // 服务器原文响应 / 状态码 —— 最有用,直接是 mail.com 的拒绝理由
   const serverText = err?.responseText || err?.response;
   if (serverText && String(serverText) !== base) parts.push(`server="${String(serverText).trim()}"`);
   if (err?.serverResponseCode) parts.push(`code=${err.serverResponseCode}`);
@@ -79,6 +80,7 @@ export async function fetchAnthropicMagicLink(creds: ImapCredentials): Promise<M
     connectionTimeout: CONNECT_TIMEOUT_MS,
     greetingTimeout: CONNECT_TIMEOUT_MS,
     socketTimeout: CONNECT_TIMEOUT_MS,
+    ...(creds.proxyUrl ? { proxy: creds.proxyUrl } : {}),
   });
 
   try {

@@ -312,8 +312,8 @@ func (claudeCodeTarget) Restore() (string, error) {
 //
 // 桌面端 spawn 的 Code/Cowork 子进程硬覆盖 ANTHROPIC_BASE_URL，env 注入无效，
 // 故走 MITM：装根 CA + 带代理 env 重启 Claude.app(route A)，把 api.anthropic.com
-// 的 /v1/messages 拦下换号池 token。MITM 代理由 app.go 常驻启动并随卡密同步。
-// 注意：本接管会重启 Claude.app，会中断正在运行的 Cowork 会话。
+// 的 /v1/messages 拦下换号池 token。MITM 代理由 app.go 常驻启动并随卡密同步;接管激活期间
+// 由看门狗维持运行(挂掉自愈重起)。注意：本接管会重启 Claude.app，会中断正在运行的 Cowork 会话。
 
 type claudeDesktopTarget struct{}
 

@@ -45,6 +45,26 @@ function pct(value: number) {
   return value < 0 ? "—" : `${Math.round(value)}%`;
 }
 
+// 自动上号各步骤的中文文案
+const AUTO_STEP_LABELS: Record<string, string> = {
+  starting: "准备中…",
+  opening_authorize_url: "打开授权页…",
+  choose_account: "切换账号…",
+  email: "填写邮箱…",
+  password: "填写密码…",
+  totp: "提交动态验证码(TOTP)…",
+  add_phone: "填写手机号…",
+  sms_polling: "等待短信验证码…",
+  sms_fill: "填写短信验证码…",
+  consent: "确认授权…",
+  got_code: "拿到授权码…",
+  exchanging_token: "换取 token…",
+  completed: "完成",
+};
+function autoStepLabel(step: string) {
+  return AUTO_STEP_LABELS[step] || (step?.startsWith("waiting") ? "等待页面跳转…" : step || "");
+}
+
 export default function CodexAccountsPage() {
   const [accounts, setAccounts] = useState<CodexAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +84,16 @@ export default function CodexAccountsPage() {
   const [oauthAuthUrl, setOauthAuthUrl] = useState("");
   const [oauthCallbackInput, setOauthCallbackInput] = useState("");
   const [oauthSubmitting, setOauthSubmitting] = useState(false);
+
+  // 自动上号(接码)表单 + 任务状态
+  const [autoEmail, setAutoEmail] = useState("");
+  const [autoPassword, setAutoPassword] = useState("");
+  const [autoTotp, setAutoTotp] = useState("");
+  const [autoPhone, setAutoPhone] = useState("");
+  const [autoSmsUrl, setAutoSmsUrl] = useState("");
+  const [autoProxy, setAutoProxy] = useState("");
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStep, setAutoStep] = useState("");
 
   const [deleteTarget, setDeleteTarget] = useState<CodexAccount | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
@@ -280,6 +310,62 @@ export default function CodexAccountsPage() {
       });
     } catch {
       // Best-effort cleanup only; the server-side session also expires.
+    }
+  }
+
+  async function handleAutoLogin() {
+    if (!autoEmail.trim() || !autoPassword.trim() || !autoPhone.trim() || !autoSmsUrl.trim() || !autoProxy.trim()) {
+      toast.error("请填写邮箱、密码、接码手机号、接码网址、出口代理");
+      return;
+    }
+    setAutoRunning(true);
+    setAutoStep("准备中…");
+    try {
+      const res = await fetch("/api/rosetta/codex-auto-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: autoEmail.trim(),
+          password: autoPassword.trim(),
+          totpSecret: autoTotp.trim(),
+          phoneNumber: autoPhone.trim(),
+          smsUrl: autoSmsUrl.trim(),
+          proxyUrl: autoProxy.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok || !data.jobId) throw new Error(data.error || "发起自动上号失败");
+      const jobId: string = data.jobId;
+
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const sres = await fetch(`/api/rosetta/codex-auto-login-status?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const s = await sres.json();
+        if (!s.ok) {
+          if (s.status === "missing") throw new Error(s.error || "任务已丢失");
+          continue;
+        }
+        setAutoStep(autoStepLabel(String(s.step || "")));
+        if (s.status === "completed") {
+          toast.success(`自动上号成功：${s.email}`);
+          setAutoEmail("");
+          setAutoPassword("");
+          setAutoTotp("");
+          setAutoPhone("");
+          setAutoSmsUrl("");
+          setAutoProxy("");
+          fetchAccounts(true);
+          return;
+        }
+        if (s.status === "failed") throw new Error(s.error || `失败于：${autoStepLabel(String(s.step || ""))}`);
+      }
+      throw new Error("自动上号超时");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "自动上号失败");
+    } finally {
+      setAutoRunning(false);
+      setAutoStep("");
     }
   }
 
@@ -504,6 +590,54 @@ export default function CodexAccountsPage() {
       ) : null}
 
       <QuotaProfilesCard product="codex" statusUrl="/api/app/lease/codex/status" />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">自动上号（接码）</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            浏览器自动完成 OpenAI 登录（邮箱→密码→TOTP→手机短信接码→授权），手机号与出口代理由你填写。整个过程约 1–2 分钟。
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field className="min-w-[220px] flex-1">
+              <FieldLabel>邮箱</FieldLabel>
+              <Input placeholder="account@example.com" value={autoEmail} onChange={(e) => setAutoEmail(e.target.value)} disabled={autoRunning} />
+            </Field>
+            <Field className="min-w-[180px] flex-1">
+              <FieldLabel>密码</FieldLabel>
+              <Input placeholder="登录密码" value={autoPassword} onChange={(e) => setAutoPassword(e.target.value)} disabled={autoRunning} />
+            </Field>
+            <Field className="min-w-[180px] flex-1">
+              <FieldLabel>TOTP 密钥（可选）</FieldLabel>
+              <Input placeholder="base32 2FA secret" value={autoTotp} onChange={(e) => setAutoTotp(e.target.value)} disabled={autoRunning} />
+            </Field>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field className="min-w-[160px]">
+              <FieldLabel>接码手机号</FieldLabel>
+              <Input placeholder="3527217858" value={autoPhone} onChange={(e) => setAutoPhone(e.target.value)} disabled={autoRunning} />
+            </Field>
+            <Field className="min-w-[260px] flex-1">
+              <FieldLabel>接码网址</FieldLabel>
+              <Input placeholder="https://app.yuntl.cc/apisms/..." value={autoSmsUrl} onChange={(e) => setAutoSmsUrl(e.target.value)} disabled={autoRunning} />
+            </Field>
+            <Field className="min-w-[240px] flex-1">
+              <FieldLabel>出口代理</FieldLabel>
+              <Input placeholder="socks5://user:pass@host:port 或 host:port:user:pass" value={autoProxy} onChange={(e) => setAutoProxy(e.target.value)} disabled={autoRunning} />
+            </Field>
+            <Button onClick={handleAutoLogin} disabled={autoRunning}>
+              {autoRunning ? <Spinner data-icon className="size-4" /> : <BotIcon data-icon className="size-4" />}
+              开始自动上号
+            </Button>
+          </div>
+          {autoRunning && autoStep ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Spinner size={14} /> 当前步骤：{autoStep}
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

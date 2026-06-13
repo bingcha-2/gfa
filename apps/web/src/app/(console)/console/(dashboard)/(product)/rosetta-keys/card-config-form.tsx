@@ -251,14 +251,16 @@ export function CardConfigForm({
           <ProductBindingManager
             bindings={value.bindings}
             weight={value.weight}
+            weights={value.weights || {}}
             accounts={accounts}
             onChange={(bindings) => onChange({ bindings })}
             onWeightChange={(weight) => onChange({ weight })}
+            onWeightsChange={(weights) => onChange({ weights })}
             disabled={disabled}
           />
         ) : (
           <p className="text-xs text-muted-foreground">
-            万能卡:不绑号、自动开放全部产品,走动态池。用量仅靠下方「模型限额」控制(留空 = 无限)。
+            万能卡:不绑号、自动开放全部产品,走动态池。新增时未填写的模型额度会按 1 写入,代表不可用。
           </p>
         )}
       </FieldSet>
@@ -270,13 +272,14 @@ export function CardConfigForm({
         <p className="text-xs text-muted-foreground">
           {value.cardType === "bound"
             ? "每个上限是「该模型在绑定账号当前刷新窗口」内的 token 配额,跟随账号窗口自动重置。留空 = 该模型无限。"
-            : "每个上限是「上面设的限流窗口」(默认 5 小时,可改) 内的 token 配额,不是终身总额——窗口到期自动重置。留空 = 该模型无限。"}
+            : "每个上限是「上面设的限流窗口」(默认 5 小时,可改) 内的 token 配额,不是终身总额——窗口到期自动重置。新增时留空 = 1,代表该模型不可用。"}
         </p>
         <ModelLimitsEditor
           buckets={buckets}
           value={value.bucketLimits}
           onChange={(bucketLimits) => onChange({ bucketLimits })}
           disabled={disabled}
+          blankLimitBehavior={value.cardType === "pool" ? "disabled" : "unlimited"}
         />
       </FieldSet>
     </div>

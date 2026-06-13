@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
-// ─── 接管前置闸:出口探测(Windows / macOS 共用)──────────────────────────────
+// ─── 接管前置闸:出口可达性探测(Windows / macOS 共用)──────────────────────────
 //
 // 背景:配了「每号静态/住宅出口代理」的产品(anthropic 恒 required;codex/antigravity
 // 绑了代理也算),接管后的官方流量必须从【代理 IP】出去,绝不能从用户真实(大陆)IP 直连
@@ -20,30 +17,27 @@ import (
 // 现实坑:egress 那一跳是裸 net.Dialer 直连账号代理,不走系统 HTTP 代理(7897);用户没开
 // Clash TUN(全局)时,会从真实大陆 IP 裸连代理 → 部分代理直接 403「Mainland China IP banned」。
 //
-// 因此接管前先做一次「安全探测」:用该号的 proxyUrl 经代理 GET 一个【中立回显 IP 服务】
-// (不是 Anthropic,全程不碰官方、不带 token,零封号风险),看能不能从代理出去:
-//   - 200 + 拿到出口 IP → 链路通,放行接管;
-//   - CONNECT 403 / banned → 代理拒了你的来源 IP → 拒绝接管,提示开 TUN;
-//   - 连不上 / 超时          → 代理被墙或挂了 → 拒绝接管(fail-closed:没通过不准接管)。
+// 判据 = 「经该号的 proxyUrl 能不能裸 CONNECT 上【该产品的官方 host】」:
+//   - CONNECT 通       → 真实流量这条路走得通、出口就是代理 IP,放行接管;
+//   - CONNECT 403/ban  → 代理按来源 IP 拒了你 → 拒绝接管,提示开 TUN;
+//   - 连不上 / 超时     → 代理被墙或挂了 → 拒绝接管(fail-closed:没通过不准接管)。
 //
-// 关键:回显服务看到的来源 IP == Anthropic 将来会看到的 IP(同一台代理连出去的),所以这一探
-// 精确回答了「能不能从代理 IP 出去」,且不需要任何自建服务端。
+// 为什么探官方 host、而不是 GET 第三方回显站(ipify/ifconfig):真实流量就是经这条代理去官方,
+// CONNECT 官方才精确回答「能不能从代理出去到官方」;第三方回显站会因自身限流/抖动误判,把本可
+// 成功的接管拦掉(这正是之前频繁误拦的根因)。CONNECT 全程不带 token、建通即关,零封号风险。
+//
+// 容错:失败重试到 egressProbeAttempts 次;http(s) 代理先试 SOCKS5 再回落原协议(部分住宅代理
+// 实际走 socks5),探通后把可用协议写入 scheme 缓存,供真实出口路径(resolveEgressProxyURL)复用。
 
-var (
-	// errEgressBanned:代理在入口按来源 IP 拒绝(403 / banned),通常是没开 TUN、真实大陆 IP 裸连。
-	errEgressBanned = errors.New("出口代理拒绝来源 IP(banned)")
-	// errEgressNoExit:200 但没回显出 IP —— 视作不可信,按未通过处理。
-	errEgressNoExit = errors.New("回显服务未返回出口 IP")
-)
+// errEgressBanned:代理在入口按来源 IP 拒绝(403 / banned),通常是没开 TUN、真实大陆 IP 裸连。
+var errEgressBanned = errors.New("出口代理拒绝来源 IP(banned)")
 
-// egressEchoEndpoints:中立的「回显调用方 IP」服务,纯文本返回一行 IP。主 + 备,避免单点挂掉误判。
-var egressEchoEndpoints = []string{
-	"https://api.ipify.org",
-	"https://ifconfig.me/ip",
-}
+// egressProbeTimeout:单次出口可达性探测(CONNECT)的超时。设大一点更宽容,容住宅代理的高时延。
+const egressProbeTimeout = 12 * time.Second
 
-// egressPreflightTimeout:单个回显端点的超时。两个端点串行,最坏 ~2×。设小是为了让 UI 不久等。
-const egressPreflightTimeout = 6 * time.Second
+// egressProbeAttempts:出口可达性探测的最大尝试次数。代理/网络偶发抖动是常态,一次没过就拦太脆
+// —— 失败重试,任一次通过即放行,显著减少误拦。
+const egressProbeAttempts = 3
 
 // looksBanned 判断错误/响应文本是否是「按来源 IP 封禁」类信号(大小写无关)。
 // 覆盖 CONNECT 403、显式 banned、以及上游那台代理给的「Mainland China IP ... banned」。
@@ -57,7 +51,8 @@ func looksBanned(s string) bool {
 	return false
 }
 
-// classifyEgressError 把 client.Do 的传输层错误归类:像封禁 → errEgressBanned;否则原样包成「连不通」。
+// classifyEgressError 把一次代理探测的传输层错误归类:像「按来源 IP 封禁(403/banned)」→
+// errEgressBanned;其它原样返回(连不通/超时)。前缀由上层用户文案统一负责,这里不再包装。
 func classifyEgressError(err error) error {
 	if err == nil {
 		return nil
@@ -65,126 +60,78 @@ func classifyEgressError(err error) error {
 	if looksBanned(err.Error()) {
 		return errEgressBanned
 	}
-	return fmt.Errorf("账号出口代理连不通: %w", err)
+	return err
 }
 
-// egressPreflight 用账号代理 proxyURL 经代理 GET 回显服务,返回探到的出口 IP。
-// 优先尝试 SOCKS5，失败则回落到原本的 HTTP 协议。
-// 失败返回 ("", err):errEgressBanned=被代理按 IP 拒;其它=连不通/超时/异常。
-func egressPreflight(proxyURL string) (string, error) {
-	scheme, u, err := parseEgressProxy(proxyURL)
-	if err != nil || scheme == "" {
-		return "", fmt.Errorf("无效的账号出口代理地址: %v", err)
+// productProbeTarget 返回各产品出口可达性探测的目标 host:port(真实流量要去的官方)。
+// 返回 "" 表示未知产品(不探)。
+func productProbeTarget(product string) string {
+	switch product {
+	case "anthropic":
+		return "api.anthropic.com:443"
+	case "codex":
+		return "chatgpt.com:443"
+	case "antigravity":
+		return "cloudcode-pa.googleapis.com:443"
+	default:
+		return ""
 	}
+}
 
-	host := u.Host
-	maskedOrig := maskProxyURL(proxyURL)
+// dialProbeOnce 经代理对 target 建一次裸 CONNECT,建通即关(不带 token、不发请求,零封号风险)。
+func dialProbeOnce(target, proxyURL string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), egressProbeTimeout)
+	defer cancel()
+	conn, err := dialRawThroughProxy(ctx, target, proxyURL)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
 
-	// 如果原本是 HTTP(S)，优先尝试转换为 SOCKS5 协议探测
+// egressReachable 经账号代理对 target(官方 host:port)做裸 CONNECT 可达性探测,带重试与协议回落。
+// 返回 nil=可达(放行);errEgressBanned=被代理按来源 IP 拒(需开 TUN);其它=连不通/超时。
+func egressReachable(target, proxyURL string) error {
+	scheme, u, perr := parseEgressProxy(proxyURL)
+	if perr != nil || scheme == "" {
+		return fmt.Errorf("无效的账号出口代理地址: %v", perr)
+	}
+	// 候选协议:http(s) 代理先试 SOCKS5 再回落原协议;本就是 socks5 直接用。
+	candidates := []string{proxyURL}
 	if scheme == "http" || scheme == "https" {
 		socksURL := "socks5://"
 		if u.User != nil {
 			socksURL += u.User.String() + "@"
 		}
 		socksURL += u.Host
-		_, socksU, socksErr := parseEgressProxy(socksURL)
-		if socksErr == nil && socksU != nil {
-			maskedSocks := maskProxyURL(socksURL)
-			Log("[egress-gate] 优先尝试使用 SOCKS5 协议连接代理: %s", maskedSocks)
-			ip, err := egressPreflightDirect(socksU)
-			if err == nil {
-				Log("[egress-gate] SOCKS5 探测成功, 已缓存使用 SOCKS5 协议。出口 IP=%s", ip)
-				setProxySchemeCache(host, "socks5")
-				return ip, nil
-			}
-			Log("[egress-gate] SOCKS5 探测未成功 (%v), 回落尝试原 HTTP 协议: %s", err, maskedOrig)
-		}
+		candidates = []string{socksURL, proxyURL}
 	}
 
-	// 执行原本的/直连协议探测
-	ip, err := egressPreflightDirect(u)
-	if err == nil {
-		setProxySchemeCache(host, scheme)
-		return ip, nil
-	}
-	return "", err
-}
-
-// egressPreflightDirect 直连账号代理做回显探测。
-func egressPreflightDirect(acctU *url.URL) (string, error) {
-	client := &http.Client{
-		Timeout: egressPreflightTimeout,
-		Transport: &http.Transport{
-			Proxy:                 http.ProxyURL(acctU),
-			TLSHandshakeTimeout:   egressPreflightTimeout,
-			ResponseHeaderTimeout: egressPreflightTimeout,
-			DisableKeepAlives:     true,
-		},
-	}
 	var lastErr error
-	for _, endpoint := range egressEchoEndpoints {
-		ip, perr := egressProbeOnce(client, endpoint)
-		if perr == nil {
-			return ip, nil
+	for attempt := 1; attempt <= egressProbeAttempts; attempt++ {
+		for _, cand := range candidates {
+			err := dialProbeOnce(target, cand)
+			if err == nil {
+				// 记下能用的协议,供真实出口路径(resolveEgressProxyURL)复用,省去再探。
+				if cScheme, cu, e := parseEgressProxy(cand); e == nil && cu != nil {
+					setProxySchemeCache(cu.Host, cScheme)
+				}
+				return nil
+			}
+			// 「被按来源 IP 拒(403/banned)」是确定性结论:换协议/重试都一样,立即返回。
+			if cerr := classifyEgressError(err); errors.Is(cerr, errEgressBanned) {
+				return errEgressBanned
+			}
+			lastErr = err
 		}
-		// 明确「被 ban」是确定性结论(换个回显端点也一样),无需再试备用,直接返回。
-		if errors.Is(perr, errEgressBanned) {
-			return "", perr
-		}
-		lastErr = perr
+		Log("[egress-gate] 出口可达性探测第 %d/%d 次未通过(target=%s, proxy=%s):%v",
+			attempt, egressProbeAttempts, target, maskProxyURL(proxyURL), lastErr)
 	}
 	if lastErr == nil {
-		lastErr = errors.New("账号出口探测失败")
+		lastErr = errors.New("出口可达性探测失败")
 	}
-	return "", lastErr
-}
-
-// egressProbeOnce 对单个回显端点探一次,解析出口 IP 或归类错误。
-func egressProbeOnce(client *http.Client, endpoint string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", classifyEgressError(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-	if resp.StatusCode == http.StatusOK {
-		ip := strings.TrimSpace(string(body))
-		if ip == "" {
-			return "", errEgressNoExit
-		}
-		return ip, nil
-	}
-	if resp.StatusCode == http.StatusForbidden || looksBanned(string(body)) {
-		return "", errEgressBanned
-	}
-	return "", fmt.Errorf("回显服务返回 HTTP %d", resp.StatusCode)
-}
-
-// anthropicProbeTarget:anthropic 真实可达性探测的目标(host:port)。
-const anthropicProbeTarget = "api.anthropic.com:443"
-
-// egressAnthropicReachable 经账号代理对 api.anthropic.com:443 做一次【裸 CONNECT】
-func egressAnthropicReachable(proxyURL string) error {
-	if strings.TrimSpace(proxyURL) == "" {
-		return errors.New("anthropic 出口探测拒绝：无出口代理，不允许从本机直连")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), egressPreflightTimeout)
-	defer cancel()
-
-	resolvedURL := resolveEgressProxyURL(proxyURL)
-	masked := maskProxyURL(resolvedURL)
-	Log("[egress-gate] 对 api.anthropic.com 进行可达性探测, proxy=%s", masked)
-
-	conn, err := dialRawThroughProxy(ctx, anthropicProbeTarget, resolvedURL)
-	if err != nil {
-		return err
-	}
-	_ = conn.Close()
-	return nil
+	return lastErr
 }
 
 // ─── 接管闸:把出口探测接到 InjectSelected 上 ────────────────────────────────
@@ -193,7 +140,7 @@ func egressAnthropicReachable(proxyURL string) error {
 // 而不是泛化的「操作失败」。前端会剥掉本前缀再展示。
 const egressGateMarker = "EGRESS_BLOCKED:"
 
-// egressInfoForTakeover 取目标产品当前账号 of 出口策略(proxyUrl + egressRequired)。
+// egressInfoForTakeover 取目标产品当前账号的出口策略(proxyUrl + egressRequired)。
 // 走各自 leaser 的 LeaseToken(force=false,复用缓存):这是控制面请求(走 api.bcai.lol),
 // 即使账号出口代理被 ban 也能拿到 —— 我们正是要先拿到 proxyUrl 才能去探它。
 func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
@@ -222,15 +169,13 @@ func egressInfoForTakeover(product string, cfg Config) (EgressInfo, error) {
 	}
 }
 
-// enforceEgressGate 是接管的硬前置闸:配了静态出口代理的产品,出口探测必须通过,否则拒绝接管。
+// enforceEgressGate 是接管的硬前置闸:配了静态出口代理的产品,出口可达性探测必须通过,否则拒绝接管。
 // 返回 nil=放行;返回 error=拒绝(带 egressGateMarker)。
 //
 // 闸判定的依据是【产品】(anthropic/codex/antigravity),与卡的类型无关 —— 池子卡和绑定卡
 // 一视同仁:池子卡接管时一样会先租到一个号、拿到【那个号的 proxyUrl】再探,探不通照样拒。
-// 不存在「池子卡免检」。
 //
-// product=="" 只在「接管目标映射不到任何已知产品」时发生(targetRequiredProduct 的 default
-// 分支),是防御性兜底,正常流程走不到 —— 真·未知目标早在 findTakeoverTarget 就被过滤掉了。
+// product=="" 只在「接管目标映射不到任何已知产品」时发生(防御性兜底,正常流程走不到)。
 func enforceEgressGate(product string, cfg Config) error {
 	if product == "" {
 		return nil
@@ -244,34 +189,33 @@ func enforceEgressGate(product string, cfg Config) error {
 	}
 	proxyURL := strings.TrimSpace(eg.ProxyURL)
 	if proxyURL == "" {
-		// 没配静态出口代理:required(anthropic)硬拒(否则会从真实 IP 直连官方);optional 放行(本就无静态 IP 可保护)。
+		// 没下发静态出口代理:required(anthropic 恒 required)硬拒(否则会从真实 IP 直连官方);
+		// optional(codex/antigravity 没绑代理)放行 —— 本就无静态 IP 可保护,不必探。
 		if eg.EgressRequired {
 			return fmt.Errorf("%s「%s」账号未下发静态出口代理,无法安全接管 —— 接管后会从你的真实 IP 直连官方,有封号风险。请联系运营在后台为该号配置出口代理。",
 				egressGateMarker, label)
 		}
+		Log("[egress-gate] %s 无出口代理且非 required,放行(不探)。", product)
 		return nil
 	}
-	exitIP, perr := egressPreflight(proxyURL)
-	if perr != nil {
-		if errors.Is(perr, errEgressBanned) {
-			Log("[egress-gate] %s 出口探测被拒(banned),拦截接管。proxy=%s", product, maskProxyURL(proxyURL))
+
+	// 有静态代理:判据 = 经这条代理能不能 CONNECT 上该产品官方。真实流量就走这条路。
+	target := productProbeTarget(product)
+	if target == "" {
+		Log("[egress-gate] %s 无已知探测目标,放行(防御兜底)。", product)
+		return nil
+	}
+	Log("[egress-gate] %s 出口可达性探测开始 target=%s, proxy=%s", product, target, maskProxyURL(proxyURL))
+	if rerr := egressReachable(target, proxyURL); rerr != nil {
+		if errors.Is(rerr, errEgressBanned) {
+			Log("[egress-gate] %s 出口被拒(banned),拦截接管。proxy=%s", product, maskProxyURL(proxyURL))
 			return fmt.Errorf("%s接管已拦截:你的网络出口是大陆 IP、被账号代理拒绝(banned)。\n\n请先在 Clash / Mihomo 里开启【TUN 模式(建议全局)】,让流量从境外节点出去,再重新接管。\n否则你的真实 IP 会暴露给官方,有封号风险。",
 				egressGateMarker)
 		}
-		Log("[egress-gate] %s 出口探测失败,拦截接管:%v。proxy=%s", product, perr, maskProxyURL(proxyURL))
-		return fmt.Errorf("%s接管已拦截:账号出口代理连不通(%v)。\n\n为避免从你的真实 IP 直连官方被封号,未通过出口检查就不允许接管。请检查网络 / 开启 TUN 后重试。",
-			egressGateMarker, perr)
+		Log("[egress-gate] %s 出口可达性探测失败,拦截接管:%v。proxy=%s", product, rerr, maskProxyURL(proxyURL))
+		return fmt.Errorf("%s接管已拦截:经账号代理连不到 %s(%v)。\n\n请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n若换了节点仍连不上,可能是当前机场已被列入黑名单,需自行更换机场。",
+			egressGateMarker, strings.TrimSuffix(target, ":443"), rerr)
 	}
-	Log("[egress-gate] %s 出口探测通过,代理出口 IP=%s", product, exitIP)
-	// anthropic 额外做一次【真实目标】可达性探测:ipify 通不代表 anthropic 通(节点可能对 anthropic
-	// 定向拦截/污染)。走和真实请求相同的出口路径裸 CONNECT,失败就拒绝接管、提示换节点。
-	if product == "anthropic" {
-		if aerr := egressAnthropicReachable(proxyURL); aerr != nil {
-			Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测失败,拦截接管:%v。proxy=%s", product, aerr, maskProxyURL(proxyURL))
-			return fmt.Errorf("%s接管已拦截:出口能上网,但连不到 api.anthropic.com(%v)。\n\n多半是当前代理节点对 anthropic 做了拦截/污染,请按顺序排查:\n1. 确认 Clash 已开启 TUN 模式(建议全局);\n2. 换一个干净的境外节点(日本/新加坡等)后重试。\n\n若换了节点仍连不上,可能是当前机场已被列入黑名单,需自行更换机场。",
-				egressGateMarker, aerr)
-		}
-		Log("[egress-gate] %s 到 api.anthropic.com 的 CONNECT 探测通过", product)
-	}
+	Log("[egress-gate] %s 出口可达性探测通过,放行接管。proxy=%s", product, maskProxyURL(proxyURL))
 	return nil
 }

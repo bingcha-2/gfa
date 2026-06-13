@@ -113,9 +113,9 @@ export default function ClaudeAccountsPage() {
   const [oauthStatusText, setOauthStatusText] = useState("");
   const [oauthSubmitting, setOauthSubmitting] = useState(false);
 
-  // 一键导入：email----password----sessionKey----proxyUrl----adspowerProfileId
+  // 一键导入：支持原 mail 格式与新 gmail 格式的多行或单行导入
   const [importLine, setImportLine] = useState("");
-  const [importParsed, setImportParsed] = useState<{ email: string; password: string; sessionKey: string; proxyUrl: string; adspowerProfileId?: string } | null>(null);
+  const [importParsed, setImportParsed] = useState<{ email: string; password: string; recoveryEmail?: string; totpSecret?: string; sessionKey: string; proxyUrl: string; adspowerProfileId?: string } | null>(null);
   const [imapFetching, setImapFetching] = useState(false);
   const [imapResult, setImapResult] = useState<{ url?: string; error?: string; date?: string } | null>(null);
   const [followingLink, setFollowingLink] = useState(false);
@@ -264,23 +264,63 @@ export default function ClaudeAccountsPage() {
   }
 
   function parseImportLine(line: string) {
-    const parts = line.trim().split("----");
-    if (parts.length < 3) return null;
+    const text = line.trim();
+    if (!text) return null;
 
-    let email = parts[0]?.trim() || "";
-    let password = parts[1]?.trim() || "";
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return null;
+
+    let email = "";
+    let password = "";
+    let recoveryEmail = "";
+    let totpSecret = "";
     let sessionKey = "";
 
-    // Support the format: NaylorAshleyddb@programmer.net----Okj5nWGj6d92----4a86b48f50bcc241a6e60e1d0b2f73c5----6321e855-a0af-40ca-95c3-bacfcfd43637----sk-ant-sid02-...
-    if (parts.length >= 5 && parts[4].trim().startsWith("sk-ant-")) {
-      sessionKey = parts[4].trim();
-    } else {
-      sessionKey = parts[2]?.trim() || "";
+    // 1. Detect if any line is a sessionKey
+    const sessionKeyLine = lines.find(l => l.startsWith("sk-ant-") || l.includes("sk-ant-"));
+    if (sessionKeyLine) {
+      sessionKey = sessionKeyLine.match(/sk-ant-sid02-[A-Za-z0-9\-_]+/)?.[0] || sessionKeyLine;
+    }
+
+    // 2. Parse the credentials line
+    const credsLine = lines.find(l => l.includes("@") && !l.startsWith("sk-ant-")) || lines[0];
+    if (credsLine) {
+      const parts = credsLine.split(/----+|---+|--/);
+      if (parts.length >= 2) {
+        email = parts[0]?.trim() || "";
+        password = parts[1]?.trim() || "";
+
+        for (let i = 2; i < parts.length; i++) {
+          const part = parts[i].trim();
+          if (!part) continue;
+
+          if (part.startsWith("sk-ant-")) {
+            sessionKey = part;
+          } else if (part.includes("@")) {
+            recoveryEmail = part;
+          } else if (part.length >= 16 && part.length <= 40 && /^[a-zA-Z2-7]+$/.test(part)) {
+            totpSecret = part;
+          } else {
+            if (parts.length === 3 && i === 2 && !sessionKey) {
+              sessionKey = part;
+            }
+          }
+        }
+      }
+    }
+
+    if (!sessionKey && lines.length > 1) {
+      const lastLine = lines[lines.length - 1];
+      if (lastLine.startsWith("sk-ant-") || lastLine.length > 50) {
+        sessionKey = lastLine;
+      }
     }
 
     return {
       email,
       password,
+      recoveryEmail,
+      totpSecret,
       sessionKey,
       proxyUrl: toSocks5(importProxyUrl),
       adspowerProfileId: "k1bvbavq", // 固定选择 k1bvbavq
@@ -290,7 +330,7 @@ export default function ClaudeAccountsPage() {
   function handleImportParse() {
     const parsed = parseImportLine(importLine);
     if (!parsed || !parsed.email || !parsed.password) {
-      toast.error("格式不对，必须至少包含：邮箱----密码----sessionKey");
+      toast.error("格式不对，必须至少包含：邮箱----密码");
       return;
     }
     setImportParsed(parsed);
@@ -395,6 +435,8 @@ export default function ClaudeAccountsPage() {
           proxyUrl: importParsed.proxyUrl,
           adspowerProfileId: importParsed.adspowerProfileId,
           sessionKey: importParsed.sessionKey,
+          recoveryEmail: importParsed.recoveryEmail,
+          totpSecret: importParsed.totpSecret,
         }),
       });
       const start = await res.json().catch(() => ({ ok: false, error: "响应解析失败" }));
@@ -692,12 +734,13 @@ export default function ClaudeAccountsPage() {
           {/* Step 1: 粘贴解析 */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Field className="flex-1">
-              <FieldLabel>账号行 (5段或3段)</FieldLabel>
-              <Input
-                placeholder="邮箱----密码----[其它无效段]----[其它无效段]----sessionKey"
+              <FieldLabel>账号行 (支持多行/多格式粘贴)</FieldLabel>
+              <Textarea
+                placeholder="支持格式如：&#10;邮箱---密码---恢复邮箱---TOTP密钥&#10;sessionKey"
                 value={importLine}
                 onChange={(e) => setImportLine(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleImportParse(); }}
+                onBlur={() => { if (importLine) handleImportParse(); }}
+                rows={3}
               />
             </Field>
             <Field className="sm:w-80">
@@ -717,6 +760,12 @@ export default function ClaudeAccountsPage() {
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
                 <span>邮箱: <span className="text-foreground">{importParsed.email}</span></span>
                 <span>密码: <span className="text-foreground">***</span></span>
+                {importParsed.recoveryEmail ? (
+                  <span>恢复邮箱: <span className="text-foreground">{importParsed.recoveryEmail}</span></span>
+                ) : null}
+                {importParsed.totpSecret ? (
+                  <span>TOTP密钥: <span className="text-foreground">{importParsed.totpSecret}</span></span>
+                ) : null}
                 <span>代理: <span className="text-foreground">{importParsed.proxyUrl || "无"}</span></span>
                 {importParsed.adspowerProfileId ? (
                   <span>浏览器号: <span className="text-foreground">{importParsed.adspowerProfileId}</span></span>

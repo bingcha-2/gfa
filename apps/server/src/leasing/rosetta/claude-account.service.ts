@@ -138,6 +138,14 @@ export class ClaudeAccountService {
       if (payload.accessTokenExpiresAt) existing.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl !== undefined) existing.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       if (payload.mailPassword) existing.mailPassword = String(payload.mailPassword);
+      if (payload.recoveryEmail !== undefined) {
+        if (payload.recoveryEmail) existing.recoveryEmail = String(payload.recoveryEmail).trim();
+        else delete existing.recoveryEmail;
+      }
+      if (payload.totpSecret !== undefined) {
+        if (payload.totpSecret) existing.totpSecret = String(payload.totpSecret).trim();
+        else delete existing.totpSecret;
+      }
       if (payload.adspowerProfileId !== undefined) {
         if (payload.adspowerProfileId) existing.adspowerProfileId = String(payload.adspowerProfileId).trim();
         else delete existing.adspowerProfileId;
@@ -158,6 +166,8 @@ export class ClaudeAccountService {
       if (payload.accessTokenExpiresAt) record.accessTokenExpiresAt = Number(payload.accessTokenExpiresAt);
       if (payload.proxyUrl) record.proxyUrl = this.normalizeProxyUrl(payload.proxyUrl);
       if (payload.mailPassword) record.mailPassword = String(payload.mailPassword);
+      if (payload.recoveryEmail) record.recoveryEmail = String(payload.recoveryEmail).trim();
+      if (payload.totpSecret) record.totpSecret = String(payload.totpSecret).trim();
       if (payload.adspowerProfileId) record.adspowerProfileId = String(payload.adspowerProfileId).trim();
       accounts.push(record);
     }
@@ -433,23 +443,45 @@ export class ClaudeAccountService {
     const method = String(payload?.method || "web").toLowerCase();
     const host = payload?.host ? String(payload.host).trim() : undefined;
     const port = payload?.port ? Number(payload.port) : undefined;
-    // Only accept a link received at/after sinceMs (defends against stale links
-    // from a prior login). waitMs polls for the email to arrive after trigger,
-    // capped so a single request never outlives the dev proxy's socket timeout
-    // (a long-held request shows up as ECONNRESET → HTML 500 → JSON parse error
-    // on the client). The frontend polls across multiple short requests instead.
+    const proxyUrl = payload?.proxyUrl ? String(payload.proxyUrl).trim() : undefined;
+    
+    const maxWait = payload?.maxWaitMs ? Number(payload.maxWaitMs) : 12_000;
     const sinceMs = payload?.sinceMs ? Number(payload.sinceMs) : undefined;
-    const waitMs = payload?.waitMs ? Math.min(Number(payload.waitMs) || 0, 12_000) : undefined;
+    const waitMs = payload?.waitMs ? Math.min(Number(payload.waitMs) || 0, maxWait) : undefined;
 
-    if (method === "imap") {
-      return fetchAnthropicMagicLink({ email, password, host, port });
+    const domain = email.split("@")[1]?.toLowerCase() || "";
+    const isMailComLike = ["mail.com", "programmer.net", "email.com", "post.com", "techie.com", "myself.com", "writeme.com"].includes(domain);
+    const resolvedMethod = isMailComLike ? method : "imap";
+    const resolvedHost = host || (domain === "gmail.com" ? "imap.gmail.com" : `imap.${domain}`);
+    const resolvedPort = port || 993;
+
+    if (resolvedMethod === "imap") {
+      // Add polling loop for general IMAP since fetchAnthropicMagicLink connects once
+      const deadline = Date.now() + (waitMs && waitMs > 0 ? waitMs : 0);
+      let lastError = "未获取到 mail";
+      for (;;) {
+        const r = await fetchAnthropicMagicLink({ email, password, host: resolvedHost, port: resolvedPort, proxyUrl });
+        if (r.ok && r.url) {
+          const emailTime = r.date ? Date.parse(r.date) : 0;
+          if (!sinceMs || emailTime >= sinceMs - 60_000) {
+            return r;
+          }
+          lastError = "邮件时间早于本次发起时间（旧邮件）";
+        } else {
+          lastError = r.error || "未获取到 magic link";
+        }
+        if (Date.now() >= deadline) {
+          return { ok: false, error: lastError };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
     }
 
     const web = await fetchAnthropicMagicLinkViaWeb({ email, password, sinceMs, waitMs });
-    if (web.ok || method === "web") return web;
+    if (web.ok || resolvedMethod === "web") return web;
 
     // method=auto: fall back to IMAP if web scraping failed
-    const imap = await fetchAnthropicMagicLink({ email, password, host, port });
+    const imap = await fetchAnthropicMagicLink({ email, password, host: resolvedHost, port: resolvedPort, proxyUrl });
     return imap.ok ? imap : { ok: false, error: `web: ${web.error}; imap: ${imap.error}` };
   }
 
@@ -476,31 +508,43 @@ export class ClaudeAccountService {
     proxyUrl: string;
     adspowerProfileId?: string;
     sessionKey?: string;
+    recoveryEmail?: string;
+    totpSecret?: string;
   }) {
     const { email, password, proxyUrl } = payload;
     if (!email) return { ok: false, error: "email 必填" };
 
     let adspowerProfileId = payload.adspowerProfileId;
-    if (!adspowerProfileId) {
-      const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
-      const data = readJson(filePath, { accounts: [] });
-      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-      const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
-      if (existing && existing.adspowerProfileId) {
+    let recoveryEmail = payload.recoveryEmail;
+    let totpSecret = payload.totpSecret;
+
+    const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
+    const data = readJson(filePath, { accounts: [] });
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+
+    if (existing) {
+      if (!adspowerProfileId && existing.adspowerProfileId) {
         adspowerProfileId = existing.adspowerProfileId;
+      }
+      if (!recoveryEmail && existing.recoveryEmail) {
+        recoveryEmail = existing.recoveryEmail;
+      }
+      if (!totpSecret && existing.totpSecret) {
+        totpSecret = existing.totpSecret;
       }
     }
 
     if (!adspowerProfileId && !proxyUrl) {
       return { ok: false, error: "未使用指纹浏览器时，proxyUrl 必填" };
     }
-    if (!password) return { ok: false, error: "password 必填(用于 mail.com 网页抓取)" };
+    if (!password) return { ok: false, error: "password 必填(用于抓取 magic link)" };
 
     const taskId = base64Url(crypto.randomBytes(12));
     this.autoOAuthTask = { taskId, phase: "starting", status: "running" };
 
     // Fire and forget — caller polls via getAutoOAuthStatus
-    this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId).catch((err) => {
+    this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId, recoveryEmail, totpSecret).catch((err) => {
       if (this.autoOAuthTask?.taskId === taskId) {
         this.autoOAuthTask.status = "error";
         this.autoOAuthTask.error = String(err?.message || err);
@@ -525,7 +569,15 @@ export class ClaudeAccountService {
     };
   }
 
-  private async runAutoOAuth(taskId: string, email: string, password: string, proxyUrl?: string, adspowerProfileId?: string) {
+  private async runAutoOAuth(
+    taskId: string,
+    email: string,
+    password: string,
+    proxyUrl?: string,
+    adspowerProfileId?: string,
+    recoveryEmail?: string,
+    totpSecret?: string,
+  ) {
     const task = this.autoOAuthTask!;
     const step = (phase: string) => {
       if (task.taskId !== taskId) return;
@@ -554,8 +606,11 @@ export class ClaudeAccountService {
       const trigger = await triggerMagicLinkViaBrowser({
         authorizeUrl: pending.authUrl,
         email,
+        password,
         proxyUrl,
         adspowerProfileId,
+        recoveryEmail,
+        totpSecret,
       });
       if (!trigger.ok || !trigger.session) {
         throw new Error(trigger.error || "浏览器触发失败");
@@ -563,24 +618,35 @@ export class ClaudeAccountService {
       this.playwrightSession = trigger.session;
       step(`email submitted (${((Date.now() - triggerStart) / 1000).toFixed(1)}s), waiting for magic link email`);
 
-      // 3. Fetch magic link from mail.com (poll up to 90s)
-      step("fetching magic link from mailbox");
-      const sinceMs = triggerStart - 30_000;
-      const mailResult = await fetchAnthropicMagicLinkViaWeb({
-        email,
-        password,
-        sinceMs,
-        waitMs: 90_000,
-      });
-      if (!mailResult.ok || !mailResult.url) {
-        await this.playwrightSession.close().catch(() => {});
-        this.playwrightSession = null;
-        throw new Error(mailResult.error || "未获取到 magic link");
+      const domain = email.split("@")[1]?.toLowerCase() || "";
+      const isGmail = domain === "gmail.com";
+
+      let mailResultUrl = "";
+      if (!isGmail) {
+        // 3. Fetch magic link from mailbox (poll up to 90s)
+        step("fetching magic link from mailbox");
+        const sinceMs = triggerStart - 30_000;
+        const mailResult = await this.fetchClaudeMagicLink({
+          email,
+          password,
+          sinceMs,
+          waitMs: 90_000,
+          maxWaitMs: 90_000,
+          proxyUrl,
+        });
+        if (!mailResult.ok || !mailResult.url) {
+          await this.playwrightSession.close().catch(() => {});
+          this.playwrightSession = null;
+          throw new Error(mailResult.error || "未获取到 magic link");
+        }
+        mailResultUrl = mailResult.url;
+        step("got magic link, consuming in browser");
+      } else {
+        step("gmail account logged in directly, bypassing magic link fetch");
       }
-      step("got magic link, consuming in browser");
 
       // 4. Consume magic link in browser → OAuth code
-      const consume = await this.playwrightSession.consumeMagicLink(mailResult.url, 60_000);
+      const consume = await this.playwrightSession.consumeMagicLink(mailResultUrl, 60_000);
       await this.playwrightSession.close().catch(() => {});
       this.playwrightSession = null;
 

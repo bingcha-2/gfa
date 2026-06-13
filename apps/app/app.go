@@ -185,6 +185,15 @@ func (a *App) GetStats() map[string]interface{} {
 		PendingReports: GetLeaser().pendingCount() + GetClaudeLeaser().pendingCount() + GetCodexLeaser().pendingCount(),
 	})...)
 
+	// 端口兜底:首选端口被外部程序占用、已自动切换到备用端口并重注入 → 带一条一次性提示
+	// (读取即清,前端 toast 显示一次),让用户知道端口变了。
+	if n := takeProxyNotice(); n != "" {
+		notifications = append(notifications, Notification{
+			Level: "transient", Category: "startup", Recoverable: true,
+			Message: n, DedupKey: "proxy-port-switch", Source: "proxy",
+		})
+	}
+
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
 	chartMode := "daily"
 	if !usageStats.HasMultipleDays() {
@@ -286,8 +295,8 @@ func (a *App) SaveCodexRelayConfig(mode, baseURL, apiKey, protocol string, model
 
 // GetIDEStatus 获取 IDE 注入状态
 func (a *App) GetIDEStatus() IDEStatus {
-	cfg := LoadConfig()
-	return DetectIDEProducts(cfg.ProxyPort)
+	// 用实际绑定端口(可能因端口兜底而非首选),保证注入状态检测对得上。
+	return DetectIDEProducts(effectiveProxyPort())
 }
 
 // DetectedPaths 返回自动检测到的路径

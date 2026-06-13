@@ -153,6 +153,18 @@ export class RosettaController {
     return this.rosetta.submitCodexOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
   }
 
+  // 自动上号(接码):浏览器自动完成 OpenAI 登录+短信接码,异步任务+轮询。
+  // body = { email, password, totpSecret?, phoneNumber, smsUrl, proxyUrl }
+  @Post("codex-auto-login")
+  startAutomatedCodexLogin(@Body() body: any) {
+    return this.rosetta.startAutomatedCodexLogin(body);
+  }
+
+  @Get("codex-auto-login-status")
+  getAutomatedCodexLoginStatus(@Query("jobId") jobId?: string) {
+    return this.rosetta.getAutomatedCodexLoginStatus(String(jobId || ""));
+  }
+
   @Post("codex-toggle-account")
   toggleCodexAccount(@Body() body: any) {
     return this.rosetta.toggleCodexAccount(body);
