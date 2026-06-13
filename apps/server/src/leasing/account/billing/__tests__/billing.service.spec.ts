@@ -31,7 +31,9 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
 }
 
 function buildService(prisma: any) {
-  return new BillingService(prisma);
+  // 这些用例只测下单查询/列表(仅用 prisma);catalog/rosetta 用不到,传桩满足 3 参构造
+  // (目录下单与座位预检在 billing.service.catalog.spec.ts 覆盖)。
+  return new BillingService(prisma, {} as any, {} as any);
 }
 
 describe("BillingService.getOrder", () => {
