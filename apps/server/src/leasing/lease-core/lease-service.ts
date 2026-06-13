@@ -796,7 +796,10 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   }
 
   async reportResult(req: any, payload: any) {
-    const auth = await this.accessKeyStore.resolveFromRequest(req, payload);
+    // 多订阅修复:report 也按本线固定 product 解析订阅(与 leaseToken 同口径)。否则 product-less
+    // 解析会在「同一账户持多产品订阅」时选成全局最长寿订阅 → 与 lease 记录的订阅 mismatch、
+    // 用量记到错订阅甚至 403 上报失败(部分产品白嫖 + 统计错乱)。
+    const auth = await this.accessKeyStore.resolveFromRequest(req, payload, { product: this.provider.id });
     // Same machine-code contract as leaseToken for session-JWT failures.
     if (auth.sessionError) {
       throw this.fail(auth.sessionError.statusCode, auth.error || "Unauthorized", {

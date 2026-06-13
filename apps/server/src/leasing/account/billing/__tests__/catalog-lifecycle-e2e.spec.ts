@@ -44,6 +44,8 @@ import { RosettaService } from "../../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../../token-server/access-key-store";
 import { SessionTokenResolver } from "../../../token-server/session-token-resolver";
 import { CustomerTokenService } from "../../customer-auth/customer-token.service";
+import { CustomerAuthService } from "../../customer-auth/customer-auth.service";
+import { CustomerEmailTokenService } from "../../customer-auth/customer-email-token.service";
 import { DeviceService } from "../../device/device.service";
 import { TokenServerService } from "../../../token-server/token-server.service";
 import { RemoteCodexService } from "../../../remote-codex/service/remote-codex.service";
@@ -788,5 +790,133 @@ describe("E2E 目录版手动授予:¥0 PAID GRANT 订单 → 同付费激活入
     expect(c.bindings).toEqual({ anthropic: 1 }); // 钉到唯一 max-20x fixture 号
     const rec = store.findById(sub.id)!;
     expect(rec.requiresBinding).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 场景 9 — 真·全流程一条龙:注册 → 邮箱验证 → 登录 → 设备会话 → 多产品订阅
+//          → 同账户同时租用 → 用量各自统计 → 限流各自独立
+// ════════════════════════════════════════════════════════════════════════════
+describe("E2E 真·一条龙:注册→验证→登录→(真 token)下单→激活→租号 + 多订阅同账户并用 + 统计/限流", () => {
+  // 走真实 CustomerAuthService(真写 customer / email-token、真发验证邮件、真校验凭据)。
+  // 邮件用 mock 捕获:验证 token 明文只在邮件链接里(DB 只存 sha256 hash),模拟"收信点链接"。
+  async function registerVerifyLogin(email: string, password: string, deviceId = "device-1") {
+    const mailbox: Array<{ to: string; subject: string; text: string }> = [];
+    const mailService = { sendMail: vi.fn(async (o: any) => { mailbox.push(o); return { ok: true }; }) } as any;
+    const authService = new CustomerAuthService(
+      prisma as any,
+      customerTokens,
+      new CustomerEmailTokenService(prisma as any),
+      mailService,
+    );
+
+    // ① 注册:真写 customer + 触发 best-effort 验证邮件(fire-and-forget)。
+    await authService.register({ email, password });
+
+    // ② 收验证邮件(异步,等它 flush)→ 从链接抽明文 token → 验证邮箱(真 consume token)。
+    await vi.waitFor(() => expect(mailbox.some((m) => /verify-email/.test(m.text))).toBe(true));
+    const verifyMail = mailbox.find((m) => /verify-email/.test(m.text))!;
+    const token = /token=([0-9a-f]+)/.exec(verifyMail.text)![1];
+    await authService.verifyEmail(token);
+
+    // ③ 登录:凭真实注册的邮箱+密码拿真 accessToken(emailVerified 已翻 true)。
+    const { accessToken, customer } = await authService.login({ email, password });
+    expect(accessToken).toBeTruthy();
+    expect(customer.emailVerified).toBe(true);
+
+    // ④ 设备会话:登录后激活设备 → 带 deviceId 的 session JWT(租号要它,等价客户端激活设备)。
+    const raw = (await prisma.customer.findUnique({ where: { id: customer.id } }))!;
+    const sessionToken = customerTokens.sign({
+      customerId: raw.id, email: raw.email, tokenVersion: raw.tokenVersion, deviceId,
+    });
+    const jti = decodeJwtPayload(sessionToken).jti as string;
+    await prisma.device.create({ data: { customerId: raw.id, deviceId, status: "ACTIVE", sessionJti: jti } });
+    return { customer: raw, sessionToken };
+  }
+
+  const reportUsage = (
+    product: "anthropic" | "codex" | "antigravity",
+    sessionToken: string,
+    leaseId: string,
+    modelKey: string,
+    tokens: number,
+  ) =>
+    leaseServices[product].reportResult(
+      { headers: { authorization: `Bearer ${sessionToken}` } },
+      { leaseId, status: 200, modelKey, inputTokens: tokens, outputTokens: 0, totalTokens: tokens },
+    );
+
+  it("注册→邮箱验证→登录拿真凭据→设备会话→号池下单激活→租号→上报(认证真接套餐链路)", async () => {
+    await publishCatalog();
+    const { customer, sessionToken } = await registerVerifyLogin("alice@e2e.test", "pw-alice-123");
+
+    // 邮箱验证链路真跑通。
+    expect(customer.emailVerified).toBe(true);
+
+    // 用真实注册的客户下单 → 回调激活。
+    const { order, sub } = await purchaseAndActivate(customer.id, {
+      line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1,
+    });
+    expect(order.status).toBe("PAID");
+    expect(sub!.status).toBe("ACTIVE");
+
+    // 用「登录后建立的设备 session token」租号 → 认证闭环到租号。
+    const r = await lease("anthropic", sessionToken, { clientId: "client-A" });
+    expect(r.ok).toBe(true);
+    expect(r.accessToken).toBe("upstream-token");
+
+    // 上报用量计回该订阅。
+    await reportUsage("anthropic", sessionToken, r.leaseId, "claude-sonnet-4-6", 150);
+    expect(store.findById(sub!.id)!.totalTokensUsed).toBe(150);
+  });
+
+  it("一账户多订阅(anthropic号池 + codex绑定 + antigravity号池)→ 同设备 token 同时租用、各命中对应订阅、用量各自统计、ACTIVE 订阅数=3", async () => {
+    await publishCatalog();
+    const { customer, sessionToken } = await registerVerifyLogin("bob@e2e.test", "pw-bob-12345");
+
+    // 三条「内容不同、产品不同、号池/绑定混合」的订阅(等价多张不同卡密)。
+    const subA = (await purchaseAndActivate(customer.id, { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 })).sub!;
+    const subC = (await purchaseAndActivate(customer.id, { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 })).sub!;
+    const subG = (await purchaseAndActivate(customer.id, { line: "pool", products: ["antigravity"], usageTier: "small", deviceLimit: 1 })).sub!;
+
+    // 订阅数统计:该账户 3 条 ACTIVE。
+    expect(await prisma.subscription.count({ where: { customerId: customer.id, status: "ACTIVE" } })).toBe(3);
+    expect(cfg(subA).line).toBe("pool");
+    expect(cfg(subC).line).toBe("bind");
+    expect(cfg(subC).bindings).toEqual({ codex: 1 }); // 绑定钉到唯一 codex fixture 号
+    expect(cfg(subG).line).toBe("pool");
+
+    // 同一设备 token 同时租三个产品 → SessionTokenResolver 按 product 各命中对应订阅。
+    const ra = await lease("anthropic", sessionToken, { clientId: "client-A" });
+    const rc = await lease("codex", sessionToken, { clientId: "client-A" });
+    const rg = await lease("antigravity", sessionToken, { clientId: "client-A" });
+    expect([ra.ok, rc.ok, rg.ok]).toEqual([true, true, true]);
+
+    // 各自上报 → 用量记到各自订阅、互不串(统计无串扰)。
+    await reportUsage("anthropic", sessionToken, ra.leaseId, "claude-sonnet-4-6", 100);
+    await reportUsage("codex", sessionToken, rc.leaseId, "gpt-5-codex", 200);
+    await reportUsage("antigravity", sessionToken, rg.leaseId, "gemini-2.5-pro", 300);
+    expect(store.findById(subA.id)!.totalTokensUsed).toBe(100);
+    expect(store.findById(subC.id)!.totalTokensUsed).toBe(200);
+    expect(store.findById(subG.id)!.totalTokensUsed).toBe(300);
+  });
+
+  it("限流按订阅独立:打满 anthropic 5h 桶 → anthropic 429,同账户 codex/antigravity 仍可租", async () => {
+    await publishCatalog();
+    const { customer, sessionToken } = await registerVerifyLogin("carol@e2e.test", "pw-carol-123");
+    await purchaseAndActivate(customer.id, { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 });
+    await purchaseAndActivate(customer.id, { line: "bind", items: [{ product: "codex", level: "pro" }], shareUsers: 1, deviceLimit: 1 });
+    await purchaseAndActivate(customer.id, { line: "pool", products: ["antigravity"], usageTier: "small", deviceLimit: 1 });
+
+    // 打满 anthropic 5h 桶(灌远超 small 上限 50000 CU 的量)。
+    const ra = await lease("anthropic", sessionToken, { clientId: "client-A" });
+    await reportUsage("anthropic", sessionToken, ra.leaseId, "claude-sonnet-4-6", 200_000);
+
+    // anthropic 限流 429;但 codex / antigravity 是独立订阅 + 独立桶,不受影响。
+    await expect(lease("anthropic", sessionToken, { clientId: "client-A" })).rejects.toMatchObject({
+      statusCode: 429, body: { ok: false },
+    });
+    expect((await lease("codex", sessionToken, { clientId: "client-A" })).ok).toBe(true);
+    expect((await lease("antigravity", sessionToken, { clientId: "client-A" })).ok).toBe(true);
   });
 });
