@@ -35,6 +35,7 @@ import type { Provider } from "./provider";
 export type TokenUsageTracker = {
   record: (event: {
     accessKeyId: string;
+    customerId?: string;
     accessKeyName?: string;
     accountId?: number;
     modelKey: string;
@@ -922,6 +923,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       if (detail.totalTokens > 0) {
         this.tokenUsageTracker.record({
           accessKeyId: cardId,
+          customerId: (auth.record?.customerId as string | undefined),
           accessKeyName: auth.record?.name || undefined,
           accountId: accountId || undefined,
           modelKey: modelKey || "",

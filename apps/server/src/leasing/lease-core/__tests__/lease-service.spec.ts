@@ -593,4 +593,40 @@ describe("LeaseService (generic core)", () => {
     // 出池,但是绑定卡 → 仍然用 1 号(仅绑定卡可用)。
     expect(r.accountId).toBe(1);
   });
+
+  it("写入点把订阅 record 的 customerId 带进用量事件", async () => {
+    const { AccessKeyStore } = await import("../../token-server/access-key-store");
+    const recordSpy = vi.fn();
+    const fakeTracker = {
+      record: recordSpy, flush: vi.fn(), destroy: vi.fn(), getQueueForTesting: () => [],
+    } as any;
+    const store = new AccessKeyStore(accessKeysFilePath);
+    // 池子订阅 record:无 binding → 走 dynamic pool;带 customerId。
+    // keyExpiresAt 设为未来时间确保不过期;key 字段供认证用(session path 用 id 查,key 供 validateRecord)。
+    store.loadSubscriptionRecords([
+      {
+        id: "sub-c1", key: "sub-c1-key", customerId: "cust-42", status: "active",
+        keyExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        products: ["codex"],
+      },
+    ]);
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken),
+      { accessKeysFilePath, accessKeyStore: store, tokenUsageTracker: fakeTracker,
+        now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+    refreshToken.mockResolvedValue("tok");
+    const req = sessionReqFor("sub-c1");
+
+    const lease = await service.leaseToken(req, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+    await service.reportResult(req, {
+      leaseId: lease.leaseId, status: 200, modelKey: "gpt-5-codex",
+      inputTokens: 100, outputTokens: 50, totalTokens: 150,
+    });
+
+    expect(recordSpy).toHaveBeenCalledWith(expect.objectContaining({
+      accessKeyId: "sub-c1", customerId: "cust-42",
+    }));
+  });
 });
