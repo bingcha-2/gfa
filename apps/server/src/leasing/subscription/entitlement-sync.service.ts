@@ -117,6 +117,7 @@ export class EntitlementSyncService {
   private registerRecord(sub: Subscription, config: Record<string, any>): void {
     const record = subscriptionToLimitRecord({
       id: sub.id,
+      customerId: sub.customerId,
       status: sub.status,
       expiresAt: sub.expiresAt,
       config,

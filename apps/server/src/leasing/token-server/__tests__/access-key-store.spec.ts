@@ -635,6 +635,18 @@ describe('AccessKeyStore', () => {
 
   // ── publicStatus ──────────────────────────────────────────────────────
 
+  describe("订阅 record 的 customerId 透传(账户化地基)", () => {
+    it("loadSubscriptionRecords 注册带 customerId 的 record → findById 可取回", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-cust-"));
+      const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+      store.loadSubscriptionRecords([
+        { id: "sub-9", customerId: "cust-9", status: "active", products: ["codex"] },
+      ]);
+      expect(store.findById("sub-9")?.customerId).toBe("cust-9");
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
+  });
+
   describe('publicStatus', () => {
     it('surfaces the card products from bindings (empty = pool card)', async () => {
       const store = makeStore([
