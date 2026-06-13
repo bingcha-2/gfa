@@ -70,19 +70,30 @@ export function AccountBillingCenter({
   onPurchase,
 }: {
   subscriptions: Subscription[] | null;
-  plans: Plan[] | null;
+  /**
+   * Legacy plan list. Omit entirely (catalog-only mode) to render just the
+   * catalog entry link — the sole purchase path now that plan-based orders
+   * are gone. Pass an array only for the legacy plan-card grid.
+   */
+  plans?: Plan[] | null;
   orders: { orders: BillingOrderRecord[]; total: number } | null;
   page: number;
   totalPages: number;
   loadError: boolean;
   onBound: () => void;
   onPage: (page: number) => void;
-  onPurchase: (plan: Plan) => void;
+  onPurchase?: (plan: Plan) => void;
 }) {
   const dict = useDict();
   const b = dict.portalApp.billing;
   const current = bestSubscription(subscriptions);
-  const isLoading = subscriptions === null || plans === null || orders === null;
+  // In catalog-only mode (no `plans` prop) the plan grid is absent, so it never
+  // gates the loading state — only subscriptions + orders do.
+  const catalogOnly = plans === undefined;
+  const isLoading =
+    subscriptions === null ||
+    (!catalogOnly && plans === null) ||
+    orders === null;
   const orderCount = orders?.total ?? 0;
 
   return (
@@ -193,7 +204,7 @@ export function AccountBillingCenter({
           </span>
         </Link>
 
-        {plans === null ? (
+        {catalogOnly ? null : plans === null ? (
           <div className="account-plan-grid">
             <AccountSkeleton className="account-skeleton--plan" />
             <AccountSkeleton className="account-skeleton--plan" />
@@ -224,7 +235,7 @@ export function AccountBillingCenter({
                     {b.deviceLimitLabel}: {fmt(b.deviceLimitValue, { n: plan.deviceLimit })}
                   </span>
                 </div>
-                <AccountButton type="button" onClick={() => onPurchase(plan)}>
+                <AccountButton type="button" onClick={() => onPurchase?.(plan)}>
                   {b.buyNow}
                 </AccountButton>
               </article>

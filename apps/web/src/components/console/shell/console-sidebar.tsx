@@ -183,7 +183,6 @@ export function ConsoleSidebar({
   // ─── 用户管理（客户业务，需求侧）─────────────────────────────────────
   const customerNav: NavItem[] = [
     { id: "customers", title: "客户账户", url: `/${prefix}/customers`, icon: <CircleUserIcon />, permKey: "customers", roleGuard: () => isAdminOrOps },
-    { id: "plans", title: "套餐配置", url: `/${prefix}/plans`, icon: <PackageIcon />, permKey: "plans", roleGuard: () => isAdminOrOps },
     { id: "plan-orders", title: "订单", url: `/${prefix}/plan-orders`, icon: <ReceiptIcon />, permKey: "billing_orders", roleGuard: () => isAdminOrOps },
     { id: "subscriptions", title: "订阅", url: `/${prefix}/subscriptions`, icon: <RefreshCwIcon />, permKey: "subscriptions", roleGuard: () => isAdminOrOps },
     { id: "tickets", title: "工单", url: `/${prefix}/tickets`, icon: <MessageSquareIcon />, permKey: "tickets", roleGuard: () => isAdminOrOps },

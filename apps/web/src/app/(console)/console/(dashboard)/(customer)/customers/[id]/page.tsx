@@ -6,11 +6,12 @@ import { useParams } from "next/navigation";
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import { toast } from "sonner";
 import type {
-  ConsoleCustomerDetail, ConsolePlan, ConsoleSubscriptionLite,
+  ConsoleCustomerDetail, ConsoleSubscriptionLite,
 } from "@/lib/console/types";
 import {
   fmtYuan, fmtDateTime, ORDER_STATUS_LABEL, SUB_STATUS_LABEL, PAY_CHANNEL_LABEL,
 } from "@/lib/console/format";
+import { GrantSubscriptionDialog } from "./grant-subscription-dialog";
 
 import {
   Card, CardContent, CardHeader, CardTitle,
@@ -24,9 +25,6 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -59,9 +57,6 @@ export default function CustomerDetailPage() {
   const [editForm, setEditForm] = useState({ displayName: "", creditYuan: "" });
 
   const [grantOpen, setGrantOpen] = useState(false);
-  const [plans, setPlans] = useState<ConsolePlan[]>([]);
-  const [grantPlanId, setGrantPlanId] = useState("");
-  const [granting, setGranting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -114,32 +109,6 @@ export default function CustomerDetailPage() {
     }
   }
 
-  async function openGrant() {
-    setGrantPlanId("");
-    setGrantOpen(true);
-    try {
-      const data = await apiRequest<ConsolePlan[]>("plans");
-      setPlans(data.filter((p) => p.active));
-    } catch (err) {
-      toast.error(getErrorMessage(err));
-    }
-  }
-
-  async function doGrant() {
-    if (!c || !grantPlanId) { toast.error("请选择套餐"); return; }
-    try {
-      setGranting(true);
-      await apiRequest(`customers/${c.id}/subscriptions`, { method: "POST", body: { planId: grantPlanId } });
-      toast.success("已发放订阅");
-      setGrantOpen(false);
-      await load();
-    } catch (err) {
-      toast.error(getErrorMessage(err));
-    } finally {
-      setGranting(false);
-    }
-  }
-
   async function revoke(sub: ConsoleSubscriptionLite) {
     try {
       await apiRequest(`subscriptions/${sub.id}/revoke`, { method: "POST" });
@@ -161,8 +130,6 @@ export default function CustomerDetailPage() {
       </div>
     );
   }
-
-  const planItems = plans.map((p) => ({ label: `${p.name} · ${fmtYuan(p.priceCents)}`, value: p.id }));
 
   return (
     <div className="space-y-4">
@@ -186,7 +153,7 @@ export default function CustomerDetailPage() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Button variant="outline" size="sm" onClick={openEdit}><Pencil className="h-3.5 w-3.5 mr-1" />备注/额度</Button>
-              <Button variant="outline" size="sm" onClick={openGrant}><Plus className="h-3.5 w-3.5 mr-1" />发放订阅</Button>
+              <Button variant="outline" size="sm" onClick={() => setGrantOpen(true)}><Plus className="h-3.5 w-3.5 mr-1" />发放订阅</Button>
               <AlertDialog>
                 <AlertDialogTrigger render={<Button variant="outline" size="sm" className={c.status === "DISABLED" ? "text-emerald-600" : "text-destructive"} />}>
                   {c.status === "DISABLED" ? <><CircleCheck className="h-3.5 w-3.5 mr-1" />解封</> : <><Ban className="h-3.5 w-3.5 mr-1" />封禁</>}
@@ -350,31 +317,13 @@ export default function CustomerDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 手动发放订阅 */}
-      <Dialog open={grantOpen} onOpenChange={setGrantOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>手动发放订阅</DialogTitle>
-            <DialogDescription>直接为该客户开通一个套餐订阅（不走支付）。同产品的旧订阅会被自动取代。</DialogDescription>
-          </DialogHeader>
-          <div className="py-2">
-            <Label>选择套餐</Label>
-            <Select value={grantPlanId} onValueChange={setGrantPlanId} items={planItems}>
-              <SelectTrigger className="mt-1 w-full"><SelectValue placeholder="请选择套餐" /></SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {planItems.map((p) => (<SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            {plans.length === 0 && <div className="text-xs text-muted-foreground mt-2">没有可用的启用套餐，请先到「套餐配置」创建。</div>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setGrantOpen(false)}>取消</Button>
-            <Button onClick={() => void doGrant()} disabled={granting || !grantPlanId}>{granting ? "发放中…" : "确认发放"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 手动发放订阅（目录版选配） */}
+      <GrantSubscriptionDialog
+        open={grantOpen}
+        onOpenChange={setGrantOpen}
+        customerId={c.id}
+        onGranted={load}
+      />
     </div>
   );
 }

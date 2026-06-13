@@ -17,7 +17,6 @@ import type {
   BindCardResult,
   NotificationsPage,
   PayChannel,
-  Plan,
   PlanCatalogResponse,
   AccountDevice,
   AccountOverview,
@@ -191,17 +190,6 @@ export async function resetPassword(token: string, password: string) {
 }
 
 // ─── Billing helpers (Stage 2a) ───────────────────────────────────────────────
-
-export async function getPlans() {
-  return userApi<{ plans: Plan[] }>("plans");
-}
-
-export async function createBillingOrder(planId: string, channel: PayChannel) {
-  return userApi<BillingOrderCreated>("billing/orders", {
-    method: "POST",
-    body: { planId, channel },
-  });
-}
 
 /**
  * Public plan catalog (spec §7.2) — drives the two-line purchase page.
