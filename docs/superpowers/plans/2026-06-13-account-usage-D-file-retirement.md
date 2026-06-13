@@ -56,7 +56,14 @@
 - 纯文件卡认证失败、订阅卡正常;bind-card 仍可把卡转订阅 + 回填用量。
 - `pnpm vitest run src/leasing` 全绿;`pnpm lint` EXIT 0。
 
-## 执行建议
-- **D1**(低风险)可顺着现有节奏 subagent-driven 推。
-- **D2**(高风险,动限流核心)建议**单独专注会话**:先补 `hydrateWindowsFromUsageLog` 完备性的集成测(证明"重建窗口==文件窗口"),再删 flush。
-- **D3** 跟在 D1/D2 后做收尾。
+## ⚠️ 咬合依赖(执行时务必按序,否则开安全洞)
+**「去文件写 ↔ 去文件读 ↔ 删 flush」三者咬死,必须当一个整体按序做:**
+- `card-migration` 的文件写(`upsertKeyRecord`)作用是**让旧卡密失效**(把老卡 key 改成 backingKeyValue)。
+- 若先删文件写、但文件仍被读(`byKey` 还认老卡 key)→ **迁移后老卡密仍能认证 = 安全洞**。
+- 正确顺序:① 先让认证完全走 DB(`findByKey` 已支持订阅卡 ✅ D1a;再删 `byKey`/`readAll` 文件读)→ ② 再删 `card-migration` 文件写 → ③ 最后删 `flush`(配 `hydrateWindowsFromUsageLog` 重建窗口的集成测)。
+- 每步之间跑全回归,且专门验:**「迁移后老卡 key 确实认证失败」+「重启后限流窗口==删 flush 前」**。
+
+## 执行进度 / 建议
+- ✅ **D1a 已落地**(`0f7061d`):`findByKey` 认订阅卡,文件卡行为不变 —— 这是唯一能安全独立落地的准备步。
+- 🔒 **剩下的咬合三步(去文件读 + card-migration 去文件写 + 删 flush)** 动限流命根子 + 涉安全洞,**强烈建议一个专注会话整体推**,边做边验上面两条断言。
+- **D3**(后台卡管理停用 + cleanup 改 DB)跟在咬合三步之后收尾。
