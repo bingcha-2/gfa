@@ -75,6 +75,10 @@ func (a *App) startup(ctx context.Context) {
 	// 启动自动更新检查
 	GetUpdater().CleanupOldBinary()
 	GetUpdater().Start()
+
+	// 启动代理看门狗:代理一旦"该跑没跑"(绑不上 / Serve 挂掉)就自愈重起(用 UserToken),
+	// 避免一次失败就永久 down、要用户手动重启。(合并自 main,适配账号制凭据)
+	startProxyWatchdog()
 }
 
 // GetConfig returns the loaded configuration

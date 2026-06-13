@@ -31,10 +31,11 @@ func startProxyWatchdog() {
 func runProxyWatchdogOnce() {
 	cfg := LoadConfig()
 
-	// ① HTTP 代理:配了卡却没在跑 → 重试 Start(内部含端口兜底)。
-	if cfg.AccountCard != "" && !GetHTTPProxy().GetStatus().Running {
+	// ① HTTP 代理:已登录却没在跑 → 重试 Start(内部含端口兜底)。
+	// 账号制:凭据是 UserToken(卡密 AccountCard 已下线,运行时不再用于鉴权)。
+	if cfg.UserToken != "" && !GetHTTPProxy().GetStatus().Running {
 		Log("[watchdog] HTTP 代理未运行,尝试自愈重启…")
-		if err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, ""); err != nil {
+		if err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, ""); err != nil {
 			Log("[watchdog] HTTP 代理自愈失败(下个周期再试): %v", err)
 		}
 	}
@@ -42,7 +43,7 @@ func runProxyWatchdogOnce() {
 	// ② MITM 代理:接管激活中却没在跑 → 重启(桌面端 Code/Cowork 接管要靠它)。
 	if mitmIsTakeoverActive() && !GetMitmManager().IsProxyRunning() {
 		Log("[watchdog] MITM 代理未运行(接管激活中),尝试自愈重启…")
-		if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.AccountCard, cfg.DeviceId, ""); err != nil {
+		if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.UserToken, cfg.DeviceId, ""); err != nil {
 			Log("[watchdog] MITM 自愈失败(下个周期再试): %v", err)
 		}
 	}
