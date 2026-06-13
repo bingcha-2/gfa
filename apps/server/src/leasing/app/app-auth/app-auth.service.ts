@@ -10,9 +10,11 @@ import { CustomerTokenService } from "../../account/customer-auth/customer-token
 import { DeviceService } from "../../account/device/device.service";
 
 function buildSubscriptionSummary(subscription: {
+  id: string;
   status: string;
   expiresAt: Date | null;
   deviceLimit: number;
+  priority: number;
   productEntitlements: string;
 } | null) {
   if (!subscription) return null;
@@ -25,12 +27,14 @@ function buildSubscriptionSummary(subscription: {
   }
 
   return {
+    id: subscription.id,
     // Catalog-only: subscriptions carry no single plan name — clients localize
     // their own label from products[]. Always null.
     planName: null,
     status: subscription.status,
     expiresAt: subscription.expiresAt,
     deviceLimit: subscription.deviceLimit,
+    priority: subscription.priority,
     products
   };
 }
@@ -44,20 +48,19 @@ export class AppAuthService {
     private readonly deviceService: DeviceService
   ) {}
 
-  private async getActiveSubscription(customerId: string) {
+  private async listActiveSubscriptionsSorted(customerId: string) {
     const now = new Date();
-    const subscription = await this.prisma.subscription.findFirst({
+    const rows = await this.prisma.subscription.findMany({
       where: {
         customerId,
         status: "ACTIVE",
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: now } }
-        ]
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }]
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { priority: "asc" },
+      select: { id: true, status: true, expiresAt: true, deviceLimit: true, priority: true, productEntitlements: true }
     });
-    return subscription;
+    // Secondary JS sort ensures stable order even in test mocks that ignore orderBy
+    return rows.slice().sort((a, b) => a.priority - b.priority);
   }
 
   async login(dto: {
@@ -155,7 +158,8 @@ export class AppAuthService {
     // Compute token expiry (30d from now)
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    const subscription = await this.getActiveSubscription(customer.id);
+    const subs = await this.listActiveSubscriptionsSorted(customer.id);
+    const subscriptions = subs.map(buildSubscriptionSummary);
 
     return {
       token,
@@ -164,7 +168,8 @@ export class AppAuthService {
         email: customer.email,
         displayName: customer.displayName
       },
-      subscription: buildSubscriptionSummary(subscription)
+      subscription: subscriptions[0] ?? null, // 兼容旧 app
+      subscriptions
     };
   }
 
@@ -207,11 +212,13 @@ export class AppAuthService {
       data: { lastSeenAt: new Date() }
     });
 
-    const subscription = await this.getActiveSubscription(dto.customerId);
+    const subs = await this.listActiveSubscriptionsSorted(dto.customerId);
+    const subscriptions = subs.map(buildSubscriptionSummary);
 
     return {
       ok: true,
-      subscription: buildSubscriptionSummary(subscription),
+      subscription: subscriptions[0] ?? null,
+      subscriptions,
       device: { status: "ACTIVE" }
     };
   }

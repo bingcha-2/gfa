@@ -331,6 +331,44 @@ describe("AppAuthService.login", () => {
 
     expect(result.subscription).toBeNull();
   });
+
+  it("subscriptions 按 priority 升序返回,兼容字段 subscription = 首个", async () => {
+    const { appAuthService, prisma } = await makeAppAuthService();
+
+    const sub1 = {
+      id: "sub-priority-2",
+      status: "ACTIVE",
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+      deviceLimit: 3,
+      priority: 2,
+      productEntitlements: JSON.stringify(["pro"])
+    };
+    const sub2 = {
+      id: "sub-priority-1",
+      status: "ACTIVE",
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+      deviceLimit: 5,
+      priority: 1,
+      productEntitlements: JSON.stringify(["basic"])
+    };
+
+    // Return in reverse priority order to test that sorting is applied.
+    // findMany is called twice: once by effectiveDeviceLimit (needs deviceLimit only),
+    // once by listActiveSubscriptionsSorted (needs all fields). Use persistent mock so
+    // both calls return the same data — effectiveDeviceLimit only reads .deviceLimit.
+    prisma.subscription.findMany.mockResolvedValue([sub1, sub2]);
+
+    const result = await appAuthService.login({
+      email: "user@example.com",
+      password: "password123",
+      deviceId: "device-abc"
+    });
+
+    expect(result.subscriptions).toHaveLength(2);
+    expect(result.subscriptions[0].priority).toBe(1);   // 按 priority 升序
+    expect(result.subscriptions[0].id).toBeTruthy();
+    expect(result.subscription).toEqual(result.subscriptions[0]); // 兼容字段=首个
+  });
 });
 
 // ── heartbeat ─────────────────────────────────────────────────────────────────
