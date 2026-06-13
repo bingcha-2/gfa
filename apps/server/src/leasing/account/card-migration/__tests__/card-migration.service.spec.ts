@@ -263,6 +263,42 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(store.findById("card-legacy-1")?.migratedToCustomerId).toBe(customer.id);
   });
 
+  it("bind-card 把该卡历史用量回填到账户(customerId)", async () => {
+    const card = usedCard();
+    writeKeys([card]);
+    store.reload();
+    const customer = await createTestCustomer();
+
+    // 预先插 2 条 CardTokenUsage,customerId=null(绑卡前的历史用量)
+    await prisma.cardTokenUsage.create({
+      data: {
+        accessKeyId: "card-legacy-1",
+        customerId: null,
+        modelKey: "gpt-5-codex",
+        bucket: "codex-gpt",
+        totalTokens: 100,
+        timestamp: new Date(),
+      },
+    });
+    await prisma.cardTokenUsage.create({
+      data: {
+        accessKeyId: "card-legacy-1",
+        customerId: null,
+        modelKey: "gpt-5-codex",
+        bucket: "codex-gpt",
+        totalTokens: 200,
+        timestamp: new Date(),
+      },
+    });
+
+    await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+
+    // bind-card 后,这 2 条的 customerId 应被回填为绑定的 customerId
+    const rows = await prisma.cardTokenUsage.findMany({ where: { accessKeyId: "card-legacy-1" } });
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => r.customerId === customer.id)).toBe(true);
+  });
+
   it("usage continuity: a CardTokenUsage row inserted pre-bind stays associated (same id)", async () => {
     writeKeys([usedCard()]);
     store.reload();

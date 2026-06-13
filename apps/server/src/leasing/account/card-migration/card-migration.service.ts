@@ -175,6 +175,11 @@ export class CardMigrationService {
             backingKeyValue,
           },
         });
+        // 把这张卡的历史用量回填到账户(ID continuity:CardTokenUsage.accessKeyId == recordId == 订阅 id)。
+        await tx.cardTokenUsage.updateMany({
+          where: { accessKeyId: recordId },
+          data: { customerId },
+        });
         await tx.notification.create({
           data: {
             customerId,
