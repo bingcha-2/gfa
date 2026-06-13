@@ -282,6 +282,22 @@ export class AccessKeyStore {
   }
 
   /**
+   * 列出某 customerId 的所有 ACTIVE 订阅 record,按 priority 升序(小=优先)。
+   * 供 SubscriptionScheduler 做账户级接力。只看内存 subscriptionById(订阅卡),
+   * 文件卡不参与账户接力(无 customerId)。
+   */
+  listByCustomerSorted(customerId: string): AccessKeyRecord[] {
+    if (!customerId) return [];
+    const out: AccessKeyRecord[] = [];
+    for (const rec of this.subscriptionById.values()) {
+      if (rec.customerId === customerId && String(rec.status || "active") === "active") {
+        out.push(rec);
+      }
+    }
+    return out.sort((a, b) => (Number(a.priority ?? 0)) - (Number(b.priority ?? 0)));
+  }
+
+  /**
    * Rebuild in-memory rate-limit windows from the durable CardTokenUsage log.
    * Called ONCE on boot: window events are not persisted to access-keys.json
    * (see serializable()), so without this a restart would reset every card's

@@ -701,3 +701,19 @@ describe('AccessKeyStore', () => {
     });
   });
 });
+
+describe("listByCustomerSorted — 账户订阅按 priority 升序", () => {
+  it("只返回该 customer 的 ACTIVE 订阅,按 priority 升序", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-list-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    store.loadSubscriptionRecords([
+      { id: "s-b", customerId: "c1", priority: 5, status: "active", products: ["codex"] },
+      { id: "s-a", customerId: "c1", priority: 1, status: "active", products: ["codex"] },
+      { id: "s-exp", customerId: "c1", priority: 0, status: "expired", products: ["codex"] },
+      { id: "s-other", customerId: "c2", priority: 0, status: "active", products: ["codex"] },
+    ]);
+    const ids = store.listByCustomerSorted("c1").map((r) => r.id);
+    expect(ids).toEqual(["s-a", "s-b"]); // 升序、排除 expired、排除 c2
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
