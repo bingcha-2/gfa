@@ -130,6 +130,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
     const record = subscriptionToLimitRecord({
       id: "sub-1",
       customerId: "cust-1",
+      priority: 3,
       status: "ACTIVE",
       expiresAt,
       config: {
@@ -145,6 +146,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
     expect(record).toEqual({
       id: "sub-1",
       customerId: "cust-1",
+      priority: 3,
       status: "active",
       products: ["anthropic"],
       bucketLimits: { "anthropic-claude": 50000 },
@@ -158,6 +160,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
     const record = subscriptionToLimitRecord({
       id: "sub-2",
       customerId: "cust-2",
+      priority: 0,
       status: "ACTIVE",
       expiresAt,
       config: {
@@ -174,6 +177,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
     expect(record).toEqual({
       id: "sub-2",
       customerId: "cust-2",
+      priority: 0,
       status: "active",
       products: ["anthropic"],
       bindings: { anthropic: 1234 },

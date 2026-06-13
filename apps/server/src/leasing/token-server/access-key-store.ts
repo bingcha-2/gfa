@@ -99,6 +99,9 @@ export interface AccessKeyRecord {
    *  entitlement-sync; legacy file/pool cards leave it undefined. Used by
    *  reportResult to stamp CardTokenUsage.customerId. */
   customerId?: string;
+  /** Account-internal failover order (mirrors Subscription.priority); lower = used
+   *  first. Set on subscription shadow records; legacy cards leave it undefined. */
+  priority?: number;
   /** Card-migration provenance: set when a legacy card was re-homed to a
    * customer Subscription (bind-card). The record keeps its id (usage/windows
    * carry over); its key is rotated to the subscription's backing key. */
