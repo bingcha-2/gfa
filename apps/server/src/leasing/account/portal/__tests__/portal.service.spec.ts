@@ -401,7 +401,7 @@ describe("PortalService.setSubscriptionPriority", () => {
 // ── 3. getUsage ───────────────────────────────────────────────────────────────
 
 describe("PortalService.getUsage", () => {
-  it("scopes usage to only the customer's subscription ids", async () => {
+  it("scopes usage directly to the customer's customerId", async () => {
     const prisma = makePrisma({
       usageRecords: [
         {
@@ -417,11 +417,6 @@ describe("PortalService.getUsage", () => {
       ],
       usageCount: 1,
     });
-    // Override subscription.findMany to return only cust-1's subs
-    prisma.subscription.findMany = vi.fn(async () => [
-      { id: "sub-1" },
-      { id: "sub-2" },
-    ]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -432,19 +427,20 @@ describe("PortalService.getUsage", () => {
     expect(result.records[0].id).toBe("rec-1");
     expect(result.total).toBe(1);
 
-    // Verify the cardTokenUsage query was scoped to the customer's sub ids
+    // Verify the cardTokenUsage query uses customerId directly (not accessKeyId)
     const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.where.accessKeyId).toEqual({ in: ["sub-1", "sub-2"] });
+    expect(callArgs.where).toEqual(
+      expect.objectContaining({ customerId: "cust-1" }),
+    );
+    expect(callArgs.where.accessKeyId).toBeUndefined();
   });
 
-  it("excludes another customer's usage rows", async () => {
-    // cust-1 has sub-A; cust-OTHER has sub-B
-    // We check that the query is scoped to sub-A only
+  it("excludes another customer's usage rows by querying with customerId", async () => {
+    // Direct customerId filter ensures only cust-1's rows are returned
     const prisma = makePrisma({
-      usageRecords: [], // empty (no rows for sub-A)
+      usageRecords: [], // DB returns empty for cust-1
       usageCount: 0,
     });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-A" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -453,14 +449,15 @@ describe("PortalService.getUsage", () => {
 
     expect(result.records).toHaveLength(0);
     const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.where.accessKeyId).toEqual({ in: ["sub-A"] });
-    // sub-B (other customer) is NOT in the filter
-    expect(callArgs.where.accessKeyId.in).not.toContain("sub-B");
+    // customerId filter ensures cust-OTHER rows are never returned
+    expect(callArgs.where).toEqual(
+      expect.objectContaining({ customerId: "cust-1" }),
+    );
+    expect(callArgs.where.accessKeyId).toBeUndefined();
   });
 
-  it("returns empty result when customer has no subscriptions", async () => {
+  it("returns empty result when no usage records exist for the customer", async () => {
     const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-    prisma.subscription.findMany = vi.fn(async () => []) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -469,13 +466,16 @@ describe("PortalService.getUsage", () => {
 
     expect(result.records).toHaveLength(0);
     expect(result.total).toBe(0);
-    // When no subs, should not even query cardTokenUsage
-    expect(prisma.cardTokenUsage.findMany).not.toHaveBeenCalled();
+    // customerId query always runs; empty result comes naturally from DB
+    expect(prisma.cardTokenUsage.findMany).toHaveBeenCalled();
+    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
+    expect(callArgs.where).toEqual(
+      expect.objectContaining({ customerId: "cust-1" }),
+    );
   });
 
   it("applies days filter: timestamp >= now - days*24h", async () => {
     const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-1" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -497,7 +497,6 @@ describe("PortalService.getUsage", () => {
 
   it("pagination: skip and take are calculated correctly", async () => {
     const prisma = makePrisma({ usageRecords: [], usageCount: 100 });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-1" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -511,7 +510,6 @@ describe("PortalService.getUsage", () => {
 
   it("pageSize is capped at 100", async () => {
     const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-1" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -525,7 +523,6 @@ describe("PortalService.getUsage", () => {
 
   it("invalid days falls back to 7", async () => {
     const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-1" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);
@@ -562,7 +559,6 @@ describe("PortalService.getUsage", () => {
       ],
       usageCount: 1,
     });
-    prisma.subscription.findMany = vi.fn(async () => [{ id: "sub-1" }]) as any;
 
     const store = makeStore();
     const service = new PortalService(prisma as any, store as any);

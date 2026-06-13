@@ -164,20 +164,9 @@ export class PortalService {
     const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
     const days = [1, 7, 30].includes(opts.days ?? 0) ? (opts.days ?? 7) : 7;
 
-    // Get the customer's subscription ids to scope usage
-    const subs = await this.prisma.subscription.findMany({
-      where: { customerId },
-      select: { id: true },
-    });
-    const subIds = subs.map((s) => s.id);
-
-    if (subIds.length === 0) {
-      return { records: [], total: 0, page, pageSize };
-    }
-
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const where = {
-      accessKeyId: { in: subIds },
+      customerId,
       timestamp: { gte: since },
     };
 
