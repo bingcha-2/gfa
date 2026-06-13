@@ -61,7 +61,7 @@ export type ConsumeResult = {
 
 type RelayHandle = { port: number; close: () => void };
 
-function startLocalSocksRelay(upstream: { host: string; port: number; userId?: string; password?: string }): Promise<RelayHandle> {
+export function startLocalSocksRelay(upstream: { host: string; port: number; userId?: string; password?: string }): Promise<RelayHandle> {
   return new Promise((resolve, reject) => {
     const server = net.createServer((client) => {
       handleSocks5Client(client, upstream).catch(() => client.destroy());
@@ -244,7 +244,7 @@ export class PlaywrightOAuthSession {
 
 // ── Trigger (step 1) ─────────────────────────────────────────────────────
 
-function parseUpstream(proxyUrl: string) {
+export function parseUpstream(proxyUrl: string) {
   const url = new URL(proxyUrl);
   return {
     host: url.hostname,
