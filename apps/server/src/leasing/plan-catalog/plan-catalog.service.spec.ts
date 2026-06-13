@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PlanCatalogService } from "./plan-catalog.service";
+import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
 function makeService(overrides: Record<string, any> = {}) {
   const prisma = {
@@ -84,7 +85,11 @@ describe("PlanCatalogService.getPublished", () => {
     const result = await service.getPublished();
 
     expect(prisma.planCatalog.findFirst).toHaveBeenCalledWith({ where: { status: "PUBLISHED" } });
-    expect(result).toEqual(expect.objectContaining({ version: 2, config: { durationDays: 30 } }));
+    expect(result).toEqual(
+      expect.objectContaining({ version: 2, config: expect.objectContaining({ durationDays: 30 }) }),
+    );
+    // 去容量双源:读目录注入运行时 ACCOUNT_SHARE_CAPACITY(test env=4),绑定线 weight 据此算。
+    expect((result as any).config.shareCapacity).toBe(ACCOUNT_SHARE_CAPACITY);
   });
 
   it("没有 PUBLISHED → null", async () => {
@@ -109,7 +114,9 @@ describe("PlanCatalogService.getByVersion", () => {
     const result = await service.getByVersion(5);
 
     expect(prisma.planCatalog.findUnique).toHaveBeenCalledWith({ where: { version: 5 } });
-    expect(result).toEqual(expect.objectContaining({ version: 5, config: { durationDays: 30 } }));
+    expect(result).toEqual(
+      expect.objectContaining({ version: 5, config: expect.objectContaining({ durationDays: 30 }) }),
+    );
   });
 
   it("该版本不存在 → null", async () => {

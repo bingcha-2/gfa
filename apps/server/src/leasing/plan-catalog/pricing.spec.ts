@@ -99,3 +99,31 @@ describe("computePurchase — 校验", () => {
     ).toThrow(/usage|用量|huge/i);
   });
 });
+
+describe("computePurchase — 绑定线 weight 跟随注入的 shareCapacity(去容量双源)", () => {
+  // 服务端读目录时把运行时 ACCOUNT_SHARE_CAPACITY 注入 config.shareCapacity;绑定线
+  // weight = shareCapacity / 共享人数,与运行时座位口径同源(不再硬编码 8)。
+  const withCap = (shareCapacity: number) => ({ ...CATALOG, shareCapacity });
+  const sel = (shareUsers: number) => ({
+    line: "bind" as const,
+    items: [{ product: "anthropic", level: "max-20x" }],
+    shareUsers,
+    deviceLimit: 1,
+  });
+
+  it("shareCapacity=4(test 运行时):独号→4(占满)、2 人→2、4 人→1", () => {
+    expect(computePurchase(withCap(4), sel(1)).config.weight).toBe(4);
+    expect(computePurchase(withCap(4), sel(2)).config.weight).toBe(2);
+    expect(computePurchase(withCap(4), sel(4)).config.weight).toBe(1);
+  });
+
+  it("shareCapacity=8(prod 默认):独号→8、2 人→4、8 人→1", () => {
+    expect(computePurchase(withCap(8), sel(1)).config.weight).toBe(8);
+    expect(computePurchase(withCap(8), sel(2)).config.weight).toBe(4);
+    expect(computePurchase(withCap(8), sel(8)).config.weight).toBe(1);
+  });
+
+  it("config 未注入 shareCapacity → 回退 prod 默认 8(非权威路径如 console 预览)", () => {
+    expect(computePurchase(CATALOG, sel(2)).config.weight).toBe(4); // 8 / 2
+  });
+});

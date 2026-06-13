@@ -1,9 +1,6 @@
 // 套餐定价 + Subscription.config 生成(纯函数,无 IO)。对齐 spec §4 / §5。
 // 价格 = 基础 + Σ(各旋钮加价),分;config = 购买时快照展开的限额配置。
 
-/** 一个号被切成 capacity 份;共享人数 N → 每份 weight = capacity / N。 */
-const SHARE_CAPACITY = 8;
-
 export interface UsageTier {
   bucketLimits: Record<string, number>;
   weeklyTokenLimit: number;
@@ -17,6 +14,13 @@ export interface CatalogConfig {
   };
   windowMs: number;
   durationDays: number;
+  /**
+   * 一个号被切成 shareCapacity 份(= 运行时 ACCOUNT_SHARE_CAPACITY,服务端读目录时注入,
+   * 见 PlanCatalogService.getPublished/getByVersion)。绑定线每份 weight = shareCapacity /
+   * 共享人数,与运行时座位口径同源(去「定价硬编码 8 / 运行时 env」双源)。非权威路径(console
+   * 价格预览)拿不到注入值时,computeBind 回退 prod 默认 8。
+   */
+  shareCapacity?: number;
 }
 
 export interface PoolSelection {
@@ -98,7 +102,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       line: "bind",
       products,
       levels,
-      weight: SHARE_CAPACITY / selection.shareUsers,
+      weight: (catalog.shareCapacity ?? 8) / selection.shareUsers,
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
     },

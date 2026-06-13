@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
 /**
  * PlanCatalog 生命周期:草稿编辑 → 发布(同时至多一条 PUBLISHED)。
@@ -35,7 +36,7 @@ export class PlanCatalogService {
   async getPublished() {
     const row = await this.prisma.planCatalog.findFirst({ where: { status: "PUBLISHED" } });
     if (!row) return null;
-    return { ...row, config: JSON.parse(row.config) };
+    return { ...row, config: this.withRuntimeCapacity(JSON.parse(row.config)) };
   }
 
   /**
@@ -45,6 +46,18 @@ export class PlanCatalogService {
   async getByVersion(version: number) {
     const row = await this.prisma.planCatalog.findUnique({ where: { version } });
     if (!row) return null;
-    return { ...row, config: JSON.parse(row.config) };
+    return { ...row, config: this.withRuntimeCapacity(JSON.parse(row.config)) };
+  }
+
+  /**
+   * 读目录时注入运行时账号份额容量(ACCOUNT_SHARE_CAPACITY)——绑定线 weight=容量/共享人数
+   * 必须与运行时座位口径同源(去双源:定价不再硬编码 8)。按当前 env 注入、不落库,故改 env
+   * 后无陈旧快照;已显式带 shareCapacity 的 config 保留其值(测试/特例可覆盖)。
+   */
+  private withRuntimeCapacity(config: any) {
+    if (config && typeof config === "object" && config.shareCapacity == null) {
+      config.shareCapacity = ACCOUNT_SHARE_CAPACITY;
+    }
+    return config;
   }
 }

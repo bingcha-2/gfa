@@ -12,9 +12,6 @@
  * server spec.
  */
 
-/** A number shaped as a single account is sliced into; share users → weight. */
-const SHARE_CAPACITY = 8;
-
 export interface CatalogUsageTier {
   bucketLimits: Record<string, number>;
   weeklyTokenLimit: number;
@@ -39,6 +36,14 @@ export interface CatalogConfig {
   };
   durationDays: number;
   windowMs: number;
+  /**
+   * Shares one upstream account is sliced into (= server runtime
+   * ACCOUNT_SHARE_CAPACITY, injected when the catalog is read server-side and
+   * returned by GET /api/plan-catalog). Bind weight = shareCapacity / shareUsers,
+   * same source as runtime seating. Optional: non-authoritative callers (the
+   * console price preview, built from an unsaved form) fall back to 8 (prod default).
+   */
+  shareCapacity?: number;
 }
 
 export interface PoolSelection {
@@ -120,7 +125,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       line: "bind",
       products,
       levels,
-      weight: SHARE_CAPACITY / selection.shareUsers,
+      weight: (catalog.shareCapacity ?? 8) / selection.shareUsers,
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
     },
