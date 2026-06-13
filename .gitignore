@@ -46,7 +46,10 @@ scripts/remote-data/
 scripts/active-*.txt
 
 # Local data
-data/
+apps/api/data/
+data/*
+!data/rosetta/
+!data/rosetta/*.json
 
 # Temp scratch files
 prev*.tsx
