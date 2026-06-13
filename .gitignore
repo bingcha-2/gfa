@@ -13,6 +13,8 @@ coverage
 .idea/
 *.tsbuildinfo
 prisma/*.db
+!prisma/dev.db
+!prisma/dev-migration.db
 prisma/*.db-journal
 tmp
 playwright-report
