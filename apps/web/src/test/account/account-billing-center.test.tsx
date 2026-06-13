@@ -22,6 +22,7 @@ const subscriptions: Subscription[] = [
     expiresAt: "2026-07-01T00:00:00.000Z",
     deviceLimit: 5,
     weight: 8,
+    priority: 0,
     migratedFromCard: false,
   },
 ];

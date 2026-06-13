@@ -7,6 +7,7 @@ import {
   ReceiptTextIcon,
   BellIcon,
   MessageSquareIcon,
+  LayersIcon,
 } from "lucide-react";
 
 import { AccountSkeleton } from "./account-ui";
@@ -226,6 +227,15 @@ export function AccountOverviewPanel({
       </section>
 
       <section className="account-overview-grid" aria-label="快捷入口">
+        <Link href="/account/subscriptions" className="account-quick-card">
+          <div className="account-quick-card__top">
+            <span className="account-quick-card__icon">
+              <LayersIcon />
+            </span>
+          </div>
+          <div className="account-quick-card__title">我的订阅</div>
+          <div className="account-quick-card__desc">查看全部订阅 · 调整接力优先级</div>
+        </Link>
         <Link href="/account/billing" className="account-quick-card">
           <div className="account-quick-card__top">
             <span className="account-quick-card__icon">

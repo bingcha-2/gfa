@@ -87,6 +87,8 @@ export type Subscription = {
   expiresAt: string | null;
   deviceLimit: number;
   weight: number;
+  /** Account-internal relay order: lower = used first. */
+  priority: number;
   migratedFromCard: boolean;
 };
 

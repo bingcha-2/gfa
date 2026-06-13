@@ -243,6 +243,14 @@ export async function getSubscriptions() {
   return userApi<{ subscriptions: Subscription[] }>("subscriptions");
 }
 
+/** Set a subscription's relay priority (lower = used first). Returns the refreshed overview. */
+export async function setSubscriptionPriority(subscriptionId: string, priority: number) {
+  return userApi<AccountOverview>("subscriptions/priority", {
+    method: "POST",
+    body: { subscriptionId, priority },
+  });
+}
+
 export async function bindCard(cardKey: string) {
   return userApi<BindCardResult>("bind-card", {
     method: "POST",
