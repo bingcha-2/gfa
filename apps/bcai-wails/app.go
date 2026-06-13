@@ -44,27 +44,6 @@ func (a *App) startup(ctx context.Context) {
 		Log("[app] Loaded existing deviceId: %s", cfg.DeviceId)
 	}
 
-	// Auto-start HTTP proxy and token leaser if account card is configured
-	if cfg.AccountCard != "" {
-		Log("[app] Auto-starting HTTP proxy and leaser...")
-		// 从配置恢复到期时间
-		if cfg.CardExpiry != "" {
-			leaser := GetLeaser()
-			leaser.mu.Lock()
-			leaser.cardExpires = cfg.CardExpiry
-			leaser.mu.Unlock()
-		}
-		// 先 Activate 拿到权威 products(开通了哪些产品),StartAutoLease 据此决定是否跑
-		// antigravity 自动租号 —— 避免 codex-only 卡在启动时盲发 antigravity 租号并报错。
-		// Activate 失败(网络等)不阻塞:StartAutoLease 仍会尝试(池子卡语义)。
-		if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, ""); err != nil {
-			Log("[app] 启动时 Activate 失败(不阻塞自动租号): %v", err)
-		}
-		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, "")
-	} else {
-		Log("[app] No account card configured. Waiting for user configuration.")
-	}
-
 	// 清理旧版接管残留的本地 chatgpt_base_url(新版用自定义 provider;旧残留会让
 	// Codex 把杂活继续发到本地代理被吞)。只清本地 127.0.0.1 残留,无残留则 no-op。
 	if err := CleanupLegacyCodexTakeover(); err != nil {
@@ -72,21 +51,42 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// 应用 Codex 中转(API 卡密)模式配置(若未配置 relay 则为 no-op,走号池/租号)。
+	// 放在 HTTP 代理启动之前:代理 handler 会读它决定 Codex 走中转还是租号。
 	GetCodexProxy().ApplyConfig(cfg)
 
-	// Always start the HTTP proxy server
-	err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, "")
-	if err != nil {
+	// 先把本地 HTTP 代理拉起来 —— 它的监听不依赖下面 Activate 的联网请求,提前起来可消除
+	// "卡已配但代理还没起" 在冷启动头几秒被前端 2s 轮询误判、误弹"本地代理未启动"横幅。
+	if err := GetHTTPProxy().Start(cfg.ProxyPort, cfg.AccountCard, cfg.DeviceId, ""); err != nil {
 		Log("[app] HTTP proxy start failed: %v", err)
 	} else {
-		Log("[app] HTTP proxy started on 127.0.0.1:%d", cfg.ProxyPort)
 		a.proxyStartedAt = time.Now()
+		Log("[app] HTTP proxy started on 127.0.0.1:%d", GetHTTPProxy().GetStatus().ListenPort)
 	}
 
 	// 常驻启动 Claude 桌面端接管用的 MITM 代理(独立端口 48801)。仅监听,不影响任何流量;
 	// 只有用户开启接管(装 CA + 带代理重启 Claude.app)后,Code/Cowork 子进程才会走它。
 	if err := GetMitmManager().StartProxy(mitmDefaultPort, cfg.AccountCard, cfg.DeviceId, ""); err != nil {
 		Log("[app] MITM 代理启动失败(不影响其它功能): %v", err)
+	}
+
+	// 配了卡才租号:Activate 拿权威 products(开通了哪些产品),StartAutoLease 据此决定是否跑
+	// antigravity 自动租号。放到代理启动之后 —— Activate 联网可能耗时,不该挡住代理监听。
+	// Activate 失败(网络等)不阻塞:StartAutoLease 仍会尝试(池子卡语义)。
+	if cfg.AccountCard != "" {
+		Log("[app] Auto-starting token leaser...")
+		// 从配置恢复到期时间
+		if cfg.CardExpiry != "" {
+			leaser := GetLeaser()
+			leaser.mu.Lock()
+			leaser.cardExpires = cfg.CardExpiry
+			leaser.mu.Unlock()
+		}
+		if _, err := GetLeaser().Activate(cfg.AccountCard, cfg.DeviceId, ""); err != nil {
+			Log("[app] 启动时 Activate 失败(不阻塞自动租号): %v", err)
+		}
+		GetLeaser().StartAutoLease(cfg.AccountCard, cfg.DeviceId, "")
+	} else {
+		Log("[app] No account card configured. Waiting for user configuration.")
 	}
 
 	// 预热连接池，提前建立 TLS 连接
@@ -99,6 +99,10 @@ func (a *App) startup(ctx context.Context) {
 	// 启动自动更新检查
 	GetUpdater().CleanupOldBinary()
 	GetUpdater().Start()
+
+	// 启动代理看门狗:代理一旦"该跑没跑"(绑不上 / Serve 挂掉)就自愈重起,
+	// 避免一次失败就永久 down、要用户手动重启。
+	startProxyWatchdog()
 }
 
 // GetConfig returns the loaded configuration
@@ -269,6 +273,15 @@ func (a *App) GetStats() map[string]interface{} {
 		PendingReports: GetLeaser().pendingCount() + GetClaudeLeaser().pendingCount() + GetCodexLeaser().pendingCount(),
 	})...)
 
+	// 端口兜底:首选端口被外部程序占用、已自动切换到备用端口并重注入 → 带一条一次性提示
+	// (读取即清,前端 toast 显示一次),让用户知道端口变了。
+	if n := takeProxyNotice(); n != "" {
+		notifications = append(notifications, Notification{
+			Level: "transient", Category: "startup", Recoverable: true,
+			Message: n, DedupKey: "proxy-port-switch", Source: "proxy",
+		})
+	}
+
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
 	chartMode := "daily"
 	if !usageStats.HasMultipleDays() {
@@ -366,8 +379,8 @@ func (a *App) SaveCodexRelayConfig(mode, baseURL, apiKey, protocol string, model
 
 // GetIDEStatus 获取 IDE 注入状态
 func (a *App) GetIDEStatus() IDEStatus {
-	cfg := LoadConfig()
-	return DetectIDEProducts(cfg.ProxyPort)
+	// 用实际绑定端口(可能因端口兜底而非首选),保证注入状态检测对得上。
+	return DetectIDEProducts(effectiveProxyPort())
 }
 
 // DetectedPaths 返回自动检测到的路径
@@ -431,7 +444,7 @@ func (a *App) InjectSelected(targets []string) (string, error) {
 		if err := enforceEgressGate(required, cfg); err != nil {
 			return "", err
 		}
-		msg, err := t.Inject(cfg.ProxyPort)
+		msg, err := t.Inject(effectiveProxyPort())
 		if err != nil {
 			results = append(results, fmt.Sprintf("%s: 接管失败 (%v)", t.Name(), err))
 		} else if msg != "" {

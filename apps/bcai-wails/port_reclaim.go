@@ -5,12 +5,17 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// errPortForeignHeld 表示端口被一个【非本程序】的进程占用 —— 我们绝不去杀它,
+// 调用方据此决定是否退到备用端口(见 LocalHTTPProxy.Start 的端口兜底)。
+var errPortForeignHeld = errors.New("port held by a foreign process")
 
 // isAddrInUse 判断监听错误是否为"端口已被占用"。
 func isAddrInUse(err error) bool {
@@ -26,8 +31,11 @@ func isAddrInUse(err error) bool {
 func sleepMs(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
 // listenWithReclaim 像 net.Listen("tcp", addr) 一样监听,但当端口被占用时
-// (典型场景:上一次客户端没干净退出、残留实例还占着代理端口),会自动找到并
-// 杀掉占用该端口的进程,然后重试一次。永远不会杀掉自己。
+// (典型场景:上一次客户端没干净退出、残留实例还占着代理端口),会找到并杀掉
+// 【确属本程序】的残留实例,然后重试。绝不杀别人的进程,也永远不杀自己。
+//
+// 若端口被一个【非本程序】的进程占着,返回 errPortForeignHeld —— 不动它,
+// 交给上层(LocalHTTPProxy.Start)退到备用端口。
 //
 // 仅用于本地代理端口(127.0.0.1),不要拿去回收对外端口。
 func listenWithReclaim(addr string) (net.Listener, error) {
@@ -50,17 +58,21 @@ func listenWithReclaim(addr string) (net.Listener, error) {
 		return nil, err
 	}
 
-	killed := reclaimPort(port)
+	killed, foreign := reclaimPort(port)
 	if killed == 0 {
-		// 没找到可杀的进程(可能是别的程序以更高权限占用),返回原始错误
+		if foreign {
+			// 被别人(非本程序)占着 → 绝不杀,交给上层做端口兜底。
+			return nil, errPortForeignHeld
+		}
+		// 没找到可杀的进程(可能 lsof/tasklist 没解析出来),返回原始错误。
 		return nil, err
 	}
 
-	// 给系统一点时间释放端口,然后重试一次。
-	for i := 0; i < 10; i++ {
+	// 给系统一点时间释放端口,然后重试(~5s,扛过 TIME_WAIT / 释放延迟)。
+	for i := 0; i < 50; i++ {
 		ln, err = net.Listen("tcp", addr)
 		if err == nil {
-			Log("[port] 端口 %d 被占用,已回收 %d 个进程后成功监听", port, killed)
+			Log("[port] 端口 %d 被本程序残留实例占用,已回收 %d 个后成功监听", port, killed)
 			return ln, nil
 		}
 		sleepMs(100)
@@ -68,21 +80,84 @@ func listenWithReclaim(addr string) (net.Listener, error) {
 	return nil, fmt.Errorf("端口 %d 回收后仍无法监听: %w", port, err)
 }
 
-// reclaimPort 找到监听指定端口的进程并杀掉(跳过自身),返回杀掉的进程数。
-func reclaimPort(port int) int {
+// reclaimPort 杀掉监听指定端口、且【确属本程序】的残留进程(跳过自身)。
+// 返回 (杀掉的数量, 是否见到非本程序/无法判定的占用者)。
+// 安全优先:不是本程序、或无法确认身份的进程,一律【不杀】,只标记 foreign=true。
+func reclaimPort(port int) (killed int, foreign bool) {
 	self := os.Getpid()
-	pids := pidsOnPort(port)
-	killed := 0
-	for _, pid := range pids {
+	for _, pid := range pidsOnPort(port) {
 		if pid == self || pid <= 0 {
 			continue
 		}
+		if !processMatchesSelf(pid) {
+			Log("[port] 端口 %d 被外部进程 PID=%d 占用,不杀(交给端口兜底)", port, pid)
+			foreign = true
+			continue
+		}
 		if killPID(pid) {
-			Log("[port] 已杀掉占用端口 %d 的进程 PID=%d", port, pid)
+			Log("[port] 已回收占用端口 %d 的本程序残留实例 PID=%d", port, pid)
 			killed++
 		}
 	}
-	return killed
+	return killed, foreign
+}
+
+// processMatchesSelf 判断 pid 是否在运行与【本程序相同的可执行文件】(按文件名比对)。
+// 用于回收端口时只杀自己的残留实例,绝不误伤别人的程序。无法判定时返回 false(安全优先)。
+func processMatchesSelf(pid int) bool {
+	selfExe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	other := processImageName(pid)
+	if other == "" {
+		return false
+	}
+	return sameExeName(filepath.Base(selfExe), other)
+}
+
+// processImageName 返回 pid 进程的可执行文件名(basename),取不到返回空。
+func processImageName(pid int) string {
+	if runtime.GOOS == "windows" {
+		// tasklist /FI "PID eq N" /NH /FO CSV → "Image.exe","PID",... ;无匹配时输出"信息:..."。
+		out, err := hideCmd("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH", "/FO", "CSV").Output()
+		if err != nil {
+			return ""
+		}
+		line := strings.TrimSpace(string(out))
+		if !strings.HasPrefix(line, "\"") {
+			return ""
+		}
+		if end := strings.Index(line[1:], "\""); end >= 0 {
+			return filepath.Base(line[1 : 1+end])
+		}
+		return ""
+	}
+	// macOS / Linux: ps -p N -o comm=
+	out, err := hideCmd("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(strings.TrimSpace(string(out)))
+}
+
+// sameExeName 比较两个可执行文件名是否同一程序(大小写不敏感)。
+// Linux 的 ps comm 会把名字截断到 15 字符,仅在确实达到截断长度时才放宽到前缀匹配,
+// 避免把不同程序误判成同一个。
+func sameExeName(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	const linuxCommMax = 15
+	if len(a) >= linuxCommMax || len(b) >= linuxCommMax {
+		return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+	}
+	return false
 }
 
 // pidsOnPort 返回正在 LISTEN 指定端口的进程 PID 列表(跨平台)。
