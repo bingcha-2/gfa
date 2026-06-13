@@ -713,16 +713,12 @@ export class AccessKeyService {
   }
 
   /**
-   * Auto-assign accounts for `count` cards each consuming `weight` shares. Only
-   * accounts of the requested membership `level` that are bindable (enabled, has
-   * a token, eligible, not permanently out of quota) are candidates. Selection:
-   * usable-now first (let the minted card work immediately) → tightest free (pack
-   * 拼车, keep whole accounts for 独享) → soonest refill → id. Returns one accountId
-   * per card, or null if no such account has room — callers treat null as "该等级
-   * 可用号不足, add more first" and do NOT mint. (This is the mint/file path; its
-   * 2nd key is share-packing because the file only has share counts. The customer
-   * DB path is assignSeatForProductFromShares, whose 2nd key is headcount — both
-   * share the same #1 "usable-now first".)
+   * Auto-assign accounts for `count` cards each consuming `weight` shares,
+   * spreading across accounts (most free shares first). Only accounts of the
+   * requested membership `level` that are currently bindable (enabled, has a
+   * token, eligible, quota not exhausted) are candidates. Returns one accountId
+   * per card, or null if no such account has room — callers treat null as "该
+   * 等级可用号不足, add more first" and do NOT mint.
    */
   private autoAssignSeats(provider: string, count: number, weight: number, level: string): number[] | null {
     const pool = readJson(this.poolFileFor(provider), { accounts: [] });
@@ -730,27 +726,19 @@ export class AccessKeyService {
       (a: any) => this.isAccountBindable(provider, a, level),
     );
     const shares = this.boundSharesByAccount(provider);
-    const remaining = accounts.map((a: any) => {
-      const q = this.bindQuotaInfo(provider, a);
-      return {
-        id: Number(a.id),
-        free: ACCOUNT_SHARE_CAPACITY - (shares.get(Number(a.id)) || 0),
-        usableNow: q.usableNow,
-        soonestReset: q.soonestReset,
-      };
-    });
+    const remaining: { id: number; free: number }[] = accounts.map((a: any) => ({
+      id: Number(a.id),
+      free: ACCOUNT_SHARE_CAPACITY - (shares.get(Number(a.id)) || 0),
+    }));
     const assigned: number[] = [];
     for (let i = 0; i < count; i++) {
-      // 立刻能用优先 → 份额最紧(装箱,留整号给独享)→ 回血最快 → id 兜底。
+      // Best-fit: among accounts that still have room (free >= weight), pick the
+      // one with the SMALLEST free (tightest fit, tie-break by id). This packs
+      // 拼车 cards tightly and keeps whole accounts free for 独享 (4-share) cards,
+      // instead of scattering across the emptiest accounts.
       const fit = remaining
-        .filter((r: any) => r.free >= weight)
-        .sort(
-          (a: any, b: any) =>
-            Number(b.usableNow) - Number(a.usableNow) ||
-            a.free - b.free ||
-            (a.soonestReset || Infinity) - (b.soonestReset || Infinity) ||
-            a.id - b.id,
-        )[0];
+        .filter((r) => r.free >= weight)
+        .sort((a, b) => a.free - b.free || a.id - b.id)[0];
       if (!fit) return null; // 没有号还剩 `weight` 份
       fit.free -= weight;
       assigned.push(fit.id);
