@@ -443,7 +443,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 文件卡(无 customerId)不接力,对原 record 做 precheckRecord 服务端兜底 enforce。
     if (auth.record.customerId) {
       const bucket = bucketKey(this.provider.id, modelKey);
-      const picked = this.ensureScheduler().selectForFailover({
+      const relay = this.ensureScheduler().selectForFailover({
         customerId: auth.record.customerId,
         providerId: this.provider.id,
         modelKey,
@@ -455,10 +455,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           weeklyRatio: (rec: any) => this.weeklyRatioForFamily(rec, familyOfBucket(bucket)),
         },
       });
-      if (picked) {
-        auth.record = picked;
+      if (relay.picked) {
+        auth.record = relay.picked;
       } else {
-        throw this.fail(429, "账户所有订阅额度已用尽，请稍后再试");
+        const resetMs = Number(relay.resetMs || 0);
+        throw this.fail(429, "账户所有订阅额度已用尽，请稍后再试", {
+          ok: false,
+          error: "账户所有订阅额度已用尽",
+          ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
+        });
       }
     } else {
       // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。

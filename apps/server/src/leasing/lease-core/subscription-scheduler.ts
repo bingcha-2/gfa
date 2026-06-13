@@ -27,6 +27,12 @@ export interface FailoverQuery {
   precheckOptions: PrecheckOptions;
 }
 
+export interface FailoverResult {
+  picked: AccessKeyRecord | null;
+  /** picked=null 时,候选中最早恢复时间(全满的 429 retryAfterMs) */
+  resetMs?: number;
+}
+
 export class SubscriptionScheduler {
   constructor(
     private readonly store: Pick<AccessKeyStore, "listByCustomerSorted" | "precheckRecord" | "boundAccountIdFor">,
@@ -34,22 +40,32 @@ export class SubscriptionScheduler {
   ) {}
 
   /**
-   * 按 priority 选第一个"三道闸全过"的订阅 record;全部用尽返回 null。
+   * 按 priority 选第一个"三道闸全过"的订阅 record;全部用尽返回 { picked: null, resetMs }。
    */
-  selectForFailover(q: FailoverQuery): AccessKeyRecord | null {
+  selectForFailover(q: FailoverQuery): FailoverResult {
     const candidates = this.store.listByCustomerSorted(q.customerId);
+    let earliestReset = 0;
     for (const cand of candidates) {
+      // 产品过滤:只接力能服务当前 provider 的订阅(绑定该产品 or 号池含该产品)
+      const serves =
+        this.store.boundAccountIdFor(cand, q.providerId) > 0 ||
+        (Array.isArray((cand as any).products) && (cand as any).products.includes(q.providerId));
+      if (!serves) continue;
       // 闸①② bucketLimits + weekly(只读预检)
       const pre = this.store.precheckRecord(cand, { ...q.precheckOptions, enforceLimit: true });
-      if (!pre.allowed) continue;
+      if (!pre.allowed) {
+        const r = Number(pre.resetMs || 0);
+        if (r > 0 && (earliestReset === 0 || r < earliestReset)) earliestReset = r;
+        continue;
+      }
       // 闸③ fair-share —— 仅当该订阅绑了上游母号(各订阅用各自的 boundAccountId)
       const boundId = this.store.boundAccountIdFor(cand, q.providerId);
       if (boundId > 0 && this.fairShareTracker) {
         const fs = this.fairShareTracker.checkFairShare(boundId, cand.id, q.bucket);
         if (!fs.allowed) continue;
       }
-      return cand;
+      return { picked: cand };
     }
-    return null;
+    return { picked: null, resetMs: earliestReset || undefined };
   }
 }

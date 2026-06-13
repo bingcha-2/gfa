@@ -646,7 +646,7 @@ describe("LeaseService (generic core)", () => {
       {
         id: "sub-c1", key: "sub-c1-key", customerId: "cust-42", status: "active",
         keyExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        products: ["codex"],
+        products: ["fake"],
       },
     ]);
     const service = withSessionResolver(new LeaseService(
