@@ -330,7 +330,75 @@ describe("PortalService.getOverview", () => {
   });
 });
 
-// ── 2. getUsage ───────────────────────────────────────────────────────────────
+// ── 2. setSubscriptionPriority ────────────────────────────────────────────────
+
+describe("PortalService.setSubscriptionPriority", () => {
+  it("改自己订阅的 priority → update 并返回重排后的 subscriptions", async () => {
+    const prisma = makePrisma({
+      subscriptions: [
+        {
+          id: "s1",
+          customerId: "cust-1",
+          migratedFromKey: null,
+          status: "ACTIVE",
+          productEntitlements: '["antigravity"]',
+          expiresAt: null,
+          deviceLimit: 3,
+          weight: 1,
+        },
+      ],
+    });
+    // add findUnique + update to subscription mock
+    (prisma.subscription as any).findUnique = vi.fn(async () => ({
+      id: "s1",
+      customerId: "cust-1",
+    }));
+    (prisma.subscription as any).update = vi.fn(async () => ({}));
+
+    const store = makeStore();
+    const service = new PortalService(prisma as any, store as any);
+
+    const res = await service.setSubscriptionPriority("cust-1", "s1", 1);
+
+    expect(res.ok).toBe(true);
+    expect(Array.isArray(res.subscriptions)).toBe(true);
+    expect((prisma.subscription as any).update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "s1" },
+        data: { priority: 1 },
+      }),
+    );
+  });
+
+  it("改不属于自己的订阅 → 抛错,不 update", async () => {
+    const prisma = makePrisma({});
+    (prisma.subscription as any).findUnique = vi.fn(async () => ({
+      id: "s1",
+      customerId: "OTHER",
+    }));
+    (prisma.subscription as any).update = vi.fn(async () => ({}));
+
+    const store = makeStore();
+    const service = new PortalService(prisma as any, store as any);
+
+    await expect(service.setSubscriptionPriority("cust-1", "s1", 1)).rejects.toBeTruthy();
+    expect((prisma.subscription as any).update).not.toHaveBeenCalled();
+  });
+
+  it("找不到订阅 → 抛错,不 update", async () => {
+    const prisma = makePrisma({});
+    (prisma.subscription as any).findUnique = vi.fn(async () => null);
+    (prisma.subscription as any).update = vi.fn(async () => ({}));
+
+    const store = makeStore();
+    const service = new PortalService(prisma as any, store as any);
+
+    await expect(service.setSubscriptionPriority("cust-1", "s-nonexistent", 2)).rejects.toBeTruthy();
+    expect((prisma.subscription as any).update).not.toHaveBeenCalled();
+  });
+});
+
+// ── 3. getUsage ───────────────────────────────────────────────────────────────
 
 describe("PortalService.getUsage", () => {
   it("scopes usage to only the customer's subscription ids", async () => {

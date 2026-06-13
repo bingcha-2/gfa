@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import type { AccessKeyStore } from "../../token-server/access-key-store";
@@ -133,6 +133,25 @@ export class PortalService {
       },
       unreadNotifications,
     };
+  }
+
+  // ── Subscription priority ──────────────────────────────────────────────────
+
+  /** 设置某订阅的优先级(账户内接力顺序)。校验订阅属于该 customer,update,返回重排后的概览订阅列表。 */
+  async setSubscriptionPriority(customerId: string, subscriptionId: string, priority: number) {
+    const sub = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: { id: true, customerId: true },
+    });
+    if (!sub || sub.customerId !== customerId) {
+      throw new NotFoundException({ error: "SUBSCRIPTION_NOT_FOUND", message: "订阅不存在或不属于当前账户" });
+    }
+    await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { priority: Math.max(0, Math.floor(Number(priority) || 0)) },
+    });
+    const overview = await this.getOverview(customerId);
+    return { ok: true, subscriptions: overview.subscriptions };
   }
 
   // ── Usage history (paginated) ───────────────────────────────────────────────

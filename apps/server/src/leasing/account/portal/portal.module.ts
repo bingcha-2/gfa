@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { CustomerAuthModule } from "../customer-auth/customer-auth.module";
 import { TokenServerModule } from "../../token-server/token-server.module";
-import { PortalController, UsageController } from "./portal.controller";
+import { PortalController, SubscriptionPriorityController, UsageController } from "./portal.controller";
 import { PortalService } from "./portal.service";
 
 /**
@@ -20,7 +20,7 @@ import { PortalService } from "./portal.service";
  */
 @Module({
   imports: [CustomerAuthModule, TokenServerModule],
-  controllers: [PortalController, UsageController],
+  controllers: [PortalController, UsageController, SubscriptionPriorityController],
   providers: [PortalService],
   exports: [PortalService],
 })

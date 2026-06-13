@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { CustomerJwtGuard } from "../customer-auth/customer-jwt.guard";
@@ -57,5 +57,27 @@ export class UsageController {
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
       days: days ? parseInt(days, 10) : undefined,
     });
+  }
+}
+
+/**
+ * SubscriptionPriorityController — set the priority (relay order) of a subscription.
+ *
+ * POST /api/account/subscriptions/priority  body: { subscriptionId, priority }
+ * → { ok: true, subscriptions: [...] }
+ */
+@Controller("account/subscriptions")
+@Public()
+@UseGuards(CustomerJwtGuard)
+export class SubscriptionPriorityController {
+  constructor(private readonly portalService: PortalService) {}
+
+  /** POST /api/account/subscriptions/priority  body: { subscriptionId, priority } */
+  @Post("priority")
+  setPriority(
+    @CurrentCustomer() customer: CustomerUser,
+    @Body() body: { subscriptionId: string; priority: number },
+  ) {
+    return this.portalService.setSubscriptionPriority(customer.customerId, body.subscriptionId, Number(body.priority));
   }
 }
