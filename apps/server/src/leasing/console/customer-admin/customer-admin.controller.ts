@@ -17,6 +17,7 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   Request,
   UseGuards,
@@ -26,7 +27,7 @@ import { ConsoleJwtGuard } from "../../../shared/auth/console-jwt.guard";
 import { Roles } from "../../../shared/auth/roles.decorator";
 import { AuditLogService } from "../../../shared/audit-log/audit-log.service";
 import { CustomerAdminService } from "./customer-admin.service";
-import { UpdateCustomerDto } from "./dto/customer-admin.dto";
+import { GrantCatalogSubscriptionDto, UpdateCustomerDto } from "./dto/customer-admin.dto";
 
 @Controller("console/customers")
 @UseGuards(ConsoleJwtGuard)
@@ -69,5 +70,23 @@ export class CustomerAdminController {
     });
 
     return result;
+  }
+
+  /** 目录版手动授予订阅(管理员,bypass 支付):提交一个目录 selection。 */
+  @Post(":id/subscriptions")
+  async grant(
+    @Param("id") id: string,
+    @Body() dto: GrantCatalogSubscriptionDto,
+    @Request() req: any,
+  ) {
+    const sub = await this.customerAdmin.grantCatalogSubscription(id, dto.selection);
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "GRANT_SUBSCRIPTION",
+      targetType: "Customer",
+      targetId: id,
+      detail: { selection: dto.selection, subscriptionId: sub.id },
+    });
+    return sub;
   }
 }

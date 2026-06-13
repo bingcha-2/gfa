@@ -4,7 +4,7 @@
  *
  * Security: every read path is asserted to omit passwordHash / tokenVersion.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NotFoundException } from "@nestjs/common";
 
 import { CustomerAdminService } from "../customer-admin.service";
@@ -21,6 +21,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 let seq = 0;
 
 let service: CustomerAdminService;
+let billing: { createGrantOrder: ReturnType<typeof vi.fn> };
+let subscriptions: { activateForOrder: ReturnType<typeof vi.fn> };
 
 async function createOrder(customerId: string, overrides: Partial<{ status: string; amountCents: number }> = {}) {
   return prisma.planOrder.create({
@@ -63,7 +65,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await cleanCustomerTables();
-  service = new CustomerAdminService(prisma as any);
+  // 手动授予用 billing/subscription;list/detail/update 用例用不到,传 mock。
+  billing = { createGrantOrder: vi.fn() };
+  subscriptions = { activateForOrder: vi.fn() };
+  service = new CustomerAdminService(prisma as any, billing as any, subscriptions as any);
 });
 
 afterAll(async () => {
@@ -170,5 +175,21 @@ describe("CustomerAdminService.updateCustomer", () => {
 
   it("throws 404 for an unknown customer", async () => {
     await expect(service.updateCustomer("no-such-customer", { displayName: "x" })).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe("CustomerAdminService.grantCatalogSubscription", () => {
+  it("落 GRANT 订单 → 走 activateForOrder 激活 → 返回订阅(目录版手动授予,编排正确)", async () => {
+    const order = { id: "ord-grant-1" };
+    const sub = { id: "sub-grant-1" };
+    billing.createGrantOrder.mockResolvedValue(order);
+    subscriptions.activateForOrder.mockResolvedValue(sub);
+    const selection = { line: "pool", products: ["antigravity"], usageTier: "small", deviceLimit: 1 };
+
+    const result = await service.grantCatalogSubscription("cust-grant", selection as any);
+
+    expect(billing.createGrantOrder).toHaveBeenCalledWith("cust-grant", selection);
+    expect(subscriptions.activateForOrder).toHaveBeenCalledWith(order);
+    expect(result).toBe(sub);
   });
 });

@@ -137,6 +137,45 @@ export class BillingService {
   }
 
   /**
+   * 管理员手动授予(目录版):不走支付,按目录 selection 算 config + 绑定线座位预检,落一条
+   * ¥0、status=PAID、payChannel=GRANT 的订单(保留订单→订阅审计链 + activatedFromOrderId FK)。
+   * 激活由调用方走与付费单同一的 SubscriptionService.activateForOrder 入口。返回该订单。
+   */
+  async createGrantOrder(customerId: string, selection: Selection) {
+    const published = await this.planCatalog.getPublished();
+    if (!published) throw new BadRequestException("套餐目录未发布,无法授予");
+
+    let config: Record<string, unknown>;
+    try {
+      ({ config } = computePurchase(published.config as CatalogConfig, selection));
+    } catch (err: any) {
+      throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
+    }
+
+    // 与付费下单同口径:绑定线座位预检(避免授予了拿不到号);号池线不预检。
+    await this.assertBindSeatsAvailable(config);
+    // resolveReferrerId 顺带校验客户存在(不存在 → NotFound)。
+    const referrerId = await this.resolveReferrerId(customerId);
+
+    const now = new Date();
+    return this.prisma.planOrder.create({
+      data: {
+        customerId,
+        amountCents: 0,
+        payChannel: "GRANT",
+        outTradeNo: generateOutTradeNo(),
+        status: "PAID",
+        paidAt: now,
+        expiresAt: now, // 已 PAID,pending TTL 无意义
+        referrerId,
+        catalogVersion: published.version,
+        selection: JSON.stringify(selection),
+        config: JSON.stringify(config),
+      } as any,
+    });
+  }
+
+  /**
    * 下单前座位预检(spec §10):仅对绑定线 config,逐 product 确认该等级还有可用座位
    * (任一上游号剩 ≥ 本单 weight 份),无 → 抛 BadRequest 拒绝下单。占用份额从 DB ACTIVE
    * 订阅的 config 按 weight 汇总(单一真相源,不读 access-keys.json 文件,避免停写文件后

@@ -560,6 +560,7 @@ enum PlanOrderStatus {
 enum PayChannel {
   ALIPAY
   WXPAY
+  GRANT // 管理员手动授予(目录版):¥0、无支付,仅作订单→订阅审计链的来源标记
 }
 
 enum DeviceStatus {

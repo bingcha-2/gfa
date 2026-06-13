@@ -11,6 +11,9 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
+import { BillingService } from "../../account/billing/billing.service";
+import { SubscriptionService } from "../../subscription/subscription.service";
+import type { Selection } from "../../plan-catalog/pricing";
 import { UpdateCustomerDto } from "./dto/customer-admin.dto";
 
 export interface ListCustomersParams {
@@ -26,6 +29,8 @@ export class CustomerAdminService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly billing: BillingService,
+    private readonly subscriptions: SubscriptionService,
   ) {}
 
   /**
@@ -220,5 +225,19 @@ export class CustomerAdminService {
 
     this.logger.log(`[customer-admin] customer ${id} updated (${JSON.stringify(dto)})`);
     return updated;
+  }
+
+  /**
+   * 管理员手动授予订阅(目录版,替代已删的 plan 版 grantSubscription):billing.createGrantOrder
+   * 落 ¥0 PAID GRANT 订单(算价 + 绑定线座位预检),再走与付费同一的 activateForOrder 激活。
+   * 返回新建或同配置续期的订阅。
+   */
+  async grantCatalogSubscription(id: string, selection: Selection) {
+    const order = await this.billing.createGrantOrder(id, selection);
+    const sub = await this.subscriptions.activateForOrder(order);
+    this.logger.log(
+      `[customer-admin] granted catalog subscription ${sub.id} to customer ${id} (order ${order.id})`,
+    );
+    return sub;
   }
 }

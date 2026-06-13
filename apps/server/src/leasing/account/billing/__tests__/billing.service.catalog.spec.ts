@@ -277,3 +277,56 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     );
   });
 });
+
+// 管理员手动授予(目录版):不走支付,落一条 ¥0 / status=PAID / payChannel=GRANT 的订单,
+// 复用 computePurchase 算 config + 绑定线座位预检。激活由调用方走 activateForOrder(同付费)。
+describe("BillingService.createGrantOrder(目录版手动授予)", () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let catalog: any;
+  let rosetta: any;
+  let service: BillingService;
+
+  beforeEach(() => {
+    prisma = makeMockPrisma();
+    catalog = makeCatalog();
+    rosetta = makeRosetta();
+    service = new BillingService(prisma, catalog, rosetta);
+    prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
+    prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({ id: "grant-order-1", ...data }));
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("号池授予 → ¥0、PAID、GRANT,带 config/selection/catalogVersion;号池不预检座位", async () => {
+    const selection = { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 };
+
+    const order = await service.createGrantOrder("cust-1", selection as any);
+
+    const data = prisma.planOrder.create.mock.calls[0][0].data;
+    expect(data.amountCents).toBe(0);
+    expect(data.payChannel).toBe("GRANT");
+    expect(data.status).toBe("PAID");
+    expect(data.paidAt).toBeInstanceOf(Date);
+    expect(data.catalogVersion).toBe(2);
+    expect(data.referrerId).toBe("referrer-1");
+    expect(JSON.parse(data.selection)).toEqual(selection);
+    expect(JSON.parse(data.config)).toMatchObject({ line: "pool", products: ["anthropic"] });
+    expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled(); // 号池线不预检
+    expect(order.id).toBe("grant-order-1");
+  });
+
+  it("绑定授予 → 走座位预检(与付费同口径);无座位 → BadRequest,不建订单", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    const selection = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
+
+    await expect(service.createGrantOrder("cust-1", selection as any)).rejects.toThrow(BadRequestException);
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("目录未发布 → BadRequest(无法授予)", async () => {
+    catalog.getPublished.mockResolvedValue(null);
+    await expect(
+      service.createGrantOrder("cust-1", { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
