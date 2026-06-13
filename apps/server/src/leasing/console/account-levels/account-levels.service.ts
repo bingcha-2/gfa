@@ -1,5 +1,5 @@
 import * as path from "path";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 
 import { defaultRemoteAccessDataDir } from "../../remote-access/data-dir";
 import { readJson } from "../../rosetta/lib/store";
@@ -26,7 +26,9 @@ export interface AccountLevelsResult {
  */
 @Injectable()
 export class AccountLevelsService {
-  constructor(private readonly dataDir: string = defaultRemoteAccessDataDir()) {}
+  // @Optional():dataDir 不是 DI 依赖,而是「读账号池目录」的可注入默认(测试可传 tmp 目录)。
+  // 无 @Optional 时 NestJS 会把 string 参数当依赖去解析 String provider → 启动期解析失败(应用起不来)。
+  constructor(@Optional() private readonly dataDir: string = defaultRemoteAccessDataDir()) {}
 
   listLevels(product: string): AccountLevelsResult {
     const fileName = POOL_FILE_BY_PRODUCT[product];
