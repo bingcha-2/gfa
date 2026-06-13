@@ -460,6 +460,7 @@ model CardTokenUsage {
   accessKeyId       String                     // Card (access key) ID that consumed the tokens
   accessKeyName     String?                    // Card display name (snapshot at record time)
   accountId         Int?                       // Rosetta account that served the request
+  customerId        String?                    // Owning account (Customer.id); null for legacy file/pool cards not yet account-bound
   modelKey          String                     // Model identifier (e.g. gemini-..., gpt-..., claude-...)
   bucket            String                     // Billing bucket: gemini / codex / opus
   status            Int      @default(0)        // Reported HTTP status
@@ -474,6 +475,7 @@ model CardTokenUsage {
   @@index([accessKeyId, timestamp])
   @@index([accessKeyId, modelKey])
   @@index([accountId, timestamp])
+  @@index([customerId, timestamp])
 }
 
 /// 账号 5h/周额度水位时序:on-change 去重后由 AccountQuotaSnapshotTracker 批量写入。
@@ -650,6 +652,7 @@ model Subscription {
   bindings            String?            // JSON product→accountId mirror
   levels              String?
   weight              Int                @default(1)
+  priority            Int                @default(0)  // Account-internal failover order: lower = used first
   deviceLimit         Int                @default(1)
   weeklyTokenLimit    Int?
   windowMs            Int                @default(18000000)
