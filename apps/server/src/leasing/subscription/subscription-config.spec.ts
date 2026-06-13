@@ -129,6 +129,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
   it("号池订阅 → record 含 bucketLimits/weeklyTokenLimit,status=active", () => {
     const record = subscriptionToLimitRecord({
       id: "sub-1",
+      customerId: "cust-1",
       status: "ACTIVE",
       expiresAt,
       config: {
@@ -143,6 +144,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
 
     expect(record).toEqual({
       id: "sub-1",
+      customerId: "cust-1",
       status: "active",
       products: ["anthropic"],
       bucketLimits: { "anthropic-claude": 50000 },
@@ -155,6 +157,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
   it("绑定订阅 → record 含 bindings/weight、requiresBinding=true,不含用量上限", () => {
     const record = subscriptionToLimitRecord({
       id: "sub-2",
+      customerId: "cust-2",
       status: "ACTIVE",
       expiresAt,
       config: {
@@ -170,6 +173,7 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
 
     expect(record).toEqual({
       id: "sub-2",
+      customerId: "cust-2",
       status: "active",
       products: ["anthropic"],
       bindings: { anthropic: 1234 },

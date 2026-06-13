@@ -95,6 +95,10 @@ export interface AccessKeyRecord {
    * Subscription.expiresAt). Takes priority over firstUsedAt+durationMs in
    * keyExpiresAt(). Regular cards never carry it. */
   keyExpiresAt?: string;
+  /** Owning account (Customer.id). Set on subscription shadow records by
+   *  entitlement-sync; legacy file/pool cards leave it undefined. Used by
+   *  reportResult to stamp CardTokenUsage.customerId. */
+  customerId?: string;
   /** Card-migration provenance: set when a legacy card was re-homed to a
    * customer Subscription (bind-card). The record keeps its id (usage/windows
    * carry over); its key is rotated to the subscription's backing key. */
