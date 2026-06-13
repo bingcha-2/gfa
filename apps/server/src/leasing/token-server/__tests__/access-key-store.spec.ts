@@ -702,6 +702,38 @@ describe('AccessKeyStore', () => {
   });
 });
 
+describe("precheckRecord — 只读三道闸预检", () => {
+  it("bucket 已超额 → allowed=false + resetMs;且不写缓存(record.status 不变)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-pre-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    const now = Date.now();
+    store.loadSubscriptionRecords([{
+      id: "s1", customerId: "c1", status: "active", products: ["codex"],
+      bucketLimits: { "codex-gpt": 100 }, windowMs: 18_000_000,
+      windowStartedAt: now,
+      tokenUsageEvents: [{ at: now, status: 200, modelKey: "gpt-5-codex", product: "codex", totalTokens: 100 }],
+    }]);
+    const rec = store.findById("s1")!;
+    const res = store.precheckRecord(rec, { modelKey: "gpt-5-codex", product: "codex", enforceLimit: true });
+    expect(res.allowed).toBe(false);
+    expect(res.resetMs).toBeGreaterThan(0);
+    expect(rec.status).toBe("active"); // 预检未把它改成 expired/写缓存
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("额度充足 → allowed=true", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-pre2-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    store.loadSubscriptionRecords([{
+      id: "s2", customerId: "c1", status: "active", products: ["codex"],
+      bucketLimits: { "codex-gpt": 100000 }, windowMs: 18_000_000,
+    }]);
+    const res = store.precheckRecord(store.findById("s2")!, { modelKey: "gpt-5-codex", product: "codex", enforceLimit: true });
+    expect(res.allowed).toBe(true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
 describe("listByCustomerSorted — 账户订阅按 priority 升序", () => {
   it("只返回该 customer 的 ACTIVE 订阅,按 priority 升序", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-list-"));

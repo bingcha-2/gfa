@@ -550,7 +550,7 @@ export class AccessKeyStore {
     keyValue: string,
     record: AccessKeyRecord,
     data: AccessKeysData,
-    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number) } = {},
+    options: { activate?: boolean; enforceLimit?: boolean; modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number); dryRun?: boolean } = {},
   ): ResolveResult {
     if (record.status && record.status !== 'active') {
       return { key: keyValue, record: null, error: 'Access key disabled' };
@@ -562,8 +562,10 @@ export class AccessKeyStore {
     }
     const expiresAt = keyExpiresAt(record);
     if (expiresAt && Date.parse(expiresAt) <= now) {
-      record.status = 'expired';
-      this.writeCache();
+      if (!options.dryRun) {
+        record.status = 'expired';
+        this.writeCache();
+      }
       return { key: keyValue, record: null, error: 'Access key expired' };
     }
 
@@ -593,7 +595,7 @@ export class AccessKeyStore {
           ? this.bucketUsageInWindow(record, bucket, now, aligned)
           : (recentBucketUsage(record, now).get(bucket) || 0);
         if (limit > 0 && used >= limit) {
-          this.writeCache();
+          if (!options.dryRun) this.writeCache();
           const windowLabel = aligned > 0 ? '账号窗口' : formatWindowLabel(record.windowMs);
           const resetMs = aligned > 0 ? Math.max(0, aligned - now) : tokenWindowResetMs(record, now);
           return {
@@ -637,7 +639,7 @@ export class AccessKeyStore {
         if (weeklyCap > 0) {
           const used = recentWeeklyBucketUsage(record, now).get(bucket) || 0;
           if (used >= weeklyCap) {
-            this.writeCache();
+            if (!options.dryRun) this.writeCache();
             return {
               key: keyValue, record: null,
               limitExceeded: true, resetMs: weeklyWindowResetMs(record, now),
@@ -648,8 +650,26 @@ export class AccessKeyStore {
       }
     }
 
-    if (options.activate) this.writeCache();
+    if (options.activate && !options.dryRun) this.writeCache();
     return { key: keyValue, record, data };
+  }
+
+  /**
+   * 只读三道闸预检(bucketLimits + weekly + expiry/status),供 SubscriptionScheduler
+   * 对候选订阅逐个判断"当前 bucket 还有没有额度"。复用 validateRecord 的 dryRun 模式,
+   * 绝不写缓存、不改 record 状态。fair-share(第三道闸)由 scheduler 另调 checkFairShare。
+   */
+  precheckRecord(
+    record: AccessKeyRecord,
+    options: { modelKey?: string; product?: string; alignedResetAt?: number | ((record: any) => number); weeklyRatio?: number | ((record: any) => number); enforceLimit?: boolean },
+  ): { allowed: boolean; resetMs?: number; reason?: string } {
+    const res = this.validateRecord(String(record.key || record.id), record, this.readAll(), {
+      ...options,
+      enforceLimit: options.enforceLimit ?? true,
+      dryRun: true,
+    });
+    if (res.record) return { allowed: true };
+    return { allowed: false, resetMs: res.resetMs, reason: res.error };
   }
 
   // ── Usage recording ────────────────────────────────────────────────────
