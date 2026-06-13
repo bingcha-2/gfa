@@ -749,3 +749,16 @@ describe("listByCustomerSorted — 账户订阅按 priority 升序", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 });
+
+describe("findByKey 支持订阅卡(去文件化)", () => {
+  it("订阅 record 带 backingKeyValue → findByKey(backingKeyValue) 查得到", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-fbk-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    store.loadSubscriptionRecords([
+      { id: "sub-x", key: "BCAI-SUB-XYZ", customerId: "c1", status: "active", products: ["codex"] },
+    ]);
+    expect(store.findByKey("BCAI-SUB-XYZ")?.id).toBe("sub-x");
+    expect(store.findByKey("不存在")).toBeNull();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});

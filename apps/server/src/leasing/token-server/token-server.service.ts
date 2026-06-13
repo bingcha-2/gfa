@@ -151,13 +151,13 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
       const subs = await prisma.subscription.findMany({
         where: { status: "ACTIVE", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
         select: {
-          id: true, customerId: true, priority: true, status: true, expiresAt: true, productEntitlements: true,
+          id: true, customerId: true, priority: true, backingKeyValue: true, status: true, expiresAt: true, productEntitlements: true,
           bucketLimits: true, bindings: true, levels: true, weight: true,
           deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
         },
       });
       const records = subs.map((s: any) =>
-        subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, status: s.status, expiresAt: s.expiresAt, config: legacyColumnsToConfig(s) }),
+        subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, backingKeyValue: s.backingKeyValue, status: s.status, expiresAt: s.expiresAt, config: legacyColumnsToConfig(s) }),
       );
       this.accessKeyStore.loadSubscriptionRecords(records as any);
     } catch (err: any) {

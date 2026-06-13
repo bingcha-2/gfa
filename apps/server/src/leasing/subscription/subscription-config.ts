@@ -77,6 +77,7 @@ export interface SubscriptionRow {
   id: string;
   customerId?: string;
   priority?: number;
+  backingKeyValue?: string;
   status: string;
   expiresAt: Date | null;
   config: Record<string, any>;
@@ -90,6 +91,7 @@ export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, 
   const config = sub.config;
   const base: Record<string, unknown> = {
     id: sub.id,
+    key: sub.backingKeyValue,
     customerId: sub.customerId,
     priority: sub.priority ?? 0,
     status: sub.status === "ACTIVE" ? "active" : "expired",

@@ -119,6 +119,7 @@ export class EntitlementSyncService {
       id: sub.id,
       customerId: sub.customerId,
       priority: sub.priority,
+      backingKeyValue: sub.backingKeyValue,
       status: sub.status,
       expiresAt: sub.expiresAt,
       config,

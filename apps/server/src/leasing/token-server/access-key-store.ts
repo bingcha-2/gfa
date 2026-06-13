@@ -177,6 +177,7 @@ export class AccessKeyStore {
   private byKey = new Map<string, AccessKeyRecord>();
   // 去影子:订阅 record 独立于文件 cache —— 不进 access-keys.json,reload 碰不到它们。
   private subscriptionById = new Map<string, AccessKeyRecord>();
+  private subscriptionByBackingKey = new Map<string, AccessKeyRecord>();
 
   constructor(
     private readonly filePath: string,
@@ -270,6 +271,11 @@ export class AccessKeyStore {
       } else {
         this.subscriptionById.set(rec.id, { ...rec } as AccessKeyRecord);
       }
+    }
+    // 重建 backingKeyValue → record 索引(findByKey 认订阅卡)
+    this.subscriptionByBackingKey.clear();
+    for (const rec of this.subscriptionById.values()) {
+      if (rec.key) this.subscriptionByBackingKey.set(this.keyHash(rec.key), rec);
     }
   }
 
@@ -433,7 +439,8 @@ export class AccessKeyStore {
   findByKey(keyValue: string): AccessKeyRecord | null {
     if (!keyValue) return null;
     this.readAll();
-    return this.byKey.get(this.keyHash(keyValue)) || null;
+    const h = this.keyHash(keyValue);
+    return this.byKey.get(h) || this.subscriptionByBackingKey.get(h) || null;
   }
 
   /**
