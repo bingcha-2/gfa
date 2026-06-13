@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 // detectCodexAppPath 检测 Codex 安装路径。
@@ -60,6 +61,11 @@ func detectCodexAppPath() string {
 				return p
 			}
 		}
+		// 新版 Codex CLI 把二进制放进内容寻址子目录 bin\<hash>\codex.exe,直查 bin\codex.exe
+		// 命中不到(且纯 CLI 安装不写 chrome-native-hosts.json / 注册表)。扫 bin\* 兜底。
+		if p := detectCodexInVersionedBin(localAppData); p != "" {
+			return p
+		}
 	case "linux":
 		if p := desktopFindApp("Codex"); p != "" {
 			return p
@@ -74,6 +80,36 @@ func detectCodexAppPath() string {
 		}
 	}
 	return ""
+}
+
+// detectCodexInVersionedBin 扫描 %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe。
+// 新版 Codex CLI 用内容寻址哈希子目录存二进制(exe 不在 bin 根层),所以直查 bin\codex.exe
+// 会失败。存在多个哈希目录(历史版本残留)时,取 codex.exe 修改时间最新的那个=当前版本。
+func detectCodexInVersionedBin(localAppData string) string {
+	if localAppData == "" {
+		return ""
+	}
+	binDir := filepath.Join(localAppData, "OpenAI", "Codex", "bin")
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	var newestMod time.Time
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		exe := filepath.Join(binDir, e.Name(), "codex.exe")
+		info, err := os.Stat(exe)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if mod := info.ModTime(); newest == "" || mod.After(newestMod) {
+			newest, newestMod = exe, mod
+		}
+	}
+	return newest
 }
 
 // ── chrome-native-hosts.json 探测 ──────────────────────────────────────────
