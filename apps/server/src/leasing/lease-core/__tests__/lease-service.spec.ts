@@ -594,6 +594,45 @@ describe("LeaseService (generic core)", () => {
     expect(r.accountId).toBe(1);
   });
 
+  it("订阅接力:优先订阅桶满 → 自动切到下一个有额度的订阅", async () => {
+    const { AccessKeyStore } = await import("../../token-server/access-key-store");
+    const store = new AccessKeyStore(accessKeysFilePath);
+    // s1: bucket "fake-gpt" limit=1, already used 5 → exceeded
+    // s2: bucket "fake-gpt" limit=100000, no usage → available
+    store.loadSubscriptionRecords([
+      { id: "s1", key: "s1-key", customerId: "cust-1", priority: 1, status: "active", products: ["fake"],
+        bucketLimits: { "fake-gpt": 1 }, windowMs: 18_000_000, windowStartedAt: Date.now(),
+        tokenUsageEvents: [{ at: Date.now(), status: 200, modelKey: "gpt-5-codex", product: "fake", totalTokens: 5 }] },
+      { id: "s2", key: "s2-key", customerId: "cust-1", priority: 2, status: "active", products: ["fake"],
+        bucketLimits: { "fake-gpt": 100000 }, windowMs: 18_000_000 },
+    ]);
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken),
+      { accessKeysFilePath, accessKeyStore: store, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+    refreshToken.mockResolvedValue("tok");
+    const lease: any = await service.leaseToken(sessionReqFor("s1"), { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+    expect(lease.activeSubscriptionId).toBe("s2");
+  });
+
+  it("账户所有订阅都满 → 429", async () => {
+    const { AccessKeyStore } = await import("../../token-server/access-key-store");
+    const store = new AccessKeyStore(accessKeysFilePath);
+    store.loadSubscriptionRecords([
+      { id: "s1", key: "s1-key", customerId: "cust-1", priority: 1, status: "active", products: ["fake"],
+        bucketLimits: { "fake-gpt": 1 }, windowMs: 18_000_000, windowStartedAt: Date.now(),
+        tokenUsageEvents: [{ at: Date.now(), status: 200, modelKey: "gpt-5-codex", product: "fake", totalTokens: 5 }] },
+    ]);
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken),
+      { accessKeysFilePath, accessKeyStore: store, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+    refreshToken.mockResolvedValue("tok");
+    await expect(service.leaseToken(sessionReqFor("s1"), { clientId: "c1", modelKey: "gpt-5-codex" }))
+      .rejects.toMatchObject({ statusCode: 429 });
+  });
+
   it("写入点把订阅 record 的 customerId 带进用量事件", async () => {
     const { AccessKeyStore } = await import("../../token-server/access-key-store");
     const recordSpy = vi.fn();

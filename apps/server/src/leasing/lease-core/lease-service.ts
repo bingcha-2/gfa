@@ -31,6 +31,7 @@ import {
 } from "../token-server/token-billing";
 import { bucketKey, familyOfBucket } from "./product-bucket";
 import type { Provider } from "./provider";
+import { SubscriptionScheduler } from "./subscription-scheduler";
 
 export type TokenUsageTracker = {
   record: (event: {
@@ -204,6 +205,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private _cachedMtimeMs = 0;
   private _accountsDirty = false;
   private _accountsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private subscriptionScheduler: SubscriptionScheduler | null = null;
 
   constructor(provider: Provider<TAccount>, options: LeaseServiceOptions = {}) {
     const dataDir = defaultRemoteAccessDataDir();
@@ -229,6 +231,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.noAccountMessage = options.noAccountMessage || "No account with projectId is available.";
     this.busyMessage = options.busyMessage || "当前账号繁忙，额度恢复中，请稍后重试";
     this.quotaProfileTracker = options.quotaProfileTracker || null;
+  }
+
+  private ensureScheduler(): SubscriptionScheduler {
+    if (!this.subscriptionScheduler) {
+      this.subscriptionScheduler = new SubscriptionScheduler(this.accessKeyStore, this.fairShareTracker);
+    }
+    return this.subscriptionScheduler;
   }
 
   private ensureDaily() {
@@ -402,9 +411,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // 每卡 token 配额(bucketLimits,按复合桶设的每模型上限)在此作为服务端兜底 enforce:
     // 客户端 localQuota 是主拦截(租号前回 429),服务端按复合桶精确再拦一道,防客户端被绕过。
     // 绑定卡另有 fair-share(下方)+ 账号原生配额;两层谁先到谁拦。
+    // 订阅卡(customerId)可能触发账户级接力:先不 enforce,拿到 record 后再决策路径。
+    // 文件卡(无 customerId)不接力,在拿到 record 后手动做 precheckRecord 兜底。
     const auth = await this.accessKeyStore.resolveFromRequest(req, payload, {
       activate: true,
-      enforceLimit: true,
+      enforceLimit: false,
       modelKey,
       // product 必传:用量事件按复合桶 `<product>-<family>` 记录(recordUsage 用 provider.id),
       // bucketLimits 也按复合桶配置;不传则 enforce 退化成 bare family,与两者都对不上。
@@ -414,15 +425,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // 派生周上限(anthropic/codex)用的 5h/周 换算比 R。回调解 record→R 的鸡生蛋。
       weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
     });
-    // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
-    if (auth.limitExceeded) {
-      const resetMs = Number(auth.resetMs || 0);
-      throw this.fail(429, auth.error || "配额已用尽，请稍后再试", {
-        ok: false,
-        error: auth.error || "配额已用尽",
-        ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
-      });
-    }
     // Session-JWT auth failure → machine code in `error` (SESSION_INVALID /
     // DEVICE_REVOKED / SUBSCRIPTION_EXPIRED). The desktop client treats these as
     // fatal (re-login / renew) instead of retrying, so the code MUST ride in the
@@ -434,6 +436,48 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
     }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
+
+    // ── 账户级订阅优先级接力 ──────────────────────────────────────────────
+    // 订阅卡(有 customerId):按 priority 在该账户的订阅间选第一个该 bucket 有额度的,
+    // 替换 auth.record。优先订阅用完会自动切到下一个;全部用尽则 429。
+    // 文件卡(无 customerId)不接力,对原 record 做 precheckRecord 服务端兜底 enforce。
+    if (auth.record.customerId) {
+      const bucket = bucketKey(this.provider.id, modelKey);
+      const picked = this.ensureScheduler().selectForFailover({
+        customerId: auth.record.customerId,
+        providerId: this.provider.id,
+        modelKey,
+        bucket,
+        precheckOptions: {
+          modelKey,
+          product: this.provider.id,
+          alignedResetAt: (rec: any) => this.boundAccountResetAt(rec, modelKey),
+          weeklyRatio: (rec: any) => this.weeklyRatioForFamily(rec, familyOfBucket(bucket)),
+        },
+      });
+      if (picked) {
+        auth.record = picked;
+      } else {
+        throw this.fail(429, "账户所有订阅额度已用尽，请稍后再试");
+      }
+    } else {
+      // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
+      const limitCheck = this.accessKeyStore.precheckRecord(auth.record, {
+        modelKey,
+        product: this.provider.id,
+        alignedResetAt: (record: any) => this.boundAccountResetAt(record, modelKey),
+        weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
+        enforceLimit: true,
+      });
+      if (!limitCheck.allowed) {
+        const resetMs = Number(limitCheck.resetMs || 0);
+        throw this.fail(429, limitCheck.reason || "配额已用尽，请稍后再试", {
+          ok: false,
+          error: limitCheck.reason || "配额已用尽",
+          ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
+        });
+      }
+    }
 
     // Two card modes:
     //  • Bound  (boundAccountId > 0): pinned to one account in this pool — lease
@@ -586,6 +630,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return {
       ok: true,
       leaseId: lease.leaseId,
+      activeSubscriptionId: auth.record.id,
       accessKeySessionId,
       sessionId: accessKeySessionId,
       sessionExpiresAt: auth.record.sessionExpiresAt || "",
