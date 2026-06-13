@@ -50,6 +50,8 @@ import { DeviceService } from "../../device/device.service";
 import { TokenServerService } from "../../../token-server/token-server.service";
 import { RemoteCodexService } from "../../../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../../../remote-anthropic/service/remote-anthropic.service";
+import * as crypto from "crypto";
+
 import { ACCOUNT_SHARE_CAPACITY } from "../../../token-server/token-billing";
 import { signParams } from "../epay.sign";
 import {
@@ -62,7 +64,10 @@ import {
 } from "../../../../shared/__tests__/customer-test-db";
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const EPAY_KEY = "catalog-e2e-key";
+// V2:商户私钥用于下单签名,平台私钥签回调、平台公钥验签(E2E 用一对即可,不交叉验)。
+const _e2eKP = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+const E2E_PRIV_B64 = _e2eKP.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+const E2E_PUB_B64 = _e2eKP.publicKey.export({ type: "spki", format: "der" }).toString("base64");
 const EPAY_PID = "7777";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -176,10 +181,18 @@ beforeEach(async () => {
     antigravity: [{ id: 1, email: "ag-ultra@pool.test", refreshToken: "rt-ag", enabled: true, projectId: "proj-1", planType: "ultra" }],
   });
 
-  vi.stubEnv("EPAY_KEY", EPAY_KEY);
+  vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", E2E_PRIV_B64); // 下单 RSA 签名(V2)
+  vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", E2E_PUB_B64); // 回调 RSA 验签(V2)
   vi.stubEnv("EPAY_PID", EPAY_PID);
   vi.stubEnv("EPAY_FEE_PERCENT", "0"); // amountCents == base price (hermetic; ignore local .env)
   vi.stubEnv("EPAY_REFERRAL_PERCENT", "0"); // no referral noise in lifecycle tests
+
+  // buildEpayPayUrl POSTs to the live zhunfu gateway — stub fetch so order creation
+  // completes offline. Activation is driven directly via callbackService.handleNotify,
+  // so the gateway response only needs to yield a cashier URL for the QR.
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    text: async () => "<script>window.location.replace('https://gw.test/pay/cashier')</script>",
+  })));
 
   tokenProvider.mockReset();
   tokenProvider.mockResolvedValue("upstream-token");
@@ -204,8 +217,8 @@ beforeEach(async () => {
     prisma as any,
   );
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
+  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService);
 
   // Three lease lines sharing the SAME store + injecting the real engine.
   const common = {
@@ -226,6 +239,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -271,8 +285,8 @@ function epayBody(outTradeNo: string, moneyYuan: string, overrides: Record<strin
     trade_status: "TRADE_SUCCESS",
     ...overrides,
   };
-  const sign = signParams(base, EPAY_KEY);
-  return { ...base, sign_type: "MD5", sign };
+  const sign = signParams(base, E2E_PRIV_B64); // 模拟 zhunfu 用平台私钥签回调
+  return { ...base, sign_type: "RSA", sign };
 }
 
 const yuan = (cents: number) => (cents / 100).toFixed(2);

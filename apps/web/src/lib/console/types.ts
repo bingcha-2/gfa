@@ -206,7 +206,6 @@ export type ConsoleCustomerList = {
 
 export type ConsoleSubscriptionLite = {
   id: string;
-  planId: string | null;
   status: string;
   startsAt: string;
   expiresAt: string | null;
@@ -214,7 +213,7 @@ export type ConsoleSubscriptionLite = {
   weight: number;
   deviceLimit: number;
   createdAt: string;
-  plan: { name: string } | null;
+  config: string | null;
 };
 export type ConsoleOrderLite = {
   id: string;
@@ -222,9 +221,9 @@ export type ConsoleOrderLite = {
   amountCents: number;
   payChannel: string;
   status: string;
+  selection: string | null;
   paidAt: string | null;
   createdAt: string;
-  plan: { name: string } | null;
 };
 export type ConsoleDeviceLite = {
   id: string;
@@ -256,15 +255,16 @@ export type ConsoleCustomerDetail = {
 export type ConsolePlanOrder = {
   id: string;
   customerId: string;
-  planId: string;
   subscriptionId: string | null;
   amountCents: number;
   payChannel: string;
   outTradeNo: string;
   status: string;
+  selection: string | null;
+  catalogVersion: number | null;
+  expiresAt: string;
   paidAt: string | null;
   createdAt: string;
-  plan: { name: string } | null;
   customer: { email: string } | null;
 };
 export type ConsolePlanOrderList = {

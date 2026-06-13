@@ -26,7 +26,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Search, Undo2 } from "lucide-react";
+import { RefreshCw, Search, Undo2 } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
@@ -43,6 +43,19 @@ const CHANNEL_ITEMS = [
   { label: "支付宝", value: "ALIPAY" },
   { label: "微信", value: "WXPAY" },
 ];
+
+function selectionName(json: string | null): string {
+  if (!json) return "—";
+  try {
+    const s = JSON.parse(json);
+    if (!s || typeof s !== "object" || !("line" in s)) return "—";
+    const line = s.line === "bind" ? "绑定" : "号池";
+    const products = s.line === "bind"
+      ? (s.items ?? []).map((i: { product: string }) => i.product)
+      : s.products ?? [];
+    return `${line} ${products.join("+") || "套餐"}`;
+  } catch { return "—"; }
+}
 
 function orderStatusBadge(status: string) {
   if (status === "PAID") return <Badge className="bg-emerald-500 text-white">{ORDER_STATUS_LABEL[status]}</Badge>;
@@ -82,6 +95,20 @@ export default function PlanOrdersPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  async function syncPayment(o: ConsolePlanOrder) {
+    try {
+      const res = await apiRequest<{ synced: boolean; message: string }>(`plan-orders/${o.id}/sync`, { method: "POST" });
+      if (res.synced) {
+        toast.success(res.message);
+      } else {
+        toast.info(res.message);
+      }
+      await load();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
   async function refund(o: ConsolePlanOrder) {
     try {
       await apiRequest(`plan-orders/${o.id}/refund`, { method: "POST" });
@@ -99,7 +126,7 @@ export default function PlanOrdersPage() {
     <Card>
       <CardHeader>
         <CardTitle>客户订单</CardTitle>
-        <CardDescription>付费订单流水：查询、筛选与退款（退款会同步取消对应订阅并通知客户）</CardDescription>
+        <CardDescription>付费订单流水：查询、筛选与退款（仅未使用可退，退款经支付网关原路退回并取消订阅、通知客户）</CardDescription>
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <div className="flex items-center gap-2">
             <Input
@@ -148,12 +175,17 @@ export default function PlanOrdersPage() {
                   <TableRow key={o.id}>
                     <TableCell className="font-mono text-xs">{o.outTradeNo}</TableCell>
                     <TableCell>{o.customer?.email ?? "—"}</TableCell>
-                    <TableCell>{o.plan?.name ?? "—"}</TableCell>
+                    <TableCell>{selectionName(o.selection)}</TableCell>
                     <TableCell className="text-right">{fmtYuan(o.amountCents)}</TableCell>
                     <TableCell>{PAY_CHANNEL_LABEL[o.payChannel] ?? o.payChannel}</TableCell>
                     <TableCell>{orderStatusBadge(o.status)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{fmtDateTime(o.paidAt)}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right flex items-center justify-end gap-1">
+                      {(o.status === "PENDING" || o.status === "EXPIRED") && (
+                        <Button variant="ghost" size="sm" onClick={() => void syncPayment(o)}>
+                          <RefreshCw className="h-3.5 w-3.5 mr-1" />查询支付
+                        </Button>
+                      )}
                       {o.status === "PAID" && (
                         <AlertDialog>
                           <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>
@@ -163,7 +195,7 @@ export default function PlanOrdersPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>退款？</AlertDialogTitle>
                               <AlertDialogDescription>
-                                确认对订单 {o.outTradeNo}（{fmtYuan(o.amountCents)}）退款？这会把订单置为已退款、取消其激活的订阅并通知客户。打款需另在支付商户后台操作。
+                                确认对订单 {o.outTradeNo}（{fmtYuan(o.amountCents)}）退款？仅未使用的订单可退款。系统会自动通过支付网关原路退款给客户，成功后取消对应订阅并通知客户；网关退款失败则订单状态不变。
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>

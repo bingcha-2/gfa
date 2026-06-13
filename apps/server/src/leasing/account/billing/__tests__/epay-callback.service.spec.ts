@@ -6,13 +6,17 @@
  * referral rewards (with and without referrerId), and post-commit sync call order.
  */
 import "reflect-metadata";
+import * as crypto from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EpayCallbackService } from "../epay-callback.service";
 import { signParams } from "../epay.sign";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const EPAY_KEY = "test-epay-key-secure";
+// 平台密钥对(模拟 zhunfu):平台私钥签回调,平台公钥(EPAY_PLATFORM_PUBLIC_KEY)验签。
+const _platform = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+const PLATFORM_PRIV_B64 = _platform.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+const PLATFORM_PUB_B64 = _platform.publicKey.export({ type: "spki", format: "der" }).toString("base64");
 const EPAY_PID = "1001";
 
 // ─── Mock builders ────────────────────────────────────────────────────────────
@@ -80,8 +84,8 @@ function validBody(overrides: Record<string, string> = {}): Record<string, strin
     ...overrides,
   };
   // sign AFTER applying overrides
-  const sign = signParams(base, EPAY_KEY);
-  return { ...base, sign_type: "MD5", sign };
+  const sign = signParams(base, PLATFORM_PRIV_B64);
+  return { ...base, sign_type: "RSA", sign };
 }
 
 /** A PENDING catalog order matching the body. */
@@ -105,7 +109,7 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
   let service: EpayCallbackService;
 
   beforeEach(() => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", EPAY_PID);
 
     prisma = makeMockPrisma();
@@ -188,7 +192,7 @@ describe("EpayCallbackService.handleNotify — idempotency", () => {
   let service: EpayCallbackService;
 
   beforeEach(() => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", EPAY_PID);
 
     prisma = makeMockPrisma();
@@ -236,7 +240,7 @@ describe("EpayCallbackService.handleNotify — referral rewards", () => {
   let service: EpayCallbackService;
 
   beforeEach(() => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", EPAY_PID);
     vi.stubEnv("EPAY_REFERRAL_PERCENT", "10");
 
@@ -298,7 +302,7 @@ describe("EpayCallbackService.handleNotify — referral rewards", () => {
         money: "9.99",
         trade_status: "TRADE_SUCCESS",
       };
-      return { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+      return { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
     })();
 
     prisma.planOrder.findUnique.mockResolvedValue(order);
@@ -321,7 +325,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
   let service: EpayCallbackService;
 
   beforeEach(() => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", EPAY_PID);
 
     prisma = makeMockPrisma();
@@ -354,7 +358,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
         money: "9.90",
         trade_status: "TRADE_SUCCESS",
       };
-      return { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+      return { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
     })();
     const result = await service.handleNotify(bodyWithBadPid);
     expect(result).toBe("fail");
@@ -371,7 +375,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
         money: "1.00", // 100 cents, not 990
         trade_status: "TRADE_SUCCESS",
       };
-      return { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+      return { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
     })();
     const result = await service.handleNotify(fraudBody);
     expect(result).toBe("fail");
@@ -395,7 +399,7 @@ describe("EpayCallbackService.handleNotify — security", () => {
         money: "9.90",
         trade_status: "TRADE_CLOSED",
       };
-      return { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+      return { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
     })();
     const result = await service.handleNotify(closedBody);
     expect(result).toBe("success");
@@ -440,26 +444,18 @@ describe("EpayCallbackService.handleNotify — fail-closed on missing config", (
     vi.restoreAllMocks();
   });
 
-  it("returns 'fail' and does nothing when EPAY_KEY is empty (signatures forgeable)", async () => {
-    vi.stubEnv("EPAY_KEY", "");
+  it("returns 'fail' and does nothing when EPAY_PLATFORM_PUBLIC_KEY is empty (can't verify)", async () => {
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", "");
     vi.stubEnv("EPAY_PID", EPAY_PID);
-    // Body signed with empty key would otherwise verify — must still fail closed.
-    const base: Record<string, string> = {
-      pid: EPAY_PID,
-      trade_no: "epay-trade-123",
-      out_trade_no: "gfa-order-1",
-      money: "9.90",
-      trade_status: "TRADE_SUCCESS",
-    };
-    const forged = { ...base, sign_type: "MD5", sign: signParams(base, "") };
-    const result = await service.handleNotify(forged);
+    // 空公钥 → Step 0 直接 fail-closed,根本到不了验签;哪怕 body 签名有效也照拒。
+    const result = await service.handleNotify(validBody());
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
   it("returns 'fail' and does nothing when EPAY_PID is empty (pid= bypass)", async () => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", "");
     // An attacker omitting pid (so pid==="" passes the pid check) must be blocked.
     const base: Record<string, string> = {
@@ -469,7 +465,7 @@ describe("EpayCallbackService.handleNotify — fail-closed on missing config", (
       money: "9.90",
       trade_status: "TRADE_SUCCESS",
     };
-    const body = { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+    const body = { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
     const result = await service.handleNotify(body);
     expect(result).toBe("fail");
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -484,7 +480,7 @@ describe("EpayCallbackService.handleNotify — concurrent CAS", () => {
   let service: EpayCallbackService;
 
   beforeEach(() => {
-    vi.stubEnv("EPAY_KEY", EPAY_KEY);
+    vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", PLATFORM_PUB_B64);
     vi.stubEnv("EPAY_PID", EPAY_PID);
     prisma = makeMockPrisma();
     subService = makeSubscriptionService();
@@ -518,11 +514,14 @@ describe("EpayCallbackService.handleNotify — concurrent CAS", () => {
     expect(subService.activateForOrder).toHaveBeenCalledOnce();
   });
 
-  it("CAS WHERE clause restricts to PENDING|EXPIRED statuses", async () => {
+  it("CAS WHERE clause restricts to PENDING|EXPIRED|CANCELLED statuses", async () => {
+    // EXPIRED/CANCELLED are intentionally accepted: a captured payment must never be
+    // dropped, even if our pending-TTL fired (EXPIRED) or the order was superseded /
+    // user-cancelled (CANCELLED) while a stale QR was still scannable.
     await service.handleNotify(validBody());
     const casArg = prisma._txProxy.planOrder.updateMany.mock.calls[0][0];
     expect(casArg.where.outTradeNo).toBe("gfa-order-1");
-    expect(casArg.where.status).toEqual({ in: ["PENDING", "EXPIRED"] });
+    expect(casArg.where.status).toEqual({ in: ["PENDING", "EXPIRED", "CANCELLED"] });
     expect(casArg.data.status).toBe("PAID");
   });
 });

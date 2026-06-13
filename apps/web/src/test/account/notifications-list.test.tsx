@@ -8,6 +8,15 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import { NotificationsList } from "@/components/account/notifications-list";
 
+// The list shares the topnav bell count via useAccount().
+const { setUnread, refreshUnread } = vi.hoisted(() => ({
+  setUnread: vi.fn(),
+  refreshUnread: vi.fn(),
+}));
+vi.mock("@/components/account/account-provider", () => ({
+  useAccount: () => ({ setUnread, refreshUnread }),
+}));
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -39,7 +48,7 @@ const PAGE = {
 };
 
 function mockNotificationsFetch(postStatus = 200) {
-  return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+  return vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       return Promise.resolve(
         postStatus === 200
@@ -54,6 +63,8 @@ function mockNotificationsFetch(postStatus = 200) {
 describe("NotificationsList", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    setUnread.mockClear();
+    refreshUnread.mockClear();
   });
 
   it("renders items with unread state and marks one read optimistically", async () => {
@@ -65,6 +76,9 @@ describe("NotificationsList", () => {
     await waitFor(() => {
       expect(screen.getByText("维护公告")).toBeInTheDocument();
     });
+
+    // Bell synced to the server's unread count when the list loads.
+    expect(setUnread).toHaveBeenCalledWith(1);
 
     const items = screen.getAllByRole("listitem");
     expect(items[0]).toHaveAttribute("data-read", "false");
@@ -140,6 +154,9 @@ describe("NotificationsList", () => {
         "/api/account/notifications/read-all"
       );
     });
+
+    // Bell cleared to zero alongside the optimistic mark-all.
+    expect(setUnread).toHaveBeenCalledWith(0);
   });
 
   it("rolls back the optimistic mark-all when read-all fails", async () => {

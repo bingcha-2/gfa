@@ -28,7 +28,7 @@ export const ja: DeepPartialDict = {
     collapseSidebar: 'サイドバーを折りたたむ',
     updateTo: 'v{version} に更新',
     updateAvailable: 'v{version} が利用可能',
-    feedback: 'GitHub フィードバック',
+    feedback: 'フィードバック',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const ja: DeepPartialDict = {
     error: 'エラー · {error}',
     leasing: 'リースを取得中...',
     needCard: 'アカウントにログインしてください',
+    subscriptionExpired: 'サブスクリプションの有効期限切れ',
     ok: 'サービス正常 · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const ja: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'サブスクリプション/セッションが無効のため、機能を停止しました',
-    cardUnusableBody: '現在のログインセッションまたはサブスクリプションが無効です(セッション期限切れ/サブスクリプション終了/デバイス削除)。再ログインするか、Web でサブスクリプションと請求を管理してください。',
+    cardUnusableTitle: 'サブスクリプションが終了したため、機能を停止しました',
+    cardUnusableBody: 'このアカウントには有効なサブスクリプションがありません(未購入または期限切れ)。Web でプランを更新または購入し、再ログインして反映してください。',
     cardUnusableRelogin: '再ログイン',
     cardUnusableBilling: 'プランと請求 ↗',
+    cardUnusableContact: 'サポートに問い合わせ',
+    cardUnusableHelp: 'お困りですか?「サポートに問い合わせ」からご連絡ください。すぐにサポートします。',
+    kickedDeviceRevoked: 'このデバイスは削除されました。再度ログインしてください。',
+    kickedSessionInvalid: 'ログイン状態が無効になりました。再度ログインしてください。',
     activateTitle: 'アカウントカードを有効化',
     activateIntro: 'カードを入力するだけで公式モデルに直結 —— API Key の設定は不要。コードデータは公式へ直接送信され、BingchaAI はローカルで認証トークンを注入するだけです。',
     cardPlaceholder: 'アカウントカードを入力 (AI...)',
@@ -233,9 +238,9 @@ export const ja: DeepPartialDict = {
     wechatContact: 'WeChat で {wechat} を追加してサポートへ',
     groupContact: 'サポートグループに参加して問い合わせ',
     viewFull: '完全版を見る',
-    githubTitle: 'GitHub で問題を報告',
-    githubDesc: 'バグ報告・機能提案・既知の問題の確認',
-    githubCta: 'Issue を作成',
+    githubTitle: 'フィードバックとヘルプ',
+    githubDesc: 'ユーザーセンターで問題の報告・機能提案・サポートへの問い合わせができます',
+    githubCta: 'ユーザーセンターへ',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const ja: DeepPartialDict = {
     version: 'バージョン',
     deviceId: 'デバイス ID',
     feedbackLabel: 'フィードバック',
-    feedbackBtn: 'GitHub で報告',
+    feedbackBtn: 'ユーザーセンターへ',
     changelogLabel: '更新履歴',
     changelogBtn: '表示',
     changelogModalTitle: 'v{version} の更新内容',
@@ -295,6 +300,8 @@ export const ja: DeepPartialDict = {
     planExpiry: '有効期限',
     deviceName: 'デバイス名',
     noSubscription: '有効なプランがありません',
+    activeMember: '加入済み',
+    refresh: '更新',
     logout: 'ログアウト',
     manageDevices: 'デバイスを管理',
     sessionExpired: 'セッションの有効期限が切れました。再ログインしてください',

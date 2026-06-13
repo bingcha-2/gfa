@@ -52,9 +52,27 @@ function checkoutBtn() {
   return screen.getByRole("button", { name: "去支付" });
 }
 
-describe("CatalogPurchase — 号池线实时算价", () => {
-  it("初始无产品 → 价格占位、去支付禁用、给出提示", () => {
+describe("CatalogPurchase — 默认绑定线", () => {
+  it("首屏默认选中绑定线,且绑定线排在号池线之前", () => {
     render(<CatalogPurchase catalog={CATALOG} />);
+
+    // 绑定模式置前:第一个 tab 是绑定线
+    expect(screen.getAllByRole("tab")[0]).toHaveTextContent("绑定线");
+
+    // 默认选中绑定线、号池线未选中
+    expect(screen.getByRole("tab", { name: /绑定线/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /号池线/ })).toHaveAttribute("aria-selected", "false");
+
+    // 绑定线初始空 → 价格占位 + 等级提示
+    expect(total()).toBe("—");
+    expect(screen.getByText("请为选中的产品各选一个等级")).toBeInTheDocument();
+  });
+});
+
+describe("CatalogPurchase — 号池线实时算价", () => {
+  it("切到号池线后无产品 → 价格占位、去支付禁用、给出提示", () => {
+    render(<CatalogPurchase catalog={CATALOG} />);
+    fireEvent.click(screen.getByRole("tab", { name: /号池线/ }));
     expect(total()).toBe("—");
     expect(checkoutBtn()).toBeDisabled();
     expect(screen.getByText("请至少选择一个产品")).toBeInTheDocument();
@@ -62,6 +80,7 @@ describe("CatalogPurchase — 号池线实时算价", () => {
 
   it("选产品 + 切大用量 + 加设备 → 价格逐项即时叠加(与 computePurchase 一致)", () => {
     render(<CatalogPurchase catalog={CATALOG} />);
+    fireEvent.click(screen.getByRole("tab", { name: /号池线/ }));
 
     // 选 Claude → ¥69
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
@@ -113,7 +132,8 @@ describe("CatalogPurchase — 线切换", () => {
   it("两条线各自保留选配,切回不丢状态", () => {
     render(<CatalogPurchase catalog={CATALOG} />);
 
-    // 号池线选 Claude
+    // 号池线选 Claude(默认在绑定线,先切到号池线)
+    fireEvent.click(screen.getByRole("tab", { name: /号池线/ }));
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
     expect(total()).toBe("¥69");
 

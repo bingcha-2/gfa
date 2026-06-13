@@ -33,6 +33,7 @@ func (a *App) startup(ctx context.Context) {
 	initLogger()
 
 	Log("=== 冰茶AI Desktop Startup ===")
+	initGuard()
 
 	// Load or initialize config
 	cfg := LoadConfig()
@@ -132,6 +133,9 @@ func clearLocalCardState() {
 	GetUsageStats().Reset()
 	GetLeaser().ResetLocalQuota()
 	GetLeaser().ClearAccessKeyStatus()
+	// 旧会话的订阅授权 + 卡密不可用 latch 不能续用,否则新登录会按旧授权路由 antigravity,
+	// 或顶着上一会话的「订阅已到期」横幅。新授权由 seedEntitlementsBeforeLease 重新 seed。
+	GetLeaser().ResetEntitlements()
 	resetBoundFractions()
 	// Clear leaser errors from the old session to avoid stale banners.
 	GetLeaser().setLastError("")

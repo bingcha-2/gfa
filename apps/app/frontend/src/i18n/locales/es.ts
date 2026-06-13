@@ -28,7 +28,7 @@ export const es: DeepPartialDict = {
     collapseSidebar: 'Contraer barra lateral',
     updateTo: 'Actualizar a v{version}',
     updateAvailable: 'v{version} disponible',
-    feedback: 'Feedback en GitHub',
+    feedback: 'Feedback',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const es: DeepPartialDict = {
     error: 'Error · {error}',
     leasing: 'Asignando cuenta...',
     needCard: 'Inicia sesión en tu cuenta',
+    subscriptionExpired: 'Suscripción vencida',
     ok: 'Servicio operativo · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const es: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Suscripción/sesión no válida — funciones desactivadas',
-    cardUnusableBody: 'Tu sesión o suscripción ya no es válida (sesión caducada/suscripción vencida/dispositivo eliminado). Inicia sesión de nuevo o gestiona tu suscripción y pagos en la web.',
+    cardUnusableTitle: 'Suscripción vencida — funciones desactivadas',
+    cardUnusableBody: 'Esta cuenta no tiene una suscripción activa (no comprada o vencida). Renueva o compra un plan en la web y vuelve a iniciar sesión para aplicarlo.',
     cardUnusableRelogin: 'Iniciar sesión de nuevo',
     cardUnusableBilling: 'Suscripción y pagos ↗',
+    cardUnusableContact: 'Contactar soporte',
+    cardUnusableHelp: '¿Tienes problemas o necesitas ayuda? Pulsa "Contactar soporte" y te ayudaremos enseguida.',
+    kickedDeviceRevoked: 'Este dispositivo ha sido eliminado. Inicia sesión de nuevo.',
+    kickedSessionInvalid: 'Tu sesión ya no es válida. Inicia sesión de nuevo.',
     activateTitle: 'Activar tarjeta de cuenta',
     activateIntro: 'Ingresa tu tarjeta y conéctate directo a los modelos oficiales — sin API Key, el código va directo a los servidores oficiales y Bingcha solo inyecta el token de autorización en local.',
     cardPlaceholder: 'Ingresa la tarjeta de cuenta (AI...)',
@@ -233,9 +238,9 @@ export const es: DeepPartialDict = {
     wechatContact: 'Agrega {wechat} en WeChat para contactar a soporte',
     groupContact: 'Únete al grupo de soporte',
     viewFull: 'Ver versión completa',
-    githubTitle: 'Reporta problemas en GitHub',
-    githubDesc: 'Reporta bugs, sugiere funciones o consulta problemas conocidos',
-    githubCta: 'Abrir un issue',
+    githubTitle: 'Comentarios y ayuda',
+    githubDesc: 'Envía problemas, sugiere funciones o contacta con soporte en tu cuenta',
+    githubCta: 'Ir a tu cuenta',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const es: DeepPartialDict = {
     version: 'Versión',
     deviceId: 'ID del dispositivo',
     feedbackLabel: 'Feedback',
-    feedbackBtn: 'Reportar en GitHub',
+    feedbackBtn: 'Ir a tu cuenta',
     changelogLabel: 'Registro de cambios',
     changelogBtn: 'Ver',
     changelogModalTitle: 'Novedades de v{version}',
@@ -295,6 +300,8 @@ export const es: DeepPartialDict = {
     planExpiry: 'Vence',
     deviceName: 'Dispositivo',
     noSubscription: 'Sin suscripción activa',
+    activeMember: 'Suscrito',
+    refresh: 'Actualizar',
     logout: 'Cerrar sesión',
     manageDevices: 'Gestionar dispositivos',
     sessionExpired: 'Sesión caducada — inicia sesión de nuevo',

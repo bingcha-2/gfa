@@ -1,4 +1,4 @@
-import { IsIn, IsObject } from "class-validator";
+import { IsIn, IsObject, IsOptional } from "class-validator";
 
 import type { Selection } from "../../../plan-catalog/pricing";
 
@@ -13,6 +13,8 @@ export class CreateCatalogOrderDto {
   @IsObject()
   selection!: Selection;
 
+  // 统一收银台后前端不再预选渠道;保留可选以兼容旧客户端,缺省由服务端占位 ALIPAY。
+  @IsOptional()
   @IsIn(["ALIPAY", "WXPAY"])
-  channel!: "ALIPAY" | "WXPAY";
+  channel?: "ALIPAY" | "WXPAY";
 }

@@ -65,7 +65,7 @@ export function MarketingNav() {
           <ThemeToggle />
           <a
             href={ACCOUNT_URL}
-            className="mkt-btn mkt-btn--ghost mkt-btn--sm mkt-nav__account"
+            className="mkt-btn mkt-btn--ghost mkt-btn--sm"
           >
             <UserIcon />
             {t.common.userCenter}

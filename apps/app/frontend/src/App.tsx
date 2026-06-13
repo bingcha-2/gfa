@@ -45,6 +45,15 @@ export default function App() {
   // 日志仅在日志页时才轮询（减少非活跃页的 IPC 开销）
   usePolling(fetchLogs, 3000, currentPage === 'logs' && isLoggedIn)
 
+  // 窗口重新获得焦点 → 立刻心跳一次。用户在网页移除设备/退订后切回客户端,
+  // 不必干等下一个 60s 轮询:被移除 → 登录页(带原因),退订 → 仪表盘横幅。
+  useEffect(() => {
+    if (!isLoggedIn) return
+    const onFocus = () => { heartbeat() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [isLoggedIn, heartbeat])
+
   // account === null → 首次 GetAccountState 尚未返回。渲染极简居中加载态,
   // 避免主界面壳先闪一下再被 LoginPage 顶掉(未登录时)。
   if (account === null) {

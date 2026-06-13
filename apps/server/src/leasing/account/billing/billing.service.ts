@@ -12,6 +12,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
@@ -20,19 +21,54 @@ import { computePurchase, type CatalogConfig, type Selection } from "../../plan-
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { occupiedSharesByAccount, type SubConfig } from "../../subscription/seat";
 import { signParams } from "./epay.sign";
+import { EpayCallbackService } from "./epay-callback.service";
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 
+function selectionDisplayName(json: string | null): string | null {
+  if (!json) return null;
+  try {
+    const s = JSON.parse(json);
+    if (!s || typeof s !== "object") return null;
+    const line = s.line === "bind" ? "绑定" : "号池";
+    const products: string[] = s.line === "bind"
+      ? (s.items ?? []).map((i: { product: string }) => i.product)
+      : s.products ?? [];
+    return products.length > 0 ? `${line} ${products.join("+")}` : `${line}套餐`;
+  } catch { return null; }
+}
+
+/**
+ * 真实支付方式以网关回调/查询的 type 为准(alipay/wxpay/bank…),已随 PAID 一起存进
+ * notifyRaw。未支付 / 无 type / 坏 JSON → null。下单时的 payChannel 只是占位:统一收银台
+ * 由用户在网关侧自选渠道,故展示「支付方式」应取这里而非 payChannel。
+ */
+function payTypeFromNotifyRaw(notifyRaw: string | null): string | null {
+  if (!notifyRaw) return null;
+  try {
+    const t = (JSON.parse(notifyRaw) as { type?: unknown })?.type;
+    return typeof t === "string" && t.trim() ? t.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveEpayBase(): string {
   return process.env.EPAY_API_BASE ?? "https://pay.example.com";
+}
+
+/** zhunfu V2 必填的 10 位秒级时间戳(字符串)。 */
+function epayTimestamp(): string {
+  return Math.floor(Date.now() / 1000).toString();
 }
 
 function resolveEpayPid(): string {
   return process.env.EPAY_PID ?? "";
 }
 
-function resolveEpayKey(): string {
-  return process.env.EPAY_KEY ?? "";
+/** V2 商户私钥(裸 base64,PKCS#8),用于下单 RSA 签名。 */
+function resolveMerchantPrivateKey(): string {
+  return process.env.EPAY_MERCHANT_PRIVATE_KEY ?? "";
 }
 
 function resolveNotifyUrl(): string {
@@ -88,6 +124,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly planCatalog: PlanCatalogService,
     private readonly rosetta: RosettaService,
+    private readonly epayCallback: EpayCallbackService,
   ) {}
 
   /**
@@ -101,7 +138,8 @@ export class BillingService {
   async createCatalogOrder(
     customerId: string,
     selection: Selection,
-    channel: "ALIPAY" | "WXPAY",
+    // 统一收银台:前端不再预选渠道,默认占位 ALIPAY;真实支付方式以回调/查询 type 为准。
+    channel: "ALIPAY" | "WXPAY" = "ALIPAY",
   ) {
     const published = await this.planCatalog.getPublished();
     if (!published) throw new BadRequestException("No published plan catalog — purchasing is unavailable");
@@ -121,6 +159,21 @@ export class BillingService {
     await this.assertBindSeatsAvailable(config);
 
     const referrerId = await this.resolveReferrerId(customerId);
+
+    // 每次选购都是一笔全新订单(不再复用旧单 —— 复用会把改价后的目录现价与旧单锁定的毛额混用,
+    // 导致差额被错算成「手续费」)。新建前先作废该客户所有「待支付」旧单:否则同时存在多个有效
+    // 二维码会有重复扫码支付的风险。CANCELLED 语义同 EXPIRED —— 若用户仍扫了某张旧码,迟到的
+    // 支付回调(handleNotify 的 CAS 接受 CANCELLED→PAID)仍能正常激活,钱不会丢。GRANT 单是
+    // PAID 不在 PENDING 范围,不受影响。校验(算价/座位/客户存在)全部通过后才作废,避免误废。
+    const superseded = await this.prisma.planOrder.updateMany({
+      where: { customerId, status: "PENDING" },
+      data: { status: "CANCELLED" },
+    });
+    if (superseded.count > 0) {
+      this.logger.log(
+        `Superseded ${superseded.count} prior PENDING order(s) for customer ${customerId} before creating a new catalog order`,
+      );
+    }
 
     return this.buildPaymentAndPersist({
       customerId,
@@ -224,6 +277,57 @@ export class BillingService {
   }
 
   /**
+   * POST 到 zhunfu /api/pay/submit 拿收银台页面 URL,再生成二维码。
+   * V2 RSA 必须用 POST(GET 被 zhunfu 拒绝签名校验)。
+   */
+  private async buildEpayPayUrl(args: {
+    outTradeNo: string;
+    amountCents: number;
+    name: string;
+  }): Promise<{ payUrl: string; qrDataUri: string }> {
+    const money = (args.amountCents / 100).toFixed(2);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const rawParams: Record<string, string> = {
+      pid: resolveEpayPid(),
+      out_trade_no: args.outTradeNo,
+      notify_url: resolveNotifyUrl(),
+      return_url: resolveReturnUrl(),
+      name: args.name,
+      money,
+      timestamp,
+      sign_type: "RSA",
+    };
+    const privateKey = resolveMerchantPrivateKey();
+    if (!privateKey) {
+      throw new ServiceUnavailableException("支付未配置：EPAY_MERCHANT_PRIVATE_KEY 为空");
+    }
+    const sign = signParams(rawParams, privateKey);
+
+    const base = resolveEpayBase();
+    const submitUrl = `${base}/api/pay/submit`;
+    const postBody = new URLSearchParams({ ...rawParams, sign }).toString();
+    this.logger.debug(`epay POST ${submitUrl} body(200): ${postBody.slice(0, 200)}`);
+    const resp = await fetch(submitUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: postBody,
+      redirect: "manual",
+    });
+    const html = await resp.text();
+
+    // zhunfu 返回 HTTP 200 + JS 跳转: window.location.replace('/pay/...')
+    const m = html.match(/location\.replace\(['"]([^'"]+)['"]\)/);
+    if (!m) {
+      const errMsg = html.match(/<body[^>]*>([\s\S]*?)<\/body>/)?.[1]?.replace(/<[^>]+>/g, "").trim() ?? html.slice(0, 500);
+      this.logger.error(`epay submit 失败: ${errMsg}`);
+      throw new ServiceUnavailableException("支付网关未返回收银台地址");
+    }
+    const payUrl = m[1].startsWith("http") ? m[1] : `${base}${m[1]}`;
+    const qrDataUri = await QRCode.toDataURL(payUrl);
+    return { payUrl, qrDataUri };
+  }
+
+  /**
    * Shared epay flow: apply the user-borne fee, build the signed payUrl + QR,
    * persist the PENDING PlanOrder, return payment info. `orderData` carries the
    * catalog snapshot columns (catalogVersion / selection / config).
@@ -244,32 +348,8 @@ export class BillingService {
     // amountCents 存「实付毛额」，与 epay 回调上报的 money 天然一致。
     const feeCents = Math.ceil((baseCents * resolveFeePercent()) / 100);
     const amountCents = baseCents + feeCents;
-    const money = (amountCents / 100).toFixed(2);
-    const type = channel === "ALIPAY" ? "alipay" : "wxpay";
 
-    const pid = resolveEpayPid();
-    const epayKey = resolveEpayKey();
-    const notifyUrl = resolveNotifyUrl();
-    const returnUrl = resolveReturnUrl();
-    const apiBase = resolveEpayBase();
-
-    // Build signed params for the payment URL.
-    const rawParams: Record<string, string> = {
-      pid,
-      type,
-      out_trade_no: outTradeNo,
-      notify_url: notifyUrl,
-      return_url: returnUrl,
-      name,
-      money,
-      sign_type: "MD5",
-    };
-    const sign = signParams(rawParams, epayKey);
-    const allParams: Record<string, string> = { ...rawParams, sign_type: "MD5", sign };
-
-    const qs = new URLSearchParams(allParams).toString();
-    const payUrl = `${apiBase}/submit.php?${qs}`;
-    const qrDataUri = await QRCode.toDataURL(payUrl);
+    const { payUrl, qrDataUri } = await this.buildEpayPayUrl({ outTradeNo, amountCents, name });
 
     // Persist the order.
     const order = await this.prisma.planOrder.create({
@@ -300,18 +380,195 @@ export class BillingService {
 
   /** Get a single order by outTradeNo, ownership-scoped. */
   async getOrder(customerId: string, outTradeNo: string) {
-    const order = await this.prisma.planOrder.findUnique({
+    let order = await this.prisma.planOrder.findUnique({
       where: { outTradeNo },
     });
     if (!order || order.customerId !== customerId) {
       throw new NotFoundException("Order not found");
     }
+
+    // PENDING / 本地已过期(EXPIRED:30min TTL cron 翻的)/ 已取消(CANCELLED:用户取消或新建时
+    // 被作废)都兜底查一次网关 —— 若网关侧实际已支付,handleNotify 的 CAS 接受
+    // PENDING|EXPIRED|CANCELLED→PAID,可恢复「付了钱但本地非 PAID」的单(本地开发 ngrok 回调
+    // 不通时尤为重要;生产由 epay 重试 + reconcile cron 再兜底)。
+    if (order.status === "PENDING" || order.status === "EXPIRED" || order.status === "CANCELLED") {
+      const synced = await this.queryAndSyncEpayOrder(outTradeNo);
+      if (synced) {
+        order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } }) ?? order;
+      }
+    }
+
     return {
       outTradeNo: order.outTradeNo,
       status: order.status,
       paidAt: order.paidAt?.toISOString() ?? null,
       subscriptionId: order.subscriptionId ?? null,
     };
+  }
+
+  /**
+   * 用户主动取消一笔未支付订单(ownership-scoped)。仅 PENDING 可取消;其他状态视为幂等 no-op,
+   * 原样返回当前状态。取消前先查一次网关:若该单实际已支付(用户已扫码),走激活流程而非取消
+   * (钱已收,不能丢)。CAS PENDING→CANCELLED 防并发回调争用 —— 若回调抢先翻成 PAID,取消让位。
+   * 返回结构与 getOrder 一致,前端可直接复用 BillingOrderState。
+   */
+  async cancelOrder(customerId: string, outTradeNo: string) {
+    let order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } });
+    if (!order || order.customerId !== customerId) {
+      throw new NotFoundException("Order not found");
+    }
+
+    if (order.status === "PENDING") {
+      // 取消前兜底查网关:已支付则激活(不取消),避免「用户扫了码又点取消」丢单。
+      const synced = await this.queryAndSyncEpayOrder(outTradeNo);
+      if (synced) {
+        order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } }) ?? order;
+      } else {
+        // CAS:仅当仍为 PENDING 才取消 —— 并发回调若抢先翻 PAID,count===0,让位于支付。
+        const cas = await this.prisma.planOrder.updateMany({
+          where: { outTradeNo, status: "PENDING" },
+          data: { status: "CANCELLED" },
+        });
+        if (cas.count > 0) {
+          this.logger.log(`Customer ${customerId} cancelled PlanOrder outTradeNo=${outTradeNo}`);
+        }
+        order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } }) ?? order;
+      }
+    }
+
+    return {
+      outTradeNo: order.outTradeNo,
+      status: order.status,
+      paidAt: order.paidAt?.toISOString() ?? null,
+      subscriptionId: order.subscriptionId ?? null,
+    };
+  }
+
+  /**
+   * 主动查询 zhunfu 订单状态:POST /api/pay/query,若已支付(status=1)则走回调激活流程。
+   * 用于本地开发(ngrok 回调不通)及生产容错(回调丢失/延迟时前端轮询兜底)。
+   * 返回 true 表示订单已被同步为 PAID。
+   */
+  async queryAndSyncEpayOrder(outTradeNo: string): Promise<boolean> {
+    const pid = resolveEpayPid();
+    const privateKey = resolveMerchantPrivateKey();
+    if (!pid || !privateKey) return false;
+
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    // V2 /api/pay/query 文档参数:pid + out_trade_no + timestamp + sign + sign_type。
+    // (act=order 是 V1 api.php?act=order 遗留,V2 不需要;签名按发出的参数集计算。)
+    const rawParams: Record<string, string> = {
+      pid,
+      out_trade_no: outTradeNo,
+      timestamp,
+      sign_type: "RSA",
+    };
+    const sign = signParams(rawParams, privateKey);
+
+    const base = resolveEpayBase();
+    try {
+      const resp = await fetch(`${base}/api/pay/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...rawParams, sign }).toString(),
+      });
+      const data = await resp.json() as Record<string, any>;
+      this.logger.log(`[epay-query] zhunfu full response for ${outTradeNo}: ${JSON.stringify(data)}`);
+
+      // zhunfu /api/pay/query 文档:code=0 表示查询成功(非 0 为失败),status=1 表示已支付
+      // (0 未支付 / 2 已退款 / 3 已冻结 / 4 预授权退款)。早前误用 code===1 判成功,
+      // 导致已支付订单被判「未支付」,前端轮询永不翻转 → 页面无反应。
+      if (String(data.code) !== "0" || String(data.status) !== "1") {
+        this.logger.warn(`[epay-query] zhunfu not paid: code=${data.code} status=${data.status} msg=${data.msg ?? ""}`);
+        return false;
+      }
+
+      const callbackParams: Record<string, string> = {
+        pid: String(data.pid ?? pid),
+        trade_no: String(data.trade_no ?? ""),
+        out_trade_no: String(data.out_trade_no ?? outTradeNo),
+        type: String(data.type ?? ""),
+        name: String(data.name ?? ""),
+        money: String(data.money ?? ""),
+        trade_status: "TRADE_SUCCESS",
+      };
+
+      const result = await this.epayCallback.handleNotify(callbackParams, { skipVerify: true });
+      this.logger.log(`[epay-query] synced order ${outTradeNo}: handleNotify=${result}`);
+      return result === "success";
+    } catch (err: any) {
+      this.logger.warn(`[epay-query] failed to query order ${outTradeNo}: ${err?.message || err}`);
+      return false;
+    }
+  }
+
+  /** 商户私钥 RSA 签名后 POST 一个 zhunfu V2 接口,返回解析后的 JSON(网络/解析失败 → null,不抛)。 */
+  private async postEpaySigned(
+    path: string,
+    params: Record<string, string>,
+    privateKey: string,
+  ): Promise<Record<string, any> | null> {
+    const sign = signParams(params, privateKey);
+    const base = resolveEpayBase();
+    try {
+      const resp = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...params, sign }).toString(),
+      });
+      const data = (await resp.json()) as Record<string, any>;
+      this.logger.log(`[epay] ${path} ${params.out_trade_no ?? params.out_refund_no ?? ""}: ${JSON.stringify(data)}`);
+      return data;
+    } catch (err: any) {
+      this.logger.error(`[epay] ${path} request failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  /**
+   * 调用 zhunfu V2 退款接口给客户实际打款(全额退 amountCents),并复核退款最终成功。返回 { ok, msg }:
+   *  - 两步:① POST /api/pay/refund 发起退款(code=0 仅代表受理);② POST /api/pay/refundquery
+   *    按 out_refund_no 复核,**必须 status=1(退款成功)才算最终确认**,ok=true。
+   *  - 任一步失败(受理失败 / 查询失败 / status≠1 / pid·私钥缺失 / 网络异常)→ ok=false 并带 msg。
+   *  - 调用方仅在 ok=true 时翻订单状态(钱→状态,绝不反过来;杜绝「标了 REFUNDED 但客户没收到钱」)。
+   *
+   * out_refund_no 按 outTradeNo 确定性派生:同一订单的退款重试始终用同一个号,网关据此去重 ——
+   * 既防并发重复退款,也让「打款成功但本地翻状态前崩溃 / 异步到账」的重试拿回原结果并复核确认(幂等)。
+   * 注:需先在 zhunfu 商户后台开启「订单退款 API」开关,否则接口返回失败。
+   */
+  async refundEpayOrder(outTradeNo: string, amountCents: number): Promise<{ ok: boolean; msg?: string }> {
+    const pid = resolveEpayPid();
+    const privateKey = resolveMerchantPrivateKey();
+    if (!pid || !privateKey) return { ok: false, msg: "支付未配置(EPAY_PID / 商户私钥为空)" };
+
+    const outRefundNo = `rf${outTradeNo}`; // 确定性退款单号 → 网关去重,重试幂等
+    const money = (amountCents / 100).toFixed(2);
+
+    // ① 发起退款。code=0 仅代表网关受理,不代表已到账。
+    const refund = await this.postEpaySigned(
+      "/api/pay/refund",
+      { pid, out_trade_no: outTradeNo, money, out_refund_no: outRefundNo, timestamp: epayTimestamp(), sign_type: "RSA" },
+      privateKey,
+    );
+    if (!refund) return { ok: false, msg: "网关请求失败" };
+    if (String(refund.code) !== "0") {
+      this.logger.warn(`[epay-refund] refund rejected for ${outTradeNo}: code=${refund.code} msg=${refund.msg ?? ""}`);
+      return { ok: false, msg: String(refund.msg ?? `code=${refund.code}`) };
+    }
+
+    // ② 复核:按 out_refund_no 查退款状态,必须 status=1(退款成功)才最终确认。
+    const q = await this.postEpaySigned(
+      "/api/pay/refundquery",
+      { pid, out_refund_no: outRefundNo, timestamp: epayTimestamp(), sign_type: "RSA" },
+      privateKey,
+    );
+    if (!q) return { ok: false, msg: "退款已提交,但退款查询请求失败,请稍后复核或查商户后台" };
+    if (String(q.code) === "0" && String(q.status) === "1") {
+      this.logger.log(`[epay-refund] refund CONFIRMED for ${outTradeNo} (out_refund_no=${outRefundNo})`);
+      return { ok: true, msg: String(q.msg ?? "退款成功") };
+    }
+    this.logger.warn(`[epay-refund] refund NOT confirmed for ${outTradeNo}: query code=${q.code} status=${q.status} msg=${q.msg ?? ""}`);
+    return { ok: false, msg: `退款未确认成功(status=${q.status ?? "?"}),请稍后复核或查商户后台:${q.msg ?? ""}`.trim() };
   }
 
   /** List orders for a customer with pagination. */
@@ -340,9 +597,10 @@ export class BillingService {
     return {
       orders: orders.map((o) => ({
         outTradeNo: o.outTradeNo,
-        planName: null, // catalog orders carry no Plan name; the selection/config is the detail
+        planName: selectionDisplayName(o.selection),
         amountCents: o.amountCents,
         payChannel: o.payChannel,
+        payType: payTypeFromNotifyRaw(o.notifyRaw),
         status: o.status,
         createdAt: o.createdAt.toISOString(),
         paidAt: o.paidAt?.toISOString() ?? null,
@@ -369,7 +627,10 @@ export class BillingService {
         }
         return {
           id: s.id,
-          planName: null, // configurator has no single plan name; products[] is the detail
+          // 目录订阅:用 products 拼接作展示名;迁移卡密订阅保持 null,前端回退「迁移卡密订阅」标签。
+          planName: s.migratedFromKey != null
+            ? null
+            : products.length > 0 ? products.join("+") : null,
           status: s.status,
           products,
           expiresAt: s.expiresAt ? s.expiresAt.toISOString() : null,

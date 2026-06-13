@@ -2,7 +2,7 @@
 
 // 新增卡密向导(弹窗 · 分步)—— 顶部「+ 生成卡密」入口。
 // 步骤:
-//   ① 选类型:万能卡 / 绑定卡 两张大卡(点选)。
+//   ① 选类型:绑定卡 / 万能卡 两张大卡(点选,绑定卡优先置前)。
 //   ② 配置:复用 card-config-form。
 //        - 万能卡:hideBinding,只显示「基本 + 模型限额」(全产品桶)。
 //        - 绑定卡:显示全部(基本 + 产品与绑定 + 模型限额,按已绑产品列桶)。
@@ -52,7 +52,7 @@ type WizardStep = "type" | "config" | "done";
 // 配置表单的初始值(每次打开重置)。
 function defaultConfig(): CardConfigValue {
   return {
-    cardType: "pool",
+    cardType: "bound",
     name: "",
     durationValue: "30",
     durationUnit: "d",
@@ -88,7 +88,8 @@ export function CreateWizard({
   onCreated,
 }: CreateWizardProps) {
   const [step, setStep] = useState<WizardStep>("type");
-  const [cardType, setCardType] = useState<CardType>("pool");
+  // 默认绑定卡(绑定卡优先,与用户端选购页 / 绑定弹窗一致)。
+  const [cardType, setCardType] = useState<CardType>("bound");
   const [config, setConfig] = useState<CardConfigValue>(defaultConfig);
   const [count, setCount] = useState("1");
   const [submitting, setSubmitting] = useState(false);
@@ -106,7 +107,7 @@ export function CreateWizard({
   // 完全重置向导状态(关闭或「再建一批」时)。
   const reset = () => {
     setStep("type");
-    setCardType("pool");
+    setCardType("bound");
     setConfig(defaultConfig());
     setCount("1");
     setError("");
@@ -256,20 +257,6 @@ export function CreateWizard({
           <div className="grid gap-3 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => chooseType("pool")}
-              className="flex flex-col gap-2 rounded-xl border p-4 text-left transition-colors hover:border-blue-500/60 hover:bg-blue-500/5"
-            >
-              <div className="flex items-center gap-2">
-                <GlobeIcon className="size-5 text-blue-500" />
-                <span className="font-medium">万能卡</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                不绑任何产品 → 自动开放全部产品。唯一控量手段是「模型限额」。适合通用分发。
-              </p>
-            </button>
-
-            <button
-              type="button"
               onClick={() => chooseType("bound")}
               className="flex flex-col gap-2 rounded-xl border p-4 text-left transition-colors hover:border-purple-500/60 hover:bg-purple-500/5"
             >
@@ -279,6 +266,20 @@ export function CreateWizard({
               </div>
               <p className="text-xs text-muted-foreground">
                 逐产品绑定账号,按「份额」均分账号原生配额;可再叠加模型限额作为绝对封顶。
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => chooseType("pool")}
+              className="flex flex-col gap-2 rounded-xl border p-4 text-left transition-colors hover:border-blue-500/60 hover:bg-blue-500/5"
+            >
+              <div className="flex items-center gap-2">
+                <GlobeIcon className="size-5 text-blue-500" />
+                <span className="font-medium">万能卡</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                不绑任何产品 → 自动开放全部产品。唯一控量手段是「模型限额」。适合通用分发。
               </p>
             </button>
           </div>

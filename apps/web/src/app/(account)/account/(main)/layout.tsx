@@ -15,7 +15,9 @@ export default async function MainLayout({ children }: { children: ReactNode }) 
   let customer: Customer;
 
   try {
-    customer = await serverUserApi<Customer>("me");
+    // GET /account/me wraps the customer in { customer }, matching the
+    // login/register contract — unwrap it before handing to the shell.
+    ({ customer } = await serverUserApi<{ customer: Customer }>("me"));
   } catch {
     redirect("/account/login");
   }

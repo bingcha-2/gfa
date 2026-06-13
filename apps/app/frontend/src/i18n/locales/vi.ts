@@ -28,7 +28,7 @@ export const vi: DeepPartialDict = {
     collapseSidebar: 'Thu gọn thanh bên',
     updateTo: 'Cập nhật lên v{version}',
     updateAvailable: 'Đã có v{version}',
-    feedback: 'Phản hồi trên GitHub',
+    feedback: 'Phản hồi',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const vi: DeepPartialDict = {
     error: 'Lỗi · {error}',
     leasing: 'Đang lấy phiên thuê...',
     needCard: 'Vui lòng đăng nhập tài khoản',
+    subscriptionExpired: 'Gói đăng ký đã hết hạn',
     ok: 'Dịch vụ bình thường · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const vi: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Gói/phiên đăng nhập đã hết hiệu lực, tính năng đã tạm dừng',
-    cardUnusableBody: 'Phiên đăng nhập hoặc gói hiện tại đã hết hiệu lực (phiên hết hạn/gói hết hạn/thiết bị bị gỡ). Vui lòng đăng nhập lại, hoặc vào trang web để quản lý gói và thanh toán.',
+    cardUnusableTitle: 'Gói đã hết hạn, tính năng đã tạm dừng',
+    cardUnusableBody: 'Tài khoản này chưa có gói đang hoạt động (chưa mua hoặc đã hết hạn). Hãy gia hạn hoặc mua gói trên trang web, sau đó đăng nhập lại để áp dụng.',
     cardUnusableRelogin: 'Đăng nhập lại',
     cardUnusableBilling: 'Gói & thanh toán ↗',
+    cardUnusableContact: 'Liên hệ hỗ trợ',
+    cardUnusableHelp: 'Gặp sự cố hoặc cần trợ giúp? Nhấn "Liên hệ hỗ trợ", chúng tôi sẽ hỗ trợ bạn ngay.',
+    kickedDeviceRevoked: 'Thiết bị này đã bị gỡ. Vui lòng đăng nhập lại.',
+    kickedSessionInvalid: 'Phiên đăng nhập đã hết hiệu lực. Vui lòng đăng nhập lại.',
     activateTitle: 'Kích hoạt thẻ tài khoản',
     activateIntro: 'Nhập thẻ là kết nối thẳng mô hình chính thức — không cần cấu hình API Key, dữ liệu mã nguồn gửi thẳng tới chính thức, Bingcha chỉ chèn token ủy quyền tại máy bạn.',
     cardPlaceholder: 'Nhập thẻ tài khoản (AI...)',
@@ -233,9 +238,9 @@ export const vi: DeepPartialDict = {
     wechatContact: 'Thêm WeChat {wechat} để liên hệ hỗ trợ',
     groupContact: 'Vào nhóm hậu mãi để liên hệ hỗ trợ',
     viewFull: 'Xem bản đầy đủ',
-    githubTitle: 'Phản hồi vấn đề trên GitHub',
-    githubDesc: 'Báo bug, đề xuất tính năng, hoặc xem các vấn đề đã biết',
-    githubCta: 'Mở Issue',
+    githubTitle: 'Phản hồi & trợ giúp',
+    githubDesc: 'Gửi vấn đề, đề xuất tính năng hoặc liên hệ hỗ trợ tại trung tâm người dùng',
+    githubCta: 'Đến trung tâm người dùng',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const vi: DeepPartialDict = {
     version: 'Phiên bản',
     deviceId: 'ID thiết bị',
     feedbackLabel: 'Phản hồi vấn đề',
-    feedbackBtn: 'Gửi phản hồi trên GitHub',
+    feedbackBtn: 'Đến trung tâm người dùng',
     changelogLabel: 'Nhật ký cập nhật',
     changelogBtn: 'Xem',
     changelogModalTitle: 'Nội dung cập nhật v{version}',
@@ -295,6 +300,8 @@ export const vi: DeepPartialDict = {
     planExpiry: 'Hết hạn',
     deviceName: 'Tên thiết bị',
     noSubscription: 'Chưa có gói còn hiệu lực',
+    activeMember: 'Đã đăng ký',
+    refresh: 'Làm mới',
     logout: 'Đăng xuất',
     manageDevices: 'Quản lý thiết bị',
     sessionExpired: 'Phiên đã hết hạn, vui lòng đăng nhập lại',

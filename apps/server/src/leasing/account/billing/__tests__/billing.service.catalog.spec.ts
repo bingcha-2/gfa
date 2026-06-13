@@ -7,10 +7,17 @@
  * PlanCatalogService; no real DB.
  */
 import "reflect-metadata";
+import * as crypto from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingService } from "../billing.service";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
+
+// V2 下单用商户私钥 RSA 签名 —— 生成一个测试私钥(裸 base64 PKCS#8)喂给 EPAY_MERCHANT_PRIVATE_KEY。
+const TEST_PRIV_B64 = crypto
+  .generateKeyPairSync("rsa", { modulusLength: 2048 })
+  .privateKey.export({ type: "pkcs8", format: "der" })
+  .toString("base64");
 
 // A minimal but valid catalog config (spec §4.1 shape) for pool + bind pricing.
 const CATALOG_CONFIG = {
@@ -35,7 +42,13 @@ const CATALOG_CONFIG = {
 function makeMockPrisma(overrides: Record<string, any> = {}) {
   return {
     customer: { findUnique: vi.fn() },
-    planOrder: { create: vi.fn() },
+    // 不再复用旧单:新建前用 updateMany 把该客户所有 PENDING 单作废(默认 count:0 = 无旧单)。
+    // findUnique 供 getOrder / cancelOrder 用。
+    planOrder: {
+      create: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findUnique: vi.fn(),
+    },
     // 绑定线下单前座位预检要读 DB ACTIVE 订阅的 config 算占用份额(默认无订阅)。
     subscription: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides,
@@ -51,6 +64,22 @@ function makeRosetta(hasSeat = true) {
   return { hasAvailableSeatFromShares: vi.fn().mockReturnValue(hasSeat) } as any;
 }
 
+const EPAY_CASHIER_URL = "https://gw.test/pay/cashier";
+
+/**
+ * buildEpayPayUrl POSTs to the live zhunfu gateway. Stub fetch so the happy path
+ * completes offline with a deterministic cashier URL. Returns the mock so tests can
+ * assert the signed V2 request (the money/sign/timestamp live in the POST body now,
+ * not in the returned payUrl). Cleared by vi.unstubAllGlobals() in afterEach.
+ */
+function stubEpayGateway() {
+  const fetchMock = vi.fn(async (_url?: unknown, _init?: unknown) => ({
+    text: async () => `<script>window.location.replace('${EPAY_CASHIER_URL}')</script>`,
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 const fixedCustomer = { id: "cust-1", invitedById: "referrer-1" };
 
 describe("BillingService.createCatalogOrder", () => {
@@ -58,15 +87,17 @@ describe("BillingService.createCatalogOrder", () => {
   let catalog: any;
   let rosetta: any;
   let service: BillingService;
+  let fetchMock: ReturnType<typeof stubEpayGateway>;
 
   beforeEach(() => {
     vi.stubEnv("EPAY_FEE_PERCENT", "0");
     vi.stubEnv("EPAY_PID", "1001");
-    vi.stubEnv("EPAY_KEY", "test-key");
+    vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
+    fetchMock = stubEpayGateway();
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta);
+    service = new BillingService(prisma, catalog, rosetta, {} as any);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -83,6 +114,7 @@ describe("BillingService.createCatalogOrder", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -111,11 +143,19 @@ describe("BillingService.createCatalogOrder", () => {
       windowMs: 18_000_000,
     });
 
-    // 返回 epay 支付信息。
+    // 返回 epay V2 支付信息:payUrl 是网关返回的收银台地址,二维码由它生成。
     expect(result.amountCents).toBe(10800);
-    expect(result.payUrl).toContain("money=108.00");
-    expect(result.payUrl).toMatch(/sign=[0-9a-f]{32}/);
+    expect(result.payUrl).toBe(EPAY_CASHIER_URL);
     expect(result.qrDataUri).toMatch(/^data:image\/png;base64,/);
+    // V2 下单是 POST /api/pay/submit,money/sign/timestamp 在请求体里(不再拼进 payUrl)。
+    const [submitUrl, init] = fetchMock.mock.calls[0];
+    expect(String(submitUrl)).toContain("/api/pay/submit"); // V2 接口(非 submit.php)
+    const reqBody = new URLSearchParams((init as any).body as string);
+    expect(reqBody.get("money")).toBe("108.00");
+    expect(reqBody.get("sign_type")).toBe("RSA");
+    expect(reqBody.get("sign")).toBeTruthy(); // RSA base64 签名
+    expect(reqBody.get("timestamp")).toMatch(/^\d{10}$/); // V2 必填 timestamp
+    expect(reqBody.get("out_trade_no")).toBe(data.outTradeNo);
   });
 
   it("绑定线 selection → 价格叠加共享人数折扣,config.line=bind + levels + weight", async () => {
@@ -180,11 +220,12 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
   beforeEach(() => {
     vi.stubEnv("EPAY_FEE_PERCENT", "0");
     vi.stubEnv("EPAY_PID", "1001");
-    vi.stubEnv("EPAY_KEY", "test-key");
+    vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
+    stubEpayGateway();
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta);
+    service = new BillingService(prisma, catalog, rosetta, {} as any);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -201,6 +242,7 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -290,7 +332,7 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta);
+    service = new BillingService(prisma, catalog, rosetta, {} as any);
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({ id: "grant-order-1", ...data }));
   });
@@ -328,5 +370,277 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
     await expect(
       service.createGrantOrder("cust-1", { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any),
     ).rejects.toThrow(BadRequestException);
+  });
+});
+
+// 不复用旧单:每次选购都是一笔全新订单。新建前(校验全过后)把该客户所有 PENDING 单作废,
+// 避免多个有效二维码被重复扫码支付 —— 同时根治「旧单锁价 + 目录改价 → 差额错算成手续费」。
+describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let catalog: any;
+  let rosetta: any;
+  let service: BillingService;
+
+  const selection = { line: "pool", products: ["anthropic"], usageTier: "large", deviceLimit: 2 };
+
+  beforeEach(() => {
+    vi.stubEnv("EPAY_FEE_PERCENT", "0");
+    vi.stubEnv("EPAY_PID", "1001");
+    vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
+    stubEpayGateway(); // 下单走 buildEpayPayUrl→网关,离线 stub 掉(本组只断言 updateMany/create)
+    prisma = makeMockPrisma();
+    catalog = makeCatalog();
+    rosetta = makeRosetta();
+    service = new BillingService(prisma, catalog, rosetta, {} as any);
+    prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
+    prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
+      id: "new-order",
+      outTradeNo: data.outTradeNo,
+      amountCents: data.amountCents,
+      payChannel: data.payChannel,
+      status: "PENDING",
+      expiresAt: data.expiresAt,
+      referrerId: data.referrerId,
+      createdAt: new Date(),
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("新建前作废该客户所有 PENDING 旧单(updateMany: PENDING→CANCELLED),并新建一笔全新单", async () => {
+    prisma.planOrder.updateMany.mockResolvedValue({ count: 2 });
+
+    const result = await service.createCatalogOrder("cust-1", selection as any, "ALIPAY");
+
+    // 作废:仅按 customer + PENDING 过滤,翻成 CANCELLED(GRANT 单是 PAID 不在范围)。
+    expect(prisma.planOrder.updateMany).toHaveBeenCalledWith({
+      where: { customerId: "cust-1", status: "PENDING" },
+      data: { status: "CANCELLED" },
+    });
+    // 始终新建(不复用任何旧单)。
+    expect(prisma.planOrder.create).toHaveBeenCalledOnce();
+    expect(result.outTradeNo).toBe(prisma.planOrder.create.mock.calls[0][0].data.outTradeNo);
+  });
+
+  it("无 PENDING 旧单(count:0)→ 照常新建", async () => {
+    prisma.planOrder.updateMany.mockResolvedValue({ count: 0 });
+    await service.createCatalogOrder("cust-1", selection as any, "ALIPAY");
+    expect(prisma.planOrder.create).toHaveBeenCalledOnce();
+  });
+
+  // 回归:复现本次线上「¥2 套餐收 ¥214.53 手续费」的根因 —— 旧单锁 vX 毛额、弹窗按 vY 现价算 base,
+  // feeCents=毛额−base 跨版本错配。去复用后每单 base/fee/amount 同源于一次 computePurchase,
+  // feeCents=ceil(base×费率) 正算,不变式 amount=base+fee 恒成立。用真实数字钉死,防回退。
+  it("回归:目录改价后新建,base/fee/amount 全出自新版,feeCents 不再跨版本错配", async () => {
+    vi.stubEnv("EPAY_FEE_PERCENT", "3.6"); // 本次线上费率
+    const bind = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 8, deviceLimit: 1 };
+
+    // 旧目录 v4:max-20x ¥299 + share[8] −¥90 = base ¥209;amount = 20900 + ceil(20900×3.6%) = 21653(¥216.53)。
+    catalog.getPublished.mockResolvedValueOnce({ version: 4, config: CATALOG_CONFIG });
+    const first = await service.createCatalogOrder("cust-1", bind as any, "ALIPAY");
+    expect(first.baseCents).toBe(20900);
+    expect(first.feeCents).toBe(753);
+    expect(first.amountCents).toBe(21653);
+    expect(first.amountCents).toBe(first.baseCents + first.feeCents); // 不变式
+
+    // 目录改价重发到 v8:max-20x 降到 ¥92 → base = 9200 − 9000 = 200(¥2)。
+    const v8 = JSON.parse(JSON.stringify(CATALOG_CONFIG));
+    v8.pricing.bind.levelPrice.anthropic["max-20x"] = 9200;
+    catalog.getPublished.mockResolvedValueOnce({ version: 8, config: v8 });
+    const second = await service.createCatalogOrder("cust-1", bind as any, "ALIPAY");
+
+    // 第二单完全按新版算:base ¥2,fee = ceil(200×3.6%) = 8,amount ¥2.08;旧版 ¥216.53 毛额绝不泄漏。
+    expect(second.baseCents).toBe(200);
+    expect(second.feeCents).toBe(8);
+    expect(second.amountCents).toBe(208);
+    expect(second.amountCents).toBe(second.baseCents + second.feeCents); // 关键不变式
+    expect(second.feeCents).not.toBe(21453); // 老 bug 的值(21653−200),显式钉死不复发
+  });
+
+  it("作废发生在校验之后:绑定线无座位 → 不作废、不新建(BadRequest)", async () => {
+    rosetta.hasAvailableSeatFromShares.mockReturnValue(false);
+    const bind = { line: "bind", items: [{ product: "anthropic", level: "max-20x" }], shareUsers: 2, deviceLimit: 1 };
+
+    await expect(service.createCatalogOrder("cust-1", bind as any, "WXPAY")).rejects.toThrow(BadRequestException);
+
+    expect(prisma.planOrder.updateMany).not.toHaveBeenCalled(); // 校验失败 → 旧单不能被误废
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+
+  it("目录未发布 → 不作废、不新建", async () => {
+    catalog.getPublished.mockResolvedValue(null);
+    await expect(service.createCatalogOrder("cust-1", selection as any, "ALIPAY")).rejects.toThrow(BadRequestException);
+    expect(prisma.planOrder.updateMany).not.toHaveBeenCalled();
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
+  });
+});
+
+// 取消订单:仅 PENDING 可取消;取消前查网关(已支付则激活,绝不丢钱);其余状态幂等原样返回。
+describe("BillingService.cancelOrder", () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let service: BillingService;
+
+  beforeEach(() => {
+    prisma = makeMockPrisma();
+    service = new BillingService(prisma, makeCatalog(), makeRosetta(), {} as any);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("PENDING 且网关未支付 → CAS 置 CANCELLED,返回 CANCELLED", async () => {
+    const pending = { id: "o1", customerId: "cust-1", outTradeNo: "gfa-1", status: "PENDING", paidAt: null, subscriptionId: null };
+    prisma.planOrder.findUnique
+      .mockResolvedValueOnce(pending) // 首次读取
+      .mockResolvedValueOnce({ ...pending, status: "CANCELLED" }); // CAS 后回读
+    prisma.planOrder.updateMany.mockResolvedValue({ count: 1 });
+    const syncSpy = vi.spyOn(service, "queryAndSyncEpayOrder").mockResolvedValue(false);
+
+    const res = await service.cancelOrder("cust-1", "gfa-1");
+
+    expect(syncSpy).toHaveBeenCalledWith("gfa-1"); // 取消前兜底查一次网关
+    expect(prisma.planOrder.updateMany).toHaveBeenCalledWith({
+      where: { outTradeNo: "gfa-1", status: "PENDING" },
+      data: { status: "CANCELLED" },
+    });
+    expect(res.status).toBe("CANCELLED");
+  });
+
+  it("PENDING 但网关已支付 → 不取消,激活后返回 PAID", async () => {
+    const pending = { id: "o1", customerId: "cust-1", outTradeNo: "gfa-1", status: "PENDING", paidAt: null, subscriptionId: null };
+    prisma.planOrder.findUnique
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce({ ...pending, status: "PAID", paidAt: new Date(), subscriptionId: "sub-1" });
+    vi.spyOn(service, "queryAndSyncEpayOrder").mockResolvedValue(true);
+
+    const res = await service.cancelOrder("cust-1", "gfa-1");
+
+    expect(prisma.planOrder.updateMany).not.toHaveBeenCalled(); // 已支付 → 不取消
+    expect(res.status).toBe("PAID");
+    expect(res.subscriptionId).toBe("sub-1");
+  });
+
+  it("非 PENDING(如 PAID)→ 幂等 no-op,原样返回,不查网关、不写库", async () => {
+    const paid = { id: "o1", customerId: "cust-1", outTradeNo: "gfa-1", status: "PAID", paidAt: new Date(), subscriptionId: "sub-1" };
+    prisma.planOrder.findUnique.mockResolvedValue(paid);
+    const syncSpy = vi.spyOn(service, "queryAndSyncEpayOrder").mockResolvedValue(false);
+
+    const res = await service.cancelOrder("cust-1", "gfa-1");
+
+    expect(syncSpy).not.toHaveBeenCalled();
+    expect(prisma.planOrder.updateMany).not.toHaveBeenCalled();
+    expect(res.status).toBe("PAID");
+  });
+
+  it("订单不存在 / 非本人 → NotFoundException", async () => {
+    prisma.planOrder.findUnique.mockResolvedValueOnce(null);
+    await expect(service.cancelOrder("cust-1", "nope")).rejects.toThrow(NotFoundException);
+
+    prisma.planOrder.findUnique.mockResolvedValueOnce({ id: "o1", customerId: "other", outTradeNo: "gfa-1", status: "PENDING" });
+    await expect(service.cancelOrder("cust-1", "gfa-1")).rejects.toThrow(NotFoundException);
+  });
+});
+
+// 网关退款(两步,商户私钥 RSA 签名):① POST /api/pay/refund 发起(code=0 仅受理);
+// ② POST /api/pay/refundquery 复核,**必须 status=1 才算最终成功(ok)**。调用方据 ok 翻状态 ——
+// 钱→状态,绝不反过来。
+describe("BillingService.refundEpayOrder", () => {
+  let service: BillingService;
+
+  beforeEach(() => {
+    vi.stubEnv("EPAY_PID", "1001");
+    vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
+    service = new BillingService(makeMockPrisma(), makeCatalog(), makeRosetta(), {} as any);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** 按 URL 路由 refund / refundquery 的两步 mock。query 省略 → 不应被调用(refund 已失败)。 */
+  function stubEpayFlow(responses: { refund: any; query?: any }) {
+    const fetchMock = vi.fn(async (url: unknown, _init?: unknown) => ({
+      json: async () =>
+        String(url).endsWith("/api/pay/refundquery") ? responses.query : responses.refund,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+  const callsTo = (m: any, suffix: string) =>
+    m.mock.calls.filter((c: any[]) => String(c[0]).endsWith(suffix));
+  const bodyOf = (call: any[]) => new URLSearchParams((call[1] as any).body as string);
+
+  it("refund code=0 且 refundquery status=1 → ok;两步参数正确", async () => {
+    const fetchMock = stubEpayFlow({ refund: { code: 0 }, query: { code: 0, status: 1, msg: "退款成功" } });
+
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+
+    expect(res.ok).toBe(true);
+    // ① 退款请求:out_trade_no / money(全额) / out_refund_no / 签名。
+    const refund = bodyOf(callsTo(fetchMock, "/api/pay/refund")[0]);
+    expect(refund.get("out_trade_no")).toBe("gfa-1");
+    expect(refund.get("money")).toBe("99.00");
+    expect(refund.get("out_refund_no")).toBe("rfgfa-1");
+    expect(refund.get("sign_type")).toBe("RSA");
+    expect(refund.get("sign")).toBeTruthy();
+    // ② 复核请求:按同一 out_refund_no 查(不带 money)。
+    const query = bodyOf(callsTo(fetchMock, "/api/pay/refundquery")[0]);
+    expect(query.get("out_refund_no")).toBe("rfgfa-1");
+    expect(query.get("sign")).toBeTruthy();
+  });
+
+  it("refund code=0 但 refundquery status≠1 → ok:false(只受理未确认,不翻状态)", async () => {
+    stubEpayFlow({ refund: { code: 0 }, query: { code: 0, status: 0, msg: "退款处理中" } });
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+    expect(res.ok).toBe(false);
+    expect(res.msg).toContain("未确认成功");
+  });
+
+  it("refund code!=0 → ok:false 且不发起复核(refundquery 不应被调用)", async () => {
+    const fetchMock = stubEpayFlow({ refund: { code: 1, msg: "订单不存在" } });
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+    expect(res.ok).toBe(false);
+    expect(res.msg).toContain("订单不存在");
+    expect(callsTo(fetchMock, "/api/pay/refundquery")).toHaveLength(0);
+  });
+
+  it("退款单号 out_refund_no 确定性派生:重试用同一个号(网关去重幂等)", async () => {
+    const fetchMock = stubEpayFlow({ refund: { code: 0 }, query: { code: 0, status: 1 } });
+    await service.refundEpayOrder("gfa-xyz", 100);
+    await service.refundEpayOrder("gfa-xyz", 100); // 重试
+    const refundCalls = callsTo(fetchMock, "/api/pay/refund");
+    expect(bodyOf(refundCalls[0]).get("out_refund_no")).toBe("rfgfa-xyz");
+    expect(bodyOf(refundCalls[1]).get("out_refund_no")).toBe("rfgfa-xyz");
+  });
+
+  it("pid/私钥缺失 → ok:false,根本不发请求", async () => {
+    vi.stubEnv("EPAY_PID", "");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+    expect(res.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refund 网络异常 → ok:false(吞掉异常,不抛)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNRESET"); }));
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+    expect(res.ok).toBe(false);
+  });
+
+  it("refund 成功但复核请求异常 → ok:false(退款已提交但未确认)", async () => {
+    const fetchMock = vi.fn(async (url: unknown) => {
+      if (String(url).endsWith("/api/pay/refundquery")) throw new Error("timeout");
+      return { json: async () => ({ code: 0 }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await service.refundEpayOrder("gfa-1", 9900);
+    expect(res.ok).toBe(false);
+    expect(res.msg).toContain("复核"); // 「退款已提交,但退款查询请求失败,请稍后复核」
   });
 });

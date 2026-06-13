@@ -276,6 +276,18 @@ html[data-account-theme="dark"] .account-auth {
 .account-usermenu__content button:hover { background: var(--surface-2); }
 .account-usermenu__content svg { width: 16px; height: 16px; color: var(--ink-faint); }
 
+/* 语言切换:account-iconbtn 触发 + 复用 usermenu 下拉样式 */
+.account-langmenu { position: relative; }
+.account-langmenu__menu {
+  min-width: 11rem;
+  max-height: min(60vh, 20rem);
+  overflow-y: auto;
+  gap: 1px;
+}
+.account-langmenu__menu [data-langmenu-check] { opacity: 0; flex-shrink: 0; }
+.account-langmenu__menu button[data-active] { color: var(--primary-text); font-weight: 600; }
+.account-langmenu__menu button[data-active] [data-langmenu-check] { opacity: 1; color: var(--primary-text); }
+
 /* 移动端汉堡 + 抽屉 */
 .account-topnav__menu { display: none; }
 .account-mobilemenu {
@@ -325,6 +337,29 @@ html[data-account-theme="dark"] .account-auth {
 .account-btn:active { transform: translateY(0); }
 .account-btn:focus-visible,
 .account-link:focus-visible { outline: 2px solid color-mix(in oklch, var(--primary) 60%, transparent); outline-offset: 2px; }
+
+/* 全局焦点环:覆盖所有交互控件(键盘可达) */
+.account-iconbtn:focus-visible,
+.account-usermenu__trigger:focus-visible,
+.account-topnav__link:focus-visible,
+.account-chip:focus-visible,
+.account-relay-arrow:focus-visible,
+.account-dialog__close:focus-visible,
+.account-dialog__backdrop:focus-visible,
+.account-order-sync:focus-visible,
+.account-catalog-back:focus-visible,
+.account-catalog-entry:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--primary) 60%, transparent);
+  outline-offset: 2px;
+}
+/* 分段式控件 inset 焦点环(父级 overflow:hidden,避免被裁切) */
+.account-segmented-control button:focus-visible,
+.account-pay-channel button:focus-visible,
+.account-stepper button:focus-visible,
+.account-catalog-tab:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--primary) 60%, transparent);
+  outline-offset: -2px;
+}
 .account-btn--primary { background: var(--primary); color: var(--primary-ink); box-shadow: 0 1px 2px oklch(0.55 0.18 38 / 0.25), 0 8px 20px var(--glow); }
 .account-btn--primary:hover { background: var(--primary-strong); box-shadow: 0 2px 4px oklch(0.55 0.18 38 / 0.3), 0 12px 28px var(--glow); }
 .account-btn--secondary { border-color: var(--line-strong); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
@@ -415,6 +450,8 @@ html[data-account-theme="dark"] .account-auth {
 .account-status-lamp[data-tone="success"] { background: var(--ok); color: var(--ok); }
 .account-status-lamp[data-tone="info"] { background: var(--info); color: var(--info); }
 .account-status-lamp[data-tone="brand"] { background: var(--primary); color: var(--primary); }
+.account-status-lamp[data-tone="warning"] { background: var(--warn); color: var(--warn); }
+.account-status-lamp[data-tone="danger"] { background: var(--danger); color: var(--danger); }
 
 /* ============================================================================
    通用页面容器 / 页头 / 面板 / 卡片
@@ -516,6 +553,8 @@ html[data-account-theme="dark"] .account-auth {
 .account-pass__brand .mk { width: 30px; height: 30px; border-radius: 9px; background: oklch(0.18 0.03 50); display: grid; place-items: center; box-shadow: 0 2px 6px oklch(0 0 0 / 0.3); }
 .account-pass__brand .mk img { width: 30px; height: 30px; border-radius: 9px; }
 .account-pass__tier { font-family: var(--font-mono), monospace; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; padding: 0.35rem 0.7rem; border-radius: 999px; background: oklch(0.2 0.03 50); color: var(--primary); }
+.account-pass__tier[data-tier="expired"] { color: oklch(0.78 0.17 25); }
+.account-pass__tier[data-tier="free"] { color: var(--metal-ink-soft); }
 .account-pass__chip { width: 46px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, oklch(0.92 0.1 88), oklch(0.78 0.13 70)); box-shadow: inset 0 0 0 1px oklch(0.5 0.1 50 / 0.4); position: relative; }
 .account-pass__chip::before { content: ""; position: absolute; inset: 6px 8px; border: 1px solid oklch(0.5 0.1 50 / 0.45); border-radius: 3px; }
 .account-pass__chip::after { content: ""; position: absolute; left: 50%; top: 5px; bottom: 5px; width: 1px; background: oklch(0.5 0.1 50 / 0.45); }
@@ -548,6 +587,9 @@ html[data-account-theme="dark"] .account-auth {
 .account-overview-hero__side { display: grid; gap: 0.9rem; }
 .account-overview-hero__prod { display: flex; align-items: center; justify-content: center; gap: 0.7rem; }
 .account-overview-hero__prod .pl { font-family: var(--font-mono), monospace; font-size: 0.72rem; color: var(--ink-faint); letter-spacing: 0.06em; }
+/* Lapsed plan: products are no longer authorized — show them muted, not brand-colored. */
+.account-overview-hero__prod[data-muted] { opacity: 0.55; }
+.account-overview-hero__prod[data-muted] .account-prodchip { background: color-mix(in oklch, var(--ink-faint) 12%, transparent); color: var(--ink-faint); border-color: color-mix(in oklch, var(--ink-faint) 24%, transparent); }
 
 .account-overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(1rem, 2.5vw, 2rem); padding: clamp(1.25rem, 3vw, 1.75rem) 0; border-block: 1px solid var(--line); }
 .account-overview-stats > div { display: grid; gap: 0.35rem; }
@@ -555,6 +597,80 @@ html[data-account-theme="dark"] .account-auth {
 .account-overview-stats .v { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 800; letter-spacing: -0.03em; display: flex; align-items: baseline; gap: 0.3rem; }
 .account-overview-stats .v small { font-size: 0.85rem; color: var(--ink-muted); font-weight: 500; }
 .account-overview-stats .v[data-tone="ok"] { color: var(--ok); }
+.account-overview-stats .v[data-tone="warn"] { color: var(--warn); }
+.account-overview-stats .v[data-tone="danger"] { color: var(--danger); }
+
+/* 续费提醒条(到期 / 即将到期) */
+.account-overview-warn {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.85rem 1.5rem; flex-wrap: wrap;
+  padding: 0.9rem 1.1rem; border-radius: var(--r-lg);
+  border: 1px solid color-mix(in oklch, var(--warn) 32%, transparent);
+  background: var(--warn-soft);
+}
+.account-overview-warn[data-state="expired"] {
+  border-color: color-mix(in oklch, var(--danger) 34%, transparent);
+  background: var(--danger-soft);
+}
+.account-overview-warn__text { display: grid; gap: 0.2rem; min-width: 0; }
+.account-overview-warn__text strong { font-size: 0.95rem; font-weight: 700; color: var(--warn); }
+.account-overview-warn[data-state="expired"] .account-overview-warn__text strong { color: var(--danger); }
+.account-overview-warn__text span { color: var(--ink-muted); font-size: 0.86rem; line-height: 1.5; }
+.account-overview-warn .account-btn { flex-shrink: 0; }
+
+/* ============================================================================
+   血条 / 液位(订阅接力 meter + 独立 QuotaBar 共用观感)
+   ============================================================================ */
+.account-meter,
+.account-quota-bar__track { position: relative; height: 0.5rem; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.account-meter__fill,
+.account-quota-bar__fill { height: 100%; border-radius: inherit; background: var(--ok); transition: width 0.45s var(--ease); }
+.account-meter[data-level="warn"] .account-meter__fill,
+.account-quota-bar__track[data-level="warn"] .account-quota-bar__fill { background: var(--warn); }
+.account-meter[data-level="critical"] .account-meter__fill,
+.account-quota-bar__track[data-level="critical"] .account-quota-bar__fill { background: var(--danger); }
+
+.account-quota-stack { display: grid; gap: 0.85rem; }
+.account-quota-inline { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; color: var(--ink-muted); font-size: 0.86rem; }
+.account-quota-bar { display: grid; gap: 0.4rem; }
+.account-quota-bar__meta { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.82rem; }
+.account-quota-bar__meta > span:first-child { color: var(--ink); font-weight: 600; }
+.account-quota-bar__meta > span:last-child { color: var(--ink-muted); font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
+.account-quota-bar__reset { color: var(--ink-faint); font-size: 0.76rem; }
+.account-muted-note { color: var(--ink-muted); font-size: 0.86rem; }
+
+/* ============================================================================
+   订阅接力列表(我的订阅)
+   ============================================================================ */
+.account-relay { display: grid; gap: 1rem; }
+.account-relay__intro { margin: 0; padding: 0.8rem 0.95rem; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-muted); font-size: 0.86rem; line-height: 1.6; }
+.account-relay__intro b { color: var(--ink); font-weight: 600; }
+.account-relay-list { display: grid; gap: 0.75rem; list-style: none; margin: 0; padding: 0; }
+.account-relay-item { display: flex; align-items: flex-start; gap: 0.85rem; padding: 1rem 1.1rem; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); transition: opacity 0.15s; }
+.account-relay-item[data-busy] { opacity: 0.55; }
+.account-relay-rank { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 0.82rem; font-weight: 700; font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
+.account-relay-item[data-first] .account-relay-rank { border-color: color-mix(in oklch, var(--primary) 45%, transparent); background: var(--primary-soft); color: var(--primary-text); }
+.account-relay-body { flex: 1; min-width: 0; display: grid; gap: 0.6rem; }
+.account-relay-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.account-relay-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; font-size: 0.95rem; font-weight: 600; color: var(--ink); }
+.account-relay-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-relay-tag { flex-shrink: 0; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary-text); font-size: 0.68rem; font-weight: 600; }
+.account-relay-products { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.account-relay-meter { display: grid; gap: 0.35rem; }
+.account-relay-meter__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; font-size: 0.8rem; }
+.account-relay-meter__head > span:first-child { color: var(--ink-muted); }
+.account-relay-meter__val { display: inline-flex; align-items: baseline; gap: 0.4rem; font-weight: 600; font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; color: var(--ink); }
+.account-relay-meter__level { font-size: 0.72rem; font-weight: 600; font-family: var(--font-sans), sans-serif; }
+.account-relay-meter[data-level="ok"] .account-relay-meter__level { color: var(--ok); }
+.account-relay-meter[data-level="warn"] .account-relay-meter__level { color: var(--warn); }
+.account-relay-meter[data-level="critical"] .account-relay-meter__level { color: var(--danger); }
+.account-relay-extra { display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem; font-size: 0.8rem; color: var(--ink-muted); }
+.account-relay-extra b { color: var(--ink); font-weight: 600; font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
+.account-relay-arrows { display: grid; gap: 0.3rem; flex-shrink: 0; }
+.account-relay-arrow { display: grid; place-items: center; width: 1.9rem; height: 1.9rem; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-muted); cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; }
+.account-relay-arrow:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); background: var(--surface-3); }
+.account-relay-arrow:disabled { opacity: 0.35; cursor: not-allowed; }
+.account-relay-arrow svg { width: 0.95rem; height: 0.95rem; }
+.account-relay-state { display: grid; place-items: center; gap: 0.75rem; padding: 2.5rem 1.5rem; text-align: center; color: var(--ink-muted); }
 
 .account-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; }
 .account-quick-card { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-sm); padding: 1.25rem 1.4rem; text-decoration: none; color: var(--ink); transition: transform 0.18s var(--ease), box-shadow 0.18s, border-color 0.18s; }
@@ -582,6 +698,9 @@ html[data-account-theme="dark"] .account-auth {
 .account-data-table__mono { font-family: var(--font-mono), monospace; font-size: 0.84rem; }
 .account-data-table__number { font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; text-align: right; }
 .account-data-table__strong { font-weight: 600; }
+.account-data-table tr[data-clickable] { cursor: pointer; transition: background 0.12s ease; }
+.account-data-table tbody tr[data-clickable]:hover td { background: var(--surface-2); }
+.account-linkbtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
 .account-row-actions { display: flex; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
 
 .account-pagination { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
@@ -741,6 +860,17 @@ html[data-account-theme="dark"] .account-auth {
 .account-order-row span { font-family: var(--font-mono), monospace; font-size: 0.68rem; color: var(--ink-faint); letter-spacing: 0.05em; text-transform: uppercase; }
 .account-order-row strong { font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .account-order-row > div:first-child strong { font-family: var(--font-mono), monospace; }
+.account-order-sync {
+  grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0.85rem; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-1); color: var(--ink-muted); font-size: 0.8rem; cursor: pointer;
+  justify-self: start; transition: color 0.15s, border-color 0.15s;
+}
+.account-order-sync:hover { color: var(--primary); border-color: var(--primary); }
+.account-order-sync:disabled { opacity: 0.6; cursor: not-allowed; }
+.account-order-sync__icon { width: 0.9rem; height: 0.9rem; }
+@keyframes account-spin { to { transform: rotate(360deg); } }
+.account-order-sync__icon--spin { animation: account-spin 1s linear infinite; }
 
 /* 卡密绑定 */
 .account-bind-card { display: grid; gap: 1rem; }
@@ -758,11 +888,13 @@ html[data-account-theme="dark"] .account-auth {
 .account-dialog__backdrop { position: absolute; inset: 0; border: 0; background: oklch(0.12 0.02 270 / 0.55); backdrop-filter: blur(3px); cursor: pointer; }
 .account-dialog__panel { position: relative; z-index: 1; width: min(440px, 100%); max-height: 90svh; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--shadow-lg); padding: clamp(1.25rem, 3vw, 1.6rem); }
 .account-dialog__panel--narrow { width: min(384px, 100%); }
+.account-dialog__panel--wide { width: min(640px, 100%); }
 .account-dialog__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .account-dialog__header h2 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
 .account-dialog__header p { margin: 0.25rem 0 0; color: var(--ink-muted); font-size: 0.86rem; }
 .account-dialog__close { width: 2rem; height: 2rem; display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-muted); cursor: pointer; font-size: 1rem; line-height: 1; flex-shrink: 0; }
 .account-dialog__close:hover { color: var(--ink); border-color: var(--line-strong); }
+.account-ticket-dialog__heading { display: grid; gap: 0.45rem; justify-items: start; }
 .account-device-rename-title,
 .account-device-revoke-title { font-weight: 700; font-size: 1.2rem; letter-spacing: -0.02em; }
 

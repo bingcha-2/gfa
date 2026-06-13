@@ -241,23 +241,6 @@ func boundResetMs(resetAt int64) int64 {
 	return rem
 }
 
-// leaserReadyWithoutAntigravity 判断卡「已明确开通产品、但不含 antigravity」。
-// 这类卡(claude-only / codex-only 绑定卡)不会去租 antigravity,主 cachedToken 恒为
-// nil,故不能据此判定「还在等首租」。products 为空(池子卡=不限产品,覆盖 antigravity)
-// 时返回 false —— 它仍需等 antigravity 首租,保持原行为。无锁直读(调用方已持 RLock)。
-func leaserReadyWithoutAntigravity(aks map[string]interface{}) bool {
-	raw, ok := aks["products"].([]interface{})
-	if !ok || len(raw) == 0 {
-		return false
-	}
-	for _, v := range raw {
-		if s, _ := v.(string); s == "antigravity" {
-			return false
-		}
-	}
-	return true
-}
-
 func (l *Leaser) GetStatus() map[string]interface{} {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -273,16 +256,24 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		expiresAtStr = time.Unix(0, l.cachedToken.ExpiresAt*int64(time.Millisecond)).Format(time.RFC3339)
 	}
 
+	// serviceState 驱动前端 StatusPill。默认 waiting_first_lease(=「获取租约中…」)只在
+	// 「确实还在等首个 antigravity 租约」时成立 —— 否则会把「卡不可用」「未开 antigravity」
+	// 这些 cachedToken 恒为 nil 的稳态也误显示成永久「获取租约中…」。
 	state := "waiting_first_lease"
-	if hasToken {
+	switch {
+	case hasToken:
 		state = "ready"
-	} else if l.lastError != "" {
+	case l.cardUnusable:
+		// 卡密不可用(订阅到期/无生效订阅):别报「获取租约中…」,前端据 cardUnusable
+		// 显示「订阅已到期」横幅 + StatusPill。
 		state = "error"
-	} else if leaserReadyWithoutAntigravity(l.accessKeyStatus) {
-		// 该卡未开通 antigravity:主(antigravity)租号被有意跳过(见 prewarm 的
-		// "本卡未开通 Antigravity,跳过"),cachedToken 恒为 nil —— 不代表还在等首租。
-		// codex/claude 按需租号,代理已就绪。否则 claude/codex-only 绑定卡会永远卡在
-		// 「获取租约中…」。
+	case l.lastError != "":
+		state = "error"
+	case decideAntigravity(l.entitlementsKnown, l.entitledProducts, l.subActive, productsFromAKS(l.accessKeyStatus)) == agSkip:
+		// 有生效订阅、但未开 antigravity:主 antigravity 租号被有意跳过(见 StartAutoLease
+		// 的「本卡未开通 Antigravity,跳过」),cachedToken 恒为 nil —— 不代表还在等首租。
+		// codex/claude 按需租号、代理已就绪。用授权(entitledProducts,心跳已 seed)判定,
+		// 不再只看 accessKeyStatus —— 否则只开 codex/anthropic 的卡冷启动会永远卡「获取租约中…」。
 		state = "ready"
 	}
 

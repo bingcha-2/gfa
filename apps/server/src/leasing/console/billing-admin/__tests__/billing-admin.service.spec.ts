@@ -5,7 +5,7 @@
  * subscription.service.spec; here we assert the expire call is made).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 
 import { BillingAdminService } from "../billing-admin.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
@@ -22,6 +22,7 @@ const prisma = getCustomerPrisma();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let entitlementSync: { syncSubscription: ReturnType<typeof vi.fn>; expireShadowRecord: ReturnType<typeof vi.fn> };
+let billing: { refundEpayOrder: ReturnType<typeof vi.fn> };
 let service: BillingAdminService;
 
 let seq = 0;
@@ -77,7 +78,9 @@ beforeEach(async () => {
     entitlementSync as unknown as EntitlementSyncService,
     {} as any,
   );
-  service = new BillingAdminService(prisma as any, subscriptionService);
+  // 网关退款默认成功(code=0 → ok);各用例可改 mock 模拟失败/已退款。
+  billing = { refundEpayOrder: vi.fn().mockResolvedValue({ ok: true }) };
+  service = new BillingAdminService(prisma as any, subscriptionService, billing as any);
 });
 
 afterAll(async () => {
@@ -104,6 +107,44 @@ describe("BillingAdminService.refundOrder", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0].type).toBe("BILLING");
     expect(notifications[0].title).toBe("订单已退款");
+
+    // 真打款:网关退款 API 按订单的 outTradeNo + 实付毛额(分)被调用一次。
+    expect(billing.refundEpayOrder).toHaveBeenCalledWith(order.outTradeNo, 9900);
+  });
+
+  it("网关退款失败 → 503,订单保持 PAID、订阅不取消、不通知(钱没退回绝不翻状态)", async () => {
+    billing.refundEpayOrder.mockResolvedValue({ ok: false, msg: "余额不足" });
+    const customer = await createTestCustomer();
+    const sub = await createSub(customer.id);
+    const order = await createOrder(customer.id, { subscriptionId: sub.id });
+
+    await expect(service.refundOrder(order.id)).rejects.toThrow(ServiceUnavailableException);
+
+    expect((await prisma.planOrder.findUnique({ where: { id: order.id } }))!.status).toBe("PAID");
+    expect((await prisma.subscription.findUnique({ where: { id: sub.id } }))!.status).toBe("ACTIVE");
+    expect(await prisma.notification.count({ where: { customerId: customer.id } })).toBe(0);
+  });
+
+  it("GRANT / ¥0 订单(管理员授予)→ 跳过网关,只做内部状态流转", async () => {
+    const customer = await createTestCustomer();
+    const grant = await prisma.planOrder.create({
+      data: {
+        customerId: customer.id,
+        amountCents: 0,
+        payChannel: "GRANT",
+        outTradeNo: `GRANT${Date.now()}${++seq}`,
+        status: "PAID",
+        paidAt: new Date(),
+        catalogVersion: 1,
+        config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
+        expiresAt: new Date(),
+      },
+    });
+
+    const result = await service.refundOrder(grant.id);
+
+    expect(billing.refundEpayOrder).not.toHaveBeenCalled(); // 无真实支付,不调网关
+    expect(result.order.status).toBe("REFUNDED");
   });
 
   it("falls back to the activatedFromOrderId link when order.subscriptionId is null", async () => {

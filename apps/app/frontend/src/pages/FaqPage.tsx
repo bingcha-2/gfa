@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Search, ChevronRight, ChevronDown, Loader2, AlertCircle, MessageCircle, ExternalLink } from 'lucide-react'
+import { Search, ChevronRight, ChevronDown, Loader2, AlertCircle, MessageCircle, MessageSquare, ExternalLink } from 'lucide-react'
 import * as api from '@/services/wails'
 import { useT } from '@/i18n'
-import { GitHubIcon } from '@/components/GitHubIcon'
-import { GITHUB_ISSUES_URL } from '@/lib/feedback'
 
 const CACHE_KEY = 'bcai_faq_cache'
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24h
@@ -210,19 +208,19 @@ export function FaqPage() {
         )
       })}
 
-      {/* GitHub feedback card — 常驻,不依赖 FAQ 是否加载成功 */}
+      {/* 意见反馈卡片 — 常驻,不依赖 FAQ 是否加载成功;点击打开用户中心 */}
       {!loading && (
         <Card>
           <CardContent className="flex items-center gap-3 py-3">
             <div className="w-9 h-9 rounded-[10px] bg-[var(--bg-tertiary)] flex items-center justify-center shrink-0 text-[var(--text-primary)]">
-              <GitHubIcon size={18} />
+              <MessageSquare size={18} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold text-[var(--text-primary)]">{t('faq.githubTitle')}</div>
               <div className="text-[11px] text-[var(--text-muted)]">{t('faq.githubDesc')}</div>
             </div>
             <button
-              onClick={() => api.openURL(GITHUB_ISSUES_URL)}
+              onClick={() => api.openURL(api.PORTAL_URLS.home)}
               className="flex items-center gap-1 text-[11px] text-[var(--primary-strong)] hover:underline shrink-0 cursor-pointer"
             >
               {t('faq.githubCta')} <ExternalLink size={11} />

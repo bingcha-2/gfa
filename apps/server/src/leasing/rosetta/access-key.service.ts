@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import * as path from "path";
 
 import { bucketsForProducts, isValidBucket } from "../lease-core/product-bucket";
-import { getModelQuotaFraction } from "../token-server/lease-scheduler";
+import { getModelQuotaFraction, getModelQuotaResetAt } from "../token-server/lease-scheduler";
 import {
   ACCOUNT_SHARE_CAPACITY,
   DEFAULT_KEY_WINDOW_MS,
@@ -390,31 +390,50 @@ export class AccessKeyService {
   }
 
   /**
-   * 去影子座位分配:与 assignSeatForProduct 同样选号(等级匹配、可绑、配额未耗尽、最紧装箱),
-   * 但占用份额由调用方按「数据库 ACTIVE 订阅的 config」算好传入(occupiedShares:accountId→已用份),
-   * NOT 从 access-keys.json 文件数 —— 停写文件后文件不再含订阅 bindings,从文件数会超卖(★陷阱★)。
-   * 返回选中的 accountId,或 null(该等级无号还剩 weight 份)。
+   * 去影子座位分配:按 DB ACTIVE 订阅 config 算好的占用份额(occupiedShares:accountId→已用份)
+   * 与人数(boundCounts:accountId→绑定张数)选号,NOT 从 access-keys.json 文件数 —— 停写文件后
+   * 文件不再含订阅 bindings,从文件数会超卖(★陷阱★)。选号优先级(高→低):
+   *   ① 没占满(余量 ≥ 本单 weight)—— 硬过滤
+   *   ② 立刻能用(usableNow:此刻有量 / 已过重置)—— 让买家能马上用,压过「人多」
+   *   ③ 其中人数最多(把拼车塞满、空号留给独享)
+   *   ④ 回血最快(soonestReset 最早)
+   *   ⑤ id 兜底(确定性)
+   * 返回选中的 accountId,或 null(该等级无号还剩 weight 份)。boundCounts 缺省为空 —— 预检
+   * (hasAvailableSeatFromShares)只问「有没有」,与排序无关(任一号够份即非 null)。
    */
   assignSeatForProductFromShares(
     product: string,
     weight: number,
     level: string,
     occupiedShares: Map<number, number>,
+    boundCounts: Map<number, number> = new Map(),
   ): number | null {
     if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
     const lvl = String(level || "").trim();
     if (!lvl) return null;
     const need = cardWeight({ weight });
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
-    const candidates = (Array.isArray(pool.accounts) ? pool.accounts : []).filter(
-      (a: any) => this.isAccountBindable(product, a, lvl),
-    );
-    // Best-fit: tightest free first (tie-break by id) — packs 拼车 cards, keeps
-    // whole accounts free for 独享. Mirrors autoAssignSeats's selection.
-    const fit = candidates
-      .map((a: any) => ({ id: Number(a.id), free: ACCOUNT_SHARE_CAPACITY - (occupiedShares.get(Number(a.id)) || 0) }))
-      .filter((r: { id: number; free: number }) => r.free >= need)
-      .sort((a: { id: number; free: number }, b: { id: number; free: number }) => a.free - b.free || a.id - b.id)[0];
+    const fit = (Array.isArray(pool.accounts) ? pool.accounts : [])
+      .filter((a: any) => this.isAccountBindable(product, a, lvl))
+      .map((a: any) => {
+        const id = Number(a.id);
+        const q = this.bindQuotaInfo(product, a);
+        return {
+          id,
+          free: ACCOUNT_SHARE_CAPACITY - (occupiedShares.get(id) || 0),
+          count: boundCounts.get(id) || 0,
+          usableNow: q.usableNow,
+          soonestReset: q.soonestReset,
+        };
+      })
+      .filter((r: any) => r.free >= need) // ① 没占满
+      .sort(
+        (a: any, b: any) =>
+          Number(b.usableNow) - Number(a.usableNow) || // ② 立刻能用(压过「人多」)
+          b.count - a.count || // ③ 其中人数最多
+          (a.soonestReset || Infinity) - (b.soonestReset || Infinity) || // ④ 回血最快
+          a.id - b.id, // ⑤ 兜底
+      )[0];
     return fit ? fit.id : null;
   }
 
@@ -636,30 +655,42 @@ export class AccessKeyService {
   }
 
   /**
-   * "配额未耗尽" — does the account still have upstream quota to lease?
-   * Unknown (no snapshot yet, e.g. a freshly imported account) counts as
-   * available so new accounts are bindable; only a KNOWN, fully-drained window
-   * excludes it. Codex quota is account-level (the "codex" key); antigravity is
-   * per-model, so it's exhausted only when EVERY known model window is drained.
-   * getModelQuotaFraction already treats a passed reset time as refilled.
+   * 绑定选号用的配额视图:此刻是否可用(usableNow)+ 若没量、最近一次回血的时间
+   * (soonestReset, epoch ms;0 = 无已知重置)。usableNow 含三种:有量、已过重置点
+   * (getModelQuotaFraction 对过期窗口直接返回满血)、以及全无快照的新号。codex/anthropic 是
+   * 账号级单窗(codex 存 "codex"、anthropic 的 claude 模型存 "claude");antigravity 按模型,
+   * 取各已知模型里最早回血的时间。
+   */
+  private bindQuotaInfo(provider: string, account: any): { usableNow: boolean; soonestReset: number } {
+    const keys =
+      provider === "antigravity"
+        ? Object.keys(account?.modelQuotaFractions || {})
+        : [provider === "anthropic" ? "claude" : provider];
+    // 全无快照的新号(antigravity 无任何模型键)→ 视为可用。
+    if (provider === "antigravity" && keys.length === 0) return { usableNow: true, soonestReset: 0 };
+    let usableNow = false;
+    let soonestReset = 0;
+    for (const key of keys) {
+      const f = getModelQuotaFraction(account, key);
+      if (f === null || f > 0) {
+        usableNow = true;
+        continue;
+      }
+      const reset = getModelQuotaResetAt(account, key); // 此刻没量:记下该窗口何时回血
+      if (reset > 0) soonestReset = soonestReset === 0 ? reset : Math.min(soonestReset, reset);
+    }
+    return { usableNow, soonestReset };
+  }
+
+  /**
+   * 能不能绑(座位预检 / 铸卡的配额闸门)。绑定卡按时长卖、跨多个配额窗口,所以「此刻没量但有
+   * 已知回血时间」的号也算活号、可绑 —— 否则会因瞬时 0% 把一个马上回血的号判死、白白拒单
+   * (★旧实现的坑★)。只有真·没量且无任何回血时间(永久耗尽 / 仅剩其它模型的「暂无」)才排除;
+   * 全无快照的新号 usableNow=true,照旧可绑。
    */
   private accountHasQuota(provider: string, account: any): boolean {
-    if (provider === "codex" || provider === "anthropic") {
-      // Account-level single-window quota. codex stores it under the "codex" key;
-      // the anthropic PRODUCT hosts the "claude" MODEL, whose window is stored under
-      // the "claude" model key (kept model-level on rename). Map product→model key.
-      const modelKey = provider === "anthropic" ? "claude" : provider;
-      const f = getModelQuotaFraction(account, modelKey);
-      return f === null || f > 0;
-    }
-    const fractions = account?.modelQuotaFractions;
-    if (!fractions || typeof fractions !== "object") return true; // unknown → assume ok
-    const models = Object.keys(fractions);
-    if (!models.length) return true;
-    return models.some((model) => {
-      const f = getModelQuotaFraction(account, model);
-      return f === null || f > 0;
-    });
+    const { usableNow, soonestReset } = this.bindQuotaInfo(provider, account);
+    return usableNow || soonestReset > 0;
   }
 
   /**
@@ -682,12 +713,16 @@ export class AccessKeyService {
   }
 
   /**
-   * Auto-assign accounts for `count` cards each consuming `weight` shares,
-   * spreading across accounts (most free shares first). Only accounts of the
-   * requested membership `level` that are currently bindable (enabled, has a
-   * token, eligible, quota not exhausted) are candidates. Returns one accountId
-   * per card, or null if no such account has room — callers treat null as "该
-   * 等级可用号不足, add more first" and do NOT mint.
+   * Auto-assign accounts for `count` cards each consuming `weight` shares. Only
+   * accounts of the requested membership `level` that are bindable (enabled, has
+   * a token, eligible, not permanently out of quota) are candidates. Selection:
+   * usable-now first (let the minted card work immediately) → tightest free (pack
+   * 拼车, keep whole accounts for 独享) → soonest refill → id. Returns one accountId
+   * per card, or null if no such account has room — callers treat null as "该等级
+   * 可用号不足, add more first" and do NOT mint. (This is the mint/file path; its
+   * 2nd key is share-packing because the file only has share counts. The customer
+   * DB path is assignSeatForProductFromShares, whose 2nd key is headcount — both
+   * share the same #1 "usable-now first".)
    */
   private autoAssignSeats(provider: string, count: number, weight: number, level: string): number[] | null {
     const pool = readJson(this.poolFileFor(provider), { accounts: [] });
@@ -695,19 +730,27 @@ export class AccessKeyService {
       (a: any) => this.isAccountBindable(provider, a, level),
     );
     const shares = this.boundSharesByAccount(provider);
-    const remaining: { id: number; free: number }[] = accounts.map((a: any) => ({
-      id: Number(a.id),
-      free: ACCOUNT_SHARE_CAPACITY - (shares.get(Number(a.id)) || 0),
-    }));
+    const remaining = accounts.map((a: any) => {
+      const q = this.bindQuotaInfo(provider, a);
+      return {
+        id: Number(a.id),
+        free: ACCOUNT_SHARE_CAPACITY - (shares.get(Number(a.id)) || 0),
+        usableNow: q.usableNow,
+        soonestReset: q.soonestReset,
+      };
+    });
     const assigned: number[] = [];
     for (let i = 0; i < count; i++) {
-      // Best-fit: among accounts that still have room (free >= weight), pick the
-      // one with the SMALLEST free (tightest fit, tie-break by id). This packs
-      // 拼车 cards tightly and keeps whole accounts free for 独享 (4-share) cards,
-      // instead of scattering across the emptiest accounts.
+      // 立刻能用优先 → 份额最紧(装箱,留整号给独享)→ 回血最快 → id 兜底。
       const fit = remaining
-        .filter((r) => r.free >= weight)
-        .sort((a, b) => a.free - b.free || a.id - b.id)[0];
+        .filter((r: any) => r.free >= weight)
+        .sort(
+          (a: any, b: any) =>
+            Number(b.usableNow) - Number(a.usableNow) ||
+            a.free - b.free ||
+            (a.soonestReset || Infinity) - (b.soonestReset || Infinity) ||
+            a.id - b.id,
+        )[0];
       if (!fit) return null; // 没有号还剩 `weight` 份
       fit.free -= weight;
       assigned.push(fit.id);

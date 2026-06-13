@@ -2,10 +2,12 @@
  * billing-admin.service.ts — console-side subscription billing mutations:
  * refund a paid PlanOrder and revoke a Subscription.
  *
- * Scope note: "refund" here is the INTERNAL state flip (order → REFUNDED,
- * linked subscription → CANCELLED + shadow record expired, customer notified).
- * It does NOT call the epay refund API — the operator returns the money via
- * the epay merchant console; an automated gateway refund is out of scope.
+ * Refund flow: (1) call the epay gateway refund API to actually return the money
+ * to the customer (BillingService.refundEpayOrder); only on gateway success do we
+ * (2) flip order → REFUNDED, (3) cancel the linked subscription + expire its shadow
+ * record, (4) notify the customer. Money first, state second — a gateway failure
+ * leaves the order PAID (no false "refunded" state). GRANT / ¥0 orders skip the
+ * gateway (no real payment) and only do the internal flip.
  *
  * Idempotency: refunding an already-REFUNDED order and revoking an
  * already-CANCELLED subscription are no-op successes (no duplicate
@@ -16,12 +18,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { PlanOrder, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
+import { BillingService } from "../../account/billing/billing.service";
 
 export interface RefundResult {
   order: PlanOrder;
@@ -43,6 +47,7 @@ export class BillingAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subscriptionService: SubscriptionService,
+    private readonly billing: BillingService,
   ) {}
 
   /**
@@ -183,10 +188,12 @@ export class BillingAdminService {
   }
 
   /**
-   * Refund a PAID plan order: order → REFUNDED, its subscription (if any) →
-   * CANCELLED + shadow record expired, customer notified. The upstream seat is
-   * released because share accounting ignores non-active records — the expired
-   * record keeps its bindings as history.
+   * Refund a PAID plan order: call the gateway refund API to return the money,
+   * then order → REFUNDED, its subscription (if any) → CANCELLED + shadow record
+   * expired, customer notified. Gateway refund runs first — on failure we throw and
+   * leave the order PAID (never a "refunded" state without the money back). The
+   * upstream seat is released because share accounting ignores non-active records —
+   * the expired record keeps its bindings as history.
    */
   async refundOrder(orderId: string): Promise<RefundResult> {
     const order = await this.prisma.planOrder.findUnique({ where: { id: orderId } });
@@ -197,6 +204,27 @@ export class BillingAdminService {
     }
     if (order.status !== "PAID") {
       throw new ConflictException(`只有已支付订单可退款（当前状态 ${order.status}）`);
+    }
+
+    // 使用检测：订单支付后如果该客户产生过 token 用量，不允许退款。
+    const usageCount = await this.prisma.cardTokenUsage.count({
+      where: {
+        customerId: order.customerId,
+        timestamp: { gte: order.paidAt ?? order.createdAt },
+      },
+    });
+    if (usageCount > 0) {
+      throw new ConflictException(`该客户在订单支付后已产生 ${usageCount} 条使用记录，不可退款`);
+    }
+
+    // 实际打款:先调网关退款 API 把钱退回客户,成功(code=0)后才往下翻状态 —— 钱→状态,绝不反过来,
+    // 杜绝「标了 REFUNDED 但客户没真收到钱」。网关失败 → 抛错、订单保持 PAID,运营可重试或查商户后台。
+    // GRANT / ¥0 单无真实支付(管理员授予),跳过网关,只做内部状态流转。
+    if (order.payChannel !== "GRANT" && order.amountCents > 0) {
+      const refund = await this.billing.refundEpayOrder(order.outTradeNo, order.amountCents);
+      if (!refund.ok) {
+        throw new ServiceUnavailableException(`网关退款失败，订单状态未变更：${refund.msg ?? "未知错误"}`);
+      }
     }
 
     // CAS PAID→REFUNDED: concurrent refund calls collapse to one winner; the
@@ -289,5 +317,29 @@ export class BillingAdminService {
     // the expired record are kept as history, not cleared).
     await this.subscriptionService.cancelSubscription(sub.id);
     return sub.id;
+  }
+
+  /**
+   * 主动同步单笔订单的支付状态：查 zhunfu，如已支付则激活。
+   * 返回同步后的订单快照。
+   */
+  async syncOrderPayment(orderId: string) {
+    const order = await this.prisma.planOrder.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException(`PlanOrder "${orderId}" not found`);
+
+    if (order.status !== "PENDING" && order.status !== "EXPIRED") {
+      return { order, synced: false, message: `订单状态为 ${order.status}，无需同步` };
+    }
+
+    const synced = await this.billing.queryAndSyncEpayOrder(order.outTradeNo);
+    const refreshed = synced
+      ? await this.prisma.planOrder.findUnique({ where: { id: orderId } })
+      : order;
+
+    return {
+      order: refreshed ?? order,
+      synced,
+      message: synced ? "支付已确认，订阅已激活" : "支付平台未确认付款",
+    };
   }
 }

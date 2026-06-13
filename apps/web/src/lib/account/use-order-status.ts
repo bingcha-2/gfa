@@ -10,7 +10,7 @@ const TERMINAL_STATUSES = new Set(["PAID", "FAILED", "EXPIRED", "REFUNDED"]);
 /**
  * Poll a billing order's status while it is pending.
  *
- * - Polls immediately, then every `intervalMs` (default 3s).
+ * - Polls immediately, then every `intervalMs` (default 5s).
  * - Skips network calls while document.visibilityState !== "visible"
  *   (timer keeps ticking cheaply; fetches resume when the tab is visible).
  * - Stops permanently on a terminal status (PAID/FAILED/EXPIRED/REFUNDED).
@@ -20,7 +20,7 @@ const TERMINAL_STATUSES = new Set(["PAID", "FAILED", "EXPIRED", "REFUNDED"]);
  */
 export function useOrderStatus(
   outTradeNo: string | null,
-  intervalMs = 3000
+  intervalMs = 5000
 ): BillingOrderState | null {
   const [order, setOrder] = useState<BillingOrderState | null>(null);
 

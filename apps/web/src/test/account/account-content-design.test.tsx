@@ -5,6 +5,17 @@ import { NotificationsList } from "@/components/account/notifications-list";
 import { TicketsList } from "@/components/account/tickets-list";
 import { UsageTable } from "@/components/account/usage-table";
 
+// NotificationsList shares the topnav bell count via useAccount(). The fns
+// must be STABLE refs (like React's real useState setter) — a fresh vi.fn()
+// per render would change load()'s deps and spin the load effect.
+const { setUnread, refreshUnread } = vi.hoisted(() => ({
+  setUnread: vi.fn(),
+  refreshUnread: vi.fn(),
+}));
+vi.mock("@/components/account/account-provider", () => ({
+  useAccount: () => ({ setUnread, refreshUnread }),
+}));
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,

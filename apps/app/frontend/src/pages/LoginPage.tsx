@@ -7,6 +7,7 @@ import { LanguageMenu } from '@/components/LanguageMenu'
 import { useT } from '@/i18n'
 import { Check } from 'lucide-react'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
+import { topInset } from '@/components/layout/chrome'
 
 /** 品牌徽标:玻璃杯图标 + 琥珀光晕(记忆点),登录与侧栏一致。 */
 function BrandMark({ size = 48 }: { size?: number }) {
@@ -27,7 +28,7 @@ function BrandMark({ size = 48 }: { size?: number }) {
 
 export function LoginPage() {
   const t = useT()
-  const { login } = useAppStore()
+  const { login, logoutReason } = useAppStore()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -63,6 +64,14 @@ export function LoginPage() {
 
   return (
     <div className="relative flex items-center justify-center min-h-screen bg-[var(--bg-primary)] px-4">
+      {/* 顶部拖动安全区:窗口为 TitleBarHiddenInset(无原生标题栏),只能从标了
+          --wails-draggable:drag 的区域拖动。登录页不在 AppShell 内,需自带一条;
+          高度与 AppShell 顶部安全区一致(mac 44 / 其它 16)。 */}
+      <div
+        className="absolute top-0 inset-x-0 z-0"
+        style={{ height: `${topInset()}px`, '--wails-draggable': 'drag' } as React.CSSProperties}
+        aria-hidden
+      />
       <LanguageMenu className="absolute top-4 right-4 z-10" />
 
       <div className="w-full max-w-[760px] grid sm:grid-cols-[1.05fr_1fr] rounded-[20px] overflow-hidden border border-[var(--border-light)] bg-[var(--bg-card)] shadow-[var(--shadow-lg)]">
@@ -118,6 +127,15 @@ export function LoginPage() {
           <div className="mb-5">
             <h1 className="text-[19px] font-bold text-[var(--text-primary)] tracking-tight">{t('login.title')}</h1>
           </div>
+
+          {/* 被动登出提示(设备被移除 / 会话失效):解释为何回到登录页,避免看着像「没反应」 */}
+          {logoutReason && !deviceLimitReached && !error && (
+            <div className="mb-3 rounded-[10px] border border-[var(--warning)] bg-[var(--warning)]/10 px-3 py-2.5 text-[12px] text-[var(--text-secondary)]">
+              {logoutReason === 'DEVICE_REVOKED'
+                ? t('dashboard.kickedDeviceRevoked')
+                : t('dashboard.kickedSessionInvalid')}
+            </div>
+          )}
 
           {/* Device limit error */}
           {deviceLimitReached && (

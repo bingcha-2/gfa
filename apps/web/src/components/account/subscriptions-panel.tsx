@@ -3,31 +3,49 @@
 import { useEffect, useState } from "react";
 import { ArrowUpIcon, ArrowDownIcon } from "lucide-react";
 
+import { AccountEmpty, AccountSkeleton } from "./account-ui";
+import { AccountStatusBadge } from "./account-status-badge";
 import { getPortalOverview, setSubscriptionPriority } from "@/lib/account/user-api";
+import {
+  isSubscriptionActive,
+  subscriptionPlanLabel,
+} from "@/lib/account/subscription-status";
 import type { OverviewSubscription } from "@/lib/account/user-types";
 import { formatTokens } from "@/lib/format";
+import { fmt } from "@/lib/i18n";
+import { useDict } from "@/lib/i18n/client";
+
+type MeterLevel = "ok" | "warn" | "critical";
 
 function sortByPriority(subs: OverviewSubscription[]): OverviewSubscription[] {
   return [...subs].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 }
 
-function statusLabel(status: string): { label: string; tone: "ok" | "muted" } {
-  const s = status.toUpperCase();
-  if (s === "ACTIVE") return { label: "可用", tone: "ok" };
-  if (s === "EXPIRED") return { label: "已过期", tone: "muted" };
-  return { label: status, tone: "muted" };
+function productKey(p: string): "codex" | "claude" | "antigravity" | undefined {
+  const s = p.toLowerCase();
+  if (s.includes("codex")) return "codex";
+  if (s.includes("claude")) return "claude";
+  if (s.includes("anti") || s.includes("gravity")) return "antigravity";
+  return undefined;
 }
 
-function remainPct(sub: OverviewSubscription): number | null {
-  const b = sub.quota?.buckets?.[0];
-  if (!b || b.limit <= 0) return null;
-  return Math.max(0, Math.min(100, Math.round(((b.limit - b.used) / b.limit) * 100)));
+/** Remaining-fuel level for the 液位 meter — high remaining reads healthy. */
+function remainMeter(sub: OverviewSubscription): { pct: number | null; level: MeterLevel } {
+  const bucket = sub.quota?.buckets?.[0];
+  if (!bucket || bucket.limit <= 0) return { pct: null, level: "ok" };
+  const pct = Math.max(
+    0,
+    Math.min(100, Math.round(((bucket.limit - bucket.used) / bucket.limit) * 100))
+  );
+  if (pct < 15) return { pct, level: "critical" };
+  if (pct < 40) return { pct, level: "warn" };
+  return { pct, level: "ok" };
 }
-
-const card =
-  "flex items-center gap-3 rounded-[14px] border border-[var(--border-light)] bg-[var(--bg-tertiary)]/40 p-4";
 
 export function SubscriptionsPanel() {
+  const dict = useDict();
+  const t = dict.portalApp.subscriptions;
+
   const [subs, setSubs] = useState<OverviewSubscription[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -61,97 +79,136 @@ export function SubscriptionsPanel() {
   }
 
   if (error) {
-    return (
-      <p className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3 text-[13px] text-[var(--text-secondary)]">
-        订阅列表加载失败,请稍后重试。
-      </p>
-    );
+    return <p className="account-form-error">{t.loadFailed}</p>;
   }
   if (!subs) {
-    return <div className="py-8 text-center text-[13px] text-[var(--text-muted)]">加载中…</div>;
-  }
-  if (subs.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-3 py-10 text-center">
-        <p className="text-[14px] text-[var(--text-muted)]">你还没有任何订阅。</p>
-        <a href="/account/billing" className="account-btn account-btn--primary">购买套餐</a>
+      <div className="account-skeleton-stack">
+        <AccountSkeleton className="account-skeleton--row" />
+        <AccountSkeleton className="account-skeleton--row" />
+        <AccountSkeleton className="account-skeleton--row" />
       </div>
     );
   }
+  if (subs.length === 0) {
+    return (
+      <AccountEmpty title={t.empty} description={t.emptyDesc}>
+        <a href="/account/billing" className="account-btn account-btn--primary">
+          {t.buy}
+        </a>
+      </AccountEmpty>
+    );
+  }
+
+  const now = Date.now();
+  const levelLabel = (lv: MeterLevel) =>
+    lv === "critical" ? t.levelCritical : lv === "warn" ? t.levelWarn : t.levelOk;
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[12px] leading-relaxed text-[var(--text-muted)]">
-        按优先级从上到下使用:排在前面的订阅会被<b className="text-[var(--text-secondary)]">优先消耗</b>,用完后
-        <b className="text-[var(--text-secondary)]">自动接力</b>到下一个。用 ↑ ↓ 调整顺序。
-      </p>
-
-      <ol className="flex flex-col gap-2.5">
-        {subs.map((s, i) => {
-          const st = statusLabel(s.status);
-          const pct = remainPct(s);
+    <div className="account-relay">
+      <ol className="account-relay-list">
+        {subs.map((sub, i) => {
+          const active = isSubscriptionActive(sub, now);
+          const cancelled = sub.status.toUpperCase() === "CANCELLED";
+          const statusLabel = cancelled
+            ? t.statusCancelled
+            : active
+              ? t.statusActive
+              : t.statusExpired;
+          const meter = remainMeter(sub);
+          const meterText = meter.pct === null ? t.unlimited : levelLabel(meter.level);
           return (
-            <li key={s.id} className={card} data-busy={busy || undefined}>
-              <div className="grid place-items-center w-8 h-8 shrink-0 rounded-full bg-[var(--bg-secondary)] border border-[var(--border-light)] text-[13px] font-bold font-mono-data text-[var(--text-secondary)]">
-                {i + 1}
-              </div>
+            <li
+              key={sub.id}
+              className="account-relay-item"
+              data-first={i === 0 || undefined}
+              data-busy={busy || undefined}
+            >
+              <div className="account-relay-rank">{i + 1}</div>
 
-              <div className="min-w-0 flex-1 flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-primary)] truncate">
-                    {s.planName ?? "迁移卡密订阅"}
-                    {i === 0 && (
-                      <span className="shrink-0 rounded-full bg-[var(--primary)]/15 px-2 py-0.5 text-[10px] font-medium text-[var(--primary)]">
-                        优先使用
-                      </span>
-                    )}
+              <div className="account-relay-body">
+                <div className="account-relay-head">
+                  <span className="account-relay-name">
+                    <span>{subscriptionPlanLabel(sub)}</span>
+                    {i === 0 && <span className="account-relay-tag">{t.priorityTag}</span>}
                   </span>
-                  <span
-                    className="shrink-0 text-[11px] font-medium"
-                    style={{ color: st.tone === "ok" ? "var(--success)" : "var(--text-muted)" }}
-                  >
-                    {st.label}
-                  </span>
+                  <AccountStatusBadge tone={active ? "success" : "muted"}>
+                    {statusLabel}
+                  </AccountStatusBadge>
                 </div>
 
-                {s.products.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {s.products.map((p) => (
-                      <span
-                        key={p}
-                        className="rounded-md bg-[var(--bg-secondary)] border border-[var(--border-light)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]"
-                      >
+                {sub.products.length > 0 && (
+                  <div className="account-relay-products">
+                    {sub.products.map((p) => (
+                      <span key={p} className="account-prodchip" data-p={productKey(p)}>
                         {p}
                       </span>
                     ))}
                   </div>
                 )}
 
-                <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-[var(--text-muted)]">
-                  <span>额度余量 <b className="text-[var(--text-primary)] font-mono-data">{pct === null ? "—" : `${pct}%`}</b></span>
-                  <span>本期用量 <b className="text-[var(--text-primary)] font-mono-data">{s.quota ? formatTokens(s.quota.recentWindowTokens) : "—"}</b></span>
-                  <span>到期 <b className="text-[var(--text-secondary)]">{s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : "∞"}</b></span>
+                <div className="account-relay-meter" data-level={meter.level}>
+                  <div className="account-relay-meter__head">
+                    <span>{t.remainLabel}</span>
+                    <span className="account-relay-meter__val">
+                      {meter.pct === null ? t.unlimited : `${meter.pct}%`}
+                      {meter.pct !== null && (
+                        <span className="account-relay-meter__level">{meterText}</span>
+                      )}
+                    </span>
+                  </div>
+                  {meter.pct !== null && (
+                    <div
+                      className="account-meter"
+                      data-level={meter.level}
+                      role="progressbar"
+                      aria-valuenow={meter.pct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={fmt(t.remainMeter, { pct: meter.pct, level: meterText })}
+                    >
+                      <div
+                        className="account-meter__fill"
+                        style={{ width: `${meter.pct}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="account-relay-extra">
+                  <span>
+                    {t.windowUsedLabel}{" "}
+                    <b>{sub.quota ? formatTokens(sub.quota.recentWindowTokens) : "—"}</b>
+                  </span>
+                  <span>
+                    {t.expiresLabel}{" "}
+                    <b>
+                      {sub.expiresAt
+                        ? new Date(sub.expiresAt).toLocaleDateString()
+                        : t.neverExpires}
+                    </b>
+                  </span>
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-col gap-1">
+              <div className="account-relay-arrows">
                 <button
                   type="button"
+                  className="account-relay-arrow"
                   disabled={i === 0 || busy}
                   onClick={() => move(i, -1)}
-                  aria-label="上移(提高优先级)"
-                  className="grid place-items-center w-7 h-7 rounded-md border border-[var(--border-light)] text-[var(--text-secondary)] disabled:opacity-30 hover:bg-[var(--bg-secondary)]"
+                  aria-label={t.moveUp}
                 >
-                  <ArrowUpIcon size={15} />
+                  <ArrowUpIcon />
                 </button>
                 <button
                   type="button"
+                  className="account-relay-arrow"
                   disabled={i === subs.length - 1 || busy}
                   onClick={() => move(i, 1)}
-                  aria-label="下移(降低优先级)"
-                  className="grid place-items-center w-7 h-7 rounded-md border border-[var(--border-light)] text-[var(--text-secondary)] disabled:opacity-30 hover:bg-[var(--bg-secondary)]"
+                  aria-label={t.moveDown}
                 >
-                  <ArrowDownIcon size={15} />
+                  <ArrowDownIcon />
                 </button>
               </div>
             </li>

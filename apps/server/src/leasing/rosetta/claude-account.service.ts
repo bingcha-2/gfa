@@ -738,9 +738,13 @@ export class ClaudeAccountService {
       // Probe upstream through the account's sticky residential proxy — same IP
       // that serves inference. A datacenter-IP probe is an anti-abuse signal.
       const snap = await fetchClaudeQuotaUpstream(token, acc.proxyUrl);
-      // 记录 /api/oauth/usage 原始返回,便于核对/排查。
+      // 已实证:/api/oauth/profile 回 organization.rate_limit_tier(snake,如
+      // "default_claude_max_20x"),细档 Max 5x/20x 能正确解析。plan= 是常驻信号(每次刷新看
+      // 解析出的套餐,退化立刻可见);只有当 plan 退化(空 或 粗档 "max")才把 profile 整体打出来
+      // 排查 —— 平时不打,免得把姓名/uuid 等 PII 每次刷新都灌进日志。
+      const planDegraded = !snap.planType || snap.planType === "max";
       console.log(
-        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} usage=${JSON.stringify(snap.raw)}${snap.error ? ` error=${snap.error}` : ""}`,
+        `[claude-refresh] #${accountId} ${acc.email} http=${snap.httpStatus} plan=${snap.planType || "?"} usage=${JSON.stringify(snap.raw)} profileHttp=${snap.profileHttpStatus ?? "?"}${planDegraded ? ` profile=${JSON.stringify(snap.profileRaw)}` : ""}${snap.error ? ` error=${snap.error}` : ""}`,
       );
       // 套餐(来自 /api/oauth/profile):有就更新,对齐 codex 的行为。
       if (snap.planType) acc.planType = snap.planType;

@@ -1,12 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { toast } from "sonner";
 import { LockIcon, SendIcon } from "lucide-react";
 
 import { AccountButton, AccountSkeleton } from "@/components/account/account-ui";
-import { TicketStatusBadge } from "@/components/account/ticket-status-badge";
 import { getTicket, replyTicket, UserApiError } from "@/lib/account/user-api";
 import type { TicketDetail } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
@@ -76,12 +74,6 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     return (
       <div className="account-state-panel">
         <p>{t.notFound}</p>
-        <Link
-          href="/account/tickets"
-          className="account-link"
-        >
-          {t.backToList}
-        </Link>
       </div>
     );
   }
@@ -94,12 +86,6 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
           <AccountButton variant="secondary" onClick={() => void load()}>
             {t.retry}
           </AccountButton>
-          <Link
-            href="/account/tickets"
-            className="account-link"
-          >
-            {t.backToList}
-          </Link>
         </div>
       </div>
     );
@@ -119,22 +105,6 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
 
   return (
     <div className="account-ticket-thread" data-testid="account-ticket-thread">
-      <div className="account-ticket-thread__header">
-        <Link
-          href="/account/tickets"
-          className="account-link"
-        >
-          {t.backToList}
-        </Link>
-        <div>
-          <h3>{detail.ticket.subject}</h3>
-          <TicketStatusBadge status={detail.ticket.status} />
-        </div>
-        <p>
-          {formatDateTime(detail.ticket.createdAt)}
-        </p>
-      </div>
-
       <ul className="account-thread-list">
         {detail.messages.map((message) => {
           const mine = message.authorType === "CUSTOMER";

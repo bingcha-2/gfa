@@ -65,5 +65,11 @@
 
 ## 执行进度 / 建议
 - ✅ **D1a 已落地**(`0f7061d`):`findByKey` 认订阅卡,文件卡行为不变 —— 这是唯一能安全独立落地的准备步。
+- 🔬 **D2-1 验证(已完成 · enforcement 级,2026-06-13)**:核实「每次部署漏额度」假设 —— **成立**。
+  - 复现链:`subscriptionToLimitRecord` 不产出 `windowStartedAt` → pre-D2(HEAD)`hydrateWindowsFromUsageLog` 只 push 事件、不重建起点 → 纯订阅卡(号池线)重启后首次请求进 `validateRecord`,`resetWindowIfExpired`/`resetWeeklyWindowIfExpired` 见起点===0 即清窗 + 重设 now → 满额 5h 桶 + 周窗被清零、本应 429 的请求被**放行**(enforcement 真放行,非仅状态层)。
+  - 修复确认:`reconstructUseAnchoredWindow`(`token-billing.ts`)+ `reconstructSubscriptionWindows`(`access-key-store.ts`,`hydrate` 末尾调用)**均已在 working tree、尚未提交**;改走真实 `hydrateWindowsFromUsageLog` → 同份满额用量被正确拦成 **429**。即 D2 核心修复已就位,待提交。
+  - 证据:`apps/server/src/leasing/token-server/__tests__/deploy-quota-leak-repro.spec.ts`(8 用例);`pnpm vitest run src/leasing/token-server` → 23 files / 404 tests 全绿,repro 文件单跑连测稳定(`Date.now()` 已 mock)。
+  - ✅ bucket 覆盖(对齐「对所有 bucket 完备」):号池 5h 桶 **`anthropic-claude`(CU)· `antigravity-gemini`(原始计量)· `codex-gpt`(CU)** + 周窗 **显式 `weeklyTokenLimit`** 与 **派生 `5h×R`**;PRE(满额清零放行)/ POST(hydrate 重建后 429)均覆盖。
+  - ⚠️ 仍未覆盖(本文件范围外):**绑定线 5h**(走 `alignedResetAt + bucketUsageInWindow`,不读 `windowStartedAt`、非 reconstruct 路径)的 enforcement 级满额拦截 —— 其窗口状态级行为已由 `access-key-store-deshadow.spec.ts`(reconstruct 跳过绑定线 5h)+ `aligned-enforce.spec.ts` 覆盖;删 flush 前若要对绑定线也做满额 429 回归,需另起用例。
 - 🔒 **剩下的咬合三步(去文件读 + card-migration 去文件写 + 删 flush)** 动限流命根子 + 涉安全洞,**强烈建议一个专注会话整体推**,边做边验上面两条断言。
 - **D3**(后台卡管理停用 + cleanup 改 DB)跟在咬合三步之后收尾。

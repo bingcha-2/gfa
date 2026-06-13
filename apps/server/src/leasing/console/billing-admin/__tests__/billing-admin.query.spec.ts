@@ -5,7 +5,7 @@
  *
  * SubscriptionService is not exercised by these read paths, so a bare stub is passed.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingAdminService } from "../billing-admin.service";
 import type { SubscriptionService } from "../../../subscription/subscription.service";
@@ -60,7 +60,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await cleanCustomerTables();
-  service = new BillingAdminService(prisma as any, subStub);
+  // 查询用例不触发退款;billing 仅为构造参数,给个空 stub 即可。
+  service = new BillingAdminService(prisma as any, subStub, { refundEpayOrder: vi.fn() } as any);
 });
 
 afterAll(async () => {

@@ -124,12 +124,16 @@ export function DashboardPage() {
         <div className="rounded-[12px] border border-[var(--danger)] bg-[var(--danger)]/5 px-4 py-3">
           <div className="text-sm font-medium text-[var(--danger)]">{t('dashboard.cardUnusableTitle')}</div>
           <div className="text-[12px] text-[var(--text-secondary)] mt-1">{t('dashboard.cardUnusableBody')}</div>
-          <div className="flex items-center gap-2 mt-2.5">
-            <Button size="sm" onClick={() => useAppStore.getState().logout()}>
-              {t('dashboard.cardUnusableRelogin')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => api.openURL(api.PORTAL_URLS.billing)}>
+          <div className="text-[12px] text-[var(--text-muted)] mt-1.5">{t('dashboard.cardUnusableHelp')}</div>
+          <div className="flex flex-wrap items-center gap-2 mt-2.5">
+            <Button size="sm" onClick={() => api.openURL(api.PORTAL_URLS.billing)}>
               {t('dashboard.cardUnusableBilling')}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => api.openURL(api.PORTAL_URLS.tickets)}>
+              {t('dashboard.cardUnusableContact')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => useAppStore.getState().logout()}>
+              {t('dashboard.cardUnusableRelogin')}
             </Button>
           </div>
         </div>

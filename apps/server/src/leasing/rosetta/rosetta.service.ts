@@ -242,9 +242,15 @@ export class RosettaService {
   assignSeatForProduct(product: string, weight: number, level: string) {
     return this.accessKeySvc.assignSeatForProduct(product, weight, level);
   }
-  /** 去影子座位分配:占用份额按 DB ACTIVE 订阅 config 算好传入,不读文件(见 access-key.service)。 */
-  assignSeatForProductFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {
-    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares);
+  /** 去影子座位分配:占用份额/人数按 DB ACTIVE 订阅 config 算好传入,不读文件(见 access-key.service)。 */
+  assignSeatForProductFromShares(
+    product: string,
+    weight: number,
+    level: string,
+    occupiedShares: Map<number, number>,
+    boundCounts?: Map<number, number>,
+  ) {
+    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts);
   }
   /** 下单前座位预检:该 product+level 有无剩 ≥ weight 份的号(占用份额按 DB 订阅 config 传入)。 */
   hasAvailableSeatFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {

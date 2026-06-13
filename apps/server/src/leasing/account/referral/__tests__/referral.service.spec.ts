@@ -118,7 +118,7 @@ describe("ReferralService.getSummary", () => {
     expect(result.referralLink).toBe("https://myapp.example.com/account/register?ref=ABC123");
   });
 
-  it("referralLink defaults to bcai.lol when WEB_BASE_URL is not set", async () => {
+  it("referralLink defaults to localhost web (dev) when WEB_BASE_URL is not set", async () => {
     const prisma = makePrisma({
       customer: makeCustomer({ referralCode: "XYZ" }),
     });
@@ -126,7 +126,7 @@ describe("ReferralService.getSummary", () => {
 
     const result = await service.getSummary("cust-1");
 
-    expect(result.referralLink).toBe("https://bcai.lol/account/register?ref=XYZ");
+    expect(result.referralLink).toBe("http://localhost:3000/account/register?ref=XYZ");
   });
 
   it("returns creditCents from customer", async () => {

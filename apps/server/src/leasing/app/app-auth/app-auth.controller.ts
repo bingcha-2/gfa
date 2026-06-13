@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  HttpCode,
+  HttpStatus,
   Post,
   Request,
   UseGuards
@@ -33,6 +35,7 @@ export class AppAuthController {
   @Public()
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Post("login")
+  @HttpCode(HttpStatus.OK)
   login(@Body() dto: AppLoginDto, @Request() req: any) {
     const lastIp =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ??
@@ -57,6 +60,7 @@ export class AppAuthController {
   @Public()
   @UseGuards(CustomerJwtGuard)
   @Post("heartbeat")
+  @HttpCode(HttpStatus.OK)
   heartbeat(
     @CurrentCustomer() customer: CustomerUser,
     @Body() dto: HeartbeatDto
@@ -76,6 +80,7 @@ export class AppAuthController {
   @Public()
   @UseGuards(CustomerJwtGuard)
   @Post("logout")
+  @HttpCode(HttpStatus.OK)
   logout(
     @CurrentCustomer() customer: CustomerUser,
     @Body() dto: AppLogoutDto

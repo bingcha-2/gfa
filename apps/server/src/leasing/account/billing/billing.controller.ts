@@ -58,6 +58,16 @@ export class BillingController {
     return this.billingService.getOrder(customer.customerId, outTradeNo);
   }
 
+  /** POST /api/account/billing/orders/:outTradeNo/cancel → 取消未支付订单(幂等;已支付则激活) */
+  @Post("billing/orders/:outTradeNo/cancel")
+  @HttpCode(200)
+  cancelOrder(
+    @CurrentCustomer() customer: CustomerUser,
+    @Param("outTradeNo") outTradeNo: string,
+  ) {
+    return this.billingService.cancelOrder(customer.customerId, outTradeNo);
+  }
+
   /** GET /api/account/subscriptions */
   @Get("subscriptions")
   listSubscriptions(@CurrentCustomer() customer: CustomerUser) {

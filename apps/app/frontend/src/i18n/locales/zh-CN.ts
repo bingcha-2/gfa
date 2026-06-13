@@ -29,7 +29,7 @@ export const zhCN = {
     collapseSidebar: '收起侧边栏',
     updateTo: '更新到 v{version}',
     updateAvailable: 'v{version} 可用',
-    feedback: 'GitHub 反馈',
+    feedback: '意见反馈',
   },
 
   theme: {
@@ -43,6 +43,7 @@ export const zhCN = {
     error: '错误 · {error}',
     leasing: '获取租约中...',
     needCard: '请登录账号',
+    subscriptionExpired: '订阅已到期',
     ok: '服务正常 · 127.0.0.1:{port}',
   },
 
@@ -65,10 +66,14 @@ export const zhCN = {
   },
 
   dashboard: {
-    cardUnusableTitle: '订阅/会话已失效,功能已停用',
-    cardUnusableBody: '当前登录会话或订阅已失效(会话过期/订阅到期/设备被移除)。请重新登录,或前往网页端处理订阅与账单。',
+    cardUnusableTitle: '订阅已到期,功能已停用',
+    cardUnusableBody: '当前账号没有可用订阅(未购买或已到期)。请前往网页端续费或购买套餐,完成后重新登录生效。',
     cardUnusableRelogin: '重新登录',
     cardUnusableBilling: '订阅与账单 ↗',
+    cardUnusableContact: '联系客服',
+    cardUnusableHelp: '遇到问题或需要帮助?点击「联系客服」,我们会尽快协助你。',
+    kickedDeviceRevoked: '你的设备已被移除,请重新登录。',
+    kickedSessionInvalid: '登录状态已失效,请重新登录。',
     activateTitle: '激活账号卡',
     activateIntro: '输入卡密即可直连官方模型 —— 无需配置 API Key,代码数据直发官方,冰茶只在本地注入授权令牌。',
     cardPlaceholder: '输入账号卡 (AI...)',
@@ -234,9 +239,9 @@ export const zhCN = {
     wechatContact: '加微信 {wechat} 联系客服',
     groupContact: '加入售后群联系客服',
     viewFull: '查看完整版',
-    githubTitle: '在 GitHub 反馈问题',
-    githubDesc: '提交 Bug、功能建议,或查看已知问题',
-    githubCta: '去提 Issue',
+    githubTitle: '问题反馈与帮助',
+    githubDesc: '前往用户中心提交问题、建议或联系客服',
+    githubCta: '前往用户中心',
   },
 
   settings: {
@@ -258,7 +263,7 @@ export const zhCN = {
     version: '版本',
     deviceId: '设备 ID',
     feedbackLabel: '问题反馈',
-    feedbackBtn: 'GitHub 提交反馈',
+    feedbackBtn: '前往用户中心',
     changelogLabel: '更新日志',
     changelogBtn: '查看',
     changelogModalTitle: 'v{version} 更新内容',
@@ -296,6 +301,8 @@ export const zhCN = {
     planExpiry: '到期时间',
     deviceName: '设备名称',
     noSubscription: '暂无有效套餐',
+    activeMember: '已订阅',
+    refresh: '刷新',
     logout: '退出登录',
     manageDevices: '管理设备',
     sessionExpired: '会话已过期，请重新登录',

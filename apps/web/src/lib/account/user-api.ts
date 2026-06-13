@@ -221,15 +221,23 @@ export async function getPlanCatalog(): Promise<PlanCatalogResponse> {
  * the backend recomputes the price authoritatively and returns the same
  * BillingOrderCreated shape (payUrl + qrDataUri) as the legacy plan order.
  */
-export async function createCatalogOrder(selection: Selection, channel: PayChannel) {
+// 统一收银台:channel 可选(用户在网关侧自选 alipay/wxpay/bank)。不传则后端占位。
+export async function createCatalogOrder(selection: Selection, channel?: PayChannel) {
   return userApi<BillingOrderCreated>("billing/catalog-orders", {
     method: "POST",
-    body: { selection, channel },
+    body: channel ? { selection, channel } : { selection },
   });
 }
 
 export async function getBillingOrderState(outTradeNo: string) {
   return userApi<BillingOrderState>(`billing/orders/${outTradeNo}`);
+}
+
+/** 取消一笔未支付订单。幂等:已支付/已终态的单原样返回当前状态。 */
+export async function cancelBillingOrder(outTradeNo: string) {
+  return userApi<BillingOrderState>(`billing/orders/${outTradeNo}/cancel`, {
+    method: "POST",
+  });
 }
 
 export async function listBillingOrders(page: number, pageSize: number) {

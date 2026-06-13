@@ -2,19 +2,21 @@
  * customer-test-db.ts — real-Prisma test helpers for the customer account
  * system (Customer / Device / Subscription / PlanOrder / Notification).
  *
- * The suite's DATABASE_URL (vitest.config.ts) points at prisma/test.db, which
- * is gitignored and starts empty on a fresh clone — so the first real-db spec
- * pushes the schema once per process (idempotent, skipped when tables exist).
+ * DATABASE_URL is set by vitest.config.ts → env (points at prisma/test.db).
+ * Never hardcode a fallback path here — fail fast if the env is missing.
  */
 import { PrismaClient } from "@prisma/client";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
-// repo root: this file sits at apps/server/src/shared/__tests__/ (5 levels deep)
 const repoRoot = resolve(__dirname, "../../../../..");
-const databaseUrl =
-  process.env.DATABASE_URL ??
-  `file:${resolve(repoRoot, "prisma/test.db").replace(/\\/g, "/")}`;
+
+function requireDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set — run tests via vitest so the env is configured");
+  return url;
+}
+const databaseUrl = requireDatabaseUrl();
 
 let prisma: PrismaClient | null = null;
 let schemaEnsured = false;

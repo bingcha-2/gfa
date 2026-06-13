@@ -12,13 +12,14 @@
  *     duplicate BILLING notification).
  *   - ReferralReward has @unique planOrderId as a second belt-and-braces guard.
  *
- * EXPIRED-order activation (by design):
- *   The CAS guard matches status="PENDING" only, so a late but validly-signed
- *   TRADE_SUCCESS for an order our reconcile cron has marked EXPIRED will NOT
- *   re-activate here. BUT see below — we intentionally widen the CAS to also
- *   accept EXPIRED because the money was genuinely captured: epay confirming a
- *   payment means we owe the customer the plan even if our pending-TTL fired
- *   first. The PENDING-or-EXPIRED guard is the deliberate policy.
+ * EXPIRED/CANCELLED-order activation (by design):
+ *   We intentionally widen the CAS to accept not just PENDING but also EXPIRED
+ *   (pending-TTL cron fired first) and CANCELLED (order superseded on re-create,
+ *   or user-cancelled, while a stale QR was still scannable). In all three cases
+ *   the money was genuinely captured — epay confirming a payment means we owe the
+ *   customer the plan regardless of our local bookkeeping. The
+ *   PENDING-or-EXPIRED-or-CANCELLED guard is the deliberate policy: never drop a
+ *   captured payment.
  *
  * callback response contract (epay expectation):
  *   - "success"  — we durably accepted the TRADE_SUCCESS (or it was already PAID,
@@ -52,8 +53,9 @@ function resolveEpayPid(): string {
   return process.env.EPAY_PID ?? "";
 }
 
-function resolveEpayKey(): string {
-  return process.env.EPAY_KEY ?? "";
+/** V2 平台公钥(裸 base64,SPKI),用于回调 RSA-SHA256 验签。 */
+function resolvePlatformPublicKey(): string {
+  return process.env.EPAY_PLATFORM_PUBLIC_KEY ?? "";
 }
 
 function resolveReferralPercent(): number {
@@ -77,30 +79,33 @@ export class EpayCallbackService {
    * Process an epay payment callback.
    * Returns "success" or "fail" as plain text.
    */
-  async handleNotify(body: Record<string, string>): Promise<"success" | "fail"> {
-    // Step 0: FAIL-CLOSED on missing config. An empty EPAY_KEY makes every
-    // signature forgeable (md5(qs + "") is attacker-computable); an empty
-    // EPAY_PID lets a request with no pid field pass the pid check below.
-    // Either condition is a misconfiguration that must NEVER fall open.
-    const epayKey = resolveEpayKey();
+  async handleNotify(
+    body: Record<string, string>,
+    opts?: { skipVerify?: boolean },
+  ): Promise<"success" | "fail"> {
     const expectedPid = resolveEpayPid();
-    if (!epayKey || !expectedPid) {
-      this.logger.error(
-        `[epay-callback] REFUSING callback — epay not configured (EPAY_KEY ${epayKey ? "set" : "MISSING"}, EPAY_PID ${expectedPid ? "set" : "MISSING"}). Failing closed.`,
-      );
-      return "fail";
-    }
 
-    // Step 1: verify signature (constant-time).
-    if (!verifySign(body, epayKey)) {
-      this.logger.warn(`[epay-callback] invalid signature — body=${JSON.stringify(body)}`);
-      return "fail";
-    }
+    if (!opts?.skipVerify) {
+      // Step 0: FAIL-CLOSED on missing config.
+      const publicKey = resolvePlatformPublicKey();
+      if (!publicKey || !expectedPid) {
+        this.logger.error(
+          `[epay-callback] REFUSING callback — epay not configured (EPAY_PLATFORM_PUBLIC_KEY ${publicKey ? "set" : "MISSING"}, EPAY_PID ${expectedPid ? "set" : "MISSING"}). Failing closed.`,
+        );
+        return "fail";
+      }
 
-    // Step 2: check pid.
-    if (body.pid !== expectedPid) {
-      this.logger.warn(`[epay-callback] pid mismatch: got="${body.pid}" expected="${expectedPid}"`);
-      return "fail";
+      // Step 1: verify signature (V2 RSA-SHA256, 平台公钥).
+      if (!verifySign(body, publicKey)) {
+        this.logger.warn(`[epay-callback] invalid signature — body=${JSON.stringify(body)}`);
+        return "fail";
+      }
+
+      // Step 2: check pid.
+      if (body.pid !== expectedPid) {
+        this.logger.warn(`[epay-callback] pid mismatch: got="${body.pid}" expected="${expectedPid}"`);
+        return "fail";
+      }
     }
 
     // Non-TRADE_SUCCESS statuses that are validly signed:
@@ -140,19 +145,21 @@ export class EpayCallbackService {
     }
 
     // Step 5 — Phase 1: fast Prisma-only transaction (no file I/O).
-    // CAS the order PENDING|EXPIRED→PAID; only the winner proceeds.
+    // CAS the order PENDING|EXPIRED|CANCELLED→PAID; only the winner proceeds.
     const referralPercent = resolveReferralPercent();
 
     let claimed = false;
     try {
       claimed = await this.prisma.$transaction(async (tx) => {
-        // Compare-and-swap: flip to PAID ONLY if still PENDING or EXPIRED.
-        // PENDING is the normal case. EXPIRED is intentionally accepted: epay
-        // confirming TRADE_SUCCESS means money was captured, so a late callback
-        // that lost a race against our pending-TTL cron still earns the plan.
+        // Compare-and-swap: flip to PAID ONLY if still PENDING, EXPIRED or CANCELLED.
+        // PENDING is the normal case. EXPIRED/CANCELLED are intentionally accepted:
+        // epay confirming TRADE_SUCCESS means money was captured, so a late callback
+        // that lost a race against our pending-TTL cron (EXPIRED) or that lands on an
+        // order superseded/cancelled while a stale QR was still scannable (CANCELLED)
+        // still earns the plan — money is never silently dropped.
         // A concurrent second callback (or an already-PAID row) yields count===0.
         const cas = await tx.planOrder.updateMany({
-          where: { outTradeNo, status: { in: ["PENDING", "EXPIRED"] } },
+          where: { outTradeNo, status: { in: ["PENDING", "EXPIRED", "CANCELLED"] } },
           data: {
             status: "PAID",
             paidAt: new Date(),

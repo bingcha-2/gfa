@@ -8,10 +8,8 @@ import * as api from '@/services/wails'
 import { cn } from '@/lib/utils'
 import { PromoSection } from '@/components/PromoSection'
 import { useT, useLocaleStore, SUPPORTED_LOCALES, LOCALE_NAMES } from '@/i18n'
-import { GitHubIcon } from '@/components/GitHubIcon'
-import { GITHUB_ISSUES_URL } from '@/lib/feedback'
 import { getChangelogRecord } from '@/lib/changelog'
-import { FolderOpen, Info, Languages, LogOut, ScrollText, User } from 'lucide-react'
+import { FolderOpen, Info, Languages, LogOut, MessageSquare, ScrollText, User } from 'lucide-react'
 
 export function SettingsPage() {
   const t = useT()
@@ -277,8 +275,8 @@ export function SettingsPage() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[var(--text-muted)]">{t('settings.feedbackLabel')}</span>
-              <Button size="sm" variant="ghost" onClick={() => api.openURL(GITHUB_ISSUES_URL)} className="h-7 gap-1.5 px-2">
-                <GitHubIcon size={13} /> {t('settings.feedbackBtn')}
+              <Button size="sm" variant="ghost" onClick={() => api.openURL(api.PORTAL_URLS.home)} className="h-7 gap-1.5 px-2">
+                <MessageSquare size={13} /> {t('settings.feedbackBtn')}
               </Button>
             </div>
           </div>

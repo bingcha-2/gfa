@@ -34,14 +34,18 @@ import {
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal URLs =====
-// toC 用户中心位于 my.bcai.lol（见 docs/NAMING.md 子域规划）；/account 前缀在
+// toC 用户中心默认在 my.bcai.lol（见 docs/NAMING.md 子域规划）；/account 前缀在
 // 子域上由 Next 中间件 root-strip，带前缀访问同样有效，本地 dev 也可直接复用。
+// 本地 dev：dev-local.sh 注入 VITE_PORTAL_BASE=http://127.0.0.1:3000，把这些链接指到本地 web。
+const PORTAL_BASE = import.meta.env.VITE_PORTAL_BASE || 'https://my.bcai.lol'
 export const PORTAL_URLS = {
-  register: 'https://my.bcai.lol/account/register',
-  forgot: 'https://my.bcai.lol/account/forgot',
-  billing: 'https://my.bcai.lol/account/billing',
-  bind: 'https://my.bcai.lol/account/billing',
-  devices: 'https://my.bcai.lol/account/devices',
+  home: `${PORTAL_BASE}/account`, // 用户中心首页(意见反馈入口指向这里)
+  register: `${PORTAL_BASE}/account/register`,
+  forgot: `${PORTAL_BASE}/account/forgot`,
+  billing: `${PORTAL_BASE}/account/billing`,
+  bind: `${PORTAL_BASE}/account/billing`,
+  devices: `${PORTAL_BASE}/account/devices`,
+  tickets: `${PORTAL_BASE}/account/tickets`, // 工单/客服:订阅失效等问题的人工支持入口
 } as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'

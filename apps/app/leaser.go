@@ -95,6 +95,11 @@ type Leaser struct {
 	// 卡密不可用(被服务端判为 Invalid/过期/禁用/未激活)。一旦置位,自动租号停止、
 	// 功能禁用,只允许用户手动退出接管。重新激活有效卡(StartAutoLease)时复位。
 	cardUnusable bool
+	// 订阅授权(由心跳/接管启动喂入,见 leaser_entitlement.go)。冷启动「盲租 antigravity」的解药:
+	// 启动前就知道订阅开了哪些产品 + 是否有生效订阅,据此决定 antigravity 是否常驻租号。
+	entitledProducts  []string // 生效订阅的产品并集(antigravity/codex/anthropic)
+	entitlementsKnown bool     // 是否已从心跳拿到授权(冷启动尚无 → false → 回退老 lease-products 逻辑)
+	subActive         bool     // 是否有生效订阅
 	// leaseFn 允许测试注入租号逻辑;nil 时走真实的 LeaseToken。仅供 StartAutoLease
 	// 的自动租号循环使用,不影响代理/激活路径直接调用 LeaseToken。
 	leaseFn func(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error)
@@ -316,6 +321,9 @@ func parseAccountId(raw json.RawMessage) int {
 }
 
 func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[string]interface{}, upstreamProxy string) (*TokenLease, error) {
+	if !GuardOK() {
+		return nil, fmt.Errorf("service unavailable")
+	}
 	l.mu.Lock()
 	if !force && l.cachedToken != nil {
 		// Expire 60 seconds early
@@ -552,21 +560,33 @@ func (l *Leaser) LeaseTokenToLease(card, deviceId string, upstream string) (*Tok
 	return l.LeaseToken(card, deviceId, false, nil, upstream)
 }
 
-// coversAntigravity 当前卡是否需要跑 antigravity 自动租号:池子卡(products 空)
-// 或开通了 antigravity 的卡 → true;只绑了 codex 等其它产品的卡 → false。
-// products 由成功租号写入 accessKeyStatus(见 CardProducts)。
+// coversAntigravity 当前订阅是否需要跑 antigravity 自动租号。优先用心跳喂入的订阅授权
+// (entitledProducts),冷启动尚无授权时回退到「上次成功租号回写的 products」老逻辑
+// (见 decideAntigravity)。只有 plan==agAttempt 才跑 antigravity。
 func (l *Leaser) coversAntigravity() bool {
-	return cardCoversProduct(l.CardProducts(), "antigravity")
+	l.mu.RLock()
+	plan := decideAntigravity(l.entitlementsKnown, l.entitledProducts, l.subActive, productsFromAKS(l.accessKeyStatus))
+	l.mu.RUnlock()
+	return plan == agAttempt
 }
 
 func (l *Leaser) StartAutoLease(card, deviceId string, upstreamProxy string) {
-	// 整体逻辑:antigravity 自动租号只服务"开通了 antigravity 的卡"(或池子卡)。
-	// 只绑了 codex 的卡在此直接跳过 —— 不发无谓的 antigravity 租号请求,也不会把
-	// "此卡未开通该服务"当成错误刷屏/弹给前端。codex 路径走自己的 leaser,不受影响。
+	// 心跳已确知「无生效订阅」(取消/过期)→ 直接判卡密不可用,不发任何 antigravity 租号。
+	// 这取代了过去「靠盲租一次 antigravity 被拒(SUBSCRIPTION_EXPIRED)才发现」的路径 ——
+	// 后者会把「只开 codex/anthropic 的有效订阅」也误判成整卡不可用(本次修掉的 bug)。
+	if l.entitlementsKnownNoSub() {
+		l.markCardUnusable(fmt.Errorf("SUBSCRIPTION_EXPIRED"))
+		return
+	}
+
+	// 整体逻辑:antigravity 自动租号只服务"开通了 antigravity 的订阅"(或冷启动尚未知时先试)。
+	// 只开了 codex/anthropic 的订阅在此直接跳过 —— 不发无谓的 antigravity 租号请求,也不会把
+	// "此订阅未开通该服务"当成错误刷屏/判死整卡。codex/anthropic 路径走自己的 leaser,不受影响。
 	if !l.coversAntigravity() {
 		l.mu.Lock()
-		l.lastError = "" // 不是错误:本卡没开通 antigravity → 前端不进入 error 状态
+		l.lastError = "" // 不是错误:本订阅没开通 antigravity → 前端不进入 error 状态
 		l.leaseRunning = false
+		l.cardUnusable = false // 有生效订阅(只是没开 antigravity)→ 卡可用;清掉冷启动盲租的误判
 		l.mu.Unlock()
 		Log("[token-leaser] 本卡未开通 Antigravity(products=%v),跳过 antigravity 常驻自动租号;codex/anthropic 激活时预热一次各自的额度", l.CardProducts())
 		// 即便没有 antigravity 常驻租号,也要在激活时预热 codex/anthropic 的额度,

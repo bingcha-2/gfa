@@ -28,7 +28,7 @@ export const fr: DeepPartialDict = {
     collapseSidebar: 'Replier la barre latérale',
     updateTo: 'Mettre à jour vers v{version}',
     updateAvailable: 'v{version} disponible',
-    feedback: 'Retour sur GitHub',
+    feedback: 'Retour d\'expérience',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const fr: DeepPartialDict = {
     error: 'Erreur · {error}',
     leasing: 'Location de compte en cours...',
     needCard: 'Connectez-vous à votre compte',
+    subscriptionExpired: 'Abonnement expiré',
     ok: 'Service opérationnel · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const fr: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Abonnement/session invalide — fonctions désactivées',
-    cardUnusableBody: 'Votre session ou votre abonnement n\'est plus valide (session expirée/abonnement terminé/appareil retiré). Reconnectez-vous ou gérez votre abonnement et vos factures sur le web.',
+    cardUnusableTitle: 'Abonnement expiré — fonctions désactivées',
+    cardUnusableBody: 'Ce compte n\'a aucun abonnement actif (non acheté ou expiré). Renouvelez ou achetez un forfait sur le web, puis reconnectez-vous pour l\'appliquer.',
     cardUnusableRelogin: 'Se reconnecter',
     cardUnusableBilling: 'Abonnement et factures ↗',
+    cardUnusableContact: 'Contacter le support',
+    cardUnusableHelp: 'Un problème ou besoin d\'aide ? Cliquez sur « Contacter le support » et nous vous aiderons rapidement.',
+    kickedDeviceRevoked: 'Cet appareil a été supprimé. Veuillez vous reconnecter.',
+    kickedSessionInvalid: 'Votre session n\'est plus valide. Veuillez vous reconnecter.',
     activateTitle: 'Activer la carte de compte',
     activateIntro: 'Saisissez votre carte pour vous connecter directement aux modèles officiels — sans clé API, le code part directement vers les serveurs officiels, Bingcha n\'injecte que le jeton d\'autorisation en local.',
     cardPlaceholder: 'Saisir la carte de compte (AI...)',
@@ -233,9 +238,9 @@ export const fr: DeepPartialDict = {
     wechatContact: 'Ajoutez {wechat} sur WeChat pour contacter le support',
     groupContact: 'Rejoignez le groupe d\'assistance',
     viewFull: 'Voir la version complète',
-    githubTitle: 'Signaler un problème sur GitHub',
-    githubDesc: 'Signalez des bugs, proposez des fonctionnalités ou consultez les problèmes connus',
-    githubCta: 'Ouvrir une issue',
+    githubTitle: 'Retour & aide',
+    githubDesc: 'Signalez des problèmes, proposez des fonctionnalités ou contactez le support dans votre espace',
+    githubCta: 'Accéder à votre espace',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const fr: DeepPartialDict = {
     version: 'Version',
     deviceId: 'ID de l\'appareil',
     feedbackLabel: 'Retour d\'expérience',
-    feedbackBtn: 'Signaler sur GitHub',
+    feedbackBtn: 'Accéder à votre espace',
     changelogLabel: 'Journal des modifications',
     changelogBtn: 'Voir',
     changelogModalTitle: 'Nouveautés de la v{version}',
@@ -295,6 +300,8 @@ export const fr: DeepPartialDict = {
     planExpiry: 'Expire le',
     deviceName: 'Appareil',
     noSubscription: 'Aucun abonnement actif',
+    activeMember: 'Abonné',
+    refresh: 'Actualiser',
     logout: 'Se déconnecter',
     manageDevices: 'Gérer les appareils',
     sessionExpired: 'Session expirée — reconnectez-vous',

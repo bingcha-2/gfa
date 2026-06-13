@@ -13,26 +13,30 @@ import {
 import { AccountSkeleton } from "./account-ui";
 import type {
   AccountOverview,
-  OverviewSubscription,
   SubscriptionQuota,
 } from "@/lib/account/user-types";
+import {
+  deriveMembershipStatus,
+  productEntitlementBadge,
+  subscriptionPlanLabel,
+  type MembershipState,
+} from "@/lib/account/subscription-status";
 import { formatTokens } from "@/lib/format";
+import { fmt } from "@/lib/i18n";
+import { useDict } from "@/lib/i18n/client";
 
-function pickBestSubscription(
-  subscriptions: OverviewSubscription[]
-): OverviewSubscription | null {
-  if (subscriptions.length === 0) return null;
-  const score = (sub: OverviewSubscription) => ({
-    active: sub.status.toUpperCase() === "ACTIVE" ? 1 : 0,
-    expiry: sub.expiresAt ? new Date(sub.expiresAt).getTime() : Number.MAX_SAFE_INTEGER,
-  });
-  return [...subscriptions].sort((a, z) => {
-    const sa = score(a);
-    const sz = score(z);
-    if (sa.active !== sz.active) return sz.active - sa.active;
-    return sz.expiry - sa.expiry;
-  })[0];
-}
+const STATE_LAMP: Record<MembershipState, "success" | "warning" | "danger" | "brand"> = {
+  active: "success",
+  expiring_soon: "warning",
+  expired: "danger",
+  none: "brand",
+};
+const STATE_STAT_TONE: Record<MembershipState, "ok" | "warn" | "danger" | undefined> = {
+  active: "ok",
+  expiring_soon: "warn",
+  expired: "danger",
+  none: undefined,
+};
 
 function usedPercent(quota: SubscriptionQuota | null): number | null {
   if (!quota) return null;
@@ -82,20 +86,43 @@ export function AccountOverviewPanel({
   loading: boolean;
   loadError: boolean;
 }) {
-  const best = overview ? pickBestSubscription(overview.subscriptions) : null;
+  const dict = useDict();
+  const o = dict.portalApp.overview;
+
+  const { state, best, daysLeft } = deriveMembershipStatus(
+    overview?.subscriptions ?? [],
+    Date.now()
+  );
   const quota = best?.quota ?? null;
   const usedPct = usedPercent(quota);
   const remainPct = usedPct === null ? null : 100 - usedPct;
   const hasPlan = Boolean(best);
+  const needsRenew = state === "expired" || state === "expiring_soon";
 
-  const planName = best?.planName ?? (hasPlan ? "迁移卡密订阅" : "未开通套餐");
+  const planName = best ? subscriptionPlanLabel(best) : o.noPlanName;
   const products = best?.products ?? [];
+  const entitlement = productEntitlementBadge(state);
   const deviceCount = overview?.devices.count ?? 0;
   const deviceLimit = overview?.devices.limit ?? 0;
   const unread = overview?.unreadNotifications ?? 0;
 
   const expiresAt = best?.expiresAt ?? null;
   const validThru = expiresAt ? mmYY(expiresAt) : hasPlan ? "∞" : "—";
+  const expiresOn = expiresAt ? expiresAt.slice(0, 10) : null;
+  const tier = state === "expired" ? "EXPIRED" : hasPlan ? "ACTIVE" : "FREE";
+
+  const eyebrowLabel: Record<MembershipState, string> = {
+    active: o.statusRunning,
+    expiring_soon: o.statusExpiringSoon,
+    expired: o.statusExpired,
+    none: o.statusPending,
+  };
+  const acctLabel: Record<MembershipState, string> = {
+    active: o.acctNormal,
+    expiring_soon: o.acctExpiringSoon,
+    expired: o.acctExpired,
+    none: o.acctNone,
+  };
 
   const idRaw = (customerId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   const memberId = idRaw ? `${idRaw.slice(0, 4)} ${idRaw.slice(4, 8)}` : "————";
@@ -111,26 +138,25 @@ export function AccountOverviewPanel({
           <span className="account-overview-hero__eyebrow">
             <span
               className="account-status-lamp"
-              data-tone={loadError ? "info" : hasPlan ? "success" : "brand"}
+              data-tone={loadError ? "info" : STATE_LAMP[state]}
             />
-            MEMBERSHIP · {loadError ? "状态读取异常" : hasPlan ? "运行中" : "待开通"}
+            MEMBERSHIP · {loadError ? o.statusError : eyebrowLabel[state]}
           </span>
           <h1>
-            你的<span className="am">冰茶</span>
+            {o.heroPre}
+            <span className="am">{o.heroBrand}</span>
             <br />
-            会员通行证
+            {o.heroTitle}
           </h1>
-          <p className="account-overview-hero__sub">
-            一张通行证接管 <b>Codex</b>、<b>Claude Code</b> 与 <b>Antigravity</b>。授权、额度与续费,都在这里。
-          </p>
+          <p className="account-overview-hero__sub">{o.heroSub}</p>
           <div className="account-overview-hero__actions">
             <Link href="/account/billing" className="account-btn account-btn--primary">
               <RefreshCwIcon />
-              {hasPlan ? "续费 / 购买套餐" : "购买套餐"}
+              {needsRenew ? o.renewNow : hasPlan ? o.renewOrBuy : o.buy}
             </Link>
             <Link href="/download" className="account-btn account-btn--secondary">
               <DownloadIcon />
-              安装客户端
+              {o.installClient}
             </Link>
           </div>
         </div>
@@ -145,19 +171,24 @@ export function AccountOverviewPanel({
                     <span className="mk">
                       <img src="/bcai-icon.png" alt="" />
                     </span>
-                    冰茶AI
+                    {dict.common.brandName}
                   </div>
                 </div>
-                <span className="account-pass__tier">{hasPlan ? "ACTIVE" : "FREE"}</span>
+                <span className="account-pass__tier" data-tier={tier.toLowerCase()}>
+                  {tier}
+                </span>
               </div>
               <div className="account-pass__chip" aria-hidden />
               <div className="account-pass__mid">
                 <div className="account-pass__plan">
                   {planName}
-                  <small>{hasPlan ? "MEMBERSHIP · 冰茶AI" : "尚未开通套餐"}</small>
+                  <small>{hasPlan ? o.passMembership : o.passNoPlan}</small>
                 </div>
                 {dotTotal > 0 && (
-                  <div className="account-pass__punch" title={`设备 ${deviceCount}/${deviceLimit}`}>
+                  <div
+                    className="account-pass__punch"
+                    title={fmt(o.passDevicesTitle, { count: deviceCount, limit: deviceLimit })}
+                  >
                     {Array.from({ length: dotTotal }).map((_, i) => (
                       <i key={i} data-off={i >= deviceCount || undefined} />
                     ))}
@@ -177,8 +208,13 @@ export function AccountOverviewPanel({
             </div>
           </div>
           {products.length > 0 && (
-            <div className="account-overview-hero__prod">
-              <span className="pl">授权产品</span>
+            <div
+              className="account-overview-hero__prod"
+              data-muted={!entitlement.active || undefined}
+            >
+              <span className="pl">
+                {entitlement.active ? o.entitledProducts : o.lapsedProducts}
+              </span>
               <span className="account-prodchips">
                 {products.map((p) => (
                   <span key={p} className="account-prodchip" data-p={productKey(p)}>
@@ -191,50 +227,74 @@ export function AccountOverviewPanel({
         </div>
       </section>
 
-      {loadError && (
-        <p className="account-overview-error">
-          数据加载失败,请稍后重试。已保留购买套餐和下载客户端入口。
-        </p>
+      {needsRenew && !loadError && (
+        <div className="account-overview-warn" data-state={state} role="status">
+          <div className="account-overview-warn__text">
+            <strong>{state === "expired" ? o.warnExpiredTitle : o.warnExpiringTitle}</strong>
+            <span>
+              {state === "expired"
+                ? expiresOn
+                  ? fmt(o.warnExpiredDated, { plan: planName, date: expiresOn })
+                  : fmt(o.warnExpiredUndated, { plan: planName })
+                : fmt(o.warnExpiringDated, {
+                    plan: planName,
+                    date: expiresOn ?? "",
+                    days: daysLeft ?? 0,
+                  })}
+            </span>
+          </div>
+          <Link
+            href="/account/billing"
+            className="account-btn account-btn--primary account-btn--compact"
+          >
+            <RefreshCwIcon />
+            {o.renewNow}
+          </Link>
+        </div>
       )}
 
-      <section className="account-overview-stats" aria-label="账户概览">
+      {loadError && (
+        <p className="account-overview-error">{o.loadErrorKeepEntry}</p>
+      )}
+
+      <section className="account-overview-stats" aria-label={o.statsAria}>
         <div>
-          <span className="k">额度余量</span>
+          <span className="k">{o.statQuota}</span>
           <span className="v acc-mono" data-tone={remainPct !== null && remainPct > 20 ? "ok" : undefined}>
             {remainPct === null ? "—" : remainPct}
             {remainPct !== null && <small>%</small>}
           </span>
         </div>
         <div>
-          <span className="k">设备席位</span>
+          <span className="k">{o.statDevices}</span>
           <span className="v acc-mono">
             {deviceCount}
             <small>/ {deviceLimit || "—"}</small>
           </span>
         </div>
         <div>
-          <span className="k">本期用量</span>
+          <span className="k">{o.statUsage}</span>
           <span className="v acc-mono">
             {quota ? formatTokens(quota.recentWindowTokens) : "—"}
           </span>
         </div>
         <div>
-          <span className="k">账号状态</span>
-          <span className="v" data-tone={hasPlan ? "ok" : undefined}>
-            {hasPlan ? "正常" : "未开通"}
+          <span className="k">{o.statStatus}</span>
+          <span className="v" data-tone={STATE_STAT_TONE[state]}>
+            {acctLabel[state]}
           </span>
         </div>
       </section>
 
-      <section className="account-overview-grid" aria-label="快捷入口">
+      <section className="account-overview-grid" aria-label={o.quickAria}>
         <Link href="/account/subscriptions" className="account-quick-card">
           <div className="account-quick-card__top">
             <span className="account-quick-card__icon">
               <LayersIcon />
             </span>
           </div>
-          <div className="account-quick-card__title">我的订阅</div>
-          <div className="account-quick-card__desc">查看全部订阅 · 调整接力优先级</div>
+          <div className="account-quick-card__title">{o.cardSubsTitle}</div>
+          <div className="account-quick-card__desc">{o.cardSubsDesc}</div>
         </Link>
         <Link href="/account/billing" className="account-quick-card">
           <div className="account-quick-card__top">
@@ -242,18 +302,22 @@ export function AccountOverviewPanel({
               <ReceiptTextIcon />
             </span>
           </div>
-          <div className="account-quick-card__title">订单与支付</div>
-          <div className="account-quick-card__desc">待支付、扫码与历史记录</div>
+          <div className="account-quick-card__title">{o.cardBillingTitle}</div>
+          <div className="account-quick-card__desc">{o.cardBillingDesc}</div>
         </Link>
         <Link href="/account/notifications" className="account-quick-card">
           <div className="account-quick-card__top">
             <span className="account-quick-card__icon">
               <BellIcon />
             </span>
-            {unread > 0 && <span className="account-quick-card__badge">{unread} 未读</span>}
+            {unread > 0 && (
+              <span className="account-quick-card__badge">
+                {fmt(o.cardUnread, { n: unread })}
+              </span>
+            )}
           </div>
-          <div className="account-quick-card__title">通知中心</div>
-          <div className="account-quick-card__desc">续费、登录与系统提醒</div>
+          <div className="account-quick-card__title">{o.cardNotifTitle}</div>
+          <div className="account-quick-card__desc">{o.cardNotifDesc}</div>
         </Link>
         <Link href="/download" className="account-quick-card">
           <div className="account-quick-card__top">
@@ -261,8 +325,8 @@ export function AccountOverviewPanel({
               <DownloadIcon />
             </span>
           </div>
-          <div className="account-quick-card__title">下载客户端</div>
-          <div className="account-quick-card__desc">桌面端接管你的 AI 工具</div>
+          <div className="account-quick-card__title">{o.cardDownloadTitle}</div>
+          <div className="account-quick-card__desc">{o.cardDownloadDesc}</div>
         </Link>
         <Link href="/account/tickets" className="account-quick-card">
           <div className="account-quick-card__top">
@@ -270,8 +334,8 @@ export function AccountOverviewPanel({
               <MessageSquareIcon />
             </span>
           </div>
-          <div className="account-quick-card__title">工单支持</div>
-          <div className="account-quick-card__desc">遇到问题随时联系我们</div>
+          <div className="account-quick-card__title">{o.cardTicketTitle}</div>
+          <div className="account-quick-card__desc">{o.cardTicketDesc}</div>
         </Link>
       </section>
     </div>

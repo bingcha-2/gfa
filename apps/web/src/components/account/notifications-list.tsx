@@ -13,6 +13,7 @@ import {
 
 import { AccountButton, AccountEmpty, AccountPill, AccountSkeleton } from "@/components/account/account-ui";
 import { DataPagination } from "@/components/account/data-pagination";
+import { useAccount } from "@/components/account/account-provider";
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -38,6 +39,8 @@ const TYPE_ICONS: Record<NotificationType, React.ReactNode> = {
 export function NotificationsList() {
   const dict = useDict();
   const n = dict.portalApp.notifications;
+  // Shared with the topnav bell so marking read here clears the badge.
+  const { setUnread, refreshUnread } = useAccount();
 
   const [data, setData] = useState<NotificationsPage | null>(null);
   const [page, setPage] = useState(1);
@@ -47,12 +50,13 @@ export function NotificationsList() {
     try {
       const next = await getNotifications(p, PAGE_SIZE);
       setData(next);
+      setUnread(next.unread); // resync the bell with server truth on open
       setLoadError(false);
     } catch {
       setData({ notifications: [], total: 0, unread: 0 });
       setLoadError(true);
     }
-  }, []);
+  }, [setUnread]);
 
   useEffect(() => {
     void load(page);
@@ -77,12 +81,15 @@ export function NotificationsList() {
   }
 
   async function handleMarkRead(id: string) {
-    // Optimistic — flip immediately, roll back on failure.
+    // Optimistic — flip immediately, roll back on failure. The mark-read button
+    // only renders for unread items, so this always clears exactly one.
     applyRead(id, new Date().toISOString());
+    setUnread((u) => Math.max(0, u - 1));
     try {
       await markNotificationRead(id);
     } catch {
       applyRead(id, null);
+      setUnread((u) => u + 1);
       toast.error(n.markFailed);
     }
   }
@@ -101,10 +108,12 @@ export function NotificationsList() {
           }
         : prev
     );
+    setUnread(0);
     try {
       await markAllNotificationsRead();
     } catch {
       setData(snapshot);
+      void refreshUnread(); // re-sync the bell from the server after rollback
       toast.error(n.markFailed);
     }
   }

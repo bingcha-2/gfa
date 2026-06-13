@@ -23,7 +23,7 @@ import { RemoteCodexService } from "../remote-codex/service/remote-codex.service
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { occupiedSharesByAccount } from "./seat";
+import { boundSeatsByAccount, occupiedSharesByAccount } from "./seat";
 import { subscriptionToLimitRecord } from "./subscription-config";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
@@ -89,8 +89,8 @@ export class EntitlementSyncService {
             );
             continue;
           }
-          const occupied = await this.occupiedSharesFromDb(product, sub.id);
-          const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, occupied);
+          const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
+          const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, shares, counts);
           if (!accountId) {
             this.logger.error(
               `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} — no account with ${weight} free shares; leaving it UNBOUND`,
@@ -127,14 +127,23 @@ export class EntitlementSyncService {
     this.accessKeyStore.loadSubscriptionRecords([record as any]);
   }
 
-  /** Occupied shares per account for a product, from all ACTIVE subs' configs (DB), excluding self. */
-  private async occupiedSharesFromDb(product: string, excludeId: string): Promise<Map<number, number>> {
+  /**
+   * 某产品在所有 ACTIVE 订阅里的座位占用(排除本订阅),一次读出两张表:
+   * shares = Σweight(容量口径,判余量);counts = 绑定张数(人数口径,选号「人数最多」用)。
+   */
+  private async seatOccupancyFromDb(
+    product: string,
+    excludeId: string,
+  ): Promise<{ shares: Map<number, number>; counts: Map<number, number> }> {
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
       select: { id: true, config: true },
     });
     const configs = rows.map((r: { id: string; config: string | null }) => ({ id: r.id, ...parseConfig(r.config) }));
-    return occupiedSharesByAccount(configs, product, excludeId);
+    return {
+      shares: occupiedSharesByAccount(configs, product, excludeId),
+      counts: boundSeatsByAccount(configs, product, excludeId),
+    };
   }
 
   /** Persist a config object back onto the subscription row. */

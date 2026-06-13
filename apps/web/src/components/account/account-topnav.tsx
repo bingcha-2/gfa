@@ -20,7 +20,7 @@ import {
 
 import { useAccount } from "./account-provider";
 import { AccountThemeToggle } from "./account-theme";
-import { getNotifications } from "@/lib/account/user-api";
+import { AccountLocaleSwitcher } from "./account-locale-switcher";
 import { useDict } from "@/lib/i18n/client";
 
 type NavKey =
@@ -51,24 +51,12 @@ const SECONDARY: NavItem[] = [
   { id: "settings", url: "/account/settings", icon: <SettingsIcon className="size-4" /> },
 ];
 
-/** One-shot unread count for the bell — no polling. */
-function useUnreadCount(): number {
-  const [unread, setUnread] = useState(0);
-  useEffect(() => {
-    getNotifications(1, 1)
-      .then((page) => setUnread(page.unread))
-      .catch(() => {});
-  }, []);
-  return unread;
-}
-
 export function AccountTopNav() {
   const pathname = usePathname();
-  const { customer, handleLogout } = useAccount();
+  const { customer, handleLogout, unread } = useAccount();
   const dict = useDict();
   const nav = dict.portalApp.nav;
   const t = dict.portalApp;
-  const unread = useUnreadCount();
 
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -98,12 +86,12 @@ export function AccountTopNav() {
   return (
     <header className="account-topnav" data-scrolled={scrolled || undefined}>
       <div className="account-topnav__inner">
-        <Link href="/account" className="account-topnav__brand" aria-label="冰茶AI 用户中心">
+        <Link href="/account" className="account-topnav__brand" aria-label={nav.brandAria}>
           <img src="/bcai-icon.png" alt="" />
-          <span>冰茶AI</span>
+          <span>{dict.common.brandName}</span>
         </Link>
 
-        <nav className="account-topnav__links" aria-label="账户导航">
+        <nav className="account-topnav__links" aria-label={nav.navAria}>
           {PRIMARY.map((item) => (
             <Link
               key={item.id}
@@ -131,6 +119,8 @@ export function AccountTopNav() {
               </span>
             )}
           </Link>
+
+          <AccountLocaleSwitcher />
 
           <AccountThemeToggle />
 
@@ -186,7 +176,7 @@ export function AccountTopNav() {
           <button
             type="button"
             className="account-iconbtn account-topnav__menu"
-            aria-label="打开菜单"
+            aria-label={nav.openMenu}
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((v) => !v)}
           >
@@ -196,7 +186,7 @@ export function AccountTopNav() {
       </div>
 
       {mobileOpen && (
-        <nav className="account-mobilemenu" aria-label="账户导航">
+        <nav className="account-mobilemenu" aria-label={nav.navAria}>
           {[...PRIMARY, ...SECONDARY].map((item) => (
             <Link
               key={item.id}

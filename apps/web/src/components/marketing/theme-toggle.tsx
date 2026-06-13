@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDict } from "@/lib/i18n/client";
 
-/** 在首屏 paint 前同步初始主题，避免闪烁。注入到 <body> 顶部。 */
+/** 浏览器地址栏配色:与页面深浅同源(镜像 --bg 令牌,meta 不支持 CSS 变量) */
+const THEME_COLOR = { dark: "#0e101a", light: "#fdfcfb" };
+
+/** 在首屏 paint 前同步初始主题,避免闪烁;并让移动端浏览器外壳(theme-color)与主题一致。注入到 <body> 顶部。 */
 // 深色优先:与用户中心(account)一致,新访客默认深色;尊重已存的选择,浅色一键可切。
-export const themeInitScript = `(function(){try{var k='mkt-theme';var s=localStorage.getItem(k);var d=s?s==='dark':true;document.documentElement.dataset.mkt=d?'dark':'light';}catch(e){document.documentElement.dataset.mkt='dark';}})();`;
+export const themeInitScript = `(function(){try{var k='mkt-theme';var s=localStorage.getItem(k);var d=s?s==='dark':true;document.documentElement.dataset.mkt=d?'dark':'light';var m=document.querySelector('meta[name=theme-color]');if(!m){m=document.createElement('meta');m.setAttribute('name','theme-color');document.head.appendChild(m);}m.setAttribute('content',d?'${THEME_COLOR.dark}':'${THEME_COLOR.light}');}catch(e){document.documentElement.dataset.mkt='dark';}})();`;
 
 const Moon = () => (
   <svg className="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -28,6 +31,9 @@ export function ThemeToggle() {
     const root = document.documentElement;
     const next = root.dataset.mkt === "dark" ? "light" : "dark";
     root.dataset.mkt = next;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", THEME_COLOR[next]);
     try {
       localStorage.setItem("mkt-theme", next);
     } catch {

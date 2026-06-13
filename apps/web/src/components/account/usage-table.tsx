@@ -51,7 +51,7 @@ export function UsageTable() {
 
   return (
     <div className="account-usage" data-testid="account-usage">
-      <div className="account-segmented-control" role="group" aria-label="使用记录时间范围">
+      <div className="account-segmented-control" role="group" aria-label={u.rangeAria}>
         {[
           [1, u.daysToday],
           [7, u.days7],

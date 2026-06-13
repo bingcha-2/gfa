@@ -380,6 +380,91 @@ func TestHeartbeat_TransientError_KeepsSession(t *testing.T) {
 	}
 }
 
+// TestHeartbeat_SeedsEntitlements: a successful (200) heartbeat must feed the
+// subscription entitlements (product union + has-active-sub) into the leaser, so
+// StartAutoLease decides the antigravity path WITHOUT a blind probe lease. Here a
+// codex-only active sub → coversAntigravity()==false (skip), not "no sub".
+func TestHeartbeat_SeedsEntitlements(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-ent")
+
+	// Reset (and restore) the shared global leaser's entitlement state so the RED
+	// is meaningful and other tests aren't polluted.
+	l := GetLeaser()
+	reset := func() {
+		l.mu.Lock()
+		l.entitledProducts, l.entitlementsKnown, l.subActive, l.accessKeyStatus = nil, false, false, nil
+		l.mu.Unlock()
+	}
+	reset()
+	defer reset()
+
+	resp := map[string]interface{}{
+		"ok":            true,
+		"subscriptions": []interface{}{map[string]interface{}{"products": []interface{}{"codex"}}},
+	}
+	srv := newHeartbeatServer(t, resp, http.StatusOK)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.HeartbeatCheck(); err != nil {
+		t.Fatalf("HeartbeatCheck: %v", err)
+	}
+
+	if l.coversAntigravity() {
+		t.Error("codex-only 授权后 coversAntigravity() 应为 false(跳过 antigravity)")
+	}
+	if l.entitlementsKnownNoSub() {
+		t.Error("有生效订阅时 entitlementsKnownNoSub() 应为 false")
+	}
+}
+
+// TestHeartbeat_RecoversFalseCardUnusable: 冷启动可能在首次心跳前盲租 antigravity 把卡误判
+// 不可用。随后一次成功心跳确认「有 codex 生效订阅(不需要 antigravity)」时,应自动重新接管、
+// 清掉误判,无需用户手动刷新。
+func TestHeartbeat_RecoversFalseCardUnusable(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir = tmpDir
+	defer func() { origConfigDir = "" }()
+	seedLoggedInConfig(t, "tok-rec")
+
+	l := GetLeaser()
+	reset := func() {
+		l.mu.Lock()
+		l.entitledProducts, l.entitlementsKnown, l.subActive, l.accessKeyStatus, l.cardUnusable = nil, false, false, nil, false
+		l.mu.Unlock()
+	}
+	reset()
+	defer reset()
+	l.mu.Lock()
+	l.cardUnusable = true // 模拟冷启动盲租 antigravity 被误判
+	l.mu.Unlock()
+
+	resp := map[string]interface{}{
+		"ok":            true,
+		"subscriptions": []interface{}{map[string]interface{}{"products": []interface{}{"codex"}}},
+	}
+	srv := newHeartbeatServer(t, resp, http.StatusOK)
+	defer srv.Close()
+	origAuthBase := authBaseURL
+	authBaseURL = srv.URL
+	defer func() { authBaseURL = origAuthBase }()
+
+	app := &App{}
+	if _, err := app.HeartbeatCheck(); err != nil {
+		t.Fatalf("HeartbeatCheck: %v", err)
+	}
+
+	if l.IsCardUnusable() {
+		t.Error("心跳确认有 codex 生效订阅后应自动恢复(cardUnusable=false)")
+	}
+}
+
 // TestHeartbeat_SubscriptionExpired_KeepsToken: still authenticated — keep the
 // session (no LoginPage), mark the leaser card-unusable (drives the dashboard
 // banner) and stop auto-lease.

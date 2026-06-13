@@ -557,6 +557,7 @@ enum PlanOrderStatus {
   FAILED
   REFUNDED
   EXPIRED
+  CANCELLED // 用户主动取消,或新建同客户订单时作废的旧未支付单(语义同 EXPIRED:可被迟到的支付回调恢复为 PAID)
 }
 
 enum PayChannel {

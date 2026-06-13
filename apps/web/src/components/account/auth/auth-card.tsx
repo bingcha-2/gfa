@@ -1,3 +1,5 @@
+"use client";
+
 import "../account.css";
 
 import { cn } from "@/lib/utils";
@@ -8,6 +10,7 @@ import {
   AccountThemeScript,
   AccountThemeToggle,
 } from "@/components/account/account-theme";
+import { useDict } from "@/lib/i18n/client";
 
 export function AuthCard({
   title,
@@ -20,15 +23,18 @@ export function AuthCard({
   children: ReactNode;
   className?: string;
 }) {
+  const dict = useDict();
+  const a = dict.portalApp.auth;
+
   return (
     <div className={cn("account-auth", className)}>
       <AccountThemeScript />
       <div className="account-auth__shell">
         <header className="account-auth__nav">
-          <Link href="/" className="account-auth__brand" aria-label="返回冰茶AI官网">
+          <Link href="/" className="account-auth__brand" aria-label={a.backToSite}>
             <img src="/bcai-icon.png" alt="" />
             <span>
-              <strong>冰茶AI</strong>
+              <strong>{dict.common.brandName}</strong>
               <span>BINGCHA AI</span>
             </span>
           </Link>
@@ -39,16 +45,15 @@ export function AuthCard({
           <aside className="account-auth__aside">
             <span className="account-auth__eyebrow">
               <span className="account-status-lamp" data-tone="success" />
-              MEMBERSHIP · 冰茶AI
+              {a.eyebrow}
             </span>
             <h1>
-              欢迎来到<span className="am">冰茶</span>
+              {a.welcomePre}
+              <span className="am">{a.welcomeBrand}</span>
               <br />
-              会员中心
+              {a.welcomeTitle}
             </h1>
-            <p className="account-auth__lead">
-              登录后接管 <b>Codex</b>、<b>Claude Code</b> 与 <b>Antigravity</b>,统一管理订阅、设备、额度与支付。
-            </p>
+            <p className="account-auth__lead">{a.lead}</p>
 
             <div className="account-auth__passdemo" aria-hidden>
               <div className="account-pass-wrap">
@@ -60,7 +65,7 @@ export function AuthCard({
                         <span className="mk">
                           <img src="/bcai-icon.png" alt="" />
                         </span>
-                        冰茶AI
+                        {dict.common.brandName}
                       </div>
                     </div>
                     <span className="account-pass__tier">MEMBER</span>
@@ -68,8 +73,8 @@ export function AuthCard({
                   <div className="account-pass__chip" />
                   <div className="account-pass__mid">
                     <div className="account-pass__plan">
-                      会员通行证
-                      <small>MEMBERSHIP · 冰茶AI</small>
+                      {a.passTitle}
+                      <small>{a.passMembership}</small>
                     </div>
                   </div>
                   <div className="account-pass__bot">
@@ -90,23 +95,23 @@ export function AuthCard({
               <div>
                 <strong>
                   <CheckIcon />
-                  本地只注入 Token
+                  {a.trust1Title}
                 </strong>
-                <p>不改你的工具链。</p>
+                <p>{a.trust1Desc}</p>
               </div>
               <div>
                 <strong>
                   <CheckIcon />
-                  请求直连官方
+                  {a.trust2Title}
                 </strong>
-                <p>冰茶不做中间人。</p>
+                <p>{a.trust2Desc}</p>
               </div>
               <div>
                 <strong>
                   <CheckIcon />
-                  同账户核对
+                  {a.trust3Title}
                 </strong>
-                <p>套餐、设备、订单统一查看。</p>
+                <p>{a.trust3Desc}</p>
               </div>
             </div>
           </aside>
@@ -120,13 +125,13 @@ export function AuthCard({
             {children}
 
             <footer className="account-auth__footer">
-              <p>登录后可购买套餐、绑定卡密、管理设备和订单。</p>
+              <p>{a.footerNote}</p>
               <div>
                 <Link href="/download" className="account-link">
-                  下载客户端
+                  {dict.common.downloadClient}
                 </Link>
                 <Link href="/" className="account-link">
-                  返回官网
+                  {a.backToSiteShort}
                 </Link>
               </div>
             </footer>

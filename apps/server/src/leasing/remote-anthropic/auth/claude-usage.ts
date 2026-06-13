@@ -55,10 +55,17 @@ const RATE_LIMIT_TIER_TO_PLAN: Record<string, string> = {
  * under `organization`. Probe all three (first non-empty wins).
  */
 function extractRateLimitTier(data: any): string {
+  // Observed (real Max-20x probe, 2026-06): the tier sits at organization.rate_limit_tier,
+  // snake_case, e.g. "default_claude_max_20x" — so the confirmed path leads. The field is
+  // officially undocumented, so we also probe top-level + account nesting and the camelCase
+  // `rateLimitTier` form (Claude Code's ~/.claude/.credentials.json) as cheap drift defense.
   return String(
-    data?.rate_limit_tier ||
+    data?.organization?.rate_limit_tier ||
+      data?.rate_limit_tier ||
       data?.account?.rate_limit_tier ||
-      data?.organization?.rate_limit_tier ||
+      data?.rateLimitTier ||
+      data?.account?.rateLimitTier ||
+      data?.organization?.rateLimitTier ||
       "",
   ).trim();
 }
@@ -84,6 +91,12 @@ export interface ClaudeQuotaSnapshot {
   httpStatus: number;
   // Best-effort error text when the fetch itself failed (network / auth).
   error?: string;
+  // Raw GET /api/oauth/profile payload + its HTTP status. Surfaced for diagnosis:
+  // whether the profile endpoint actually carries the fine-grained rate_limit_tier
+  // (Max 5x/20x) or only the coarse organization_type is UNVERIFIED on the wire,
+  // so we log the real body to find out instead of guessing. Best-effort.
+  profileRaw?: unknown;
+  profileHttpStatus?: number;
 }
 
 interface RawRateLimit {
@@ -125,9 +138,13 @@ function remainingPercent(w: RawRateLimit | null | undefined): number {
  * Read the account's 套餐 from GET /api/oauth/profile (no quota cost). Prefer the
  * fine-grained rate_limit_tier (default_claude_max_5x → max-5x / …_20x → max-20x)
  * so the detected planType matches the binding-line catalog levels; fall back to
- * organization.organization_type (coarse max/pro/enterprise/team). "" on any failure.
+ * organization.organization_type (coarse max/pro/enterprise/team). planType is ""
+ * on any failure; `raw`/`httpStatus` carry the profile response for diagnosis.
  */
-async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Promise<string> {
+async function fetchClaudePlanType(
+  accessToken: string,
+  proxyUrl?: string,
+): Promise<{ planType: string; raw: unknown; httpStatus: number }> {
   try {
     const res = await proxyRequiredFetch(proxyUrl, CLAUDE_PROFILE_URL, {
       method: "GET",
@@ -138,15 +155,23 @@ async function fetchClaudePlanType(accessToken: string, proxyUrl?: string): Prom
         "user-agent": CLAUDE_CODE_UA,
       },
     });
-    if (!res.ok) return "";
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { planType: "", raw: body.slice(0, 300), httpStatus: res.status };
+    }
     const data: any = await res.json();
     // Fine-grained tier first (distinguishes Max 5x vs 20x); coarse org_type as fallback.
     const tier = extractRateLimitTier(data);
-    if (tier && RATE_LIMIT_TIER_TO_PLAN[tier]) return RATE_LIMIT_TIER_TO_PLAN[tier];
-    const orgType = String(data?.organization?.organization_type || "").trim();
-    return ORG_TYPE_TO_PLAN[orgType] || "";
+    let planType = "";
+    if (tier && RATE_LIMIT_TIER_TO_PLAN[tier]) {
+      planType = RATE_LIMIT_TIER_TO_PLAN[tier];
+    } else {
+      const orgType = String(data?.organization?.organization_type || "").trim();
+      planType = ORG_TYPE_TO_PLAN[orgType] || "";
+    }
+    return { planType, raw: data, httpStatus: res.status };
   } catch {
-    return "";
+    return { planType: "", raw: null, httpStatus: 0 };
   }
 }
 
@@ -160,11 +185,16 @@ export async function fetchClaudeQuotaUpstream(
   proxyUrl?: string,
 ): Promise<ClaudeQuotaSnapshot> {
   if (!accessToken) return { raw: null, httpStatus: 0, error: "missing access token" };
-  const [snap, planType] = await Promise.all([
+  const [snap, profile] = await Promise.all([
     fetchUsageSnapshot(accessToken, proxyUrl),
     fetchClaudePlanType(accessToken, proxyUrl),
   ]);
-  if (planType) snap.planType = planType;
+  if (profile.planType) snap.planType = profile.planType;
+  // Always surface the raw profile payload so the caller can log it: this is the
+  // only way to confirm whether /api/oauth/profile carries rate_limit_tier (Max
+  // 5x/20x) upstream, which the hand-written specs can't prove.
+  snap.profileRaw = profile.raw;
+  snap.profileHttpStatus = profile.httpStatus;
   return snap;
 }
 

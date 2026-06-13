@@ -48,7 +48,7 @@ describe("useOrderStatus", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("polls immediately and then every 3 seconds while PENDING", async () => {
+  it("polls immediately and then every 5 seconds while PENDING", async () => {
     const mockFetch = vi
       .fn()
       .mockImplementation(() =>
@@ -67,14 +67,14 @@ describe("useOrderStatus", () => {
       "/api/account/billing/orders/T1"
     );
 
-    // Every 3s thereafter
+    // Every 5s thereafter
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(5000);
     });
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(5000);
     });
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
@@ -104,7 +104,7 @@ describe("useOrderStatus", () => {
     expect(result.current?.status).toBe("PENDING");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(5000);
     });
     expect(result.current?.status).toBe("PAID");
 

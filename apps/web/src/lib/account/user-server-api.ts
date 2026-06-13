@@ -61,7 +61,8 @@ export async function serverUserApi<T>(path: string): Promise<T> {
 /** Convenience: fetch the current customer (/account/me). */
 export async function getCustomerFromCookie(): Promise<Customer | null> {
   try {
-    return await serverUserApi<Customer>("me");
+    const { customer } = await serverUserApi<{ customer: Customer }>("me");
+    return customer;
   } catch {
     return null;
   }

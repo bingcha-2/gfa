@@ -123,6 +123,39 @@ describe("fetchClaudeQuotaUpstream (/api/oauth/usage)", () => {
     expect(snap.planType).toBe("max-5x");
   });
 
+  it("also reads camelCase rateLimitTier (credentials.json form) → max-20x", async () => {
+    // The profile endpoint's field casing is undocumented; .credentials.json uses
+    // camelCase `rateLimitTier`, so extractRateLimitTier must catch it too.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(JSON.stringify({ rateLimitTier: "default_claude_max_20x" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.planType).toBe("max-20x");
+  });
+
+  it("surfaces the raw /api/oauth/profile payload + status for diagnosis", async () => {
+    // The mapping can silently degrade to coarse "max" if the profile endpoint omits
+    // rate_limit_tier; profileRaw is how a real probe's log reveals the true shape.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/oauth/profile")) {
+          return new Response(JSON.stringify({ organization: { organization_type: "claude_max" } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.1, resets_at: null } }), { status: 200 });
+      }),
+    );
+    const snap = await fetchClaudeQuotaUpstream("token");
+    expect(snap.profileRaw).toMatchObject({ organization: { organization_type: "claude_max" } });
+    expect(snap.profileHttpStatus).toBe(200);
+  });
+
   it("maps default_claude_ai (Pro tier) → pro", async () => {
     vi.stubGlobal(
       "fetch",

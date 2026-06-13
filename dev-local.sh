@@ -172,15 +172,21 @@ install_deps() {
 setup_client_env() {
   echo -e "${BOLD}${CYAN}═══ 客户端环境变量 → 本地服务端 ═══${NC}"
 
-  export BCAI_API_BASE="http://127.0.0.1:3001/api/remote-token"
-  export BCAI_CODEX_API_BASE="http://127.0.0.1:3001/api/remote-codex"
-  export BCAI_ANTHROPIC_REMOTE_BASE="http://127.0.0.1:3001/api/remote-anthropic"
+  export BCAI_API_BASE="http://127.0.0.1:3001/api/app/lease/antigravity"
+  export BCAI_CODEX_API_BASE="http://127.0.0.1:3001/api/app/lease/codex"
+  export BCAI_ANTHROPIC_REMOTE_BASE="http://127.0.0.1:3001/api/app/lease/anthropic"
+  # 账户登录/心跳/登出（/app/login 等）→ 本地服务端，否则默认打生产域 api.bcai.lol
+  export BCAI_AUTH_BASE="http://127.0.0.1:3001/api"
   export BCAI_UPDATE_URL="http://127.0.0.1:3000/updates/latest-wails.json"
+  # toC 用户中心链接（注册/忘记密码/购买/绑定/设备）→ 本地 web，否则前端硬编码会跳 my.bcai.lol
+  export VITE_PORTAL_BASE="http://127.0.0.1:3000"
 
   echo -e "  ${GREEN}✓${NC} BCAI_API_BASE  → ${CYAN}$BCAI_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_CODEX_API_BASE → ${CYAN}$BCAI_CODEX_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_ANTHROPIC_REMOTE_BASE → ${CYAN}$BCAI_ANTHROPIC_REMOTE_BASE${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_AUTH_BASE → ${CYAN}$BCAI_AUTH_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_UPDATE_URL → ${CYAN}$BCAI_UPDATE_URL${NC}"
+  echo -e "  ${GREEN}✓${NC} VITE_PORTAL_BASE → ${CYAN}$VITE_PORTAL_BASE${NC}"
   echo -e "  ${DIM}无需修改源码，环境变量仅在本次运行生效${NC}"
   echo ""
 }
@@ -271,10 +277,13 @@ start_server() {
   export WEB_PORT="${WEB_PORT:-3000}"
   export API_BASE_URL="http://127.0.0.1:3001/api"
   export CORS_ALLOWED_ORIGINS="http://localhost:3000"
+  # 邮件里的密码重置/邮箱验证链接基址 → 本地 web，否则默认 https://bcai.lol（生产域，本地点不开）
+  export WEB_BASE_URL="${WEB_BASE_URL:-http://localhost:3000}"
   export CONSOLE_COOKIE_SECURE=""
   export ADMIN_IP_ALLOWLIST=""
   export ADMIN_PATH_PREFIX="${ADMIN_PATH_PREFIX:-console}"
-  export ROSETTA_DATA_DIR="$DATA_DIR"
+  # ROSETTA_DATA_DIR: 不在此处 export —— 由 .env 设定（如指向项目内 data/rosetta），
+  # dev.mjs 合并时 .env 未被 shell export 覆盖。init_data_dir 用 DATA_DIR 变量即可。
 
   # 默认起 ngrok 并把 epay 回调指到本地（EPAY_TUNNEL=0 可关）
   start_epay_tunnel
@@ -419,8 +428,8 @@ main() {
     remote)
       # 启动全部服务，但客户端连远端 bcai.site（不设环境变量，使用代码默认值）
       echo -e "${BOLD}${CYAN}═══ 客户端连接远端 bcai.site ═══${NC}"
-      echo -e "  ${DIM}API_BASE  → https://bcai.site/remote-token (默认)${NC}"
-      echo -e "  ${DIM}更新检查  → https://bcai.site/updates/latest-wails.json (默认)${NC}"
+      echo -e "  ${DIM}API_BASE  → https://api.bcai.lol/api/app/lease/antigravity (默认)${NC}"
+      echo -e "  ${DIM}更新检查  → https://bcai.lol/updates/latest-wails.json (默认)${NC}"
       echo ""
       start_server
       start_client

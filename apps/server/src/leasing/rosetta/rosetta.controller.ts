@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Headers, UnauthorizedException, ForbiddenException } from "@nestjs/common";
 
 import { RosettaService } from "./rosetta.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
@@ -23,16 +23,12 @@ export class RosettaController {
   ) {}
 
   /**
-   * Reload the access-key cache in BOTH lease pools. The antigravity
-   * (tokenServer) and codex (remoteCodex) services each hold their own
-   * AccessKeyStore over the same access-keys.json, so a binding write is only
-   * visible to a pool after it reloads — reloading just one leaves the other
-   * serving stale bindings.
+   * 卡密后台管理已停用:账户/订阅体系下不再手动发卡、改卡、绑卡、删卡、批量清理。
+   * 路由保留(返回 403 FEATURE_DISABLED)以便可逆 + 前端按钮置灰;开通服务只剩
+   * 「账户下单订阅」或「账户 bind-card 转订阅」两条路,均不经后台手动发卡。
    */
-  private reloadKeyStores() {
-    this.tokenServer.reloadAccessKeys();
-    this.remoteCodex.reloadAccessKeys();
-    this.remoteAnthropic.reloadAccessKeys();
+  private cardAdminDisabled(): never {
+    throw new ForbiddenException({ error: "FEATURE_DISABLED", message: "卡密后台管理已停用,请改用账户订阅。" });
   }
 
   @Get("access-keys")
@@ -282,17 +278,13 @@ export class RosettaController {
   }
 
   @Post("access-key")
-  createAccessKey(@Body() body: any) {
-    const result = this.rosetta.createAccessKey(body);
-    this.reloadKeyStores();
-    return result;
+  createAccessKey() {
+    return this.cardAdminDisabled();
   }
 
   @Post("access-key-update")
-  updateAccessKey(@Body() body: any) {
-    const result = this.rosetta.updateAccessKey(body);
-    this.reloadKeyStores();
-    return result;
+  updateAccessKey() {
+    return this.cardAdminDisabled();
   }
 
   @Get("access-key-limits")
@@ -301,48 +293,33 @@ export class RosettaController {
   }
 
   @Post("access-key-bind")
-  bindAccessKey(@Body() body: any) {
-    const result = this.rosetta.bindAccessKey(body);
-    this.reloadKeyStores();
-    return result;
+  bindAccessKey() {
+    return this.cardAdminDisabled();
   }
 
   @Post("access-key-unbind")
-  unbindAccessKey(@Body() body: any) {
-    const result = this.rosetta.unbindAccessKey(body);
-    this.reloadKeyStores();
-    return result;
+  unbindAccessKey() {
+    return this.cardAdminDisabled();
   }
 
   @Post("access-key-set-bindings")
-  setAccessKeyBindings(@Body() body: any) {
-    const result = this.rosetta.setAccessKeyBindings(body);
-    this.reloadKeyStores();
-    return result;
+  setAccessKeyBindings() {
+    return this.cardAdminDisabled();
   }
 
   @Post("access-key-delete")
-  async deleteAccessKey(@Body() body: any) {
-    const result = this.rosetta.deleteAccessKey(body);
-    this.reloadKeyStores();
-    // Drop the card's persisted token usage log alongside the card itself.
-    const id = String(body?.id || "");
-    if (id) await this.tokenUsageStats.deleteCardUsage(id);
-    return result;
+  deleteAccessKey() {
+    return this.cardAdminDisabled();
   }
 
   @Post("cleanup-expired-keys")
-  async cleanupExpiredKeys() {
-    const result = await this.rosetta.cleanupExpiredKeys();
-    this.reloadKeyStores();
-    return result;
+  cleanupExpiredKeys() {
+    return this.cardAdminDisabled();
   }
 
   @Post("cleanup-unbound-keys")
-  async cleanupUnboundKeys() {
-    const result = await this.rosetta.cleanupUnboundKeys();
-    this.reloadKeyStores();
-    return result;
+  cleanupUnboundKeys() {
+    return this.cardAdminDisabled();
   }
 
   @Post("captcha-unblock")

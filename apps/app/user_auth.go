@@ -98,6 +98,30 @@ func computeDeviceName() string {
 }
 
 // startServicesForUser starts leaser + proxy after a successful login.
+// seedEntitlementsBeforeLease 在首次自动租号前,用一次心跳把「订阅授权(产品并集 + 是否有
+// 生效订阅)」喂给 leaser。这样 StartAutoLease 启动时 entitlementsKnown 已为真,decideAntigravity
+// 能直接判 agAttempt/agSkip/agNoSub —— 不再冷启动「盲探一次 antigravity」:只开 codex/anthropic
+// 的有效订阅会被租号端点回 SUBSCRIPTION_EXPIRED(该码语义二义)误判整卡不可用,在仪表盘闪一段
+// 假的「订阅已到期」横幅。服务端心跳对无生效订阅返回 200 + subscriptions:[](非 403),故此处
+// 只认 200;离线/会话失效/旧服务端 → 不 seed,回退到老的盲探逻辑(行为不退化)。
+func seedEntitlementsBeforeLease(cfg Config) {
+	payload := map[string]interface{}{
+		"deviceId":      cfg.DeviceId,
+		"clientVersion": AppVersion,
+	}
+	body, status, err := doAuthPostWithBearer("/app/heartbeat", payload, cfg.UserToken)
+	if err != nil || status != http.StatusOK {
+		return
+	}
+	var result map[string]interface{}
+	if json.Unmarshal(body, &result) != nil {
+		return
+	}
+	if products, hasActive, ok := parseHeartbeatEntitlements(result); ok {
+		GetLeaser().SetEntitlements(products, hasActive)
+	}
+}
+
 func startServicesForUser(cfg Config) {
 	// Use UserToken as the "card" parameter throughout the lease/proxy chain;
 	// leaser passes it to postJSONWithSecretToBase which now sets Bearer.
@@ -108,7 +132,14 @@ func startServicesForUser(cfg Config) {
 	// the JWT — the old card /api/activate handshake is gone (server stubbed it
 	// fail-closed after the force-upgrade; products now arrive with each lease
 	// response's accessKeyStatus).
-	GetLeaser().StartAutoLease(token, deviceId, "")
+	//
+	// 先 seed 授权再租号(见 seedEntitlementsBeforeLease)。放后台 goroutine:不阻塞启动/登录
+	// (HTTP 代理在下方照常先起,真实请求可按需租号);seed 完成后再 StartAutoLease,
+	// 据已知授权正确路由,杜绝冷启动盲探误判。
+	go func() {
+		seedEntitlementsBeforeLease(cfg)
+		GetLeaser().StartAutoLease(token, deviceId, "")
+	}()
 
 	// HTTP proxy always starts.
 	if err := GetHTTPProxy().Start(cfg.ProxyPort, token, deviceId, ""); err != nil {
@@ -367,9 +398,26 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("heartbeat parse error: %w", err)
 	}
 
+	// Feed subscription entitlements (product union + has-active-sub) into the
+	// leaser so StartAutoLease decides the antigravity path WITHOUT a blind probe
+	// lease — fixes the cold-start "codex/anthropic-only sub → whole card unusable"
+	// misfire. ok=false means the server didn't carry subscriptions (old build) →
+	// leave entitlements unknown (legacy behavior).
+	if products, hasActive, ok := parseHeartbeatEntitlements(result); ok {
+		leaser := GetLeaser()
+		leaser.SetEntitlements(products, hasActive)
+		// 冷启动可能在首次心跳之前盲租 antigravity 把卡误判不可用。现确知有生效订阅、且不需要
+		// antigravity(只 codex/anthropic)→ 重新接管:StartAutoLease 据新授权走 agSkip,清掉
+		// 误判、放行 codex/anthropic,无需用户手动刷新。需要 antigravity 的真失败不在此重试。
+		if hasActive && leaser.IsCardUnusable() && !productListContains(products, "antigravity") {
+			leaser.StartAutoLease(cfg.UserToken, cfg.DeviceId, "")
+		}
+	}
+
 	// Refresh the local subscription snapshot so plan renewals/changes show up
 	// in the UI (GetAccountState reads config) without a re-login.
-	if sub, ok := result["subscription"].(map[string]interface{}); ok {
+	subVal, hasSubKey := result["subscription"]
+	if sub, ok := subVal.(map[string]interface{}); ok {
 		changed := false
 		if v, ok := sub["planName"].(string); ok && v != cfg.PlanName {
 			cfg.PlanName = v
@@ -386,6 +434,19 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 		if changed {
 			if saveErr := SaveConfig(cfg); saveErr != nil {
 				Log("[auth] Failed to persist heartbeat subscription update: %v", saveErr)
+			}
+		}
+	} else if hasSubKey {
+		// Server explicitly reported no active subscription (subscription: null) —
+		// the plan lapsed or was removed. Clear the stale local snapshot so the UI
+		// stops showing a subscribed/expiry state carried over from a previous plan.
+		// (The key-present guard avoids wiping when an older server omits the field.)
+		if cfg.PlanName != "" || cfg.PlanExpiry != "" || cfg.PlanDeviceMax != 0 {
+			cfg.PlanName = ""
+			cfg.PlanExpiry = ""
+			cfg.PlanDeviceMax = 0
+			if saveErr := SaveConfig(cfg); saveErr != nil {
+				Log("[auth] Failed to clear stale subscription snapshot: %v", saveErr)
 			}
 		}
 	}

@@ -28,7 +28,7 @@ export const zhTW: DeepPartialDict = {
     collapseSidebar: '收合側邊欄',
     updateTo: '更新到 v{version}',
     updateAvailable: 'v{version} 可用',
-    feedback: 'GitHub 意見回饋',
+    feedback: '意見回饋',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const zhTW: DeepPartialDict = {
     error: '錯誤 · {error}',
     leasing: '取得租約中...',
     needCard: '請登入帳號',
+    subscriptionExpired: '訂閱已到期',
     ok: '服務正常 · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const zhTW: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: '訂閱/工作階段已失效,功能已停用',
-    cardUnusableBody: '目前的登入工作階段或訂閱已失效(工作階段過期/訂閱到期/裝置被移除)。請重新登入,或前往網頁端處理訂閱與帳單。',
+    cardUnusableTitle: '訂閱已到期,功能已停用',
+    cardUnusableBody: '目前帳號沒有可用訂閱(未購買或已到期)。請前往網頁端續費或購買方案,完成後重新登入生效。',
     cardUnusableRelogin: '重新登入',
     cardUnusableBilling: '訂閱與帳單 ↗',
+    cardUnusableContact: '聯絡客服',
+    cardUnusableHelp: '遇到問題或需要協助?點擊「聯絡客服」,我們會盡快協助你。',
+    kickedDeviceRevoked: '你的裝置已被移除,請重新登入。',
+    kickedSessionInvalid: '登入狀態已失效,請重新登入。',
     activateTitle: '啟用帳號卡',
     activateIntro: '輸入卡密即可直連官方模型 —— 無需設定 API Key,程式碼資料直送官方,冰茶只在本機注入授權權杖。',
     cardPlaceholder: '輸入帳號卡 (AI...)',
@@ -233,9 +238,9 @@ export const zhTW: DeepPartialDict = {
     wechatContact: '加微信 {wechat} 聯絡客服',
     groupContact: '加入售後群組聯絡客服',
     viewFull: '查看完整版',
-    githubTitle: '在 GitHub 回報問題',
-    githubDesc: '回報 Bug、提出功能建議,或查看已知問題',
-    githubCta: '前往提交 Issue',
+    githubTitle: '問題回饋與協助',
+    githubDesc: '前往使用者中心提交問題、建議或聯絡客服',
+    githubCta: '前往使用者中心',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const zhTW: DeepPartialDict = {
     version: '版本',
     deviceId: '裝置 ID',
     feedbackLabel: '問題回報',
-    feedbackBtn: 'GitHub 提交回報',
+    feedbackBtn: '前往使用者中心',
     changelogLabel: '更新日誌',
     changelogBtn: '檢視',
     changelogModalTitle: 'v{version} 更新內容',
@@ -295,6 +300,8 @@ export const zhTW: DeepPartialDict = {
     planExpiry: '到期時間',
     deviceName: '裝置名稱',
     noSubscription: '暫無有效方案',
+    activeMember: '已訂閱',
+    refresh: '重新整理',
     logout: '登出',
     manageDevices: '管理裝置',
     sessionExpired: '工作階段已過期,請重新登入',

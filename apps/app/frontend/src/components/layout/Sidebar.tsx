@@ -1,10 +1,8 @@
-import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download, BookOpen } from 'lucide-react'
-import { GitHubIcon } from '@/components/GitHubIcon'
+import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download, BookOpen, MessageSquare } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
 import { useT } from '@/i18n'
-import { GITHUB_ISSUES_URL } from '@/lib/feedback'
 import { BAR_H, topInset } from './chrome'
 import type { PageId } from '@/types'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
@@ -114,9 +112,9 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
               {!collapsed && t('nav.settings')}
             </button>
 
-            {/* GitHub feedback — open the public issue tracker */}
+            {/* 意见反馈 — 打开用户中心 */}
             <button
-              onClick={() => api.openURL(GITHUB_ISSUES_URL)}
+              onClick={() => api.openURL(api.PORTAL_URLS.home)}
               title={collapsed ? t('nav.feedback') : undefined}
               className={cn(
                 'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
@@ -124,7 +122,7 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
               )}
             >
-              <GitHubIcon size={20} className="flex-shrink-0" />
+              <MessageSquare size={20} strokeWidth={1.7} className="flex-shrink-0" />
               {!collapsed && t('nav.feedback')}
             </button>
 

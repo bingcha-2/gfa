@@ -62,10 +62,17 @@ function readEnv() {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
     let val = trimmed.slice(eq + 1).trim();
-    // Strip surrounding quotes
-    if ((val.startsWith('"') && val.endsWith('"')) ||
-        (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
+    // Strip surrounding quotes (handle inline comments after closing quote)
+    if (val.startsWith('"')) {
+      const close = val.indexOf('"', 1);
+      val = close > 0 ? val.slice(1, close) : val.slice(1);
+    } else if (val.startsWith("'")) {
+      const close = val.indexOf("'", 1);
+      val = close > 0 ? val.slice(1, close) : val.slice(1);
+    } else {
+      // Unquoted: strip inline comment
+      const hashIdx = val.indexOf(" #");
+      if (hashIdx >= 0) val = val.slice(0, hashIdx).trimEnd();
     }
     env[key] = val;
   }
@@ -159,15 +166,17 @@ const services = [
     cwd: ROOT,
     shell: false,
     stdio: "inherit",
-    env: { ...process.env, ...env },
+    env: { ...env, ...process.env },
   });
   if (seedResult.status !== 0) {
     console.warn("[dev] db:seed exited non-zero — check DB init");
   }
 
   // Merge root .env into process.env so child processes inherit all vars.
-  // This ensures Next.js middleware, NestJS, and Worker all see the same config.
-  const childEnv = { ...process.env, ...env };
+  // .env provides defaults; already-set env vars (e.g. from dev-local.sh /
+  // ngrok exports) take precedence — matches dotenv / NestJS ConfigModule
+  // convention ("don't override existing").
+  const childEnv = { ...env, ...process.env };
 
   const procs = [];
   let allReadyPrinted = false;

@@ -43,7 +43,7 @@ export type PlanCatalogResponse = {
 
 export type PayChannel = "ALIPAY" | "WXPAY";
 
-export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED";
+export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "EXPIRED" | "REFUNDED" | "CANCELLED";
 
 /** POST /web/billing/orders response. */
 export type BillingOrderCreated = {
@@ -72,7 +72,10 @@ export type BillingOrderRecord = {
   outTradeNo: string;
   planName: string;
   amountCents: number;
+  /** 下单时的占位渠道(统一收银台后无实义);展示「支付方式」请优先用 payType。 */
   payChannel: PayChannel;
+  /** 真实支付方式,来自网关回调/查询 type:alipay/wxpay/bank…;未支付为 null。 */
+  payType?: string | null;
   status: OrderStatus;
   createdAt: string;
   paidAt?: string | null;

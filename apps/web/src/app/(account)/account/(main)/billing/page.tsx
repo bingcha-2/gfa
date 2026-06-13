@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AccountBillingCenter } from "@/components/account/account-billing-center";
-import { getSubscriptions, listBillingOrders } from "@/lib/account/user-api";
+import { cancelBillingOrder, getBillingOrderState, getSubscriptions, listBillingOrders } from "@/lib/account/user-api";
 import type { BillingOrderRecord, Subscription } from "@/lib/account/user-types";
 
 const PAGE_SIZE = 10;
@@ -50,6 +50,17 @@ export default function BillingPage() {
     void loadOrders(page);
   }, [loadSubscriptions, loadOrders, page]);
 
+  const syncOrder = useCallback(async (outTradeNo: string) => {
+    await getBillingOrderState(outTradeNo);
+    await Promise.all([loadSubscriptions(), loadOrders(page)]);
+  }, [loadSubscriptions, loadOrders, page]);
+
+  const cancelOrder = useCallback(async (outTradeNo: string) => {
+    await cancelBillingOrder(outTradeNo);
+    // 取消后兜底刷新:订单翻 CANCELLED;若并发支付抢先,刷新会显示 PAID + 新订阅。
+    await Promise.all([loadSubscriptions(), loadOrders(page)]);
+  }, [loadSubscriptions, loadOrders, page]);
+
   const totalPages = orders
     ? Math.max(1, Math.ceil(orders.total / PAGE_SIZE))
     : 1;
@@ -63,6 +74,8 @@ export default function BillingPage() {
       loadError={loadError}
       onBound={refreshAfterPurchase}
       onPage={setPage}
+      onSyncOrder={syncOrder}
+      onCancelOrder={cancelOrder}
     />
   );
 }

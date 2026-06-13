@@ -25,6 +25,7 @@ import {
   tokenWindowResetMs,
   formatWindowLabel,
   bucketWindowStart,
+  reconstructUseAnchoredWindow,
   UNIVERSAL_BILLING,
   ProviderBilling,
   keyExpiresAt,
@@ -280,6 +281,62 @@ export class AccessKeyStore {
   }
 
   /**
+   * 卡迁移「转化即删」去影子:把刚迁移出来的 DB 订阅配置 record 注册进 subscriptionById,
+   * 并把同 id 文件影子卡的实时限流窗口(events + 窗口起点 + firstUsedAt + 累计计数器)平移到
+   * 订阅 record 上,然后把文件影子卡从 cache/byId/byKey 物理删除并落盘。
+   *
+   * 不变量(调用方须保证):已在进程级 withAccessKeysWriteLock 内、DB Subscription 行已提交;
+   * 本方法全程同步、无 await —— 与并发 flush/recordUsage 互斥(JS 单线程,debounce flush 的
+   * setTimeout 回调不会打断同步段)。平移在删除之前完成 → 删除后 findById 落到订阅 record 时
+   * 限流额度连续(不被重置/穿透);老卡 key 在内存(byKey)与文件里同时消失。重启后该订阅由
+   * boot 的 loadActiveSubscriptions + hydrate + reconstructSubscriptionWindows(从 CardTokenUsage
+   * 回放重建窗口起点)接管,口径与此刻平移一致。
+   */
+  migrateCardRecordToSubscription(subRecord: Partial<AccessKeyRecord> & { id: string }): void {
+    const id = subRecord.id;
+    // 1) 注册订阅配置 record(新 id → 建;已存在 → 刷新配置、保留既有窗口)。
+    this.loadSubscriptionRecords([subRecord]);
+    // 2) 把文件影子卡的实时窗口/计数器平移到订阅 record —— 务必在删除影子之前。
+    const sub = this.subscriptionById.get(id);
+    const file = this.byId.get(id);
+    if (sub && file) {
+      sub.usageEvents = file.usageEvents;
+      sub.tokenUsageEvents = file.tokenUsageEvents;
+      sub.weeklyTokenUsageEvents = file.weeklyTokenUsageEvents;
+      sub.windowStartedAt = file.windowStartedAt;
+      sub.weeklyWindowStartedAt = file.weeklyWindowStartedAt;
+      sub.firstUsedAt = file.firstUsedAt;
+      sub.totalRequests = file.totalRequests;
+      sub.totalInputTokens = file.totalInputTokens;
+      sub.totalOutputTokens = file.totalOutputTokens;
+      sub.totalCachedInputTokens = file.totalCachedInputTokens;
+      sub.totalRawTokensUsed = file.totalRawTokensUsed;
+      sub.totalTokensUsed = file.totalTokensUsed;
+      sub.lastUsedAt = file.lastUsedAt;
+    }
+    // 3) 物理删除文件影子卡(cache + 两个索引)并落盘。
+    this.removeFileRecordById(id);
+  }
+
+  /**
+   * 从文件 cache + byId + byKey 删除单条卡记录并立即落盘。仅供「转化即删」去影子内部使用:
+   * byKey 仅在该项确实指向被删 record 时才删(避免误删同 keyHash 的订阅卡 backingKey 索引)。
+   */
+  private removeFileRecordById(id: string): void {
+    if (!this.cache) this.readAll();
+    const rec = this.byId.get(id);
+    if (!rec || !this.cache) return;
+    this.cache.keys = this.cache.keys.filter((k) => k && k.id !== id);
+    this.byId.delete(id);
+    if (rec.key) {
+      const h = this.keyHash(rec.key);
+      if (this.byKey.get(h) === rec) this.byKey.delete(h);
+    }
+    this.dirty = true;
+    this.flush();
+  }
+
+  /**
    * 去影子:列出所有已注册的订阅 record(subscriptionById 的快照)。
    * 运行时限额从内存读、不读文件 —— 测试与诊断据此核验注册状态,无需触碰 access-keys.json。
    */
@@ -353,6 +410,42 @@ export class AccessKeyStore {
       record.tokenUsageEvents.push(ev);
       if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
       record.weeklyTokenUsageEvents.push(ev);
+    }
+    // 灌完事件后,为订阅 record 从回放重建窗口起点(文件卡起点持久化在文件里,天然不在此列)。
+    this.reconstructSubscriptionWindows();
+  }
+
+  /**
+   * 去影子:订阅 record 的 5h/周窗口起点无持久化 —— boot 时 loadActiveSubscriptions 不设、
+   * hydrate 只灌事件,起点为未设。首次访问会被 reset*WindowIfExpired 当作过期清零(= 重启穿透)。
+   * 本方法在 hydrate 之后,对 subscriptionById 里"起点未设"的订阅 record,从已灌入的事件回放
+   * 重建当前窗口起点并裁剪事件,使限流额度跨重启连续。
+   *  - 5h:仅号池订阅(!requiresBinding)。绑定订阅的 5h 走 alignedResetAt + bucketUsageInWindow,
+   *    不读 windowStartedAt、且按上游窗自行过滤事件 —— 在此重建/裁剪反而会错削它的事件。
+   *  - 周:号池 + 绑定都用 weeklyWindowStartedAt + recentWeeklyBucketUsage(直接求和),故都重建。
+   * 文件卡(byId,起点已从文件读回)天然跳过。重复调用幂等(起点设好后不再重建)。
+   */
+  reconstructSubscriptionWindows(now = Date.now()): void {
+    for (const rec of this.subscriptionById.values()) {
+      if (!rec) continue;
+      if (!rec.requiresBinding && !Number(rec.windowStartedAt || 0)) {
+        const r = reconstructUseAnchoredWindow(rec.tokenUsageEvents || [], tokenWindowMs(rec), now);
+        if (r.startedAt > 0) {
+          rec.windowStartedAt = r.startedAt;
+          rec.tokenUsageEvents = r.events;
+        } else {
+          rec.tokenUsageEvents = [];
+        }
+      }
+      if (!Number(rec.weeklyWindowStartedAt || 0)) {
+        const r = reconstructUseAnchoredWindow(rec.weeklyTokenUsageEvents || [], weeklyWindowMsFn(rec), now);
+        if (r.startedAt > 0) {
+          rec.weeklyWindowStartedAt = r.startedAt;
+          rec.weeklyTokenUsageEvents = r.events;
+        } else {
+          rec.weeklyTokenUsageEvents = [];
+        }
+      }
     }
   }
 

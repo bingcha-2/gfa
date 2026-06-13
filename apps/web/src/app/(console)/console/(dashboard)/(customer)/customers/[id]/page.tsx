@@ -33,12 +33,25 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Ban, CircleCheck, Pencil, Plus } from "lucide-react";
+import { ArrowLeft, Ban, CircleCheck, Pencil, Plus, RefreshCw } from "lucide-react";
 
 function subStatusBadge(status: string) {
   if (status === "ACTIVE") return <Badge className="bg-emerald-500 text-white">{SUB_STATUS_LABEL[status]}</Badge>;
   if (status === "CANCELLED") return <Badge variant="destructive">{SUB_STATUS_LABEL[status]}</Badge>;
   return <Badge variant="outline">{SUB_STATUS_LABEL[status] ?? status}</Badge>;
+}
+
+function selectionName(json: string | null | undefined): string {
+  if (!json) return "—";
+  try {
+    const s = JSON.parse(json);
+    if (!s || typeof s !== "object" || !("line" in s)) return "—";
+    const line = s.line === "bind" ? "绑定" : "号池";
+    const products = s.line === "bind"
+      ? (s.items ?? []).map((i: { product: string }) => i.product)
+      : s.products ?? [];
+    return `${line} ${products.join("+") || "套餐"}`;
+  } catch { return "—"; }
 }
 
 function orderStatusBadge(status: string) {
@@ -103,6 +116,20 @@ export default function CustomerDetailPage() {
       });
       toast.success("已保存");
       setEditOpen(false);
+      await load();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
+  async function syncOrder(orderId: string) {
+    try {
+      const res = await apiRequest<{ synced: boolean; message: string }>(`plan-orders/${orderId}/sync`, { method: "POST" });
+      if (res.synced) {
+        toast.success(res.message);
+      } else {
+        toast.info(res.message);
+      }
       await load();
     } catch (err) {
       toast.error(getErrorMessage(err));
@@ -203,7 +230,7 @@ export default function CustomerDetailPage() {
                   <TableBody>
                     {c.subscriptions.map((s) => (
                       <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.plan?.name ?? "—"}</TableCell>
+                        <TableCell className="font-medium">{selectionName(s.config)}</TableCell>
                         <TableCell>{subStatusBadge(s.status)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(s.startsAt)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(s.expiresAt)}</TableCell>
@@ -216,7 +243,7 @@ export default function CustomerDetailPage() {
                               <AlertDialogContent>
                                 <AlertDialogHeader>
                                   <AlertDialogTitle>取消订阅？</AlertDialogTitle>
-                                  <AlertDialogDescription>确认取消该订阅「{s.plan?.name ?? s.id}」？取消后对应席位将被释放，客户会收到通知。</AlertDialogDescription>
+                                  <AlertDialogDescription>确认取消该订阅「{selectionName(s.config) || s.id}」？取消后对应席位将被释放，客户会收到通知。</AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
                                   <AlertDialogCancel>返回</AlertDialogCancel>
@@ -246,17 +273,25 @@ export default function CustomerDetailPage() {
                       <TableHead>渠道</TableHead>
                       <TableHead>状态</TableHead>
                       <TableHead>支付时间</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {c.planOrders.map((o) => (
                       <TableRow key={o.id}>
                         <TableCell className="font-mono text-xs">{o.outTradeNo}</TableCell>
-                        <TableCell>{o.plan?.name ?? "—"}</TableCell>
+                        <TableCell>{selectionName(o.selection)}</TableCell>
                         <TableCell className="text-right">{fmtYuan(o.amountCents)}</TableCell>
                         <TableCell>{PAY_CHANNEL_LABEL[o.payChannel] ?? o.payChannel}</TableCell>
                         <TableCell>{orderStatusBadge(o.status)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(o.paidAt)}</TableCell>
+                        <TableCell className="text-right">
+                          {(o.status === "PENDING" || o.status === "EXPIRED") && (
+                            <Button variant="ghost" size="sm" onClick={() => void syncOrder(o.id)}>
+                              <RefreshCw className="h-3.5 w-3.5 mr-1" />查询支付
+                            </Button>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

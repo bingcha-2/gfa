@@ -532,6 +532,36 @@ export function recentWeeklyBucketUsage(record: any, now = Date.now()): Map<stri
   return out;
 }
 
+/**
+ * 由"用满后下次使用才开新窗"(use-anchored 固定窗)的用量事件,回放重建出 `now` 时刻所在窗口的
+ * 起点 + 裁剪到该窗口的事件。用于订阅 record 跨重启从 CardTokenUsage 重建窗口起点 —— boot 时
+ * windowStartedAt 已随内存丢失,5h 号池窗口与周窗口都按此回放(两者都是 use-anchored:见
+ * resetWindowIfExpired / resetWeeklyWindowIfExpired,过期或起点为 0 时把起点设成首次使用时刻)。
+ *
+ * 活窗判定与 resetWindowIfExpired 一致(`now - startedAt >= windowMs` 即过期)。返回 startedAt=0
+ * 表示窗口已过期/无事件 → 调用方应清空事件、保持起点未设(下次使用时由 reset*WindowIfExpired 开新窗)。
+ *
+ * 局限:仅能从用量日志回放。历史上由"读操作"触发的窗口重置(无对应用量行)无法重现,可能使重建的
+ * 窗口边界比真实略晚(偏宽);但绝不漏计已用额度,远好于重启把整窗清零(穿透)。
+ */
+export function reconstructUseAnchoredWindow(
+  events: any[],
+  windowMs: number,
+  now = Date.now(),
+): { startedAt: number; events: any[] } {
+  const ms = Number(windowMs) > 0 ? Number(windowMs) : DEFAULT_KEY_WINDOW_MS;
+  const sorted = (Array.isArray(events) ? events : [])
+    .filter((e) => e && Number(e.at) > 0)
+    .sort((a, b) => Number(a.at) - Number(b.at));
+  let anchor = 0;
+  for (const ev of sorted) {
+    const at = Number(ev.at);
+    if (anchor === 0 || at - anchor >= ms) anchor = at;
+  }
+  if (anchor === 0 || now - anchor >= ms) return { startedAt: 0, events: [] };
+  return { startedAt: anchor, events: sorted.filter((e) => Number(e.at) >= anchor) };
+}
+
 // ── Key expiration ───────────────────────────────────────────────────────────
 
 /**

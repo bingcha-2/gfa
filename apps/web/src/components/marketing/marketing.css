@@ -535,34 +535,34 @@ a.mkt-dlcard:hover { border-color: var(--line-strong); box-shadow: var(--shadow-
    全部包在 no-preference 内；reduced-motion 下一切为自然可见态。 */
 @media (prefers-reduced-motion: no-preference) {
   /* 通用 rise（hero 副文案/按钮/信任行）*/
-  .mkt-anim .mkt-reveal { animation: mkt-rise 0.7s var(--ease-quint) both; }
-  .mkt-anim .mkt-reveal[data-d="1"] { animation-delay: 0.16s; }
-  .mkt-anim .mkt-reveal[data-d="2"] { animation-delay: 0.46s; }
-  .mkt-anim .mkt-reveal[data-d="3"] { animation-delay: 0.56s; }
-  .mkt-anim .mkt-reveal[data-d="4"] { animation-delay: 0.66s; }
+  html[data-mkt-anim] .mkt-reveal { animation: mkt-rise 0.7s var(--ease-quint) both; }
+  html[data-mkt-anim] .mkt-reveal[data-d="1"] { animation-delay: 0.16s; }
+  html[data-mkt-anim] .mkt-reveal[data-d="2"] { animation-delay: 0.46s; }
+  html[data-mkt-anim] .mkt-reveal[data-d="3"] { animation-delay: 0.56s; }
+  html[data-mkt-anim] .mkt-reveal[data-d="4"] { animation-delay: 0.66s; }
   @keyframes mkt-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 
   /* 标题逐行遮罩上推（签名动效）*/
-  .mkt-anim .mkt-h1__line { overflow: hidden; }
-  .mkt-anim .mkt-h1__in { animation: mkt-line-up 0.85s var(--ease-expo) both; }
-  .mkt-anim .mkt-h1__line:nth-child(1) .mkt-h1__in { animation-delay: 0.10s; }
-  .mkt-anim .mkt-h1__line:nth-child(2) .mkt-h1__in { animation-delay: 0.22s; }
+  html[data-mkt-anim] .mkt-h1__line { overflow: hidden; }
+  html[data-mkt-anim] .mkt-h1__in { animation: mkt-line-up 0.85s var(--ease-expo) both; }
+  html[data-mkt-anim] .mkt-h1__line:nth-child(1) .mkt-h1__in { animation-delay: 0.10s; }
+  html[data-mkt-anim] .mkt-h1__line:nth-child(2) .mkt-h1__in { animation-delay: 0.22s; }
   @keyframes mkt-line-up { from { transform: translateY(105%); opacity: 0; } to { transform: none; opacity: 1; } }
 
   /* 产品图滑入 */
-  .mkt-anim .mkt-hero__mock { animation: mkt-mock-in 0.95s var(--ease-expo) 0.34s both; }
+  html[data-mkt-anim] .mkt-hero__mock { animation: mkt-mock-in 0.95s var(--ease-expo) 0.34s both; }
   @keyframes mkt-mock-in { from { transform: translateY(26px) scale(0.985); opacity: 0; } to { transform: none; opacity: 1; } }
 
   /* 仪表盘血条涨条（让产品图“活起来”）*/
-  .mkt-anim .mkt-hero__mock .mkt-bar > i { transform-origin: left; animation: mkt-bar-fill 0.9s var(--ease-quint) 0.9s both; }
+  html[data-mkt-anim] .mkt-hero__mock .mkt-bar > i { transform-origin: left; animation: mkt-bar-fill 0.9s var(--ease-quint) 0.9s both; }
   @keyframes mkt-bar-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
   /* 状态点呼吸（仅 hero）*/
-  .mkt-anim .mkt-hero__mock .mkt-pill--ok::before { animation: mkt-pulse 2.4s ease-in-out 1.4s infinite; }
+  html[data-mkt-anim] .mkt-hero__mock .mkt-pill--ok::before { animation: mkt-pulse 2.4s ease-in-out 1.4s infinite; }
   @keyframes mkt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* 光晕缓入 */
-  .mkt-anim .mkt-hero__glow { animation: mkt-glow-in 1.5s var(--ease-quint) 0.05s both; }
+  html[data-mkt-anim] .mkt-hero__glow { animation: mkt-glow-in 1.5s var(--ease-quint) 0.05s both; }
   @keyframes mkt-glow-in { from { opacity: 0; } to { opacity: 1; } }
 
   /* 直连流向图:Token 光点沿线流动 */

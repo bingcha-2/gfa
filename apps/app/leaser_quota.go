@@ -63,17 +63,7 @@ func (l *Leaser) markCardUnusable(err error) {
 func (l *Leaser) CardProducts() []string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	raw, ok := l.accessKeyStatus["products"].([]interface{})
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, v := range raw {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
+	return productsFromAKS(l.accessKeyStatus)
 }
 
 func (l *Leaser) StopAutoLease() {

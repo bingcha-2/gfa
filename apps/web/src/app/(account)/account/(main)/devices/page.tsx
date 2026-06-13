@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { PencilIcon, Trash2Icon } from "lucide-react";
+import { PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/account/page-header";
 import {
@@ -16,6 +16,7 @@ import {
 import { AccountStatusBadge } from "@/components/account/account-status-badge";
 import { getDevices, renameDevice, revokeDevice } from "@/lib/account/user-api";
 import type { AccountDevice } from "@/lib/account/user-types";
+import { useDialogA11y } from "@/lib/account/use-dialog-a11y";
 import { formatDateTime } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useDict } from "@/lib/i18n/client";
@@ -50,6 +51,11 @@ export default function DevicesPage() {
   // Revoke confirm
   const [revokeTarget, setRevokeTarget] = useState<AccountDevice | null>(null);
   const [revoking, setRevoking] = useState(false);
+
+  const renamePanelRef = useRef<HTMLElement>(null);
+  const revokePanelRef = useRef<HTMLElement>(null);
+  useDialogA11y(renamePanelRef, Boolean(renameTarget), () => setRenameTarget(null));
+  useDialogA11y(revokePanelRef, Boolean(revokeTarget), () => setRevokeTarget(null));
 
   const load = useCallback(async () => {
     try {
@@ -217,10 +223,12 @@ export default function DevicesPage() {
           <button
             type="button"
             className="account-dialog__backdrop"
-            aria-label="关闭重命名弹窗"
+            aria-label={d.closeRename}
             onClick={() => setRenameTarget(null)}
           />
           <section
+            ref={renamePanelRef}
+            tabIndex={-1}
             className="account-dialog__panel"
             role="dialog"
             aria-modal="true"
@@ -234,10 +242,10 @@ export default function DevicesPage() {
               <button
                 type="button"
                 className="account-dialog__close"
-                aria-label="关闭重命名弹窗"
+                aria-label={d.closeRename}
                 onClick={() => setRenameTarget(null)}
               >
-                x
+                <XIcon size={16} />
               </button>
             </header>
             <form onSubmit={handleRename} className="account-form-stack">
@@ -249,7 +257,7 @@ export default function DevicesPage() {
                 maxLength={64}
                 required
                 disabled={renaming}
-                autoFocus
+                data-autofocus
               />
               <div className="account-form-actions">
                 <AccountButton type="submit" disabled={renaming || !renameValue.trim()}>
@@ -266,10 +274,12 @@ export default function DevicesPage() {
           <button
             type="button"
             className="account-dialog__backdrop"
-            aria-label="关闭移除设备确认"
+            aria-label={d.closeRevoke}
             onClick={() => setRevokeTarget(null)}
           />
           <section
+            ref={revokePanelRef}
+            tabIndex={-1}
             className="account-dialog__panel account-dialog__panel--narrow"
             role="alertdialog"
             aria-modal="true"
@@ -294,6 +304,7 @@ export default function DevicesPage() {
                 variant="secondary"
                 disabled={revoking}
                 onClick={() => setRevokeTarget(null)}
+                data-autofocus
               >
               {d.cancel}
               </AccountButton>

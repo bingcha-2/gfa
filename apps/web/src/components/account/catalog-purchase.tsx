@@ -33,7 +33,8 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
   const productName = (p: string) => c.productNames[p] ?? p;
   const levelName = (l: string) => c.levelNames[l] ?? l;
 
-  const [line, setLine] = useState<Line>("pool");
+  // 默认进入绑定线(绑定模式置前并默认选中):锁定独享号更稳,作为首选。
+  const [line, setLine] = useState<Line>("bind");
 
   // ── 号池线 state ────────────────────────────────────────────────────────────
   const tierKeys = useMemo(() => Object.keys(catalog.usageTiers), [catalog]);
@@ -129,18 +130,6 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
         <button
           type="button"
           role="tab"
-          aria-selected={line === "pool"}
-          className="account-catalog-tab"
-          data-line="pool"
-          onClick={() => setLine("pool")}
-        >
-          <LayersIcon />
-          <span className="account-catalog-tab__name">{c.linePool}</span>
-          <span className="account-catalog-tab__tag">{c.linePoolTag}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={line === "bind"}
           className="account-catalog-tab"
           data-line="bind"
@@ -150,65 +139,21 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
           <span className="account-catalog-tab__name">{c.lineBind}</span>
           <span className="account-catalog-tab__tag">{c.lineBindTag}</span>
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={line === "pool"}
+          className="account-catalog-tab"
+          data-line="pool"
+          onClick={() => setLine("pool")}
+        >
+          <LayersIcon />
+          <span className="account-catalog-tab__name">{c.linePool}</span>
+          <span className="account-catalog-tab__tag">{c.linePoolTag}</span>
+        </button>
       </div>
 
       <div className="account-catalog-body">
-        {/* ── 号池线 ─────────────────────────────────────────────────────────── */}
-        {line === "pool" && (
-          <div className="account-catalog-config" role="tabpanel">
-            <p className="account-catalog-config__hint">{c.linePoolHint}</p>
-
-            <Knob label={c.productsLabel} sub={c.productsHint}>
-              <div className="account-chipset" role="group" aria-label={c.productsLabel}>
-                {catalog.products.map((product) => (
-                  <button
-                    key={product}
-                    type="button"
-                    className="account-chip"
-                    aria-pressed={poolProducts.includes(product)}
-                    onClick={() => togglePoolProduct(product)}
-                  >
-                    {productName(product)}
-                  </button>
-                ))}
-              </div>
-            </Knob>
-
-            <Knob label={c.usageLabel}>
-              <div className="account-chipset account-chipset--seg" role="radiogroup" aria-label={c.usageLabel}>
-                {tierKeys.map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="radio"
-                    aria-checked={usageTier === key}
-                    className="account-chip"
-                    onClick={() => setUsageTier(key)}
-                  >
-                    {key === "small" ? c.usageSmall : key === "large" ? c.usageLarge : key}
-                  </button>
-                ))}
-              </div>
-            </Knob>
-
-            <Knob label={c.deviceLabel}>
-              <Stepper
-                value={poolDevices}
-                onChange={setPoolDevices}
-                unit={(n) => fmt(c.deviceUnit, { n })}
-                decLabel={c.decReduce}
-                incLabel={c.incAdd}
-              />
-            </Knob>
-
-            <Knob label={c.durationLabel}>
-              <span className="account-catalog-static">
-                {fmt(t.durationDays, { n: catalog.durationDays })}
-              </span>
-            </Knob>
-          </div>
-        )}
-
         {/* ── 绑定线 ─────────────────────────────────────────────────────────── */}
         {line === "bind" && (
           <div className="account-catalog-config" role="tabpanel">
@@ -280,6 +225,62 @@ export function CatalogPurchase({ catalog }: { catalog: CatalogConfig }) {
               <Stepper
                 value={bindDevices}
                 onChange={setBindDevices}
+                unit={(n) => fmt(c.deviceUnit, { n })}
+                decLabel={c.decReduce}
+                incLabel={c.incAdd}
+              />
+            </Knob>
+
+            <Knob label={c.durationLabel}>
+              <span className="account-catalog-static">
+                {fmt(t.durationDays, { n: catalog.durationDays })}
+              </span>
+            </Knob>
+          </div>
+        )}
+
+        {/* ── 号池线 ─────────────────────────────────────────────────────────── */}
+        {line === "pool" && (
+          <div className="account-catalog-config" role="tabpanel">
+            <p className="account-catalog-config__hint">{c.linePoolHint}</p>
+
+            <Knob label={c.productsLabel} sub={c.productsHint}>
+              <div className="account-chipset" role="group" aria-label={c.productsLabel}>
+                {catalog.products.map((product) => (
+                  <button
+                    key={product}
+                    type="button"
+                    className="account-chip"
+                    aria-pressed={poolProducts.includes(product)}
+                    onClick={() => togglePoolProduct(product)}
+                  >
+                    {productName(product)}
+                  </button>
+                ))}
+              </div>
+            </Knob>
+
+            <Knob label={c.usageLabel}>
+              <div className="account-chipset account-chipset--seg" role="radiogroup" aria-label={c.usageLabel}>
+                {tierKeys.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={usageTier === key}
+                    className="account-chip"
+                    onClick={() => setUsageTier(key)}
+                  >
+                    {key === "small" ? c.usageSmall : key === "large" ? c.usageLarge : key}
+                  </button>
+                ))}
+              </div>
+            </Knob>
+
+            <Knob label={c.deviceLabel}>
+              <Stepper
+                value={poolDevices}
+                onChange={setPoolDevices}
                 unit={(n) => fmt(c.deviceUnit, { n })}
                 decLabel={c.decReduce}
                 incLabel={c.incAdd}

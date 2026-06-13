@@ -8,7 +8,7 @@ interface StatusPillProps {
 
 export function StatusPill({ compact = false }: StatusPillProps) {
   const t = useT()
-  const { proxyRunning, proxyPort, leaserState, leaserError, config } = useAppStore()
+  const { proxyRunning, proxyPort, leaserState, leaserError, config, cardUnusable } = useAppStore()
 
   let dotColor = 'bg-[var(--text-muted)]'
   let text = t('status.checking')
@@ -16,6 +16,11 @@ export function StatusPill({ compact = false }: StatusPillProps) {
 
   if (!proxyRunning) {
     text = t('status.proxyDown')
+  } else if (cardUnusable) {
+    // 卡密不可用(订阅到期/无生效订阅)优先于一切租号态:否则 cachedToken 恒空时
+    // 会落到「获取租约中…」或绿色「服务正常」,与仪表盘「订阅已到期」横幅自相矛盾。
+    dotColor = 'bg-[var(--danger)]'
+    text = t('status.subscriptionExpired')
   } else if (leaserError) {
     dotColor = 'bg-[var(--danger)]'
     text = t('status.error', { error: leaserError })

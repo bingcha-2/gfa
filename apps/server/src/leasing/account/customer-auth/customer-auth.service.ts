@@ -14,6 +14,7 @@ import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { CustomerTokenService } from "./customer-token.service";
 import { CustomerEmailTokenService } from "./customer-email-token.service";
 import { MailService } from "../../../shared/mail/mail.service";
+import { passwordResetEmail, verifyEmailEmail } from "../../../shared/mail/auth-email";
 
 // bcrypt cost factor — 10 as spec'd
 const BCRYPT_ROUNDS = 10;
@@ -66,7 +67,9 @@ function generateReferralCode(): string {
 }
 
 function webBaseUrl(): string {
-  return process.env.WEB_BASE_URL ?? "https://bcai.lol";
+  // 默认指向本地 web（dev）；生产由 WEB_BASE_URL 注入账号中心子域 my.bcai.lol
+  // （见 .env.example / docs/NAMING.md）。不在源码里写死生产域名。
+  return process.env.WEB_BASE_URL ?? "http://localhost:3000";
 }
 
 @Injectable()
@@ -178,10 +181,12 @@ export class CustomerAuthService {
       .issueToken(customerId, CustomerEmailTokenPurpose.VERIFY_EMAIL, ttlMs)
       .then((plaintext) => {
         const link = `${webBaseUrl()}/account/verify-email?token=${plaintext}`;
+        const mail = verifyEmailEmail(link);
         return this.mailService.sendMail({
           to: email,
-          subject: "Verify your email address",
-          text: `Please verify your email address by clicking the link below:\n\n${link}\n\nThis link expires in 24 hours.`
+          subject: mail.subject,
+          text: mail.text,
+          html: mail.html
         });
       })
       .catch((err) => {
@@ -376,12 +381,14 @@ export class CustomerAuthService {
       );
 
       const link = `${webBaseUrl()}/account/reset?token=${plaintext}`;
+      const mail = passwordResetEmail(link);
       // Fire-and-forget the mail send — do not await failure into the response
       this.mailService
         .sendMail({
           to: customer.email,
-          subject: "Reset your password",
-          text: `You requested a password reset. Click the link below to reset your password:\n\n${link}\n\nThis link expires in 30 minutes. If you did not request this, please ignore this email.`
+          subject: mail.subject,
+          text: mail.text,
+          html: mail.html
         })
         .catch((err) => {
           this.logger.warn(
@@ -453,11 +460,13 @@ export class CustomerAuthService {
     );
 
     const link = `${webBaseUrl()}/account/verify-email?token=${plaintext}`;
+    const mail = verifyEmailEmail(link);
     this.mailService
       .sendMail({
         to: customer.email,
-        subject: "Verify your email address",
-        text: `Please verify your email address by clicking the link below:\n\n${link}\n\nThis link expires in 24 hours.`
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html
       })
       .catch((err) => {
         this.logger.warn(

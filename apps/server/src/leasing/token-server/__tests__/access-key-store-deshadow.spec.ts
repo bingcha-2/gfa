@@ -4,7 +4,10 @@ import * as path from "path";
 import * as os from "os";
 
 import { AccessKeyStore } from "../access-key-store";
+import { recentBucketUsage, recentWeeklyBucketUsage } from "../token-billing";
 import { cardIdSessionResolver, sessionReqFor } from "./session-test-util";
+
+const sumUsage = (m: Map<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
 
 let lastStorePath = "";
 
@@ -126,5 +129,83 @@ describe("AccessKeyStore.reload 与订阅 record 协同(去影子 reload 陷阱)
     expect(after.bucketLimits).toEqual({ "anthropic-claude": 50000 }); // 配置在
     expect(after.tokenUsageEvents).toEqual([{ at: 1, tokens: 5 }]); // 用量在(否则限额清零→白嫖)
     expect(store.findById("old-card"), "老卡也仍在").toBeTruthy();
+  });
+});
+
+describe("D2 去影子:订阅 record 窗口起点跨重启重建(hydrate 后回放,防穿透)", () => {
+  const FIVE_H = 18_000_000;
+  const HOUR = 60 * 60 * 1000;
+
+  it("号池订阅 boot 后:5h + 周窗口起点从用量回放重建,额度不被清零", () => {
+    const now = Date.now();
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{
+      id: "pool-1", key: "BK-POOL", customerId: "c1", status: "active",
+      products: ["antigravity"], bucketLimits: { "antigravity-gemini": 1_000_000 },
+      windowMs: FIVE_H,
+    } as any]);
+    // 模拟 boot:hydrate 灌入窗口内(1h 前)的一条用量。
+    store.hydrateWindowsFromUsageLog([{
+      accessKeyId: "pool-1", at: now - HOUR, status: 200,
+      modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
+      inputTokens: 3000, outputTokens: 2000, rawTotalTokens: 5000, totalTokens: 5000,
+    }]);
+
+    const rec = store.findById("pool-1") as any;
+    // 起点被重建为事件时刻(而非 0)→ 不会被 resetWindowIfExpired 当过期清空。
+    expect(rec.windowStartedAt).toBe(now - HOUR);
+    expect(rec.weeklyWindowStartedAt).toBe(now - HOUR);
+    expect(rec.tokenUsageEvents).toHaveLength(1);
+    // recentBucketUsage 内部会 resetWindowIfExpired;若起点没重建会清零 → 这里证明额度连续。
+    expect(sumUsage(recentBucketUsage(rec, now))).toBeGreaterThan(0);
+    expect(sumUsage(recentWeeklyBucketUsage(rec, now))).toBeGreaterThan(0);
+  });
+
+  it("5h 已过期但仍在周窗内:5h 重置为空、周窗口保留(各按自己窗长回放)", () => {
+    const now = Date.now();
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{
+      id: "pool-2", key: "BK-POOL2", customerId: "c1", status: "active",
+      products: ["antigravity"], bucketLimits: { "antigravity-gemini": 1_000_000 },
+      windowMs: FIVE_H,
+    } as any]);
+    // 6h 前的用量:超出 5h 窗,但在 7 天周窗内。
+    store.hydrateWindowsFromUsageLog([{
+      accessKeyId: "pool-2", at: now - 6 * HOUR, status: 200,
+      modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
+      rawTotalTokens: 5000, totalTokens: 5000,
+    }]);
+
+    const rec = store.findById("pool-2") as any;
+    // 5h 窗已过期 → 起点未设、事件清空(下次使用才开新窗)。
+    expect(Number(rec.windowStartedAt || 0)).toBe(0);
+    expect(rec.tokenUsageEvents).toHaveLength(0);
+    // 周窗仍活 → 起点 = 事件时刻、事件保留。
+    expect(rec.weeklyWindowStartedAt).toBe(now - 6 * HOUR);
+    expect(rec.weeklyTokenUsageEvents).toHaveLength(1);
+    expect(sumUsage(recentWeeklyBucketUsage(rec, now))).toBeGreaterThan(0);
+  });
+
+  it("绑定订阅:5h 不重建/不裁剪(走 alignedResetAt,事件保留),周窗口照常重建", () => {
+    const now = Date.now();
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{
+      id: "bind-1", key: "BK-BIND", customerId: "c1", status: "active",
+      products: ["antigravity"], bindings: { antigravity: 7 }, weight: 1,
+      requiresBinding: true, windowMs: FIVE_H,
+    } as any]);
+    // 两条:1h 前 + 6h 前。绑定卡 5h 靠 alignedResetAt 按上游窗过滤,故 tokenUsageEvents 不应被本逻辑裁剪。
+    store.hydrateWindowsFromUsageLog([
+      { accessKeyId: "bind-1", at: now - HOUR, status: 200, modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", rawTotalTokens: 1000, totalTokens: 1000 },
+      { accessKeyId: "bind-1", at: now - 6 * HOUR, status: 200, modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", rawTotalTokens: 2000, totalTokens: 2000 },
+    ]);
+
+    const rec = store.findById("bind-1") as any;
+    // 5h:绑定卡不读 windowStartedAt、不在此重建;两条事件全保留(交给 alignedResetAt 过滤)。
+    expect(Number(rec.windowStartedAt || 0)).toBe(0);
+    expect(rec.tokenUsageEvents).toHaveLength(2);
+    // 周:两条都在 7 天内 → 起点 = 最早事件、两条都保留。
+    expect(rec.weeklyWindowStartedAt).toBe(now - 6 * HOUR);
+    expect(rec.weeklyTokenUsageEvents).toHaveLength(2);
   });
 });

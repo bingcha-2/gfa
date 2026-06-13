@@ -3,7 +3,9 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 
 function webBaseUrl(): string {
-  return process.env.WEB_BASE_URL ?? "https://bcai.lol";
+  // 默认指向本地 web（dev）；生产由 WEB_BASE_URL 注入账号中心子域 my.bcai.lol
+  // （见 .env.example / docs/NAMING.md）。不在源码里写死生产域名。
+  return process.env.WEB_BASE_URL ?? "http://localhost:3000";
 }
 
 @Injectable()

@@ -1,25 +1,37 @@
 "use client";
 
-// 「实时算价预览」(spec §7 表单⑤)。改任一格 → 按 computePurchase(与后端同口径,
-// 复用 buy-page 的 catalog-pricing.ts)算几个代表组合即时显示。
+// 「实时算价预览」(spec §7 表单⑤)—— 和客户端购买页(CatalogPurchase)同款交互:
+// 运营在右栏像客户一样点选「号池线 / 绑定线」的产品、用量档、等级、共享人数、设备数,
+// 实时看「任意」组合的价格,而不是只看几个固定代表组合。
 //
-// 代表组合(基于当前表单派生的 config):
-//   号池:每个启用产品 × 小用量 × 1 设备;首启用产品 × 大用量 × 1 设备。
-//   绑定:每个启用产品取其首个等级 × 1 人独号 × 1 设备。
-// computePurchase 在无效选择(无产品 / 等级无价)时抛错 —— 捕获后跳过该行,不崩。
+// 同口径:计价复用 buy-page 的 computePurchase(与后端 pricing.ts 字节对齐);配置取
+// 「当前编辑中(未保存)」的表单 formToConfig(form),故改定价 / 等级即时反映。仅供预览,
+// 不影响线上(线上读已发布版)。
+//
+// 与购买页的差异:① 无结算 / 下单,纯试算;② UI 用 console 自身 chip 风格(非 account
+// 门户 CSS / i18n);③ 选项随表单编辑动态变化 —— 选中项可能引用「已停用产品 / 已删等级
+// 或用量档」,故对失效选择做「纯派生兜底」(不写回 state):失效则从价格里剔除 / 回退首档,
+// 表单改回来时选择自动恢复。
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { formatPriceCents } from "@/lib/account/format-extensions";
-import { computePurchase, type CatalogConfig } from "@/lib/account/catalog-pricing";
-import { formToConfig, type PlanCatalogForm } from "@/lib/console/plan-catalog-form";
+import {
+  computePurchase,
+  type CatalogConfig,
+  type Selection,
+} from "@/lib/account/catalog-pricing";
+import {
+  formToConfig,
+  SHARE_USERS,
+  type PlanCatalogForm,
+} from "@/lib/console/plan-catalog-form";
+import { cn } from "@/lib/utils";
 import { productLabel } from "./catalog-defaults";
 
-interface PreviewRow {
-  label: string;
-  priceCents: number;
-}
+type Line = "pool" | "bind";
+
+const MAX_DEVICES = 20;
 
 function tierLabel(key: string): string {
   if (key === "small") return "小用量";
@@ -27,113 +39,312 @@ function tierLabel(key: string): string {
   return key;
 }
 
-/** 安全计价:无效选择返回 null(不抛)。 */
-function priceOf(
-  config: CatalogConfig,
-  selection: Parameters<typeof computePurchase>[1],
-): number | null {
-  try {
-    return computePurchase(config, selection).priceCents;
-  } catch {
-    return null;
-  }
+function shareLabel(n: number): string {
+  return n === 1 ? "1 人独号" : `${n} 人共享`;
 }
 
-function buildRows(config: CatalogConfig): PreviewRow[] {
-  const rows: PreviewRow[] = [];
-  const products = config.products ?? [];
-  const tierKeys = Object.keys(config.usageTiers ?? {});
-  const firstTier = tierKeys[0];
-  const largeTier = tierKeys.includes("large") ? "large" : tierKeys[1];
-
-  // 号池:每产品 × 首个用量档 × 1 设备。
-  for (const product of products) {
-    if (!firstTier) break;
-    const price = priceOf(config, {
-      line: "pool",
-      products: [product],
-      usageTier: firstTier,
-      deviceLimit: 1,
-    });
-    if (price !== null) {
-      rows.push({
-        label: `号池 · ${productLabel(product)} · ${tierLabel(firstTier)} · 1 设备`,
-        priceCents: price,
-      });
-    }
-  }
-
-  // 号池:首产品 × 大用量(若存在且与首档不同)× 1 设备。
-  if (products[0] && largeTier && largeTier !== firstTier) {
-    const price = priceOf(config, {
-      line: "pool",
-      products: [products[0]],
-      usageTier: largeTier,
-      deviceLimit: 1,
-    });
-    if (price !== null) {
-      rows.push({
-        label: `号池 · ${productLabel(products[0])} · ${tierLabel(largeTier)} · 1 设备`,
-        priceCents: price,
-      });
-    }
-  }
-
-  // 绑定:每产品取首个等级 × 1 人独号 × 1 设备。
-  for (const product of products) {
-    const level = config.levels?.[product]?.[0];
-    if (!level) continue;
-    const price = priceOf(config, {
-      line: "bind",
-      items: [{ product, level }],
-      shareUsers: 1,
-      deviceLimit: 1,
-    });
-    if (price !== null) {
-      rows.push({
-        label: `绑定 · ${productLabel(product)} · ${level} · 1 人独号`,
-        priceCents: price,
-      });
-    }
-  }
-
-  return rows;
+/** chip / pill 统一样式(对齐 products-section 的等级 chip)。 */
+function chipCls(active: boolean): string {
+  return cn(
+    "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+    "disabled:pointer-events-none disabled:opacity-50",
+    active
+      ? "border-primary bg-primary/10 text-foreground"
+      : "bg-muted/40 text-muted-foreground hover:bg-muted",
+  );
 }
 
 export function PricePreview({ form }: { form: PlanCatalogForm }) {
-  // 表单 → config → 代表组合价。form 变即重算(useMemo 依赖整 form)。
-  const rows = useMemo(() => {
-    try {
-      return buildRows(formToConfig(form));
-    } catch {
-      return [];
-    }
-  }, [form]);
+  // 当前编辑值 → config(与购买页 / 后端同结构)。表单变即重算。
+  const config = useMemo<CatalogConfig>(() => formToConfig(form), [form]);
+  const products = config.products; // 仅启用产品(formToConfig 已过滤)。
+  const tierKeys = useMemo(() => Object.keys(config.usageTiers), [config]);
+
+  const [line, setLine] = useState<Line>("pool");
+
+  // ── 号池线选择(首产品 + 首档预选,进页面即有一个非空价)──────────────────────────
+  const [poolProducts, setPoolProducts] = useState<string[]>(() =>
+    products[0] ? [products[0]] : [],
+  );
+  const [usageTier, setUsageTier] = useState<string>(() => tierKeys[0] ?? "");
+  const [poolDevices, setPoolDevices] = useState(1);
+
+  // ── 绑定线选择:product → 选中等级(不在表里 = 该产品未选)────────────────────────
+  const [bindLevels, setBindLevels] = useState<Record<string, string>>({});
+  const [shareUsers, setShareUsers] = useState(1);
+  const [bindDevices, setBindDevices] = useState(1);
+
+  // ── 失效兜底(纯派生,不写回 state)──────────────────────────────────────────────
+  const effTier = tierKeys.includes(usageTier) ? usageTier : tierKeys[0] ?? "";
+  const effPoolProducts = poolProducts.filter((p) => products.includes(p));
+  // 绑定项:仅启用产品 & 该产品仍有等级;选中等级失效则回退该产品首档。
+  const effBindItems = products
+    .filter((p) => p in bindLevels)
+    .map((p) => {
+      const levels = config.levels[p] ?? [];
+      const stored = bindLevels[p];
+      const level = levels.includes(stored) ? stored : levels[0];
+      return level ? { product: p, level } : null;
+    })
+    .filter((x): x is { product: string; level: string } => x !== null);
+
+  // ── 当前组合 → 价格(computePurchase 在空选 / 失效时抛错 → 视为「未就绪」)─────────
+  const selection: Selection =
+    line === "pool"
+      ? { line: "pool", products: effPoolProducts, usageTier: effTier, deviceLimit: poolDevices }
+      : { line: "bind", items: effBindItems, shareUsers, deviceLimit: bindDevices };
+
+  let priced: { priceCents: number } | null = null;
+  try {
+    const ready =
+      line === "pool"
+        ? effPoolProducts.length > 0 && !!effTier
+        : effBindItems.length > 0;
+    if (ready) priced = computePurchase(config, selection);
+  } catch {
+    priced = null;
+  }
+
+  // 当前组合的人类摘要(展示在价格上方)。
+  const summary =
+    line === "pool"
+      ? effPoolProducts.length
+        ? `号池 · ${effPoolProducts.map(productLabel).join(" + ")} · ${tierLabel(effTier)} · ${poolDevices} 设备`
+        : null
+      : effBindItems.length
+        ? `绑定 · ${effBindItems.map((i) => `${productLabel(i.product)} ${i.level}`).join(" + ")} · ${shareLabel(shareUsers)} · ${bindDevices} 设备`
+        : null;
+
+  function togglePoolProduct(p: string) {
+    setPoolProducts((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
+    );
+  }
+
+  function toggleBindProduct(p: string) {
+    setBindLevels((prev) => {
+      if (p in prev) {
+        const next = { ...prev };
+        delete next[p];
+        return next;
+      }
+      const first = config.levels[p]?.[0];
+      return first ? { ...prev, [p]: first } : prev;
+    });
+  }
+
+  const emptyHint = line === "pool" ? "请至少选择一个产品" : "请为选中的产品各选一个等级";
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">
-        按当前编辑值实时计算(与购买页 / 后端同口径)。仅供预览,不影响线上。
+        像客户端一样选配,实时看任意组合的价格(与购买页 / 后端同口径)。仅供预览,不影响线上。
       </p>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          配置完整后这里会显示几个代表套餐的价格。
-        </p>
+
+      {products.length === 0 ? (
+        <p className="text-sm text-muted-foreground">启用并配置产品后,可在此像客户端一样试算价格。</p>
       ) : (
-        <div className="flex flex-col divide-y rounded-lg border">
-          {rows.map((row) => (
-            <div
-              key={row.label}
-              className="flex items-center justify-between gap-3 px-3 py-2"
-            >
-              <span className="text-xs text-muted-foreground">{row.label}</span>
-              <Badge variant="secondary" className="font-mono text-xs">
-                {formatPriceCents(row.priceCents)}
-              </Badge>
+        <>
+          {/* 线切换 */}
+          <div className="grid grid-cols-2 gap-1 rounded-lg border p-1" role="tablist" aria-label="计价线">
+            {(["pool", "bind"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="tab"
+                aria-selected={line === l}
+                onClick={() => setLine(l)}
+                className={cn(
+                  "rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                  line === l ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {l === "pool" ? "号池线" : "绑定线"}
+              </button>
+            ))}
+          </div>
+
+          {/* ── 号池线 ───────────────────────────────────────────────────────────── */}
+          {line === "pool" && (
+            <div className="flex flex-col gap-3" role="tabpanel">
+              <Field label="产品" hint="可多选,叠加">
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="产品">
+                  {products.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      aria-pressed={poolProducts.includes(p)}
+                      onClick={() => togglePoolProduct(p)}
+                      className={chipCls(poolProducts.includes(p))}
+                    >
+                      {productLabel(p)}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="用量档">
+                {tierKeys.length === 0 ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-500">未配置用量档。</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="用量档">
+                    {tierKeys.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="radio"
+                        aria-checked={effTier === key}
+                        onClick={() => setUsageTier(key)}
+                        className={chipCls(effTier === key)}
+                      >
+                        {tierLabel(key)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Field>
+
+              <Field label="设备">
+                <Stepper value={poolDevices} onChange={setPoolDevices} />
+              </Field>
             </div>
-          ))}
-        </div>
+          )}
+
+          {/* ── 绑定线 ───────────────────────────────────────────────────────────── */}
+          {line === "bind" && (
+            <div className="flex flex-col gap-3" role="tabpanel">
+              <Field label="产品 / 等级" hint="选产品再选等级">
+                <div className="flex flex-col gap-2">
+                  {products.map((p) => {
+                    const selected = p in bindLevels;
+                    const levels = config.levels[p] ?? [];
+                    const effLevel = levels.includes(bindLevels[p]) ? bindLevels[p] : levels[0];
+                    return (
+                      <div key={p} className="flex flex-col gap-1.5">
+                        <button
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => toggleBindProduct(p)}
+                          disabled={levels.length === 0}
+                          title={levels.length === 0 ? "该产品未配置等级" : undefined}
+                          className={cn(chipCls(selected), "self-start")}
+                        >
+                          {productLabel(p)}
+                        </button>
+                        {selected && levels.length > 0 && (
+                          <div
+                            className="flex flex-wrap gap-1.5 pl-1"
+                            role="radiogroup"
+                            aria-label={`${productLabel(p)} 等级`}
+                          >
+                            {levels.map((level) => (
+                              <button
+                                key={level}
+                                type="button"
+                                role="radio"
+                                aria-checked={effLevel === level}
+                                onClick={() => setBindLevels((prev) => ({ ...prev, [p]: level }))}
+                                className={chipCls(effLevel === level)}
+                              >
+                                {level}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Field>
+
+              <Field label="共享人数">
+                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="共享人数">
+                  {SHARE_USERS.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      role="radio"
+                      aria-checked={shareUsers === n}
+                      onClick={() => setShareUsers(n)}
+                      className={chipCls(shareUsers === n)}
+                    >
+                      {shareLabel(n)}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="设备">
+                <Stepper value={bindDevices} onChange={setBindDevices} />
+              </Field>
+            </div>
+          )}
+
+          {/* ── 价格读数 ─────────────────────────────────────────────────────────── */}
+          <div className="rounded-lg border bg-muted/30 p-3">
+            <div className="min-h-4 text-[11px] text-muted-foreground">{summary ?? emptyHint}</div>
+            <div className="mt-1 flex items-baseline justify-between gap-2">
+              <span className="text-xs text-muted-foreground">合计</span>
+              <span className="font-mono text-lg font-semibold tabular-nums" data-testid="preview-total">
+                {priced ? formatPriceCents(priced.priceCents) : "—"}
+              </span>
+            </div>
+            <div className="text-right text-[11px] text-muted-foreground">/ {config.durationDays} 天</div>
+          </div>
+        </>
       )}
+    </div>
+  );
+}
+
+// ── 小型展示件 ───────────────────────────────────────────────────────────────────
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs font-medium">{label}</span>
+        {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Stepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  const btn =
+    "inline-flex size-7 items-center justify-center rounded-md border text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+  return (
+    <div className="inline-flex items-center gap-2">
+      <button
+        type="button"
+        aria-label="减少"
+        disabled={value <= 1}
+        onClick={() => onChange(Math.max(1, value - 1))}
+        className={btn}
+      >
+        −
+      </button>
+      <span className="w-14 text-center text-xs tabular-nums" aria-live="polite">
+        {value} 设备
+      </span>
+      <button
+        type="button"
+        aria-label="增加"
+        disabled={value >= MAX_DEVICES}
+        onClick={() => onChange(Math.min(MAX_DEVICES, value + 1))}
+        className={btn}
+      >
+        +
+      </button>
     </div>
   );
 }

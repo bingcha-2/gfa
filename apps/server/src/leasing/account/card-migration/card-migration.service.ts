@@ -58,6 +58,7 @@ import { RemoteCodexService } from "../../remote-codex/service/remote-codex.serv
 import { RemoteAnthropicService } from "../../remote-anthropic/service/remote-anthropic.service";
 import { keyExpiresAt } from "../../token-server/token-billing";
 import { newBackingKeyValue } from "../../subscription/subscription.service";
+import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
 
 const ALL_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -108,8 +109,16 @@ export class CardMigrationService {
 
     let record = this.accessKeyStore.findByKey(cardKey);
     if (!record) {
-      // The original key string dies at migration (rotated to the backing key),
-      // so an idempotent re-bind finds the record via migration provenance.
+      // 「转化即删」后老卡 key 在内存/文件都没了 → 幂等重绑改查 DB 的迁移痕迹
+      // (Subscription.migratedFromKey)。命中即按已绑/冲突应答,不再依赖文件影子。
+      const migratedSub = await this.prisma.subscription.findFirst({ where: { migratedFromKey: cardKey } });
+      if (migratedSub) {
+        if (migratedSub.customerId !== customerId) {
+          throw new ConflictException({ error: "CARD_ALREADY_BOUND", message: "该卡密已绑定到其他账号" });
+        }
+        return { ok: true, alreadyBound: true, subscription: summarize(migratedSub) };
+      }
+      // 兼容历史:迁移前/中残留的文件影子仍带 migratedFromKey 时,走老路径自愈。
       record = this.findByMigratedFromKey(cardKey);
       if (!record) {
         throw new NotFoundException({ error: "CARD_NOT_FOUND", message: "卡密不存在" });
@@ -203,20 +212,27 @@ export class CardMigrationService {
       throw err;
     }
 
-    // Post-commit write barrier (synchronous triple — see module doc): a
-    // concurrent store flush during the commit await may have rewritten the
-    // file from a cache that predates the in-tx write. Flush whatever is
-    // pending, re-assert the migration fields on top of the current disk
-    // state (idempotent merge), and reload the pools so the old card key dies
-    // in every byKey index.
+    // 转化即删去影子(替代原"提交后重新断言影子"屏障):先 flush 结算提交期间可能产生的增量
+    // (单写者纪律),再把迁移出来的订阅按「与 boot 完全一致」的方式(legacyColumnsToConfig +
+    // subscriptionToLimitRecord)注册进内存订阅索引,同时把文件影子卡的实时限流窗口平移到订阅
+    // record,然后物理删除影子卡。migrate... 内部全程同步、与并发 flush 互斥;删除以最终 flush
+    // 落盘,reloadPools 让各池重读到"无影子"的文件。重启后由 boot 的 hydrate + 窗口重建接管。
     this.accessKeyStore.flush();
-    const reasserted = this.rosetta.upsertKeyRecord(migrationFields, { createIfMissing: false });
-    if (!reasserted.ok) {
-      // Record vanished mid-flight (operator deletion) — the committed rows
-      // stand; log loudly instead of failing a bind the customer already won.
-      this.logger.error(
-        `bind-card: post-commit re-assert failed for record ${recordId}: ${reasserted.error} — record missing from access-keys.json while its Subscription row exists`,
-      );
+    const subRow = await this.prisma.subscription.findUnique({ where: { id: recordId } });
+    if (subRow) {
+      const limitRecord = subscriptionToLimitRecord({
+        id: subRow.id,
+        customerId: subRow.customerId,
+        priority: subRow.priority,
+        backingKeyValue: subRow.backingKeyValue ?? undefined,
+        status: subRow.status,
+        expiresAt: subRow.expiresAt,
+        config: legacyColumnsToConfig(subRow as any),
+      });
+      this.accessKeyStore.migrateCardRecordToSubscription(limitRecord as any);
+    } else {
+      // 刚提交的行查不到(理论不该发生)—— 退回只删影子,避免老卡 key 残留。
+      this.logger.error(`bind-card: post-commit subscription ${recordId} not found — cannot de-shadow cleanly`);
     }
     this.reloadPools();
     this.logger.log(`bind-card: record ${recordId} migrated to customer ${customerId} (products=${products.join(",")})`);

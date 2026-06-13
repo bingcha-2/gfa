@@ -1,13 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowRightIcon,
   CreditCardIcon,
   KeyRoundIcon,
+  LoaderCircleIcon,
   PackageCheckIcon,
   ReceiptTextIcon,
+  RefreshCwIcon,
   SparklesIcon,
+  XCircleIcon,
 } from "lucide-react";
 
 import { AccountButton, AccountPill, AccountSkeleton } from "./account-ui";
@@ -22,6 +26,7 @@ import type {
 } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
 import { formatPriceCents } from "@/lib/account/format-extensions";
+import { isSubscriptionActive } from "@/lib/account/subscription-status";
 import { fmt } from "@/lib/i18n";
 import { useDict } from "@/lib/i18n/client";
 
@@ -37,6 +42,7 @@ function orderStatusTone(status: OrderStatus) {
       return "destructive";
     case "EXPIRED":
     case "REFUNDED":
+    case "CANCELLED":
     default:
       return "muted";
   }
@@ -54,8 +60,61 @@ function bestSubscription(subscriptions: Subscription[] | null): Subscription | 
   })[0];
 }
 
-function productList(products: string[]) {
-  return products.length > 0 ? products.join(" / ") : "购买后自动开通";
+function productList(products: string[], autoLabel: string) {
+  return products.length > 0 ? products.join(" / ") : autoLabel;
+}
+
+function SyncOrderButton({
+  outTradeNo,
+  onSync,
+  labels,
+}: {
+  outTradeNo: string;
+  onSync: (outTradeNo: string) => Promise<void>;
+  labels: { syncing: string; syncStatus: string };
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="account-order-sync"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await onSync(outTradeNo); } finally { setBusy(false); }
+      }}
+    >
+      {busy
+        ? <><LoaderCircleIcon className="account-order-sync__icon account-order-sync__icon--spin" />{labels.syncing}</>
+        : <><RefreshCwIcon className="account-order-sync__icon" />{labels.syncStatus}</>}
+    </button>
+  );
+}
+
+function CancelOrderButton({
+  outTradeNo,
+  onCancel,
+  labels,
+}: {
+  outTradeNo: string;
+  onCancel: (outTradeNo: string) => Promise<void>;
+  labels: { cancel: string; cancelling: string; confirm: string };
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="account-order-cancel"
+      disabled={busy}
+      onClick={async () => {
+        if (!window.confirm(labels.confirm)) return;
+        setBusy(true);
+        try { await onCancel(outTradeNo); } finally { setBusy(false); }
+      }}
+    >
+      {busy
+        ? <><LoaderCircleIcon className="account-order-sync__icon account-order-sync__icon--spin" />{labels.cancelling}</>
+        : <><XCircleIcon className="account-order-sync__icon" />{labels.cancel}</>}
+    </button>
+  );
 }
 
 export function AccountBillingCenter({
@@ -68,6 +127,8 @@ export function AccountBillingCenter({
   onBound,
   onPage,
   onPurchase,
+  onSyncOrder,
+  onCancelOrder,
 }: {
   subscriptions: Subscription[] | null;
   /**
@@ -83,9 +144,17 @@ export function AccountBillingCenter({
   onBound: () => void;
   onPage: (page: number) => void;
   onPurchase?: (plan: Plan) => void;
+  onSyncOrder?: (outTradeNo: string) => Promise<void>;
+  onCancelOrder?: (outTradeNo: string) => Promise<void>;
 }) {
   const dict = useDict();
   const b = dict.portalApp.billing;
+  const subStatus = dict.portalApp.subscriptions;
+  // 迁移卡密订阅 only for genuinely card-migrated subs; otherwise the plan's own
+  // name. planName here is products.join("+"), so "null ⇒ migrated" would mislabel
+  // a migrated sub that carries products as just its products.
+  const planLabel = (s: Subscription) =>
+    s.migratedFromCard ? b.migratedPlanName : s.planName ?? b.migratedPlanName;
   const current = bestSubscription(subscriptions);
   // In catalog-only mode (no `plans` prop) the plan grid is absent, so it never
   // gates the loading state — only subscriptions + orders do.
@@ -104,25 +173,22 @@ export function AccountBillingCenter({
             {loadError
               ? b.loadFailed
               : isLoading
-                ? "正在同步订阅与订单"
+                ? b.heroSyncing
                 : current
-                  ? "订阅已连接"
-                  : "等待购买套餐"}
+                  ? b.heroConnected
+                  : b.heroWaiting}
           </AccountPill>
-          <h2>支付中心</h2>
-          <p>
-            套餐购买、扫码支付、卡密绑定和订单记录集中在这里。支付完成后,
-            客户端授权会自动更新。
-          </p>
+          <h2>{b.centerTitle}</h2>
+          <p>{b.centerDesc}</p>
         </div>
         <div className="account-billing-hero__status">
           <div>
-            <span>当前订阅</span>
-            <strong>{current?.planName ?? (current ? b.migratedPlanName : "暂无套餐")}</strong>
+            <span>{b.heroCurrentLabel}</span>
+            <strong>{current ? planLabel(current) : b.heroNoPlan}</strong>
           </div>
           <div>
-            <span>订单记录</span>
-            <strong>{orderCount} 笔</strong>
+            <span>{b.heroOrdersLabel}</span>
+            <strong>{fmt(b.heroOrdersValue, { n: orderCount })}</strong>
           </div>
         </div>
       </section>
@@ -132,7 +198,7 @@ export function AccountBillingCenter({
           <div className="account-billing-panel__header">
             <div>
               <p>{b.currentSection}</p>
-              <h3>{current?.planName ?? (current ? b.migratedPlanName : b.currentEmpty)}</h3>
+              <h3>{current ? planLabel(current) : b.currentEmpty}</h3>
             </div>
             <PackageCheckIcon />
           </div>
@@ -146,8 +212,8 @@ export function AccountBillingCenter({
               {subscriptions.map((sub) => (
                 <article className="account-subscription-card" key={sub.id}>
                   <div>
-                    <strong>{sub.planName ?? b.migratedPlanName}</strong>
-                    <span>{productList(sub.products)}</span>
+                    <strong>{planLabel(sub)}</strong>
+                    <span>{productList(sub.products, b.autoProvision)}</span>
                   </div>
                   <div>
                     <span>{b.expiresLabel}</span>
@@ -159,6 +225,19 @@ export function AccountBillingCenter({
                     <span>{b.deviceLimitLabel}</span>
                     <strong>{fmt(b.deviceLimitValue, { n: sub.deviceLimit })}</strong>
                   </div>
+                  {(() => {
+                    const active = isSubscriptionActive(sub, Date.now());
+                    const cancelled = sub.status.toUpperCase() === "CANCELLED";
+                    return (
+                      <AccountStatusBadge tone={active ? "success" : "muted"}>
+                        {cancelled
+                          ? subStatus.statusCancelled
+                          : active
+                            ? subStatus.statusActive
+                            : subStatus.statusExpired}
+                      </AccountStatusBadge>
+                    );
+                  })()}
                   <AccountPill tone={sub.weight >= 8 ? "brand" : "info"}>
                     {sub.weight >= 8 ? b.weightDedicated : b.weightShared}
                   </AccountPill>
@@ -172,7 +251,7 @@ export function AccountBillingCenter({
           <div className="account-billing-panel__header">
             <div>
               <p>{b.bindSection}</p>
-              <h3>卡密接入</h3>
+              <h3>{b.bindHeading}</h3>
             </div>
             <KeyRoundIcon />
           </div>
@@ -185,7 +264,7 @@ export function AccountBillingCenter({
         <div className="account-billing-panel__header">
           <div>
             <p>{b.plansSection}</p>
-            <h3>选择套餐</h3>
+            <h3>{b.plansHeading}</h3>
           </div>
           <CreditCardIcon />
         </div>
@@ -230,7 +309,7 @@ export function AccountBillingCenter({
                   <span>/ {fmt(b.durationDays, { n: plan.durationDays })}</span>
                 </div>
                 <div className="account-plan-card__meta">
-                  <span>{productList(plan.products)}</span>
+                  <span>{productList(plan.products, b.autoProvision)}</span>
                   <span>
                     {b.deviceLimitLabel}: {fmt(b.deviceLimitValue, { n: plan.deviceLimit })}
                   </span>
@@ -248,7 +327,7 @@ export function AccountBillingCenter({
         <div className="account-billing-panel__header">
           <div>
             <p>{b.ordersSection}</p>
-            <h3>支付记录</h3>
+            <h3>{b.ordersHeading}</h3>
           </div>
           <ReceiptTextIcon />
         </div>
@@ -276,7 +355,9 @@ export function AccountBillingCenter({
                 <div>
                   <span>{b.colChannel}</span>
                   <strong>
-                    {order.payChannel === "ALIPAY" ? b.channelAlipay : b.channelWxpay}
+                    {order.payType
+                      ? (b.payType as Record<string, string>)[order.payType] ?? order.payType
+                      : "—"}
                   </strong>
                 </div>
                 <div>
@@ -289,6 +370,24 @@ export function AccountBillingCenter({
                   <span>{b.colCreatedAt}</span>
                   <strong>{formatDateTime(order.createdAt)}</strong>
                 </div>
+                {order.status === "PENDING" && (onSyncOrder || onCancelOrder) && (
+                  <div className="account-order-row__actions">
+                    {onSyncOrder && (
+                      <SyncOrderButton
+                        outTradeNo={order.outTradeNo}
+                        onSync={onSyncOrder}
+                        labels={{ syncing: b.syncing, syncStatus: b.syncStatus }}
+                      />
+                    )}
+                    {onCancelOrder && (
+                      <CancelOrderButton
+                        outTradeNo={order.outTradeNo}
+                        onCancel={onCancelOrder}
+                        labels={{ cancel: b.cancelOrder, cancelling: b.cancelling, confirm: b.cancelConfirm }}
+                      />
+                    )}
+                  </div>
+                )}
               </article>
             ))}
             {orders.total > PAGE_SIZE && (

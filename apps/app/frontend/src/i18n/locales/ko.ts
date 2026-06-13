@@ -28,7 +28,7 @@ export const ko: DeepPartialDict = {
     collapseSidebar: '사이드바 접기',
     updateTo: 'v{version} 업데이트',
     updateAvailable: 'v{version} 사용 가능',
-    feedback: 'GitHub 피드백',
+    feedback: '피드백',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const ko: DeepPartialDict = {
     error: '오류 · {error}',
     leasing: '계정 임대 중...',
     needCard: '계정에 로그인하세요',
+    subscriptionExpired: '구독이 만료되었습니다',
     ok: '서비스 정상 · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const ko: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: '구독/세션이 만료되어 기능이 중지되었습니다',
-    cardUnusableBody: '현재 로그인 세션 또는 구독이 더 이상 유효하지 않습니다 (세션 만료/구독 종료/기기 제거). 다시 로그인하거나 웹에서 구독과 결제를 관리하세요.',
+    cardUnusableTitle: '구독이 만료되어 기능이 중지되었습니다',
+    cardUnusableBody: '이 계정에 사용 가능한 구독이 없습니다(미구매 또는 만료). 웹에서 갱신하거나 요금제를 구매한 뒤 다시 로그인하면 적용됩니다.',
     cardUnusableRelogin: '다시 로그인',
     cardUnusableBilling: '구독 및 결제 ↗',
+    cardUnusableContact: '고객지원 문의',
+    cardUnusableHelp: '문제가 있거나 도움이 필요하신가요? "고객지원 문의"를 누르면 신속히 도와드립니다.',
+    kickedDeviceRevoked: '이 기기가 제거되었습니다. 다시 로그인해 주세요.',
+    kickedSessionInvalid: '로그인 상태가 만료되었습니다. 다시 로그인해 주세요.',
     activateTitle: '계정 카드 활성화',
     activateIntro: '카드를 입력하면 공식 모델에 바로 연결됩니다 — API Key 설정 불필요, 코드 데이터는 공식 서버로 직접 전송되며 Bingcha는 로컬에서 인증 토큰만 주입합니다.',
     cardPlaceholder: '계정 카드 입력 (AI...)',
@@ -233,9 +238,9 @@ export const ko: DeepPartialDict = {
     wechatContact: '위챗 {wechat} 추가 후 고객 지원에 문의하세요',
     groupContact: '고객 지원 그룹에 참여해 문의하세요',
     viewFull: '전체 버전 보기',
-    githubTitle: 'GitHub에서 문제 제보',
-    githubDesc: '버그 신고, 기능 제안, 알려진 문제 확인',
-    githubCta: '이슈 등록하기',
+    githubTitle: '피드백 및 도움말',
+    githubDesc: '사용자 센터에서 문제 제보, 기능 제안 또는 고객지원에 문의하세요',
+    githubCta: '사용자 센터로 이동',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const ko: DeepPartialDict = {
     version: '버전',
     deviceId: '기기 ID',
     feedbackLabel: '문제 제보',
-    feedbackBtn: 'GitHub에서 제보',
+    feedbackBtn: '사용자 센터로 이동',
     changelogLabel: '업데이트 내역',
     changelogBtn: '보기',
     changelogModalTitle: 'v{version} 업데이트 내용',
@@ -295,6 +300,8 @@ export const ko: DeepPartialDict = {
     planExpiry: '만료일',
     deviceName: '기기 이름',
     noSubscription: '유효한 플랜이 없습니다',
+    activeMember: '구독 중',
+    refresh: '새로고침',
     logout: '로그아웃',
     manageDevices: '기기 관리',
     sessionExpired: '세션이 만료되었습니다. 다시 로그인해 주세요',

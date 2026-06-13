@@ -6,7 +6,7 @@
  * plan-based createOrder path was removed with the Plan table.)
  */
 import "reflect-metadata";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingService } from "../billing.service";
 import { NotFoundException } from "@nestjs/common";
@@ -31,9 +31,7 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
 }
 
 function buildService(prisma: any) {
-  // 这些用例只测下单查询/列表(仅用 prisma);catalog/rosetta 用不到,传桩满足 3 参构造
-  // (目录下单与座位预检在 billing.service.catalog.spec.ts 覆盖)。
-  return new BillingService(prisma, {} as any, {} as any);
+  return new BillingService(prisma, {} as any, {} as any, {} as any);
 }
 
 describe("BillingService.getOrder", () => {
@@ -181,7 +179,7 @@ describe("BillingService.listSubscriptions", () => {
     service = buildService(prisma);
   });
 
-  it("maps subscriptions with null planName and parsed products (catalog purchase)", async () => {
+  it("maps catalog subscriptions with products-joined planName and parsed products", async () => {
     const expiry = new Date("2026-12-31T00:00:00Z");
     prisma.subscription.findMany.mockResolvedValue([
       {
@@ -198,7 +196,7 @@ describe("BillingService.listSubscriptions", () => {
     expect(result.subscriptions).toHaveLength(1);
     const sub = result.subscriptions[0];
     expect(sub.id).toBe("sub-1");
-    expect(sub.planName).toBeNull(); // configurator has no single plan name
+    expect(sub.planName).toBe("antigravity+codex"); // 目录订阅:products 拼接为展示名
     expect(sub.status).toBe("ACTIVE");
     expect(sub.products).toEqual(["antigravity", "codex"]);
     expect(sub.expiresAt).toBe("2026-12-31T00:00:00.000Z");

@@ -40,3 +40,24 @@ export function occupiedSharesByAccount(
   }
   return m;
 }
+
+/**
+ * 某产品下,每个上游号已绑的「人数」(= 绑定订阅张数,而非 weight 求和)。选号「人数最多优先」
+ * 据此:把拼车塞满、空号留给独享。口径与 occupiedSharesByAccount 完全一致(只数 line=bind、
+ * bindings[product] 命中,可 excludeId 排除自身),区别仅是每命中一条 +1 而非 +weight。
+ */
+export function boundSeatsByAccount(
+  configs: Array<SubConfig & { id?: string }>,
+  product: string,
+  excludeId = "",
+): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const c of configs) {
+    if (c.line !== "bind") continue;
+    if (excludeId && c.id === excludeId) continue;
+    const accountId = Number(c.bindings?.[product]);
+    if (!(accountId > 0)) continue;
+    m.set(accountId, (m.get(accountId) || 0) + 1);
+  }
+  return m;
+}

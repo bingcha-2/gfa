@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { PlusIcon } from "lucide-react";
+import { PlusIcon, XIcon } from "lucide-react";
 
 import {
   AccountButton,
@@ -13,8 +12,10 @@ import {
   AccountTextarea,
 } from "@/components/account/account-ui";
 import { TicketStatusBadge } from "@/components/account/ticket-status-badge";
+import { TicketThread } from "@/components/account/ticket-thread";
 import { createTicket, getTickets } from "@/lib/account/user-api";
 import type { TicketSummary } from "@/lib/account/user-types";
+import { useDialogA11y } from "@/lib/account/use-dialog-a11y";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
 
@@ -29,6 +30,12 @@ export function TicketsList() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Ticket whose conversation is shown in a modal (null = no thread open).
+  const [activeTicket, setActiveTicket] = useState<TicketSummary | null>(null);
+
+  const createPanelRef = useRef<HTMLElement>(null);
+  const threadPanelRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +52,21 @@ export function TicketsList() {
     void load();
   }, [load]);
 
+  const closeCreate = useCallback(() => {
+    setDialogOpen(false);
+    setSubject("");
+    setBody("");
+  }, []);
+
+  // Closing reloads the list so "最近更新" / 状态 reflect any reply just sent.
+  const closeThread = useCallback(() => {
+    setActiveTicket(null);
+    void load();
+  }, [load]);
+
+  useDialogA11y(createPanelRef, dialogOpen, closeCreate);
+  useDialogA11y(threadPanelRef, Boolean(activeTicket), closeThread);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (submitting || !subject.trim() || !body.trim()) return;
@@ -52,8 +74,7 @@ export function TicketsList() {
     try {
       await createTicket(subject.trim(), body.trim());
       toast.success(t.createdToast);
-      // Closing triggers onOpenChange(false), which resets subject/body.
-      setDialogOpen(false);
+      closeCreate();
       await load();
     } catch {
       toast.error(t.createFailed);
@@ -94,14 +115,22 @@ export function TicketsList() {
             </thead>
             <tbody>
               {tickets.map((ticket) => (
-                <tr key={ticket.id}>
+                <tr
+                  key={ticket.id}
+                  data-clickable
+                  onClick={() => setActiveTicket(ticket)}
+                >
                   <td>
-                    <Link
-                      href={`/account/tickets/${ticket.id}`}
-                      className="account-link"
+                    <button
+                      type="button"
+                      className="account-link account-linkbtn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveTicket(ticket);
+                      }}
                     >
                       {ticket.subject}
-                    </Link>
+                    </button>
                   </td>
                   <td>
                     <TicketStatusBadge status={ticket.status} />
@@ -124,14 +153,12 @@ export function TicketsList() {
           <button
             type="button"
             className="account-dialog__backdrop"
-            aria-label="关闭工单弹窗"
-            onClick={() => {
-              setDialogOpen(false);
-              setSubject("");
-              setBody("");
-            }}
+            aria-label={t.close}
+            onClick={closeCreate}
           />
           <section
+            ref={createPanelRef}
+            tabIndex={-1}
             className="account-dialog__panel"
             role="dialog"
             aria-modal="true"
@@ -145,14 +172,10 @@ export function TicketsList() {
               <button
                 type="button"
                 className="account-dialog__close"
-                aria-label="关闭工单弹窗"
-                onClick={() => {
-                  setDialogOpen(false);
-                  setSubject("");
-                  setBody("");
-                }}
+                aria-label={t.close}
+                onClick={closeCreate}
               >
-                x
+                <XIcon size={16} />
               </button>
             </header>
             <form onSubmit={handleCreate} className="account-form-stack">
@@ -164,6 +187,7 @@ export function TicketsList() {
                 maxLength={120}
                 required
                 disabled={submitting}
+                data-autofocus
               />
               <AccountTextarea
                 label={t.bodyLabel}
@@ -176,13 +200,50 @@ export function TicketsList() {
               />
               <div className="account-form-actions">
                 <AccountButton
-                type="submit"
-                disabled={submitting || !subject.trim() || !body.trim()}
-              >
-                {submitting ? t.submitting : t.submit}
+                  type="submit"
+                  disabled={submitting || !subject.trim() || !body.trim()}
+                >
+                  {submitting ? t.submitting : t.submit}
                 </AccountButton>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {activeTicket && (
+        <div className="account-dialog" role="presentation">
+          <button
+            type="button"
+            className="account-dialog__backdrop"
+            aria-label={t.close}
+            onClick={closeThread}
+          />
+          <section
+            ref={threadPanelRef}
+            tabIndex={-1}
+            className="account-dialog__panel account-dialog__panel--wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-ticket-thread-dialog-title"
+          >
+            <header className="account-dialog__header">
+              <div className="account-ticket-dialog__heading">
+                <h2 id="account-ticket-thread-dialog-title">
+                  {activeTicket.subject}
+                </h2>
+                <TicketStatusBadge status={activeTicket.status} />
+              </div>
+              <button
+                type="button"
+                className="account-dialog__close"
+                aria-label={t.close}
+                onClick={closeThread}
+              >
+                <XIcon size={16} />
+              </button>
+            </header>
+            <TicketThread ticketId={activeTicket.id} />
           </section>
         </div>
       )}

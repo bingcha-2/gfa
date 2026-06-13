@@ -22,6 +22,8 @@ import { SubscriptionService } from "../../../subscription/subscription.service"
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
+import * as crypto from "crypto";
+
 import { AccessKeyStore } from "../../../token-server/access-key-store";
 import { signParams } from "../epay.sign";
 import {
@@ -33,7 +35,10 @@ import {
 } from "../../../../shared/__tests__/customer-test-db";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const EPAY_KEY = "integration-test-key";
+// V2:商户私钥下单签名 + 平台私钥签回调 / 平台公钥验签(integration 用一对即可)。
+const _intKP = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+const INT_PRIV_B64 = _intKP.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+const INT_PUB_B64 = _intKP.publicKey.export({ type: "spki", format: "der" }).toString("base64");
 const EPAY_PID = "9001";
 
 // Pool-line catalog priced so the default selection costs exactly 990, and the
@@ -100,8 +105,8 @@ function buildBody(outTradeNo: string, money: string, overrides: Record<string, 
     trade_status: "TRADE_SUCCESS",
     ...overrides,
   };
-  const sign = signParams(base, EPAY_KEY);
-  return { ...base, sign_type: "MD5", sign };
+  const sign = signParams(base, INT_PRIV_B64);
+  return { ...base, sign_type: "RSA", sign };
 }
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
@@ -124,13 +129,21 @@ beforeEach(async () => {
     ],
   }));
 
-  vi.stubEnv("EPAY_KEY", EPAY_KEY);
+  vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", INT_PRIV_B64);
+  vi.stubEnv("EPAY_PLATFORM_PUBLIC_KEY", INT_PUB_B64);
   vi.stubEnv("EPAY_PID", EPAY_PID);
   vi.stubEnv("EPAY_REFERRAL_PERCENT", "10");
   // Pin fee to 0 so order amounts equal the base price: these tests assert base
   // prices and build callback bodies at base price. Without this, a developer's
   // local .env (EPAY_FEE_PERCENT) leaks in via Vitest and breaks every amount check.
   vi.stubEnv("EPAY_FEE_PERCENT", "0");
+
+  // buildEpayPayUrl POSTs to the live zhunfu gateway — stub fetch so order creation
+  // completes offline. The signed V2 request is asserted via the captured POST body;
+  // callback activation is driven directly via callbackService.handleNotify.
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    text: async () => "<script>window.location.replace('https://gw.test/pay/cashier')</script>",
+  })));
 
   const rosetta = new RosettaService({ dataDir: tmpDir });
   store = new AccessKeyStore(accessKeysPath);
@@ -144,14 +157,15 @@ beforeEach(async () => {
   );
   planCatalog = new PlanCatalogService(prisma as any);
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
+  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService);
 
   await publishCatalog();
 });
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -181,8 +195,15 @@ describe("BillingService.createCatalogOrder — DB integration", () => {
     expect(result.outTradeNo).toMatch(/^gfa\d+[0-9a-f]{12}$/);
     expect(result.amountCents).toBe(990);
     expect(result.qrDataUri).toMatch(/^data:image\/png;base64,/);
-    expect(result.payUrl).toContain("money=9.90");
-    expect(result.payUrl).toMatch(/sign=[0-9a-f]{32}/);
+    // V2:payUrl 是网关返回的收银台地址;签名的下单请求体里才有 money/sign_type/sign。
+    expect(result.payUrl).toBe("https://gw.test/pay/cashier");
+    const [submitUrl, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(String(submitUrl)).toContain("/api/pay/submit");
+    const reqBody = new URLSearchParams((init as any).body as string);
+    expect(reqBody.get("money")).toBe("9.90");
+    expect(reqBody.get("sign_type")).toBe("RSA");
+    expect(reqBody.get("sign")).toBeTruthy();
+    expect(reqBody.get("out_trade_no")).toBe(result.outTradeNo);
 
     const stored = await prisma.planOrder.findUnique({ where: { outTradeNo: result.outTradeNo } });
     expect(stored).toBeTruthy();
@@ -383,7 +404,7 @@ describe("EpayCallbackService — security failures (DB integration)", () => {
       money: "9.90",
       trade_status: "TRADE_SUCCESS",
     };
-    const body = { ...base, sign_type: "MD5", sign: signParams(base, EPAY_KEY) };
+    const body = { ...base, sign_type: "RSA", sign: signParams(base, INT_PRIV_B64) };
 
     const result = await callbackService.handleNotify(body);
     expect(result).toBe("fail");
@@ -422,9 +443,10 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
     const cust1 = await createTestCustomer();
     const cust2 = await createTestCustomer();
 
-    // Create 2 orders for cust1, 1 for cust2
-    await catalogOrder(cust1.id, "ALIPAY");
-    await catalogOrder(cust1.id, "WXPAY");
+    // Create 2 orders for cust1, 1 for cust2。
+    // 不同 selection(small/large)→ 不触发「同 customer+同 selection」复用,确保是 2 笔独立订单。
+    await catalogOrder(cust1.id, "ALIPAY", "small");
+    await catalogOrder(cust1.id, "WXPAY", "large");
     await catalogOrder(cust2.id, "ALIPAY");
 
     const result = await billingService.listOrders(cust1.id, 1, 10);
@@ -438,8 +460,9 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
 
   it("pagination: page 2 with pageSize 1 returns the older order", async () => {
     const customer = await createTestCustomer();
-    await catalogOrder(customer.id, "ALIPAY");
-    await catalogOrder(customer.id, "WXPAY");
+    // 不同 selection → 避免同 selection 复用,确保 2 笔独立订单(才能测分页)。
+    await catalogOrder(customer.id, "ALIPAY", "small");
+    await catalogOrder(customer.id, "WXPAY", "large");
 
     const page1 = await billingService.listOrders(customer.id, 1, 1);
     const page2 = await billingService.listOrders(customer.id, 2, 1);
@@ -478,7 +501,7 @@ describe("BillingService.listSubscriptions — DB integration", () => {
     expect(sub.expiresAt).toBeNull();
   });
 
-  it("catalog purchase → planName null + migratedFromCard false", async () => {
+  it("catalog purchase → planName = products joined + migratedFromCard false", async () => {
     const customer = await createTestCustomer();
     const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
     const body = buildBody(outTradeNo, "9.90");
@@ -487,7 +510,8 @@ describe("BillingService.listSubscriptions — DB integration", () => {
     const result = await billingService.listSubscriptions(customer.id);
     expect(result.subscriptions).toHaveLength(1);
     const sub = result.subscriptions[0];
-    expect(sub.planName).toBeNull(); // catalog purchases have no single plan name
+    // 目录订阅用 products 拼接作展示名(只有迁移卡密订阅才 planName=null → 前端回退「迁移卡密订阅」)。
+    expect(sub.planName).toBe("antigravity");
     expect(sub.migratedFromCard).toBe(false);
   });
 });

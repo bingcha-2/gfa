@@ -22,6 +22,9 @@ export type AppNotification = {
 interface AppState {
   // ===== Account =====
   account: AccountState | null
+  // 被动登出原因码(心跳检测到 DEVICE_REVOKED / SESSION_INVALID 等致命态时落地;
+  // 登录页据此给一句解释,避免「无声登出」看着像没反应)。
+  logoutReason: string
 
   // ===== Data =====
   config: Config | null
@@ -107,6 +110,7 @@ let heartbeatInFlight = false
 
 export const useAppStore = create<AppState>((set, get) => ({
   account: null,
+  logoutReason: '',
   config: null,
   proxyRunning: false,
   proxyPort: 48800,
@@ -271,6 +275,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   login: async (email: string, password: string) => {
+    set({ logoutReason: '' }) // 新一次登录尝试 → 清掉上次的被动登出提示
     const result = await api.userLogin(email, password)
     await get().fetchAccountState()
     await get().fetchConfig()
@@ -293,6 +298,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       await api.heartbeatCheck()
     } catch (err) {
       console.error('heartbeat failed:', err)
+      // 致命会话类(设备被移除 / 会话失效)Go 侧已清本地会话 → 即将回登录页;
+      // 抓出原因码,登录页展示一句解释。SUBSCRIPTION_EXPIRED 不在此列(保留登录态,走横幅)。
+      const msg = String((err as { message?: string } | undefined)?.message ?? err ?? '')
+      const code = msg.match(/DEVICE_REVOKED|SESSION_INVALID|DEVICE_LIMIT_EXCEEDED/)?.[0]
+      if (code) set({ logoutReason: code })
     } finally {
       heartbeatInFlight = false
     }

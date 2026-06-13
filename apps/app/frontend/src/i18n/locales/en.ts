@@ -28,7 +28,7 @@ export const en: DeepPartialDict = {
     collapseSidebar: 'Collapse sidebar',
     updateTo: 'Update to v{version}',
     updateAvailable: 'v{version} available',
-    feedback: 'Feedback on GitHub',
+    feedback: 'Feedback',
   },
 
   theme: {
@@ -42,6 +42,7 @@ export const en: DeepPartialDict = {
     error: 'Error · {error}',
     leasing: 'Acquiring lease...',
     needCard: 'Sign in to your account',
+    subscriptionExpired: 'Subscription expired',
     ok: 'Service healthy · 127.0.0.1:{port}',
   },
 
@@ -64,10 +65,14 @@ export const en: DeepPartialDict = {
   },
 
   dashboard: {
-    cardUnusableTitle: 'Session or subscription invalid — features disabled',
-    cardUnusableBody: 'Your session is no longer valid (session expired / subscription ended / device removed). Sign in again, or manage your subscription on the web.',
+    cardUnusableTitle: 'Subscription expired — features disabled',
+    cardUnusableBody: 'This account has no active subscription (not purchased or expired). Renew or buy a plan on the web, then sign in again to apply.',
     cardUnusableRelogin: 'Sign in again',
     cardUnusableBilling: 'Subscription & billing ↗',
+    cardUnusableContact: 'Contact support',
+    cardUnusableHelp: 'Having trouble or need help? Tap "Contact support" and our team will assist you shortly.',
+    kickedDeviceRevoked: 'This device has been removed. Please sign in again.',
+    kickedSessionInvalid: 'Your session is no longer valid. Please sign in again.',
     activateTitle: 'Activate account card',
     activateIntro: 'Enter your card to connect straight to official models — no API keys, code goes directly to official servers, Bingcha only injects the authorization token locally.',
     cardPlaceholder: 'Enter account card (AI...)',
@@ -233,9 +238,9 @@ export const en: DeepPartialDict = {
     wechatContact: 'Add {wechat} on WeChat for support',
     groupContact: 'Join the support group',
     viewFull: 'View full version',
-    githubTitle: 'Report issues on GitHub',
-    githubDesc: 'File bugs, suggest features, or browse known issues',
-    githubCta: 'Open an issue',
+    githubTitle: 'Feedback & help',
+    githubDesc: 'Submit issues, suggest features, or contact support in your account',
+    githubCta: 'Go to your account',
   },
 
   settings: {
@@ -257,7 +262,7 @@ export const en: DeepPartialDict = {
     version: 'Version',
     deviceId: 'Device ID',
     feedbackLabel: 'Feedback',
-    feedbackBtn: 'Report on GitHub',
+    feedbackBtn: 'Go to your account',
     changelogLabel: 'Changelog',
     changelogBtn: 'View',
     changelogModalTitle: 'What\'s new in v{version}',
@@ -295,6 +300,8 @@ export const en: DeepPartialDict = {
     planExpiry: 'Expires',
     deviceName: 'Device',
     noSubscription: 'No active subscription',
+    activeMember: 'Subscribed',
+    refresh: 'Refresh',
     logout: 'Sign out',
     manageDevices: 'Manage devices',
     sessionExpired: 'Session expired — please sign in again',

@@ -10,17 +10,16 @@ import { AccountTopNav } from "@/components/account/account-topnav";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/account/billing",
+  // AccountLocaleSwitcher reads useRouter() to refresh after a locale change.
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
 vi.mock("@/components/account/account-provider", () => ({
   useAccount: () => ({
     customer: { email: "member@example.com", displayName: "" },
     handleLogout: vi.fn(),
+    unread: 0,
   }),
-}));
-
-vi.mock("@/lib/account/user-api", () => ({
-  getNotifications: () => Promise.resolve({ notifications: [], total: 0, unread: 0 }),
 }));
 
 describe("AccountTopNav", () => {

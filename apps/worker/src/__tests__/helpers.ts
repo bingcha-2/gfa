@@ -1,20 +1,21 @@
 /**
  * Worker test helpers.
  *
- * Provides a shared PrismaClient pointing at the dev SQLite DB,
- * cleanup utilities, and mock factories for BullMQ Job objects.
+ * DATABASE_URL is set by vitest.config.ts → env; never hardcode the path here.
  */
 import { PrismaClient } from "@prisma/client";
-import { resolve } from "node:path";
 
 let prisma: PrismaClient | null = null;
-const databaseUrl = `file:${resolve(__dirname, "../../../../prisma/test.db").replace(/\\/g, "/")}`;
+
+function requireDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set — run tests via vitest so the env is configured");
+  return url;
+}
 
 export function getPrisma(): PrismaClient {
   if (!prisma) {
-    prisma = new PrismaClient({
-      datasourceUrl: databaseUrl
-    });
+    prisma = new PrismaClient({ datasourceUrl: requireDatabaseUrl() });
   }
   return prisma;
 }

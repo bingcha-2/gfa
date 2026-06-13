@@ -333,7 +333,7 @@ export default function PlanCatalogPage() {
           <Card className="lg:sticky lg:top-4">
             <CardHeader>
               <CardTitle>实时算价预览</CardTitle>
-              <CardDescription>代表套餐组合的价格(随编辑即时更新)。</CardDescription>
+              <CardDescription>像客户端一样点选,实时试算任意组合的价格(随编辑更新)。</CardDescription>
             </CardHeader>
             <CardContent>
               <PricePreview form={form} />

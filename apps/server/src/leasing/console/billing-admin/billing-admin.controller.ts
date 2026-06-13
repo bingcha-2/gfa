@@ -60,6 +60,11 @@ export class BillingAdminController {
     return this.billingAdmin.billingStats();
   }
 
+  @Post("plan-orders/:id/sync")
+  async syncOrderPayment(@Param("id") id: string) {
+    return this.billingAdmin.syncOrderPayment(id);
+  }
+
   @Post("plan-orders/:id/refund")
   async refundOrder(@Param("id") id: string, @Request() req: any) {
     const result = await this.billingAdmin.refundOrder(id);

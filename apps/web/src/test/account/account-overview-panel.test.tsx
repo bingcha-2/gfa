@@ -26,7 +26,9 @@ const overview: AccountOverview = {
       planName: "年度会员",
       status: "ACTIVE",
       products: ["Codex", "Claude Code"],
-      expiresAt: "2026-07-01T00:00:00.000Z",
+      // Far-future so the "active membership" intent stays stable regardless of
+      // when the suite runs (the panel now honors real expiry).
+      expiresAt: "2099-07-01T00:00:00.000Z",
       deviceLimit: 5,
       weight: 8,
       priority: 0,
@@ -96,5 +98,39 @@ describe("AccountOverviewPanel", () => {
       "href",
       "/download"
     );
+  });
+
+  it("shows an EXPIRED state — not a false ACTIVE — for a lapsed subscription", () => {
+    const lapsed: AccountOverview = {
+      ...overview,
+      subscriptions: [
+        {
+          ...overview.subscriptions[0],
+          // status still reads ACTIVE from the backend, but the expiry has passed.
+          status: "ACTIVE",
+          expiresAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+
+    render(
+      <AccountOverviewPanel
+        customerId="cus_1"
+        overview={lapsed}
+        loading={false}
+        loadError={false}
+      />
+    );
+
+    // The pass must not lie: no ACTIVE tier, no 运行中 / 正常.
+    expect(screen.queryByText("ACTIVE")).not.toBeInTheDocument();
+    expect(screen.queryByText("运行中")).not.toBeInTheDocument();
+    expect(screen.queryByText("正常")).not.toBeInTheDocument();
+    // It reports the lapsed state and surfaces a renew path.
+    expect(screen.getByText("EXPIRED")).toBeInTheDocument();
+    expect(screen.getAllByText(/已过期/).length).toBeGreaterThan(0);
+    const renew = screen.getAllByRole("link", { name: /立即续费/ });
+    expect(renew.length).toBeGreaterThan(0);
+    renew.forEach((link) => expect(link).toHaveAttribute("href", "/account/billing"));
   });
 });
