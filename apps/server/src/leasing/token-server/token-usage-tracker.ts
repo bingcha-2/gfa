@@ -11,6 +11,7 @@
 
 interface TokenUsageEvent {
   accessKeyId: string;
+  customerId?: string;
   accessKeyName?: string;
   accountId?: number;
   modelKey: string;
@@ -41,6 +42,7 @@ export class TokenUsageTracker {
    */
   record(event: {
     accessKeyId: string;
+    customerId?: string;
     accessKeyName?: string;
     accountId?: number;
     modelKey: string;
@@ -55,6 +57,7 @@ export class TokenUsageTracker {
     if (!event.accessKeyId) return;
     this.queue.push({
       accessKeyId: event.accessKeyId,
+      customerId: event.customerId,
       accessKeyName: event.accessKeyName,
       accountId: event.accountId,
       modelKey: event.modelKey || "",
