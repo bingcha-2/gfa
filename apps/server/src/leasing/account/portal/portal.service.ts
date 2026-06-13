@@ -67,7 +67,6 @@ export class PortalService {
       }),
       this.prisma.subscription.findMany({
         where: { customerId },
-        include: { plan: { select: { name: true } } },
       }),
       this.prisma.device.count({
         where: { customerId, status: "ACTIVE" },
@@ -92,13 +91,14 @@ export class PortalService {
 
       return {
         id: sub.id,
-        planName: sub.plan?.name ?? null,
+        // The configurator has no single plan name; products[] carries the detail.
+        planName: null,
         status: sub.status as string,
         products: productEntitlements,
         expiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
         deviceLimit: sub.deviceLimit,
         weight: sub.weight,
-        migratedFromCard: sub.planId === null,
+        migratedFromCard: sub.migratedFromKey != null,
         quota,
       };
     });

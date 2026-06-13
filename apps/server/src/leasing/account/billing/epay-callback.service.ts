@@ -32,7 +32,7 @@
  *   Phase 1 — fast Prisma-only transaction: CAS the order PENDING→PAID, create
  *             Notification, create ReferralReward + increment creditCents. No
  *             file I/O inside (sync writes access-keys.json → too slow for a tx).
- *   Phase 2 — outside tx: call SubscriptionService.activateOrExtend (which
+ *   Phase 2 — outside tx: call SubscriptionService.activateForOrder (which
  *             internally calls EntitlementSyncService.syncSubscription for
  *             access-keys.json writes). Then update order.subscriptionId.
  *
@@ -218,8 +218,8 @@ export class EpayCallbackService {
     }
 
     // Step 5 — Phase 2: activate subscription (outside tx — includes file I/O via sync).
-    // activateOrExtend internally calls entitlementSync.syncSubscription.
-    // Catalog-based orders (planId null, config snapshot set) take the config path; see activateForOrder.
+    // activateForOrder internally calls entitlementSync.syncSubscription and writes
+    // the order's config snapshot into Subscription.config (catalog activation).
     let updatedSub: Awaited<ReturnType<SubscriptionService["activateForOrder"]>>;
     try {
       updatedSub = await this.subscriptionService.activateForOrder(order);
@@ -242,7 +242,7 @@ export class EpayCallbackService {
       return "success";
     }
 
-    // Step 6: return success — sync was already done inside activateOrExtend.
+    // Step 6: return success — sync was already done inside activateForOrder.
     return "success";
   }
 }

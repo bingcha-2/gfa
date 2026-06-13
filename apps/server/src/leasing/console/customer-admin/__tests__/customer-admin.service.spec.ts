@@ -1,16 +1,13 @@
 /**
  * customer-admin.service.spec.ts — console customer management against the real
- * Prisma test db. grantSubscription uses a REAL SubscriptionService with a
- * mocked EntitlementSyncService (shadow-record side effects covered elsewhere).
+ * Prisma test db (list / detail / enable-disable / profile edit).
  *
  * Security: every read path is asserted to omit passwordHash / tokenVersion.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { NotFoundException } from "@nestjs/common";
 
 import { CustomerAdminService } from "../customer-admin.service";
-import { SubscriptionService } from "../../../subscription/subscription.service";
-import type { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import {
   cleanCustomerTables,
   createTestCustomer,
@@ -23,41 +20,28 @@ const prisma = getCustomerPrisma();
 const DAY_MS = 24 * 60 * 60 * 1000;
 let seq = 0;
 
-let entitlementSync: { syncSubscription: ReturnType<typeof vi.fn>; expireShadowRecord: ReturnType<typeof vi.fn> };
 let service: CustomerAdminService;
 
-async function createPlan(overrides: Record<string, unknown> = {}) {
-  return prisma.plan.create({
-    data: {
-      name: `套餐 ${++seq}`,
-      priceCents: 9900,
-      durationDays: 30,
-      productEntitlements: JSON.stringify(["antigravity"]),
-      ...overrides,
-    },
-  });
-}
-
-async function createOrder(customerId: string, planId: string, overrides: Partial<{ status: string; amountCents: number }> = {}) {
+async function createOrder(customerId: string, overrides: Partial<{ status: string; amountCents: number }> = {}) {
   return prisma.planOrder.create({
     data: {
       customerId,
-      planId,
       amountCents: overrides.amountCents ?? 9900,
       payChannel: "ALIPAY",
       outTradeNo: `OT${Date.now()}${++seq}`,
       status: (overrides.status ?? "PAID") as any,
       paidAt: new Date(),
+      catalogVersion: 1,
+      config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     },
   });
 }
 
-async function createSub(customerId: string, overrides: Partial<{ status: string; planId: string | null }> = {}) {
+async function createSub(customerId: string, overrides: Partial<{ status: string }> = {}) {
   return prisma.subscription.create({
     data: {
       customerId,
-      planId: overrides.planId ?? null,
       status: (overrides.status ?? "ACTIVE") as any,
       startsAt: new Date(),
       expiresAt: new Date(Date.now() + 30 * DAY_MS),
@@ -79,12 +63,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await cleanCustomerTables();
-  entitlementSync = { syncSubscription: vi.fn(), expireShadowRecord: vi.fn() };
-  const subscriptionService = new SubscriptionService(
-    prisma as any,
-    entitlementSync as unknown as EntitlementSyncService,
-  );
-  service = new CustomerAdminService(prisma as any, subscriptionService);
+  service = new CustomerAdminService(prisma as any);
 });
 
 afterAll(async () => {
@@ -112,12 +91,11 @@ describe("CustomerAdminService.listCustomers", () => {
 
   it("computes per-row aggregates (active subs, order count, paid sum, active devices)", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    await createSub(customer.id, { status: "ACTIVE", planId: plan.id });
-    await createSub(customer.id, { status: "CANCELLED", planId: plan.id }); // excluded
-    await createOrder(customer.id, plan.id, { status: "PAID", amountCents: 9900 });
-    await createOrder(customer.id, plan.id, { status: "PAID", amountCents: 5000 });
-    await createOrder(customer.id, plan.id, { status: "REFUNDED", amountCents: 9900 }); // not in paid sum
+    await createSub(customer.id, { status: "ACTIVE" });
+    await createSub(customer.id, { status: "CANCELLED" }); // excluded
+    await createOrder(customer.id, { status: "PAID", amountCents: 9900 });
+    await createOrder(customer.id, { status: "PAID", amountCents: 5000 });
+    await createOrder(customer.id, { status: "REFUNDED", amountCents: 9900 }); // not in paid sum
     await createDevice(customer.id, "ACTIVE");
     await createDevice(customer.id, "REVOKED"); // excluded
 
@@ -146,9 +124,8 @@ describe("CustomerAdminService.listCustomers", () => {
 describe("CustomerAdminService.getCustomer", () => {
   it("returns detail with inlined subscriptions / orders / devices and no secrets", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    await createSub(customer.id, { planId: plan.id });
-    await createOrder(customer.id, plan.id);
+    await createSub(customer.id);
+    await createOrder(customer.id);
     await createDevice(customer.id);
 
     const detail = await service.getCustomer(customer.id);
@@ -193,25 +170,5 @@ describe("CustomerAdminService.updateCustomer", () => {
 
   it("throws 404 for an unknown customer", async () => {
     await expect(service.updateCustomer("no-such-customer", { displayName: "x" })).rejects.toThrow(NotFoundException);
-  });
-});
-
-describe("CustomerAdminService.grantSubscription", () => {
-  it("activates a plan subscription (ACTIVE) and mints a shadow record", async () => {
-    const customer = await createTestCustomer();
-    const plan = await createPlan();
-
-    const sub = await service.grantSubscription(customer.id, plan.id);
-
-    expect(sub.status).toBe("ACTIVE");
-    expect(sub.customerId).toBe(customer.id);
-    expect(sub.planId).toBe(plan.id);
-    expect(entitlementSync.syncSubscription).toHaveBeenCalledTimes(1);
-    expect(await prisma.subscription.count({ where: { customerId: customer.id, status: "ACTIVE" } })).toBe(1);
-  });
-
-  it("throws 404 for an unknown customer", async () => {
-    const plan = await createPlan();
-    await expect(service.grantSubscription("no-such-customer", plan.id)).rejects.toThrow(NotFoundException);
   });
 });

@@ -56,7 +56,7 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
   } as any;
 }
 
-function makeSubscriptionService(sub: any = { id: "sub-1", planId: "plan-1" }) {
+function makeSubscriptionService(sub: any = { id: "sub-1" }) {
   // Phase-2 activation goes through activateForOrder (routes plan vs catalog order).
   return {
     activateForOrder: vi.fn().mockResolvedValue(sub),
@@ -84,11 +84,12 @@ function validBody(overrides: Record<string, string> = {}): Record<string, strin
   return { ...base, sign_type: "MD5", sign };
 }
 
-/** A PENDING order matching the body. */
+/** A PENDING catalog order matching the body. */
 const pendingOrder = {
   id: "order-db-1",
   customerId: "cust-1",
-  planId: "plan-1",
+  catalogVersion: 1,
+  config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
   outTradeNo: "gfa-order-1",
   amountCents: 990, // matches money=9.90
   status: "PENDING",
@@ -130,13 +131,13 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     expect(result).toBe("success");
   });
 
-  it("calls activateForOrder with the order (customerId/planId/id carried through)", async () => {
+  it("calls activateForOrder with the order (customerId/config/id carried through)", async () => {
     await service.handleNotify(validBody());
     expect(subService.activateForOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         id: pendingOrder.id,
         customerId: pendingOrder.customerId,
-        planId: pendingOrder.planId,
+        catalogVersion: pendingOrder.catalogVersion,
       }),
     );
   });
@@ -168,7 +169,7 @@ describe("EpayCallbackService.handleNotify — happy path", () => {
     prisma.planOrder.update = vi.fn().mockResolvedValue({});
     subService.activateForOrder.mockImplementation(async () => {
       callOrder.push("activate-called");
-      return { id: "sub-1", planId: "plan-1" };
+      return { id: "sub-1" };
     });
 
     await service.handleNotify(validBody());

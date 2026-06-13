@@ -1,6 +1,6 @@
 /**
  * billing-reconcile.service.spec.ts — real Prisma DB tests for stranded-paid
- * order recovery.
+ * order recovery (catalog-only orders).
  *
  * Disambiguation is EXACT via Subscription.activatedFromOrderId (M13b):
  *   1. Stranded order with NO subscription (activation never ran) → reconcile
@@ -8,12 +8,9 @@
  *   2. Stranded order whose subscription recorded activatedFromOrderId ==
  *      order.id (only the order.subscriptionId linkage failed) → re-link
  *      WITHOUT re-activating (expiresAt unchanged — no double-extend).
- *   3. A same-plan ACTIVE sub linked to a DIFFERENT order is NOT evidence:
- *      the stranded order must be ACTIVATED, not mis-relinked (the old
- *      heuristic's false positive — the purchase silently evaporated).
- *   4. Legacy fallback: an ACTIVE same (customer, plan) sub with NO order link
- *      at all (activatedFromOrderId null, pre-link-column) touched at/after
- *      paidAt → re-link only.
+ *   3. A same-config ACTIVE sub linked to a DIFFERENT order is NOT exact
+ *      evidence: reconcile re-drives activation, which (for a same-config sub)
+ *      EXTENDS it — the customer receives the time the stranded order paid for.
  */
 import "reflect-metadata";
 import * as fs from "fs";
@@ -24,6 +21,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { BillingReconcileService } from "../billing-reconcile.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
+import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../../token-server/access-key-store";
 import {
@@ -37,43 +35,51 @@ import {
 const prisma = getCustomerPrisma();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Pool-line config snapshot a catalog order carries (single product, no seats).
+const POOL_CONFIG = {
+  line: "pool",
+  products: ["antigravity"],
+  bucketLimits: { "antigravity-gemini": 1_000_000 },
+  weight: 1,
+  deviceLimit: 1,
+  weeklyTokenLimit: 5_000_000,
+  windowMs: 18_000_000,
+};
+
 let tmpDir: string;
 let accessKeysPath: string;
 let store: AccessKeyStore;
 let subscriptionService: SubscriptionService;
 let entitlementSync: EntitlementSyncService;
+let planCatalog: PlanCatalogService;
 let reconcileService: BillingReconcileService;
 
-async function createTestPlan(overrides: Partial<Record<string, any>> = {}) {
-  return prisma.plan.create({
+/** Publish a catalog (version 1, durationDays 30) so catalog activation can resolve the validity window. */
+async function publishCatalog() {
+  await prisma.planCatalog.deleteMany();
+  return prisma.planCatalog.create({
     data: {
-      name: overrides.name ?? "Pro 月卡",
-      priceCents: overrides.priceCents ?? 990,
-      durationDays: overrides.durationDays ?? 30,
-      productEntitlements: overrides.productEntitlements ?? JSON.stringify(["antigravity"]),
-      bucketLimits: overrides.bucketLimits ?? JSON.stringify({ "antigravity-gemini": 1_000_000 }),
-      levels: overrides.levels ?? JSON.stringify({ antigravity: "ultra" }),
-      weight: overrides.weight ?? 1,
-      deviceLimit: overrides.deviceLimit ?? 3,
-      weeklyTokenLimit: overrides.weeklyTokenLimit ?? 5_000_000,
-      windowMs: overrides.windowMs ?? 18_000_000,
-      active: true,
+      version: 1,
+      status: "PUBLISHED",
+      config: JSON.stringify({ durationDays: 30, windowMs: 18_000_000 }),
+      publishedAt: new Date(),
     },
   });
 }
 
-/** Create a PAID order with subscriptionId=null, paidAt in the past. */
-async function createStrandedOrder(customerId: string, planId: string, paidAt: Date) {
+/** Create a PAID catalog order with subscriptionId=null, paidAt in the past. */
+async function createStrandedOrder(customerId: string, paidAt: Date) {
   return prisma.planOrder.create({
     data: {
       customerId,
-      planId,
       amountCents: 990,
       payChannel: "ALIPAY",
       outTradeNo: `gfa-stranded-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       status: "PAID",
       paidAt,
       subscriptionId: null,
+      catalogVersion: 1,
+      config: JSON.stringify(POOL_CONFIG),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     },
   });
@@ -106,8 +112,11 @@ beforeEach(async () => {
     { reloadAccessKeys: vi.fn() } as any,
     prisma as any,
   );
-  subscriptionService = new SubscriptionService(prisma as any, entitlementSync);
+  planCatalog = new PlanCatalogService(prisma as any);
+  subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   reconcileService = new BillingReconcileService(prisma as any, subscriptionService);
+
+  await publishCatalog();
 });
 
 afterEach(async () => {
@@ -124,8 +133,7 @@ afterAll(async () => {
 describe("BillingReconcileService.reconcileOne", () => {
   it("stranded order with NO subscription → activates and links once", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
-    const order = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+    const order = await createStrandedOrder(customer.id, new Date(Date.now() - 10 * 60 * 1000));
 
     // Precondition: no subscription yet.
     expect(await prisma.subscription.count({ where: { customerId: customer.id } })).toBe(0);
@@ -141,16 +149,14 @@ describe("BillingReconcileService.reconcileOne", () => {
     expect(refreshed!.subscriptionId).toBe(subs[0].id);
   });
 
-  it("stranded order whose sub recorded activatedFromOrderId == order.id → re-links ONLY (no activateOrExtend, no extend)", async () => {
+  it("stranded order whose sub recorded activatedFromOrderId == order.id → re-links ONLY (no re-activation, no extend)", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan({ durationDays: 30 });
-    const paidAt = new Date(Date.now() - 10 * 60 * 1000);
-    const order = await createStrandedOrder(customer.id, plan.id, paidAt);
+    const order = await createStrandedOrder(customer.id, new Date(Date.now() - 10 * 60 * 1000));
 
-    // Simulate "activation already ran but linkage failed": activate with THIS
-    // order's id (persists activatedFromOrderId = order.id). The order still
-    // has subscriptionId=null.
-    const existingSub = await subscriptionService.activateOrExtend(customer.id, plan.id, { orderId: order.id });
+    // Simulate "activation already ran but linkage failed": activate THIS order
+    // (persists activatedFromOrderId = order.id). The order still has
+    // subscriptionId=null.
+    const existingSub = await subscriptionService.activateForOrder(order);
     const expiryBefore = existingSub.expiresAt!.getTime();
     expect(existingSub.activatedFromOrderId).toBe(order.id);
 
@@ -159,7 +165,7 @@ describe("BillingReconcileService.reconcileOne", () => {
     const before = await prisma.planOrder.findUnique({ where: { id: order.id } });
     expect(before!.subscriptionId).toBeNull();
 
-    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
+    const activateSpy = vi.spyOn(subscriptionService, "activateForOrder");
 
     await reconcileService.reconcileOne(order);
 
@@ -177,33 +183,30 @@ describe("BillingReconcileService.reconcileOne", () => {
     expect(after!.subscriptionId).toBe(existingSub.id);
   });
 
-  it("same-plan sub linked to a DIFFERENT order is NOT evidence → stranded order is ACTIVATED, not mis-relinked", async () => {
+  it("same-config sub linked to a DIFFERENT order is NOT exact evidence → stranded order is ACTIVATED (extends), not mis-relinked", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan({ durationDays: 30 });
 
     // Order A paid and FULLY activated+linked: the sub records
     // activatedFromOrderId = orderA.id.
-    const orderA = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 30 * 60 * 1000));
-    const sub = await subscriptionService.activateOrExtend(customer.id, plan.id, { orderId: orderA.id });
+    const orderA = await createStrandedOrder(customer.id, new Date(Date.now() - 30 * 60 * 1000));
+    const sub = await subscriptionService.activateForOrder(orderA);
     await prisma.planOrder.update({ where: { id: orderA.id }, data: { subscriptionId: sub.id } });
     const expiryAfterA = sub.expiresAt!.getTime();
 
-    // Order B: a SECOND purchase of the same plan whose Phase-2 activation
-    // never ran (stranded). Under the old updatedAt heuristic the ACTIVE
-    // same-plan sub (touched >= paidAt, but owned by order A) was treated as
-    // evidence and order B was silently re-linked — the customer's second
-    // purchase evaporated.
-    const orderB = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+    // Order B: a SECOND purchase of the same config whose Phase-2 activation
+    // never ran (stranded). Only an exact activatedFromOrderId match counts as
+    // evidence, so reconcile re-drives activation for order B.
+    const orderB = await createStrandedOrder(customer.id, new Date(Date.now() - 10 * 60 * 1000));
 
-    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
+    const activateSpy = vi.spyOn(subscriptionService, "activateForOrder");
 
     await reconcileService.reconcileOne(orderB);
 
     // Activation MUST have been driven for order B...
     expect(activateSpy).toHaveBeenCalledTimes(1);
-    expect(activateSpy).toHaveBeenCalledWith(customer.id, plan.id, { orderId: orderB.id });
+    expect(activateSpy).toHaveBeenCalledWith(orderB);
 
-    // ...which, for a same-plan ACTIVE sub, EXTENDS it by durationDays — the
+    // ...which, for a same-config ACTIVE sub, EXTENDS it by durationDays — the
     // customer actually receives the time order B paid for.
     const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
     expect(subs).toHaveLength(1);
@@ -218,37 +221,9 @@ describe("BillingReconcileService.reconcileOne", () => {
     expect(aAfter!.subscriptionId).toBe(sub.id);
   });
 
-  it("legacy fallback: ACTIVE same-plan sub with NO order link (pre-link-column) touched >= paidAt → re-links ONLY", async () => {
-    const customer = await createTestCustomer();
-    const plan = await createTestPlan({ durationDays: 30 });
-    const paidAt = new Date(Date.now() - 10 * 60 * 1000);
-    const order = await createStrandedOrder(customer.id, plan.id, paidAt);
-
-    // Pre-link-column activation: no orderId passed → activatedFromOrderId
-    // stays null. Its updatedAt (now) is >= paidAt.
-    const legacySub = await subscriptionService.activateOrExtend(customer.id, plan.id);
-    expect(legacySub.activatedFromOrderId).toBeNull();
-    const expiryBefore = legacySub.expiresAt!.getTime();
-
-    const activateSpy = vi.spyOn(subscriptionService, "activateOrExtend");
-
-    await reconcileService.reconcileOne(order);
-
-    // Legacy path: re-link only, never re-activate.
-    expect(activateSpy).not.toHaveBeenCalled();
-
-    const subs = await prisma.subscription.findMany({ where: { customerId: customer.id } });
-    expect(subs).toHaveLength(1);
-    expect(subs[0].expiresAt!.getTime()).toBe(expiryBefore); // no extend
-
-    const after = await prisma.planOrder.findUnique({ where: { id: order.id } });
-    expect(after!.subscriptionId).toBe(legacySub.id);
-  });
-
   it("is idempotent across repeated runs (second run is a no-op)", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan({ durationDays: 30 });
-    const order = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+    const order = await createStrandedOrder(customer.id, new Date(Date.now() - 10 * 60 * 1000));
 
     await reconcileService.reconcileOne(order);
     const subsAfter1 = await prisma.subscription.findMany({ where: { customerId: customer.id } });
@@ -271,12 +246,11 @@ describe("BillingReconcileService.reconcileOne", () => {
 describe("BillingReconcileService.reconcileStrandedOrders (cron)", () => {
   it("only processes orders older than the min-age cutoff", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
 
     // Fresh stranded order (paidAt = now) — should be SKIPPED (too recent).
-    const fresh = await createStrandedOrder(customer.id, plan.id, new Date());
+    const fresh = await createStrandedOrder(customer.id, new Date());
     // Old stranded order — should be processed.
-    const old = await createStrandedOrder(customer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+    const old = await createStrandedOrder(customer.id, new Date(Date.now() - 10 * 60 * 1000));
 
     await reconcileService.reconcileStrandedOrders();
 
@@ -290,17 +264,16 @@ describe("BillingReconcileService.reconcileStrandedOrders (cron)", () => {
   it("per-order failure does not abort the batch (one bad order, one good)", async () => {
     const goodCustomer = await createTestCustomer();
     const badCustomer = await createTestCustomer();
-    const plan = await createTestPlan({ name: "shared" });
-    const good = await createStrandedOrder(goodCustomer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
-    const bad = await createStrandedOrder(badCustomer.id, plan.id, new Date(Date.now() - 10 * 60 * 1000));
+    const good = await createStrandedOrder(goodCustomer.id, new Date(Date.now() - 10 * 60 * 1000));
+    const bad = await createStrandedOrder(badCustomer.id, new Date(Date.now() - 10 * 60 * 1000));
 
     // Make activation fail for the bad customer only (simulates seat exhaustion
     // / transient activation error), leaving the good order to succeed.
-    const realActivate = subscriptionService.activateOrExtend.bind(subscriptionService);
-    vi.spyOn(subscriptionService, "activateOrExtend").mockImplementation(
-      async (customerId: string, planId: string, opts?: any) => {
-        if (customerId === badCustomer.id) throw new Error("seat exhaustion (simulated)");
-        return realActivate(customerId, planId, opts);
+    const realActivate = subscriptionService.activateForOrder.bind(subscriptionService);
+    vi.spyOn(subscriptionService, "activateForOrder").mockImplementation(
+      async (order: any) => {
+        if (order.customerId === badCustomer.id) throw new Error("seat exhaustion (simulated)");
+        return realActivate(order);
       },
     );
 

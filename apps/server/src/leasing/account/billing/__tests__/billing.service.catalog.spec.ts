@@ -2,8 +2,8 @@
  * billing.service.catalog.spec.ts — catalog-driven order creation (spec §8).
  *
  * createCatalogOrder: take a selection → price it against the PUBLISHED catalog
- * via computePurchase → persist a PlanOrder (planId null; selection/config/
- * catalogVersion/amountCents snapshot) → return the epay payUrl. Mocked Prisma +
+ * via computePurchase → persist a PlanOrder (selection/config/catalogVersion/
+ * amountCents snapshot) → return the epay payUrl. Mocked Prisma +
  * PlanCatalogService; no real DB.
  */
 import "reflect-metadata";
@@ -86,14 +86,13 @@ describe("BillingService.createCatalogOrder", () => {
     vi.restoreAllMocks();
   });
 
-  it("号池线 selection → computePurchase 定价,订单存 config/selection/catalogVersion,planId null", async () => {
+  it("号池线 selection → computePurchase 定价,订单存 config/selection/catalogVersion", async () => {
     const selection = { line: "pool", products: ["anthropic"], usageTier: "large", deviceLimit: 2 };
 
     const result = await service.createCatalogOrder("cust-1", selection as any, "ALIPAY");
 
     expect(prisma.planOrder.create).toHaveBeenCalledOnce();
     const data = prisma.planOrder.create.mock.calls[0][0].data;
-    expect(data.planId).toBeNull();
     expect(data.customerId).toBe("cust-1");
     expect(data.catalogVersion).toBe(2);
     // 价格 = anthropic 6900 + large 3000 + 1 台额外设备 900 = 10800 分。

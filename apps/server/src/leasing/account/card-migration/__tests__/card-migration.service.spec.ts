@@ -116,7 +116,7 @@ describe("CardMigrationService.bindCard — migration", () => {
     const sub = await prisma.subscription.findUnique({ where: { id: card.id } });
     expect(sub).toBeTruthy();
     expect(sub!.customerId).toBe(customer.id);
-    expect(sub!.planId).toBeNull();
+    expect(sub!.migratedFromKey).toBe("BCAI-AAAA-BBBB"); // provenance marker for card-migrated subs
     expect(sub!.status).toBe("ACTIVE");
     expect(sub!.backingKeyValue).toMatch(/^sub_[0-9a-f]{48}$/);
     expect(sub!.weight).toBe(2);
@@ -405,7 +405,6 @@ describe("CardMigrationService.bindCard — idempotency and errors", () => {
       data: {
         id: "card-legacy-1",
         customerId: owner.id,
-        planId: null,
         status: "ACTIVE",
         startsAt: new Date(),
         expiresAt: null,

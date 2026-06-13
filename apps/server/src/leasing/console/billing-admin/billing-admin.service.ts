@@ -80,7 +80,6 @@ export class BillingAdminService {
       this.prisma.planOrder.findMany({
         where,
         include: {
-          plan: { select: { name: true } },
           customer: { select: { email: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -119,7 +118,6 @@ export class BillingAdminService {
       this.prisma.subscription.findMany({
         where,
         include: {
-          plan: { select: { name: true } },
           customer: { select: { email: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -135,7 +133,8 @@ export class BillingAdminService {
   /**
    * Customer-business dashboard KPIs: today's new customers, active
    * subscriptions, today's paid revenue + count, 30-day refund rate, and the
-   * paid-order distribution by plan.
+   * paid-order distribution. Catalog-only: every paid order is a 目录套餐 (no
+   * Plan rows), so the distribution is a single collective bucket.
    */
   async billingStats() {
     const now = new Date();
@@ -148,7 +147,7 @@ export class BillingAdminService {
       todayPaidAgg,
       paidOrRefunded30,
       refunded30,
-      planGroups,
+      paidOrderCount,
     ] = await Promise.all([
       this.prisma.customer.count({ where: { createdAt: { gte: startOfToday } } }),
       this.prisma.subscription.count({ where: { status: "ACTIVE" } }),
@@ -163,27 +162,15 @@ export class BillingAdminService {
       this.prisma.planOrder.count({
         where: { status: "REFUNDED", createdAt: { gte: thirtyDaysAgo } },
       }),
-      this.prisma.planOrder.groupBy({
-        by: ["planId"],
-        where: { status: "PAID" },
-        _count: true,
-      }),
+      this.prisma.planOrder.count({ where: { status: "PAID" } }),
     ]);
 
-    // Catalog-based orders have planId=null (selection-driven, no Plan row) and
-    // group under the null key — label them collectively rather than looking up a Plan.
-    const planIds = planGroups.map((g) => g.planId).filter((id): id is string => id != null);
-    const plans = planIds.length
-      ? await this.prisma.plan.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } })
-      : [];
-    const nameMap = new Map(plans.map((p) => [p.id, p.name]));
-    const planDistribution = planGroups
-      .map((g) => ({
-        planId: g.planId,
-        planName: g.planId == null ? "目录套餐" : (nameMap.get(g.planId) ?? g.planId),
-        count: g._count,
-      }))
-      .sort((a, b) => b.count - a.count);
+    // Catalog-only: all paid orders are selection-driven (no Plan row) — report
+    // them as one collective 目录套餐 bucket.
+    const planDistribution =
+      paidOrderCount > 0
+        ? [{ planId: null, planName: "目录套餐", count: paidOrderCount }]
+        : [];
 
     return {
       todayNewCustomers,

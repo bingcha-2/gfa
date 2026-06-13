@@ -1,6 +1,6 @@
 /**
  * customer-test-db.ts — real-Prisma test helpers for the customer account
- * system (Customer / Device / Subscription / Plan / Notification).
+ * system (Customer / Device / Subscription / PlanOrder / Notification).
  *
  * The suite's DATABASE_URL (vitest.config.ts) points at prisma/test.db, which
  * is gitignored and starts empty on a fresh clone — so the first real-db spec
@@ -50,7 +50,6 @@ export async function cleanCustomerTables(): Promise<void> {
   await db.device.deleteMany();
   await db.subscription.deleteMany();
   await db.planOrder.deleteMany();
-  await db.plan.deleteMany();
   await db.customerEmailToken.deleteMany();
   await db.customer.deleteMany();
 }

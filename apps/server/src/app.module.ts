@@ -35,7 +35,6 @@ import { MailModule } from "./shared/mail/mail.module";
 // Aliased: google-family already exports an AccountModule (Google account admin).
 import { AccountModule as AccountSurfaceModule } from "./leasing/account/account.module";
 import { AppSurfaceModule } from "./leasing/app/app-surface.module";
-import { PlanModule } from "./leasing/plan/plan.module";
 import { PlanCatalogModule } from "./leasing/plan-catalog/plan-catalog.module";
 import { SubscriptionModule } from "./leasing/subscription/subscription.module";
 import { BillingAdminModule } from "./leasing/console/billing-admin/billing-admin.module";
@@ -100,7 +99,6 @@ import { ReferralModule } from "./leasing/account/referral/referral.module";
     MailModule,
     AccountSurfaceModule,
     AppSurfaceModule,
-    PlanModule,
     PlanCatalogModule,
     SubscriptionModule,
     BillingAdminModule,

@@ -1,5 +1,5 @@
 /**
- * billing.service.ts — plan order creation and management.
+ * billing.service.ts — catalog order creation and management.
  *
  * Does NOT talk to epay directly: it builds the payUrl that the client can
  * use. The epay callback is handled in EpayCallbackService.
@@ -91,37 +91,12 @@ export class BillingService {
   ) {}
 
   /**
-   * Create a PENDING PlanOrder, build the payUrl and qrDataUri.
-   * Snapshot referrerId = customer.invitedById at order-create time.
-   */
-  async createOrder(
-    customerId: string,
-    planId: string,
-    channel: "ALIPAY" | "WXPAY",
-  ) {
-    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
-    if (!plan) throw new NotFoundException(`Plan "${planId}" not found`);
-    if (!plan.active) throw new BadRequestException("Plan is not available for purchase");
-
-    const referrerId = await this.resolveReferrerId(customerId);
-
-    return this.buildPaymentAndPersist({
-      customerId,
-      referrerId,
-      baseCents: plan.priceCents,
-      name: plan.name,
-      channel,
-      orderData: { planId },
-    });
-  }
-
-  /**
    * Catalog-driven order (spec §8): price a `selection` against the PUBLISHED
    * catalog via computePurchase, then persist a PlanOrder snapshotting the
-   * selection + generated config + catalogVersion (planId null). On activation
-   * the epay callback writes that config into the Subscription. computePurchase
-   * throws on an invalid selection (unknown tier/level) — we let it propagate so
-   * no order is created.
+   * selection + generated config + catalogVersion. On activation the epay
+   * callback writes that config into the Subscription. computePurchase throws on
+   * an invalid selection (unknown tier/level) — we let it propagate so no order
+   * is created.
    */
   async createCatalogOrder(
     customerId: string,
@@ -154,7 +129,6 @@ export class BillingService {
       name: orderName(selection),
       channel,
       orderData: {
-        planId: null,
         catalogVersion: published.version,
         selection: JSON.stringify(selection),
         config: JSON.stringify(config),
@@ -211,9 +185,9 @@ export class BillingService {
   }
 
   /**
-   * Shared epay flow for both ordering paths: apply the user-borne fee, build the
-   * signed payUrl + QR, persist the PENDING PlanOrder, return payment info.
-   * `orderData` carries the path-specific columns (planId, or catalog snapshot).
+   * Shared epay flow: apply the user-borne fee, build the signed payUrl + QR,
+   * persist the PENDING PlanOrder, return payment info. `orderData` carries the
+   * catalog snapshot columns (catalogVersion / selection / config).
    */
   private async buildPaymentAndPersist(args: {
     customerId: string;
@@ -317,7 +291,6 @@ export class BillingService {
     const [orders, total] = await Promise.all([
       this.prisma.planOrder.findMany({
         where: { customerId },
-        include: { plan: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
         skip,
         take: safePageSize,
@@ -328,7 +301,7 @@ export class BillingService {
     return {
       orders: orders.map((o) => ({
         outTradeNo: o.outTradeNo,
-        planName: o.plan?.name ?? null, // catalog-based orders have no Plan row
+        planName: null, // catalog orders carry no Plan name; the selection/config is the detail
         amountCents: o.amountCents,
         payChannel: o.payChannel,
         status: o.status,
@@ -343,7 +316,6 @@ export class BillingService {
   async listSubscriptions(customerId: string) {
     const subs = await this.prisma.subscription.findMany({
       where: { customerId },
-      include: { plan: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     });
 
@@ -358,13 +330,13 @@ export class BillingService {
         }
         return {
           id: s.id,
-          planName: s.planId ? (s.plan?.name ?? null) : null,
+          planName: null, // configurator has no single plan name; products[] is the detail
           status: s.status,
           products,
           expiresAt: s.expiresAt ? s.expiresAt.toISOString() : null,
           deviceLimit: s.deviceLimit,
           weight: s.weight,
-          migratedFromCard: s.planId == null,
+          migratedFromCard: s.migratedFromKey != null,
         };
       }),
     };

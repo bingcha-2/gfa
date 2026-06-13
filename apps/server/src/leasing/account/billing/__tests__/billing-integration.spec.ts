@@ -1,13 +1,14 @@
 /**
- * billing-integration.spec.ts — real Prisma DB tests for billing:
- *  - Order create persists correctly with referrerId snapshot + 30m expiry
+ * billing-integration.spec.ts — real Prisma DB tests for billing (catalog-only):
+ *  - Catalog order create persists correctly with referrerId snapshot + 30m expiry
  *  - Callback happy path: PAID status, subscription activated, notification, reward
  *  - Idempotency: replay → no double-reward, both responses "success"
- *  - Subscriptions list: planId null → planName null + migratedFromCard true
+ *  - Subscriptions list: migratedFromKey set → migratedFromCard true
  *  - List/get: ownership scoping
  *
  * Uses the same customer-test-db.ts bootstrap as M5 subscription specs.
- * EntitlementSyncService is MOCKED so no access-keys.json needed.
+ * Orders go through the catalog path (createCatalogOrder + a PUBLISHED
+ * PlanCatalog priced so a known selection costs 990 / 1000 cents).
  */
 import "reflect-metadata";
 import * as fs from "fs";
@@ -19,6 +20,7 @@ import { BillingService } from "../billing.service";
 import { EpayCallbackService } from "../epay-callback.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
+import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../../token-server/access-key-store";
 import { signParams } from "../epay.sign";
@@ -34,6 +36,23 @@ import {
 const EPAY_KEY = "integration-test-key";
 const EPAY_PID = "9001";
 
+// Pool-line catalog priced so the default selection costs exactly 990, and the
+// `large` usage tier costs 1000 — matching the legacy plan prices these tests assert.
+const CATALOG_CONFIG = {
+  products: ["antigravity"],
+  levels: { antigravity: ["ultra"] },
+  usageTiers: {
+    small: { bucketLimits: { "antigravity-gemini": 1_000_000 }, weeklyTokenLimit: 5_000_000 },
+    large: { bucketLimits: { "antigravity-gemini": 1_000_000 }, weeklyTokenLimit: 5_000_000 },
+  },
+  pricing: {
+    pool: { product: { antigravity: 990 }, usage: { small: 0, large: 10 }, devicePerExtra: 900 },
+    bind: { levelPrice: { antigravity: { ultra: 990 } }, share: { "1": 0 }, devicePerExtra: 900 },
+  },
+  durationDays: 30,
+  windowMs: 18_000_000,
+};
+
 // ─── Prisma + helpers ─────────────────────────────────────────────────────────
 const prisma = getCustomerPrisma();
 
@@ -42,25 +61,34 @@ let accessKeysPath: string;
 let store: AccessKeyStore;
 let subscriptionService: SubscriptionService;
 let entitlementSync: EntitlementSyncService;
+let planCatalog: PlanCatalogService;
 let billingService: BillingService;
 let callbackService: EpayCallbackService;
 
-async function createTestPlan(overrides: Partial<Record<string, any>> = {}) {
-  return prisma.plan.create({
+/** Publish the integration catalog (version 1) so createCatalogOrder + activation can price/resolve it. */
+async function publishCatalog() {
+  await prisma.planCatalog.deleteMany();
+  return prisma.planCatalog.create({
     data: {
-      name: overrides.name ?? "Pro 月卡",
-      priceCents: overrides.priceCents ?? 990,
-      durationDays: overrides.durationDays ?? 30,
-      productEntitlements: overrides.productEntitlements ?? JSON.stringify(["antigravity"]),
-      bucketLimits: overrides.bucketLimits ?? JSON.stringify({ "antigravity-gemini": 1_000_000 }),
-      levels: overrides.levels ?? JSON.stringify({ antigravity: "ultra" }),
-      weight: overrides.weight ?? 1,
-      deviceLimit: overrides.deviceLimit ?? 3,
-      weeklyTokenLimit: overrides.weeklyTokenLimit ?? 5_000_000,
-      windowMs: overrides.windowMs ?? 18_000_000,
-      active: overrides.active !== undefined ? overrides.active : true,
+      version: 1,
+      status: "PUBLISHED",
+      config: JSON.stringify(CATALOG_CONFIG),
+      publishedAt: new Date(),
     },
   });
+}
+
+/** A pool-line catalog order priced at 990 (small) or 1000 (large). */
+function catalogOrder(
+  customerId: string,
+  channel: "ALIPAY" | "WXPAY",
+  usageTier: "small" | "large" = "small",
+) {
+  return billingService.createCatalogOrder(
+    customerId,
+    { line: "pool", products: ["antigravity"], usageTier, deviceLimit: 1 } as any,
+    channel,
+  );
 }
 
 function buildBody(outTradeNo: string, money: string, overrides: Record<string, string> = {}): Record<string, string> {
@@ -99,6 +127,10 @@ beforeEach(async () => {
   vi.stubEnv("EPAY_KEY", EPAY_KEY);
   vi.stubEnv("EPAY_PID", EPAY_PID);
   vi.stubEnv("EPAY_REFERRAL_PERCENT", "10");
+  // Pin fee to 0 so order amounts equal the base price: these tests assert base
+  // prices and build callback bodies at base price. Without this, a developer's
+  // local .env (EPAY_FEE_PERCENT) leaks in via Vitest and breaks every amount check.
+  vi.stubEnv("EPAY_FEE_PERCENT", "0");
 
   const rosetta = new RosettaService({ dataDir: tmpDir });
   store = new AccessKeyStore(accessKeysPath);
@@ -110,9 +142,12 @@ beforeEach(async () => {
     { reloadAccessKeys: vi.fn() } as any,
     prisma as any,
   );
-  subscriptionService = new SubscriptionService(prisma as any, entitlementSync);
-  billingService = new BillingService(prisma as any);
+  planCatalog = new PlanCatalogService(prisma as any);
+  subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
+  billingService = new BillingService(prisma as any, planCatalog, rosetta);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
+
+  await publishCatalog();
 });
 
 afterEach(async () => {
@@ -129,7 +164,7 @@ afterAll(async () => {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("BillingService.createOrder — DB integration", () => {
+describe("BillingService.createCatalogOrder — DB integration", () => {
   it("persists a PENDING order with 30m expiry and referrerId snapshot", async () => {
     const referrer = await createTestCustomer();
     const customer = await prisma.customer.create({
@@ -140,9 +175,8 @@ describe("BillingService.createOrder — DB integration", () => {
         invitedById: referrer.id,
       },
     });
-    const plan = await createTestPlan();
 
-    const result = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const result = await catalogOrder(customer.id, "ALIPAY");
 
     expect(result.outTradeNo).toMatch(/^gfa\d+[0-9a-f]{12}$/);
     expect(result.amountCents).toBe(990);
@@ -165,8 +199,7 @@ describe("BillingService.createOrder — DB integration", () => {
 describe("EpayCallbackService — callback happy path (DB integration)", () => {
   it("marks order PAID, activates subscription, creates BILLING notification, returns 'success'", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const body = buildBody(outTradeNo, "9.90");
     const result = await callbackService.handleNotify(body);
@@ -202,8 +235,7 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
         invitedById: referrer.id,
       },
     });
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const body = buildBody(outTradeNo, "9.90");
 
@@ -249,8 +281,7 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
         invitedById: referrer.id,
       },
     });
-    const plan = await createTestPlan({ durationDays: 30 });
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const body = buildBody(outTradeNo, "9.90");
 
@@ -298,8 +329,8 @@ describe("EpayCallbackService — referral (DB integration)", () => {
         invitedById: referrer.id,
       },
     });
-    const plan = await createTestPlan({ priceCents: 1000 });
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "WXPAY");
+    // `large` usage tier prices to 1000 cents (990 + 10).
+    const { outTradeNo } = await catalogOrder(customer.id, "WXPAY", "large");
 
     const body = buildBody(outTradeNo, "10.00");
     await callbackService.handleNotify(body);
@@ -316,8 +347,7 @@ describe("EpayCallbackService — referral (DB integration)", () => {
 
   it("no ReferralReward when order has no referrerId", async () => {
     const customer = await createTestCustomer(); // invitedById = null
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const body = buildBody(outTradeNo, "9.90");
     await callbackService.handleNotify(body);
@@ -330,8 +360,7 @@ describe("EpayCallbackService — referral (DB integration)", () => {
 describe("EpayCallbackService — security failures (DB integration)", () => {
   it("tampered sign: returns 'fail', no state change", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const tampered = buildBody(outTradeNo, "9.90");
     tampered.sign = "00000000000000000000000000000000";
@@ -345,8 +374,7 @@ describe("EpayCallbackService — security failures (DB integration)", () => {
 
   it("wrong pid: returns 'fail'", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const base: Record<string, string> = {
       pid: "WRONG_PID",
@@ -363,8 +391,7 @@ describe("EpayCallbackService — security failures (DB integration)", () => {
 
   it("amount mismatch: returns 'fail', no activation", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan({ priceCents: 990 });
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
     const body = buildBody(outTradeNo, "1.00"); // 100 cents, not 990
     const result = await callbackService.handleNotify(body);
@@ -385,8 +412,7 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
   it("getOrder: other customer's outTradeNo → NotFoundException", async () => {
     const cust1 = await createTestCustomer();
     const cust2 = await createTestCustomer();
-    const plan = await createTestPlan();
-    const { outTradeNo } = await billingService.createOrder(cust1.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(cust1.id, "ALIPAY");
 
     // cust2 tries to access cust1's order
     await expect(billingService.getOrder(cust2.id, outTradeNo)).rejects.toThrow(/not found/i);
@@ -395,12 +421,11 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
   it("listOrders: only returns current customer's orders, total correct", async () => {
     const cust1 = await createTestCustomer();
     const cust2 = await createTestCustomer();
-    const plan = await createTestPlan();
 
     // Create 2 orders for cust1, 1 for cust2
-    await billingService.createOrder(cust1.id, plan.id, "ALIPAY");
-    await billingService.createOrder(cust1.id, plan.id, "WXPAY");
-    await billingService.createOrder(cust2.id, plan.id, "ALIPAY");
+    await catalogOrder(cust1.id, "ALIPAY");
+    await catalogOrder(cust1.id, "WXPAY");
+    await catalogOrder(cust2.id, "ALIPAY");
 
     const result = await billingService.listOrders(cust1.id, 1, 10);
     expect(result.total).toBe(2);
@@ -413,9 +438,8 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
 
   it("pagination: page 2 with pageSize 1 returns the older order", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan();
-    await billingService.createOrder(customer.id, plan.id, "ALIPAY");
-    await billingService.createOrder(customer.id, plan.id, "WXPAY");
+    await catalogOrder(customer.id, "ALIPAY");
+    await catalogOrder(customer.id, "WXPAY");
 
     const page1 = await billingService.listOrders(customer.id, 1, 1);
     const page2 = await billingService.listOrders(customer.id, 2, 1);
@@ -429,15 +453,15 @@ describe("BillingService.listOrders + getOrder — ownership scoping (DB integra
 });
 
 describe("BillingService.listSubscriptions — DB integration", () => {
-  it("planId null → planName null + migratedFromCard true + products parsed", async () => {
+  it("migratedFromKey set → planName null + migratedFromCard true + products parsed", async () => {
     const customer = await createTestCustomer();
 
-    // Create a migrated-card subscription (planId null)
+    // Create a card-migrated subscription (provenance marker set).
     await prisma.subscription.create({
       data: {
         id: "card-mig-billing-test",
         customerId: customer.id,
-        planId: null,
+        migratedFromKey: "BCAI-MIG-TEST",
         status: "ACTIVE",
         productEntitlements: JSON.stringify(["antigravity", "codex"]),
         backingKeyValue: "sub_" + "c".repeat(48),
@@ -454,17 +478,16 @@ describe("BillingService.listSubscriptions — DB integration", () => {
     expect(sub.expiresAt).toBeNull();
   });
 
-  it("planId set → planName + migratedFromCard false", async () => {
+  it("catalog purchase → planName null + migratedFromCard false", async () => {
     const customer = await createTestCustomer();
-    const plan = await createTestPlan({ name: "Ultra 月卡" });
-    const { outTradeNo } = await billingService.createOrder(customer.id, plan.id, "ALIPAY");
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
     const body = buildBody(outTradeNo, "9.90");
     await callbackService.handleNotify(body);
 
     const result = await billingService.listSubscriptions(customer.id);
     expect(result.subscriptions).toHaveLength(1);
     const sub = result.subscriptions[0];
-    expect(sub.planName).toBe("Ultra 月卡");
+    expect(sub.planName).toBeNull(); // catalog purchases have no single plan name
     expect(sub.migratedFromCard).toBe(false);
   });
 });

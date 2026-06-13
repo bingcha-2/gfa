@@ -24,33 +24,27 @@ let service: BillingAdminService;
 
 const subStub = {} as unknown as SubscriptionService;
 
-async function createPlan(name = `套餐 ${++seq}`) {
-  return prisma.plan.create({
-    data: { name, priceCents: 9900, durationDays: 30, productEntitlements: JSON.stringify(["antigravity"]) },
-  });
-}
-
-async function createOrder(customerId: string, planId: string, overrides: Partial<{ status: string; payChannel: string; amountCents: number; paidAt: Date | null; createdAt: Date }> = {}) {
+async function createOrder(customerId: string, overrides: Partial<{ status: string; payChannel: string; amountCents: number; paidAt: Date | null; createdAt: Date }> = {}) {
   return prisma.planOrder.create({
     data: {
       customerId,
-      planId,
       amountCents: overrides.amountCents ?? 9900,
       payChannel: (overrides.payChannel ?? "ALIPAY") as any,
       outTradeNo: `OT${Date.now()}${++seq}`,
       status: (overrides.status ?? "PAID") as any,
       paidAt: overrides.paidAt === undefined ? new Date() : overrides.paidAt,
       ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+      catalogVersion: 1,
+      config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     },
   });
 }
 
-async function createSub(customerId: string, planId: string | null, status = "ACTIVE") {
+async function createSub(customerId: string, status = "ACTIVE") {
   return prisma.subscription.create({
     data: {
       customerId,
-      planId,
       status: status as any,
       startsAt: new Date(),
       expiresAt: new Date(Date.now() + 30 * DAY_MS),
@@ -75,24 +69,21 @@ afterAll(async () => {
 });
 
 describe("BillingAdminService.listOrders", () => {
-  it("joins plan name + customer email, paginates", async () => {
+  it("joins customer email, paginates", async () => {
     const customer = await createTestCustomer({ email: "buyer@orders.test" });
-    const plan = await createPlan("拼车版");
-    await createOrder(customer.id, plan.id);
-    await createOrder(customer.id, plan.id);
+    await createOrder(customer.id);
+    await createOrder(customer.id);
 
     const result = await service.listOrders({ page: 1, pageSize: 1 });
     expect(result.total).toBe(2);
     expect(result.orders).toHaveLength(1);
-    expect(result.orders[0].plan?.name).toBe("拼车版");
     expect(result.orders[0].customer?.email).toBe("buyer@orders.test");
   });
 
   it("filters by status / payChannel and searches outTradeNo / email", async () => {
     const customer = await createTestCustomer({ email: "alice@orders.test" });
-    const plan = await createPlan();
-    await createOrder(customer.id, plan.id, { status: "PAID", payChannel: "ALIPAY" });
-    await createOrder(customer.id, plan.id, { status: "REFUNDED", payChannel: "WXPAY" });
+    await createOrder(customer.id, { status: "PAID", payChannel: "ALIPAY" });
+    await createOrder(customer.id, { status: "REFUNDED", payChannel: "WXPAY" });
 
     expect((await service.listOrders({ page: 1, pageSize: 20, status: "PAID" })).total).toBe(1);
     expect((await service.listOrders({ page: 1, pageSize: 20, payChannel: "WXPAY" })).total).toBe(1);
@@ -101,15 +92,13 @@ describe("BillingAdminService.listOrders", () => {
 });
 
 describe("BillingAdminService.listSubscriptions", () => {
-  it("joins plan + customer, filters by status and searches customer email", async () => {
+  it("joins customer, filters by status and searches customer email", async () => {
     const customer = await createTestCustomer({ email: "sub@subs.test" });
-    const plan = await createPlan("独享版");
-    await createSub(customer.id, plan.id, "ACTIVE");
-    await createSub(customer.id, plan.id, "CANCELLED");
+    await createSub(customer.id, "ACTIVE");
+    await createSub(customer.id, "CANCELLED");
 
     const active = await service.listSubscriptions({ page: 1, pageSize: 20, status: "ACTIVE" });
     expect(active.total).toBe(1);
-    expect(active.subscriptions[0].plan?.name).toBe("独享版");
     expect(active.subscriptions[0].customer?.email).toBe("sub@subs.test");
 
     const byEmail = await service.listSubscriptions({ page: 1, pageSize: 20, search: "sub@subs" });
@@ -120,16 +109,15 @@ describe("BillingAdminService.listSubscriptions", () => {
 describe("BillingAdminService.billingStats", () => {
   it("aggregates today's customers / revenue, active subs, 30-day refund rate, plan distribution", async () => {
     const customer = await createTestCustomer(); // createdAt = now → counts toward today
-    const plan = await createPlan("月卡");
 
-    await createSub(customer.id, plan.id, "ACTIVE");
-    await createSub(customer.id, plan.id, "CANCELLED"); // not active
+    await createSub(customer.id, "ACTIVE");
+    await createSub(customer.id, "CANCELLED"); // not active
 
     // Today's revenue: 2 PAID orders today.
-    await createOrder(customer.id, plan.id, { status: "PAID", amountCents: 9900 });
-    await createOrder(customer.id, plan.id, { status: "PAID", amountCents: 100 });
+    await createOrder(customer.id, { status: "PAID", amountCents: 9900 });
+    await createOrder(customer.id, { status: "PAID", amountCents: 100 });
     // One REFUNDED in the window → refund rate = 1 refunded / 3 (paid+refunded).
-    await createOrder(customer.id, plan.id, { status: "REFUNDED" });
+    await createOrder(customer.id, { status: "REFUNDED" });
 
     const stats = await service.billingStats();
 
@@ -138,7 +126,8 @@ describe("BillingAdminService.billingStats", () => {
     expect(stats.todayPaidCents).toBe(10000);
     expect(stats.todayPaidCount).toBe(2);
     expect(stats.refundRate30d).toBeCloseTo(1 / 3, 5);
-    const month = stats.planDistribution.find((p) => p.planName === "月卡");
-    expect(month?.count).toBe(2); // PAID orders for this plan
+    // Catalog-only: all PAID orders bucket under the collective 目录套餐 label.
+    const catalogBucket = stats.planDistribution.find((p) => p.planName === "目录套餐");
+    expect(catalogBucket?.count).toBe(2); // 2 PAID orders
   });
 });

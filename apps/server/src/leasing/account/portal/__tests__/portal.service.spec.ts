@@ -5,8 +5,8 @@
  *   1. overview: assembles customer + subscriptions with quota; quota from store
  *      publicStatus mapped correctly (including weeklyWindowTokens); missing
  *      record → unlimited fallback; devices count = ACTIVE only;
- *      unreadNotifications correct; planName resolved / null;
- *      migratedFromCard from planId.
+ *      unreadNotifications correct; planName always null;
+ *      migratedFromCard from migratedFromKey.
  *   2. usage: scoped to customer's sub ids ONLY (another customer's rows excluded);
  *      days filter applied; pagination total correct.
  */
@@ -86,13 +86,12 @@ describe("PortalService.getOverview", () => {
     expect(typeof result.customer.createdAt).toBe("string");
   });
 
-  it("resolves planName from sub.plan when planId is non-null", async () => {
+  it("planName is always null and migratedFromCard false for a catalog purchase (no migratedFromKey)", async () => {
     const prisma = makePrisma({
       subscriptions: [
         {
           id: "sub-1",
-          planId: "plan-abc",
-          plan: { name: "Pro Plan" },
+          migratedFromKey: null,
           status: "ACTIVE",
           productEntitlements: '["antigravity"]',
           expiresAt: null,
@@ -106,17 +105,16 @@ describe("PortalService.getOverview", () => {
 
     const result = await service.getOverview("cust-1");
 
-    expect(result.subscriptions[0].planName).toBe("Pro Plan");
+    expect(result.subscriptions[0].planName).toBeNull();
     expect(result.subscriptions[0].migratedFromCard).toBe(false);
   });
 
-  it("planName is null and migratedFromCard is true when planId is null (migrated card)", async () => {
+  it("planName is null and migratedFromCard is true for a card-migrated sub (migratedFromKey set)", async () => {
     const prisma = makePrisma({
       subscriptions: [
         {
           id: "sub-2",
-          planId: null,
-          plan: null,
+          migratedFromKey: "BCAI-AAAA-BBBB",
           status: "ACTIVE",
           productEntitlements: '["antigravity"]',
           expiresAt: null,

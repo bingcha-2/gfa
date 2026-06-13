@@ -20,22 +20,17 @@ const prisma = getCustomerPrisma();
 let seq = 0;
 let service: ReferralAdminService;
 
-async function createPlan() {
-  return prisma.plan.create({
-    data: { name: `套餐 ${++seq}`, priceCents: 9900, durationDays: 30, productEntitlements: JSON.stringify(["antigravity"]) },
-  });
-}
-
-async function createOrder(customerId: string, planId: string) {
+async function createOrder(customerId: string) {
   return prisma.planOrder.create({
     data: {
       customerId,
-      planId,
       amountCents: 9900,
       payChannel: "ALIPAY",
       outTradeNo: `OT${Date.now()}${++seq}`,
       status: "PAID",
       paidAt: new Date(),
+      catalogVersion: 1,
+      config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     },
   });
@@ -67,8 +62,7 @@ describe("ReferralAdminService.listRewards", () => {
   it("resolves referrer / invitee emails + order number", async () => {
     const referrer = await createTestCustomer({ email: "ref@reward.test" });
     const invitee = await createTestCustomer({ email: "inv@reward.test" });
-    const plan = await createPlan();
-    const order = await createOrder(invitee.id, plan.id);
+    const order = await createOrder(invitee.id);
     await createReward(referrer.id, invitee.id, order.id);
 
     const result = await service.listRewards({ page: 1, pageSize: 20 });
@@ -83,9 +77,8 @@ describe("ReferralAdminService.listRewards", () => {
   it("filters by status", async () => {
     const referrer = await createTestCustomer();
     const invitee = await createTestCustomer();
-    const plan = await createPlan();
-    const o1 = await createOrder(invitee.id, plan.id);
-    const o2 = await createOrder(invitee.id, plan.id);
+    const o1 = await createOrder(invitee.id);
+    const o2 = await createOrder(invitee.id);
     await createReward(referrer.id, invitee.id, o1.id, "GRANTED");
     await createReward(referrer.id, invitee.id, o2.id, "REVOKED");
 
@@ -98,9 +91,8 @@ describe("ReferralAdminService.listRewards", () => {
     const alice = await createTestCustomer({ email: "alice@ref.test" });
     const bob = await createTestCustomer({ email: "bob@ref.test" });
     const invitee = await createTestCustomer();
-    const plan = await createPlan();
-    const o1 = await createOrder(invitee.id, plan.id);
-    const o2 = await createOrder(invitee.id, plan.id);
+    const o1 = await createOrder(invitee.id);
+    const o2 = await createOrder(invitee.id);
     await createReward(alice.id, invitee.id, o1.id);
     await createReward(bob.id, invitee.id, o2.id);
 

@@ -26,27 +26,13 @@ let service: BillingAdminService;
 
 let seq = 0;
 
-async function createPlan() {
-  return prisma.plan.create({
-    data: {
-      name: `退款测试套餐 ${++seq}`,
-      priceCents: 9900,
-      durationDays: 30,
-      productEntitlements: JSON.stringify(["antigravity"]),
-      levels: JSON.stringify({ antigravity: "ultra" }),
-    },
-  });
-}
-
 async function createSub(customerId: string, overrides: Partial<{
   status: "ACTIVE" | "EXPIRED" | "CANCELLED";
-  planId: string | null;
   activatedFromOrderId: string | null;
 }> = {}) {
   return prisma.subscription.create({
     data: {
       customerId,
-      planId: overrides.planId ?? null,
       status: (overrides.status ?? "ACTIVE") as any,
       startsAt: new Date(),
       expiresAt: new Date(Date.now() + 30 * DAY_MS),
@@ -57,20 +43,21 @@ async function createSub(customerId: string, overrides: Partial<{
   });
 }
 
-async function createOrder(customerId: string, planId: string, overrides: Partial<{
+async function createOrder(customerId: string, overrides: Partial<{
   status: "PENDING" | "PAID" | "FAILED" | "REFUNDED" | "EXPIRED";
   subscriptionId: string | null;
 }> = {}) {
   return prisma.planOrder.create({
     data: {
       customerId,
-      planId,
       amountCents: 9900,
       payChannel: "ALIPAY",
       outTradeNo: `OT${Date.now()}${++seq}`,
       status: (overrides.status ?? "PAID") as any,
       subscriptionId: overrides.subscriptionId ?? null,
       paidAt: overrides.status === "PENDING" ? null : new Date(),
+      catalogVersion: 1,
+      config: JSON.stringify({ line: "pool", products: ["antigravity"] }),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     },
   });
@@ -83,9 +70,12 @@ beforeAll(async () => {
 beforeEach(async () => {
   await cleanCustomerTables();
   entitlementSync = { syncSubscription: vi.fn(), expireShadowRecord: vi.fn() };
+  // refund/revoke only exercise SubscriptionService.cancelSubscription, which
+  // touches neither the catalog nor rosetta — stub them.
   const subscriptionService = new SubscriptionService(
     prisma as any,
     entitlementSync as unknown as EntitlementSyncService,
+    {} as any,
   );
   service = new BillingAdminService(prisma as any, subscriptionService);
 });
@@ -98,9 +88,8 @@ afterAll(async () => {
 describe("BillingAdminService.refundOrder", () => {
   it("refunds a PAID order: REFUNDED + linked sub CANCELLED + shadow expired + BILLING notification", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const sub = await createSub(customer.id, { planId: plan.id });
-    const order = await createOrder(customer.id, plan.id, { subscriptionId: sub.id });
+    const sub = await createSub(customer.id);
+    const order = await createOrder(customer.id, { subscriptionId: sub.id });
 
     const result = await service.refundOrder(order.id);
 
@@ -119,9 +108,8 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("falls back to the activatedFromOrderId link when order.subscriptionId is null", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const order = await createOrder(customer.id, plan.id, { subscriptionId: null });
-    const sub = await createSub(customer.id, { planId: plan.id, activatedFromOrderId: order.id });
+    const order = await createOrder(customer.id, { subscriptionId: null });
+    const sub = await createSub(customer.id, { activatedFromOrderId: order.id });
 
     const result = await service.refundOrder(order.id);
 
@@ -131,8 +119,7 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("refunds an order with no subscription at all (state flip + notification only)", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const order = await createOrder(customer.id, plan.id);
+    const order = await createOrder(customer.id);
 
     const result = await service.refundOrder(order.id);
 
@@ -143,9 +130,8 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("rejects refunding a non-PAID order with 409", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const pending = await createOrder(customer.id, plan.id, { status: "PENDING" });
-    const expired = await createOrder(customer.id, plan.id, { status: "EXPIRED" });
+    const pending = await createOrder(customer.id, { status: "PENDING" });
+    const expired = await createOrder(customer.id, { status: "EXPIRED" });
 
     await expect(service.refundOrder(pending.id)).rejects.toThrow(ConflictException);
     await expect(service.refundOrder(expired.id)).rejects.toThrow(ConflictException);
@@ -158,9 +144,8 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("is idempotent: refunding an already-REFUNDED order is a no-op success", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const sub = await createSub(customer.id, { planId: plan.id });
-    const order = await createOrder(customer.id, plan.id, { subscriptionId: sub.id });
+    const sub = await createSub(customer.id);
+    const order = await createOrder(customer.id, { subscriptionId: sub.id });
 
     await service.refundOrder(order.id);
     const second = await service.refundOrder(order.id);
@@ -174,9 +159,8 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("skips cancellation when the linked subscription is already CANCELLED", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const sub = await createSub(customer.id, { planId: plan.id, status: "CANCELLED" });
-    const order = await createOrder(customer.id, plan.id, { subscriptionId: sub.id });
+    const sub = await createSub(customer.id, { status: "CANCELLED" });
+    const order = await createOrder(customer.id, { subscriptionId: sub.id });
 
     const result = await service.refundOrder(order.id);
 
@@ -187,8 +171,7 @@ describe("BillingAdminService.refundOrder", () => {
 
   it("survives a dangling subscriptionId link (refund still completes)", async () => {
     const customer = await createTestCustomer();
-    const plan = await createPlan();
-    const order = await createOrder(customer.id, plan.id, { subscriptionId: "ghost-sub" });
+    const order = await createOrder(customer.id, { subscriptionId: "ghost-sub" });
 
     const result = await service.refundOrder(order.id);
 

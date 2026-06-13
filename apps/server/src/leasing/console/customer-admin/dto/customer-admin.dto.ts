@@ -1,7 +1,6 @@
 import {
   IsIn,
   IsInt,
-  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
@@ -22,10 +21,4 @@ export class UpdateCustomerDto {
   @IsOptional()
   @IsInt()
   creditCents?: number;
-}
-
-export class GrantSubscriptionDto {
-  @IsString()
-  @IsNotEmpty()
-  planId!: string;
 }

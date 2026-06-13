@@ -161,7 +161,7 @@ export class CardMigrationService {
           data: {
             id: recordId, // ID CONTINUITY — the record is re-homed, not re-minted
             customerId,
-            planId: null,
+            migratedFromKey: cardKey, // provenance marker: distinguishes card-migrated subs from catalog purchases
             status: "ACTIVE",
             startsAt: new Date(),
             expiresAt,
@@ -241,7 +241,8 @@ export class CardMigrationService {
         data: {
           id: record.id,
           customerId,
-          planId: null,
+          // self-heal of a card-migrated sub → restore the provenance marker.
+          migratedFromKey: record.migratedFromKey ?? null,
           status: "ACTIVE",
           startsAt: new Date(),
           expiresAt: expiresIso ? new Date(expiresIso) : null,

@@ -629,44 +629,21 @@ model CustomerEmailToken {
   @@index([customerId])
 }
 
-/// Purchasable plan template.
-model Plan {
-  id                   String   @id @default(cuid())
-  name                 String
-  description          String?
-  priceCents           Int
-  durationDays         Int
-  productEntitlements  String                    // JSON array e.g. ["antigravity","codex","anthropic"]
-  bucketLimits         String?                   // JSON per-model caps
-  levels               String?                   // JSON per-product plan levels
-  weight               Int      @default(1)      // fair-share: 1=拼车 … 8=独享
-  deviceLimit          Int      @default(1)
-  weeklyTokenLimit     Int?                      // token count; 2^31 ceiling acceptable
-  windowMs             Int      @default(18000000) // 5h in ms
-  active               Boolean  @default(true)
-  sortOrder            Int      @default(0)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-
-  planOrders  PlanOrder[]
-  subscriptions Subscription[]
-}
-
 /// Active / past subscription; its id doubles as shadow access-key record id and fair-share cardId.
 /// For migrated cards the id is set to the old card's id on create.
 model Subscription {
   id                  String             @id @default(cuid())
   customerId          String
-  planId              String?
   status              SubscriptionStatus @default(ACTIVE)
   startsAt            DateTime           @default(now())
   expiresAt           DateTime?          // nullable: migrated never-used card has no expiry until first use
   activatedFromOrderId String?           // PlanOrder.id that created/last extended this sub — exact order→sub link for reconcile + refund
+  migratedFromKey     String?            // set ONLY for card-migrated subs: the original card key (provenance). Catalog purchases leave it null.
   // 去影子:限额配置单一真相源(JSON 字符串;SQLite 无 Json,与 bucketLimits 等一致)。
   // 购买时快照展开的实际值(含显式 line),运行时直读它喂限额引擎、判号池/绑定。见 spec §4.2 / §6。
   config              String?
-  catalogVersion      Int?               // 买时的 PlanCatalog 版本(溯源 / 价格锁定);Plan 路径无目录 → null
-  // Purchase-time snapshots decoupled from Plan
+  catalogVersion      Int?               // 买时的 PlanCatalog 版本(溯源 / 价格锁定)
+  // Purchase-time snapshots: the runtime mirror columns lease-service still reads.
   productEntitlements String
   bucketLimits        String?
   bindings            String?            // JSON product→accountId mirror
@@ -680,10 +657,8 @@ model Subscription {
   updatedAt           DateTime           @updatedAt
 
   customer  Customer  @relation(fields: [customerId], references: [id])
-  plan      Plan?     @relation(fields: [planId], references: [id])
 
   @@index([customerId])
-  @@index([planId])
   @@index([activatedFromOrderId])
 }
 
@@ -702,14 +677,11 @@ model PlanCatalog {
 }
 
 /// Plan purchase order (distinct from the existing family-group Order).
-/// Two ordering paths coexist:
-///  - Plan-based  : planId set, catalog columns null (legacy).
-///  - Catalog-based: planId null, catalogVersion/selection/config set —
-///    config is the computePurchase snapshot written into Subscription on activation. See spec §8.
+/// Catalog-only: every order carries catalogVersion/selection/config —
+/// config is the computePurchase snapshot written into Subscription on activation. See spec §8.
 model PlanOrder {
   id             String         @id @default(cuid())
   customerId     String
-  planId         String?        // null for catalog-based orders (selection-driven)
   subscriptionId String?        // filled on activation
   amountCents    Int
   payChannel     PayChannel
@@ -719,7 +691,7 @@ model PlanOrder {
   notifyRaw      String?
   paidAt         DateTime?
   referrerId     String?        // Customer id of inviter at purchase time
-  // Catalog-based purchase snapshot (null for plan-based orders):
+  // Catalog purchase snapshot:
   catalogVersion Int?           // PUBLISHED PlanCatalog version priced against (price lock / 溯源)
   selection      String?        // JSON of the customer's selection (audit / re-pricing)
   config         String?        // JSON config from computePurchase → written into Subscription.config on activation
@@ -728,10 +700,8 @@ model PlanOrder {
   updatedAt      DateTime       @updatedAt
 
   customer  Customer  @relation(fields: [customerId], references: [id])
-  plan      Plan?     @relation(fields: [planId], references: [id])
 
   @@index([customerId])
-  @@index([planId])
   @@index([status])
 }
 

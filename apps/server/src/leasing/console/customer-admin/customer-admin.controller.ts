@@ -4,7 +4,6 @@
  *   GET   console/customers                  — list (page/pageSize/search/status)
  *   GET   console/customers/:id              — detail (+subscriptions/orders/devices)
  *   PATCH console/customers/:id              — enable-disable / edit note / credit
- *   POST  console/customers/:id/subscriptions — manual grant
  *
  * Mirrors the console admin-mutation convention (see billing-admin.controller):
  * ConsoleJwtGuard + @Roles("ADMIN","OPERATIONS") at class level, mutations
@@ -18,7 +17,6 @@ import {
   Param,
   ParseIntPipe,
   Patch,
-  Post,
   Query,
   Request,
   UseGuards,
@@ -28,7 +26,7 @@ import { ConsoleJwtGuard } from "../../../shared/auth/console-jwt.guard";
 import { Roles } from "../../../shared/auth/roles.decorator";
 import { AuditLogService } from "../../../shared/audit-log/audit-log.service";
 import { CustomerAdminService } from "./customer-admin.service";
-import { GrantSubscriptionDto, UpdateCustomerDto } from "./dto/customer-admin.dto";
+import { UpdateCustomerDto } from "./dto/customer-admin.dto";
 
 @Controller("console/customers")
 @UseGuards(ConsoleJwtGuard)
@@ -71,24 +69,5 @@ export class CustomerAdminController {
     });
 
     return result;
-  }
-
-  @Post(":id/subscriptions")
-  async grant(
-    @Param("id") id: string,
-    @Body() dto: GrantSubscriptionDto,
-    @Request() req: any,
-  ) {
-    const sub = await this.customerAdmin.grantSubscription(id, dto.planId);
-
-    await this.auditLog.log({
-      operatorId: req.user?.id,
-      action: "GRANT_SUBSCRIPTION",
-      targetType: "Customer",
-      targetId: id,
-      detail: { planId: dto.planId, subscriptionId: sub.id },
-    });
-
-    return sub;
   }
 }

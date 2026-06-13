@@ -10,12 +10,10 @@ import { CustomerTokenService } from "../../account/customer-auth/customer-token
 import { DeviceService } from "../../account/device/device.service";
 
 function buildSubscriptionSummary(subscription: {
-  planId: string | null;
   status: string;
   expiresAt: Date | null;
   deviceLimit: number;
   productEntitlements: string;
-  plan?: { name: string } | null;
 } | null) {
   if (!subscription) return null;
 
@@ -27,9 +25,9 @@ function buildSubscriptionSummary(subscription: {
   }
 
   return {
-    // null when the subscription has no linked Plan (e.g. migrated cards) —
-    // clients localize the fallback label themselves.
-    planName: subscription.plan?.name ?? null,
+    // Catalog-only: subscriptions carry no single plan name — clients localize
+    // their own label from products[]. Always null.
+    planName: null,
     status: subscription.status,
     expiresAt: subscription.expiresAt,
     deviceLimit: subscription.deviceLimit,
@@ -57,8 +55,7 @@ export class AppAuthService {
           { expiresAt: { gt: now } }
         ]
       },
-      orderBy: { createdAt: "desc" },
-      include: { plan: { select: { name: true } } }
+      orderBy: { createdAt: "desc" }
     });
     return subscription;
   }

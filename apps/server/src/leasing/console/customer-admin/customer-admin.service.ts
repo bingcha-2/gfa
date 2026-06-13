@@ -1,8 +1,7 @@
 /**
  * customer-admin.service.ts — console-side customer management:
  * paginated/searchable list (with aggregates), detail (with subscriptions /
- * orders / devices), enable-disable + profile edit, and manual subscription
- * grant.
+ * orders / devices), and enable-disable + profile edit.
  *
  * Security: every read goes through an explicit field whitelist — passwordHash
  * and tokenVersion are NEVER returned. Disabling a customer bumps tokenVersion
@@ -12,7 +11,6 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
-import { SubscriptionService } from "../../subscription/subscription.service";
 import { UpdateCustomerDto } from "./dto/customer-admin.dto";
 
 export interface ListCustomersParams {
@@ -28,7 +26,6 @@ export class CustomerAdminService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   /**
@@ -143,7 +140,6 @@ export class CustomerAdminService {
         subscriptions: {
           select: {
             id: true,
-            planId: true,
             status: true,
             startsAt: true,
             expiresAt: true,
@@ -151,7 +147,6 @@ export class CustomerAdminService {
             weight: true,
             deviceLimit: true,
             createdAt: true,
-            plan: { select: { name: true } },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -164,7 +159,6 @@ export class CustomerAdminService {
             status: true,
             paidAt: true,
             createdAt: true,
-            plan: { select: { name: true } },
           },
           orderBy: { createdAt: "desc" },
         },
@@ -226,22 +220,5 @@ export class CustomerAdminService {
 
     this.logger.log(`[customer-admin] customer ${id} updated (${JSON.stringify(dto)})`);
     return updated;
-  }
-
-  /**
-   * Manually grant a subscription (bypasses payment). Reuses
-   * SubscriptionService.activateOrExtend — validates the plan, cancels
-   * overlapping plan-backed subs, mints the shadow record.
-   */
-  async grantSubscription(id: string, planId: string) {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!customer) throw new NotFoundException(`Customer "${id}" not found`);
-
-    const sub = await this.subscriptionService.activateOrExtend(id, planId, {});
-    this.logger.log(`[customer-admin] granted subscription ${sub.id} (plan ${planId}) to customer ${id}`);
-    return sub;
   }
 }

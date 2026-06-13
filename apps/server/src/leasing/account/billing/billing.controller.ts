@@ -21,7 +21,6 @@ import { CustomerJwtGuard } from "../customer-auth/customer-jwt.guard";
 import { CurrentCustomer } from "../customer-auth/customer.decorator";
 import type { CustomerUser } from "../customer-auth/customer-jwt.strategy";
 import { BillingService } from "./billing.service";
-import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateCatalogOrderDto } from "./dto/create-catalog-order.dto";
 
 @Public()
@@ -29,16 +28,6 @@ import { CreateCatalogOrderDto } from "./dto/create-catalog-order.dto";
 @Controller("account")
 export class BillingController {
   constructor(private readonly billingService: BillingService) {}
-
-  /** POST /api/account/billing/orders → 201 (legacy plan-based order) */
-  @Post("billing/orders")
-  @HttpCode(201)
-  createOrder(
-    @CurrentCustomer() customer: CustomerUser,
-    @Body() dto: CreateOrderDto,
-  ) {
-    return this.billingService.createOrder(customer.customerId, dto.planId, dto.channel);
-  }
 
   /** POST /api/account/billing/catalog-orders → 201 (catalog-driven selection order, spec §8) */
   @Post("billing/catalog-orders")

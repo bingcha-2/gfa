@@ -618,7 +618,6 @@ describe("E2E 边界/异常", () => {
         payChannel: "ALIPAY",
         outTradeNo: `gfa-unbound-${Date.now()}`,
         status: "PAID",
-        planId: null,
         catalogVersion: 1,
         config: JSON.stringify(config),
         expiresAt: new Date(Date.now() + DAY_MS),

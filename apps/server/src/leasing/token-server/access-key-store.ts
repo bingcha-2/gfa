@@ -83,13 +83,13 @@ export interface AccessKeyRecord {
   /** Legacy single-binding fields, still read by boundAccountIdFor as a fallback. */
   provider?: string;
   boundAccountId?: number;
-  /** Plan-backed shadow records MUST hold a seat (binding) to lease (M13b).
-   * Set by entitlement-sync on every sync of a planId-backed subscription. If
-   * seat assignment failed for EVERY product, the record is binding-less and
-   * would otherwise fall through to the broad dynamic POOL in
-   * LeaseService.leaseToken — access the plan never sold. The flag makes the
-   * lease path 409 instead. Admin pool cards and migrated legacy cards
-   * (planId null) never carry it, so their behavior is unchanged. */
+  /** Bind-line subscription shadow records MUST hold a seat (binding) to lease (M13b).
+   * Set by entitlement-sync on every sync of a bind-line subscription. If seat
+   * assignment failed for EVERY product, the record is binding-less and would
+   * otherwise fall through to the broad dynamic POOL in LeaseService.leaseToken —
+   * access the subscription never sold. The flag makes the lease path 409 instead.
+   * Admin pool cards, pool-line subscriptions, and migrated legacy cards never
+   * carry it, so their behavior is unchanged. */
   requiresBinding?: boolean;
   /** ABSOLUTE expiry (ISO) — set on subscription shadow records (mirrors
    * Subscription.expiresAt). Takes priority over firstUsedAt+durationMs in
