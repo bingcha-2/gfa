@@ -97,6 +97,7 @@ describe("PortalService.getOverview", () => {
           expiresAt: null,
           deviceLimit: 3,
           weight: 1,
+          priority: 2,
         },
       ],
     });
@@ -107,6 +108,7 @@ describe("PortalService.getOverview", () => {
 
     expect(result.subscriptions[0].planName).toBeNull();
     expect(result.subscriptions[0].migratedFromCard).toBe(false);
+    expect(result.subscriptions[0].priority).toBe(2);
   });
 
   it("planName is null and migratedFromCard is true for a card-migrated sub (migratedFromKey set)", async () => {

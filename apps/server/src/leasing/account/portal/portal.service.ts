@@ -98,6 +98,7 @@ export class PortalService {
         expiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
         deviceLimit: sub.deviceLimit,
         weight: sub.weight,
+        priority: sub.priority,
         migratedFromCard: sub.migratedFromKey != null,
         quota,
       };
