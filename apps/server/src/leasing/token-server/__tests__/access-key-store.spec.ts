@@ -645,6 +645,16 @@ describe('AccessKeyStore', () => {
       expect(store.findById("sub-9")?.customerId).toBe("cust-9");
       fs.rmSync(tmp, { recursive: true, force: true });
     });
+
+    it("loadSubscriptionRecords 注册带 priority 的 record → findById 可取回", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-prio-"));
+      const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+      store.loadSubscriptionRecords([
+        { id: "sub-p", customerId: "cust-1", priority: 7, status: "active", products: ["codex"] },
+      ]);
+      expect(store.findById("sub-p")?.priority).toBe(7);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
   });
 
   describe('publicStatus', () => {
