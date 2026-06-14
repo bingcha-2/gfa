@@ -1,30 +1,30 @@
 {
-  "version": "9.6.4",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.4/BingchaAI-9.6.4.exe",
-  "sha256": "DD2D64B61BD27DC09ACF7D01929BACCF8A6158EF1FA117F8797F699B811EA805",
-  "size": 21134848,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.4/BingchaAI-9.6.4-setup.exe",
-  "installerSha256": "81D4A5337EF5735CCB374124CA6C20677B1B1518F0DC790D5179F4F499E830D9",
-  "installerSize": 11170708,
-  "changelog": "版本更新与稳定性改进",
-  "minVersion": "9.6.4",
+  "version": "9.6.5",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.5/BingchaAI-9.6.5.exe",
+  "sha256": "6DBC6B92CB98DAD5E62232346EAA6BA566942D40C6C77D82E95DD1A66E388EFA",
+  "size": 21147648,
+  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.5/BingchaAI-9.6.5-setup.exe",
+  "installerSha256": "DF026DEB6C02CC5BD037583F928406479CCE15FE668F0288E5768D04784BDCFB",
+  "installerSize": 11176634,
+  "changelog": "-解决了用户提出的问题。\n-解决了提出问题的用户。\n-更新了最新的版本号",
+  "minVersion": "9.6.5",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.4/BingchaAI-9.6.4-arm64.dmg",
-      "sha256": "34872044D3DBFA0444369EB3744865A949C575AE5A4FCA7C6451A9681D78A5CD",
-      "size": 10296740
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.5/BingchaAI-9.6.5-arm64.dmg",
+      "sha256": "260F70BF2DBAE4F4FFB31C451CDAAFB227A68659A23DC0231E7B15155B88A4B8",
+      "size": 10300654
     },
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.4/BingchaAI-9.6.4-amd64.dmg",
-      "sha256": "2981C34F81B086A95587B89AF4BAE1E757799F2F39847305DD0CB5EED1C623DE",
-      "size": 11027581
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.5/BingchaAI-9.6.5-amd64.dmg",
+      "sha256": "7A657CD70C0744B114B629ACE2C58C83B8CCFD03F750558EDD33163380E2FE34",
+      "size": 11032436
     }
   },
   "linux": {
     "amd64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.4/BingchaAI-9.6.4-linux-amd64.tar.gz",
-      "sha256": "3308722A5B618376119AD918194734C5C4FF3DB8EFF1833B036243F8C7686F63",
-      "size": 8732701
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.6.5/BingchaAI-9.6.5-linux-amd64.tar.gz",
+      "sha256": "715F240B28148FF051B185F9A98BC98185F0F99E9CDF3BDBF2198604CBECE983",
+      "size": 8738805
     }
   }
 }
