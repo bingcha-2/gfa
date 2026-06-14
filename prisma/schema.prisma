@@ -496,18 +496,19 @@ model AccountQuotaSnapshot {
   @@index([timestamp])
 }
 
-/// 学习出的 5h/周预算(从 quota-profiles.json 迁入)。一行一个 provider+planType+family。
-/// 由 QuotaProfileTracker 内存聚合 + 定时批量 upsert。history* 存 JSON 数组(最近 20 个样本)。
+/// 学习出的 5h/周预算。一行一个 provider+planType+family。
+/// 由 QuotaProfileTracker 内存聚合 + 定时批量 upsert。权威预算 = history 的时间衰减加权中位
+/// (读时重算);window5h/weekly 仅为读时快照(status 展示 + 旧代码降级安全网)。
 model QuotaProfile {
   provider      String
   planType      String
   family        String                     // gemini | claude | gpt
-  window5h      Float    @default(0)        // 学习的 5h 加权 token 预算(0=未知)
-  weekly        Float    @default(0)        // 学习的周预算
+  window5h      Float    @default(0)        // 读时重算快照(权威=history5h 衰减加权中位)
+  weekly        Float    @default(0)        // 读时重算快照(权威=historyWeekly)
   samples5h     Int      @default(0)
   samplesWeekly Int      @default(0)
-  history5h     String   @default("[]")     // JSON: number[] 最近 5h 样本
-  historyWeekly String   @default("[]")     // JSON: number[] 最近周样本
+  history5h     String   @default("[]")     // JSON: {v:number,t:number}[](向后兼容旧 number[])
+  historyWeekly String   @default("[]")     // JSON: {v:number,t:number}[](向后兼容旧 number[])
   lastUpdatedAt BigInt   @default(0)        // epoch ms
 
   @@id([provider, planType, family])
@@ -522,8 +523,8 @@ model FairShareWindow {
   cardId          String
   windowStart     BigInt                   // epoch ms,5h 窗口起点
   weightedUsed    Float    @default(0)      // 本窗口该卡已用加权 token
-  estimatedBudget Float    @default(0)
-  confidence      String   @default("default")
+  estimatedBudget Float    @default(0)      // 已退役(预算改读学习档案);保留列写默认值,下个发布周期再 DROP
+  confidence      String   @default("default") // 已退役(同上)
   lastFraction    Float    @default(1)
   updatedAt       DateTime @default(now())
 

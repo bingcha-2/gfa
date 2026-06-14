@@ -104,20 +104,20 @@ describe("FairShareTracker SQL persistence", () => {
     expect(t2.getBucketStateForTesting(1, "codex-gpt")?.perCard.c1).toBe(2880);
   });
 
-  it("on load past the 5h boundary: discards usage but keeps the learned budget", async () => {
+  it("on load past the 5h boundary: discards usage; budget comes from the learned profile/default", async () => {
     const { prisma } = makeFsPrisma();
     const T = 1_700_000_000_000;
     const t1 = track(makeTracker(() => T, prisma));
     t1.recordUsage(1, "c1", "codex-gpt", 100100, 0, 0); // cost 100100
-    t1.confirmBudget(1, "codex-gpt"); // estimatedBudget = totalUsed, confidence 'confirmed'
     await t1.flush();
 
     const t2 = track(makeTracker(() => T + WINDOW_MS + 1, prisma)); // window expired
     await t2.load();
     const state = t2.getBucketStateForTesting(1, "codex-gpt");
     expect(state?.totalUsed).toBe(0); // stale per-card usage discarded
-    expect(state?.estimatedBudget).toBe(100100); // budget retained
-    expect(state?.confidence).toBe("estimated"); // confirmed downgraded
+    // Budget is no longer per-account ratcheted/persisted — it's read from the
+    // learned profile (none wired here) → DEFAULT_BUDGETS.pro.gpt.
+    expect(state?.resolvedBudget).toBe(100000);
     expect(state?.lastFraction).toBe(1); // upstream window reset → full
   });
 
@@ -299,16 +299,13 @@ describe("周窗口公平份额(trackWeekly)", () => {
     expect(r.retryAfterMs).toBe(7 * 24 * 60 * 60 * 1000);
   });
 
-  it("does not let a sparse weekly sample shrink below the learned 5h budget ratio", () => {
+  it("weekly budget floors at default5h × R while weekly is unlearned", () => {
     const t = makeClaudeTracker(() => T, true);
-    t.recordUsage(1, "c1", "anthropic-claude", 20_000, 0, 0, "claude-opus-4-8");
-    t.updateBudgetEstimate(1, "anthropic-claude", 0.94);
-    const shortBudget = t.getBucketStateForTesting(1, "anthropic-claude")!.estimatedBudget;
-
-    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.94);
-
+    t.recordUsage(1, "c1", "anthropic-claude", 20_000, 0, 0, "claude-opus-4-8"); // creates 5h + weekly trackers
+    const shortBudget = t.getBucketStateForTesting(1, "anthropic-claude")!.resolvedBudget;
     const weekly = t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))!;
-    expect(weekly.estimatedBudget).toBeGreaterThanOrEqual(shortBudget * 5);
+    // No learned weekly → weekly budget = max(default5h, learned5h) × clamp(R) ≥ short × 4.235.
+    expect(weekly.resolvedBudget).toBeGreaterThanOrEqual(shortBudget * 4.235);
     expect(t.checkFairShare(1, "c1", "anthropic-claude").allowed).toBe(true);
   });
 });
@@ -352,8 +349,7 @@ describe("trackWeekly 默认关闭:行为与历史一致(antigravity)", () => {
     t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
     expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(150, 5);
     expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
-    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // no-op
-    t.confirmWeeklyBudget(1, "anthropic-claude"); // no-op
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // no-op (trackWeekly off)
     expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
   });
 });

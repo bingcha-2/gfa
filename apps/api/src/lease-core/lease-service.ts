@@ -6,7 +6,7 @@ import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
 import { FairShareTracker, weeklyBucketKey } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
-import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from "./quota-profile-tracker";
+import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO, clampWeeklyRatio, SAMPLE_DROP_STEP } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
 import {
   DEFAULT_AFFINITY_TTL_MS,
@@ -182,6 +182,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
   private readonly busyMessage: string;
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly clientAffinity = new Map<string, { accountId: number; expiresAt: number }>();
+  /** Continuous quota-profile sampling cursors, per (accountId, scope-key).
+   *  Holds the per-account fraction stream state for the "sample every ~10% drop"
+   *  trigger + cross-window-reset detection. Per-account (NOT in the cross-account
+   *  QuotaProfile, which would cross-contaminate). Rebuilt after restart. */
+  private readonly profileSampleCursors = new Map<string, { lastFraction: number; windowStart: number; lastTotalUsed: number }>();
   private readonly enterpriseProbe = new EnterpriseProbeManager({ log: () => undefined });
   private totalLeases = 0;
   private totalReports = 0;
@@ -915,6 +920,87 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return n > 1 ? Math.min(1, n / 100) : Math.min(1, n);
   }
 
+  /**
+   * Continuous quota-profile sampling. Called AFTER recordUsage so the sampled
+   * totalUsed already includes this request and is aligned with the (post-report)
+   * upstream fraction. Samples once per ~10% drop in the remaining fraction.
+   * Cross-window reset is detected from the SAME windowStart that clears perCard.
+   */
+  private maybeSampleQuotaProfile(accountId: number, account: TAccount, record: any): void {
+    if (!this.fairShareTracker || !this.quotaProfileTracker) return;
+    const inputs = this.provider.quotaSnapshotInputs?.(account) || [];
+    if (inputs.length === 0) return; // structured snapshot only (codex/anthropic); others learn via 429
+    const planType = String((account as any)?.planType || "free").toLowerCase();
+    // 决策④:绑卡(1 号≈GFA 独占)跳过门6;池卡/万能卡启用一致性门6。
+    const isBound = this.accessKeyStore.boundAccountIdFor(record, this.provider.id) > 0;
+    for (const inp of inputs) {
+      const bucket = bucketKey(this.provider.id, inp.modelKey);
+      const family = familyOfBucket(bucket);
+      this.sampleQuotaScope(accountId, planType, family, bucket, false, this.quotaPercentToFraction(inp.hourlyPercent), isBound);
+      if (this.fairShareTracker.isWeeklyTracked()) {
+        this.sampleQuotaScope(accountId, planType, family, bucket, true, this.quotaPercentToFraction(inp.weeklyPercent), isBound);
+      }
+    }
+  }
+
+  /** One scope (5h or weekly) of the continuous sampler. */
+  private sampleQuotaScope(
+    accountId: number,
+    planType: string,
+    family: string,
+    bucket: string,
+    isWeekly: boolean,
+    fraction: number | null,
+    isBound: boolean,
+  ): void {
+    if (fraction === null) return; // gate A.1: no real reading → never sample
+    const scopeKey = isWeekly ? weeklyBucketKey(bucket) : bucket;
+    const state = this.fairShareTracker!.getTrackerState(accountId, scopeKey);
+    if (!state) return;
+    const totalUsed = state.totalUsed;
+    const cursorKey = `${accountId} ${scopeKey}`;
+    const cursor = this.profileSampleCursors.get(cursorKey);
+
+    // Gate A.2: window reset (windowStart changed = perCard was cleared) → reset
+    // baseline, never sample across the boundary (avoids phantom negative consumption).
+    if (!cursor || cursor.windowStart !== state.windowStart) {
+      this.profileSampleCursors.set(cursorKey, { lastFraction: fraction, windowStart: state.windowStart, lastTotalUsed: totalUsed });
+      return;
+    }
+    // Fraction rose within the same window (coarse-granularity jitter) → re-baseline, don't sample.
+    if (fraction > cursor.lastFraction) {
+      cursor.lastFraction = fraction;
+      cursor.lastTotalUsed = totalUsed;
+      return;
+    }
+    // Trigger: only sample once per ~10% drop in remaining fraction.
+    if (cursor.lastFraction - fraction < SAMPLE_DROP_STEP) return;
+
+    // Gate A.6 (pool/universal cards only): this step's usage increment must
+    // plausibly explain this step's fraction drop, else an external consumer of
+    // the shared account is polluting the estimate → skip.
+    if (!isBound) {
+      const usedDelta = totalUsed - cursor.lastTotalUsed;
+      const fracDrop = cursor.lastFraction - fraction;
+      if (!(usedDelta > 0) || fracDrop <= 0) {
+        cursor.lastFraction = fraction;
+        cursor.lastTotalUsed = totalUsed;
+        return;
+      }
+      const stepEst = usedDelta / fracDrop;
+      const totalEst = fraction < 1 ? totalUsed / (1 - fraction) : stepEst;
+      if (stepEst > totalEst * 3 || stepEst < totalEst / 3) {
+        cursor.lastFraction = fraction;
+        cursor.lastTotalUsed = totalUsed;
+        return; // inconsistent → likely external consumption, drop
+      }
+    }
+
+    this.quotaProfileTracker!.recordSample(this.provider.id, planType, family, totalUsed, fraction, isWeekly);
+    cursor.lastFraction = fraction;
+    cursor.lastTotalUsed = totalUsed;
+  }
+
   async reportResult(req: any, payload: any) {
     const auth = this.accessKeyStore.resolveFromRequest(req, payload);
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
@@ -981,6 +1067,13 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           detail.inputTokens, detail.outputTokens, detail.cachedInputTokens,
           modelKey, // 真实模型 → 按 Claude 档位单价(Opus/Sonnet/Haiku/Fable)计权
         );
+      }
+      // Continuous quota-profile sampling — MUST run after recordUsage above so
+      // the sampled totalUsed includes this request (aligned with the upstream
+      // fraction from applyAccountQuotaSnapshot earlier in this report).
+      if (this.quotaProfileTracker) {
+        const account = this.readAccounts().find((a) => a.id === accountId);
+        if (account) this.maybeSampleQuotaProfile(accountId, account, auth.record);
       }
     }
 
@@ -1054,8 +1147,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
           const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
           this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
-          // Fair-share: confirm budget ceiling on upstream exhaustion.
-          if (this.fairShareTracker && status === 429) {
+          // Fair-share: 429 backstop quota-profile sample (density safety net for
+          // sparse windows). NOT a special per-account SET — just one more sample
+          // into the same decayed-median pool. The consumed≥0.2 gate inside
+          // recordSample naturally drops rate-limit 429s (account still has quota).
+          if (this.fairShareTracker && status === 429 && this.quotaProfileTracker) {
             const bucket = bucketKey(this.provider.id, modelKey);
             const account = this.readAccounts().find((a) => a.id === accountId);
             const resetAt = account ? getModelQuotaResetAt(account as any, modelKey) : 0;
@@ -1063,22 +1159,14 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
             const isWeekly = this.fairShareTracker.isWeeklyTracked()
               && (retryAfterMs > FIVE_HOURS_MS || resetAt > this.now() + FIVE_HOURS_MS);
 
-            if (isWeekly) {
-              this.fairShareTracker.confirmWeeklyBudget(accountId, bucket);
-            } else {
-              this.fairShareTracker.confirmBudget(accountId, bucket);
-            }
-            // Record exhaustion sample for quota profile learning
-            if (this.quotaProfileTracker) {
-              const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
-              if (state && state.totalUsed > 0) {
-                const planType = String((account as any)?.planType || "free");
-                const family = familyOfBucket(bucket);
-                this.quotaProfileTracker.recordExhaustion(
-                  this.provider.id, planType, family,
-                  state.totalUsed, state.lastFraction, isWeekly,
-                );
-              }
+            const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
+            if (state && state.totalUsed > 0) {
+              const planType = String((account as any)?.planType || "free");
+              const family = familyOfBucket(bucket);
+              this.quotaProfileTracker.recordSample(
+                this.provider.id, planType, family,
+                state.totalUsed, state.lastFraction, isWeekly,
+              );
             }
           }
         } else if (status === 403) {
