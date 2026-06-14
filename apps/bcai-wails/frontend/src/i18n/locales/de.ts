@@ -183,7 +183,7 @@ export const de: DeepPartialDict = {
     caFailedTitle: 'Inferenz übernommen · Max ausstehend',
     caRetakeBtn: 'Neu übernehmen · Zertifikat installieren',
     storeClaudeTitle: '⚠ Store-Version kann nicht übernommen werden',
-    storeClaudeBtn: 'Standalone per Klick installieren',
+    storeClaudeBtn: 'Standalone herunterladen',
     permissionTitle: 'Systemberechtigung erforderlich',
     permissionBody: '{message}\n\nAktivieren Sie BingchaAI unter „Systemeinstellungen → Datenschutz & Sicherheit → App-Verwaltung“ und versuchen Sie es erneut.',
     opFailed: 'Aktion fehlgeschlagen',

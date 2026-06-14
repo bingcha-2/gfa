@@ -50,7 +50,7 @@ function resolve(s: AccessKeyStore, weeklyRatio: (rec: any) => number) {
 describe("派生周上限 = 5h上限 × R(anthropic/codex)", () => {
   const base = { id: "k", key: "ks", status: "active", provider: "anthropic" };
 
-  it("weeklyRatio below 3 is floored, so 2000 CU is allowed against a derived 3000 CU weekly cap", () => {
+  it("weeklyRatio below 4.235 is floored, so 2000 CU is allowed against a derived 4235 CU weekly cap", () => {
     const s = makeStore({ ...base, windowStartedAt: nowVal, weeklyWindowStartedAt: nowVal, bucketLimits: { "anthropic-claude": 1000 } });
     build4Windows(s); // 周=2000, 5h=500
     const res = resolve(s, () => 2);
@@ -76,10 +76,10 @@ describe("派生周上限 = 5h上限 × R(anthropic/codex)", () => {
   it("publicStatus 派生周桶:池子卡 bucketLimits → weeklyBuckets 含 5h×R", () => {
     const s = makeStore({ ...base, windowStartedAt: nowVal, weeklyWindowStartedAt: nowVal, bucketLimits: { "anthropic-claude": 1000 } });
     out500(s, "r1"); // 5h & 周 各 500 CU
-    const st = s.publicStatus(s.findById("k")!, 0, () => 3) as any; // R=3
+    const st = s.publicStatus(s.findById("k")!, 0, () => 3) as any; // clamped to R=4.235
     const wb = (st.weeklyBuckets || []).find((b: any) => b.bucket === "anthropic-claude");
     expect(wb).toBeDefined();
-    expect(wb.limit).toBe(3000); // 1000 × 3
+    expect(wb.limit).toBe(4235); // 1000 × 4.235
     expect(wb.used).toBe(500);
     // 5h 桶照旧
     const fh = (st.buckets || []).find((b: any) => b.bucket === "anthropic-claude");

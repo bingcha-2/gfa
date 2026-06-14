@@ -148,19 +148,19 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
       expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(5);
     });
 
-    it("比值越界被夹到 [2,30]", () => {
+    it("比值越界被夹到 [4.235,30]", () => {
       const tracker = new QuotaProfileTracker();
       active = tracker;
       tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false);    // 5h = 100000
       tracker.recordExhaustion("anthropic", "max", "claude", 9000000, 0.1, true);   // weekly = 10,000,000 → 比值 100
       expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(30); // 夹到 30
     });
-    it("learned ratios below 3 are floored so weekly quota is never smaller than 3x 5h", () => {
+    it("learned ratios below 4.235 are floored so weekly quota is never smaller than 4.235x 5h", () => {
       const tracker = new QuotaProfileTracker();
       active = tracker;
       tracker.recordExhaustion("anthropic", "max", "claude", 80000, 0.2, false);  // 5h = 100000
       tracker.recordExhaustion("anthropic", "max", "claude", 160000, 0.2, true);  // weekly = 200000 => R=2
-      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(3);
+      expect(tracker.getWeeklyToShortRatio("anthropic", "max", "claude")).toBe(4.235);
     });
   });
 });

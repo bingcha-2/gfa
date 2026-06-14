@@ -4,6 +4,7 @@ import * as path from "path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { weeklyBucketKey } from "../../token-server/fair-share-tracker";
 import { RemoteAnthropicService } from "../service/remote-anthropic.service";
 
 function writeJson(filePath: string, value: unknown) {
@@ -139,6 +140,101 @@ describe("RemoteAnthropicService", () => {
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
     expect(stored.keys[0].totalTokensUsed).toBe(160);
     expect(stored.keys[0].totalRequests).toBe(1);
+  });
+
+  it("feeds 5h and weekly fair-share windows from their own Claude quota fields", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    const service = makeService();
+    const lease = await service.leaseToken(
+      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      { clientId: "client-a", modelKey: MODEL },
+    );
+
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+    await service.reportResult(
+      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      {
+        leaseId: lease.leaseId,
+        reportId: "quota-windows-1",
+        status: 200,
+        modelKey: MODEL,
+        inputTokens: 100,
+        outputTokens: 0,
+        totalTokens: 100,
+        accountQuota: {
+          planType: "max",
+          claudeQuota: {
+            hourlyPercent: 90,
+            weeklyPercent: 50,
+            hourlyResetTime: hourlyReset,
+            weeklyResetTime: weeklyReset,
+          },
+        },
+      },
+    );
+
+    const bucket = "anthropic-claude";
+    const short = service.fairShareTracker?.getBucketStateForTesting(21, bucket);
+    const weekly = service.fairShareTracker?.getBucketStateForTesting(21, weeklyBucketKey(bucket));
+
+    expect(short?.lastFraction).toBeCloseTo(0.9, 5);
+    expect(short && short.windowStart + 5 * 60 * 60 * 1000).toBe(Date.parse(hourlyReset));
+    expect(weekly?.lastFraction).toBeCloseTo(0.5, 5);
+    expect(weekly && weekly.windowStart + 7 * 24 * 60 * 60 * 1000).toBe(Date.parse(weeklyReset));
+  });
+
+  it("learns weekly exhaustion samples from the weekly fair-share window", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    const service = makeService();
+    const lease = await service.leaseToken(
+      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      { clientId: "client-a", modelKey: MODEL },
+    );
+
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+    await service.reportResult(
+      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      {
+        leaseId: lease.leaseId,
+        reportId: "weekly-sample-usage",
+        status: 200,
+        modelKey: MODEL,
+        inputTokens: 20_000,
+        outputTokens: 0,
+        totalTokens: 20_000,
+        accountQuota: {
+          planType: "max",
+          claudeQuota: {
+            hourlyPercent: 90,
+            weeklyPercent: 50,
+            hourlyResetTime: hourlyReset,
+            weeklyResetTime: weeklyReset,
+          },
+        },
+      },
+    );
+
+    const bucket = "anthropic-claude";
+    const weeklyState = service.fairShareTracker?.getTrackerState(21, weeklyBucketKey(bucket));
+    expect(weeklyState?.lastFraction).toBeCloseTo(0.5, 5);
+
+    await service.reportResult(
+      { headers: { "x-token-server-secret": "claude-secret-card" } },
+      {
+        leaseId: lease.leaseId,
+        reportId: "weekly-sample-429",
+        status: 429,
+        modelKey: MODEL,
+        retryAfterMs: 4 * 24 * 60 * 60 * 1000,
+      },
+    );
+
+    const profile = service.quotaProfileTracker?.getProfile("anthropic", "max", "claude");
+    expect(profile?.samplesWeekly).toBe(1);
+    expect(profile?.samples5h).toBe(0);
+    expect(profile?.weekly).toBeCloseTo(weeklyState!.totalUsed / 0.5, 5);
   });
 
   it("cools down a Claude account after a 429 quota status report", async () => {

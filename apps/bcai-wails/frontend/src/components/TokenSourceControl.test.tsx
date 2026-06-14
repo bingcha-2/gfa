@@ -1,12 +1,24 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // 隔离 wails 运行时:组件 `import * as api`,渲染期不会调用(仅点击 handler 才调),
 // mock 掉避免引入 window.go 运行时依赖。
+const { apiMocks } = vi.hoisted(() => ({
+  apiMocks: {
+    injectSelected: vi.fn(),
+    restoreSelected: vi.fn(),
+    openSystemPermissionSettings: vi.fn(),
+    installStandaloneClaude: vi.fn(),
+    openURL: vi.fn(),
+  },
+}))
+
 vi.mock('@/services/wails', () => ({
-  injectSelected: vi.fn(),
-  restoreSelected: vi.fn(),
-  openSystemPermissionSettings: vi.fn(),
+  injectSelected: apiMocks.injectSelected,
+  restoreSelected: apiMocks.restoreSelected,
+  openSystemPermissionSettings: apiMocks.openSystemPermissionSettings,
+  installStandaloneClaude: apiMocks.installStandaloneClaude,
+  openURL: apiMocks.openURL,
 }))
 
 // zustand store 以 selector 形式读取;mock 成"对给定 state 跑 selector"。
@@ -38,6 +50,7 @@ function setPlatform(p: string) {
 
 describe('TokenSourceControl — Claude Desktop 接管入口跨平台', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     // 复位 detected,避免测试间串味。
     store.state.ideProducts = [
       { id: 'claude_desktop', name: DESKTOP_LABEL, detected: true, injected: false },
@@ -78,5 +91,22 @@ describe('TokenSourceControl — Claude Desktop 接管入口跨平台', () => {
     setPlatform('Linux x86_64')
     render(<TokenSourceControl />)
     expect(screen.queryByText(DESKTOP_LABEL)).toBeNull()
+  })
+
+  it('Store 版 Claude Desktop 弹窗确认后打开官方独立版 exe 下载地址', async () => {
+    setPlatform('Win32')
+    apiMocks.injectSelected.mockResolvedValue('STORE_CLAUDE:检测到 Microsoft Store 版 Claude Desktop')
+    apiMocks.installStandaloneClaude.mockResolvedValue(undefined)
+
+    render(<TokenSourceControl />)
+
+    fireEvent.click(screen.getByRole('button', { name: '接管' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认' }))
+    fireEvent.click(await screen.findByRole('button', { name: '下载独立版' }))
+
+    await waitFor(() => {
+      expect(apiMocks.openURL).toHaveBeenCalledWith('https://claude.ai/api/desktop/win32/x64/exe/latest/redirect')
+    })
+    expect(apiMocks.installStandaloneClaude).not.toHaveBeenCalled()
   })
 })

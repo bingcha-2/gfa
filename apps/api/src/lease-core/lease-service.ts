@@ -4,7 +4,7 @@ import * as fs from "fs";
 import { defaultRemoteAccessDataDir } from "../remote-access/data-dir";
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { isPermanentTokenRefreshError, maskEmail, readJsonFile, writeJsonFile } from "../token-server/data-store";
-import { FairShareTracker } from "../token-server/fair-share-tracker";
+import { FairShareTracker, weeklyBucketKey } from "../token-server/fair-share-tracker";
 import { accountWeight, EnterpriseProbeManager, getModelQuotaFraction, getModelQuotaResetAt, scoreAccount } from "../token-server/lease-scheduler";
 import { QuotaProfileTracker, DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from "./quota-profile-tracker";
 import { ModelGateManager } from "../token-server/model-gates";
@@ -800,6 +800,66 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return out;
   }
 
+  private syncFairShareQuotaSnapshot(accountId: number, account: TAccount): void {
+    if (!this.fairShareTracker) return;
+
+    const inputs = this.provider.quotaSnapshotInputs?.(account) || [];
+    if (inputs.length > 0) {
+      for (const inp of inputs) {
+        const bucket = bucketKey(this.provider.id, inp.modelKey);
+        const hourlyFraction = this.quotaPercentToFraction(inp.hourlyPercent);
+        if (hourlyFraction !== null) {
+          this.fairShareTracker.updateBudgetEstimate(accountId, bucket, hourlyFraction);
+        }
+
+        const hourlyReset = inp.hourlyResetAt ? inp.hourlyResetAt.getTime() : 0;
+        if (Number.isFinite(hourlyReset) && hourlyReset > 0) {
+          this.fairShareTracker.syncWindow(accountId, bucket, hourlyReset);
+        }
+
+        const weeklyFraction = this.quotaPercentToFraction(inp.weeklyPercent);
+        if (weeklyFraction !== null) {
+          this.fairShareTracker.updateWeeklyBudgetEstimate(accountId, bucket, weeklyFraction);
+        }
+
+        const weeklyReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
+        if (Number.isFinite(weeklyReset) && weeklyReset > 0) {
+          this.fairShareTracker.syncWeeklyWindow(accountId, bucket, weeklyReset);
+        }
+      }
+      return;
+    }
+
+    const fractions = (account as any)?.modelQuotaFractions;
+    if (fractions && typeof fractions === "object") {
+      for (const [model, frac] of Object.entries(fractions)) {
+        const f = Number(frac);
+        if (Number.isFinite(f) && f >= 0 && f <= 1) {
+          const bucket = bucketKey(this.provider.id, model);
+          this.fairShareTracker.updateBudgetEstimate(accountId, bucket, f);
+        }
+      }
+    }
+
+    const resetTimes = (account as any)?.modelQuotaResetTimes;
+    if (resetTimes && typeof resetTimes === "object") {
+      for (const [model, resetStr] of Object.entries(resetTimes)) {
+        const resetMs = Date.parse(String(resetStr));
+        if (Number.isFinite(resetMs) && resetMs > 0) {
+          const bucket = bucketKey(this.provider.id, model);
+          this.fairShareTracker.syncWindow(accountId, bucket, resetMs);
+        }
+      }
+    }
+  }
+
+  private quotaPercentToFraction(value: unknown): number | null {
+    if (value == null) return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n > 1 ? Math.min(1, n / 100) : Math.min(1, n);
+  }
+
   async reportResult(req: any, payload: any) {
     const auth = this.accessKeyStore.resolveFromRequest(req, payload);
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
@@ -837,44 +897,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // Fair-share: push updated quota fractions into the tracker.
       if (this.fairShareTracker) {
         const account = this.readAccounts().find((a) => a.id === accountId);
-        const fractions = (account as any)?.modelQuotaFractions;
-        if (fractions && typeof fractions === "object") {
-          for (const [model, frac] of Object.entries(fractions)) {
-            const f = Number(frac);
-            if (Number.isFinite(f) && f >= 0 && f <= 1) {
-              const bucket = bucketKey(this.provider.id, model);
-              this.fairShareTracker.updateBudgetEstimate(accountId, bucket, f);
-            }
-          }
-        }
-        // Sync fair-share window to upstream resetTime
-        const resetTimes = (account as any)?.modelQuotaResetTimes;
-        if (resetTimes && typeof resetTimes === "object") {
-          for (const [model, resetStr] of Object.entries(resetTimes)) {
-            const resetMs = Date.parse(String(resetStr));
-            if (Number.isFinite(resetMs) && resetMs > 0) {
-              const bucket = bucketKey(this.provider.id, model);
-              this.fairShareTracker.syncWindow(accountId, bucket, resetMs);
-            }
-          }
-        }
-        // Fair-share 周窗口:用通用 quotaSnapshotInputs 的 weeklyPercent/weeklyResetAt 喂周预算
-        // 估计 + 对齐上游周 reset。仅 codex/anthropic 提供 weekly(antigravity 为空→跳过);
-        // updateWeeklyBudgetEstimate/syncWeeklyWindow 内部受 trackWeekly 门控,关闭线自动 no-op。
-        if (this.provider.quotaSnapshotInputs) {
-          for (const inp of this.provider.quotaSnapshotInputs(account as TAccount)) {
-            const wpRaw = Number(inp.weeklyPercent);
-            if (inp.weeklyPercent == null || !Number.isFinite(wpRaw)) continue;
-            // weeklyPercent 通常是 0..100(剩余 %);防御性兼容已是 0..1 的情况。
-            const fraction = wpRaw > 1 ? Math.min(1, wpRaw / 100) : Math.max(0, wpRaw);
-            const bucket = bucketKey(this.provider.id, inp.modelKey);
-            this.fairShareTracker.updateWeeklyBudgetEstimate(accountId, bucket, fraction);
-            const wReset = inp.weeklyResetAt ? inp.weeklyResetAt.getTime() : 0;
-            if (Number.isFinite(wReset) && wReset > 0) {
-              this.fairShareTracker.syncWeeklyWindow(accountId, bucket, wReset);
-            }
-          }
-        }
+        if (account) this.syncFairShareQuotaSnapshot(accountId, account);
       }
     }
 
@@ -979,21 +1002,22 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           // Fair-share: confirm budget ceiling on upstream exhaustion.
           if (this.fairShareTracker && status === 429) {
             const bucket = bucketKey(this.provider.id, modelKey);
-            this.fairShareTracker.confirmBudget(accountId, bucket);
-            // 「周」429:上游 retry-after 远超 5h → 周限额触顶,额外把周预算钉到当前周已用。
-            // confirmWeeklyBudget 内部受 trackWeekly 门控,无周窗口的线(antigravity)自动 no-op。
-            if (retryAfterMs > 5 * 60 * 60 * 1000) {
+            const account = this.readAccounts().find((a) => a.id === accountId);
+            const resetAt = account ? getModelQuotaResetAt(account as any, modelKey) : 0;
+            const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+            const isWeekly = this.fairShareTracker.isWeeklyTracked()
+              && (retryAfterMs > FIVE_HOURS_MS || resetAt > this.now() + FIVE_HOURS_MS);
+
+            if (isWeekly) {
               this.fairShareTracker.confirmWeeklyBudget(accountId, bucket);
+            } else {
+              this.fairShareTracker.confirmBudget(accountId, bucket);
             }
             // Record exhaustion sample for quota profile learning
             if (this.quotaProfileTracker) {
-              const state = this.fairShareTracker.getTrackerState(accountId, bucket);
+              const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
               if (state && state.totalUsed > 0) {
-                const account = this.readAccounts().find((a) => a.id === accountId);
                 const planType = String((account as any)?.planType || "free");
-                const resetAt = getModelQuotaResetAt(account as any, modelKey);
-                const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-                const isWeekly = resetAt > this.now() + FIVE_HOURS_MS;
                 const family = familyOfBucket(bucket);
                 this.quotaProfileTracker.recordExhaustion(
                   this.provider.id, planType, family,

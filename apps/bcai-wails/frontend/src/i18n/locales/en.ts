@@ -183,7 +183,7 @@ export const en: DeepPartialDict = {
     caFailedTitle: 'Inference taken over · Max pending',
     caRetakeBtn: 'Retake · install certificate',
     storeClaudeTitle: '⚠ Store version can\'t be taken over',
-    storeClaudeBtn: 'One-click install standalone',
+    storeClaudeBtn: 'Download standalone',
     permissionTitle: 'System permission required',
     permissionBody: '{message}\n\nEnable BingchaAI under "System Settings → Privacy & Security → App Management", then retry.',
     opFailed: 'Operation failed',
