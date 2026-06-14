@@ -9,8 +9,8 @@ import (
 )
 
 // Build-time injectable base domains (override via ldflags -X main.buildAPIBase=... -X main.buildApexBase=...)
-var buildAPIBase = "https://api.bcai.space"
-var buildApexBase = "https://bcai.space"
+var buildAPIBase = "https://api.bcai.lol"
+var buildApexBase = "https://bcai.lol"
 
 type Config struct {
 	// ── Legacy card-key fields (kept for old config file parsing; not used for runtime auth) ──

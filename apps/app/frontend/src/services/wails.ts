@@ -37,8 +37,8 @@ import {
 // ===== Portal / Site URLs =====
 // 构建时通过 VITE_PORTAL_BASE / VITE_APEX_BASE 注入（见 build-wails.yml）；
 // 本地 dev：dev-local.sh 注入 VITE_PORTAL_BASE=http://127.0.0.1:3000，把链接指到本地 web。
-const PORTAL_BASE = import.meta.env.VITE_PORTAL_BASE || 'https://my.bcai.space'
-const APEX_BASE = import.meta.env.VITE_APEX_BASE || 'https://bcai.space'
+const PORTAL_BASE = import.meta.env.VITE_PORTAL_BASE || 'https://my.bcai.lol'
+const APEX_BASE = import.meta.env.VITE_APEX_BASE || 'https://bcai.lol'
 
 export const PORTAL_URLS = {
   home: `${PORTAL_BASE}/account`, // 用户中心首页(意见反馈入口指向这里)

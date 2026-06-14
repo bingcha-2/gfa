@@ -12,17 +12,17 @@ on:
         required: false
         default: '-解决了用户提出的问题。\n-解决了提出问题的用户。\n-更新了最新的版本号'
       api_base:
-        description: '机器 API 基础域（留空则用默认 https://api.bcai.space）'
+        description: '机器 API 基础域（留空则用默认 https://api.bcai.lol）'
         required: false
-        default: 'https://api.bcai.space'
+        default: 'https://api.bcai.lol'
       apex_base:
         description: '官网 Apex 域，用于更新清单/FAQ（留空则用默认 https://bcai.space）'
         required: false
-        default: 'https://bcai.space'
+        default: 'https://bcai.lol'
       portal_base:
-        description: '用户中心域，用于注册/反馈/设备等页面（留空则用默认 https://my.bcai.space）'
+        description: '用户中心域，用于注册/反馈/设备等页面（留空则用默认 https://my.bcai.lol）'
         required: false
-        default: 'https://my.bcai.space'
+        default: 'https://my.bcai.lol'
 
 permissions:
   contents: write
@@ -127,13 +127,13 @@ jobs:
           GOFLAGS: -trimpath
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          API_BASE="${{ github.event.inputs.api_base || 'https://api.bcai.space' }}"
-          APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.space' }}"
+          API_BASE="${{ github.event.inputs.api_base || 'https://api.bcai.lol' }}"
+          APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.lol' }}"
           LDFLAGS="-s -w -X main.AppVersion=${VERSION} -X main.buildAPIBase=${API_BASE} -X main.buildApexBase=${APEX_BASE}"
 
           # 1) 先构建前端，然后删 source map（在 go:embed 打包前）
-          PORTAL_BASE="${{ github.event.inputs.portal_base || 'https://my.bcai.space' }}"
-          APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.space' }}"
+          PORTAL_BASE="${{ github.event.inputs.portal_base || 'https://my.bcai.lol' }}"
+          APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.lol' }}"
           cd frontend && npm install && VITE_PORTAL_BASE="${PORTAL_BASE}" VITE_APEX_BASE="${APEX_BASE}" npm run build && cd ..
           find frontend/dist -name '*.map' -delete
           echo "✅ Source maps stripped before Go embed"
