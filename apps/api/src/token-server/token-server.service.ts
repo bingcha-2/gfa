@@ -78,6 +78,11 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
           provider.id, planType, bucketFamily(bucket),
         );
       },
+      getWeeklyRatio: (planType: string, bucket: string) => {
+        return quotaProfileTracker.getWeeklyToShortRatio(
+          provider.id, planType, bucketFamily(bucket),
+        );
+      },
       prisma: options.prisma,
       provider: provider.id,
       now: options.now,

@@ -482,6 +482,7 @@ func (l *Leaser) LeaseToken(card, deviceId string, force bool, options map[strin
 		l.lastError = errMsg
 		l.mu.Unlock()
 		Log("[token-leaser] Lease token failed: %s - %s", leaseResp.Code, errMsg)
+		syncQuotaStateFromBody(l, body)
 		// 硬额度(卡级 token 上限超限)→ 结构化 QuotaExhaustedError,让 proxy 转 429 + Retry-After。
 		// antigravity 走 success=false,可能不带 retryAfterMs,靠文案识别;恢复时间未知则显示「稍后」。
 		if rms, _ := parseQuota429(body); isHardQuotaLimit(rms, errMsg) {

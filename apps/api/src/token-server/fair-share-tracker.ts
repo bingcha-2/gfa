@@ -16,7 +16,7 @@
 import { QUOTA_WEIGHTS } from "@gfa/shared";
 
 import { bucketFamily, claudeModelTier, quotaWeightFor } from "../lease-core/product-bucket";
-import { DEFAULT_WEEKLY_RATIO } from "../lease-core/quota-profile-tracker";
+import { DEFAULT_WEEKLY_RATIO, clampWeeklyRatio } from "../lease-core/quota-profile-tracker";
 
 // quotaWeightFor 已迁至 product-bucket(供 token-billing 的静态封顶复用,避免
 // token-billing ↔ fair-share 循环依赖)。此处 re-export 兼容既有引用点。
@@ -96,6 +96,11 @@ export interface FairShareCheck {
   reason?: string;
   /** Per-card remaining fraction (0~1) for blood bar display. */
   remainingFraction?: number;
+  window?: "5h" | "7d";
+  bucket?: string;
+  resetAt?: number;
+  resetMs?: number;
+  retryAfterMs?: number;
 }
 
 export interface FairShareTrackerOptions {
@@ -112,6 +117,7 @@ export interface FairShareTrackerOptions {
   getLearnedBudget?: (planType: string, bucket: string) => number;
   /** Optional: learned **weekly** budget(加权单元),0 = 未知。仅有周窗口的线启用。 */
   getLearnedWeeklyBudget?: (planType: string, bucket: string) => number;
+  getWeeklyRatio?: (planType: string, family: string) => number;
   /** 是否启用「周公平份额」第二层窗口。codex/anthropic 上游有 5h+周双限额 → true;
    *  antigravity 仅 5h(每模型)→ false(默认)。关闭时行为与历史完全一致。 */
   trackWeekly?: boolean;
@@ -239,13 +245,15 @@ export class FairShareTracker {
     this.ensureWindow(tracker, this.nowFn());
     const totalUsed = this.totalWeighted(tracker);
     const consumed = 1.0 - fraction;
+    const floor = this.estimatedBudgetForKey(accountId, bucket, tracker);
 
     if (consumed > 0.05 && totalUsed > 0) {
       const estimated = totalUsed / consumed;
+      const bounded = isWeeklyBucketKey(bucket) ? Math.max(estimated, floor) : estimated;
       // Only adjust upward (avoid fraction jitter shrinking the budget),
       // unless we're still on the default and first real estimate arrives.
-      if (estimated > tracker.estimatedBudget || tracker.confidence === 'default') {
-        tracker.estimatedBudget = estimated;
+      if (bounded > tracker.estimatedBudget || tracker.confidence === 'default') {
+        tracker.estimatedBudget = bounded;
         tracker.confidence = 'estimated';
       }
     } else if (fraction >= 0.90 && totalUsed > 0) {
@@ -254,9 +262,9 @@ export class FairShareTracker {
       // than our default — grow the floor conservatively (5× totalUsed).
       // Do NOT upgrade confidence: we have no real signal, so checkFairShare
       // should remain lenient.
-      const floor = totalUsed * 5;
-      if (floor > tracker.estimatedBudget) {
-        tracker.estimatedBudget = floor;
+      const widened = Math.max(totalUsed * 5, isWeeklyBucketKey(bucket) ? floor : 0);
+      if (widened > tracker.estimatedBudget) {
+        tracker.estimatedBudget = widened;
       }
     }
     tracker.lastFraction = fraction;
@@ -268,7 +276,9 @@ export class FairShareTracker {
     const tracker = this.getOrCreate(accountId, bucket);
     const totalUsed = this.totalWeighted(tracker);
     if (totalUsed > 0) {
-      tracker.estimatedBudget = totalUsed;
+      tracker.estimatedBudget = isWeeklyBucketKey(bucket)
+        ? Math.max(totalUsed, this.estimatedBudgetForKey(accountId, bucket, tracker))
+        : totalUsed;
       tracker.confidence = 'confirmed';
       this.dirty = true;
     }
@@ -281,32 +291,61 @@ export class FairShareTracker {
     if (!this.trackWeekly) return short;
     const weekly = this.checkWindow(accountId, cardId, weeklyBucketKey(bucket));
     const blocking = !short.allowed ? short : !weekly.allowed ? weekly : null;
-    if (blocking) return { allowed: false, reason: blocking.reason, remainingFraction: 0 };
+    if (blocking) {
+      return {
+        allowed: false,
+        reason: blocking.reason,
+        remainingFraction: 0,
+        window: blocking.window,
+        bucket: blocking.bucket,
+        resetAt: blocking.resetAt,
+        resetMs: blocking.resetMs,
+        retryAfterMs: blocking.retryAfterMs,
+      };
+    }
+    const chosen = (short.remainingFraction ?? 1) <= (weekly.remainingFraction ?? 1) ? short : weekly;
     return {
       allowed: true,
       remainingFraction: Math.min(short.remainingFraction ?? 1, weekly.remainingFraction ?? 1),
+      window: chosen.window,
+      bucket: chosen.bucket,
+      resetAt: chosen.resetAt,
+      resetMs: chosen.resetMs,
     };
   }
 
   /** 单个窗口(5h 或周)的公平份额判定。 */
   private checkWindow(accountId: number, cardId: string, key: string): FairShareCheck {
     const tracker = this.trackers.get(accountId)?.get(key);
+    const window = isWeeklyBucketKey(key) ? "7d" : "5h";
+    const bucket = baseBucketOf(key);
     if (!tracker) {
-      return { allowed: true, remainingFraction: 1.0 };
+      return { allowed: true, remainingFraction: 1.0, window, bucket };
     }
     this.ensureWindow(tracker, this.nowFn());
+    const now = this.nowFn();
+    const resetAt = tracker.windowStart + tracker.windowMs;
+    const resetMs = Math.max(0, resetAt - now);
 
     // When upstream reports ≥90% remaining, we have no reliable budget estimate.
     // Allow the lease unconditionally — real protection comes from the upstream
     // 429 response. Blocking based on a guess would prematurely cut off cards
     // while Google's coarse 20% granularity hasn't even budged.
     if (tracker.lastFraction >= 0.90) {
-      return { allowed: true, remainingFraction: tracker.lastFraction };
+      return {
+        allowed: true,
+        remainingFraction: tracker.lastFraction,
+        window,
+        bucket,
+        resetAt,
+        resetMs,
+        retryAfterMs: resetMs,
+      };
     }
 
     const weight = this.opts.getCardWeight(cardId);
     const capacity = this.opts.accountShareCapacity;
-    const perCardBudget = tracker.estimatedBudget * (weight / capacity);
+    const perCardBudget = this.estimatedBudgetForKey(accountId, key, tracker) * (weight / capacity);
     const myUsage = tracker.perCard.get(cardId) || 0;
     const remaining = Math.max(0, perCardBudget - myUsage);
     const remainingFraction = perCardBudget > 0 ? remaining / perCardBudget : 1;
@@ -317,9 +356,14 @@ export class FairShareTracker {
         allowed: false,
         reason: `${label}已用完 (已用 ${formatTokens(myUsage)}/${formatTokens(perCardBudget)} 加权单元)`,
         remainingFraction: 0,
+        window,
+        bucket,
+        resetAt,
+        resetMs,
+        retryAfterMs: resetMs,
       };
     }
-    return { allowed: true, remainingFraction };
+    return { allowed: true, remainingFraction, window, bucket, resetAt, resetMs, retryAfterMs: resetMs };
   }
 
   // ── 周窗口的喂数据 / 确认(仅 trackWeekly 时生效;内部复用同名 5h 方法 + 周 key)──
@@ -417,6 +461,27 @@ export class FairShareTracker {
 
   // ── Internal ────────────────────────────────────────────────────────────
 
+  private estimatedBudgetForKey(accountId: number, bucket: string, tracker?: BucketTracker): number {
+    if (!isWeeklyBucketKey(bucket)) {
+      return tracker?.estimatedBudget ?? 0;
+    }
+    const baseBucket = baseBucketOf(bucket);
+    const planType = (this.opts.getAccountPlanType(accountId) || "free").toLowerCase();
+    const floor = this.estimatedWeeklyFloor(accountId, baseBucket, planType);
+    return Math.max(tracker?.estimatedBudget || 0, floor);
+  }
+
+  private estimatedWeeklyFloor(accountId: number, baseBucket: string, planType: string): number {
+    const defaults = DEFAULT_BUDGETS[planType] || DEFAULT_BUDGETS.free;
+    const family = bucketFamily(baseBucket);
+    const default5h = defaults[family] || defaults.gemini || 50_000;
+    const learned5h = this.opts.getLearnedBudget?.(planType, baseBucket) || 0;
+    const current5h = this.trackers.get(accountId)?.get(baseBucket)?.estimatedBudget || 0;
+    const ratio = clampWeeklyRatio(this.opts.getWeeklyRatio?.(planType, family) ?? WEEKLY_BUDGET_MULTIPLIER);
+    const floor5h = Math.max(default5h, learned5h, current5h);
+    return floor5h * ratio;
+  }
+
   private getOrCreate(accountId: number, bucket: string): BucketTracker {
     let bucketMap = this.trackers.get(accountId);
     if (!bucketMap) {
@@ -435,11 +500,11 @@ export class FairShareTracker {
       const learned = isWeekly
         ? this.opts.getLearnedWeeklyBudget?.(planType, baseBucket) || 0
         : this.opts.getLearnedBudget?.(planType, baseBucket) || 0;
-      const defaultBudget = isWeekly ? base5h * WEEKLY_BUDGET_MULTIPLIER : base5h;
+      const defaultBudget = isWeekly ? this.estimatedWeeklyFloor(accountId, baseBucket, planType) : base5h;
       tracker = {
         windowMs: isWeekly ? WEEKLY_WINDOW_MS : WINDOW_MS,
         windowStart: this.nowFn(),
-        estimatedBudget: learned > 0 ? learned : defaultBudget,
+        estimatedBudget: isWeekly ? Math.max(learned, defaultBudget) : (learned > 0 ? learned : defaultBudget),
         confidence: learned > 0 ? 'estimated' : 'default',
         perCard: new Map(),
         lastFraction: 1.0,

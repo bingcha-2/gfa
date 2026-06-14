@@ -229,6 +229,85 @@ func recordFairShareQuota(body []byte) {
 	}
 }
 
+func syncQuotaStateFromBody(l *Leaser, body []byte) {
+	recordAccountBuckets(body)
+	recordFairShareQuota(body)
+	var raw map[string]interface{}
+	if json.Unmarshal(body, &raw) != nil {
+		return
+	}
+	if aks, ok := raw["accessKeyStatus"]; ok {
+		if aksMap, ok := aks.(map[string]interface{}); ok {
+			l.syncFromServer(aksMap)
+		}
+	}
+}
+
+func cloneAccessKeyStatusWithElapsed(aks map[string]interface{}, elapsedMs int64) map[string]interface{} {
+	if aks == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(aks))
+	for k, v := range aks {
+		out[k] = v
+	}
+	adjust := func(msKey, atKey string) {
+		raw, ok := aks[msKey]
+		if !ok {
+			return
+		}
+		rmf, ok := raw.(float64)
+		if !ok {
+			return
+		}
+		adj := rmf - float64(elapsedMs)
+		if adj < 0 {
+			adj = 0
+		}
+		out[msKey] = adj
+		if atKey != "" {
+			if adj <= 0 {
+				out[atKey] = ""
+			} else {
+				out[atKey] = time.Now().Add(time.Duration(adj) * time.Millisecond).Format(time.RFC3339)
+			}
+		}
+	}
+	adjust("tokenWindowResetMs", "tokenWindowResetAt")
+	adjust("weeklyWindowResetMs", "weeklyWindowResetAt")
+	if rawBuckets, ok := aks["weeklyBuckets"].([]interface{}); ok {
+		buckets := make([]interface{}, len(rawBuckets))
+		for i, item := range rawBuckets {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				buckets[i] = item
+				continue
+			}
+			m2 := make(map[string]interface{}, len(m))
+			for k, v := range m {
+				m2[k] = v
+			}
+			if raw, ok := m["weeklyWindowResetMs"]; ok {
+				if rmf, ok := raw.(float64); ok {
+					adj := rmf - float64(elapsedMs)
+					if adj < 0 {
+						adj = 0
+					}
+					m2["weeklyWindowResetMs"] = adj
+					if adj <= 0 {
+						m2["weeklyWindowResetAt"] = ""
+					} else {
+						m2["weeklyWindowResetAt"] = time.Now().Add(time.Duration(adj) * time.Millisecond).Format(time.RFC3339)
+					}
+				}
+			}
+			buckets[i] = m2
+		}
+		out["weeklyBuckets"] = buckets
+	}
+	return out
+}
+
 // boundResetMs 把绑定号上游重置的绝对时间(epoch ms)换算成剩余毫秒;0 表示未知。
 func boundResetMs(resetAt int64) int64 {
 	if resetAt <= 0 {
@@ -286,25 +365,10 @@ func (l *Leaser) GetStatus() map[string]interface{} {
 		state = "ready"
 	}
 
-	// Dynamically adjust tokenWindowResetMs to account for elapsed time
+	// Dynamically adjust token/weekly reset counters to account for elapsed time.
 	aks := l.accessKeyStatus
 	if aks != nil && !l.accessKeyStatusAt.IsZero() {
-		elapsed := time.Since(l.accessKeyStatusAt).Milliseconds()
-		// Make a shallow copy to avoid mutating the cached map
-		aksAdj := make(map[string]interface{}, len(aks))
-		for k, v := range aks {
-			aksAdj[k] = v
-		}
-		if resetMs, ok := aks["tokenWindowResetMs"]; ok {
-			if rmf, ok := resetMs.(float64); ok {
-				adj := rmf - float64(elapsed)
-				if adj < 0 {
-					adj = 0
-				}
-				aksAdj["tokenWindowResetMs"] = adj
-			}
-		}
-		aks = aksAdj
+		aks = cloneAccessKeyStatusWithElapsed(aks, time.Since(l.accessKeyStatusAt).Milliseconds())
 	}
 
 	// 本地额度剩余恢复时间

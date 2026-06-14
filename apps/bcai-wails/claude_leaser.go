@@ -164,6 +164,8 @@ func (l *ClaudeLeaser) LeaseToken(card, deviceId string, force bool, options map
 
 	body, status, err := postClaudeBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
+		recordAccountBuckets(body)
+		recordFairShareQuota(body)
 		// 不熔断、不重试:额度超限就如实返回,允许用户/IDE 自己再调(每次都真 lease,
 		// accessKeyStatus 也随之刷新)。硬额度(token limit exceeded,retryAfter 达数小时)→
 		// 返回结构化 QuotaExhaustedError,让 proxy 转成 429 + Retry-After 给 IDE,IDE 据此

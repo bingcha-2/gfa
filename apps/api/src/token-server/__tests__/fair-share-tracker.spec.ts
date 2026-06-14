@@ -288,12 +288,28 @@ describe("周窗口公平份额(trackWeekly)", () => {
 
   it("周份额用完即拦,即便 5h 窗口仍宽松(reason 标注本周)", () => {
     const t = makeClaudeTracker(() => T, true);
-    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // cost 500 → 5h & 周
-    // 上游周剩余 50%:周预算反推 = 500/0.5 = 1000;每卡 = 1000 × 1/8 = 125;已用 500 ≥ 125 → 拦
+    t.recordUsage(1, "c1", "anthropic-claude", 1_500_000, 0, 0, "claude-opus-4-8");
     t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5);
     const r = t.checkFairShare(1, "c1", "anthropic-claude");
     expect(r.allowed).toBe(false);
     expect(r.reason).toContain("本周");
+    expect(r.window).toBe("7d");
+    expect(r.bucket).toBe("anthropic-claude");
+    expect(r.resetAt).toBe(T + 7 * 24 * 60 * 60 * 1000);
+    expect(r.retryAfterMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("does not let a sparse weekly sample shrink below the learned 5h budget ratio", () => {
+    const t = makeClaudeTracker(() => T, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 20_000, 0, 0, "claude-opus-4-8");
+    t.updateBudgetEstimate(1, "anthropic-claude", 0.94);
+    const shortBudget = t.getBucketStateForTesting(1, "anthropic-claude")!.estimatedBudget;
+
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.94);
+
+    const weekly = t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))!;
+    expect(weekly.estimatedBudget).toBeGreaterThanOrEqual(shortBudget * 5);
+    expect(t.checkFairShare(1, "c1", "anthropic-claude").allowed).toBe(true);
   });
 });
 
@@ -302,8 +318,8 @@ describe("getCardWeeklyQuotaFractions(周血条)", () => {
 
   it("返回周窗口 fraction,键为基础桶名;5h 接口仍不含周键", () => {
     const t = makeClaudeTracker(() => T, true);
-    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // 500 CU → 5h & 周
-    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // 周预算=500/0.5=1000;每卡=125;已用500 → fraction 0
+    t.recordUsage(1, "c1", "anthropic-claude", 1_500_000, 0, 0, "claude-opus-4-8");
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5);
     const wk = t.getCardWeeklyQuotaFractions(1, "c1");
     expect(wk["anthropic-claude"]).toBeDefined();
     expect(wk["anthropic-claude"].fraction).toBeCloseTo(0, 5);

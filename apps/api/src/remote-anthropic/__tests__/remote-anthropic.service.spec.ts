@@ -237,6 +237,45 @@ describe("RemoteAnthropicService", () => {
     expect(profile?.weekly).toBeCloseTo(weeklyState!.totalUsed / 0.5, 5);
   });
 
+  it("returns fair-share quota windows on lease-time 429 rejection", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    writeJson(accessKeysFilePath, {
+      keys: [
+        {
+          id: "claude-card-1",
+          key: "claude-secret-card",
+          status: "active",
+          durationMs: 60 * 60 * 1000,
+          bindings: { anthropic: 21 },
+        },
+      ],
+    });
+    const service = makeService();
+    const bucket = "anthropic-claude";
+
+    service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
+    service.fairShareTracker?.updateBudgetEstimate(21, bucket, 0.5);
+    service.fairShareTracker?.updateWeeklyBudgetEstimate(21, bucket, 0.5);
+
+    await expect(
+      service.leaseToken(
+        { headers: { "x-token-server-secret": "claude-secret-card" } },
+        { clientId: "client-a", modelKey: MODEL },
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 429,
+      body: expect.objectContaining({
+        fairShareQuota: expect.objectContaining({
+          [bucket]: expect.objectContaining({ resetAt: expect.any(Number) }),
+        }),
+        weeklyFairShareQuota: expect.objectContaining({
+          [bucket]: expect.objectContaining({ resetAt: expect.any(Number) }),
+        }),
+      }),
+    });
+    expect(tokenProvider).not.toHaveBeenCalled();
+  });
+
   it("cools down a Claude account after a 429 quota status report", async () => {
     tokenProvider.mockResolvedValue("claude-access-token-alpha");
     const service = makeService();

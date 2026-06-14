@@ -414,22 +414,29 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       weeklyRatio: (record: any) => this.resolveWeeklyRatio(record, modelKey),
     });
     // 超额(模型/周配额用尽)→ 429(带恢复时间),区别于无效/过期/禁用的 401。
+    const statusRecord = auth.record || this.accessKeyStore.findByKey(auth.key);
     if (auth.limitExceeded) {
       const resetMs = Number(auth.resetMs || 0);
+      const quota = statusRecord
+        ? this.buildLeaseQuotaPayload(statusRecord, this.accessKeyStore.boundAccountIdFor(statusRecord, this.provider.id), modelKey)
+        : null;
       throw this.fail(429, auth.error || "配额已用尽，请稍后再试", {
         ok: false,
         error: auth.error || "配额已用尽",
         ...(resetMs > 0 ? { retryAfterMs: resetMs } : {}),
+        ...(quota ? { accountBuckets: quota.accountBucketsData, accessKeyStatus: quota.accessKeyStatus } : {}),
+        ...(quota?.fairShareQuota ? { fairShareQuota: quota.fairShareQuota } : {}),
+        ...(quota?.weeklyFairShareQuota ? { weeklyFairShareQuota: quota.weeklyFairShareQuota } : {}),
       });
     }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
+    const boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
 
     // Two card modes:
     //  • Bound  (boundAccountId > 0): pinned to one account in this pool — lease
     //    only from it, no dynamic-pool fallback.
     //  • Pool   (no binding at all): legacy dynamic pool with failover.
     // A card bound for a DIFFERENT pool only is not sold for this one → rejected.
-    const boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
     if (boundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
       throw this.fail(409, "此卡未开通该服务，请联系客服");
     }
@@ -439,7 +446,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       const bucket = bucketKey(this.provider.id, modelKey);
       const check = this.fairShareTracker.checkFairShare(boundAccountId, auth.record.id, bucket);
       if (!check.allowed) {
-        throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复");
+        const quota = this.buildLeaseQuotaPayload(auth.record, boundAccountId, modelKey);
+        throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复", {
+          ok: false,
+          error: check.reason || "公平限额已用完，请等待额度恢复",
+          ...(check.retryAfterMs ? { retryAfterMs: check.retryAfterMs } : {}),
+          accountBuckets: quota.accountBucketsData,
+          accessKeyStatus: quota.accessKeyStatus,
+          ...(quota.fairShareQuota ? { fairShareQuota: quota.fairShareQuota } : {}),
+          ...(quota.weeklyFairShareQuota ? { weeklyFairShareQuota: quota.weeklyFairShareQuota } : {}),
+        });
       }
     }
 
@@ -653,6 +669,45 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       this.boundAccountResetAt(record, modelKey),
       (bucket: string) => this.weeklyRatioForFamily(record, familyOfBucket(bucket)),
     );
+  }
+
+  private buildLeaseQuotaPayload(record: any, boundAccountId: number, modelKey: string, account?: TAccount | null): {
+    accountBucketsData: Record<string, { fraction: number; resetAt: number }>;
+    fairShareQuota?: Record<string, { fraction: number; resetAt: number }>;
+    weeklyFairShareQuota?: Record<string, { fraction: number; resetAt: number }>;
+    accessKeyStatus: any;
+  } {
+    const resolvedAccount = account || (boundAccountId > 0
+      ? this.readAccounts().find((a) => a.id === boundAccountId) || null
+      : null);
+    const accountBucketsData = resolvedAccount ? this.accountBucketQuotas(resolvedAccount) : {};
+    const accessKeyStatus = this.publicAccessKeyStatus(record, modelKey);
+    const rawFairShare = (boundAccountId > 0 && this.fairShareTracker)
+      ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, record.id)
+      : undefined;
+    const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && boundAccountId > 0)
+      ? Object.fromEntries(
+          Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 5 * 60 * 60 * 1000 }]),
+        )
+      : rawFairShare;
+    const weeklyTracked = boundAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
+    const rawWeeklyFairShare = weeklyTracked
+      ? this.fairShareTracker!.getCardWeeklyQuotaFractions(boundAccountId, record.id)
+      : undefined;
+    const weeklyFairShareQuota = !weeklyTracked
+      ? undefined
+      : (rawWeeklyFairShare && Object.keys(rawWeeklyFairShare).length === 0)
+        ? Object.fromEntries(
+            Object.keys(accountBucketsData).map((k) => [k, { fraction: 1, resetAt: this.now() + 7 * 24 * 60 * 60 * 1000 }]),
+          )
+        : rawWeeklyFairShare;
+
+    return {
+      accountBucketsData,
+      fairShareQuota,
+      weeklyFairShareQuota,
+      accessKeyStatus,
+    };
   }
 
   /**
