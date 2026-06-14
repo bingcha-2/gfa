@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// 默认走机器 API 域 api.bcai.lol（NestJS 直达,见 docs/NAMING.md;9.5.0 强升后无备域名）
-var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", "https://api.bcai.lol/api/app/lease/anthropic")
+// 构建时通过 ldflags 注入 buildAPIBase；运行时可用 BCAI_ANTHROPIC_REMOTE_BASE 覆盖
+var ANTHROPIC_REMOTE_BASE = getEnvOrDefault("BCAI_ANTHROPIC_REMOTE_BASE", buildAPIBase+"/api/app/lease/anthropic")
 
 // ClaudeQuotaWindow 保存 claude 账号两个限额窗口的剩余百分比(0-100,越高越健康),
 // 与服务端 claude.provider.applyQuotaSnapshot / leaseResponseExtras 的 claudeWindows 对齐。

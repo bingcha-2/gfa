@@ -13,9 +13,8 @@ import (
 
 // authBaseURL is the machine-API base URL for account-session calls
 // (/app/login, /app/heartbeat, /app/logout) and other client API fetches.
-// Set via BCAI_AUTH_BASE env; defaults to https://api.bcai.lol/api
-// (api.bcai.lol = NestJS direct, see docs/NAMING.md). Overridable in tests.
-var authBaseURL = getEnvOrDefault("BCAI_AUTH_BASE", "https://api.bcai.lol/api")
+// Set via BCAI_AUTH_BASE env or buildAPIBase ldflags. Overridable in tests.
+var authBaseURL = getEnvOrDefault("BCAI_AUTH_BASE", buildAPIBase+"/api")
 
 // ────────────────────────────────────────────────────────────────────────────
 // Internal helpers

@@ -14,9 +14,8 @@ import (
 	"time"
 )
 
-// API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用）
-// 默认走机器 API 域 api.bcai.lol（NestJS 直达,见 docs/NAMING.md;9.5.0 强升后无备域名）
-var API_BASE = getEnvOrDefault("BCAI_API_BASE", "https://api.bcai.lol/api/app/lease/antigravity")
+// API_BASE 可通过环境变量 BCAI_API_BASE 覆盖（本地开发用），构建时通过 ldflags 注入 buildAPIBase
+var API_BASE = getEnvOrDefault("BCAI_API_BASE", buildAPIBase+"/api/app/lease/antigravity")
 
 const defaultWindowMs int64 = 5 * 3600 * 1000 // 5h
 

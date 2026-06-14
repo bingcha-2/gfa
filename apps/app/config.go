@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// Build-time injectable base domains (override via ldflags -X main.buildAPIBase=... -X main.buildApexBase=...)
+var buildAPIBase = "https://api.bcai.space"
+var buildApexBase = "https://bcai.space"
+
 type Config struct {
 	// ── Legacy card-key fields (kept for old config file parsing; not used for runtime auth) ──
 	AccountCard string `json:"accountCard"` // kept for backward-compat; runtime no longer reads this for auth

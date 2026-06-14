@@ -20,10 +20,8 @@ import (
 var AppVersion = "9.7.0"
 
 var (
-	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用）
-	// 更新清单 + 下载固定在官网主域 bcai.lol（/updates/* 留在 apex,见 docs/NAMING.md;
-	// 机器 API 走 api.bcai.lol,与更新源无关）
-	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", "https://bcai.lol/updates/latest-wails.json")
+	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用），构建时通过 ldflags 注入 buildApexBase
+	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", buildApexBase+"/updates/latest-wails.json")
 	UpdateCheckFreq = 30 * time.Minute
 )
 

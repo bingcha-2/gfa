@@ -11,6 +11,14 @@ on:
         description: '更新日志 (用字面 \n 分行,客户端按行渲染为列表)'
         required: false
         default: '-解决了用户提出的问题。\n-解决了提出问题的用户。\n-更新了最新的版本号'
+      api_base:
+        description: '机器 API 基础域（留空则用默认 https://api.bcai.space）'
+        required: false
+        default: 'https://api.bcai.space'
+      apex_base:
+        description: '官网 Apex 域，用于更新清单（留空则用默认 https://bcai.space）'
+        required: false
+        default: 'https://bcai.space'
 
 permissions:
   contents: write
@@ -115,7 +123,9 @@ jobs:
           GOFLAGS: -trimpath
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          LDFLAGS="-s -w -X main.AppVersion=${VERSION}"
+          API_BASE="${{ github.event.inputs.api_base || 'https://api.bcai.space' }}"
+          APEX_BASE="${{ github.event.inputs.apex_base || 'https://bcai.space' }}"
+          LDFLAGS="-s -w -X main.AppVersion=${VERSION} -X main.buildAPIBase=${API_BASE} -X main.buildApexBase=${APEX_BASE}"
 
           # 1) 先构建前端，然后删 source map（在 go:embed 打包前）
           cd frontend && npm install && npm run build && cd ..

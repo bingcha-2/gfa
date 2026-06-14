@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// 默认走机器 API 域 api.bcai.lol（NestJS 直达,见 docs/NAMING.md;9.5.0 强升后无备域名）
-var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", "https://api.bcai.lol/api/app/lease/codex")
+// 构建时通过 ldflags 注入 buildAPIBase；运行时可用 BCAI_CODEX_API_BASE 覆盖
+var CODEX_API_BASE = getEnvOrDefault("BCAI_CODEX_API_BASE", buildAPIBase+"/api/app/lease/codex")
 
 type CodexTokenLease struct {
 	AccessToken string `json:"accessToken"`
