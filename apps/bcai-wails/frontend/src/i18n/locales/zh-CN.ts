@@ -140,6 +140,8 @@ export const zhCN = {
     titleMonth: '近 30 天',
     input: '输入',
     output: '输出',
+    cacheRead: '缓存读',
+    cacheWrite: '缓存写',
     noData: '近期无用量',
   },
 

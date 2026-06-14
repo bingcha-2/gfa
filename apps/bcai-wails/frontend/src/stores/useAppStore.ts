@@ -59,8 +59,8 @@ interface AppState {
   cumulativeSaving: number
 
   // Usage trend (history)
-  dailyHistory: { date: string; inputTokens: number; outputTokens: number }[]
-  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number }[]
+  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
+  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
   chartMode: string
 
   // Usage

@@ -139,6 +139,8 @@ export const ko: DeepPartialDict = {
     titleMonth: '최근 30일',
     input: '입력',
     output: '출력',
+    cacheRead: '캐시 읽기',
+    cacheWrite: '캐시 쓰기',
     noData: '최근 사용량 없음',
   },
 

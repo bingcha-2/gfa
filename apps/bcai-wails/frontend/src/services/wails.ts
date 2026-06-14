@@ -113,8 +113,8 @@ export interface StatsResponse {
     generations: number
     retries: number
   }
-  dailyHistory: { date: string; inputTokens: number; outputTokens: number }[]
-  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number }[]
+  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
+  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
   chartMode: string
   cumulativeSaving: number
   appVersion: string

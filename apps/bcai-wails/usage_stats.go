@@ -26,9 +26,11 @@ type DailyRecord struct {
 
 // HourlyRecord 每小时用量记录
 type HourlyRecord struct {
-	Hour         string `json:"hour"` // "15" (0-23)
-	InputTokens  int64  `json:"inputTokens"`
-	OutputTokens int64  `json:"outputTokens"`
+	Hour             string `json:"hour"` // "15" (0-23)
+	InputTokens      int64  `json:"inputTokens"`
+	OutputTokens     int64  `json:"outputTokens"`
+	CachedTokens     int64  `json:"cachedTokens"`     // 缓存读 cache_read
+	CacheWriteTokens int64  `json:"cacheWriteTokens"` // 缓存写 cache_creation
 }
 
 // UsageStatsStore 用量统计持久化
@@ -173,6 +175,8 @@ func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, raw
 	hr := s.getHour()
 	hr.InputTokens += input
 	hr.OutputTokens += output
+	hr.CachedTokens += cacheRead
+	hr.CacheWriteTokens += cacheWrite
 	s.dirty = true
 }
 

@@ -139,6 +139,8 @@ export const zhTW: DeepPartialDict = {
     titleMonth: '近 30 天',
     input: '輸入',
     output: '輸出',
+    cacheRead: '快取讀',
+    cacheWrite: '快取寫',
     noData: '近期無用量',
   },
 

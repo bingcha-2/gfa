@@ -21,6 +21,8 @@ function TrendTooltip({ active, payload, label }: any) {
       <div className="mb-0.5 font-semibold text-[var(--text-primary)]">{label}</div>
       <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />{tr('trend.input')} {formatTokens(val('input'))}</div>
       <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />{tr('trend.output')} {formatTokens(val('output'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-4)' }} />{tr('trend.cacheWrite')} {formatTokens(val('cacheWrite'))}</div>
+      <div className="text-[var(--text-secondary)]"><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-3)' }} />{tr('trend.cacheRead')} {formatTokens(val('cacheRead'))}</div>
     </div>
   )
 }
@@ -39,9 +41,9 @@ export function UsageTrendChart() {
   ]
 
   const rows = range === 'day'
-    ? hourlyHistory.map((h) => ({ label: h.hour, input: h.inputTokens, output: h.outputTokens }))
-    : [...dailyHistory].slice(0, DAYS[range]).reverse().map((d) => ({ label: d.date.slice(5), input: d.inputTokens, output: d.outputTokens }))
-  const hasData = rows.some((r) => r.input + r.output > 0)
+    ? hourlyHistory.map((h) => ({ label: h.hour, input: h.inputTokens, output: h.outputTokens, cacheWrite: h.cacheWriteTokens || 0, cacheRead: h.cachedTokens || 0 }))
+    : [...dailyHistory].slice(0, DAYS[range]).reverse().map((d) => ({ label: d.date.slice(5), input: d.inputTokens, output: d.outputTokens, cacheWrite: d.cacheWriteTokens || 0, cacheRead: d.cachedTokens || 0 }))
+  const hasData = rows.some((r) => r.input + r.output + r.cacheWrite + r.cacheRead > 0)
   // 标签密度:小时(24)隔 3 个、月(30)隔 2 个,其余全显
   const interval = range === 'day' ? 3 : range === 'month' ? 2 : 0
 
@@ -74,7 +76,9 @@ export function UsageTrendChart() {
               <XAxis dataKey="label" interval={interval} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
               <Tooltip cursor={{ fill: 'var(--bg-hover)' }} content={<TrendTooltip />} />
               <Bar dataKey="input" stackId="t" fill="var(--chart-2)" maxBarSize={28} />
-              <Bar dataKey="output" stackId="t" fill="var(--chart-1)" maxBarSize={28} radius={[2, 2, 0, 0]} />
+              <Bar dataKey="output" stackId="t" fill="var(--chart-1)" maxBarSize={28} />
+              <Bar dataKey="cacheWrite" stackId="t" fill="var(--chart-4)" maxBarSize={28} />
+              <Bar dataKey="cacheRead" stackId="t" fill="var(--chart-3)" maxBarSize={28} radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -83,6 +87,8 @@ export function UsageTrendChart() {
         <div className="mt-2 flex gap-4 text-[11px] text-[var(--text-muted)]">
           <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-2)' }} />{t('trend.input')}</span>
           <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-1)' }} />{t('trend.output')}</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-4)' }} />{t('trend.cacheWrite')}</span>
+          <span><i className="mr-1 inline-block size-2 rounded-sm align-middle" style={{ background: 'var(--chart-3)' }} />{t('trend.cacheRead')}</span>
         </div>
       </CardContent>
     </Card>

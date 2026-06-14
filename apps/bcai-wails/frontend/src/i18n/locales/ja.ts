@@ -139,6 +139,8 @@ export const ja: DeepPartialDict = {
     titleMonth: '直近 30 日',
     input: '入力',
     output: '出力',
+    cacheRead: 'キャッシュ読取',
+    cacheWrite: 'キャッシュ書込',
     noData: '直近の使用はありません',
   },
 

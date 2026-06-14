@@ -139,6 +139,8 @@ export const fr: DeepPartialDict = {
     titleMonth: '30 derniers jours',
     input: 'Entrée',
     output: 'Sortie',
+    cacheRead: 'Lecture cache',
+    cacheWrite: 'Écriture cache',
     noData: 'Aucun usage récent',
   },
 

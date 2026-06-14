@@ -139,6 +139,8 @@ export const vi: DeepPartialDict = {
     titleMonth: '30 ngày qua',
     input: 'Đầu vào',
     output: 'Đầu ra',
+    cacheRead: 'Đọc cache',
+    cacheWrite: 'Ghi cache',
     noData: 'Gần đây không có lượng dùng',
   },
 
