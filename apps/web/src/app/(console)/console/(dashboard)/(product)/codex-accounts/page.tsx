@@ -5,6 +5,7 @@ import { BadgeCheckIcon, BotIcon, DownloadIcon, ExternalLinkIcon, FileJsonIcon, 
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/console/leasing/quota-profiles-card";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { consoleApiPath } from "@/lib/console/client-api";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,7 @@ export default function CodexAccountsPage() {
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const res = await fetch("/api/console/rosetta/codex-accounts", { cache: "no-store" });
+      const res = await fetch(consoleApiPath("rosetta/codex-accounts"), { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const list: CodexAccount[] = Array.isArray(data.accounts) ? data.accounts : [];
@@ -149,7 +150,7 @@ export default function CodexAccountsPage() {
     }
     setAdding(true);
     try {
-      const res = await fetch("/api/console/rosetta/codex-add-account", {
+      const res = await fetch(consoleApiPath("rosetta/codex-add-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), refreshToken: refreshToken.trim(), planType: planType.trim(), alias: alias.trim() }),
@@ -174,7 +175,7 @@ export default function CodexAccountsPage() {
     }
     setImporting(true);
     try {
-      const res = await fetch("/api/console/rosetta/codex-import-account", {
+      const res = await fetch(consoleApiPath("rosetta/codex-import-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: importText }),
@@ -202,7 +203,7 @@ export default function CodexAccountsPage() {
   async function handleExport() {
     setExporting(true);
     try {
-      const res = await fetch("/api/console/rosetta/codex-accounts-export", { cache: "no-store" });
+      const res = await fetch(consoleApiPath("rosetta/codex-accounts-export"), { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "导出失败");
@@ -227,7 +228,7 @@ export default function CodexAccountsPage() {
   async function handleOAuthStart() {
     setOauthStarting(true);
     try {
-      const res = await fetch("/api/console/rosetta/codex-oauth-start", {
+      const res = await fetch(consoleApiPath("rosetta/codex-oauth-start"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
@@ -258,7 +259,7 @@ export default function CodexAccountsPage() {
     setOauthSubmitting(true);
     setOauthStatusText("");
     try {
-      const res = await fetch("/api/console/rosetta/codex-oauth-submit", {
+      const res = await fetch(consoleApiPath("rosetta/codex-oauth-submit"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId: oauthLoginId, input }),
@@ -285,7 +286,7 @@ export default function CodexAccountsPage() {
   async function refreshQuotaSilently(accountId?: number) {
     if (!accountId) return;
     try {
-      await fetch("/api/console/rosetta/codex-refresh-quota", {
+      await fetch(consoleApiPath("rosetta/codex-refresh-quota"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
@@ -303,7 +304,7 @@ export default function CodexAccountsPage() {
     setOauthCallbackInput("");
     if (!loginId) return;
     try {
-      await fetch("/api/console/rosetta/codex-oauth-cancel", {
+      await fetch(consoleApiPath("rosetta/codex-oauth-cancel"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId }),
@@ -321,7 +322,7 @@ export default function CodexAccountsPage() {
     setAutoRunning(true);
     setAutoStep("准备中…");
     try {
-      const res = await fetch("/api/console/rosetta/codex-auto-login", {
+      const res = await fetch(consoleApiPath("rosetta/codex-auto-login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -340,7 +341,7 @@ export default function CodexAccountsPage() {
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2000));
-        const sres = await fetch(`/api/console/rosetta/codex-auto-login-status?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const sres = await fetch(consoleApiPath(`rosetta/codex-auto-login-status?jobId=${encodeURIComponent(jobId)}`), { cache: "no-store" });
         const s = await sres.json();
         if (!s.ok) {
           if (s.status === "missing") throw new Error(s.error || "任务已丢失");
@@ -371,7 +372,7 @@ export default function CodexAccountsPage() {
 
   async function handleToggle(account: CodexAccount) {
     try {
-      const res = await fetch("/api/console/rosetta/codex-toggle-account", {
+      const res = await fetch(consoleApiPath("rosetta/codex-toggle-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -386,7 +387,7 @@ export default function CodexAccountsPage() {
 
   async function handleTogglePool(account: CodexAccount) {
     try {
-      const res = await fetch("/api/console/rosetta/codex-toggle-account-pool", {
+      const res = await fetch(consoleApiPath("rosetta/codex-toggle-account-pool"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -403,7 +404,7 @@ export default function CodexAccountsPage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
-      const res = await fetch("/api/console/rosetta/codex-delete-account", {
+      const res = await fetch(consoleApiPath("rosetta/codex-delete-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: deleteTarget.id }),
@@ -422,7 +423,7 @@ export default function CodexAccountsPage() {
   async function handleRefresh(account: CodexAccount) {
     setBusyId(account.id);
     try {
-      const res = await fetch("/api/console/rosetta/codex-refresh-quota", {
+      const res = await fetch(consoleApiPath("rosetta/codex-refresh-quota"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -446,7 +447,7 @@ export default function CodexAccountsPage() {
   async function handleReactivate(account: CodexAccount) {
     setBusyId(account.id);
     try {
-      const res = await fetch("/api/console/rosetta/codex-reactivate-account", {
+      const res = await fetch(consoleApiPath("rosetta/codex-reactivate-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -475,7 +476,7 @@ export default function CodexAccountsPage() {
     let fail = 0;
     for (const acc of targets) {
       try {
-        const res = await fetch("/api/console/rosetta/codex-refresh-quota", {
+        const res = await fetch(consoleApiPath("rosetta/codex-refresh-quota"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ accountId: acc.id }),
@@ -501,7 +502,7 @@ export default function CodexAccountsPage() {
   async function handleSaveProxy(account: CodexAccount) {
     setProxySaving(true);
     try {
-      const res = await fetch("/api/console/rosetta/account-set-proxy", {
+      const res = await fetch(consoleApiPath("rosetta/account-set-proxy"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: "codex", accountId: account.id, proxyUrl: proxyEditVal.trim() }),

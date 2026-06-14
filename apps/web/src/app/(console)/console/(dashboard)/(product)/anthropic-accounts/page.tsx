@@ -5,6 +5,7 @@ import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, Key
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/console/leasing/quota-profiles-card";
 import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
+import { consoleApiPath } from "@/lib/console/client-api";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,7 +129,7 @@ export default function ClaudeAccountsPage() {
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-accounts", { cache: "no-store" });
+      const res = await fetch(consoleApiPath("rosetta/anthropic-accounts"), { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAccounts(Array.isArray(data.accounts) ? data.accounts : []);
@@ -154,7 +155,7 @@ export default function ClaudeAccountsPage() {
     }
     setAdding(true);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-add-account", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-add-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -184,7 +185,7 @@ export default function ClaudeAccountsPage() {
     setFollowResult(null);
     setAttemptStartedAt(Date.now());
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-oauth-start", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-oauth-start"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ proxyUrl: importParsed?.proxyUrl || "" }),
@@ -213,7 +214,7 @@ export default function ClaudeAccountsPage() {
     setOauthSubmitting(true);
     setOauthStatusText("");
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-oauth-submit", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-oauth-submit"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId: oauthLoginId, input }),
@@ -237,7 +238,7 @@ export default function ClaudeAccountsPage() {
     setOauthLoginId(""); setOauthStatusText(""); setOauthCallbackInput("");
     if (!loginId) return;
     try {
-      await fetch("/api/console/rosetta/anthropic-oauth-cancel", {
+      await fetch(consoleApiPath("rosetta/anthropic-oauth-cancel"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId }),
@@ -348,7 +349,7 @@ export default function ClaudeAccountsPage() {
       // 只接受「本次尝试开始」之后到达的邮件;并且无论如何不取超过 15 分钟的旧链接(必已过期)。
       // 同时轮询等待邮件到达(触发后投递有几秒延迟)。
       const since = Math.max(attemptStartedAt || 0, Date.now() - 15 * 60 * 1000);
-      const res = await fetch("/api/console/rosetta/anthropic-fetch-magic-link", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-fetch-magic-link"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -383,7 +384,7 @@ export default function ClaudeAccountsPage() {
     setFollowingLink(true);
     setFollowResult(null);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-follow-magic-link", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-follow-magic-link"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ loginId: oauthLoginId, url: imapResult.url }),
@@ -426,7 +427,7 @@ export default function ClaudeAccountsPage() {
     setAutoPhase("starting");
     try {
       // 1. Fire the async job — returns taskId immediately
-      const res = await fetch("/api/console/rosetta/anthropic-auto-oauth", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-auto-oauth"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -453,7 +454,7 @@ export default function ClaudeAccountsPage() {
         for (;;) {
           await new Promise((r) => setTimeout(r, 2000));
           try {
-            const sr = await fetch(`/api/console/rosetta/anthropic-auto-oauth-status?taskId=${taskId}`);
+            const sr = await fetch(consoleApiPath(`rosetta/anthropic-auto-oauth-status?taskId=${taskId}`));
             const st = await sr.json().catch(() => null);
             if (!st) continue;
             setAutoPhase(st.phase || "");
@@ -487,7 +488,7 @@ export default function ClaudeAccountsPage() {
 
   async function handleToggle(account: ClaudeAccount) {
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-toggle-account", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-toggle-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -502,7 +503,7 @@ export default function ClaudeAccountsPage() {
 
   async function handleTogglePool(account: ClaudeAccount) {
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-toggle-account-pool", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-toggle-account-pool"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -519,7 +520,7 @@ export default function ClaudeAccountsPage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-delete-account", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-delete-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: deleteTarget.id }),
@@ -539,7 +540,7 @@ export default function ClaudeAccountsPage() {
   async function handleRefresh(account: ClaudeAccount) {
     setBusyId(account.id);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-refresh-quota", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-refresh-quota"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -554,7 +555,7 @@ export default function ClaudeAccountsPage() {
             for (;;) {
               await new Promise((r) => setTimeout(r, 3000));
               try {
-                const sr = await fetch(`/api/console/rosetta/anthropic-auto-oauth-status?taskId=${tid}`);
+                const sr = await fetch(consoleApiPath(`rosetta/anthropic-auto-oauth-status?taskId=${tid}`));
                 const st = await sr.json().catch(() => null);
                 if (!st) continue;
                 if (st.status === "done") {
@@ -597,7 +598,7 @@ export default function ClaudeAccountsPage() {
   async function handleReactivate(account: ClaudeAccount) {
     setBusyId(account.id);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-reactivate-account", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-reactivate-account"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
@@ -621,7 +622,7 @@ export default function ClaudeAccountsPage() {
   async function handleSaveProxy(account: ClaudeAccount) {
     setProxySaving(true);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-set-proxy", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-set-proxy"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id, proxyUrl: proxyEditVal.trim() }),
@@ -646,7 +647,7 @@ export default function ClaudeAccountsPage() {
   async function handleSavePw(account: ClaudeAccount) {
     setPwSaving(true);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-set-mail-password", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-set-mail-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id, mailPassword: pwEditVal }),
@@ -671,7 +672,7 @@ export default function ClaudeAccountsPage() {
   async function handleSaveAdspower(account: ClaudeAccount) {
     setAdspowerSaving(true);
     try {
-      const res = await fetch("/api/console/rosetta/anthropic-set-adspower-profile", {
+      const res = await fetch(consoleApiPath("rosetta/anthropic-set-adspower-profile"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id, adspowerProfileId: adspowerEditVal.trim() }),

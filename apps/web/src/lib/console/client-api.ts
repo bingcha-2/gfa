@@ -21,8 +21,20 @@ function withConsolePrefix(path: string): string {
     : `console/${rel}`;
 }
 
+/**
+ * Build a console API URL from a resource path ("rosetta/codex-add-account",
+ * "plan-catalog", …). The /api/console/ prefix is applied centrally via
+ * withConsolePrefix so callers never hardcode it — a bare "/api/rosetta/…"
+ * typo silently 404s under the split-domain console host (the legacy bare
+ * aliases were removed server-side). Paths already starting with console/
+ * pass through unchanged.
+ */
+export function consoleApiPath(resource: string): string {
+  return `/api/${withConsolePrefix(resource)}`;
+}
+
 function buildUrl(path: string, search?: ApiRequestOptions["search"]) {
-  const targetPath = `/api/${withConsolePrefix(path)}`;
+  const targetPath = consoleApiPath(path);
 
   if (!search) {
     return targetPath;
