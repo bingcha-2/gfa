@@ -465,18 +465,11 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # 把生成好的 manifest 暂存，切到 main 再提交，避免非 main 分支触发时 rebase 冲突
-          MANIFEST_TMP=$(mktemp)
-          cp "${UPDATES}/latest-wails.json" "$MANIFEST_TMP"
-          git fetch origin main
-          git checkout main
-          git pull origin main
-          mkdir -p "${UPDATES}"
-          cp "$MANIFEST_TMP" "${UPDATES}/latest-wails.json"
           git add "${UPDATES}/latest-wails.json"
           git commit -m "release: update manifest for v${VERSION}
 
           Download URLs now point to GitHub Release (public repo).
           Binaries no longer committed to git." || echo "No changes to commit"
-          git push origin main
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
 
