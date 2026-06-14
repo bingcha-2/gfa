@@ -154,7 +154,7 @@ export function AccountOverviewPanel({
               <RefreshCwIcon />
               {needsRenew ? o.renewNow : hasPlan ? o.renewOrBuy : o.buy}
             </Link>
-            <Link href="/download" className="account-btn account-btn--secondary">
+            <Link href="/account/download" className="account-btn account-btn--secondary">
               <DownloadIcon />
               {o.installClient}
             </Link>
@@ -319,7 +319,7 @@ export function AccountOverviewPanel({
           <div className="account-quick-card__title">{o.cardNotifTitle}</div>
           <div className="account-quick-card__desc">{o.cardNotifDesc}</div>
         </Link>
-        <Link href="/download" className="account-quick-card">
+        <Link href="/account/download" className="account-quick-card">
           <div className="account-quick-card__top">
             <span className="account-quick-card__icon">
               <DownloadIcon />

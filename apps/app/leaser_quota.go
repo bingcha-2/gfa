@@ -54,7 +54,7 @@ func (l *Leaser) markCardUnusable(err error) {
 	l.mu.Lock()
 	l.cardUnusable = true
 	l.mu.Unlock()
-	Log("[token-leaser] 卡密不可用(%v),已停止自动租号;请重新激活有效卡密或退出接管", err)
+	Log("[token-leaser] 订阅不可用(%v),已停止自动租号;请续费有效订阅或退出接管", err)
 	l.StopAutoLease()
 }
 

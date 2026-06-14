@@ -96,7 +96,7 @@ describe("AccountOverviewPanel", () => {
     );
     expect(screen.getByRole("link", { name: /安装客户端/ })).toHaveAttribute(
       "href",
-      "/download"
+      "/account/download"
     );
   });
 

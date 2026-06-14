@@ -5,6 +5,7 @@ import { MonitorSmartphoneIcon, ShieldCheckIcon } from "lucide-react";
 
 import { ChangePasswordForm } from "@/components/account/auth/change-password-form";
 import { DevicesPanel } from "@/components/account/devices-panel";
+import { EmailVerifyCard } from "@/components/account/email-verify-card";
 import { LogoutButton } from "@/components/account/logout-button";
 import { useDict } from "@/lib/i18n/client";
 
@@ -56,6 +57,14 @@ export function AccountMe({ initialTab = "devices" }: { initialTab?: MeTab }) {
           <DevicesPanel />
         ) : (
           <div className="account-settings">
+            <section className="account-settings-panel">
+              <div>
+                <h3>{t.settings.emailVerifySection}</h3>
+                <p>{t.settings.emailVerifyDesc}</p>
+              </div>
+              <EmailVerifyCard />
+            </section>
+
             <section className="account-settings-panel">
               <div>
                 <h3>{t.settings.changePwdSection}</h3>

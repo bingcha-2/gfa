@@ -11,7 +11,7 @@ import * as crypto from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingService } from "../billing.service";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 
 // V2 下单用商户私钥 RSA 签名 —— 生成一个测试私钥(裸 base64 PKCS#8)喂给 EPAY_MERCHANT_PRIVATE_KEY。
 const TEST_PRIV_B64 = crypto
@@ -80,7 +80,7 @@ function stubEpayGateway() {
   return fetchMock;
 }
 
-const fixedCustomer = { id: "cust-1", invitedById: "referrer-1" };
+const fixedCustomer = { id: "cust-1", invitedById: "referrer-1", emailVerified: true };
 
 describe("BillingService.createCatalogOrder", () => {
   let prisma: ReturnType<typeof makeMockPrisma>;
@@ -186,6 +186,14 @@ describe("BillingService.createCatalogOrder", () => {
     await expect(
       service.createCatalogOrder("cust-1", { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any, "ALIPAY"),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it("邮箱未验证 → Forbidden(EMAIL_NOT_VERIFIED),不建订单", async () => {
+    prisma.customer.findUnique.mockResolvedValue({ ...fixedCustomer, emailVerified: false });
+    await expect(
+      service.createCatalogOrder("cust-1", { line: "pool", products: ["anthropic"], usageTier: "small", deviceLimit: 1 } as any, "ALIPAY"),
+    ).rejects.toThrow(ForbiddenException);
+    expect(prisma.planOrder.create).not.toHaveBeenCalled();
   });
 
   it("非法 selection(未知 usageTier)→ 抛错,不建订单", async () => {

@@ -305,6 +305,7 @@ export const ko: DeepPartialDict = {
     logout: '로그아웃',
     manageDevices: '기기 관리',
     sessionExpired: '세션이 만료되었습니다. 다시 로그인해 주세요',
+    subscriptionExpired: '구독이 만료되었습니다. 계속하려면 갱신해 주세요',
     logoutConfirmTitle: '로그아웃',
     logoutConfirmBody: '현재 계정에서 로그아웃할까요?',
     mySubscriptions: '내 구독',

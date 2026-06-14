@@ -305,6 +305,7 @@ export const ja: DeepPartialDict = {
     logout: 'ログアウト',
     manageDevices: 'デバイスを管理',
     sessionExpired: 'セッションの有効期限が切れました。再ログインしてください',
+    subscriptionExpired: 'サブスクリプションの有効期限が切れました。続行するには更新してください',
     logoutConfirmTitle: 'ログアウト',
     logoutConfirmBody: '現在のアカウントからログアウトしますか?',
     mySubscriptions: 'マイサブスク',

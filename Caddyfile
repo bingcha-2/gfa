@@ -87,7 +87,10 @@ my.bcai.space {
 	header X-Robots-Tag "noindex, nofollow"
 
 	# The ONLY paths that exist on this host (positive allowlist).
-	@accountSurface path / /account /account/* /api/account /api/account/* /api/account-session /api/account-session/* /_next/* /favicon.ico /bcai-icon.png
+	#   /api/plan-catalog .. the purchase page (/account/billing/plans) reads the
+	#     PUBLISHED catalog through this public Next route handler.
+	#   /api/faq-images/* .. the tickets page embeds the customer-service QR.
+	@accountSurface path / /account /account/* /api/account /api/account/* /api/account-session /api/account-session/* /api/plan-catalog /api/faq-images /api/faq-images/* /_next/* /favicon.ico /bcai-icon.png
 	handle @accountSurface {
 		reverse_proxy localhost:3000
 	}

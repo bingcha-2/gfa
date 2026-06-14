@@ -6,6 +6,7 @@ import { getDict } from "@/lib/i18n/server";
 import { PageHeader } from "@/components/account/page-header";
 import { AccountPill } from "@/components/account/account-ui";
 import { fmt } from "@/lib/i18n";
+import { marketingUrl } from "@/lib/marketing-url";
 
 export const dynamic = "force-dynamic";
 
@@ -181,7 +182,7 @@ export default async function AccountDownloadPage() {
         <div className="account-empty">
           <strong>{d.loadFailedNotice}</strong>
           <Link
-            href="/download"
+            href={marketingUrl("/download")}
             className="account-link"
           >
             {d.goMarketingDownload}

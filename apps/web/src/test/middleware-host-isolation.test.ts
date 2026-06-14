@@ -458,7 +458,16 @@ describe("full split (all three host envs set)", () => {
     expectNotFound(middleware(makeRequest(accountUrl("/api/app/lease/codex/status"))));
     expectNotFound(middleware(makeRequest(accountUrl("/api/epay/notify"))));
     expectNotFound(middleware(makeRequest(accountUrl("/api/remote-stats"))));
-    expectNotFound(middleware(makeRequest(accountUrl("/api/faq-images/x.png"))));
+  });
+
+  it("account host serves /api/faq-images (tickets page embeds the customer-service QR)", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(accountUrl("/api/faq-images/x.png"))));
+  });
+
+  it("account host serves /api/plan-catalog (the purchase page reads the public catalog)", async () => {
+    const middleware = await loadMiddleware(env);
+    expectPassThrough(middleware(makeRequest(accountUrl("/api/plan-catalog"))));
   });
 
   it("account host does not let /api/account leak the console namespace (exact-segment match)", async () => {

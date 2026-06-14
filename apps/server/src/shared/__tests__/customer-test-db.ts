@@ -69,6 +69,7 @@ export async function createTestCustomer(overrides: Partial<{
   email: string;
   tokenVersion: number;
   status: "ACTIVE" | "DISABLED";
+  emailVerified: boolean;
 }> = {}) {
   const db = getCustomerPrisma();
   seq += 1;
@@ -78,6 +79,8 @@ export async function createTestCustomer(overrides: Partial<{
       passwordHash: "$2b$10$test-hash-placeholder",
       status: (overrides.status ?? "ACTIVE") as any,
       tokenVersion: overrides.tokenVersion ?? 0,
+      // 默认已验证:下单 gate 要求 emailVerified;需测未验证态的用例显式传 false。
+      emailVerified: overrides.emailVerified ?? true,
       referralCode: `REF${Date.now().toString(36)}${seq}`.toUpperCase(),
     },
   });

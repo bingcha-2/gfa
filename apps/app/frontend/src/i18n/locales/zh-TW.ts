@@ -305,6 +305,7 @@ export const zhTW: DeepPartialDict = {
     logout: '登出',
     manageDevices: '管理裝置',
     sessionExpired: '工作階段已過期,請重新登入',
+    subscriptionExpired: '訂閱已到期,請續費後繼續使用',
     logoutConfirmTitle: '登出',
     logoutConfirmBody: '確定要登出目前帳號嗎?',
     mySubscriptions: '我的訂閱',

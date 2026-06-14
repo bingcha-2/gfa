@@ -306,6 +306,7 @@ export const zhCN = {
     logout: '退出登录',
     manageDevices: '管理设备',
     sessionExpired: '会话已过期，请重新登录',
+    subscriptionExpired: '订阅已到期，请续费后继续使用',
     logoutConfirmTitle: '退出登录',
     logoutConfirmBody: '确定要退出当前账号吗？',
     mySubscriptions: '我的订阅',

@@ -305,6 +305,7 @@ export const vi: DeepPartialDict = {
     logout: 'Đăng xuất',
     manageDevices: 'Quản lý thiết bị',
     sessionExpired: 'Phiên đã hết hạn, vui lòng đăng nhập lại',
+    subscriptionExpired: 'Gói đăng ký đã hết hạn, vui lòng gia hạn để tiếp tục',
     logoutConfirmTitle: 'Đăng xuất',
     logoutConfirmBody: 'Bạn có chắc muốn đăng xuất tài khoản hiện tại?',
     mySubscriptions: 'Gói đăng ký của tôi',

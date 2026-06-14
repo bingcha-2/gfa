@@ -187,6 +187,7 @@ describe("BillingService.createCatalogOrder — DB integration", () => {
         passwordHash: "$2b$10$test",
         referralCode: `R${Date.now()}`,
         invitedById: referrer.id,
+        emailVerified: true,
       },
     });
 
@@ -254,6 +255,7 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
         passwordHash: "$2b$10$test",
         referralCode: `RIDEMP${Date.now()}`,
         invitedById: referrer.id,
+        emailVerified: true,
       },
     });
     const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
@@ -300,6 +302,7 @@ describe("EpayCallbackService — idempotency (DB integration)", () => {
         passwordHash: "$2b$10$test",
         referralCode: `RCONC${Date.now()}`,
         invitedById: referrer.id,
+        emailVerified: true,
       },
     });
     const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
@@ -348,6 +351,7 @@ describe("EpayCallbackService — referral (DB integration)", () => {
         passwordHash: "$2b$10$test",
         referralCode: `RREF${Date.now()}`,
         invitedById: referrer.id,
+        emailVerified: true,
       },
     });
     // `large` usage tier prices to 1000 cents (990 + 10).

@@ -50,8 +50,10 @@ const IP_ALLOWLIST: string[] = RAW_ALLOWLIST
 //         console-consumed ops APIs (/api/app/lease/*, /api/remote-stats/*,
 //         /api/faq-images/*). The ADMIN_IP_ALLOWLIST applies to this WHOLE
 //         host. Everything else → 404.
-//       · ACCOUNT_HOST  → /account/*, /api/account/*, /api/account-session/*.
-//         The bare root redirects to /account. Everything else (marketing
+//       · ACCOUNT_HOST  → /account/*, /api/account/*, /api/account-session/*,
+//         plus /api/plan-catalog (public catalog proxy the purchase page reads)
+//         and /api/faq-images/* (the tickets page embeds the customer-service
+//         QR). The bare root redirects to /account. Everything else (marketing
 //         pages, console surface, machine APIs) → 404.
 //       · MARKETING_HOST→ marketing pages and static assets; the only /api/*
 //         namespace is /api/faq-images/* (FAQ pages embed those images —
@@ -224,15 +226,22 @@ function gateAccountHost(request: NextRequest, pathname: string): NextResponse |
   if (
     matchesPathPrefix(pathname, "/account") ||
     matchesPathPrefix(pathname, "/api/account") ||
-    matchesPathPrefix(pathname, "/api/account-session")
+    matchesPathPrefix(pathname, "/api/account-session") ||
+    // The billing/plans purchase page reads the PUBLISHED plan catalog via the
+    // public /api/plan-catalog proxy (no cookie, backend root) — not under
+    // /api/account, so allow it explicitly.
+    matchesPathPrefix(pathname, "/api/plan-catalog") ||
+    // The tickets page embeds the customer-service QR (and any FAQ image in
+    // portal content), served from the same backend static mount the
+    // marketing/console hosts use. Public, no cookie — let it through.
+    matchesPathPrefix(pathname, "/api/faq-images")
   ) {
     // Continue into the portal pipeline below (auth-page exemptions and the
     // cookie redirect).
     return null;
   }
 
-  // Marketing pages, the console surface, machine APIs (and /api/faq-images,
-  // which no account page uses): "not here".
+  // Marketing pages, the console surface and machine APIs: "not here".
   return notFound();
 }
 

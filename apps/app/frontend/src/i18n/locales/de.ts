@@ -305,6 +305,7 @@ export const de: DeepPartialDict = {
     logout: 'Abmelden',
     manageDevices: 'Geräte verwalten',
     sessionExpired: 'Sitzung abgelaufen — bitte erneut anmelden',
+    subscriptionExpired: 'Abonnement abgelaufen — bitte verlängern, um fortzufahren',
     logoutConfirmTitle: 'Abmelden',
     logoutConfirmBody: 'Möchten Sie sich wirklich abmelden?',
     mySubscriptions: 'Meine Abos',

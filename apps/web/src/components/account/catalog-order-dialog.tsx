@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2Icon, XCircleIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { CheckCircle2Icon, XCircleIcon, RotateCcwIcon, XIcon, MailWarningIcon } from "lucide-react";
 
 import { AccountButton, AccountSkeleton } from "./account-ui";
 import { useOrderStatus } from "@/lib/account/use-order-status";
-import { cancelBillingOrder, createCatalogOrder } from "@/lib/account/user-api";
+import { cancelBillingOrder, createCatalogOrder, UserApiError } from "@/lib/account/user-api";
 import type { BillingOrderCreated } from "@/lib/account/user-types";
 import type { Selection } from "@/lib/account/catalog-pricing";
 import { formatCountdown, formatPriceCents } from "@/lib/account/format-extensions";
@@ -41,6 +41,8 @@ export function CatalogOrderFlow({
   const [order, setOrder] = useState<BillingOrderCreated | null>(null);
   const [creating, setCreating] = useState(true);
   const [createError, setCreateError] = useState<string | null>(null);
+  // 邮箱未验证(后端 EMAIL_NOT_VERIFIED)→ 专门引导,而非笼统「创建失败」。
+  const [needsVerify, setNeedsVerify] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const paidHandled = useRef(false);
@@ -61,17 +63,22 @@ export function CatalogOrderFlow({
       requestedRef.current = selectionKey;
       setCreating(true);
       setCreateError(null);
+      setNeedsVerify(false);
       setOrder(null); // abandon previous order → polling stops
       try {
         const created = await createCatalogOrder(selection);
         setOrder(created);
         setNow(Date.now());
       } catch (err) {
-        setCreateError(
-          err instanceof Error && err.message
-            ? err.message
-            : t.dialogCreateFailed
-        );
+        if (err instanceof UserApiError && err.code === "EMAIL_NOT_VERIFIED") {
+          setNeedsVerify(true);
+        } else {
+          setCreateError(
+            err instanceof Error && err.message
+              ? err.message
+              : t.dialogCreateFailed
+          );
+        }
       } finally {
         setCreating(false);
         creatingRef.current = false;
@@ -185,7 +192,18 @@ export function CatalogOrderFlow({
         </div>
       )}
 
-      {!creating && createError && (
+      {!creating && needsVerify && (
+        <div className="account-order-flow account-order-flow--terminal">
+          <MailWarningIcon />
+          <div>{t.emailVerifyRequiredTitle}</div>
+          <p>{t.emailVerifyRequiredDesc}</p>
+          <a href="/account/me?tab=security" className="account-btn account-btn--primary">
+            {t.goVerifyEmail}
+          </a>
+        </div>
+      )}
+
+      {!creating && !needsVerify && createError && (
         <div className="account-order-flow account-order-flow--terminal">
           <XCircleIcon />
           <div>{t.dialogCreateFailed}</div>

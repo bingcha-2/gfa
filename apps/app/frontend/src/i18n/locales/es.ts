@@ -305,6 +305,7 @@ export const es: DeepPartialDict = {
     logout: 'Cerrar sesión',
     manageDevices: 'Gestionar dispositivos',
     sessionExpired: 'Sesión caducada — inicia sesión de nuevo',
+    subscriptionExpired: 'Suscripción caducada — renueva para continuar',
     logoutConfirmTitle: 'Cerrar sesión',
     logoutConfirmBody: '¿Seguro que quieres cerrar la sesión?',
     mySubscriptions: 'Mis suscripciones',

@@ -10,6 +10,7 @@ import * as QRCode from "qrcode";
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -145,6 +146,19 @@ export class BillingService {
     // 统一收银台:前端不再预选渠道,默认占位 ALIPAY;真实支付方式以回调/查询 type 为准。
     channel: "ALIPAY" | "WXPAY" = "ALIPAY",
   ) {
+    // 邮箱未验证不允许下单:付款后凭据/找回密码都依赖可达邮箱,先卡住避免「付了钱忘了密码进不去」。
+    const buyer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { emailVerified: true },
+    });
+    if (!buyer) throw new NotFoundException("Customer not found");
+    if (!buyer.emailVerified) {
+      throw new ForbiddenException({
+        error: "EMAIL_NOT_VERIFIED",
+        message: "请先验证邮箱后再购买",
+      });
+    }
+
     const published = await this.planCatalog.getPublished();
     if (!published) throw new BadRequestException("No published plan catalog — purchasing is unavailable");
 

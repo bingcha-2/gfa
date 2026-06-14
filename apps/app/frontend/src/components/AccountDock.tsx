@@ -268,9 +268,12 @@ export function AccountDock({
                   <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                 </button>
               </div>
-              {unusable && (
+              {/* 会话失效 → 真要重新登录;卡可用态(订阅到期/无生效订阅)→ 提示续费,别叫用户重登。 */}
+              {account.sessionUnusable ? (
                 <div className="relative mt-2 text-[11px] text-[var(--danger)]">{t('account.sessionExpired')}</div>
-              )}
+              ) : cardUnusable ? (
+                <div className="relative mt-2 text-[11px] text-[var(--danger)]">{t('account.subscriptionExpired')}</div>
+              ) : null}
             </div>
 
             {/* 明细:邮箱 / 到期(单订阅或无数组时)/ 设备 / 订阅接力 */}

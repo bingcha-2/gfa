@@ -305,6 +305,7 @@ export const fr: DeepPartialDict = {
     logout: 'Se déconnecter',
     manageDevices: 'Gérer les appareils',
     sessionExpired: 'Session expirée — reconnectez-vous',
+    subscriptionExpired: 'Abonnement expiré — renouvelez pour continuer',
     logoutConfirmTitle: 'Se déconnecter',
     logoutConfirmBody: 'Voulez-vous vraiment vous déconnecter ?',
     mySubscriptions: 'Mes abonnements',

@@ -11,6 +11,7 @@ import {
   AccountThemeToggle,
 } from "@/components/account/account-theme";
 import { useDict } from "@/lib/i18n/client";
+import { marketingUrl } from "@/lib/marketing-url";
 
 export function AuthCard({
   title,
@@ -127,10 +128,10 @@ export function AuthCard({
             <footer className="account-auth__footer">
               <p>{a.footerNote}</p>
               <div>
-                <Link href="/download" className="account-link">
+                <Link href={marketingUrl("/download")} className="account-link">
                   {dict.common.downloadClient}
                 </Link>
-                <Link href="/" className="account-link">
+                <Link href={marketingUrl("/")} className="account-link">
                   {a.backToSiteShort}
                 </Link>
               </div>
