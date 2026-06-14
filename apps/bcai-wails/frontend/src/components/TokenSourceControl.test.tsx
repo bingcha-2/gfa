@@ -100,7 +100,10 @@ describe('TokenSourceControl — Claude Desktop 接管入口跨平台', () => {
 
     render(<TokenSourceControl />)
 
-    const desktopRow = screen.getByText(DESKTOP_LABEL).closest('.flex.items-center.justify-between')!
+    const desktopRow = screen.getByText(DESKTOP_LABEL).closest('.flex.items-center.justify-between')
+    if (!(desktopRow instanceof HTMLElement)) {
+      throw new Error('desktop row not found')
+    }
     fireEvent.click(within(desktopRow).getByRole('button', { name: '接管' }))
     fireEvent.click(await screen.findByRole('button', { name: '确认' }))
     fireEvent.click(await screen.findByRole('button', { name: '下载独立版' }))
