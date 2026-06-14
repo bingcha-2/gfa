@@ -94,7 +94,7 @@ jobs:
       - name: Install Wails CLI & garble
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
-          go install mvdan.cc/garble@latest
+          go install mvdan.cc/garble@v0.15.0
 
       # NSIS：把 Windows 客户端打成安装包（而非裸 exe），显著降低 Defender/SmartScreen 误报。
       # GitHub windows runner 不预装 NSIS，需通过 choco 安装并加入 PATH 供 wails 调用 makensis。
