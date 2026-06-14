@@ -1,0 +1,147 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# GFA Caddy config — split-domain deploy on bcai.space: one subdomain per audience.
+#
+# Four sites:
+#   1) bcai.space          MARKETING → Next.js :3000   官网 + /updates 升级源
+#   2) my.bcai.space       ACCOUNT   → Next.js :3000   toC 用户中心
+#   3) console.bcai.space  CONSOLE   → Next.js :3000   toB 管理后台
+#   4) api.bcai.space      API       → NestJS  :3001   machine clients — NO Next.js
+#
+# Path prefixes are KEPT (no root-strip): the portal is my.bcai.space/account/*,
+# the console is console.bcai.space/console/*. URLs stay 1:1 with the code.
+#
+# ── What the operator MUST configure before applying ──────────────────────────
+#   • DNS ............ one A/AAAA record per subdomain (apex/@, my, console,
+#     api) → this server. Prefer a plain (non-CDN-proxied) record for the
+#     console subdomain so the remote_ip allowlist hook sees real client IPs.
+#   • TLS ............ Caddy auto-provisions an ACME cert PER site address once
+#     its DNS record resolves and ports 80/443 are reachable (4 certs, auto).
+#   • Next.js env .... ONE Next process (:3000) serves sites 1–3; the middleware
+#     (apps/web/src/middleware.ts) tells the surfaces apart by Host header.
+#     OPTIONAL second layer — set on that process then restart it:
+#         MARKETING_HOST=bcai.space
+#         ACCOUNT_HOST=my.bcai.space
+#         CONSOLE_HOST=console.bcai.space    # legacy alias: ADMIN_HOST
+#         ACCOUNT_COOKIE_DOMAIN=my.bcai.space
+#         CONSOLE_COOKIE_DOMAIN=console.bcai.space
+#         ADMIN_IP_ALLOWLIST=…               # optional, unchanged semantics
+#     With ALL host envs unset the middleware is a no-op (single-domain dev
+#     behavior) — Caddy below ALREADY enforces the per-host isolation, so this
+#     env layer is defense-in-depth, not required. NEVER set the cookie-domain
+#     envs to the parent domain (".bcai.space") — that shares cookies across
+#     subdomains and defeats the isolation.
+#   • NestJS env ..... payment URLs must point at the new hosts (.env):
+#         EPAY_NOTIFY_URL=https://api.bcai.space/api/epay/notify
+#         EPAY_RETURN_URL=https://my.bcai.space/account/billing
+#   • Validate ....... run `caddy validate --config Caddyfile` BEFORE reload.
+#
+# Traffic map:
+#   visitors  → bcai.space          marketing pages, /updates/*, /api/faq-images/*
+#   customers → my.bcai.space       /account/*, /api/account/*, /api/account-session/*
+#   admins    → console.bcai.space  /console/*, /login, /api/console/*, /api/console-session/*
+#   clients   → api.bcai.space      /api/app/*
+#   epay      → api.bcai.space      /api/epay/*
+#   uptime    → api.bcai.space      /api/health
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) MARKETING — apex domain.
+#
+# Serves the public 官网 only. /updates/* is served straight from disk so
+# publishing a client release needs no Next.js rebuild. Keep the update feed on
+# the APEX forever — deployed desktop clients poll
+# https://bcai.space/updates/latest-wails.json (apps/app/updater.go).
+# ──────────────────────────────────────────────────────────────────────────────
+bcai.space {
+	handle /updates/* {
+		root * D:/gfa/apps/web/public/updates
+		uri strip_prefix /updates
+		file_server
+	}
+
+	# FAQ 配图 — the ONLY /api/* namespace on the marketing host (browser-loaded
+	# images embedded in FAQ answers, rewritten through Next → NestJS).
+	handle /api/faq-images/* {
+		reverse_proxy localhost:3000
+	}
+
+	# Surfaces that do NOT exist on the apex → 404 (reveals nothing):
+	@notMarketing path /account /account/* /console /console/* /login /login/* /api/*
+	handle @notMarketing {
+		respond 404
+	}
+
+	# Everything else → Next.js: marketing pages, /_next/*, public assets.
+	handle {
+		reverse_proxy localhost:3000
+	}
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) ACCOUNT — toC 用户中心 subdomain.
+#
+# Single upstream by design: ONLY Next.js. /api/account/* is the cookie→Bearer
+# proxy (a Next route handler) — it must NOT shortcut to :3001.
+# ──────────────────────────────────────────────────────────────────────────────
+my.bcai.space {
+	header X-Robots-Tag "noindex, nofollow"
+
+	# The ONLY paths that exist on this host (positive allowlist).
+	@accountSurface path / /account /account/* /api/account /api/account/* /api/account-session /api/account-session/* /_next/* /favicon.ico /bcai-icon.png
+	handle @accountSurface {
+		reverse_proxy localhost:3000
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) CONSOLE — toB 管理后台 subdomain.
+#
+# Single upstream by design: ONLY Next.js. Admin Bearer APIs (/api/console/*)
+# reach NestJS through Next's rewrites, never directly from here.
+# ──────────────────────────────────────────────────────────────────────────────
+console.bcai.space {
+	header X-Robots-Tag "noindex, nofollow"
+
+	# ── OPTIONAL: proxy-level IP allowlist (recommended). Keep FIRST so it wins.
+	# @blockedConsoleIp not remote_ip 203.0.113.10 198.51.100.0/24
+	# handle @blockedConsoleIp {
+	#     respond 404
+	# }
+
+	# The ONLY paths that exist on this host (positive allowlist). With a custom
+	# ADMIN_PATH_PREFIX, add /<prefix> and /<prefix>/* here too.
+	@consoleSurface path / /console /console/* /login /login/* /api/console /api/console/* /api/console-session /api/console-session/* /api/app/lease /api/app/lease/* /api/remote-stats /api/remote-stats/* /api/faq-images /api/faq-images/* /_next/* /favicon.ico /bcai-icon.png
+	handle @consoleSurface {
+		reverse_proxy localhost:3000
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) API — machine subdomain. Proxied DIRECTLY to NestJS (:3001). No Next.js.
+# Auth is Bearer JWT (desktop clients) / signature (epay) inside NestJS.
+# ──────────────────────────────────────────────────────────────────────────────
+api.bcai.space {
+	@machineSurface path /api/app /api/app/* /api/epay /api/epay/* /api/health /api/remote-stats /api/remote-stats/*
+	handle @machineSurface {
+		reverse_proxy localhost:3001
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OPTIONAL: www → apex (uncomment after adding a DNS record for www).
+# ──────────────────────────────────────────────────────────────────────────────
+# www.bcai.space {
+#	redir https://bcai.space{uri} 301
+# }
