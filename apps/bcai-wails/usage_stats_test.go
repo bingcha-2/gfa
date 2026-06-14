@@ -31,4 +31,10 @@ func TestAddTokensBillableAndCacheWrite(t *testing.T) {
 	if rec.BillableTokens != 39660 {
 		t.Fatalf("billable = %d, want 39660", rec.BillableTokens)
 	}
+	// 真实节省(全口径,含缓存):net入100*5 + 出260*25 + 缓存读3000*0.5 + 缓存写39000*6.25
+	// = (500 + 6500 + 1500 + 243750)/1e6 = 0.25225 USD。缓存写 0.24375 是大头。
+	want := 0.25225
+	if got := rec.SavedMoneyUSD; got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("saved(含缓存) = %v, want %v", got, want)
+	}
 }
