@@ -671,7 +671,7 @@ export default function ClaudeAccountsPage() {
   async function handleSaveAdspower(account: ClaudeAccount) {
     setAdspowerSaving(true);
     try {
-      const res = await fetch("/api/rosetta/anthropic-set-adspower-profile", {
+      const res = await fetch("/api/console/rosetta/anthropic-set-adspower-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: account.id, adspowerProfileId: adspowerEditVal.trim() }),

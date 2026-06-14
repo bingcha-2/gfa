@@ -114,7 +114,7 @@ console.bcai.space {
 
 	# The ONLY paths that exist on this host (positive allowlist). With a custom
 	# ADMIN_PATH_PREFIX, add /<prefix> and /<prefix>/* here too.
-	@consoleSurface path / /console /console/* /login /login/* /api/console /api/console/* /api/console-session /api/console-session/* /api/app/lease /api/app/lease/* /api/remote-stats /api/remote-stats/* /api/faq-images /api/faq-images/* /_next/* /favicon.ico /bcai-icon.png
+	@consoleSurface path / /console /console/* /login /login/* /api/console /api/console/* /api/console-session /api/console-session/* /api/plan-catalog /api/plan-catalog/* /api/app/lease /api/app/lease/* /api/remote-stats /api/remote-stats/* /api/faq-images /api/faq-images/* /_next/* /favicon.ico /bcai-icon.png
 	handle @consoleSurface {
 		reverse_proxy localhost:3000
 	}

@@ -321,7 +321,7 @@ export default function CodexAccountsPage() {
     setAutoRunning(true);
     setAutoStep("准备中…");
     try {
-      const res = await fetch("/api/rosetta/codex-auto-login", {
+      const res = await fetch("/api/console/rosetta/codex-auto-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -340,7 +340,7 @@ export default function CodexAccountsPage() {
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2000));
-        const sres = await fetch(`/api/rosetta/codex-auto-login-status?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const sres = await fetch(`/api/console/rosetta/codex-auto-login-status?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
         const s = await sres.json();
         if (!s.ok) {
           if (s.status === "missing") throw new Error(s.error || "任务已丢失");
