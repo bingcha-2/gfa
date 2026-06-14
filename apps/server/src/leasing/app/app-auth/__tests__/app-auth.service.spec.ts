@@ -185,7 +185,9 @@ async function makeAppAuthService(options: {
     prisma as any,
     customerAuthService,
     tokenService,
-    deviceService
+    deviceService,
+    // SHARED_ACCESS_KEY_STORE:订阅剩余额度 best-effort 读取,测试降级为 null(不阻断登录/排序)。
+    { findById: () => null, publicStatus: () => null } as any
   );
 
   return { appAuthService, tokenService, prisma, customer, devices };

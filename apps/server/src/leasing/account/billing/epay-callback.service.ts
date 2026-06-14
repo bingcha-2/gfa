@@ -135,13 +135,21 @@ export class EpayCallbackService {
       return "success";
     }
 
-    // Step 4: amount check.
+    // Step 4: amount check —— 实付必须 ≥ 订单价(允许多付)。
+    // 网关「用户承担手续费」开关开启时,客户实付 = 订单价 + 通道费,回调上报的 money 会大于我们下单
+    // 的 amountCents —— 这是合法的,不能当欺诈拒掉(否则客户付了钱订单永远激活不了)。只有「少付」或
+    // 「金额非法/缺失(NaN)」才判欺诈。多付的差额即网关代收的手续费,记一条日志便于对账。
     const incomingAmountCents = Math.round(parseFloat(body.money) * 100);
-    if (incomingAmountCents !== order.amountCents) {
+    if (!Number.isFinite(incomingAmountCents) || incomingAmountCents < order.amountCents) {
       this.logger.error(
-        `[epay-callback] AMOUNT MISMATCH — FRAUD SIGNAL: order="${outTradeNo}" expected=${order.amountCents} got=${incomingAmountCents}`,
+        `[epay-callback] AMOUNT TOO LOW / INVALID — FRAUD SIGNAL: order="${outTradeNo}" expected>=${order.amountCents} got="${body.money}"`,
       );
       return "fail";
+    }
+    if (incomingAmountCents > order.amountCents) {
+      this.logger.log(
+        `[epay-callback] overpayment accepted (gateway fee): order="${outTradeNo}" order=${order.amountCents} paid=${incomingAmountCents} fee=${incomingAmountCents - order.amountCents}`,
+      );
     }
 
     // Step 5 — Phase 1: fast Prisma-only transaction (no file I/O).

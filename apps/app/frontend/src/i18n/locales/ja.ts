@@ -307,6 +307,14 @@ export const ja: DeepPartialDict = {
     sessionExpired: 'セッションの有効期限が切れました。再ログインしてください',
     logoutConfirmTitle: 'ログアウト',
     logoutConfirmBody: '現在のアカウントからログアウトしますか?',
+    mySubscriptions: 'マイサブスク',
+    relayHint: '各製品は利用可能;順序は同一製品内の消費優先度のみを決めます。',
+    priorityTag: '優先',
+    neverExpires: '無期限',
+    unlimited: '無制限',
+    moveUp: '上へ',
+    moveDown: '下へ',
+    reorderFailed: '並べ替えに失敗しました',
   },
 
   modal: {

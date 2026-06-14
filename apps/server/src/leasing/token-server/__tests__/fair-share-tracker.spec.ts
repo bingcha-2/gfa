@@ -70,7 +70,6 @@ function makeFsPrisma() {
 function makeTracker(now: () => number, prisma?: any) {
   return new FairShareTracker({
     getAccountPlanType: () => "pro",
-    getBoundCardIds: () => [],
     getCardWeight: () => 1,
     accountShareCapacity: 8,
     provider: "codex",
@@ -161,7 +160,7 @@ describe("FairShareTracker SQL persistence", () => {
 describe("FairShareTracker.getCardWindowUsed", () => {
   it("sums a card's weighted usage across buckets in the current window", () => {
     const t = new FairShareTracker({
-      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      getAccountPlanType: () => "pro", getCardWeight: () => 1,
       accountShareCapacity: 8, now: () => 1_700_000_000_000,
     });
     t.recordUsage(1, "c1", "codex-gpt", 100, 0, 0); // 100
@@ -228,7 +227,7 @@ describe("weightedCost:按 Claude 档位单价", () => {
 describe("recordUsage:按 modelKey 计权,同账号 Claude 共享一个桶", () => {
   it("传 modelKey 时按档位计价;Opus 比 Haiku 多扣份额", () => {
     const t = new FairShareTracker({
-      getAccountPlanType: () => "max", getBoundCardIds: () => [], getCardWeight: () => 1,
+      getAccountPlanType: () => "max", getCardWeight: () => 1,
       accountShareCapacity: 8, now: () => 1_700_000_000_000,
     });
     // 同一个 anthropic-claude 桶,不同模型 → 不同加权成本
@@ -244,7 +243,7 @@ describe("recordUsage:按 modelKey 计权,同账号 Claude 共享一个桶", () 
 // ── 阶段 2:自动补全不计额度 + 5h/周双窗口公平份额 ────────────────────────────
 function makeClaudeTracker(now: () => number, trackWeekly: boolean) {
   return new FairShareTracker({
-    getAccountPlanType: () => "max", getBoundCardIds: () => [], getCardWeight: () => 1,
+    getAccountPlanType: () => "max", getCardWeight: () => 1,
     accountShareCapacity: 8, trackWeekly, now,
   });
 }
@@ -317,7 +316,7 @@ describe("getCardWeeklyQuotaFractions(周血条)", () => {
 
   it("trackWeekly 关闭 → 周血条为空", () => {
     const t = new FairShareTracker({
-      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      getAccountPlanType: () => "pro", getCardWeight: () => 1,
       accountShareCapacity: 8, now: () => T,
     });
     t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8");
@@ -330,7 +329,7 @@ describe("trackWeekly 默认关闭:行为与历史一致(antigravity)", () => {
   it("不创建周窗口,周喂数据方法 no-op", () => {
     const T = 1_700_000_000_000;
     const t = new FairShareTracker({
-      getAccountPlanType: () => "pro", getBoundCardIds: () => [], getCardWeight: () => 1,
+      getAccountPlanType: () => "pro", getCardWeight: () => 1,
       accountShareCapacity: 8, now: () => T, // 无 trackWeekly
     });
     t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
@@ -350,5 +349,26 @@ describe("QUOTA_WEIGHTS 派生自定价源", () => {
     expect(SHARED_WEIGHTS.gemini.cache).toBeCloseTo(0.25, 5);
     expect(SHARED_WEIGHTS.gpt.output).toBe(8);
     expect(SHARED_WEIGHTS.gpt.cache).toBeCloseTo(0.1, 5);
+  });
+});
+
+describe("公平份额按固定 capacity 分摊(非动态 1/N)", () => {
+  it("每卡份额 = 预算 × weight/capacity,与同账号其他卡数量无关", () => {
+    // 份额分母是固定的 accountShareCapacity(此处 8),不是「当前绑定卡数 N」—— 固定 vs 动态
+    // 分摊的分界;改成 1/N 会让本断言失败,守护这个语义。
+    const t = new FairShareTracker({
+      getAccountPlanType: () => "pro",
+      getCardWeight: () => 1,
+      accountShareCapacity: 8,
+      now: () => 1_700_000_000_000,
+    });
+    // 同一账号两张卡各记 1000 加权;若按动态 1/N(N=2)分摊,分母会是 2 而非固定的 8。
+    t.recordUsage(1, "a", "codex-gpt", 1000, 0, 0);
+    t.recordUsage(1, "b", "codex-gpt", 1000, 0, 0);
+    t.updateBudgetEstimate(1, "codex-gpt", 0.5); // 预算反推 = 2000/0.5 = 4000;lastFraction 0.5(<0.9 才走份额判定)
+    // 每卡预算 = 4000 × 1/8 = 500;a 已用 1000 ≥ 500 → fraction 0。
+    // (若是动态 1/2 分摊,每卡预算 2000、fraction 0.5,本断言会失败 → 守护「固定 capacity」语义。)
+    expect(t.getCardQuotaFractions(1, "a")["codex-gpt"].fraction).toBe(0);
+    expect(t.checkFairShare(1, "a", "codex-gpt").allowed).toBe(false);
   });
 });

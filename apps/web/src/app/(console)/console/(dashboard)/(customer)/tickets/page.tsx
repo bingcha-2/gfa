@@ -20,7 +20,7 @@ import {
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Search, MessageSquare } from "lucide-react";
+import { Search, MessageSquare, Flame } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
@@ -44,6 +44,7 @@ export default function TicketsPage() {
   const [status, setStatus] = useState("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [urgentOnly, setUrgentOnly] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +55,7 @@ export default function TicketsPage() {
           pageSize: PAGE_SIZE,
           status: status === "all" ? undefined : status,
           search: search || undefined,
+          urgent: urgentOnly ? "true" : undefined,
         },
       });
       setData(res);
@@ -62,7 +64,7 @@ export default function TicketsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, status, search]);
+  }, [page, status, search, urgentOnly]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -91,6 +93,14 @@ export default function TicketsPage() {
             <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup>{STATUS_ITEMS.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}</SelectGroup></SelectContent>
           </Select>
+          <Button
+            variant={urgentOnly ? "default" : "outline"}
+            size="sm"
+            className={urgentOnly ? "bg-red-500 hover:bg-red-600 text-white" : "text-red-600 border-red-300 hover:bg-red-50"}
+            onClick={() => { setUrgentOnly((v) => !v); setPage(1); }}
+          >
+            <Flame className="h-4 w-4 mr-1" />仅看加急
+          </Button>
         </div>
       </CardHeader>
       <CardContent>
@@ -115,7 +125,14 @@ export default function TicketsPage() {
                 {data.tickets.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell>{t.customer?.email ?? "—"}</TableCell>
-                    <TableCell className="font-medium max-w-xs truncate">{t.subject}</TableCell>
+                    <TableCell className="font-medium max-w-xs truncate">
+                      {t.urgent && (
+                        <Badge className="bg-red-500 text-white mr-1.5 align-middle">
+                          <Flame className="h-3 w-3 mr-0.5" />加急
+                        </Badge>
+                      )}
+                      {t.subject}
+                    </TableCell>
                     <TableCell>{ticketStatusBadge(t.status)}</TableCell>
                     <TableCell className="text-center">{t._count.messages}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{fmtDateTime(t.updatedAt)}</TableCell>

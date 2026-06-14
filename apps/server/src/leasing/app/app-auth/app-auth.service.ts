@@ -1,22 +1,27 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException
 } from "@nestjs/common";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
+import { AccessKeyStore } from "../../token-server/access-key-store";
 import { CustomerAuthService } from "../../account/customer-auth/customer-auth.service";
 import { CustomerTokenService } from "../../account/customer-auth/customer-token.service";
 import { DeviceService } from "../../account/device/device.service";
 
-function buildSubscriptionSummary(subscription: {
-  id: string;
-  status: string;
-  expiresAt: Date | null;
-  deviceLimit: number;
-  priority: number;
-  productEntitlements: string;
-} | null) {
+function buildSubscriptionSummary(
+  subscription: {
+    id: string;
+    status: string;
+    expiresAt: Date | null;
+    deviceLimit: number;
+    priority: number;
+    productEntitlements: string;
+  } | null,
+  remainFraction: number | null = null
+) {
   if (!subscription) return null;
 
   let products: any;
@@ -35,7 +40,10 @@ function buildSubscriptionSummary(subscription: {
     expiresAt: subscription.expiresAt,
     deviceLimit: subscription.deviceLimit,
     priority: subscription.priority,
-    products
+    products,
+    // 每订阅「最紧复合桶」的剩余额度比例(0-1);null=无限额/无额度数据。客户端据此画余量条,
+    // 用来区分同产品同到期的多个订阅(谁在消耗、谁备用满额)。
+    remainFraction
   };
 }
 
@@ -45,8 +53,36 @@ export class AppAuthService {
     private readonly prisma: PrismaService,
     private readonly customerAuthService: CustomerAuthService,
     private readonly tokenService: CustomerTokenService,
-    private readonly deviceService: DeviceService
+    private readonly deviceService: DeviceService,
+    @Inject("SHARED_ACCESS_KEY_STORE") private readonly store: AccessKeyStore
   ) {}
+
+  /**
+   * 单个订阅的剩余额度比例 —— 取该订阅「最紧复合桶」的 (limit-used)/limit(0-1)。
+   * 订阅 record 未加载 / 无限额(无 bucket 上限)→ null。供客户端多订阅余量条、区分订阅。
+   * Best-effort:store 读取/计算异常一律降级为 null(绝不阻断登录/心跳)。
+   */
+  private subscriptionRemainFraction(subscriptionId: string): number | null {
+    const record = this.store.findById(subscriptionId);
+    if (!record) return null;
+    let status: any;
+    try {
+      status = this.store.publicStatus(record);
+    } catch {
+      return null;
+    }
+    const buckets = Array.isArray(status?.buckets) ? status.buckets : [];
+    let min = 1;
+    let has = false;
+    for (const b of buckets) {
+      const limit = Number(b?.limit) || 0;
+      if (limit <= 0) continue;
+      has = true;
+      const frac = Math.max(0, Math.min(1, (limit - (Number(b?.used) || 0)) / limit));
+      if (frac < min) min = frac;
+    }
+    return has ? min : null;
+  }
 
   private async listActiveSubscriptionsSorted(customerId: string) {
     const now = new Date();
@@ -159,7 +195,7 @@ export class AppAuthService {
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     const subs = await this.listActiveSubscriptionsSorted(customer.id);
-    const subscriptions = subs.map(buildSubscriptionSummary);
+    const subscriptions = subs.map((s) => buildSubscriptionSummary(s, this.subscriptionRemainFraction(s.id)));
 
     return {
       token,
@@ -213,7 +249,7 @@ export class AppAuthService {
     });
 
     const subs = await this.listActiveSubscriptionsSorted(dto.customerId);
-    const subscriptions = subs.map(buildSubscriptionSummary);
+    const subscriptions = subs.map((s) => buildSubscriptionSummary(s, this.subscriptionRemainFraction(s.id)));
 
     return {
       ok: true,

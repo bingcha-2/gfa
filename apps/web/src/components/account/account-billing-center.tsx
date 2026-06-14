@@ -10,6 +10,7 @@ import {
   PackageCheckIcon,
   ReceiptTextIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   SparklesIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -117,6 +118,33 @@ function CancelOrderButton({
   );
 }
 
+function RefundOrderButton({
+  outTradeNo,
+  onRefund,
+  labels,
+}: {
+  outTradeNo: string;
+  onRefund: (outTradeNo: string) => Promise<void>;
+  labels: { refund: string; refunding: string; confirm: string };
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="account-order-cancel"
+      disabled={busy}
+      onClick={async () => {
+        if (!window.confirm(labels.confirm)) return;
+        setBusy(true);
+        try { await onRefund(outTradeNo); } finally { setBusy(false); }
+      }}
+    >
+      {busy
+        ? <><LoaderCircleIcon className="account-order-sync__icon account-order-sync__icon--spin" />{labels.refunding}</>
+        : <><RotateCcwIcon className="account-order-sync__icon" />{labels.refund}</>}
+    </button>
+  );
+}
+
 export function AccountBillingCenter({
   subscriptions,
   plans,
@@ -129,6 +157,7 @@ export function AccountBillingCenter({
   onPurchase,
   onSyncOrder,
   onCancelOrder,
+  onRefundOrder,
 }: {
   subscriptions: Subscription[] | null;
   /**
@@ -146,6 +175,7 @@ export function AccountBillingCenter({
   onPurchase?: (plan: Plan) => void;
   onSyncOrder?: (outTradeNo: string) => Promise<void>;
   onCancelOrder?: (outTradeNo: string) => Promise<void>;
+  onRefundOrder?: (outTradeNo: string) => Promise<void>;
 }) {
   const dict = useDict();
   const b = dict.portalApp.billing;
@@ -386,6 +416,15 @@ export function AccountBillingCenter({
                         labels={{ cancel: b.cancelOrder, cancelling: b.cancelling, confirm: b.cancelConfirm }}
                       />
                     )}
+                  </div>
+                )}
+                {order.status === "PAID" && onRefundOrder && (
+                  <div className="account-order-row__actions">
+                    <RefundOrderButton
+                      outTradeNo={order.outTradeNo}
+                      onRefund={onRefundOrder}
+                      labels={{ refund: b.refundOrder, refunding: b.refunding, confirm: b.refundConfirm }}
+                    />
                   </div>
                 )}
               </article>

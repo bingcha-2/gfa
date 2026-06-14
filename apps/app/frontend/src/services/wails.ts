@@ -31,6 +31,7 @@ import {
   UserLogout as _UserLogout,
   GetAccountState as _GetAccountState,
   HeartbeatCheck as _HeartbeatCheck,
+  SetSubscriptionPriority as _SetSubscriptionPriority,
 } from '../../wailsjs/go/main/App'
 
 // ===== Portal URLs =====
@@ -50,15 +51,20 @@ export const PORTAL_URLS = {
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 
+import type { main } from '../../wailsjs/go/models'
 import type { Config, IDEStatus, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
 
 // ===== Config =====
 export async function getConfig(): Promise<Config> {
-  return GetConfig()
+  // GetConfig 返回 wails 生成的 main.Config(其 SubscriptionSnapshot.remainFraction 标为
+  // optional number);手写 Config 用 number|null。两者是同一数据的镜像,断言对齐(与 saveConfig 对称)。
+  return GetConfig() as unknown as Config
 }
 
 export async function saveConfig(cfg: Config): Promise<void> {
-  await _SaveConfig(cfg)
+  // 运行时 cfg 即 GetConfig 返回的 main.Config 实例(自带 convertValues);手写 Config
+  // interface 字段已与之对齐,仅缺该方法签名,故断言 —— wails 生成 class 与手写镜像的固有差异。
+  await _SaveConfig(cfg as unknown as main.Config)
 }
 
 // ===== Account Login =====
@@ -79,6 +85,11 @@ export async function getAccountState(): Promise<AccountState> {
 // 瞬时网络错误同样 reject 但不动本地会话。
 export async function heartbeatCheck(): Promise<Record<string, unknown>> {
   return _HeartbeatCheck()
+}
+
+// 调整订阅接力优先级(↑↓);成功后调用方应 heartbeat() 刷新本地多订阅快照。
+export async function setSubscriptionPriority(subscriptionId: string, priority: number): Promise<void> {
+  await _SetSubscriptionPriority(subscriptionId, priority)
 }
 
 // ===== Stats =====

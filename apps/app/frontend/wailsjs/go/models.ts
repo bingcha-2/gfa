@@ -1,5 +1,29 @@
 export namespace main {
 	
+	export class SubscriptionSnapshot {
+	    id: string;
+	    status: string;
+	    expiresAt: string;
+	    deviceLimit: number;
+	    priority: number;
+	    products: string[];
+	    remainFraction?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.status = source["status"];
+	        this.expiresAt = source["expiresAt"];
+	        this.deviceLimit = source["deviceLimit"];
+	        this.priority = source["priority"];
+	        this.products = source["products"];
+	        this.remainFraction = source["remainFraction"];
+	    }
+	}
 	export class Config {
 	    accountCard: string;
 	    cardExpiry: string;
@@ -16,6 +40,7 @@ export namespace main {
 	    planExpiry: string;
 	    planDeviceMax: number;
 	    deviceName: string;
+	    subscriptions: SubscriptionSnapshot[];
 	    codexMode: string;
 	    codexRelayBase: string;
 	    codexRelayKey: string;
@@ -43,12 +68,31 @@ export namespace main {
 	        this.planExpiry = source["planExpiry"];
 	        this.planDeviceMax = source["planDeviceMax"];
 	        this.deviceName = source["deviceName"];
+	        this.subscriptions = this.convertValues(source["subscriptions"], SubscriptionSnapshot);
 	        this.codexMode = source["codexMode"];
 	        this.codexRelayBase = source["codexRelayBase"];
 	        this.codexRelayKey = source["codexRelayKey"];
 	        this.codexRelayProtocol = source["codexRelayProtocol"];
 	        this.codexModelMap = source["codexModelMap"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class DetectedPaths {
 	    idePath: string;
@@ -126,6 +170,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class UpdateStatus {
 	    status: string;
 	    version: string;

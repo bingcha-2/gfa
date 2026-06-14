@@ -68,6 +68,16 @@ export class BillingController {
     return this.billingService.cancelOrder(customer.customerId, outTradeNo);
   }
 
+  /** POST /api/account/billing/orders/:outTradeNo/refund → 用户自助退款已支付订单(退 96.4%) */
+  @Post("billing/orders/:outTradeNo/refund")
+  @HttpCode(200)
+  refundOrder(
+    @CurrentCustomer() customer: CustomerUser,
+    @Param("outTradeNo") outTradeNo: string,
+  ) {
+    return this.billingService.refundOwnOrder(customer.customerId, outTradeNo);
+  }
+
   /** GET /api/account/subscriptions */
   @Get("subscriptions")
   listSubscriptions(@CurrentCustomer() customer: CustomerUser) {

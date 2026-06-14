@@ -364,22 +364,31 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     totalRequests: number;
     fairShare: Record<string, { fraction: number; resetAt: number }>;
     windowWeightedUsed: number;
+    /** 看板展示「客户 + 套餐 + 到期」替掉裸 id。 */
+    customerId?: string;
+    products?: string[];
+    expiresAt?: string | null;
   }> {
-    const ids = this.accessKeyStore.cardsBoundToAccount(accountId, this.provider.id);
-    return ids.map((id) => {
+    // account-system:号下绑定的就是订阅(subscriptionById,DB 唯一真相源);文件卡已退役,不再取
+    // (不混合)。订阅行带 客户/套餐/到期,供前端展示「邮箱 + 套餐」而非裸 id。纯展示口径;公平份额
+    // 限流另按 weight/capacity 计。
+    return this.accessKeyStore.subscriptionsBoundToAccount(accountId, this.provider.id).map((id) => {
       const record = this.accessKeyStore.findById(id);
       const pub = record ? this.accessKeyStore.publicStatus(record) : null;
-      const w = Math.floor(Number((record as any)?.weight ?? 1));
+      const r = record as any;
+      const w = Math.floor(Number(r?.weight ?? 1));
       const weight = Number.isFinite(w) && w >= 1 ? w : 1;
-      const fairShare = this.fairShareTracker?.getCardQuotaFractions(accountId, id) || {};
       return {
         id,
         name: pub?.name || record?.name || "",
         weight,
         totalTokensUsed: Number(pub?.totalTokensUsed || 0),
         totalRequests: Number(pub?.totalRequests || 0),
-        fairShare,
+        fairShare: this.fairShareTracker?.getCardQuotaFractions(accountId, id) || {},
         windowWeightedUsed: this.fairShareTracker?.getCardWindowUsed(accountId, id) || 0,
+        customerId: r?.customerId,
+        products: Array.isArray(r?.products) ? r.products : [],
+        expiresAt: r?.keyExpiresAt ?? null,
       };
     });
   }

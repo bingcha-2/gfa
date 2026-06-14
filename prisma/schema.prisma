@@ -751,6 +751,8 @@ model Ticket {
   customerId String
   subject    String
   status     TicketStatus @default(OPEN)
+  urgent     Boolean      @default(false) // 加急处理:客户或管理员可置;关闭工单时自动清
+  urgentAt   DateTime?                    // 置加急的时间(取消/关闭时归 null)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 

@@ -576,6 +576,22 @@ export class AccessKeyStore {
       .map((k) => k.id);
   }
 
+  /**
+   * 去影子:绑定到某上游号的「订阅」id(subscriptionById,不写文件)。与 cardsBoundToAccount
+   * 同口径(boundAccountIdFor 读 record.bindings[providerId])。account-system 下用量看板
+   * (getBoundCardsForAccount)只列订阅 —— 文件卡已退役、不再混取;本方法与 cardsBoundToAccount
+   * 分属两套数据源(订阅 vs 文件卡)。号池订阅无 bindings,自然不被纳入。
+   */
+  subscriptionsBoundToAccount(accountId: number, providerId: string): string[] {
+    if (accountId <= 0) return [];
+    const out: string[] = [];
+    for (const rec of this.subscriptionById.values()) {
+      if (rec.status && rec.status !== 'active') continue;
+      if (this.boundAccountIdFor(rec, providerId) === accountId) out.push(rec.id);
+    }
+    return out;
+  }
+
   // ── Request resolution ─────────────────────────────────────────────────
 
   /** Injected session-JWT → subscription resolver (see SessionResolverLike). */

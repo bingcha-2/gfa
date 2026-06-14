@@ -307,6 +307,14 @@ export const es: DeepPartialDict = {
     sessionExpired: 'Sesión caducada — inicia sesión de nuevo',
     logoutConfirmTitle: 'Cerrar sesión',
     logoutConfirmBody: '¿Seguro que quieres cerrar la sesión?',
+    mySubscriptions: 'Mis suscripciones',
+    relayHint: 'Todos los productos siguen disponibles; el orden solo define la prioridad de consumo dentro del mismo producto.',
+    priorityTag: 'Prioridad',
+    neverExpires: 'Sin caducidad',
+    unlimited: 'Sin límite',
+    moveUp: 'Subir',
+    moveDown: 'Bajar',
+    reorderFailed: 'No se pudo reordenar',
   },
 
   modal: {

@@ -1,6 +1,6 @@
 import { getDict } from "@/lib/i18n/server";
 import { PageHeader } from "@/components/account/page-header";
-import { UsageTable } from "@/components/account/usage-table";
+import { UsageView } from "@/components/account/usage-view";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export default async function UsagePage() {
   return (
     <div className="account-page">
       <PageHeader title={t.pages.usageTitle} />
-      <UsageTable />
+      <UsageView />
     </div>
   );
 }

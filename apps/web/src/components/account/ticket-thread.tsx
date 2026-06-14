@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { LockIcon, SendIcon } from "lucide-react";
+import { FlameIcon, LockIcon, SendIcon } from "lucide-react";
 
 import { AccountButton, AccountSkeleton } from "@/components/account/account-ui";
-import { getTicket, replyTicket, UserApiError } from "@/lib/account/user-api";
+import { TicketUrgentBadge } from "@/components/account/ticket-urgent-badge";
+import { getTicket, replyTicket, setTicketUrgent, UserApiError } from "@/lib/account/user-api";
 import type { TicketDetail } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
@@ -21,6 +22,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
+  const [togglingUrgent, setTogglingUrgent] = useState(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -70,6 +72,41 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     }
   }
 
+  async function handleToggleUrgent() {
+    if (!detail || togglingUrgent) return;
+    const next = !detail.ticket.urgent;
+    setTogglingUrgent(true);
+    try {
+      const { ticket } = await setTicketUrgent(ticketId, next);
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              ticket: { ...prev.ticket, urgent: ticket.urgent, urgentAt: ticket.urgentAt },
+            }
+          : prev
+      );
+      toast.success(next ? t.urgentToast : t.cancelUrgentToast);
+    } catch (err) {
+      if (err instanceof UserApiError && err.code === "TICKET_CLOSED") {
+        // Ticket was closed since loading — closing clears urgent server-side.
+        setDetail((prev) =>
+          prev
+            ? {
+                ...prev,
+                ticket: { ...prev.ticket, status: "CLOSED", urgent: false, urgentAt: null },
+              }
+            : prev
+        );
+        toast.error(t.closedNotice);
+      } else {
+        toast.error(t.urgentFailed);
+      }
+    } finally {
+      setTogglingUrgent(false);
+    }
+  }
+
   if (loadState === "notFound") {
     return (
       <div className="account-state-panel">
@@ -105,6 +142,22 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
 
   return (
     <div className="account-ticket-thread" data-testid="account-ticket-thread">
+      {!closed && (
+        <div
+          style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}
+        >
+          {detail.ticket.urgent && <TicketUrgentBadge />}
+          <AccountButton
+            variant="secondary"
+            onClick={() => void handleToggleUrgent()}
+            disabled={togglingUrgent}
+          >
+            <FlameIcon data-icon="inline-start" />
+            {detail.ticket.urgent ? t.cancelUrgent : t.urgent}
+          </AccountButton>
+        </div>
+      )}
+
       <ul className="account-thread-list">
         {detail.messages.map((message) => {
           const mine = message.authorType === "CUSTOMER";

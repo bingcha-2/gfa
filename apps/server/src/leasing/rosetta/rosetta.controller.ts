@@ -31,6 +31,22 @@ export class RosettaController {
     throw new ForbiddenException({ error: "FEATURE_DISABLED", message: "卡密后台管理已停用,请改用账户订阅。" });
   }
 
+  /**
+   * 用 DB 订阅占用(座位真相源)覆盖账号列表的 usedShares。底层 list 仍按文件卡
+   * 口径(access-keys.json,已退役)算 usedShares,这里统一改成订阅口径,与下单
+   * 选号(entitlement-sync)一致 —— 否则订阅占了座位、后台「份额用量」仍显示 0/N。
+   */
+  private async overlaySubscriptionShares<T extends { accounts: Array<{ id: number; usedShares: number }> }>(
+    res: T,
+    product: string,
+  ): Promise<T> {
+    const shares = await this.rosetta.occupiedSharesFromSubscriptions(product);
+    for (const acc of res.accounts) {
+      acc.usedShares = shares.get(Number(acc.id)) || 0;
+    }
+    return res;
+  }
+
   @Get("access-keys")
   listAccessKeys(@Query("search") search?: string) {
     return this.rosetta.listAccessKeys({ search });
@@ -42,8 +58,8 @@ export class RosettaController {
   }
 
   @Get("accounts")
-  listAccounts() {
-    return this.rosetta.listAccounts();
+  async listAccounts() {
+    return this.overlaySubscriptionShares(this.rosetta.listAccounts(), "antigravity");
   }
 
   @Post("add-account")
@@ -112,8 +128,8 @@ export class RosettaController {
 
   // ── Codex account pool ──────────────────────────────────────────────
   @Get("codex-accounts")
-  listCodexAccounts() {
-    return this.rosetta.listCodexAccounts();
+  async listCodexAccounts() {
+    return this.overlaySubscriptionShares(this.rosetta.listCodexAccounts(), "codex");
   }
 
   // 导出全部 codex 账号(含 token),返回可被 codex-import-account 原样导入的 JSON。
@@ -188,8 +204,8 @@ export class RosettaController {
 
   // ── Claude account pool ─────────────────────────────────────────────
   @Get("anthropic-accounts")
-  listClaudeAccounts() {
-    return this.rosetta.listClaudeAccounts();
+  async listClaudeAccounts() {
+    return this.overlaySubscriptionShares(this.rosetta.listClaudeAccounts(), "anthropic");
   }
 
   @Post("anthropic-add-account")

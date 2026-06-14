@@ -1,10 +1,11 @@
 /**
  * ticket-admin.controller.ts — console support ticket surface.
  *
- *   GET   console/tickets             — list (page/pageSize/status/search)
+ *   GET   console/tickets             — list (page/pageSize/status/search/urgent)
  *   GET   console/tickets/:id         — detail + messages
  *   POST  console/tickets/:id/messages — admin reply (→ ANSWERED + notify)
- *   PATCH console/tickets/:id         — set status (e.g. CLOSED)
+ *   PATCH console/tickets/:id         — set status (e.g. CLOSED → auto-clears urgent)
+ *   PATCH console/tickets/:id/urgent  — set/clear urgent (加急)
  */
 import {
   Body,
@@ -25,7 +26,11 @@ import { ConsoleJwtGuard } from "../../../shared/auth/console-jwt.guard";
 import { Roles } from "../../../shared/auth/roles.decorator";
 import { AuditLogService } from "../../../shared/audit-log/audit-log.service";
 import { TicketAdminService } from "./ticket-admin.service";
-import { ReplyTicketDto, UpdateTicketStatusDto } from "./dto/ticket-admin.dto";
+import {
+  ReplyTicketDto,
+  SetTicketUrgentDto,
+  UpdateTicketStatusDto,
+} from "./dto/ticket-admin.dto";
 
 @Controller("console/tickets")
 @UseGuards(ConsoleJwtGuard)
@@ -42,8 +47,15 @@ export class TicketAdminController {
     @Query("pageSize", new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
     @Query("status") status?: string,
     @Query("search") search?: string,
+    @Query("urgent") urgent?: string,
   ) {
-    return this.ticketAdmin.listTickets({ page, pageSize, status, search });
+    return this.ticketAdmin.listTickets({
+      page,
+      pageSize,
+      status,
+      search,
+      urgent: urgent === "true",
+    });
   }
 
   @Get(":id")
@@ -81,6 +93,23 @@ export class TicketAdminController {
       targetType: "Ticket",
       targetId: id,
       detail: { status: dto.status },
+    });
+    return result;
+  }
+
+  @Patch(":id/urgent")
+  async setUrgent(
+    @Param("id") id: string,
+    @Body() dto: SetTicketUrgentDto,
+    @Request() req: any,
+  ) {
+    const result = await this.ticketAdmin.setUrgent(id, dto.urgent);
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "UPDATE_TICKET_URGENT",
+      targetType: "Ticket",
+      targetId: id,
+      detail: { urgent: dto.urgent },
     });
     return result;
   }

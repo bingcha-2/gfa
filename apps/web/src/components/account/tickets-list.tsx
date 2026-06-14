@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { PlusIcon, XIcon } from "lucide-react";
+import { FlameIcon, PlusIcon, XIcon } from "lucide-react";
 
 import {
   AccountButton,
@@ -12,8 +12,9 @@ import {
   AccountTextarea,
 } from "@/components/account/account-ui";
 import { TicketStatusBadge } from "@/components/account/ticket-status-badge";
+import { TicketUrgentBadge } from "@/components/account/ticket-urgent-badge";
 import { TicketThread } from "@/components/account/ticket-thread";
-import { createTicket, getTickets } from "@/lib/account/user-api";
+import { createTicket, getTickets, setTicketUrgent, UserApiError } from "@/lib/account/user-api";
 import type { TicketSummary } from "@/lib/account/user-types";
 import { useDialogA11y } from "@/lib/account/use-dialog-a11y";
 import { formatDateTime } from "@/lib/format";
@@ -33,6 +34,9 @@ export function TicketsList() {
 
   // Ticket whose conversation is shown in a modal (null = no thread open).
   const [activeTicket, setActiveTicket] = useState<TicketSummary | null>(null);
+
+  // Id of the ticket whose urgent flag is currently being toggled (row button).
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const createPanelRef = useRef<HTMLElement>(null);
   const threadPanelRef = useRef<HTMLElement>(null);
@@ -83,6 +87,45 @@ export function TicketsList() {
     }
   }
 
+  // Toggle urgent straight from the list row (no need to open the thread).
+  // Propagation is stopped by the cell wrapper so the row doesn't open the thread.
+  async function handleToggleUrgent(ticket: TicketSummary) {
+    if (togglingId) return;
+    const next = !ticket.urgent;
+    setTogglingId(ticket.id);
+    try {
+      const { ticket: updated } = await setTicketUrgent(ticket.id, next);
+      setTickets((prev) =>
+        prev
+          ? prev.map((row) =>
+              row.id === ticket.id
+                ? { ...row, urgent: updated.urgent, urgentAt: updated.urgentAt }
+                : row
+            )
+          : prev
+      );
+      toast.success(next ? t.urgentToast : t.cancelUrgentToast);
+    } catch (err) {
+      if (err instanceof UserApiError && err.code === "TICKET_CLOSED") {
+        // Closed since the list loaded — reflect it locally (closed clears urgent).
+        setTickets((prev) =>
+          prev
+            ? prev.map((row) =>
+                row.id === ticket.id
+                  ? { ...row, status: "CLOSED", urgent: false, urgentAt: null }
+                  : row
+              )
+            : prev
+        );
+        toast.error(t.closedNotice);
+      } else {
+        toast.error(t.urgentFailed);
+      }
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
   return (
     <div className="account-ticket-center" data-testid="account-ticket-center">
       <div className="account-list-toolbar">
@@ -111,6 +154,7 @@ export function TicketsList() {
                 <th>{t.colStatus}</th>
                 <th>{t.colCreatedAt}</th>
                 <th>{t.colUpdatedAt}</th>
+                <th>{t.colActions}</th>
               </tr>
             </thead>
             <tbody>
@@ -121,16 +165,19 @@ export function TicketsList() {
                   onClick={() => setActiveTicket(ticket)}
                 >
                   <td>
-                    <button
-                      type="button"
-                      className="account-link account-linkbtn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveTicket(ticket);
-                      }}
-                    >
-                      {ticket.subject}
-                    </button>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                      <button
+                        type="button"
+                        className="account-link account-linkbtn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveTicket(ticket);
+                        }}
+                      >
+                        {ticket.subject}
+                      </button>
+                      {ticket.urgent && <TicketUrgentBadge />}
+                    </span>
                   </td>
                   <td>
                     <TicketStatusBadge status={ticket.status} />
@@ -140,6 +187,18 @@ export function TicketsList() {
                   </td>
                   <td className="account-data-table__muted">
                     {formatDateTime(ticket.updatedAt)}
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {ticket.status !== "CLOSED" && (
+                      <AccountButton
+                        variant="secondary"
+                        onClick={() => void handleToggleUrgent(ticket)}
+                        disabled={togglingId === ticket.id}
+                      >
+                        <FlameIcon data-icon="inline-start" />
+                        {ticket.urgent ? t.cancelUrgent : t.urgent}
+                      </AccountButton>
+                    )}
                   </td>
                 </tr>
               ))}

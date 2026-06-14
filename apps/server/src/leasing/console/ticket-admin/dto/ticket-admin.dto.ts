@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsString, MaxLength } from "class-validator";
+import { IsBoolean, IsIn, IsNotEmpty, IsString, MaxLength } from "class-validator";
 
 export class ReplyTicketDto {
   @IsString()
@@ -10,4 +10,9 @@ export class ReplyTicketDto {
 export class UpdateTicketStatusDto {
   @IsIn(["OPEN", "ANSWERED", "CLOSED"])
   status!: "OPEN" | "ANSWERED" | "CLOSED";
+}
+
+export class SetTicketUrgentDto {
+  @IsBoolean()
+  urgent!: boolean;
 }

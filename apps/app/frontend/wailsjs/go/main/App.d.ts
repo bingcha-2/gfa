@@ -60,6 +60,8 @@ export function SaveConfig(arg1:main.Config):Promise<void>;
 
 export function SetClaudeDesktopMockLogin(arg1:boolean):Promise<boolean>;
 
+export function SetSubscriptionPriority(arg1:string,arg2:number):Promise<void>;
+
 export function UserLogin(arg1:string,arg2:string):Promise<Record<string, any>>;
 
 export function UserLogout():Promise<void>;

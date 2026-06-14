@@ -164,7 +164,7 @@ export type UsageRecord = {
   timestamp: string;
   modelKey: string;
   bucket: string;
-  status: string;
+  status: number; // HTTP 状态码(200/429/…),由 token 用量事件透传(Number)
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -175,6 +175,39 @@ export type UsagePage = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+// ─── Usage stats (aggregated — drives the history charts) ─────────────────────
+
+export type UsageStatPoint = {
+  /** X 轴标签:hour → "HH:00";day → "MM-DD"。 */
+  label: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requests: number;
+};
+
+export type UsageStatModel = {
+  modelKey: string;
+  totalTokens: number;
+  requests: number;
+};
+
+export type UsageStats = {
+  granularity: "hour" | "day";
+  points: UsageStatPoint[];
+  /** 按 totalTokens 降序。 */
+  byModel: UsageStatModel[];
+  status: { success: number; failed: number };
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requests: number;
+    /** 节省金额(美元)。与客户端同算法:Σ 净输入×family单价 + 输出×family单价。 */
+    savedUSD: number;
+  };
 };
 
 // ─── Notifications (contracts C/D) ────────────────────────────────────────────
@@ -209,6 +242,8 @@ export type TicketSummary = {
   id: string;
   subject: string;
   status: TicketStatus;
+  urgent: boolean;
+  urgentAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -225,9 +260,20 @@ export type TicketDetail = {
     id: string;
     subject: string;
     status: TicketStatus;
+    urgent: boolean;
+    urgentAt: string | null;
     createdAt: string;
   };
   messages: TicketMessage[];
+};
+
+/** PATCH /api/account/tickets/:id/urgent response. */
+export type TicketUrgentResult = {
+  ticket: {
+    id: string;
+    urgent: boolean;
+    urgentAt: string | null;
+  };
 };
 
 // ─── Referral (contract I) ────────────────────────────────────────────────────

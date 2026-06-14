@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -13,7 +14,7 @@ import { CustomerJwtGuard } from "../customer-auth/customer-jwt.guard";
 import { CurrentCustomer } from "../customer-auth/customer.decorator";
 import { CustomerUser } from "../customer-auth/customer-jwt.strategy";
 import { TicketService } from "./ticket.service";
-import { CreateMessageDto, CreateTicketDto } from "./dto/ticket.dto";
+import { CreateMessageDto, CreateTicketDto, SetTicketUrgentDto } from "./dto/ticket.dto";
 
 /**
  * TicketController — customer support ticket management.
@@ -23,6 +24,7 @@ import { CreateMessageDto, CreateTicketDto } from "./dto/ticket.dto";
  *   POST /api/account/tickets              create ticket (OPEN + first CUSTOMER message)
  *   GET  /api/account/tickets/:id          detail + messages (ownership)
  *   POST /api/account/tickets/:id/messages reply (ownership; 409 if CLOSED; re-open if ANSWERED)
+ *   PATCH /api/account/tickets/:id/urgent  set/clear urgent (ownership; 409 if CLOSED)
  */
 @Controller("account/tickets")
 @Public()
@@ -81,5 +83,21 @@ export class TicketController {
     @Body() dto: CreateMessageDto,
   ) {
     return this.ticketService.reply(customer.customerId, id, dto.body);
+  }
+
+  /**
+   * PATCH /api/account/tickets/:id/urgent
+   * Body: { urgent: boolean }
+   * → { ticket: {id,urgent,urgentAt} }
+   * Status CLOSED → 409 { error: "TICKET_CLOSED" }
+   * Ownership → 404 TICKET_NOT_FOUND
+   */
+  @Patch(":id/urgent")
+  setUrgent(
+    @CurrentCustomer() customer: CustomerUser,
+    @Param("id") id: string,
+    @Body() dto: SetTicketUrgentDto,
+  ) {
+    return this.ticketService.setUrgent(customer.customerId, id, dto.urgent);
   }
 }

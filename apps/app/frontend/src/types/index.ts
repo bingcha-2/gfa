@@ -30,6 +30,18 @@ export interface Config {
   codexRelayKey: string
   codexRelayProtocol: string
   codexModelMap: Record<string, string>
+  subscriptions: AccountSubscription[]
+}
+
+// ===== Account Subscription (多订阅快照·按 priority 升序) =====
+export interface AccountSubscription {
+  id: string
+  status: string
+  expiresAt: string // ISO-8601;空串表示长期有效
+  deviceLimit: number
+  priority: number
+  products: string[] // antigravity | codex | anthropic
+  remainFraction: number | null // 最紧复合桶剩余额度比例(0-1);null=无限额/无数据
 }
 
 // ===== Account State =====
@@ -43,6 +55,7 @@ export interface AccountState {
   tokenExpiry: string
   tokenExpired: boolean
   sessionUnusable: boolean
+  subscriptions: AccountSubscription[]
 }
 
 // ===== IDE =====

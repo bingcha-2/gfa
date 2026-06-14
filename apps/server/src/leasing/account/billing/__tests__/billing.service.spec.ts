@@ -31,7 +31,7 @@ function makeMockPrisma(overrides: Record<string, any> = {}) {
 }
 
 function buildService(prisma: any) {
-  return new BillingService(prisma, {} as any, {} as any, {} as any);
+  return new BillingService(prisma, {} as any, {} as any, {} as any, {} as any);
 }
 
 describe("BillingService.getOrder", () => {
@@ -239,5 +239,80 @@ describe("BillingService.listSubscriptions", () => {
     ]);
     const result = await service.listSubscriptions("cust-1");
     expect(result.subscriptions[0].products).toEqual([]);
+  });
+});
+
+describe("BillingService.refundOwnOrder", () => {
+  const PAID = {
+    id: "o1", customerId: "c1", outTradeNo: "T1", status: "PAID",
+    payChannel: "ALIPAY", amountCents: 1000,
+    paidAt: new Date("2026-06-01"), createdAt: new Date("2026-06-01"),
+    subscriptionId: "s1",
+  };
+
+  function setup(
+    order: any,
+    opts: { usage?: number; refundOk?: boolean; casCount?: number; sub?: any } = {},
+  ) {
+    const prisma = {
+      planOrder: {
+        findUnique: vi.fn().mockResolvedValue(order),
+        updateMany: vi.fn().mockResolvedValue({ count: opts.casCount ?? 1 }),
+      },
+      cardTokenUsage: { count: vi.fn().mockResolvedValue(opts.usage ?? 0) },
+      subscription: {
+        findUnique: vi.fn().mockResolvedValue(opts.sub ?? null),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    } as any;
+    const subscriptions = { cancelSubscription: vi.fn().mockResolvedValue({}) } as any;
+    const service = new BillingService(prisma, {} as any, {} as any, {} as any, subscriptions);
+    vi.spyOn(service, "refundEpayOrder").mockResolvedValue({ ok: opts.refundOk ?? true });
+    return { service, prisma, subscriptions };
+  }
+
+  it("他人订单 → 404(不泄露存在性)", async () => {
+    const { service } = setup({ ...PAID, customerId: "other" });
+    await expect(service.refundOwnOrder("c1", "T1")).rejects.toThrow(NotFoundException);
+  });
+
+  it("非 PAID → 拒绝", async () => {
+    const { service } = setup({ ...PAID, status: "PENDING" });
+    await expect(service.refundOwnOrder("c1", "T1")).rejects.toThrow(/已支付/);
+  });
+
+  it("GRANT/¥0 → 拒绝", async () => {
+    const { service } = setup({ ...PAID, payChannel: "GRANT" });
+    await expect(service.refundOwnOrder("c1", "T1")).rejects.toThrow(/可退款金额/);
+  });
+
+  it("支付后有用量 → 拒绝(防买了用完再退)", async () => {
+    const { service } = setup(PAID, { usage: 2 });
+    await expect(service.refundOwnOrder("c1", "T1")).rejects.toThrow(/使用记录/);
+  });
+
+  it("正常:退 96.4% + CAS 翻 REFUNDED + 取消订阅", async () => {
+    const { service, prisma, subscriptions } = setup(PAID, { sub: { id: "s1", status: "ACTIVE" } });
+    const res = await service.refundOwnOrder("c1", "T1");
+    expect(service.refundEpayOrder).toHaveBeenCalledWith("T1", 964); // 1000 × 0.964
+    expect(prisma.planOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: "o1", status: "PAID" },
+      data: { status: "REFUNDED" },
+    });
+    expect(subscriptions.cancelSubscription).toHaveBeenCalledWith("s1");
+    expect(res).toMatchObject({ ok: true, refundedCents: 964 });
+  });
+
+  it("网关退款失败 → 抛错,订单不翻状态", async () => {
+    const { service, prisma } = setup(PAID, { refundOk: false });
+    await expect(service.refundOwnOrder("c1", "T1")).rejects.toThrow(/退款失败/);
+    expect(prisma.planOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("已 REFUNDED → 幂等返回,不重复退款", async () => {
+    const { service } = setup({ ...PAID, status: "REFUNDED" });
+    const res = await service.refundOwnOrder("c1", "T1");
+    expect(res).toMatchObject({ ok: true, alreadyRefunded: true });
+    expect(service.refundEpayOrder).not.toHaveBeenCalled();
   });
 });

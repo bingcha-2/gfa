@@ -55,11 +55,6 @@ export class RemoteAnthropicService extends LeaseService<ClaudeAccount> implemen
           return acct?.planType || 'free';
         } catch { return 'free'; }
       },
-      getBoundCardIds: (accountId: number) => {
-        try {
-          return service.accessKeyStore.cardsBoundToAccount(accountId, provider.id);
-        } catch { return []; }
-      },
       getCardWeight: (cardId: string) => {
         try {
           const r = service.accessKeyStore.findById(cardId) as any;

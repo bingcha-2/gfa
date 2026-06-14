@@ -308,6 +308,14 @@ export const zhCN = {
     sessionExpired: '会话已过期，请重新登录',
     logoutConfirmTitle: '退出登录',
     logoutConfirmBody: '确定要退出当前账号吗？',
+    mySubscriptions: '我的订阅',
+    relayHint: '各产品均可用;顺序只决定同类产品的扣量先后。',
+    priorityTag: '优先',
+    neverExpires: '长期有效',
+    unlimited: '无限额',
+    moveUp: '上移',
+    moveDown: '下移',
+    reorderFailed: '调整顺序失败',
   },
 
   modal: {

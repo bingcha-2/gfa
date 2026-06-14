@@ -126,4 +126,62 @@ describe("TicketAdminService.updateStatus", () => {
 
     await expect(service.updateStatus("no-such-ticket", "CLOSED")).rejects.toThrow(NotFoundException);
   });
+
+  it("auto-clears the urgent flag when a ticket is CLOSED", async () => {
+    const customer = await createTestCustomer();
+    const ticket = await createTicket(customer.id, { status: "OPEN" });
+    await service.setUrgent(ticket.id, true);
+
+    await service.updateStatus(ticket.id, "CLOSED");
+
+    const row = await prisma.ticket.findUnique({ where: { id: ticket.id } });
+    expect(row!.status).toBe("CLOSED");
+    expect(row!.urgent).toBe(false);
+    expect(row!.urgentAt).toBeNull();
+  });
+});
+
+describe("TicketAdminService urgent (加急)", () => {
+  it("floats urgent tickets to the top and supports the urgent-only filter", async () => {
+    const customer = await createTestCustomer();
+    const normal = await createTicket(customer.id, { status: "OPEN" });
+    const urgent = await createTicket(customer.id, { status: "OPEN" });
+    await service.setUrgent(urgent.id, true);
+
+    const all = await service.listTickets({ page: 1, pageSize: 20 });
+    expect(all.tickets[0].id).toBe(urgent.id); // urgent sorts first
+    expect(all.tickets[0].urgent).toBe(true);
+    expect(all.tickets.find((t) => t.id === normal.id)?.urgent).toBe(false);
+
+    const onlyUrgent = await service.listTickets({ page: 1, pageSize: 20, urgent: true });
+    expect(onlyUrgent.total).toBe(1);
+    expect(onlyUrgent.tickets[0].id).toBe(urgent.id);
+  });
+
+  it("setUrgent toggles the flag; clearing nulls urgentAt", async () => {
+    const customer = await createTestCustomer();
+    const ticket = await createTicket(customer.id, { status: "OPEN" });
+
+    const set = await service.setUrgent(ticket.id, true);
+    expect(set.urgent).toBe(true);
+    let row = await prisma.ticket.findUnique({ where: { id: ticket.id } });
+    expect(row!.urgent).toBe(true);
+    expect(row!.urgentAt).not.toBeNull();
+
+    const clear = await service.setUrgent(ticket.id, false);
+    expect(clear.urgent).toBe(false);
+    row = await prisma.ticket.findUnique({ where: { id: ticket.id } });
+    expect(row!.urgent).toBe(false);
+    expect(row!.urgentAt).toBeNull();
+  });
+
+  it("rejects urging a CLOSED ticket with 409 (invariant: closed ⇒ not urgent)", async () => {
+    const customer = await createTestCustomer();
+    const ticket = await createTicket(customer.id, { status: "CLOSED" });
+    await expect(service.setUrgent(ticket.id, true)).rejects.toThrow(ConflictException);
+  });
+
+  it("throws 404 for an unknown ticket", async () => {
+    await expect(service.setUrgent("no-such-ticket", true)).rejects.toThrow(NotFoundException);
+  });
 });

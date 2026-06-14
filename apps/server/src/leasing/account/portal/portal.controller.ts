@@ -58,6 +58,21 @@ export class UsageController {
       days: days ? parseInt(days, 10) : undefined,
     });
   }
+
+  /**
+   * GET /api/account/usage/stats?days=
+   * days ∈ {1,7,30}, default 7
+   * → { granularity, points, byModel, status, totals } — 历史记录页统计图
+   */
+  @Get("stats")
+  usageStats(
+    @CurrentCustomer() customer: CustomerUser,
+    @Query("days") days?: string,
+  ) {
+    return this.portalService.getUsageStats(customer.customerId, {
+      days: days ? parseInt(days, 10) : undefined,
+    });
+  }
 }
 
 /**

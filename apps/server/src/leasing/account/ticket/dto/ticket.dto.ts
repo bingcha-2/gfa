@@ -1,4 +1,4 @@
-import { IsString, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsString, MaxLength, MinLength } from "class-validator";
 import { Transform } from "class-transformer";
 
 export class CreateTicketDto {
@@ -19,4 +19,9 @@ export class CreateMessageDto {
   @MinLength(1)
   @MaxLength(4000)
   body!: string;
+}
+
+export class SetTicketUrgentDto {
+  @IsBoolean()
+  urgent!: boolean;
 }

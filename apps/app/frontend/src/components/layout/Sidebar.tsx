@@ -1,4 +1,4 @@
-import { LayoutDashboard, ScrollText, Settings, PanelLeftClose, PanelLeftOpen, Download, BookOpen, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, ScrollText, PanelLeftClose, PanelLeftOpen, Download, BookOpen } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import * as api from '@/services/wails'
@@ -6,6 +6,7 @@ import { useT } from '@/i18n'
 import { BAR_H, topInset } from './chrome'
 import type { PageId } from '@/types'
 import bcaiIcon from '@/assets/images/bcai-icon.png'
+import { AccountDock } from '@/components/AccountDock'
 
 const SIDEBAR_EXPANDED = 200
 const SIDEBAR_COLLAPSED = 88
@@ -96,37 +97,9 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
           <div className="border-t border-[var(--border-light)] mb-2" />
 
           <div className={cn('flex flex-col gap-[3px]', collapsed && 'items-center')}>
-            {/* Settings button */}
-            <button
-              onClick={() => onPageChange('settings')}
-              title={collapsed ? t('nav.settings') : undefined}
-              className={cn(
-                'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
-                collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
-                currentPage === 'settings'
-                  ? 'bg-[var(--primary-light)] text-[var(--primary-strong)] font-semibold'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-              )}
-            >
-              <Settings size={20} strokeWidth={currentPage === 'settings' ? 2.2 : 1.7} className="flex-shrink-0" />
-              {!collapsed && t('nav.settings')}
-            </button>
+            {/* 设置 / 意见反馈已收纳进账户坞菜单(见 AccountDock),左导航只留主页面入口,更清爽。 */}
 
-            {/* 意见反馈 — 打开用户中心 */}
-            <button
-              onClick={() => api.openURL(api.PORTAL_URLS.home)}
-              title={collapsed ? t('nav.feedback') : undefined}
-              className={cn(
-                'flex items-center rounded-[10px] text-[13px] font-medium transition-all duration-200 text-left',
-                collapsed ? 'justify-center w-[48px] h-[48px]' : 'gap-3 px-3 h-[42px] w-full',
-                'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
-              )}
-            >
-              <MessageSquare size={20} strokeWidth={1.7} className="flex-shrink-0" />
-              {!collapsed && t('nav.feedback')}
-            </button>
-
-            {/* Update button — next to settings */}
+            {/* Update button */}
             {hasUpdate && (
               <button
                 onClick={() => api.downloadUpdate()}
@@ -142,6 +115,11 @@ export function Sidebar({ currentPage, onPageChange, collapsed, onToggleCollapse
                 {!collapsed && t('nav.updateAvailable', { version: updateStatus!.version })}
               </button>
             )}
+          </div>
+
+          {/* Account dock — 会员头像 + 点开会员通行证面板 */}
+          <div className="border-t border-[var(--border-light)] mt-2 pt-2">
+            <AccountDock collapsed={collapsed} onNavigate={onPageChange} />
           </div>
 
           {/* Version */}

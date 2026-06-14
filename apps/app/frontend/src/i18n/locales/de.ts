@@ -307,6 +307,14 @@ export const de: DeepPartialDict = {
     sessionExpired: 'Sitzung abgelaufen — bitte erneut anmelden',
     logoutConfirmTitle: 'Abmelden',
     logoutConfirmBody: 'Möchten Sie sich wirklich abmelden?',
+    mySubscriptions: 'Meine Abos',
+    relayHint: 'Alle Produkte bleiben nutzbar; die Reihenfolge bestimmt nur die Abbuchungspriorität beim selben Produkt.',
+    priorityTag: 'Priorität',
+    neverExpires: 'Unbegrenzt',
+    unlimited: 'Ohne Limit',
+    moveUp: 'Nach oben',
+    moveDown: 'Nach unten',
+    reorderFailed: 'Neuordnung fehlgeschlagen',
   },
 
   modal: {

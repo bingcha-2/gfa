@@ -100,6 +100,9 @@ type DashboardCard = {
   usageTrend: { date: string; totalTokens: number; requests: number }[];
   usageTotals: { totalTokens: number; requests: number };
   hourlyFrequency: { hour: number; requests: number; totalTokens: number }[];
+  email?: string;
+  products?: string[];
+  expiresAt?: string | null;
 };
 type WaterPoint = {
   modelKey: string;
@@ -128,6 +131,7 @@ type DashboardProduct = {
   mode: string;
   accounts: DashboardAccount[];
   totalAccounts?: number;
+  shareCapacity?: number;
 };
 
 export default function UsageStatsPage() {
@@ -261,6 +265,7 @@ export default function UsageStatsPage() {
             today={today?.byProvider?.[p.id]}
             accounts={dp?.accounts ?? []}
             totalAccounts={dp?.totalAccounts}
+            shareCapacity={dp?.shareCapacity}
           />
         );
       })}
@@ -396,11 +401,13 @@ function ProviderBoard({
   today,
   accounts = [],
   totalAccounts,
+  shareCapacity,
 }: {
   provider: ProviderStats;
   today?: ProviderUsage;
   accounts?: DashboardAccount[];
   totalAccounts?: number;
+  shareCapacity?: number;
 }) {
   // Most-constrained models first: fewest available accounts, then lowest water level.
   const models = useMemo(
@@ -448,13 +455,13 @@ function ProviderBoard({
         {accounts.length > 0 ? (
           <div>
             <div className="mb-2 flex items-baseline justify-between">
-              <span className="text-sm font-medium">账号绑定卡明细</span>
+              <span className="text-sm font-medium">账号订阅占用明细</span>
               <span className="text-xs text-muted-foreground">
                 有数据 {accounts.length}
                 {typeof totalAccounts === "number" ? ` / 共 ${totalAccounts}` : ""} 账号
               </span>
             </div>
-            <BoundCardAccordion accounts={accounts} />
+            <BoundCardAccordion accounts={accounts} shareCapacity={shareCapacity} />
           </div>
         ) : null}
       </CardContent>

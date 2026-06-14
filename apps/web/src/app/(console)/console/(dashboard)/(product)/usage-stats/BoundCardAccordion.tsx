@@ -25,6 +25,9 @@ type Card_ = {
   usageTrend: TrendPoint[];
   usageTotals: { totalTokens: number; requests: number };
   hourlyFrequency: FreqPoint[];
+  email?: string;
+  products?: string[];
+  expiresAt?: string | null;
 };
 type FamilyQuota = {
   family: string; // gemini | claude | gpt
@@ -111,6 +114,12 @@ const FAMILY_LABEL: Record<string, string> = { gemini: "Gemini", claude: "Claude
 function familyLabel(f: string): string {
   return FAMILY_LABEL[f] || f;
 }
+/** 订阅套餐(product)→ 展示标签:上游号 product 映射到面向用户的模型名。 */
+const PRODUCT_LABEL: Record<string, string> = { antigravity: "Gemini", codex: "GPT", anthropic: "Claude" };
+function productsLabel(products?: string[]): string {
+  if (!products || products.length === 0) return "";
+  return products.map((p) => PRODUCT_LABEL[p] || p).join(" / ");
+}
 /** A family counts as exhausted when any of its windows reads exactly 0% remaining. */
 function exhaustedFamilies(a: Account): string[] {
   return (a.families || [])
@@ -126,6 +135,13 @@ function formatReset(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `重置 ${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+/** 订阅到期日(ISO)→ "M/D";空/无效显示 "—"。 */
+function formatExpires(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 /** 账号当前可用性徽标:剩余%只是上次快照,被封禁的号要明确标出"现在用不了"。 */
@@ -257,7 +273,7 @@ function AccountFrequency({ cards }: { cards: Card_[] }) {
 
 const PAGE_SIZE = 20;
 
-export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
+export function BoundCardAccordion({ accounts, shareCapacity = 8 }: { accounts: Account[]; shareCapacity?: number }) {
   const [warnOnly, setWarnOnly] = useState(false);
   const [page, setPage] = useState(1);
   // "useful"(默认):可用号优先 + 最近使用在前(把能用、活跃的号顶上来)。
@@ -298,7 +314,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-sm">账号水位与绑定卡明细</CardTitle>
+        <CardTitle className="text-sm">账号水位与订阅占用明细</CardTitle>
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -318,6 +334,8 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
         {shown.length === 0 && <div className="py-4 text-center text-xs text-muted-foreground">无符合条件的账号</div>}
         {pageItems.map((a) => {
           const worst = Math.min(100, ...a.boundCards.map((c) => { const f = minFraction(c.fairShare); return f === null ? 100 : Math.round(f * 100); }));
+          // 已占份数 = 该号所有订阅/卡的权重之和;cap = 上游号总份数(shareCapacity,缺省 8)。
+          const used = a.boundCards.reduce((s, c) => s + c.weight, 0);
           return (
             <Collapsible key={a.id} className="rounded-lg border">
               <CollapsibleTrigger className="flex w-full items-center gap-2 p-3 text-sm [&[data-panel-open]>svg]:rotate-90">
@@ -327,7 +345,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                 <StatusBadge a={a} />
                 <span className="ml-auto flex items-center gap-2">
                   {a.families && a.families.length > 0 ? <FamilyPills families={a.families} /> : <QuotaPills a={a} />}
-                  <span className="text-xs text-muted-foreground">{a.boundCards.length} 卡 · 份额最紧 {worst}%</span>
+                  <span className="text-xs text-muted-foreground">已占 {used}/{shareCapacity} 份 · {a.boundCards.length} 订阅 · 最紧 {worst}%</span>
                 </span>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -345,7 +363,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>卡</TableHead>
+                        <TableHead>订阅</TableHead>
                         <TableHead className="text-center">权重</TableHead>
                         <TableHead className="text-right">
                           本窗口已用{" "}
@@ -366,6 +384,7 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                             估算
                           </Badge>
                         </TableHead>
+                        <TableHead className="text-right">到期</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -374,9 +393,15 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                         // (consistent with the header's "份额最紧" summary, which treats null as 100).
                         const f = minFraction(c.fairShare);
                         const pct = f === null ? 100 : Math.round(f * 100);
+                        const plan = productsLabel(c.products);
                         return (
                           <TableRow key={c.id}>
-                            <TableCell className="max-w-[140px] truncate font-medium">{c.name || c.id}</TableCell>
+                            <TableCell className="max-w-[160px] font-medium">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate">{c.email || c.id}</span>
+                                {plan && <Badge variant="outline" className="shrink-0 text-[9px]">{plan}</Badge>}
+                              </div>
+                            </TableCell>
                             <TableCell className="text-center"><Badge variant="secondary">×{c.weight}</Badge></TableCell>
                             <TableCell className="text-right tabular-nums">{formatTokens(Math.round(c.windowWeightedUsed))}</TableCell>
                             <TableCell className="text-right tabular-nums">{formatTokens(c.usageTotals?.totalTokens ?? 0)}</TableCell>
@@ -387,6 +412,9 @@ export function BoundCardAccordion({ accounts }: { accounts: Account[] }) {
                                 </div>
                                 <span className="w-8 text-right text-xs tabular-nums">{pct}%</span>
                               </div>
+                            </TableCell>
+                            <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                              {formatExpires(c.expiresAt)}
                             </TableCell>
                           </TableRow>
                         );

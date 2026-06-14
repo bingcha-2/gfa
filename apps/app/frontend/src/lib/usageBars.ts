@@ -24,6 +24,12 @@ const PRODUCT_LABEL: Record<string, string> = {
   anthropic: 'Anthropic',
 }
 
+/** 产品轴 → 展示名。归一 legacy 'claude' → anthropic;未知值原样返回。 */
+export function productLabel(product: string): string {
+  const p = product === 'claude' ? 'anthropic' : product
+  return PRODUCT_LABEL[p] || product
+}
+
 // 模型(family)显示名。血条颜色不在这里定 —— 一律由健康度(充足/一般/紧张/已用尽)
 // 决定(见 UsageBar),不靠每个模型一种彩色区分,区分交给「产品名 · 模型」标签文字。
 const FAMILY_META: Record<Family, { label: string }> = {

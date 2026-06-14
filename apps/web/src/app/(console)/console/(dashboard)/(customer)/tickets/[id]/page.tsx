@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Send, Lock, RotateCcw } from "lucide-react";
+import { ArrowLeft, Send, Lock, RotateCcw, Flame } from "lucide-react";
 
 function ticketStatusBadge(status: string) {
   if (status === "OPEN") return <Badge className="bg-amber-500 text-white">{TICKET_STATUS_LABEL[status]}</Badge>;
@@ -69,6 +69,16 @@ export default function TicketDetailPage() {
     }
   }
 
+  async function setUrgent(urgent: boolean) {
+    try {
+      await apiRequest(`tickets/${id}/urgent`, { method: "PATCH", body: { urgent } });
+      toast.success(urgent ? "已加急" : "已取消加急");
+      await load();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
   if (loading) {
     return <div className="space-y-4"><Skeleton className="h-8 w-40" /><Skeleton className="h-64 w-full" /></div>;
   }
@@ -91,10 +101,23 @@ export default function TicketDetailPage() {
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
-              <CardTitle className="flex items-center gap-2">{t.subject} {ticketStatusBadge(t.status)}</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                {t.subject}
+                {ticketStatusBadge(t.status)}
+                {t.urgent && (
+                  <Badge className="bg-red-500 text-white"><Flame className="h-3 w-3 mr-0.5" />加急</Badge>
+                )}
+              </CardTitle>
               <div className="text-sm text-muted-foreground">{t.customer?.email ?? "—"} · 创建于 {fmtDateTime(t.createdAt)}</div>
             </div>
-            <div className="shrink-0">
+            <div className="shrink-0 flex items-center gap-2">
+              {!closed && (
+                t.urgent ? (
+                  <Button variant="outline" size="sm" onClick={() => void setUrgent(false)}><Flame className="h-3.5 w-3.5 mr-1" />取消加急</Button>
+                ) : (
+                  <Button variant="outline" size="sm" className="text-red-600 border-red-300 hover:bg-red-50" onClick={() => void setUrgent(true)}><Flame className="h-3.5 w-3.5 mr-1" />加急</Button>
+                )
+              )}
               {closed ? (
                 <Button variant="outline" size="sm" onClick={() => void setStatus("OPEN")}><RotateCcw className="h-3.5 w-3.5 mr-1" />重新打开</Button>
               ) : (

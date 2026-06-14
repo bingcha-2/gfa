@@ -54,11 +54,6 @@ export class RemoteCodexService extends LeaseService<CodexAccount> implements On
           return acct?.planType || 'free';
         } catch { return 'free'; }
       },
-      getBoundCardIds: (accountId: number) => {
-        try {
-          return service.accessKeyStore.cardsBoundToAccount(accountId, provider.id);
-        } catch { return []; }
-      },
       getCardWeight: (cardId: string) => {
         try {
           const r = service.accessKeyStore.findById(cardId) as any;

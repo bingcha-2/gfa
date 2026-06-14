@@ -307,6 +307,14 @@ export const zhTW: DeepPartialDict = {
     sessionExpired: '工作階段已過期,請重新登入',
     logoutConfirmTitle: '登出',
     logoutConfirmBody: '確定要登出目前帳號嗎?',
+    mySubscriptions: '我的訂閱',
+    relayHint: '各產品均可用;順序只決定同類產品的扣量先後。',
+    priorityTag: '優先',
+    neverExpires: '長期有效',
+    unlimited: '無限額',
+    moveUp: '上移',
+    moveDown: '下移',
+    reorderFailed: '調整順序失敗',
   },
 
   modal: {

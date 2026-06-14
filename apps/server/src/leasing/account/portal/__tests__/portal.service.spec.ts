@@ -11,7 +11,7 @@
  *      days filter applied; pagination total correct.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PortalService } from "../portal.service";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -577,5 +577,146 @@ describe("PortalService.getUsage", () => {
       outputTokens: 120,
       totalTokens: 420,
     });
+  });
+});
+
+// ── 4. getUsageStats ──────────────────────────────────────────────────────────
+
+describe("PortalService.getUsageStats", () => {
+  function recentRow(over: Record<string, any> = {}) {
+    return {
+      timestamp: new Date(Date.now() - 60 * 1000), // ~1 min ago → lands in last bucket
+      modelKey: "claude-sonnet-4",
+      bucket: "antigravity-claude",
+      status: 200,
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      ...over,
+    };
+  }
+
+  it("day window (7) → 7 daily points; hour window (1) → 24 hourly points", async () => {
+    const store = makeStore();
+
+    const week = new PortalService(makePrisma({ usageRecords: [] }) as any, store as any);
+    const r7 = await week.getUsageStats("cust-1", { days: 7 });
+    expect(r7.granularity).toBe("day");
+    expect(r7.points).toHaveLength(7);
+
+    const day = new PortalService(makePrisma({ usageRecords: [] }) as any, store as any);
+    const r1 = await day.getUsageStats("cust-1", { days: 1 });
+    expect(r1.granularity).toBe("hour");
+    expect(r1.points).toHaveLength(24);
+  });
+
+  it("invalid days falls back to 7", async () => {
+    const service = new PortalService(makePrisma({ usageRecords: [] }) as any, makeStore() as any);
+    const r = await service.getUsageStats("cust-1", { days: 99 });
+    expect(r.granularity).toBe("day");
+    expect(r.points).toHaveLength(7);
+  });
+
+  it("scopes the query to the customer and the window (timestamp gte)", async () => {
+    const prisma = makePrisma({ usageRecords: [] });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const before = Date.now();
+    await service.getUsageStats("cust-1", { days: 7 });
+
+    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
+    expect(callArgs.where.customerId).toBe("cust-1");
+    expect(callArgs.where.timestamp.gte).toBeInstanceOf(Date);
+    // since ≈ 6 full days before today's local midnight → at least 5 days ago.
+    expect((callArgs.where.timestamp.gte as Date).getTime()).toBeLessThan(
+      before - 5 * 24 * 60 * 60 * 1000,
+    );
+  });
+
+  it("aggregates totals, byModel (desc), and status; points sum equals totals", async () => {
+    const prisma = makePrisma({
+      usageRecords: [
+        recentRow({ modelKey: "claude-sonnet-4", status: 200, inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+        recentRow({ modelKey: "claude-sonnet-4", status: 429, inputTokens: 10, outputTokens: 0, totalTokens: 10 }),
+        recentRow({ modelKey: "gpt-4o", status: 200, inputTokens: 300, outputTokens: 200, totalTokens: 500 }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+
+    expect(r.totals).toMatchObject({
+      inputTokens: 410,
+      outputTokens: 250,
+      totalTokens: 660,
+      requests: 3,
+    });
+
+    // byModel sorted by totalTokens desc: gpt-4o (500) before claude-sonnet-4 (160)
+    expect(r.byModel.map((m) => m.modelKey)).toEqual(["gpt-4o", "claude-sonnet-4"]);
+    expect(r.byModel[1]).toEqual({ modelKey: "claude-sonnet-4", totalTokens: 160, requests: 2 });
+
+    // status: 200/200 success, 429 failed
+    expect(r.status).toEqual({ success: 2, failed: 1 });
+
+    // every record landed inside the window → points sum reconstructs the token/request totals
+    const sum = r.points.reduce(
+      (acc, p) => ({
+        inputTokens: acc.inputTokens + p.inputTokens,
+        outputTokens: acc.outputTokens + p.outputTokens,
+        totalTokens: acc.totalTokens + p.totalTokens,
+        requests: acc.requests + p.requests,
+      }),
+      { inputTokens: 0, outputTokens: 0, totalTokens: 0, requests: 0 },
+    );
+    expect(sum).toEqual({
+      inputTokens: r.totals.inputTokens,
+      outputTokens: r.totals.outputTokens,
+      totalTokens: r.totals.totalTokens,
+      requests: r.totals.requests,
+    });
+  });
+
+  it("empty usage → zeroed totals, empty byModel, full set of zero points", async () => {
+    const service = new PortalService(makePrisma({ usageRecords: [] }) as any, makeStore() as any);
+    const r = await service.getUsageStats("cust-1", { days: 30 });
+
+    expect(r.points).toHaveLength(30);
+    expect(r.points.every((p) => p.totalTokens === 0 && p.requests === 0)).toBe(true);
+    expect(r.byModel).toEqual([]);
+    expect(r.status).toEqual({ success: 0, failed: 0 });
+    expect(r.totals).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, requests: 0, savedUSD: 0 });
+  });
+
+  it("savedUSD uses the client per-family pricing (claude 5/25, gemini 2/12, gpt 1.25/10), family from bucket suffix", async () => {
+    const prisma = makePrisma({
+      usageRecords: [
+        // claude 1M in + 0.2M out → 1*5 + 0.2*25 = $10 (mirrors apps/app usage_stats_test)
+        recentRow({ bucket: "antigravity-claude", inputTokens: 1_000_000, outputTokens: 200_000, totalTokens: 1_200_000 }),
+        // gpt 1M in + 0 out → 1*1.25 = $1.25
+        recentRow({ bucket: "codex-gpt", inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 }),
+        // gemini 1M in + 1M out → 1*2 + 1*12 = $14
+        recentRow({ bucket: "antigravity-gemini", inputTokens: 1_000_000, outputTokens: 1_000_000, totalTokens: 2_000_000 }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+
+    // 10 + 1.25 + 14 = 25.25
+    expect(r.totals.savedUSD).toBe(25.25);
+  });
+
+  it("savedUSD falls back to gemini pricing for an unknown/empty bucket family (matches client priceFor)", async () => {
+    const prisma = makePrisma({
+      usageRecords: [
+        // no family suffix → gemini fallback: 1M in * 2 = $2
+        recentRow({ bucket: "weirdbucket", inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 }),
+      ],
+    });
+    const service = new PortalService(prisma as any, makeStore() as any);
+
+    const r = await service.getUsageStats("cust-1", { days: 7 });
+    expect(r.totals.savedUSD).toBe(2);
   });
 });

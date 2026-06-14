@@ -118,6 +118,10 @@ export function SetClaudeDesktopMockLogin(arg1) {
   return window['go']['main']['App']['SetClaudeDesktopMockLogin'](arg1);
 }
 
+export function SetSubscriptionPriority(arg1, arg2) {
+  return window['go']['main']['App']['SetSubscriptionPriority'](arg1, arg2);
+}
+
 export function UserLogin(arg1, arg2) {
   return window['go']['main']['App']['UserLogin'](arg1, arg2);
 }

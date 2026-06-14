@@ -1,37 +1,8 @@
-import { getDict } from "@/lib/i18n/server";
-import { PageHeader } from "@/components/account/page-header";
-import { ChangePasswordForm } from "@/components/account/auth/change-password-form";
-import { LogoutButton } from "@/components/account/logout-button";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function SettingsPage() {
-  const dict = await getDict();
-  const t = dict.portalApp;
-
-  return (
-    <div className="account-settings" data-testid="account-settings">
-      <PageHeader title={t.pages.settingsTitle} />
-
-      <section className="account-settings-panel">
-        <div>
-          <h3>{t.settings.changePwdSection}</h3>
-          <p>
-            {t.settings.changePwdDesc}
-          </p>
-        </div>
-        <ChangePasswordForm />
-      </section>
-
-      <section className="account-settings-panel">
-        <div>
-          <h3>{t.settings.logoutSection}</h3>
-          <p>
-            {t.settings.logoutDesc}
-          </p>
-        </div>
-        <LogoutButton />
-      </section>
-    </div>
-  );
+// 账号设置(改密码 / 退出)已并入「我的」中心(/account/me)。保留重定向兼容旧书签。
+export default function SettingsRedirect() {
+  redirect("/account/me?tab=security");
 }

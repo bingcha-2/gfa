@@ -307,6 +307,14 @@ export const vi: DeepPartialDict = {
     sessionExpired: 'Phiên đã hết hạn, vui lòng đăng nhập lại',
     logoutConfirmTitle: 'Đăng xuất',
     logoutConfirmBody: 'Bạn có chắc muốn đăng xuất tài khoản hiện tại?',
+    mySubscriptions: 'Gói đăng ký của tôi',
+    relayHint: 'Tất cả sản phẩm vẫn dùng được; thứ tự chỉ quyết định ưu tiên trừ phí trong cùng một sản phẩm.',
+    priorityTag: 'Ưu tiên',
+    neverExpires: 'Không hết hạn',
+    unlimited: 'Không giới hạn',
+    moveUp: 'Lên',
+    moveDown: 'Xuống',
+    reorderFailed: 'Sắp xếp lại thất bại',
   },
 
   modal: {

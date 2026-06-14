@@ -307,6 +307,14 @@ export const ko: DeepPartialDict = {
     sessionExpired: '세션이 만료되었습니다. 다시 로그인해 주세요',
     logoutConfirmTitle: '로그아웃',
     logoutConfirmBody: '현재 계정에서 로그아웃할까요?',
+    mySubscriptions: '내 구독',
+    relayHint: '모든 제품을 사용할 수 있으며, 순서는 동일 제품의 차감 우선순위만 정합니다.',
+    priorityTag: '우선',
+    neverExpires: '무기한',
+    unlimited: '무제한',
+    moveUp: '위로',
+    moveDown: '아래로',
+    reorderFailed: '순서 변경 실패',
   },
 
   modal: {

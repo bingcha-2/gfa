@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -45,6 +46,33 @@ type loginResponse struct {
 		DeviceLimit int      `json:"deviceLimit"`
 		Products    []string `json:"products"`
 	} `json:"subscription"`
+	// Subscriptions 是全部生效订阅(服务端按 priority 升序),驱动客户端多订阅展示。
+	Subscriptions []struct {
+		Id             string   `json:"id"`
+		Status         string   `json:"status"`
+		ExpiresAt      string   `json:"expiresAt"`
+		DeviceLimit    int      `json:"deviceLimit"`
+		Priority       int      `json:"priority"`
+		Products       []string `json:"products"`
+		RemainFraction *float64 `json:"remainFraction"`
+	} `json:"subscriptions"`
+}
+
+// snapshots 把 /app/login 响应的订阅数组转成可持久化快照(供多订阅展示)。
+func (r loginResponse) snapshots() []SubscriptionSnapshot {
+	out := make([]SubscriptionSnapshot, 0, len(r.Subscriptions))
+	for _, s := range r.Subscriptions {
+		out = append(out, SubscriptionSnapshot{
+			Id:             s.Id,
+			Status:         s.Status,
+			ExpiresAt:      s.ExpiresAt,
+			DeviceLimit:    s.DeviceLimit,
+			Priority:       s.Priority,
+			Products:       s.Products,
+			RemainFraction: s.RemainFraction,
+		})
+	}
+	return out
 }
 
 // loginErrorResponse is the error shape of POST /app/login.
@@ -179,6 +207,7 @@ func clearUserSession(cfg *Config) {
 	cfg.PlanName = ""
 	cfg.PlanExpiry = ""
 	cfg.PlanDeviceMax = 0
+	cfg.Subscriptions = nil
 }
 
 // UserLogin authenticates with email+password, persists session data to config,
@@ -241,6 +270,7 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 		cfg.PlanExpiry = resp.Subscription.ExpiresAt
 		cfg.PlanDeviceMax = resp.Subscription.DeviceLimit
 	}
+	cfg.Subscriptions = resp.snapshots()
 	if err := SaveConfig(cfg); err != nil {
 		Log("[auth] Failed to save config after login: %v", err)
 		// Non-fatal — session is valid; continue.
@@ -310,6 +340,12 @@ func (a *App) GetAccountState() map[string]interface{} {
 		}
 	}
 
+	// 多订阅展示快照:nil → 空数组,保证前端拿到 [] 而非 null。
+	subs := cfg.Subscriptions
+	if subs == nil {
+		subs = []SubscriptionSnapshot{}
+	}
+
 	return map[string]interface{}{
 		"loggedIn":      loggedIn,
 		"email":         cfg.UserEmail,
@@ -319,9 +355,44 @@ func (a *App) GetAccountState() map[string]interface{} {
 		"deviceName":    cfg.DeviceName,
 		"tokenExpiry":   cfg.UserTokenExpiry,
 		"tokenExpired":  tokenExpired,
+		"subscriptions": subs,
 		// cardUnusable-equivalent: token expired or empty
 		"sessionUnusable": !loggedIn || tokenExpired,
 	}
+}
+
+// SetSubscriptionPriority 调整某订阅的接力优先级:POST /account/subscriptions/priority。
+// 与 web portal 同一套 customer JWT 鉴权 —— CustomerJwtGuard 只校验 typ/customer/
+// tokenVersion,不看 deviceId,故客户端会话 token 可直接调用该端点。本方法只发请求;
+// 调用方随后心跳一次刷新本地多订阅快照,让新顺序立即生效(无需重登/等轮询)。
+func (a *App) SetSubscriptionPriority(subscriptionId string, priority int) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	cfg := LoadConfig()
+	if cfg.UserToken == "" {
+		return fmt.Errorf("not logged in")
+	}
+
+	payload := map[string]interface{}{
+		"subscriptionId": subscriptionId,
+		"priority":       priority,
+	}
+	body, status, err := doAuthPostWithBearer("/account/subscriptions/priority", payload, cfg.UserToken)
+	if err != nil {
+		return fmt.Errorf("set priority network error: %w", err)
+	}
+	// NestJS 的 @Post 默认回 201 Created;priority 更新成功是 2xx。只把非 2xx 当失败
+	// —— 此前误用 != 200 把成功的 201 判成失败,弹错误框 + 白回滚。
+	if status < 200 || status >= 300 {
+		// 尽量提取后端 error/message,避免把整段响应体糊给用户。
+		var errResp loginErrorResponse
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			return fmt.Errorf("%s: %s", errResp.Error, errResp.Message)
+		}
+		return fmt.Errorf("set priority failed (HTTP %d)", status)
+	}
+	return nil
 }
 
 // min returns the smaller of a, b (local helper to avoid Go 1.21 requirement).
@@ -330,6 +401,55 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// parseHeartbeatSubscriptions extracts the full subscriptions array from a
+// /app/heartbeat response. The bool is false ONLY when the key is absent (older
+// server) — callers must not clear the local snapshot in that case. A present
+// key (including null or []) yields the parsed list (possibly empty), which is a
+// legitimate "all subs lapsed" signal.
+func parseHeartbeatSubscriptions(result map[string]interface{}) ([]SubscriptionSnapshot, bool) {
+	raw, present := result["subscriptions"]
+	if !present {
+		return nil, false
+	}
+	arr, _ := raw.([]interface{}) // null / non-array → empty list
+	out := make([]SubscriptionSnapshot, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		snap := SubscriptionSnapshot{Products: []string{}}
+		if v, ok := m["id"].(string); ok {
+			snap.Id = v
+		}
+		if v, ok := m["status"].(string); ok {
+			snap.Status = v
+		}
+		if v, ok := m["expiresAt"].(string); ok {
+			snap.ExpiresAt = v
+		}
+		if v, ok := m["deviceLimit"].(float64); ok {
+			snap.DeviceLimit = int(v)
+		}
+		if v, ok := m["priority"].(float64); ok {
+			snap.Priority = int(v)
+		}
+		if v, ok := m["products"].([]interface{}); ok {
+			for _, p := range v {
+				if ps, ok := p.(string); ok {
+					snap.Products = append(snap.Products, ps)
+				}
+			}
+		}
+		if v, ok := m["remainFraction"].(float64); ok {
+			f := v
+			snap.RemainFraction = &f
+		}
+		out = append(out, snap)
+	}
+	return out, true
 }
 
 // HeartbeatCheck sends a heartbeat to the server (frontend polls ~60s),
@@ -414,11 +534,15 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 		}
 	}
 
-	// Refresh the local subscription snapshot so plan renewals/changes show up
-	// in the UI (GetAccountState reads config) without a re-login.
+	// Refresh the local subscription snapshots so plan renewals/changes show up in
+	// the UI (GetAccountState reads config) without a re-login. The single-sub
+	// fields (PlanName/PlanExpiry/PlanDeviceMax) stay for legacy single-sub UI and
+	// checks; the full `subscriptions` array drives the multi-sub list. Both are
+	// folded into one `changed` flag → at most one SaveConfig per heartbeat.
+	changed := false
+
 	subVal, hasSubKey := result["subscription"]
 	if sub, ok := subVal.(map[string]interface{}); ok {
-		changed := false
 		if v, ok := sub["planName"].(string); ok && v != cfg.PlanName {
 			cfg.PlanName = v
 			changed = true
@@ -431,23 +555,32 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 			cfg.PlanDeviceMax = int(v)
 			changed = true
 		}
-		if changed {
-			if saveErr := SaveConfig(cfg); saveErr != nil {
-				Log("[auth] Failed to persist heartbeat subscription update: %v", saveErr)
-			}
-		}
 	} else if hasSubKey {
 		// Server explicitly reported no active subscription (subscription: null) —
-		// the plan lapsed or was removed. Clear the stale local snapshot so the UI
-		// stops showing a subscribed/expiry state carried over from a previous plan.
+		// the plan lapsed or was removed. Clear the stale single-sub snapshot so the
+		// UI stops showing a subscribed/expiry state carried over from a previous plan.
 		// (The key-present guard avoids wiping when an older server omits the field.)
 		if cfg.PlanName != "" || cfg.PlanExpiry != "" || cfg.PlanDeviceMax != 0 {
 			cfg.PlanName = ""
 			cfg.PlanExpiry = ""
 			cfg.PlanDeviceMax = 0
-			if saveErr := SaveConfig(cfg); saveErr != nil {
-				Log("[auth] Failed to clear stale subscription snapshot: %v", saveErr)
-			}
+			changed = true
+		}
+	}
+
+	// Full subscriptions array (multi-sub list). present=false means an older server
+	// omitted the field → leave the local array untouched (no spurious wipe). A
+	// present-but-empty array (all subs lapsed) is a real update that clears the list.
+	if snaps, present := parseHeartbeatSubscriptions(result); present {
+		if !reflect.DeepEqual(cfg.Subscriptions, snaps) {
+			cfg.Subscriptions = snaps
+			changed = true
+		}
+	}
+
+	if changed {
+		if saveErr := SaveConfig(cfg); saveErr != nil {
+			Log("[auth] Failed to persist heartbeat subscription update: %v", saveErr)
 		}
 	}
 	return result, nil

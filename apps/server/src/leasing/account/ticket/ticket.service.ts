@@ -20,6 +20,8 @@ export class TicketService {
         id: true,
         subject: true,
         status: true,
+        urgent: true,
+        urgentAt: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -30,6 +32,8 @@ export class TicketService {
         id: t.id,
         subject: t.subject,
         status: t.status as string,
+        urgent: t.urgent,
+        urgentAt: t.urgentAt ? t.urgentAt.toISOString() : null,
         createdAt: t.createdAt.toISOString(),
         updatedAt: t.updatedAt.toISOString(),
       })),
@@ -56,6 +60,8 @@ export class TicketService {
         id: true,
         subject: true,
         status: true,
+        urgent: true,
+        urgentAt: true,
         createdAt: true,
       },
     });
@@ -65,6 +71,8 @@ export class TicketService {
         id: ticket.id,
         subject: ticket.subject,
         status: ticket.status as string,
+        urgent: ticket.urgent,
+        urgentAt: ticket.urgentAt ? ticket.urgentAt.toISOString() : null,
         createdAt: ticket.createdAt.toISOString(),
       },
     };
@@ -80,6 +88,8 @@ export class TicketService {
         customerId: true,
         subject: true,
         status: true,
+        urgent: true,
+        urgentAt: true,
         createdAt: true,
         messages: {
           orderBy: { createdAt: "asc" },
@@ -102,6 +112,8 @@ export class TicketService {
         id: ticket.id,
         subject: ticket.subject,
         status: ticket.status as string,
+        urgent: ticket.urgent,
+        urgentAt: ticket.urgentAt ? ticket.urgentAt.toISOString() : null,
         createdAt: ticket.createdAt.toISOString(),
       },
       messages: ticket.messages.map((m) => ({
@@ -159,6 +171,42 @@ export class TicketService {
         authorType: message.authorType as "CUSTOMER",
         body: message.body,
         createdAt: message.createdAt.toISOString(),
+      },
+    };
+  }
+
+  // ── Set / clear urgent (加急) ──────────────────────────────────────────────
+
+  /**
+   * Toggle the urgent flag on the customer's own ticket. Takes effect
+   * immediately (no approval). A CLOSED ticket cannot be expedited — 409,
+   * mirroring the reply rule.
+   */
+  async setUrgent(customerId: string, id: string, urgent: boolean) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: { id: true, customerId: true, status: true },
+    });
+
+    if (!ticket || ticket.customerId !== customerId) {
+      throw new NotFoundException({ error: "TICKET_NOT_FOUND", message: "Ticket not found" });
+    }
+
+    if (ticket.status === "CLOSED") {
+      throw new ConflictException({ error: "TICKET_CLOSED", message: "Ticket is closed" });
+    }
+
+    const updated = await this.prisma.ticket.update({
+      where: { id },
+      data: { urgent, urgentAt: urgent ? new Date() : null },
+      select: { id: true, urgent: true, urgentAt: true },
+    });
+
+    return {
+      ticket: {
+        id: updated.id,
+        urgent: updated.urgent,
+        urgentAt: updated.urgentAt ? updated.urgentAt.toISOString() : null,
       },
     };
   }

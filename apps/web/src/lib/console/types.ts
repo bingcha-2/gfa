@@ -301,6 +301,8 @@ export type ConsoleTicketListItem = {
   id: string;
   subject: string;
   status: string;
+  urgent: boolean;
+  urgentAt: string | null;
   createdAt: string;
   updatedAt: string;
   customer: { email: string } | null;
@@ -323,6 +325,8 @@ export type ConsoleTicketDetail = {
   customerId: string;
   subject: string;
   status: string;
+  urgent: boolean;
+  urgentAt: string | null;
   createdAt: string;
   updatedAt: string;
   customer: { email: string } | null;

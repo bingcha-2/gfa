@@ -25,8 +25,10 @@ import type {
   TicketDetail,
   TicketMessage,
   TicketSummary,
+  TicketUrgentResult,
   UsageDays,
   UsagePage,
+  UsageStats,
 } from "./user-types";
 import type { Selection } from "./catalog-pricing";
 
@@ -240,6 +242,13 @@ export async function cancelBillingOrder(outTradeNo: string) {
   });
 }
 
+export async function refundBillingOrder(outTradeNo: string) {
+  return userApi<{ ok: boolean; alreadyRefunded: boolean; refundedCents: number }>(
+    `billing/orders/${outTradeNo}/refund`,
+    { method: "POST" },
+  );
+}
+
 export async function listBillingOrders(page: number, pageSize: number) {
   return userApi<{ orders: BillingOrderRecord[]; total: number }>(
     "billing/orders",
@@ -296,6 +305,11 @@ export async function getUsage(page: number, pageSize: number, days: UsageDays) 
   return userApi<UsagePage>("usage", { search: { page, pageSize, days } });
 }
 
+/** 历史记录页统计图聚合数据(按 1/7/30 天窗口)。 */
+export async function getUsageStats(days: UsageDays) {
+  return userApi<UsageStats>("usage/stats", { search: { days } });
+}
+
 export async function getNotifications(page: number, pageSize: number) {
   return userApi<NotificationsPage>("notifications", {
     search: { page, pageSize },
@@ -335,6 +349,14 @@ export async function replyTicket(id: string, body: string) {
   return userApi<{ message: TicketMessage }>(`tickets/${id}/messages`, {
     method: "POST",
     body: { body },
+  });
+}
+
+/** 加急 / 取消加急 自己的工单(立即生效;CLOSED 工单返回 409 TICKET_CLOSED)。 */
+export async function setTicketUrgent(id: string, urgent: boolean) {
+  return userApi<TicketUrgentResult>(`tickets/${id}/urgent`, {
+    method: "PATCH",
+    body: { urgent },
   });
 }
 

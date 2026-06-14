@@ -94,6 +94,36 @@ describe("LeaseService (generic core)", () => {
     expect((result as any).projectId).toBeUndefined();
   });
 
+  // 用量看板「订阅占用明细」:account-system 下文件卡已退役,这块只列订阅。绑定到某号的订阅
+  // 行带 客户/套餐/到期,前端展示「邮箱 + 套餐」;绑定到同号的老文件卡(若文件里还有)不混进来。
+  it("getBoundCardsForAccount:只取订阅、不取文件卡;订阅行带客户/套餐/到期", () => {
+    // 文件里一张绑到账号 1 的老卡 —— account-system 下不该再出现在看板。
+    writeJson(accessKeysFilePath, { keys: [{ id: "file-card", key: "k", status: "active", bindings: { fake: 1 } }] });
+    const service = makeService();
+    (service as any).accessKeyStore.loadSubscriptionRecords([
+      {
+        id: "sub-1",
+        status: "active",
+        customerId: "cust-1",
+        products: ["fake"],
+        bindings: { fake: 1 },
+        weight: 3,
+        keyExpiresAt: "2026-07-20T00:00:00.000Z",
+        requiresBinding: true,
+      },
+    ]);
+
+    const rows = (service as any).getBoundCardsForAccount(1) as any[];
+
+    // 只取订阅:绑到同号的文件卡 file-card 不混进来。
+    expect(rows.map((r) => r.id)).toEqual(["sub-1"]);
+    const sub = rows[0];
+    expect(sub.customerId).toBe("cust-1");
+    expect(sub.products).toEqual(["fake"]);
+    expect(sub.expiresAt).toBe("2026-07-20T00:00:00.000Z");
+    expect(sub.weight).toBe(3);
+  });
+
   it("下发账号绑定的出口代理 accountProxyUrl;optional provider 的 egressRequired=false", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {

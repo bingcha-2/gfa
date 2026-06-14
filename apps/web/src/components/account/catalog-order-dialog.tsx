@@ -225,6 +225,8 @@ export function CatalogOrderFlow({
             <strong>{formatPriceCents(order.amountCents)}</strong>
           </div>
 
+          <p className="account-order-flow__safenote">{t.channelFeeNote}</p>
+
           <div className="account-order-flow__countdown">
             <span>{t.countdownLabel}</span>
             <strong>{formatCountdown(remainingMs)}</strong>

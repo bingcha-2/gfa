@@ -458,6 +458,7 @@ html[data-account-theme="dark"] .account-auth {
    ============================================================================ */
 .account-page,
 .account-devices,
+.account-me,
 .account-usage,
 .account-notifications,
 .account-ticket-center,
@@ -501,6 +502,27 @@ html[data-account-theme="dark"] .account-auth {
 .account-billing-panel__header svg { width: 1.15rem; height: 1.15rem; color: var(--primary); }
 .account-pane__note { margin: 0.8rem 0 0; color: var(--ink-muted); line-height: 1.6; font-size: 0.88rem; }
 .account-pane__footer { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+/* 工单页·售后客服联系卡:微信号(可复制)+ 客服二维码,数据同官网 FAQ(/console/faq/settings) */
+.account-support { display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; flex-wrap: wrap; }
+.account-support__main { min-width: 0; flex: 1 1 16rem; }
+.account-support__main .account-panel__header { margin-bottom: 0.6rem; }
+.account-support__wechat { display: inline-flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.account-support__wechat code {
+  font-family: var(--font-mono), monospace; font-size: 0.95rem; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0.35rem 0.65rem;
+}
+.account-support__copy {
+  cursor: pointer; font-size: 0.8rem; font-weight: 600; color: var(--primary);
+  background: transparent; border: 0; padding: 0.25rem 0.35rem;
+}
+.account-support__copy:hover { text-decoration: underline; }
+.account-support__qr { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; font-size: 0.76rem; color: var(--ink-muted); }
+.account-support__qr img {
+  width: 7.5rem; height: 7.5rem; object-fit: contain;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; padding: 0.35rem;
+}
 
 /* 数据键值行(订阅、详情等) */
 .account-kv { display: grid; gap: 0; }
@@ -1099,4 +1121,86 @@ html[data-account-theme="dark"] .account-auth {
   .account-auth * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   .account-btn:hover,
   .account-quick-card:hover { transform: none; }
+}
+
+/* ── 「我的」中心:Tab 容器 ─────────────────────────────────────────────── */
+.account-me-tabs { display: grid; gap: 1.25rem; }
+.account-tabs {
+  display: inline-flex; gap: 4px; padding: 4px; width: fit-content; max-width: 100%;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2); overflow-x: auto;
+}
+.account-tab {
+  display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap;
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--ink-muted); font-size: 0.9rem; font-weight: 600;
+  padding: 0.5rem 0.95rem; border-radius: 7px;
+  transition: background 0.15s, color 0.15s;
+}
+.account-tab svg { width: 1rem; height: 1rem; }
+.account-tab:hover { color: var(--ink); }
+.account-tab[data-active] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.account-tabpanel { display: grid; gap: 1.25rem; }
+.account-devices__toolbar { display: flex; justify-content: flex-end; }
+
+/* ── 历史记录:统计图 ───────────────────────────────────────────────────── */
+.account-usage-view { display: grid; gap: 1.25rem; }
+.account-charts-wrap { display: grid; gap: 1rem; }
+
+.account-chart-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; }
+.account-chart-kpi {
+  display: grid; gap: 0.3rem; padding: 0.85rem 1rem;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface);
+}
+.account-chart-kpi--accent {
+  border-color: color-mix(in oklch, var(--primary) 40%, var(--line));
+  background: var(--primary-soft);
+}
+.account-chart-kpi__label { color: var(--ink-muted); font-size: 0.78rem; font-weight: 600; }
+.account-chart-kpi__value { color: var(--ink); font-size: 1.4rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.account-chart-kpi--accent .account-chart-kpi__value { color: var(--primary-text); }
+
+.account-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.account-chart-card {
+  display: grid; gap: 0.85rem; min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--surface); box-shadow: var(--shadow-sm);
+  padding: clamp(1rem, 2.2vw, 1.4rem);
+}
+.account-chart-card__title { margin: 0; color: var(--ink); font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; }
+.account-chart-card__body { height: 220px; min-width: 0; }
+.account-chart-skeleton { height: 290px; border-radius: var(--r-lg); }
+
+.account-chart-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; align-items: center; height: 100%; }
+.account-chart-split__plot { position: relative; height: 100%; min-width: 0; }
+.account-chart-donut__center {
+  position: absolute; inset: 0; display: grid; place-content: center; gap: 0.1rem;
+  text-align: center; pointer-events: none;
+}
+.account-chart-donut__center strong { color: var(--ink); font-size: 1.5rem; font-weight: 800; line-height: 1; }
+.account-chart-donut__center span { color: var(--ink-muted); font-size: 0.72rem; }
+
+.account-chart-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; min-width: 0; }
+.account-chart-legend li { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; min-width: 0; }
+.account-chart-legend__dot { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+.account-chart-legend__name { color: var(--ink-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-chart-legend__val { margin-left: auto; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+
+.account-chart-tip {
+  display: grid; gap: 0.3rem; min-width: 7rem; padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); box-shadow: var(--shadow-md);
+}
+.account-chart-tip__label { color: var(--ink-muted); font-size: 0.72rem; font-weight: 600; }
+.account-chart-tip__row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; }
+.account-chart-tip__dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.account-chart-tip__name { color: var(--ink-muted); }
+.account-chart-tip__val { margin-left: auto; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  .account-charts { grid-template-columns: 1fr; }
+  .account-chart-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .account-chart-kpis { grid-template-columns: 1fr; }
 }

@@ -20,6 +20,8 @@ const OPEN_THREAD = {
     id: "t1",
     subject: "无法登录",
     status: "ANSWERED",
+    urgent: false,
+    urgentAt: null,
     createdAt: "2026-06-09T00:00:00.000Z",
   },
   messages: [
@@ -194,5 +196,98 @@ describe("TicketThread", () => {
     await waitFor(() => {
       expect(screen.getByText("客户端登录报错")).toBeInTheDocument();
     });
+  });
+
+  it("marks the ticket urgent via the 加急 button", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "PATCH") {
+          return Promise.resolve(
+            jsonResponse({
+              ticket: { id: "t1", urgent: true, urgentAt: "2026-06-10T00:00:00.000Z" },
+            })
+          );
+        }
+        return Promise.resolve(jsonResponse(OPEN_THREAD));
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<TicketThread ticketId="t1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("客户端登录报错")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "加急" }));
+
+    // Button flips to 取消加急 once the flag is set.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "取消加急" })).toBeInTheDocument();
+    });
+
+    const patches = mockFetch.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+    );
+    expect(patches).toHaveLength(1);
+    expect(String(patches[0][0])).toContain("/api/account/tickets/t1/urgent");
+    expect(JSON.parse((patches[0][1] as RequestInit).body as string)).toEqual({
+      urgent: true,
+    });
+  });
+
+  it("cancels urgent on an already-urgent ticket", async () => {
+    const URGENT_THREAD = {
+      ...OPEN_THREAD,
+      ticket: { ...OPEN_THREAD.ticket, urgent: true, urgentAt: "2026-06-10T00:00:00.000Z" },
+    };
+    const mockFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (init?.method === "PATCH") {
+          return Promise.resolve(
+            jsonResponse({ ticket: { id: "t1", urgent: false, urgentAt: null } })
+          );
+        }
+        return Promise.resolve(jsonResponse(URGENT_THREAD));
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<TicketThread ticketId="t1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "取消加急" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "取消加急" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "加急" })).toBeInTheDocument();
+    });
+
+    const patches = mockFetch.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+    );
+    expect(JSON.parse((patches[0][1] as RequestInit).body as string)).toEqual({
+      urgent: false,
+    });
+  });
+
+  it("hides the 加急 button on a CLOSED ticket", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        ticket: { ...OPEN_THREAD.ticket, status: "CLOSED" },
+        messages: OPEN_THREAD.messages,
+      })
+    );
+    vi.stubGlobal("fetch", mockFetch);
+
+    render(<TicketThread ticketId="t1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("工单已关闭,无法继续回复。")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "加急" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消加急" })).not.toBeInTheDocument();
   });
 });

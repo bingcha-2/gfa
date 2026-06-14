@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { rollupProviderStats, RemoteStatsService } from "../remote-stats.service";
+import { ACCOUNT_SHARE_CAPACITY } from "../../token-server/token-billing";
 
 const antigravityStatus = {
   mode: "remote-token-server",
@@ -201,5 +202,48 @@ describe("RemoteStatsService.getDashboard", () => {
     const out = await build().getDashboard({ days: 7 });
     const antigravity = out.products.find((p) => p.id === "antigravity")!;
     expect(antigravity.accounts).toEqual([]);
+  });
+
+  it("订阅行补 email(查 customer 表);product 带 shareCapacity(供前端算「已占/容量」)", async () => {
+    const status = {
+      mode: "remote-anthropic-server",
+      accounts: { total: 1, enabled: 1 },
+      daily: { tokensUsed: 0 },
+      models: [{ key: "claude-opus-4-6", displayName: "Claude", bucket: "anthropic-claude" }],
+      quota: { accounts: [{ id: 1, email: "acct@upstream.com", planType: "max", quotaStatus: "ok", activeLeases: 0, modelQuotaFractions: { claude: 0.9 } }] },
+    };
+    const anthropic = {
+      getStatus: () => status,
+      getBoundCardsForAccount: (aid: number) =>
+        aid === 1
+          ? [{
+              id: "sub-1", name: "", weight: 8, totalTokensUsed: 0, totalRequests: 0,
+              fairShare: {}, windowWeightedUsed: 0,
+              customerId: "cust-1", products: ["anthropic"], expiresAt: "2026-07-20T00:00:00.000Z",
+            }]
+          : [],
+    };
+    const empty = {
+      getStatus: () => ({ mode: "m", accounts: { total: 0, enabled: 0 }, daily: { tokensUsed: 0 }, models: [], quota: { accounts: [] } }),
+      getBoundCardsForAccount: () => [],
+    };
+    const prisma = {
+      accountQuotaSnapshot: { findMany: async () => [] },
+      customer: { findMany: async ({ where }: any) => (where.id.in.includes("cust-1") ? [{ id: "cust-1", email: "debbie@x.com" }] : []) },
+    };
+    const tokenUsageStats = {
+      getCardUsageSummary: async () => ({ totals: { totalTokens: 0, requests: 0 }, daily: [] }),
+      getHourlyFrequency: async () => ({ byHour: [] }),
+    };
+    const svc = new RemoteStatsService(empty as any, empty as any, anthropic as any, prisma as any, tokenUsageStats as any);
+
+    const out = await svc.getDashboard({ days: 7 });
+    const anth = out.products.find((p) => p.id === "anthropic")!;
+    expect((anth as any).shareCapacity).toBe(ACCOUNT_SHARE_CAPACITY);
+
+    const sub = anth.accounts[0].boundCards[0] as any;
+    expect(sub.email).toBe("debbie@x.com"); // 查 customer 表补上
+    expect(sub.products).toEqual(["anthropic"]);
+    expect(sub.expiresAt).toBe("2026-07-20T00:00:00.000Z");
   });
 });

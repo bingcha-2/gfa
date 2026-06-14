@@ -6,7 +6,6 @@ import { UsageBar } from '@/components/UsageBar'
 import { PromoCard } from '@/components/PromoCard'
 import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
-import { AccountStatusCard } from '@/components/AccountStatusCard'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
@@ -117,9 +116,6 @@ export function DashboardPage() {
       {/* ── 状态 ── */}
       <StatusPill />
       <NotificationBanner />
-
-      {/* ── 账号卡:显示登录状态、套餐、到期、设备 ── */}
-      <AccountStatusCard />
 
       {/* 会话/订阅已失效(SESSION_INVALID / SUBSCRIPTION_EXPIRED 等):
           引导重新登录(登出 → 自动回登录页)或前往网页端处理订阅与账单 */}

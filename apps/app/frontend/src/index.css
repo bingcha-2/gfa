@@ -167,6 +167,13 @@ body {
 }
 .dot-pulse { animation: pulse-dot 2s ease-in-out infinite; }
 
+/* ===== Account popover 弹出(从账户行方向轻浮起,160ms) ===== */
+@keyframes account-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.account-pop-in { animation: account-pop-in 0.16s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: bottom left; }
+
 /* ===== Font Mono(数据等宽) ===== */
 .font-mono-data {
   font-family: var(--font-mono);

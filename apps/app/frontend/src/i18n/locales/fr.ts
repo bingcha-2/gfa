@@ -307,6 +307,14 @@ export const fr: DeepPartialDict = {
     sessionExpired: 'Session expirée — reconnectez-vous',
     logoutConfirmTitle: 'Se déconnecter',
     logoutConfirmBody: 'Voulez-vous vraiment vous déconnecter ?',
+    mySubscriptions: 'Mes abonnements',
+    relayHint: 'Tous les produits restent utilisables; seul leur ordre fixe la priorité de consommation pour un même produit.',
+    priorityTag: 'Prioritaire',
+    neverExpires: 'Sans expiration',
+    unlimited: 'Illimité',
+    moveUp: 'Monter',
+    moveDown: 'Descendre',
+    reorderFailed: 'Échec du réordonnancement',
   },
 
   modal: {

@@ -31,6 +31,12 @@ type Config struct {
 	PlanDeviceMax   int    `json:"planDeviceMax"`   // device limit from subscription
 	DeviceName      string `json:"deviceName"`      // hostname + " (" + GOOS + ")"
 
+	// Subscriptions 是登录/心跳取到的「全部生效订阅」快照(服务端按 priority 升序),
+	// 用于客户端展示多订阅(接力顺序)。PlanName/PlanExpiry/PlanDeviceMax 仍保留为
+	// 「首订阅」派生,供既有单订阅 UI/判定兼容。心跳用服务端 subscriptions[] 覆盖刷新;
+	// 登出清空。
+	Subscriptions []SubscriptionSnapshot `json:"subscriptions"`
+
 	// Codex 中转(API 卡密)模式:不租号、不要 card,用本地配置的 key 直连第三方
 	// 中转站。CodexMode=="relay" 且 base/key 齐全时启用;否则走原有号池/租号流程。
 	CodexMode          string            `json:"codexMode"`          // "" / "rental" (默认) 或 "relay"
@@ -38,6 +44,21 @@ type Config struct {
 	CodexRelayKey      string            `json:"codexRelayKey"`      // 中转卡密(Authorization: Bearer)
 	CodexRelayProtocol string            `json:"codexRelayProtocol"` // "" / "responses" (默认) 或 "chat"(通用 OpenAI 中转)
 	CodexModelMap      map[string]string `json:"codexModelMap"`      // 可选:客户端模型名 → 中转模型名
+}
+
+// SubscriptionSnapshot 是单个生效订阅的客户端展示快照。catalog 化后订阅无 planName,
+// 产品由 Products[] 决定;ExpiresAt 为空串表示长期有效。字段对齐服务端
+// /app/login、/app/heartbeat 的 subscriptions[] 元素。
+type SubscriptionSnapshot struct {
+	Id          string   `json:"id"`
+	Status      string   `json:"status"`
+	ExpiresAt   string   `json:"expiresAt"`
+	DeviceLimit int      `json:"deviceLimit"`
+	Priority    int      `json:"priority"`
+	Products    []string `json:"products"`
+	// RemainFraction 是该订阅「最紧复合桶」的剩余额度比例(0-1);nil=无限额/无数据。
+	// 用于客户端多订阅余量条 —— 区分同产品同到期的订阅(谁在消耗、谁备用满额)。
+	RemainFraction *float64 `json:"remainFraction"`
 }
 
 var (

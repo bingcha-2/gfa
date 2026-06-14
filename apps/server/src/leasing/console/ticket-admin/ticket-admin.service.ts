@@ -22,6 +22,7 @@ export class TicketAdminService {
     pageSize: number;
     status?: string;
     search?: string;
+    urgent?: boolean;
   }) {
     const page = Number.isFinite(params.page) ? Math.max(1, Math.floor(params.page)) : 1;
     const pageSize = Number.isFinite(params.pageSize)
@@ -36,6 +37,7 @@ export class TicketAdminService {
     }
     const search = params.search?.trim();
     if (search) where.customer = { email: { contains: search } };
+    if (params.urgent) where.urgent = true;
 
     const [tickets, total] = await Promise.all([
       this.prisma.ticket.findMany({
@@ -44,12 +46,15 @@ export class TicketAdminService {
           id: true,
           subject: true,
           status: true,
+          urgent: true,
+          urgentAt: true,
           createdAt: true,
           updatedAt: true,
           customer: { select: { email: true } },
           _count: { select: { messages: true } },
         },
-        orderBy: { updatedAt: "desc" },
+        // Urgent tickets float to the top; ties broken by most-recent activity.
+        orderBy: [{ urgent: "desc" }, { updatedAt: "desc" }],
         skip,
         take: pageSize,
       }),
@@ -67,6 +72,8 @@ export class TicketAdminService {
         customerId: true,
         subject: true,
         status: true,
+        urgent: true,
+        urgentAt: true,
         createdAt: true,
         updatedAt: true,
         customer: { select: { email: true } },
@@ -116,10 +123,33 @@ export class TicketAdminService {
       select: { id: true },
     });
     if (!ticket) throw new NotFoundException(`Ticket "${id}" not found`);
+    // Closing a ticket auto-clears its urgent flag (a closed ticket no longer
+    // needs expediting). Other transitions leave urgent untouched.
+    const data: Prisma.TicketUpdateInput =
+      status === "CLOSED" ? { status, urgent: false, urgentAt: null } : { status };
     return this.prisma.ticket.update({
       where: { id },
-      data: { status },
+      data,
+      select: { id: true, status: true, urgent: true },
+    });
+  }
+
+  /** Set / clear the urgent flag on any ticket (admin override). */
+  async setUrgent(id: string, urgent: boolean) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
       select: { id: true, status: true },
+    });
+    if (!ticket) throw new NotFoundException(`Ticket "${id}" not found`);
+    // Invariant: a CLOSED ticket is never urgent (close auto-clears it), so
+    // reject re-urging a closed ticket. Clearing urgent stays allowed.
+    if (urgent && ticket.status === "CLOSED") {
+      throw new ConflictException({ error: "TICKET_CLOSED", message: "工单已关闭，无法加急" });
+    }
+    return this.prisma.ticket.update({
+      where: { id },
+      data: { urgent, urgentAt: urgent ? new Date() : null },
+      select: { id: true, urgent: true, urgentAt: true },
     });
   }
 }

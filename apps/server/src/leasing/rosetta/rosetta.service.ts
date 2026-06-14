@@ -7,6 +7,7 @@ import { AutomationService } from "../../google-family/automation/automation.ser
 import { proxyAwareFetch } from "../lease-core/egress";
 import type { CachedToken } from "./google-api";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { occupiedSharesByAccount } from "../subscription/seat";
 
 import { AccessKeyService } from "./access-key.service";
 import { AdspowerService } from "./adspower.service";
@@ -134,6 +135,32 @@ export class RosettaService {
     });
 
     return { ok: true, employees, accounts };
+  }
+
+  // ── 订阅座位口径(控制台账号列表用)──────────────────────────────────────
+  /**
+   * 某 product 下每个上游号(accountId)被 ACTIVE 订阅占用的份额(Σweight)。
+   * 座位真相源 = DB 订阅 config.bindings(access-keys.json 文件口径已退役),与
+   * 下单选号(entitlement-sync.seatOccupancyFromDb)同口径。控制台账号列表用它
+   * 覆盖 usedShares —— 否则订阅占了座位、后台仍按文件卡数显示 0/N。无 prisma
+   * (单元测试 new RosettaService 未注入)时返回空 Map。
+   */
+  async occupiedSharesFromSubscriptions(product: string): Promise<Map<number, number>> {
+    if (!this.prisma) return new Map<number, number>();
+    const parse = (json: string | null): Record<string, any> => {
+      try {
+        const p = JSON.parse(String(json || "{}"));
+        return p && typeof p === "object" && !Array.isArray(p) ? p : {};
+      } catch {
+        return {};
+      }
+    };
+    const rows = await this.prisma.subscription.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, config: true },
+    });
+    const configs = rows.map((r: { id: string; config: string | null }) => ({ id: r.id, ...parse(r.config) }));
+    return occupiedSharesByAccount(configs, product);
   }
 
   // ── Antigravity accounts (→ AntigravityAccountService) ──────────────────

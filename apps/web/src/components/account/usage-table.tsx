@@ -12,16 +12,22 @@ import { useDict } from "@/lib/i18n/client";
 
 const PAGE_SIZE = 20;
 
-function isSuccessStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === "success" || s === "ok" || s === "200";
+function isSuccessStatus(status: number | string): boolean {
+  // status 是 HTTP 状态码(number,如 200/429),旧数据可能是字符串 —— 两种都兜住。
+  const n = Number(status);
+  if (Number.isFinite(n) && n > 0) return n >= 200 && n < 300;
+  const s = String(status).toLowerCase();
+  return s === "success" || s === "ok";
 }
 
-export function UsageTable() {
+/**
+ * 用量明细表。`days` 受控于父级(UsageView 的分段控件);单独渲染时默认 7 天。
+ * 切换窗口时父级用 key={days} 重挂本组件以重置分页。
+ */
+export function UsageTable({ days = 7 }: { days?: UsageDays }) {
   const dict = useDict();
   const u = dict.portalApp.usage;
 
-  const [days, setDays] = useState<UsageDays>(7);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<UsagePage | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -41,33 +47,10 @@ export function UsageTable() {
     void load(page, days);
   }, [page, days, load]);
 
-  function handleDaysChange(value: UsageDays) {
-    setDays(value);
-    setPage(1); // window change resets pagination
-    setData(null); // show skeleton while reloading
-  }
-
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   return (
     <div className="account-usage" data-testid="account-usage">
-      <div className="account-segmented-control" role="group" aria-label={u.rangeAria}>
-        {[
-          [1, u.daysToday],
-          [7, u.days7],
-          [30, u.days30],
-        ].map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={days === value}
-            onClick={() => handleDaysChange(value as UsageDays)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {loadError && <p className="account-form-error">{u.loadFailed}</p>}
 
       {data === null ? (

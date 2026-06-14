@@ -218,7 +218,7 @@ beforeEach(async () => {
   );
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService);
+  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService, subscriptionService);
 
   // Three lease lines sharing the SAME store + injecting the real engine.
   const common = {

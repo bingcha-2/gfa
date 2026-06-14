@@ -6,6 +6,7 @@
  *   2. create: creates OPEN ticket + first CUSTOMER message
  *   3. getDetail: returns ticket + messages; 404 for other's/nonexistent
  *   4. reply: appends message; 409 if CLOSED; re-opens ANSWERED; 404 for other's
+ *   5. setUrgent: sets/clears urgent + urgentAt; 409 if CLOSED; 404 for other's
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -20,6 +21,8 @@ function makeTicket(overrides: Partial<{
   customerId: string;
   subject: string;
   status: string;
+  urgent: boolean;
+  urgentAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   messages: any[];
@@ -29,6 +32,8 @@ function makeTicket(overrides: Partial<{
     customerId: overrides.customerId ?? "cust-1",
     subject: overrides.subject ?? "Help please",
     status: overrides.status ?? "OPEN",
+    urgent: overrides.urgent ?? false,
+    urgentAt: overrides.urgentAt ?? null,
     createdAt: overrides.createdAt ?? new Date("2026-06-01T00:00:00Z"),
     updatedAt: overrides.updatedAt ?? new Date("2026-06-01T00:00:00Z"),
     messages: overrides.messages ?? [],
@@ -92,6 +97,8 @@ function makePrisma(opts: {
           customerId: data.customerId,
           subject: data.subject,
           status: data.status,
+          urgent: data.urgent ?? false,
+          urgentAt: data.urgentAt ?? null,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -180,7 +187,7 @@ describe("TicketService.list", () => {
 // ── 2. create ─────────────────────────────────────────────────────────────────
 
 describe("TicketService.create", () => {
-  it("creates a ticket with status OPEN and returns it", async () => {
+  it("creates a ticket with status OPEN, not urgent, and returns it", async () => {
     const prisma = makePrisma();
     const service = new TicketService(prisma as any);
 
@@ -188,6 +195,8 @@ describe("TicketService.create", () => {
 
     expect(result.ticket.status).toBe("OPEN");
     expect(result.ticket.subject).toBe("My issue");
+    expect(result.ticket.urgent).toBe(false);
+    expect(result.ticket.urgentAt).toBeNull();
     expect(typeof result.ticket.id).toBe("string");
     expect(typeof result.ticket.createdAt).toBe("string");
   });
@@ -204,7 +213,7 @@ describe("TicketService.create", () => {
     expect(createCall.data.messages.create.body).toBe("The body of my question");
   });
 
-  it("returned ticket shape has id, subject, status, createdAt", async () => {
+  it("returned ticket shape has id, subject, status, urgent, urgentAt, createdAt", async () => {
     const prisma = makePrisma();
     const service = new TicketService(prisma as any);
 
@@ -213,8 +222,10 @@ describe("TicketService.create", () => {
     expect(result.ticket).toHaveProperty("id");
     expect(result.ticket).toHaveProperty("subject");
     expect(result.ticket).toHaveProperty("status");
+    expect(result.ticket).toHaveProperty("urgent");
+    expect(result.ticket).toHaveProperty("urgentAt");
     expect(result.ticket).toHaveProperty("createdAt");
-    expect(Object.keys(result.ticket)).toHaveLength(4);
+    expect(Object.keys(result.ticket)).toHaveLength(6);
   });
 });
 
@@ -331,5 +342,74 @@ describe("TicketService.reply", () => {
     } catch (err: any) {
       expect(err.response.error).toBe("TICKET_NOT_FOUND");
     }
+  });
+});
+
+// ── 5. setUrgent ────────────────────────────────────────────────────────────────
+
+describe("TicketService.setUrgent", () => {
+  it("marks an OPEN ticket urgent and stamps urgentAt", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-1", status: "OPEN" });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    const result = await service.setUrgent("cust-1", "t1", true);
+
+    expect(result.ticket.urgent).toBe(true);
+    expect(typeof result.ticket.urgentAt).toBe("string");
+
+    const updateCall = (prisma.ticket.update as any).mock.calls[0][0];
+    expect(updateCall.data.urgent).toBe(true);
+    expect(updateCall.data.urgentAt).toBeInstanceOf(Date);
+  });
+
+  it("clears urgent and nulls urgentAt", async () => {
+    const t = makeTicket({
+      id: "t1",
+      customerId: "cust-1",
+      status: "OPEN",
+      urgent: true,
+      urgentAt: new Date("2026-06-02T00:00:00Z"),
+    });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    const result = await service.setUrgent("cust-1", "t1", false);
+
+    expect(result.ticket.urgent).toBe(false);
+    expect(result.ticket.urgentAt).toBeNull();
+
+    const updateCall = (prisma.ticket.update as any).mock.calls[0][0];
+    expect(updateCall.data.urgent).toBe(false);
+    expect(updateCall.data.urgentAt).toBeNull();
+  });
+
+  it("throws 409 TICKET_CLOSED when the ticket is CLOSED", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-1", status: "CLOSED" });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    await expect(service.setUrgent("cust-1", "t1", true)).rejects.toThrow(ConflictException);
+
+    try {
+      await service.setUrgent("cust-1", "t1", true);
+    } catch (err: any) {
+      expect(err.response.error).toBe("TICKET_CLOSED");
+    }
+  });
+
+  it("throws 404 TICKET_NOT_FOUND when the ticket belongs to another customer", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-OTHER", status: "OPEN" });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    await expect(service.setUrgent("cust-1", "t1", true)).rejects.toThrow(NotFoundException);
+  });
+
+  it("throws 404 TICKET_NOT_FOUND when the ticket doesn't exist", async () => {
+    const prisma = makePrisma({ tickets: [] });
+    const service = new TicketService(prisma as any);
+
+    await expect(service.setUrgent("cust-1", "nonexistent", true)).rejects.toThrow(NotFoundException);
   });
 });

@@ -307,6 +307,14 @@ export const en: DeepPartialDict = {
     sessionExpired: 'Session expired — please sign in again',
     logoutConfirmTitle: 'Sign out',
     logoutConfirmBody: 'Are you sure you want to sign out?',
+    mySubscriptions: 'My subscriptions',
+    relayHint: 'All products stay usable; order only sets billing precedence within the same product.',
+    priorityTag: 'Priority',
+    neverExpires: 'No expiry',
+    unlimited: 'Unlimited',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    reorderFailed: 'Failed to reorder',
   },
 
   modal: {

@@ -9,6 +9,7 @@ import * as QRCode from "qrcode";
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -22,6 +23,8 @@ import { RosettaService } from "../../rosetta/rosetta.service";
 import { occupiedSharesByAccount, type SubConfig } from "../../subscription/seat";
 import { signParams } from "./epay.sign";
 import { EpayCallbackService } from "./epay-callback.service";
+import { SubscriptionService } from "../../subscription/subscription.service";
+import type { PlanOrder } from "@prisma/client";
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 
@@ -125,6 +128,7 @@ export class BillingService {
     private readonly planCatalog: PlanCatalogService,
     private readonly rosetta: RosettaService,
     private readonly epayCallback: EpayCallbackService,
+    private readonly subscriptions: SubscriptionService,
   ) {}
 
   /**
@@ -442,6 +446,70 @@ export class BillingService {
       paidAt: order.paidAt?.toISOString() ?? null,
       subscriptionId: order.subscriptionId ?? null,
     };
+  }
+
+  /**
+   * 用户自助退款一笔已支付订单(ownership-scoped)。镜像 console 管理员退款,多一道归属校验,
+   * 且只退实付的 96.4%(保留 3.6% 渠道费,与支付页 channelFeeNote 提示一致)。
+   * 资格:本人 + PAID + 真实付费单(非 GRANT/¥0)+ 支付后无 token 用量。
+   * 先调网关退款,确认成功(钱已退)才 CAS PAID→REFUNDED 并取消订阅 —— 钱→状态,绝不反过来。
+   */
+  async refundOwnOrder(customerId: string, outTradeNo: string) {
+    const order = await this.prisma.planOrder.findUnique({ where: { outTradeNo } });
+    if (!order || order.customerId !== customerId) {
+      throw new NotFoundException("Order not found");
+    }
+    if (order.status === "REFUNDED") {
+      return { ok: true, alreadyRefunded: true, refundedCents: 0 };
+    }
+    if (order.status !== "PAID") {
+      throw new ConflictException(`只有已支付订单可退款（当前状态 ${order.status}）`);
+    }
+    if (order.payChannel === "GRANT" || order.amountCents <= 0) {
+      throw new ConflictException("该订单无可退款金额");
+    }
+
+    // 使用检测:订单支付后产生过 token 用量 → 不允许退款(防「买了用完再退」)。
+    const usageCount = await this.prisma.cardTokenUsage.count({
+      where: { customerId: order.customerId, timestamp: { gte: order.paidAt ?? order.createdAt } },
+    });
+    if (usageCount > 0) {
+      throw new ConflictException("订单支付后已产生使用记录,不可退款");
+    }
+
+    // 只退 96.4%:3.6% 渠道费由用户承担(与支付页提示一致)。
+    const refundCents = Math.round(order.amountCents * 0.964);
+    const refund = await this.refundEpayOrder(order.outTradeNo, refundCents);
+    if (!refund.ok) {
+      throw new ServiceUnavailableException(`退款失败,订单状态未变更:${refund.msg ?? "未知错误"}`);
+    }
+
+    // CAS PAID→REFUNDED:并发退款收敛为一个赢家,输家重读返回幂等结果。
+    const cas = await this.prisma.planOrder.updateMany({
+      where: { id: order.id, status: "PAID" },
+      data: { status: "REFUNDED" },
+    });
+    if (cas.count !== 1) {
+      const again = await this.prisma.planOrder.findUnique({ where: { id: order.id } });
+      if (again?.status === "REFUNDED") {
+        return { ok: true, alreadyRefunded: true, refundedCents: 0 };
+      }
+      throw new ConflictException(`订单状态已变化,退款未执行（当前状态 ${again?.status ?? "UNKNOWN"}）`);
+    }
+
+    await this.cancelRefundedSubscription(order);
+    this.logger.log(`Customer ${customerId} refunded PlanOrder outTradeNo=${outTradeNo} (${refundCents} cents)`);
+    return { ok: true, alreadyRefunded: false, refundedCents: refundCents };
+  }
+
+  /** 退款连带取消该订单激活的订阅(已取消则 no-op)。与 console 管理员退款同等逻辑。 */
+  private async cancelRefundedSubscription(order: PlanOrder): Promise<string | null> {
+    const sub = order.subscriptionId
+      ? await this.prisma.subscription.findUnique({ where: { id: order.subscriptionId } })
+      : await this.prisma.subscription.findFirst({ where: { activatedFromOrderId: order.id } });
+    if (!sub || sub.status === "CANCELLED") return null;
+    await this.subscriptions.cancelSubscription(sub.id);
+    return sub.id;
   }
 
   /**

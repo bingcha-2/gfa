@@ -1,8 +1,10 @@
 /**
  * fair-share-tracker.ts — Dynamic fair-share quota for bound cards.
  *
- * When N cards are bound to the same upstream account, each card gets
- * 1/N of the account's estimated total budget (in weighted token units).
+ * Cards bound to the same upstream account split its estimated budget by share
+ * weight: each card gets weight/capacity of the account's total (in weighted
+ * token units), where capacity is the FIXED account share capacity (4 or 8) —
+ * NOT the live bound-card count.
  *
  * Weighted tokens account for the different cost ratios of input/output/cache:
  *   weightedCost = input × W_input + output × W_output + cache × W_cache
@@ -101,8 +103,6 @@ export interface FairShareCheck {
 export interface FairShareTrackerOptions {
   /** Resolve planType for an account id. */
   getAccountPlanType: (accountId: number) => string;
-  /** Resolve all active card ids bound to an account in a given provider pool. */
-  getBoundCardIds: (accountId: number) => string[];
   /** Resolve a card's share weight (1..capacity). */
   getCardWeight: (cardId: string) => number;
   /** Total share capacity per upstream account (4 or 8). */

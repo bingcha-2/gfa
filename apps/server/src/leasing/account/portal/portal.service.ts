@@ -15,6 +15,50 @@ const UNLIMITED_QUOTA = {
   totalTokensUsed: 0,
 };
 
+/**
+ * 与前端 usage 表 isSuccessStatus 同义:status 是 HTTP 码(200/429…),
+ * 旧数据可能是字符串。2xx → 成功,其余(含 0/未知)→ 失败。
+ */
+function isSuccessStatus(status: number | string): boolean {
+  const n = Number(status);
+  if (Number.isFinite(n) && n > 0) return n >= 200 && n < 300;
+  const s = String(status).toLowerCase();
+  return s === "success" || s === "ok";
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+/** 图表 X 轴桶标签:hour → "HH:00";day → "MM-DD"(均按服务器本地时区)。 */
+function formatBucketLabel(start: Date, granularity: "hour" | "day"): string {
+  if (granularity === "hour") return `${pad2(start.getHours())}:00`;
+  return `${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`;
+}
+
+/**
+ * 省钱折算价(美元/百万 token),与客户端 apps/app/pricing.json 同一份表。
+ * 节省金额算法与客户端 UsageStatsStore.AddTokens 一致:
+ *   savedUSD += 净输入/1e6 * inPerM + 输出/1e6 * outPerM(不含缓存)。
+ * family 取自 bucket 后缀(`<product>-<family>`,如 antigravity-claude);
+ * 未知/缺失家族回退 gemini(与客户端 priceFor 一致)。
+ */
+const FAMILY_PRICING: Record<string, { inPerM: number; outPerM: number }> = {
+  claude: { inPerM: 5, outPerM: 25 },
+  gemini: { inPerM: 2, outPerM: 12 },
+  gpt: { inPerM: 1.25, outPerM: 10 },
+};
+
+function familyOfBucket(bucket: string): string {
+  const i = bucket.indexOf("-");
+  return i < 0 ? "" : bucket.slice(i + 1);
+}
+
+function savedUSDFor(bucket: string, input: number, output: number): number {
+  const p = FAMILY_PRICING[familyOfBucket(bucket)] ?? FAMILY_PRICING.gemini;
+  return (input / 1_000_000) * p.inPerM + (output / 1_000_000) * p.outPerM;
+}
+
 function mapQuota(status: any): typeof UNLIMITED_QUOTA {
   if (!status) return UNLIMITED_QUOTA;
 
@@ -205,6 +249,105 @@ export class PortalService {
       total,
       page,
       pageSize,
+    };
+  }
+
+  // ── Usage stats (aggregated for charts) ─────────────────────────────────────
+
+  /**
+   * 历史记录页统计图数据源。按窗口聚合 cardTokenUsage:
+   *   - points:   时间序列(days=1 → 24 个整点桶;7/30 → 按日历日分桶,含当天)
+   *   - byModel:  各模型 Token 总量(降序)
+   *   - status:   成功 / 失败(2xx vs 其余)请求数
+   *   - totals:   窗口内 input/output/total/requests 合计
+   */
+  async getUsageStats(customerId: string, opts: { days?: number }) {
+    const days = [1, 7, 30].includes(opts.days ?? 0) ? (opts.days ?? 7) : 7;
+    const granularity: "hour" | "day" = days === 1 ? "hour" : "day";
+    const stepMs = granularity === "hour" ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const bucketCount = granularity === "hour" ? 24 : days;
+
+    // 桶对齐:hour → 当前整点向前 24 个;day → 本地零点向前 days 天(含当天)。
+    const anchor = new Date();
+    if (granularity === "hour") anchor.setMinutes(0, 0, 0);
+    else anchor.setHours(0, 0, 0, 0);
+    const since = new Date(anchor.getTime() - (bucketCount - 1) * stepMs);
+
+    const rows = await this.prisma.cardTokenUsage.findMany({
+      where: { customerId, timestamp: { gte: since } },
+      orderBy: { timestamp: "asc" },
+      take: 100_000,
+      select: {
+        timestamp: true,
+        modelKey: true,
+        bucket: true,
+        status: true,
+        inputTokens: true,
+        outputTokens: true,
+        totalTokens: true,
+      },
+    });
+
+    const buckets = Array.from({ length: bucketCount }, (_, i) => ({
+      start: new Date(since.getTime() + i * stepMs),
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      requests: 0,
+    }));
+
+    const byModel = new Map<string, { totalTokens: number; requests: number }>();
+    const totals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, requests: 0, savedUSD: 0 };
+    let success = 0;
+    let failed = 0;
+
+    for (const r of rows) {
+      const input = Number(r.inputTokens) || 0;
+      const output = Number(r.outputTokens) || 0;
+      const total = Number(r.totalTokens) || 0;
+
+      const idx = Math.min(
+        bucketCount - 1,
+        Math.max(0, Math.floor((r.timestamp.getTime() - since.getTime()) / stepMs)),
+      );
+      const b = buckets[idx];
+      b.inputTokens += input;
+      b.outputTokens += output;
+      b.totalTokens += total;
+      b.requests += 1;
+
+      const m = byModel.get(r.modelKey) ?? { totalTokens: 0, requests: 0 };
+      m.totalTokens += total;
+      m.requests += 1;
+      byModel.set(r.modelKey, m);
+
+      if (isSuccessStatus(r.status)) success += 1;
+      else failed += 1;
+
+      totals.inputTokens += input;
+      totals.outputTokens += output;
+      totals.totalTokens += total;
+      totals.requests += 1;
+      totals.savedUSD += savedUSDFor(r.bucket, input, output);
+    }
+
+    // 浮点累加去噪:保留到分以下 4 位,前端按 toFixed(2) 展示。
+    totals.savedUSD = Math.round(totals.savedUSD * 10_000) / 10_000;
+
+    return {
+      granularity,
+      points: buckets.map((b) => ({
+        label: formatBucketLabel(b.start, granularity),
+        inputTokens: b.inputTokens,
+        outputTokens: b.outputTokens,
+        totalTokens: b.totalTokens,
+        requests: b.requests,
+      })),
+      byModel: [...byModel.entries()]
+        .map(([modelKey, v]) => ({ modelKey, totalTokens: v.totalTokens, requests: v.requests }))
+        .sort((a, b) => b.totalTokens - a.totalTokens),
+      status: { success, failed },
+      totals,
     };
   }
 }

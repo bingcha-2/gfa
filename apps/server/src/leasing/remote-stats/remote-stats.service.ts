@@ -7,6 +7,7 @@ import { RemoteCodexService } from "../remote-codex/service/remote-codex.service
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { TokenUsageStatsService } from "../rosetta/token-usage-stats.service";
+import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 
 /** Remaining fraction below this is treated as "near-exhausted" (warning). */
 const LOW_REMAINING = 0.2;
@@ -220,6 +221,9 @@ type DashboardProvider = {
     totalRequests: number;
     fairShare: Record<string, { fraction: number; resetAt: number }>;
     windowWeightedUsed: number;
+    customerId?: string;
+    products?: string[];
+    expiresAt?: string | null;
   }>;
 };
 
@@ -290,9 +294,18 @@ export class RemoteStatsService {
       .map((acc) => ({ acc, snap: snapshots.get(acc.id), boundBase: service.getBoundCardsForAccount(acc.id) }))
       .filter((c) => c.boundBase.length > 0 || c.snap);
 
+    // 订阅行展示「邮箱 + 套餐」:去影子后订阅 record 只带 customerId,这里一次性批量解析成邮箱。
+    const custIds = [...new Set(
+      candidates
+        .flatMap((c) => c.boundBase as any[])
+        .filter((b) => b?.customerId)
+        .map((b) => b.customerId as string),
+    )];
+    const emailMap = await this.loadCustomerEmails(custIds);
+
     const accounts = await Promise.all(
       candidates.map(async ({ acc, snap, boundBase }) => {
-        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days, acc.id)));
+        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days, acc.id, emailMap)));
         const quota = accountQuotaSummary(acc, snap, families, now);
         return {
           id: acc.id,
@@ -321,13 +334,28 @@ export class RemoteStatsService {
       }),
     );
 
-    return { id, mode: String(status?.mode || ""), health, accounts, totalAccounts: statusAccounts.length };
+    return { id, mode: String(status?.mode || ""), health, accounts, totalAccounts: statusAccounts.length, shareCapacity: ACCOUNT_SHARE_CAPACITY };
+  }
+
+  /** 批量把订阅行的 customerId 解析成客户邮箱(看板展示「邮箱 + 套餐」)。查不到/出错 → 空 Map。 */
+  private async loadCustomerEmails(ids: string[]): Promise<Map<string, string>> {
+    if (!ids.length) return new Map();
+    try {
+      const rows = await this.prisma.customer.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, email: true },
+      });
+      return new Map(rows.map((r: { id: string; email: string }) => [r.id, r.email]));
+    } catch {
+      return new Map();
+    }
   }
 
   private async decorateCard(
     card: ReturnType<DashboardProvider["getBoundCardsForAccount"]>[number],
     days: number,
     accountId: number,
+    emailMap: Map<string, string>,
   ) {
     // Scope usage to this account: a card bound across 御三家 has one account per
     // provider, so without accountId every provider's view shows the card's global
@@ -338,6 +366,8 @@ export class RemoteStatsService {
     ]);
     return {
       ...card,
+      // 订阅行补客户邮箱(供「邮箱 + 套餐」展示);无 customerId 时留空。
+      email: card.customerId ? emailMap.get(card.customerId) || "" : "",
       usageTrend: (summary as any)?.daily || [],
       usageTotals: (summary as any)?.totals || { totalTokens: 0, requests: 0 },
       hourlyFrequency: (freq as any)?.byHour || [],

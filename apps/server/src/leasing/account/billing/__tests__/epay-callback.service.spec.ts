@@ -365,21 +365,24 @@ describe("EpayCallbackService.handleNotify — security", () => {
     expect(subService.activateForOrder).not.toHaveBeenCalled();
   });
 
-  it("returns 'fail' for amount mismatch (fraud signal)", async () => {
-    // Valid sign but money doesn't match order's amountCents
-    const fraudBody = ((): Record<string, string> => {
-      const base: Record<string, string> = {
-        pid: EPAY_PID,
-        trade_no: "epay-trade-123",
-        out_trade_no: "gfa-order-1",
-        money: "1.00", // 100 cents, not 990
-        trade_status: "TRADE_SUCCESS",
-      };
-      return { ...base, sign_type: "RSA", sign: signParams(base, PLATFORM_PRIV_B64) };
-    })();
-    const result = await service.handleNotify(fraudBody);
+  it("returns 'fail' for underpayment (paid < order amount, fraud signal)", async () => {
+    // Valid sign but money is LESS than order's amountCents (990) → 少付,判欺诈拒绝。
+    const result = await service.handleNotify(validBody({ money: "1.00" })); // 100 < 990
     expect(result).toBe("fail");
     expect(subService.activateForOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns 'fail' for invalid/missing money (NaN)", async () => {
+    const result = await service.handleNotify(validBody({ money: "abc" }));
+    expect(result).toBe("fail");
+    expect(subService.activateForOrder).not.toHaveBeenCalled();
+  });
+
+  it("accepts overpayment (paid > order amount = 网关代收手续费) → success + activate", async () => {
+    // 网关「用户承担手续费」:实付 = 订单价 9.90 + 通道费 → 10.50 > 990,合法,必须放行激活。
+    const result = await service.handleNotify(validBody({ money: "10.50" })); // 1050 > 990
+    expect(result).toBe("success");
+    expect(subService.activateForOrder).toHaveBeenCalledOnce();
   });
 
   it("returns 'fail' for unknown out_trade_no", async () => {

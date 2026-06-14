@@ -97,7 +97,7 @@ describe("BillingService.createCatalogOrder", () => {
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any);
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -225,7 +225,7 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any);
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -332,7 +332,7 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any);
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({ id: "grant-order-1", ...data }));
   });
@@ -391,7 +391,7 @@ describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => 
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any);
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
       id: "new-order",
@@ -486,7 +486,7 @@ describe("BillingService.cancelOrder", () => {
 
   beforeEach(() => {
     prisma = makeMockPrisma();
-    service = new BillingService(prisma, makeCatalog(), makeRosetta(), {} as any);
+    service = new BillingService(prisma, makeCatalog(), makeRosetta(), {} as any, {} as any);
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -553,7 +553,7 @@ describe("BillingService.refundEpayOrder", () => {
   beforeEach(() => {
     vi.stubEnv("EPAY_PID", "1001");
     vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
-    service = new BillingService(makeMockPrisma(), makeCatalog(), makeRosetta(), {} as any);
+    service = new BillingService(makeMockPrisma(), makeCatalog(), makeRosetta(), {} as any, {} as any);
   });
 
   afterEach(() => {

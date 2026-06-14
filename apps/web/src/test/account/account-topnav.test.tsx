@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { AccountTopNav } from "@/components/account/account-topnav";
 
@@ -33,5 +33,22 @@ describe("AccountTopNav", () => {
     expect(document.querySelector(".account-topnav")).toBeInTheDocument();
     // The old sidebar shell is gone.
     expect(document.querySelector(".account-client-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("places 我的 (account hub) as the last primary nav item and drops the standalone 设备 link", () => {
+    render(<AccountTopNav />);
+
+    const linksRow = document.querySelector(".account-topnav__links");
+    expect(linksRow).toBeTruthy();
+
+    const links = within(linksRow as HTMLElement).getAllByRole("link");
+    // Rightmost primary entry is the merged 我的 hub, pointing at /account/me.
+    const last = links[links.length - 1];
+    expect(last).toHaveTextContent("我的");
+    expect(last).toHaveAttribute("href", "/account/me");
+
+    // 设备 / 设置 are no longer standalone top-level links (merged into 我的).
+    expect(screen.queryByRole("link", { name: "设备" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "设置" })).toBeNull();
   });
 });

@@ -158,7 +158,7 @@ beforeEach(async () => {
   planCatalog = new PlanCatalogService(prisma as any);
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService);
+  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService, subscriptionService);
 
   await publishCatalog();
 });
@@ -410,16 +410,30 @@ describe("EpayCallbackService — security failures (DB integration)", () => {
     expect(result).toBe("fail");
   });
 
-  it("amount mismatch: returns 'fail', no activation", async () => {
+  it("underpayment: paid < order amount → 'fail', no activation", async () => {
     const customer = await createTestCustomer();
     const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY");
 
-    const body = buildBody(outTradeNo, "1.00"); // 100 cents, not 990
+    const body = buildBody(outTradeNo, "1.00"); // 100 < 990 → 少付,拒绝
     const result = await callbackService.handleNotify(body);
     expect(result).toBe("fail");
 
     const order = await prisma.planOrder.findUnique({ where: { outTradeNo } });
     expect(order!.status).toBe("PENDING");
+  });
+
+  it("overpayment (gateway fee): paid > order amount → 'success', activated", async () => {
+    const customer = await createTestCustomer();
+    const { outTradeNo } = await catalogOrder(customer.id, "ALIPAY"); // amountCents 990
+
+    // 网关「用户承担手续费」:客户实付 = 订单价 9.90 + 通道费 → 10.25 > 990,合法,放行激活。
+    const body = buildBody(outTradeNo, "10.25");
+    const result = await callbackService.handleNotify(body);
+    expect(result).toBe("success");
+
+    const order = await prisma.planOrder.findUnique({ where: { outTradeNo } });
+    expect(order!.status).toBe("PAID");
+    expect(order!.subscriptionId).toBeTruthy(); // 激活后回填订阅
   });
 
   it("unknown out_trade_no: returns 'fail'", async () => {
