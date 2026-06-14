@@ -91,10 +91,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
-      - name: Install Wails CLI & garble
+      - name: Install Wails CLI
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
-          go install mvdan.cc/garble@v0.15.0
 
       # NSIS：把 Windows 客户端打成安装包（而非裸 exe），显著降低 Defender/SmartScreen 误报。
       # GitHub windows runner 不预装 NSIS，需通过 choco 安装并加入 PATH 供 wails 调用 makensis。
@@ -138,11 +137,11 @@ jobs:
           find frontend/dist -name '*.map' -delete
           echo "✅ Source maps stripped before Go embed"
 
-          # 2) -s 跳过前端重复构建，-garble 混淆 Go 符号
+          # 2) -s 跳过前端重复构建
           if [ "${{ matrix.os_name }}" = "windows" ]; then
-            wails build -nsis -s -ldflags "$LDFLAGS" -garble
+            wails build -nsis -s -ldflags "$LDFLAGS"
           else
-            wails build -s -ldflags "$LDFLAGS" -garble
+            wails build -s -ldflags "$LDFLAGS"
           fi
 
       # ── Windows: 重命名 + 计算 hash（裸 exe 供自动更新，NSIS 安装包供首次下载）──
