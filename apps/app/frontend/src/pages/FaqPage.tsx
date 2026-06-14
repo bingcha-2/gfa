@@ -245,7 +245,7 @@ export function FaqPage() {
               </div>
             </div>
             <a
-              href="https://bcai.lol/faq"
+              href={api.SITE_URLS.faq}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-[11px] text-[var(--primary-strong)] hover:underline shrink-0"

@@ -34,11 +34,12 @@ import {
   SetSubscriptionPriority as _SetSubscriptionPriority,
 } from '../../wailsjs/go/main/App'
 
-// ===== Portal URLs =====
-// toC 用户中心默认在 my.bcai.lol（见 docs/NAMING.md 子域规划）；/account 前缀在
-// 子域上由 Next 中间件 root-strip，带前缀访问同样有效，本地 dev 也可直接复用。
-// 本地 dev：dev-local.sh 注入 VITE_PORTAL_BASE=http://127.0.0.1:3000，把这些链接指到本地 web。
-const PORTAL_BASE = import.meta.env.VITE_PORTAL_BASE || 'https://my.bcai.lol'
+// ===== Portal / Site URLs =====
+// 构建时通过 VITE_PORTAL_BASE / VITE_APEX_BASE 注入（见 build-wails.yml）；
+// 本地 dev：dev-local.sh 注入 VITE_PORTAL_BASE=http://127.0.0.1:3000，把链接指到本地 web。
+const PORTAL_BASE = import.meta.env.VITE_PORTAL_BASE || 'https://my.bcai.space'
+const APEX_BASE = import.meta.env.VITE_APEX_BASE || 'https://bcai.space'
+
 export const PORTAL_URLS = {
   home: `${PORTAL_BASE}/account`, // 用户中心首页(意见反馈入口指向这里)
   register: `${PORTAL_BASE}/account/register`,
@@ -47,6 +48,10 @@ export const PORTAL_URLS = {
   bind: `${PORTAL_BASE}/account/billing`,
   devices: `${PORTAL_BASE}/account/devices`,
   tickets: `${PORTAL_BASE}/account/tickets`, // 工单/客服:订阅失效等问题的人工支持入口
+} as const
+
+export const SITE_URLS = {
+  faq: `${APEX_BASE}/faq`,
 } as const
 
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
