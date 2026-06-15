@@ -50,7 +50,10 @@ scripts/active-*.txt
 apps/api/data/
 data/*
 !data/rosetta/
-!data/rosetta/*.json
+# data/rosetta 是运行时数据目录(含真实 sessionKey/密码/卡密 + 计费台账的时间戳备份),
+# 一律不入库 —— 跑着的服务端会不停改写它,且含敏感凭证。目录本身保留,内容全忽略。
+data/rosetta/*.json
+data/rosetta/*.bak*
 
 # Temp scratch files
 prev*.tsx
