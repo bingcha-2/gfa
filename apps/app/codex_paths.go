@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -79,7 +80,80 @@ func detectCodexAppPath() string {
 			}
 		}
 	}
+
+	// 纯 CLI 安装兜底:npm -g / brew / 手动软链进 PATH 的 `codex`。这类安装不写
+	// chrome-native-hosts.json、不进注册表、也不在上面的固定目录里,仅靠前面的探测会漏检,
+	// 导致接管按钮不出现。放在最末位,保证 GUI / 官方安装优先。
+	if p := detectCodexOnPath(); p != "" {
+		return p
+	}
 	return ""
+}
+
+// codexWindowsGUIExeCandidates 返回 Windows 上 Codex 桌面 GUI 的候选可执行文件路径。
+// 纯函数(入参为目录根,不碰磁盘/注册表),便于单测。空根目录会被跳过。
+// 刻意不含 CLI 的 %LOCALAPPDATA%\OpenAI\Codex\bin\... —— 那是命令行二进制,
+// 不能当作"GUI 已安装"的依据,否则纯 CLI 会被误判成 GUI 而触发无意义的 kill/relaunch。
+func codexWindowsGUIExeCandidates(localAppData, programFiles string) []string {
+	candidates := []string{}
+	if localAppData != "" {
+		candidates = append(candidates, filepath.Join(localAppData, "Programs", "Codex", "Codex.exe"))
+	}
+	if programFiles != "" {
+		candidates = append(candidates, filepath.Join(programFiles, "Codex", "Codex.exe"))
+	}
+	return candidates
+}
+
+// detectCodexOnPath 在 PATH 里找 `codex` 可执行文件(纯 CLI 安装的兜底探测)。
+func detectCodexOnPath() string {
+	p, err := exec.LookPath("codex")
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// codexGUIInstalled 报告机器上是否安装了 Codex 桌面 GUI(区别于纯 CLI 二进制)。
+//
+// 接管/还原后是否需要"退出→重启"取决于此:GUI 是常驻进程,启动时把 config.toml 读进内存
+// 缓存,改文件后必须重启才会重读;且其历史按 provider 存于 state_5.sqlite,需要 retag。
+// 纯 CLI 则每次运行现读 config、历史走 ~/.codex/sessions 的 JSONL,既不需要重启,也没有
+// sqlite 历史可对齐。这里只查 GUI 专属安装位置(刻意不含 CLI 的 OpenAI\Codex\bin),避免把
+// CLI 误判成 GUI 而去做无意义的 kill/relaunch。
+func codexGUIInstalled() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		if spotlightFindApp("Codex.app") != "" {
+			return true
+		}
+		_, err := os.Stat("/Applications/Codex.app")
+		return err == nil
+	case "windows":
+		if loc := registryFindInstallPath("Codex"); loc != "" {
+			if _, err := os.Stat(loc); err == nil {
+				return true
+			}
+		}
+		for _, p := range codexWindowsGUIExeCandidates(os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")) {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return true
+			}
+		}
+		return false
+	case "linux":
+		if desktopFindApp("Codex") != "" {
+			return true
+		}
+		for _, p := range []string{"/opt/Codex/codex", "/usr/share/codex/codex"} {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // detectCodexInVersionedBin 扫描 %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe。

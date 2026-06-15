@@ -302,8 +302,15 @@ func QuitCodexApp() {
 	}
 }
 
-// LaunchCodexApp 启动 Codex(尽力而为)。
+// LaunchCodexApp 启动 Codex GUI(尽力而为)。
+//
+// 仅对桌面 GUI 安装有意义:纯 CLI 没有可"拉起"的常驻进程,headless 执行 codex 二进制(无 TTY)
+// 只会起一个立即退出/空转的孤儿进程。故先用 codexGUIInstalled 守卫,纯 CLI 直接跳过。
 func LaunchCodexApp() {
+	if !codexGUIInstalled() {
+		Log("[codex] 纯 CLI 安装(无桌面 GUI),无需拉起;config 已生效,重开终端即可")
+		return
+	}
 	path := detectCodexAppPath()
 	if path == "" {
 		Log("[codex] 未检测到 Codex 安装路径,跳过启动")

@@ -265,8 +265,13 @@ func (codexTarget) Inject(proxyPort int) (string, error) {
 	} else if cleared {
 		Log("[codex] 接管已清除遗留的中转(relay)配置,切回租号模式")
 	}
-	// 切到自定义 provider(bingchaai)→ 退出 Codex → 把历史 retag 到 bingchaai
-	// (当前 provider 视图下可见)→ 重启。
+	// 纯 CLI 安装:config 已写入并即时生效(CLI 每次运行现读),没有常驻 GUI 需要重启、
+	// 也没有 state_5.sqlite 历史需要 retag。直接返回,提示重开终端。
+	if !codexGUIInstalled() {
+		return "Codex CLI: ✓ 已接管,重开终端(或重新运行 codex)即可生效", nil
+	}
+	// GUI 桌面版:切到自定义 provider(bingchaai)→ 退出 Codex → 把历史 retag 到 bingchaai
+	// (当前 provider 视图下可见)→ 重启,让常驻进程重读 config。
 	go RestartCodexAfterTakeover(codexProviderID)
 	return "Codex: ✓ 已接管,正在重启 Codex...", nil
 }
@@ -275,7 +280,11 @@ func (codexTarget) Restore() (string, error) {
 	if err := RestoreCodexSettings(); err != nil {
 		return "", err
 	}
-	// 还原后回到官方 openai provider → 把历史 retag 回 openai。
+	// 纯 CLI:同 Inject,无 GUI 可重启、无 sqlite 历史需 retag。
+	if !codexGUIInstalled() {
+		return "Codex CLI: ✓ 已恢复,重开终端(或重新运行 codex)即可生效", nil
+	}
+	// GUI:还原后回到官方 openai provider → 把历史 retag 回 openai → 重启。
 	go RestartCodexAfterTakeover(codexDefaultProvider)
 	return "Codex: ✓ 已恢复,正在重启 Codex...", nil
 }
