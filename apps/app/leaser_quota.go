@@ -30,6 +30,25 @@ func (l *Leaser) refreshBoundQuota(card, deviceId, upstreamProxy string, force b
 	l.preheatBoundProducts(card, deviceId, upstreamProxy, force)
 }
 
+// RefreshQuotaNow 手动强制刷新上游额度并上报(force=true 绕过 5min 节流),供前端「刷新」
+// 按钮调用 —— 让用户在「还没发请求」时也能主动拉到上游真实余量并同步给服务端。等价激活
+// (StartAutoLease)那一下的额度刷新,但不重启租号 ticker。三条都是同步的(antigravity 的
+// fetchAccountQuotaAsync 在此路径下同步执行),返回时血条已写入,前端可直接 GetStats 读到新值。
+//
+// antigravity 已 bound 的卡走 refreshBoundQuota(force 重租 + 直连上游 per-model + 上报,
+// 内部已含 codex/anthropic 预热);未 bound 的卡(只开 codex/anthropic、或冷启动尚未租到、
+// 池子卡)只预热 codex/anthropic,避免对 antigravity 发无谓租号。
+func (l *Leaser) RefreshQuotaNow(card, deviceId, upstreamProxy string) {
+	l.mu.RLock()
+	bound := l.cachedToken != nil && l.cachedToken.Bound
+	l.mu.RUnlock()
+	if bound {
+		l.refreshBoundQuota(card, deviceId, upstreamProxy, true)
+		return
+	}
+	l.preheatBoundProducts(card, deviceId, upstreamProxy, true)
+}
+
 // preheatBoundProducts 预热 codex / anthropic(claude 模型)绑定号的额度。这两条走各自
 // 独立的 leaser,不依赖 antigravity 主 token,因此 codex-only / anthropic-only 卡也能在
 // 激活时把血条刷出真实余量(否则 StartAutoLease 因「未开通 antigravity」提前 return,

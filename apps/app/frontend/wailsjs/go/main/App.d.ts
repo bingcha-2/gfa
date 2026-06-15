@@ -48,6 +48,8 @@ export function OpenCACertForTrust():Promise<void>;
 
 export function OpenSystemPermissionSettings():Promise<void>;
 
+export function RefreshQuota():Promise<void>;
+
 export function RestartProxy():Promise<void>;
 
 export function RestartToUpdate():Promise<void>;

@@ -94,6 +94,10 @@ export function OpenSystemPermissionSettings() {
   return window['go']['main']['App']['OpenSystemPermissionSettings']();
 }
 
+export function RefreshQuota() {
+  return window['go']['main']['App']['RefreshQuota']();
+}
+
 export function RestartProxy() {
   return window['go']['main']['App']['RestartProxy']();
 }

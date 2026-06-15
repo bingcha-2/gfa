@@ -122,12 +122,19 @@ export function AccountDock({
     }
   }
 
-  // 手动刷新:心跳一次(重校会话 + 拉最新订阅),再刷新租号/额度态;卡密不可用时顺带重启接管。
+  // 手动刷新:心跳一次(重校会话 + 拉最新订阅)→ 强制拉上游额度并上报 → 刷新租号/额度态;
+  // 卡密不可用时顺带重启接管。额度刷新失败不致命,不挡后续本地状态刷新。
   const handleRefresh = async () => {
     if (refreshing) return
     setRefreshing(true)
     try {
       await heartbeat()
+      // GetStats 只读缓存快照,故先主动去上游拉一次最新余量(并上报服务端),再 fetchStats 才能看到新值。
+      try {
+        await api.refreshQuota()
+      } catch (err) {
+        console.error('refreshQuota failed:', err)
+      }
       await fetchStats()
       if (useAppStore.getState().cardUnusable) {
         await api.restartProxy()

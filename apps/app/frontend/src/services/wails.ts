@@ -7,6 +7,7 @@ import {
   GetConfig,
   SaveConfig as _SaveConfig,
   GetStats,
+  RefreshQuota as _RefreshQuota,
   RestartProxy as _RestartProxy,
   GetLogs,
   ClearLogs as _ClearLogs,
@@ -173,6 +174,12 @@ export interface StatsResponse {
 
 export async function getStats(): Promise<StatsResponse> {
   return GetStats() as Promise<StatsResponse>
+}
+
+// 强制拉取上游额度并上报(force=true,绕过节流)。GetStats 只读缓存,故刷新需先调本方法
+// 再 getStats 才能看到上游最新余量。失败不致命,调用方应吞错后照常刷新本地状态。
+export async function refreshQuota(): Promise<void> {
+  await _RefreshQuota()
 }
 
 // ===== Proxy =====

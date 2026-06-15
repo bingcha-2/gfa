@@ -79,6 +79,9 @@ func (a *App) startup(ctx context.Context) {
 	// 启动代理看门狗:代理一旦"该跑没跑"(绑不上 / Serve 挂掉)就自愈重起(用 UserToken),
 	// 避免一次失败就永久 down、要用户手动重启。(合并自 main,适配账号制凭据)
 	startProxyWatchdog()
+
+	// 启动额度自动刷新:每 30min 拉一次上游真实余量并上报,闲置(不主动发请求)时血条/服务端也保持同步。
+	startQuotaRefreshLoop()
 }
 
 // GetConfig returns the loaded configuration
@@ -251,6 +254,18 @@ func (a *App) RestartProxy() error {
 
 	GetCodexProxy().ApplyConfig(cfg) // 重启时重新应用 Codex 中转模式配置
 	return GetHTTPProxy().Start(cfg.ProxyPort, cfg.UserToken, cfg.DeviceId, "")
+}
+
+// RefreshQuota 手动强制拉取上游额度并上报(force=true,绕过 5min 节流)。供前端「刷新」按钮
+// 调用 —— GetStats 只读缓存快照,本方法负责真正去上游取最新余量并把 quota-only report 同步给
+// 服务端,前端应在本方法之后再 GetStats 才能看到刷新结果。未登录/未接管时为 no-op。
+func (a *App) RefreshQuota() error {
+	cfg := LoadConfig()
+	if cfg.UserToken == "" {
+		return nil
+	}
+	GetLeaser().RefreshQuotaNow(cfg.UserToken, cfg.DeviceId, "")
+	return nil
 }
 
 // SetClaudeDesktopMockLogin 开关 Claude 桌面端接管的「登录态 mock」。
