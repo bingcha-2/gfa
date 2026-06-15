@@ -580,8 +580,38 @@ html[data-account-theme="dark"] .account-auth {
 .account-pane__note { margin: 0.8rem 0 0; color: var(--ink-muted); line-height: 1.6; font-size: 0.88rem; }
 .account-pane__footer { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); display: flex; gap: 0.75rem; flex-wrap: wrap; }
 
+.account-workflow-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+.account-workflow-grid--stack { grid-template-columns: 1fr; }
+.account-summary-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: color-mix(in oklch, var(--surface-2) 72%, transparent);
+}
+.account-summary-strip--compact {
+  justify-content: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.35rem;
+}
+
 /* 工单页·售后客服联系卡:微信号(可复制)+ 客服二维码,数据同官网 FAQ(/console/faq/settings) */
 .account-support { display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; flex-wrap: wrap; }
+.account-support-panel {
+  border-color: color-mix(in oklch, var(--primary) 24%, var(--line));
+  background:
+    linear-gradient(135deg, color-mix(in oklch, var(--primary-soft) 58%, transparent), transparent 48%),
+    var(--surface);
+}
 .account-support__main { min-width: 0; flex: 1 1 16rem; }
 .account-support__main .account-panel__header { margin-bottom: 0.6rem; }
 .account-support__wechat { display: inline-flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
@@ -1018,7 +1048,8 @@ html[data-account-theme="dark"] .account-auth {
 .account-order-flow--terminal p { color: var(--ink-muted); font-size: 0.88rem; max-width: 36ch; margin: 0; }
 
 @media (max-width: 860px) {
-  .account-billing__grid { grid-template-columns: 1fr; }
+  .account-billing__grid,
+  .account-workflow-grid { grid-template-columns: 1fr; }
 }
 
 /* ============================================================================
@@ -1159,6 +1190,33 @@ html[data-account-theme="dark"] .account-auth {
 .account-auth__trust strong svg { width: 0.95rem; height: 0.95rem; color: var(--ok); flex-shrink: 0; }
 .account-auth__trust p { margin: 0; font-size: 0.78rem; color: var(--ink-muted); line-height: 1.5; }
 .account-auth__panel { display: grid; gap: 1.35rem; align-content: start; border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--shadow-lg); padding: clamp(1.5rem, 3.5vw, 2.25rem); }
+.account-auth-card {
+  position: relative;
+  overflow: hidden;
+}
+.account-auth-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--info), var(--ok));
+}
+.account-auth-card__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.account-auth-card__brand img {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.4rem;
+  box-shadow: var(--shadow-sm);
+}
 .account-auth__panel-head { display: grid; gap: 0.4rem; }
 .account-auth__panel-head h1 { margin: 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.03em; color: var(--ink); }
 .account-auth__panel-head p { margin: 0; color: var(--ink-muted); line-height: 1.6; font-size: 0.92rem; }

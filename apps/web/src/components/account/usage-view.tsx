@@ -17,8 +17,9 @@ export function UsageView() {
   const [days, setDays] = useState<UsageDays>(7);
 
   return (
-    <div className="account-usage-view">
-      <div className="account-segmented-control" role="group" aria-label={u.rangeAria}>
+    <div className="account-usage-view account-workflow-grid account-workflow-grid--stack">
+      <div className="account-summary-strip account-summary-strip--compact">
+        <div className="account-segmented-control" role="group" aria-label={u.rangeAria}>
         {([
           [1, u.daysToday],
           [7, u.days7],
@@ -33,6 +34,7 @@ export function UsageView() {
             {label}
           </button>
         ))}
+        </div>
       </div>
 
       <UsageCharts days={days} />

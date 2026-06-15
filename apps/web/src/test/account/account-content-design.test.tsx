@@ -1,9 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
 import { NotificationsList } from "@/components/account/notifications-list";
 import { TicketsList } from "@/components/account/tickets-list";
 import { UsageTable } from "@/components/account/usage-table";
+
+const root = path.resolve(__dirname, "../..");
 
 // NotificationsList shares the topnav bell count via useAccount(). The fns
 // must be STABLE refs (like React's real useState setter) — a fresh vi.fn()
@@ -26,6 +30,14 @@ function jsonResponse(body: unknown, status = 200) {
 describe("account content design contracts", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("workflow pages use the redesigned account panel primitives", async () => {
+    const css = fs.readFileSync(path.join(root, "components/account/account.css"), "utf8");
+
+    expect(css).toContain(".account-workflow-grid");
+    expect(css).toContain(".account-summary-strip");
+    expect(css).toContain(".account-support-panel");
   });
 
   it("usage history renders with account table controls instead of shadcn table/toggle slots", async () => {

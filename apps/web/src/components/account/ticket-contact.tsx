@@ -32,7 +32,10 @@ export function TicketContact({
   }
 
   return (
-    <section className="account-panel account-support" data-testid="account-ticket-contact">
+    <section
+      className="account-panel account-support account-support-panel"
+      data-testid="account-ticket-contact"
+    >
       <div className="account-support__main">
         <div className="account-panel__header">
           <div>

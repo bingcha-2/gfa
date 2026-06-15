@@ -18,6 +18,8 @@ describe("AuthCard", () => {
 
     // New editorial membership auth shell + signature pass card.
     expect(document.querySelector(".account-auth")).toBeInTheDocument();
+    expect(document.querySelector(".account-auth-card")).toBeInTheDocument();
+    expect(document.querySelector(".account-auth-card__brand")).toBeInTheDocument();
     expect(document.querySelector(".account-pass")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "切换账户界面深浅模式" })

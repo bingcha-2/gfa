@@ -117,7 +117,11 @@ export function AuthCard({
             </div>
           </aside>
 
-          <section className="account-auth__panel" aria-label={title}>
+          <section className="account-auth__panel account-auth-card" aria-label={title}>
+            <div className="account-auth-card__brand" aria-hidden>
+              <img src="/bcai-icon.png" alt="" />
+              <span>{dict.common.brandName}</span>
+            </div>
             <div className="account-auth__panel-head">
               <h1>{title}</h1>
               {description && <p>{description}</p>}

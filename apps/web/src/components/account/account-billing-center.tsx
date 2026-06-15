@@ -211,7 +211,7 @@ export function AccountBillingCenter({
           <h2>{b.centerTitle}</h2>
           <p>{b.centerDesc}</p>
         </div>
-        <div className="account-billing-hero__status">
+        <div className="account-billing-hero__status account-summary-strip">
           <div>
             <span>{b.heroCurrentLabel}</span>
             <strong>{current ? planLabel(current) : b.heroNoPlan}</strong>
@@ -223,7 +223,7 @@ export function AccountBillingCenter({
         </div>
       </section>
 
-      <div className="account-billing__grid">
+      <div className="account-billing__grid account-workflow-grid">
         <section className="account-billing-panel account-billing-panel--wide">
           <div className="account-billing-panel__header">
             <div>
