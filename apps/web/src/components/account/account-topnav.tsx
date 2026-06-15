@@ -81,117 +81,25 @@ export function AccountTopNav() {
   }
 
   const displayName = customer.displayName || customer.email;
-  const initial = (customer.displayName || customer.email || "·").charAt(0).toUpperCase();
+  const initial = (customer.displayName || customer.email || "?").charAt(0).toUpperCase();
 
   return (
-    <header className="account-topnav" data-scrolled={scrolled || undefined}>
-      <div className="account-topnav__inner">
-        <Link href="/account" className="account-topnav__brand" aria-label={nav.brandAria}>
+    <>
+      <aside className="account-rail" data-scrolled={scrolled || undefined}>
+        <Link href="/account" className="account-rail__brand" aria-label={nav.brandAria}>
           <img src="/bcai-icon.png" alt="" />
-          <span>{dict.common.brandName}</span>
+          <span>
+            {dict.common.brandName}
+            <small>ACCOUNT</small>
+          </span>
         </Link>
 
-        <nav className="account-topnav__links" aria-label={nav.navAria}>
+        <nav className="account-rail__nav" aria-label={nav.navAria}>
           {PRIMARY.map((item) => (
             <Link
               key={item.id}
               href={item.url}
-              className="account-topnav__link"
-              data-active={isActive(item.url) || undefined}
-            >
-              {nav[item.id]}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="account-topnav__spacer" />
-
-        <div className="account-topnav__actions">
-          <Link
-            href="/account/notifications"
-            className="account-iconbtn"
-            aria-label={nav.notifications}
-          >
-            <BellIcon />
-            {unread > 0 && (
-              <span className="account-iconbtn__badge" aria-hidden>
-                {unread > 9 ? "9+" : unread}
-              </span>
-            )}
-          </Link>
-
-          <AccountLocaleSwitcher />
-
-          <AccountThemeToggle />
-
-          <div className="account-usermenu">
-            <button
-              type="button"
-              className="account-usermenu__trigger"
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-            >
-              <span className="account-usermenu__avatar" aria-hidden>
-                {initial}
-              </span>
-              <span className="account-usermenu__name">{displayName}</span>
-              <ChevronDownIcon />
-            </button>
-            {menuOpen && (
-              <>
-                <button
-                  type="button"
-                  aria-hidden
-                  onClick={() => setMenuOpen(false)}
-                  style={{
-                    position: "fixed",
-                    inset: 0,
-                    zIndex: 110,
-                    background: "transparent",
-                    border: 0,
-                    cursor: "default",
-                  }}
-                />
-                <div className="account-usermenu__content" role="menu">
-                  <div className="account-usermenu__head">
-                    <b>{displayName}</b>
-                    <span>● {customer.email}</span>
-                  </div>
-                  {SECONDARY.map((item) => (
-                    <Link key={item.id} href={item.url} role="menuitem">
-                      {item.icon}
-                      {nav[item.id]}
-                    </Link>
-                  ))}
-                  <button type="button" onClick={handleLogout} role="menuitem">
-                    <LogOutIcon />
-                    {t.actions.logout}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          <button
-            type="button"
-            className="account-iconbtn account-topnav__menu"
-            aria-label={nav.openMenu}
-            aria-expanded={mobileOpen}
-            onClick={() => setMobileOpen((v) => !v)}
-          >
-            {mobileOpen ? <XIcon /> : <MenuIcon />}
-          </button>
-        </div>
-      </div>
-
-      {mobileOpen && (
-        <nav className="account-mobilemenu" aria-label={nav.navAria}>
-          {[...PRIMARY, ...SECONDARY].map((item) => (
-            <Link
-              key={item.id}
-              href={item.url}
-              className="account-topnav__link"
+              className="account-rail__link"
               data-active={isActive(item.url) || undefined}
             >
               {item.icon}
@@ -199,7 +107,126 @@ export function AccountTopNav() {
             </Link>
           ))}
         </nav>
-      )}
-    </header>
+
+        <div className="account-rail__footer">
+          {SECONDARY.map((item) => (
+            <Link
+              key={item.id}
+              href={item.url}
+              className="account-rail__link account-rail__link--muted"
+              data-active={isActive(item.url) || undefined}
+            >
+              {item.icon}
+              {nav[item.id]}
+            </Link>
+          ))}
+        </div>
+      </aside>
+
+      <header className="account-actionbar" data-scrolled={scrolled || undefined}>
+        <div className="account-actionbar__inner">
+          <Link href="/account" className="account-actionbar__brand" aria-label={nav.brandAria}>
+            <img src="/bcai-icon.png" alt="" />
+            <span>{dict.common.brandName}</span>
+          </Link>
+
+          <div className="account-actionbar__spacer" />
+
+          <div className="account-actionbar__actions">
+            <Link
+              href="/account/notifications"
+              className="account-iconbtn"
+              aria-label={nav.notifications}
+            >
+              <BellIcon />
+              {unread > 0 && (
+                <span className="account-iconbtn__badge" aria-hidden>
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </Link>
+
+            <AccountLocaleSwitcher />
+
+            <AccountThemeToggle />
+
+            <div className="account-usermenu">
+              <button
+                type="button"
+                className="account-usermenu__trigger"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+              >
+                <span className="account-usermenu__avatar" aria-hidden>
+                  {initial}
+                </span>
+                <span className="account-usermenu__name">{displayName}</span>
+                <ChevronDownIcon />
+              </button>
+              {menuOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-hidden
+                    onClick={() => setMenuOpen(false)}
+                    style={{
+                      position: "fixed",
+                      inset: 0,
+                      zIndex: 110,
+                      background: "transparent",
+                      border: 0,
+                      cursor: "default",
+                    }}
+                  />
+                  <div className="account-usermenu__content" role="menu">
+                    <div className="account-usermenu__head">
+                      <b>{displayName}</b>
+                      <span>● {customer.email}</span>
+                    </div>
+                    {SECONDARY.map((item) => (
+                      <Link key={item.id} href={item.url} role="menuitem">
+                        {item.icon}
+                        {nav[item.id]}
+                      </Link>
+                    ))}
+                    <button type="button" onClick={handleLogout} role="menuitem">
+                      <LogOutIcon />
+                      {t.actions.logout}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="account-iconbtn account-topnav__menu"
+              aria-label={nav.openMenu}
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((v) => !v)}
+            >
+              {mobileOpen ? <XIcon /> : <MenuIcon />}
+            </button>
+          </div>
+        </div>
+
+        {mobileOpen && (
+          <nav className="account-mobilemenu" aria-label={nav.navAria}>
+            {[...PRIMARY, ...SECONDARY].map((item) => (
+              <Link
+                key={item.id}
+                href={item.url}
+                className="account-rail__link"
+                data-active={isActive(item.url) || undefined}
+              >
+                {item.icon}
+                {nav[item.id]}
+              </Link>
+            ))}
+          </nav>
+        )}
+      </header>
+    </>
   );
 }

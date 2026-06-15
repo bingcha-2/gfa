@@ -135,21 +135,23 @@ export function AccountOverviewPanel({
     <div className="account-overview" data-testid="account-overview-panel">
       <section className="account-overview-hero">
         <div className="account-overview-hero__copy">
-          <span className="account-overview-hero__eyebrow">
-            <span
-              className="account-status-lamp"
-              data-tone={loadError ? "info" : STATE_LAMP[state]}
-            />
-            MEMBERSHIP · {loadError ? o.statusError : eyebrowLabel[state]}
-          </span>
-          <h1>
-            {o.heroPre}
-            <span className="am">{o.heroBrand}</span>
-            <br />
-            {o.heroTitle}
-          </h1>
-          <p className="account-overview-hero__sub">{o.heroSub}</p>
-          <div className="account-overview-hero__actions">
+          <div className="account-overview-status">
+            <span className="account-overview-hero__eyebrow">
+              <span
+                className="account-status-lamp"
+                data-tone={loadError ? "info" : STATE_LAMP[state]}
+              />
+              MEMBERSHIP / {loadError ? o.statusError : eyebrowLabel[state]}
+            </span>
+            <h1>
+              {o.heroPre}
+              <span className="am">{o.heroBrand}</span>
+              <br />
+              {o.heroTitle}
+            </h1>
+            <p className="account-overview-hero__sub">{o.heroSub}</p>
+          </div>
+          <div className="account-overview-hero__actions account-overview-actions">
             <Link href="/account/billing" className="account-btn account-btn--primary">
               <RefreshCwIcon />
               {needsRenew ? o.renewNow : hasPlan ? o.renewOrBuy : o.buy}
@@ -257,7 +259,7 @@ export function AccountOverviewPanel({
         <p className="account-overview-error">{o.loadErrorKeepEntry}</p>
       )}
 
-      <section className="account-overview-stats" aria-label={o.statsAria}>
+      <section className="account-overview-stats account-overview-statstrip" aria-label={o.statsAria}>
         <div>
           <span className="k">{o.statQuota}</span>
           <span className="v acc-mono" data-tone={remainPct !== null && remainPct > 20 ? "ok" : undefined}>

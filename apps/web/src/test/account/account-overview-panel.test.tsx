@@ -79,6 +79,23 @@ describe("AccountOverviewPanel", () => {
     expect(screen.getByText("订单与支付")).toBeInTheDocument();
   });
 
+  it("groups operational status into the redesigned overview layout", () => {
+    render(
+      <AccountOverviewPanel
+        customerId="cus_1"
+        overview={overview}
+        loading={false}
+        loadError={false}
+      />
+    );
+
+    const panel = screen.getByTestId("account-overview-panel");
+    expect(panel.querySelector(".account-overview-status")).toBeInTheDocument();
+    expect(panel.querySelector(".account-overview-actions")).toBeInTheDocument();
+    expect(panel.querySelector(".account-overview-statstrip")).toBeInTheDocument();
+    expect(panel.querySelector(".account-pass")).toBeInTheDocument();
+  });
+
   it("keeps purchase and client setup actions visible when there is no plan", () => {
     render(
       <AccountOverviewPanel

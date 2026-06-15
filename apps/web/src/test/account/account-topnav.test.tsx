@@ -23,22 +23,30 @@ vi.mock("@/components/account/account-provider", () => ({
 }));
 
 describe("AccountTopNav", () => {
-  it("marks the current account section inside the account-owned top nav", () => {
+  it("renders a desktop account rail and keeps billing active", () => {
     render(<AccountTopNav />);
 
     const billingLink = screen.getByRole("link", { name: /订阅|Billing/i });
 
     expect(billingLink).toHaveAttribute("data-active");
-    expect(billingLink).toHaveClass("account-topnav__link");
-    expect(document.querySelector(".account-topnav")).toBeInTheDocument();
+    expect(billingLink).toHaveClass("account-rail__link");
+    expect(document.querySelector(".account-rail")).toBeInTheDocument();
     // The old sidebar shell is gone.
     expect(document.querySelector(".account-client-sidebar")).not.toBeInTheDocument();
   });
 
-  it("places 我的 (account hub) as the last primary nav item and drops the standalone 设备 link", () => {
+  it("keeps account actions in the top action bar", () => {
     render(<AccountTopNav />);
 
-    const linksRow = document.querySelector(".account-topnav__links");
+    expect(document.querySelector(".account-actionbar")).toBeInTheDocument();
+    expect(screen.getByLabelText(/通知|Notifications/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /菜单|Menu/i })).toBeInTheDocument();
+  });
+
+  it("places 我的 (account hub) as the last primary rail item and drops the standalone 设备 link", () => {
+    render(<AccountTopNav />);
+
+    const linksRow = document.querySelector(".account-rail__nav");
     expect(linksRow).toBeTruthy();
 
     const links = within(linksRow as HTMLElement).getAllByRole("link");
