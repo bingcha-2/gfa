@@ -192,7 +192,7 @@ describe('AccessKeyStore', () => {
   // ── Flush to disk ──────────────────────────────────────────────────────
 
   describe('flush', () => {
-    it('should persist changes to disk after flush', async () => {
+    it('recordUsage does NOT persist to disk — usage lives in DB (CardTokenUsage), file untouched', async () => {
       const store = makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
         totalRequests: 0, usageEvents: [], tokenUsageEvents: [],
@@ -201,12 +201,14 @@ describe('AccessKeyStore', () => {
       store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50 }, '');
       store.flush();
 
-      // Re-read from disk
+      // 上报路径不再标脏 → flush 不写盘:磁盘计数维持初始 0。
       const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
-      expect(raw.keys[0].totalRequests).toBe(1);
+      expect(raw.keys[0].totalRequests).toBe(0);
+      // 但内存计数已就地更新(供本进程 publicStatus 展示;重启由 DB 重建)。
+      expect(store.findById('k1')!.totalRequests).toBe(1);
     });
 
-    it('does NOT persist per-window event arrays to disk — they are in-memory only', async () => {
+    it('recordUsage keeps event arrays + counters in memory only — nothing reaches disk', async () => {
       const store = makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
         totalRequests: 0, windowStartedAt: Date.now(), weeklyWindowStartedAt: Date.now(),
@@ -214,16 +216,17 @@ describe('AccessKeyStore', () => {
       store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50, rawTotalTokens: 150 }, 'claude-opus-4', '', 'anthropic');
       store.flush();
 
-      // On disk: counters persisted, but the three event arrays are omitted so the
-      // file stays small and JSON.stringify never hits V8's max-string-length.
+      // 磁盘:上报不落盘 —— 计数维持 0,事件数组也从不写出(serializable() 仍会剥离,
+      // 这里因根本没写盘而天然不存在)。
       const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
-      expect(raw.keys[0].totalRequests).toBe(1);
+      expect(raw.keys[0].totalRequests).toBe(0);
       expect(raw.keys[0].usageEvents).toBeUndefined();
       expect(raw.keys[0].tokenUsageEvents).toBeUndefined();
       expect(raw.keys[0].weeklyTokenUsageEvents).toBeUndefined();
 
-      // In memory: events remain — they are the authoritative rate-limit window.
+      // 内存:计数 + 事件都在 —— 限额窗口的权威来源。
       const inMem = store.findById('k1')!;
+      expect(inMem.totalRequests).toBe(1);
       expect((inMem.tokenUsageEvents || []).length).toBeGreaterThan(0);
     });
 

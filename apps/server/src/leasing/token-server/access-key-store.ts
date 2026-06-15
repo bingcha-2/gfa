@@ -904,7 +904,11 @@ export class AccessKeyStore {
       });
     }
 
-    this.markDirty();
+    // 用量上报【一律不落 access-keys.json】(不管文件卡还是订阅):
+    // 用量记账已全量走 DB(CardTokenUsage,见 token-usage-tracker),限额窗口开机从该日志重建;
+    // access-keys.json 里的累计计数只是历史快照、无人据此判限额。文件仅作静态卡的【配置】存储,
+    // 只在 admin 增删改卡时写(markDirty 的其它调用点)。所以上报路径这里不 markDirty。
+    // record 的内存计数已就地更新,供本进程 publicStatus 展示;重启由 DB 重建,不依赖文件。
     return true;
   }
 
