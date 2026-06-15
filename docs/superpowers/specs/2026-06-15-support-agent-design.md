@@ -22,6 +22,7 @@ bot 能力:
 |---|---|
 | 工作模式 | 全自动实时对话客服 |
 | **知识来源** | **从工单提炼的知识库(知识飞轮)**,非手写 FAQ |
+| **提炼触发** | **工作人员在工单页勾选工单手动触发**(非自动),只挑值得沉淀的 |
 | **知识入库** | AI 提炼成**草稿**,后台**人工审核**通过才生效 |
 | **知识检索(v1)** | 关键词 + AI 选标题,**不依赖 embedding**;Phase 2 升级语义检索 |
 | 模型渠道 | 国内供应商,OpenAI 兼容接口,env 切换(DeepSeek/千问/豆包) |
@@ -46,7 +47,7 @@ bot 调 create_support_ticket 转人工(带上对话上下文)
   ↓
 你 / 客服在现有工单系统回复、解决、关闭
   ↓
-[工单关闭] 触发 BullMQ 提炼任务:
+[工作人员在工单页勾选有价值的工单 → 点"提炼知识"] 入队 BullMQ:
    LLM 读工单全文 → 提炼 { 问题, 通用解法, 分类, 是否值得入库 }
    去隐私 / 去客户专属信息 / 写成通用版
   ↓
@@ -154,6 +155,9 @@ support-knowledge-admin/
 POST /api/account/support/chat         # body {conversationId?, message} → SSE: delta|tool|done|error
 GET  /api/account/support/conversation # 载当前客户最近会话(重开续聊)
 
+# 后台:工作人员手动提炼 (ConsoleJwtGuard)
+POST   /api/console/tickets/distill            # body{ticketIds[]} 勾选工单→入队提炼,返回 {queued}
+
 # 后台知识审核 (ConsoleJwtGuard)
 GET    /api/console/support-knowledge          # 列表(按 status 过滤:DRAFT/MERGE_SUGGESTED/PUBLISHED)
 PATCH  /api/console/support-knowledge/:id       # 编辑 question/answer/category
@@ -211,8 +215,8 @@ model KnowledgeEntry {
 
 ### 提炼任务(BullMQ)
 
-- **触发**:工单状态变 `CLOSED`(在 `TicketAdminService` 改状态处入队 `distill` 任务,带 ticketId)。
-- **消费**:`distill.processor` 读工单全文 → LLM 提炼 `{question, answer, category, worthSaving}`(去隐私、泛化、判断是否值得入库)→ `worthSaving=false` 则丢弃。
+- **触发**:**工作人员手动**——在后台工单页勾选若干工单点"提炼知识",或在工单详情页点"提炼成知识"。后端 `POST /api/console/tickets/distill {ticketIds[]}` 把每个 ticketId 入队 `distill` 任务。**不自动触发**(不在工单关闭时跑)。
+- **消费**:`distill.processor` 读工单全文 → LLM 提炼 `{question, answer, category, worthSaving}`(去隐私、泛化、判断是否值得入库)→ `worthSaving=false` 则丢弃(回执提示"该工单无可沉淀知识")。
 - **去重/合并(就地)**:`worthSaving` 时,先用同一检索找现有 `PUBLISHED`/`DRAFT` 同类条目:
   - **无同类** → 建新草稿 `KnowledgeEntry(status=DRAFT, sourceTicketId)`。
   - **有同类** → 不新建重复条目,而是 LLM 把「现有答案 + 本次新案例」合并成更完善答案,生成一条**更新建议**:`status=MERGE_SUGGESTED`、`mergeTargetId=<现有条目>`、存合并后答案。审核页显示为"建议更新知识 #X(并入新案例)"带前后对比;通过则**更新目标条目**(非新增),该建议归档。
@@ -238,6 +242,12 @@ model KnowledgeEntry {
 
 挂 account 布局,右下角气泡 → shadcn 聊天浮层。进入 `GET /conversation` 载历史;发送用 fetch + ReadableStream 读 SSE,按 `delta` 逐字渲染、`tool` 显示状态条、`done` 收尾;命中升级时渲染带 ticketId 的"查看工单"卡片跳 `/account/tickets`。`SUPPORT_AGENT_ENABLED` 关时不渲染。`user-api.ts` 加方法。
 
+### 后台工单页加"提炼知识"入口
+
+- `/console/tickets` 列表:加多选(勾选框)+ "提炼知识"按钮 → 调 `POST /api/console/tickets/distill {ticketIds}`,toast "已提交 N 个工单提炼,稍后到知识审核页查看草稿"。
+- 工单详情页:加"提炼成知识"按钮(单条)。
+- 仅 ADMIN/OPERATIONS 可见。
+
 ### 后台知识审核页 `/console/.../support-knowledge`
 
 - 侧边栏(`console-sidebar.tsx`「系统」组)加入口,权限 ADMIN/OPERATIONS。
@@ -262,7 +272,7 @@ model KnowledgeEntry {
 
 - 工具单测:数据隔离(他人 id 无效)、脱敏字段被删。
 - agent 循环:mock LLM,覆盖 直接答 / 查一次知识再答 / 升级建工单 / 超轮兜底 / 工具解析失败降级。
-- 提炼任务:mock LLM,覆盖 worthSaving 真假、去隐私、无同类→新草稿、有同类→生成 MERGE_SUGGESTED。
+- 提炼任务:手动入队 `tickets/distill {ticketIds}`;mock LLM,覆盖 worthSaving 真假、去隐私、无同类→新草稿、有同类→生成 MERGE_SUGGESTED。
 - 合并:发布 MERGE_SUGGESTED 更新目标条目+归档建议;手动 merge 揉合答案+其余归档。
 - 检索:`searchTitles` 小库全给/大库粗筛、`getAnswer` 取答+usageCount 自增。
 - SSE 端点集成:事件序列、归属 403。
@@ -272,7 +282,7 @@ model KnowledgeEntry {
 ## 实现顺序(建议分期)
 
 - **P1 闭环最小可用**:Prisma 三模型 + LLM client + agent 循环 + 4 个只读/建单工具 + `search_knowledge`(关键词) + SSE 接口 + 悬浮气泡前端。此时 bot 能聊、能查本人信息、查不到就转人工。
-- **P2 知识飞轮**:工单关闭触发 BullMQ 提炼 → 草稿 + 后台审核页。此后知识自动积累、bot 越用越能答。
+- **P2 知识飞轮**:工单页勾选工单手动提炼(BullMQ) → 草稿 + 后台审核页。此后人工挑工单沉淀、bot 越用越能答。
 - **P3 增强(可选)**:历史工单批量提炼冷启动;embedding 语义检索;运营看板(deflection 率、高频未答问题);后台回看 bot 会话。
 
 (P1+P2 即完整飞轮;P3 为优化。)
