@@ -9,7 +9,7 @@ html[data-mkt="light"] { background: oklch(0.992 0.002 60); }
 html[data-mkt="dark"] { background: oklch(0.175 0.022 278); }
 
 .mkt {
-  /* —— Light（默认）—— */
+  /* Light（默认） */
   --bg: oklch(0.992 0.002 60);
   --surface: oklch(1 0 0);
   --surface-2: oklch(0.974 0.004 60);
@@ -26,12 +26,12 @@ html[data-mkt="dark"] { background: oklch(0.175 0.022 278); }
   --glow: oklch(0.7 0.18 47 / 0.2);
   --ok: oklch(0.62 0.15 150);
 
-  /* —— 生态标识色 —— */
+  /* 生态标识色 */
   --anti: oklch(0.55 0.18 274);   /* Antigravity 靛 */
   --codex: oklch(0.6 0.13 162);   /* Codex 绿 */
   --claude: oklch(0.55 0.2 305);  /* Claude 紫 */
 
-  /* —— 尺度 —— */
+  /* 尺度 */
   --radius: 0.75rem;
   --shadow-sm: 0 1px 2px oklch(0.3 0.02 50 / 0.04), 0 1px 3px oklch(0.3 0.02 50 / 0.05);
   --shadow-md: 0 4px 14px oklch(0.3 0.02 50 / 0.08), 0 2px 6px oklch(0.3 0.02 50 / 0.05);
@@ -573,8 +573,17 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
 }
 .mkt-feature-row:first-child { border-top: 0; padding-top: 0; }
 .mkt-feature-row b {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   color: var(--ink);
   font-size: 0.96rem;
+}
+.mkt-feature-row b svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--primary);
+  flex-shrink: 0;
 }
 .mkt-feature-row span,
 .mkt-feature-row p {
@@ -612,6 +621,11 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
   height: 28px;
   object-fit: contain;
 }
+.mkt-logo-tile__mark svg {
+  width: 24px;
+  height: 24px;
+  color: var(--primary);
+}
 .mkt-logo-tile b { font-size: 1rem; }
 .mkt-logo-tile span { color: var(--ink-muted); font-size: 0.88rem; line-height: 1.55; }
 
@@ -643,8 +657,17 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
   font-weight: 700;
 }
 .mkt-process__item h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 1rem;
   font-weight: 700;
+}
+.mkt-process__item h3 svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--primary);
+  flex-shrink: 0;
 }
 .mkt-process__item p {
   margin-top: 0.25rem;
@@ -677,8 +700,21 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
   background: color-mix(in oklch, var(--surface) 88%, var(--bg));
 }
 .mkt-support-panel__item b {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   color: var(--ink);
   font-size: 0.95rem;
+}
+.mkt-support-panel__item b svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.mkt-support-panel__item a {
+  color: var(--primary-text);
+  font-weight: 650;
 }
 .mkt-support-panel__item span,
 .mkt-support-panel__item p {

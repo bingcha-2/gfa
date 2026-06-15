@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Check, Cloud, KeyRound, Laptop, LockKeyhole, Route, ShieldCheck } from "lucide-react";
 import { MarketingShell } from "@/components/marketing/shell";
 import { getDict } from "@/lib/i18n/server";
 
@@ -7,23 +8,8 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t.meta.howTitle, description: t.meta.howDescription };
 }
 
-const Bulb = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z" />
-  </svg>
-);
-const Lock = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-  </svg>
-);
-const Check = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M20 6 9 17l-5-5" />
-  </svg>
-);
-
 const PRODUCT_DOTS = ["var(--anti)", "var(--codex)", "var(--claude)"];
+const FLOW_ICONS = [Laptop, KeyRound, Route, Cloud];
 
 export default async function HowItWorksPage() {
   const t = await getDict();
@@ -37,88 +23,79 @@ export default async function HowItWorksPage() {
             <p>{t.how.sub}</p>
           </div>
 
-          {/* 架构概述 */}
-          <div className="mkt-block">
-            <h2>{t.how.archTitle}</h2>
-            <div className="mkt-prose">
+          <div className="mkt-feature-band mkt-feature-band--split mkt-feature-band--accent mkt-block">
+            <div className="mkt-feature-band__content">
+              <h2>{t.how.archTitle}</h2>
               <p>
                 {t.how.archP1Pre}<strong>{t.how.archP1Strong1}</strong>{t.how.archP1Mid}
                 <strong>{t.how.archP1Strong2}</strong>{t.how.archP1Post}
               </p>
             </div>
-            <div className="mkt-note">
-              <div className="mkt-note__h"><Bulb />{t.how.coreNoteTitle}</div>
-              <p>{t.how.coreNote}</p>
+            <div className="mkt-process">
+              {t.how.flow.map((s, i) => {
+                const Icon = FLOW_ICONS[i] ?? Check;
+                return (
+                  <article className="mkt-process__item" key={s.t}>
+                    <div>
+                      <h3><Icon aria-hidden /> {s.t}</h3>
+                      <p>{s.d}</p>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
 
-          {/* 请求生命周期 */}
-          <div className="mkt-block">
-            <h2>{t.how.lifecycleTitle}</h2>
-            <div className="mkt-steps">
-              {t.how.flow.map((s, i) => (
-                <div className="mkt-step" key={s.t}>
-                  <span className="mkt-step__n">{i + 1}</span>
-                  <div className="mkt-step__t">{s.t}</div>
-                  <p className="mkt-step__d">{s.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 号池轮换 */}
-          <div className="mkt-block">
-            <h2>{t.how.poolTitle}</h2>
-            <div className="mkt-prose" style={{ marginBottom: "1.25rem" }}>
-              <p>{t.how.poolIntro}</p>
-            </div>
-            <div className="mkt-caps">
-              {t.how.pool.map((f) => (
-                <div className="mkt-cap" key={f.t}>
-                  <span className="mkt-cap__icon"><Check /></span>
-                  <div>
-                    <div className="mkt-cap__t">{f.t}</div>
-                    <p className="mkt-cap__d">{f.d}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 各产品接管体验 */}
-          <div className="mkt-block">
-            <h2>{t.how.productsTitle}</h2>
-            <div className="mkt-spec">
-              {t.how.products.map((p, i) => (
-                <div className="mkt-spec__item" key={p.name} style={{ ["--dot" as string]: PRODUCT_DOTS[i] }}>
-                  <span className="mkt-spec__name">{p.name}</span>
-                  <ul className="mkt-spec__list">
-                    {p.items.map((h) => <li key={h}>{h}</li>)}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 安全模型 */}
-          <div className="mkt-block" style={{ marginBottom: 0 }}>
-            <h2>{t.how.safetyTitle}</h2>
-            <div className="mkt-trust">
-              <div className="mkt-trust__head">
-                <span className="mkt-trust__badge"><Lock /></span>
-                <div>
-                  <h3 className="mkt-h2" style={{ fontSize: "clamp(1.4rem, 2.2vw, 1.75rem)" }}>{t.how.safetyHeadline}</h3>
-                  <p className="mkt-lead" style={{ marginTop: "0.35rem" }}>{t.how.safetyLead}</p>
-                </div>
+          <div className="mkt-shell-grid mkt-block">
+            <div className="mkt-support-panel">
+              <div className="mkt-feature-band__content">
+                <h2>{t.how.poolTitle}</h2>
+                <p>{t.how.poolIntro}</p>
               </div>
-              <div className="mkt-trust__points">
-                {t.how.safe.map(([b, s]) => (
-                  <div className="mkt-trust__point" key={b}>
-                    <b><Check />{b}</b>
-                    <span>{s}</span>
-                  </div>
+              <div className="mkt-support-panel__grid">
+                {t.how.pool.map((f) => (
+                  <article className="mkt-support-panel__item" key={f.t}>
+                    <b><ShieldCheck aria-hidden /> {f.t}</b>
+                    <span>{f.d}</span>
+                  </article>
                 ))}
               </div>
+            </div>
+            <div className="mkt-feature-band">
+              <div className="mkt-feature-band__content">
+                <span className="mkt-kicker">{t.how.coreNoteTitle}</span>
+                <h2>{t.how.lifecycleTitle}</h2>
+                <p>{t.how.coreNote}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mkt-feature-band mkt-block">
+            <div className="mkt-feature-band__content">
+              <h2>{t.how.productsTitle}</h2>
+            </div>
+            <div className="mkt-feature-band__rows">
+              {t.how.products.map((p, i) => (
+                <article className="mkt-feature-row" key={p.name} style={{ ["--dot" as string]: PRODUCT_DOTS[i] }}>
+                  <b>{p.name}</b>
+                  <p>{p.items.join(" / ")}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="mkt-support-panel">
+            <div className="mkt-feature-band__content">
+              <h2>{t.how.safetyTitle}</h2>
+              <p>{t.how.safetyLead}</p>
+            </div>
+            <div className="mkt-support-panel__grid">
+              {t.how.safe.map(([b, s]) => (
+                <article className="mkt-support-panel__item" key={b}>
+                  <b><LockKeyhole aria-hidden /> {b}</b>
+                  <span>{s}</span>
+                </article>
+              ))}
             </div>
           </div>
         </div>

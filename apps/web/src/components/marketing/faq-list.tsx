@@ -48,7 +48,7 @@ export function FaqList({
   return (
     <div className="mkt-faq">
       {(contactWechat || contactQrcodeUrl) && (
-        <div className="mkt-faq__contact">
+        <div className="mkt-faq__contact mkt-support-panel__item">
           <div>
             <div className="mkt-faq__contact-t">{t.faqPage.contactTitle}</div>
             <div className="mkt-faq__contact-d">{t.faqPage.contactDesc}</div>
