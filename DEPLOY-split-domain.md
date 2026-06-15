@@ -127,6 +127,7 @@ pnpm db:migrate:status     # 应显示 Database schema is up to date!
 | `CUSTOMER_JWT_SECRET` | **生产必填**,客户端(toC)JWT,≥32 字符,与 `JWT_SECRET` 分开。不设则 server 启动 FATAL 退出。生成:`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `WEB_BASE_URL` | `https://my.bcai.space`(邮件验证/改密链接基址) |
 | `NEXT_PUBLIC_ACCOUNT_URL` | `https://my.bcai.space/account`。官网各处「用户中心」按钮目标(`lib/account/portal-url.ts` 的 `ACCOUNT_URL`)。不设则回退相对 `/account` → 被 apex 404。**`NEXT_PUBLIC_*` 构建期内联,改后必须重 build web** |
+| `NEXT_PUBLIC_MARKETING_ORIGIN` | `https://bcai.space`。让 `my/console` 子域上的跨域官网链接(下载页、首页等)变成绝对 URL(`lib/marketing-url.ts` 的 `marketingUrl()`)。不设则回退相对路径 → 被子域的 host-isolation 404。**构建期内联,改后必须重 build web** |
 | `CORS_ALLOWED_ORIGINS` | `https://my.bcai.space,https://console.bcai.space` |
 | `MARKETING_HOST`/`ACCOUNT_HOST`/`CONSOLE_HOST` | `bcai.space`/`my.bcai.space`/`console.bcai.space`(middleware 第二层;全空=no-op) |
 | `ACCOUNT_COOKIE_DOMAIN`/`CONSOLE_COOKIE_DOMAIN` | 各自子域,**切勿设父域** `.bcai.space` |
@@ -180,7 +181,7 @@ Get-Content .\logs\daemon.log -Tail 80
 3. **切分支被 `dev.db` 卡住** → 服务/worker 进程锁文件。见 §2。
 4. **cookie 域不要设父域** `.bcai.space` → 会跨子域共享 cookie,破坏隔离。
 5. **`@gfa/shared` 没 build** → server/web 编译报缺 `@nestjs/*` 等。先 build shared。
-6. **官网「用户中心」跳 apex 被 404** → 没设 `NEXT_PUBLIC_ACCOUNT_URL`(回退相对 `/account`)。设成子域绝对地址 **并重 build web**(NEXT_PUBLIC_ 构建期内联,光重启无效)。
+6. **官网「用户中心」跳 apex 被 404** → 没设 `NEXT_PUBLIC_ACCOUNT_URL`(回退相对 `/account`)。设成子域绝对地址 **并重 build web**(NEXT_PUBLIC_ 构建期内联,光重启无效)。同理,`my/console` 子域上的下载页/首页等跨域链接 404 → 没设 `NEXT_PUBLIC_MARKETING_ORIGIN`,设成 `https://<apex>` 并重 build。
 7. **Caddy 不是 Windows 服务**:`D:\caddy.exe start` 是游离进程,崩溃或重启机器都不会自动拉起,挂了则整站连不上(443 无监听)。排查:`Get-Process caddy` 为空 + `netstat | findstr :443` 无监听 → `D:\caddy.exe start --config D:\gfa\Caddyfile` 重启。**建议注册成 Windows 服务/加开机自启**以免单点。
 
 ---
@@ -189,9 +190,9 @@ Get-Content .\logs\daemon.log -Tail 80
 
 把以下文件里的 `bcai.space` 全部替换为目标域,并重新配 DNS + 防火墙,然后 §6/§7:
 - `D:\gfa\Caddyfile`(四个 site 块 + 头部注释)
-- `D:\gfa\.env`:`WEB_BASE_URL`、`NEXT_PUBLIC_ACCOUNT_URL`、`CORS_ALLOWED_ORIGINS`、`MARKETING_HOST`/`ACCOUNT_HOST`/`CONSOLE_HOST`、
+- `D:\gfa\.env`:`WEB_BASE_URL`、`NEXT_PUBLIC_ACCOUNT_URL`、`NEXT_PUBLIC_MARKETING_ORIGIN`、`CORS_ALLOWED_ORIGINS`、`MARKETING_HOST`/`ACCOUNT_HOST`/`CONSOLE_HOST`、
   `ACCOUNT_COOKIE_DOMAIN`/`CONSOLE_COOKIE_DOMAIN`、`EPAY_NOTIFY_URL`、`EPAY_RETURN_URL`
-  (改完 `NEXT_PUBLIC_ACCOUNT_URL` 等 NEXT_PUBLIC_ 变量后**必须重 build web**)
+  (改完任何 `NEXT_PUBLIC_*` 变量后**必须重 build web**)
 - 桌面客户端升级源(`apps/app/updater.go` 的 `UpdateCheckURL`)若也要换域,需改源码并重新出包。
 
 > 管理后台凭据(本环境):登录邮箱 `admin@gfa.local`(SUPER_ADMIN)等,见旧库数据。
