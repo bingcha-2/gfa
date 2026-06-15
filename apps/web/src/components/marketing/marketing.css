@@ -227,12 +227,6 @@ html[data-mkt="dark"] .mkt-iconbtn .moon { display: none; }
 .mkt-h1 .accent { color: var(--primary); }
 .mkt-hero__sub { font-size: clamp(1.0625rem, 1.6vw, 1.25rem); color: var(--ink-muted); line-height: 1.65; max-width: 36ch; text-wrap: pretty; }
 .mkt-hero__cta { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-.mkt-hero__trust {
-  display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: center;
-  font-size: 0.875rem; color: var(--ink-muted); margin-top: 0.25rem;
-}
-.mkt-hero__trust span { display: inline-flex; align-items: center; gap: 0.4rem; }
-.mkt-hero__trust svg { width: 1rem; height: 1rem; color: var(--ok); }
 
 /* ───────── 客户端 mock（产品图）───────── */
 .mkt-mock {
