@@ -1,18 +1,15 @@
 {
-  "version": "9.7.0",
-  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.0/BingchaAI-9.7.0.exe",
-  "sha256": "FB7FB2BE2CBCF6343E5791024C75B07EA2B685F7542107BEB5BD4290304C7753",
-  "size": 21147136,
-  "installerUrl": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.0/BingchaAI-9.7.0-setup.exe",
-  "installerSha256": "8C66B6CDDF32938675F3CFFC56F3092F9408A31CDEFD97E8893E4912871FDD8A",
-  "installerSize": 11191929,
-  "changelog": "界面优化与性能提升",
+  "version": "9.7.1",
+  "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.1/BingchaAI-9.7.1.exe",
+  "sha256": "AB883F357A2E00AB94E78256B4E971C9AF64A1C318C2236AA86E4E1133461258",
+  "size": 21047296,
+  "changelog": "刷新时同步上游额度并上报；每30分钟自动刷新一次上游余量",
   "minVersion": "9.7.0",
   "macOS": {
     "arm64": {
-      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.0/BingchaAI-9.7.0-arm64.dmg",
-      "sha256": "A087C872F496408CEFFBBD6AD78321E841264DEAB4335718B40A0BF329FA2FFE",
-      "size": 10333752
+      "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.1/BingchaAI-9.7.1-arm64.dmg",
+      "sha256": "CC424157412E2AD6C83812B91B5129BAB65835EDD68B056061E32A688A3BDCFA",
+      "size": 10243783
     },
     "amd64": {
       "url": "https://github.com/bingcha-2/bcai-releases/releases/download/wails-v9.7.0/BingchaAI-9.7.0-amd64.dmg",
