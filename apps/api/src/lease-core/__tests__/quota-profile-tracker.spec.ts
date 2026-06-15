@@ -48,12 +48,12 @@ describe("QuotaProfileTracker (SQL-backed)", () => {
     expect(tracker.getProfile("antigravity", "ultra", "claude")).toBeNull();
   });
 
-  it("drops low-consumed samples (consumed < 0.2) but accepts the 0.2 boundary", () => {
+  it("drops low-consumed samples (consumed < 0.10) but accepts the 0.10 boundary", () => {
     const tracker = new QuotaProfileTracker(undefined, { now: () => NOW });
     active = tracker;
-    tracker.recordSample("antigravity", "ultra", "claude", 200000, 0.85, false); // consumed 0.15 → drop
+    tracker.recordSample("antigravity", "ultra", "claude", 200000, 0.95, false); // consumed 0.05 → drop
     expect(tracker.getProfile("antigravity", "ultra", "claude")).toBeNull();
-    tracker.recordSample("antigravity", "ultra", "claude", 200000, 0.8, false); // consumed 0.20 → keep (float-safe)
+    tracker.recordSample("antigravity", "ultra", "claude", 200000, 0.9, false); // consumed 0.10 → keep (float-safe)
     expect(tracker.getProfile("antigravity", "ultra", "claude")?.samples5h).toBe(1);
   });
 
