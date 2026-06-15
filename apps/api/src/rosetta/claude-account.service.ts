@@ -17,7 +17,7 @@ import type { RosettaContext } from "./lib/context";
 import { fetchAnthropicMagicLink } from "./lib/imap-magic-link";
 import { fetchAnthropicMagicLinkViaWeb } from "./lib/mailcom-web-magic-link";
 import { base64Url, codeChallenge } from "./lib/pkce";
-import { triggerMagicLinkViaBrowser, type PlaywrightOAuthSession } from "./lib/playwright-oauth";
+import { loginViaSessionKey, triggerMagicLinkViaBrowser, type PlaywrightOAuthSession } from "./lib/playwright-oauth";
 import { nowIso, readJson, setAccountProxyInPool, toSocks5ProxyUrl, writeJson } from "./lib/store";
 
 // Claude (Anthropic 订阅 OAuth) — 值对照 Claude Code 2.x 二进制(平台已迁到 platform.claude.com /
@@ -537,17 +537,20 @@ export class ClaudeAccountService {
     }
 
     const adspowerProfileId = resolveAnthropicAdspowerProfileId(payload.adspowerProfileId, storedAdspowerProfileId);
+    const sessionKey = String(payload.sessionKey || "").trim();
 
     if (!adspowerProfileId && !proxyUrl) {
       return { ok: false, error: "未使用指纹浏览器时，proxyUrl 必填" };
     }
-    if (!password) return { ok: false, error: "password 必填(用于抓取 magic link)" };
+    // SK 直登用注入 cookie 当已登录态，不抓邮件，所以不需要邮箱密码;
+    // 只有走 magic-link 流程(无 sessionKey)时才强制 password。
+    if (!sessionKey && !password) return { ok: false, error: "password 必填(用于抓取 magic link)" };
 
     const taskId = base64Url(crypto.randomBytes(12));
     this.autoOAuthTask = { taskId, phase: "starting", status: "running" };
 
     // Fire and forget — caller polls via getAutoOAuthStatus
-    this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId, recoveryEmail, totpSecret).catch((err) => {
+    this.runAutoOAuth(taskId, email, password, proxyUrl, adspowerProfileId, recoveryEmail, totpSecret, sessionKey).catch((err) => {
       if (this.autoOAuthTask?.taskId === taskId) {
         this.autoOAuthTask.status = "error";
         this.autoOAuthTask.error = String(err?.message || err);
@@ -580,6 +583,7 @@ export class ClaudeAccountService {
     adspowerProfileId?: string,
     recoveryEmail?: string,
     totpSecret?: string,
+    sessionKey?: string,
   ) {
     const task = this.autoOAuthTask!;
     const step = (phase: string) => {
@@ -602,6 +606,43 @@ export class ClaudeAccountService {
       if (!startResult.ok) throw new Error("OAuth 会话创建失败");
       const pending = this.claudeOAuthPending!;
       pending.mailPassword = password;
+
+      // ── SK 直登分支:有 sessionKey 时注入 cookie 当已登录态,跳过邮箱+magic-link ──
+      // 拿 claude.ai 的 web 会话 cookie(sk-ant-sid0x)走一遍 OAuth authorize,直接换出
+      // 号池要用的 OAuth token。免登邮箱、免抓信。
+      if (sessionKey && sessionKey.trim()) {
+        step(adspowerProfileId ? `SK 直登 (AdsPower ${adspowerProfileId})` : "SK 直登 (SOCKS5)");
+        const sk = await loginViaSessionKey({
+          authorizeUrl: pending.authUrl,
+          sessionKey: sessionKey.trim(),
+          proxyUrl,
+          adspowerProfileId,
+        });
+        if (!sk.ok || !sk.code) throw new Error(sk.error || "SK 直登未拿到 code");
+
+        step("SK 直登拿到 code,换 token 中");
+        const result = await this.completeClaudeOAuthLogin(pending, sk.code, sk.state || pending.state);
+        step(`done! ${result.email} ${result.isUpdate ? "updated" : "added"}`);
+
+        if (result.accountId) {
+          step("refreshing quota");
+          try {
+            await this.refreshClaudeAccountQuota({ accountId: result.accountId });
+            step("quota refreshed");
+          } catch {
+            // non-fatal — account is already saved
+          }
+        }
+
+        if (task.taskId === taskId) {
+          task.status = "done";
+          task.email = result.email;
+          task.isUpdate = result.isUpdate;
+          task.accountId = result.accountId;
+          task.phase = "completed";
+        }
+        return;
+      }
 
       // 2. Browser: navigate to authorize URL → CF challenge → fill email → submit
       step(adspowerProfileId ? `launching AdsPower profile: ${adspowerProfileId}` : "launching browser (SOCKS5 proxy)");

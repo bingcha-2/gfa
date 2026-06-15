@@ -280,6 +280,209 @@ function parseProxyToAdsPowerConfig(proxyUrl: string): any {
   }
 }
 
+// Anti-automation hardening injected before every page load. Extracted verbatim
+// from triggerMagicLinkViaBrowser so the sessionKey-login path runs the exact
+// same stealth as the magic-link path (CF challenge passes the same way).
+function stealthInit() {
+  // 1. Overwrite navigator.webdriver to false
+  Object.defineProperty(navigator, "webdriver", { get: () => false });
+
+  // 2. Mock window.chrome
+  (window as any).chrome = {
+    runtime: {},
+    loadTimes: function () {},
+    csi: function () {},
+    app: {},
+  };
+
+  // 3. Mock navigator.plugins
+  const pdfViewer = {
+    name: "Chrome PDF Viewer",
+    filename: "internal-pdf-viewer",
+    description: "Portable Document Format",
+  };
+  Object.defineProperty(navigator, "plugins", {
+    get: () => [pdfViewer],
+  });
+
+  // 4. Overwrite navigator.permissions.query safely
+  const originalQuery = navigator.permissions.query;
+  navigator.permissions.query = (parameters: any) => {
+    try {
+      if (parameters && parameters.name === "notifications") {
+        const permission = (window as any).Notification ? (window as any).Notification.permission : "default";
+        return Promise.resolve({
+          state: permission,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          onchange: null,
+        } as any);
+      }
+      return originalQuery.call(navigator.permissions, parameters);
+    } catch {
+      return Promise.resolve({
+        state: "default",
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        onchange: null,
+      } as any);
+    }
+  };
+}
+
+// ── SessionKey direct login (skip email + magic link) ────────────────────
+// Given a claude.ai web session cookie (sk-ant-sid0x-…), inject it as the
+// `sessionKey` cookie, navigate the OAuth authorize URL as an already-logged-in
+// user, click the consent button if shown, and capture the ?code= callback.
+// This is the magic-link flow with the email/inbox steps replaced by a cookie.
+//
+// EXTERNAL UNKNOWNS (must be confirmed against a live account + proxy):
+//   - which domain the sid02 cookie belongs to (.claude.ai vs .claude.com) →
+//     we seed BOTH to be safe;
+//   - whether CF passes with only a cookie and no human interaction;
+//   - whether the consent screen auto-appears / its button copy.
+// On failure we return the current page URL to aid debugging.
+export async function loginViaSessionKey(opts: {
+  authorizeUrl: string;
+  sessionKey: string;
+  proxyUrl?: string;
+  adspowerProfileId?: string;
+  timeoutMs?: number;
+}): Promise<ConsumeResult> {
+  let relay: RelayHandle | null = null;
+  let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  let adspowerOpts: { client: AdsPowerClient; profileId: string } | undefined;
+  const timeoutMs = opts.timeoutMs ?? 90_000;
+
+  const sk = (opts.sessionKey || "").trim();
+  if (!sk) return { ok: false, error: "sessionKey 为空" };
+
+  // Claude's web session cookie is named `sessionKey`; value is the sk-ant-sid0x token.
+  const sessionCookie = (domain: string) => ({
+    name: "sessionKey",
+    value: sk,
+    domain,
+    path: "/",
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax" as const,
+  });
+
+  try {
+    let page: Page;
+
+    if (opts.adspowerProfileId) {
+      const host = process.env.ADSPOWER_HOST || "http://127.0.0.1:50325";
+      const apiKey = process.env.ADSPOWER_API_KEY || "72b3bff4dfd7dafca46046dd4c5c1992008379d6ce494bed";
+      const client = new AdsPowerClient({ baseUrl: host, apiKey });
+      const userProxyConfig = opts.proxyUrl ? parseProxyToAdsPowerConfig(opts.proxyUrl) : undefined;
+      console.log(`[sk-login] Connecting to AdsPower Profile: ${opts.adspowerProfileId} with proxyUrl: ${opts.proxyUrl || "profile default"}`);
+
+      const openRes = await client.openProfile(opts.adspowerProfileId, userProxyConfig);
+      adspowerOpts = { client, profileId: opts.adspowerProfileId };
+
+      browser = await chromium.connectOverCDP(openRes.debugUrl);
+      context = browser.contexts()[0];
+      if (!context) throw new Error("未在 AdsPower 浏览器实例中找到上下文");
+
+      // Clear any stale cookies BEFORE seeding our sessionKey so we land logged
+      // in as exactly this account (the profile may hold another account's cookie).
+      await context.clearCookies().catch(() => {});
+      page = context.pages()[0] || (await context.newPage());
+    } else {
+      if (!opts.proxyUrl) throw new Error("未提供 SOCKS5 代理 URL，且未使用指纹浏览器");
+      const upstream = parseUpstream(opts.proxyUrl);
+      relay = await startLocalSocksRelay(upstream);
+      console.log(`[sk-login] local SOCKS5 relay on 127.0.0.1:${relay.port} → ${upstream.host}:${upstream.port}`);
+
+      browser = await chromium.launch({
+        headless: false,
+        proxy: { server: `socks5://127.0.0.1:${relay.port}` },
+        ignoreDefaultArgs: ["--enable-automation"],
+        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+      });
+
+      context = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York",
+      });
+      await context.addInitScript(stealthInit);
+      page = await context.newPage();
+    }
+
+    // Seed the session cookie on both candidate domains before navigating.
+    await context.addCookies([sessionCookie(".claude.ai"), sessionCookie(".claude.com")]).catch((e) => {
+      console.warn(`[sk-login] addCookies failed: ${e?.message || e}`);
+    });
+
+    // Arm the callback listener BEFORE navigating — an already-authorized account
+    // can redirect straight to /oauth/code/callback?code= without a consent click.
+    const callbackPattern = /\/oauth\/code\/callback\?/;
+    const codePromise = new Promise<{ code: string; state: string; url: string }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("等待 OAuth 回调超时")), timeoutMs);
+      const check = (url: string) => {
+        if (!callbackPattern.test(url)) return;
+        clearTimeout(timer);
+        try {
+          const parsed = new URL(url);
+          resolve({ code: parsed.searchParams.get("code") || "", state: parsed.searchParams.get("state") || "", url });
+        } catch {
+          reject(new Error(`回调 URL 解析失败: ${url}`));
+        }
+      };
+      page.on("request", (req) => check(req.url()));
+      page.on("framenavigated", (frame) => {
+        if (frame === page.mainFrame()) check(frame.url());
+      });
+    });
+
+    console.log("[sk-login] navigating to authorize URL with injected sessionKey...");
+    await page.goto(opts.authorizeUrl, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch((e) => {
+      // A mid-navigation redirect to the callback can abort goto — that's fine,
+      // the listener still fires. Only surface non-redirect failures.
+      console.log(`[sk-login] goto note: ${e?.message || e}`);
+    });
+
+    // The consent screen may need an explicit Authorize/Allow click.
+    try {
+      const allowBtn = page.getByRole("button", { name: /allow|authorize|accept|confirm|continue|同意|授权/i });
+      await allowBtn.waitFor({ timeout: 15_000 });
+      await allowBtn.click();
+      console.log("[sk-login] clicked consent/authorize button");
+    } catch {
+      // No consent button — either auto-redirect or not logged in (sessionKey bad).
+    }
+
+    const result = await codePromise;
+    return {
+      ok: Boolean(result.code),
+      code: result.code,
+      state: result.state,
+      callbackUrl: result.url,
+      error: result.code ? undefined : "回调中未包含 code",
+    };
+  } catch (err: any) {
+    let snapshot = "";
+    try {
+      const pgs = context?.pages() || [];
+      if (pgs[0]) {
+        const url = pgs[0].url();
+        const body = await pgs[0].textContent("body").catch(() => "");
+        snapshot = ` (url=${url}, page=${(body || "").slice(0, 200)})`;
+      }
+    } catch {}
+    return { ok: false, error: `SK 直登失败: ${err?.message || err}${snapshot}` };
+  } finally {
+    try { if (context && !opts.adspowerProfileId) await context.close(); } catch {}
+    try { if (browser) await browser.close(); } catch {}
+    if (relay) relay.close();
+    if (adspowerOpts) await adspowerOpts.client.closeProfile(adspowerOpts.profileId).catch(() => {});
+  }
+}
+
 export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Promise<TriggerResult> {
   let relay: RelayHandle | null = null;
   let browser: Browser | null = null;
@@ -333,52 +536,7 @@ export async function triggerMagicLinkViaBrowser(opts: PlaywrightOAuthOpts): Pro
         timezoneId: "America/New_York",
       });
 
-      await context.addInitScript(() => {
-        // 1. Overwrite navigator.webdriver to false
-        Object.defineProperty(navigator, "webdriver", { get: () => false });
-
-        // 2. Mock window.chrome
-        (window as any).chrome = {
-          runtime: {},
-          loadTimes: function() {},
-          csi: function() {},
-          app: {},
-        };
-
-        // 3. Mock navigator.plugins
-        const pdfViewer = {
-          name: "Chrome PDF Viewer",
-          filename: "internal-pdf-viewer",
-          description: "Portable Document Format",
-        };
-        Object.defineProperty(navigator, "plugins", {
-          get: () => [pdfViewer],
-        });
-
-        // 4. Overwrite navigator.permissions.query safely
-        const originalQuery = navigator.permissions.query;
-        navigator.permissions.query = (parameters: any) => {
-          try {
-            if (parameters && parameters.name === "notifications") {
-              const permission = (window as any).Notification ? (window as any).Notification.permission : "default";
-              return Promise.resolve({
-                state: permission,
-                addEventListener: () => {},
-                removeEventListener: () => {},
-                onchange: null,
-              } as any);
-            }
-            return originalQuery.call(navigator.permissions, parameters);
-          } catch {
-            return Promise.resolve({
-              state: "default",
-              addEventListener: () => {},
-              removeEventListener: () => {},
-              onchange: null,
-            } as any);
-          }
-        };
-      });
+      await context.addInitScript(stealthInit);
 
       page = await context.newPage();
     }

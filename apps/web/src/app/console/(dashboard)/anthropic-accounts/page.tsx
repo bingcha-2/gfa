@@ -5,6 +5,7 @@ import { BadgeCheckIcon, BotIcon, ExternalLinkIcon, GaugeIcon, GitMergeIcon, Key
 import { toast } from "sonner";
 import { QuotaProfilesCard } from "@/components/quota-profiles-card";
 import { AccountStatusCell } from "@/components/account-status-cell";
+import { parseAccountLine } from "@/lib/parse-account-line";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -264,64 +265,12 @@ export default function ClaudeAccountsPage() {
   }
 
   function parseImportLine(line: string) {
-    const text = line.trim();
-    if (!text) return null;
-
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (lines.length === 0) return null;
-
-    let email = "";
-    let password = "";
-    let recoveryEmail = "";
-    let totpSecret = "";
-    let sessionKey = "";
-
-    // 1. Detect if any line is a sessionKey
-    const sessionKeyLine = lines.find(l => l.startsWith("sk-ant-") || l.includes("sk-ant-"));
-    if (sessionKeyLine) {
-      sessionKey = sessionKeyLine.match(/sk-ant-sid02-[A-Za-z0-9\-_]+/)?.[0] || sessionKeyLine;
-    }
-
-    // 2. Parse the credentials line
-    const credsLine = lines.find(l => l.includes("@") && !l.startsWith("sk-ant-")) || lines[0];
-    if (credsLine) {
-      const parts = credsLine.split(/----+|---+|--/);
-      if (parts.length >= 2) {
-        email = parts[0]?.trim() || "";
-        password = parts[1]?.trim() || "";
-
-        for (let i = 2; i < parts.length; i++) {
-          const part = parts[i].trim();
-          if (!part) continue;
-
-          if (part.startsWith("sk-ant-")) {
-            sessionKey = part;
-          } else if (part.includes("@")) {
-            recoveryEmail = part;
-          } else if (part.length >= 16 && part.length <= 40 && /^[a-zA-Z2-7]+$/.test(part)) {
-            totpSecret = part;
-          } else {
-            if (parts.length === 3 && i === 2 && !sessionKey) {
-              sessionKey = part;
-            }
-          }
-        }
-      }
-    }
-
-    if (!sessionKey && lines.length > 1) {
-      const lastLine = lines[lines.length - 1];
-      if (lastLine.startsWith("sk-ant-") || lastLine.length > 50) {
-        sessionKey = lastLine;
-      }
-    }
-
+    // 纯解析逻辑抽到 lib/parse-account-line(带回归测试,覆盖 3/4/5 段、---/----、
+    // SK 同行或换行等多种格式);这里只补上代理(右侧单独框)与固定指纹号。
+    const parsed = parseAccountLine(line);
+    if (!parsed) return null;
     return {
-      email,
-      password,
-      recoveryEmail,
-      totpSecret,
-      sessionKey,
+      ...parsed,
       proxyUrl: toSocks5(importProxyUrl),
       adspowerProfileId: "k1bvbavq", // 固定选择 k1bvbavq
     };
@@ -408,16 +357,23 @@ export default function ClaudeAccountsPage() {
     }
   }
 
-  async function handleAutoOAuth() {
+  // skMode=true: 走 SK 直登(指纹浏览器内注入 sessionKey 当已登录态,免邮箱密码、免抓信);
+  // skMode=false: 原 magic-link 全自动(需邮箱密码)。两者共用后端 auto-oauth 接口与轮询。
+  async function handleAutoOAuth(skMode = false) {
     if (!importParsed) {
       toast.error("请先粘贴并解析账号行");
       return;
     }
     if (!importParsed.proxyUrl && !importParsed.adspowerProfileId) {
-      toast.error("全自动需要 SOCKS5 代理（或使用指纹浏览器号）");
+      toast.error(`${skMode ? "SK 直登" : "全自动"}需要 SOCKS5 代理（或使用指纹浏览器号）`);
       return;
     }
-    if (!importParsed.password) {
+    if (skMode) {
+      if (!importParsed.sessionKey) {
+        toast.error("未解析到 sessionKey(sk-ant-sid0x...)，无法 SK 直登");
+        return;
+      }
+    } else if (!importParsed.password) {
       toast.error("全自动需要邮箱密码(用于抓取 magic link)");
       return;
     }
@@ -434,7 +390,9 @@ export default function ClaudeAccountsPage() {
           password: importParsed.password,
           proxyUrl: importParsed.proxyUrl,
           adspowerProfileId: importParsed.adspowerProfileId,
-          sessionKey: importParsed.sessionKey,
+          // 只在 SK 直登模式发 sessionKey;否则后端会因检测到 sessionKey 而走 SK 分支,
+          // 导致用户点「magic-link 全自动」时被误导向 SK 流程。
+          sessionKey: skMode ? importParsed.sessionKey : "",
           recoveryEmail: importParsed.recoveryEmail,
           totpSecret: importParsed.totpSecret,
         }),
@@ -772,10 +730,22 @@ export default function ClaudeAccountsPage() {
                 ) : null}
               </div>
 
+              {/* SK 直登:指纹浏览器内注入 sessionKey，免邮箱密码、免抓信，直接换 token */}
+              {importParsed.sessionKey ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">SK 直登（指纹浏览器 + 代理，免邮箱）</span>
+                  <Button size="sm" variant="default" onClick={() => handleAutoOAuth(true)} disabled={autoRunning}>
+                    {autoRunning ? <Spinner size={14} /> : <KeyRoundIcon className="size-3.5" />}
+                    {autoRunning ? "注入登录中…" : "SK 一键上号"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">已检测到 sessionKey</span>
+                </div>
+              ) : null}
+
               {/* Full auto: Playwright headless browser through SOCKS5 */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">全自动（无头浏览器）</span>
-                <Button size="sm" variant="default" onClick={handleAutoOAuth} disabled={autoRunning}>
+                <span className="font-medium">全自动（magic-link，需邮箱密码）</span>
+                <Button size="sm" variant="outline" onClick={() => handleAutoOAuth(false)} disabled={autoRunning}>
                   {autoRunning ? <Spinner size={14} /> : null}
                   {autoRunning ? "自动化中…" : "一键全自动"}
                 </Button>
