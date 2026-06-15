@@ -26,9 +26,11 @@ type DailyRecord struct {
 
 // HourlyRecord 每小时用量记录
 type HourlyRecord struct {
-	Hour         string `json:"hour"` // "15" (0-23)
-	InputTokens  int64  `json:"inputTokens"`
-	OutputTokens int64  `json:"outputTokens"`
+	Hour             string `json:"hour"` // "15" (0-23)
+	InputTokens      int64  `json:"inputTokens"`
+	OutputTokens     int64  `json:"outputTokens"`
+	CachedTokens     int64  `json:"cachedTokens"`     // 缓存读 cache_read
+	CacheWriteTokens int64  `json:"cacheWriteTokens"` // 缓存写 cache_creation
 }
 
 // UsageStatsStore 用量统计持久化
@@ -161,12 +163,20 @@ func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, raw
 	rec.CachedTokens += cacheRead
 	rec.CacheWriteTokens += cacheWrite
 	rec.BillableTokens += billable
+	// 真实节省 = 官方 API 全口径成本:net 输入 + 输出 + 缓存读(折扣) + 缓存写(溢价)。
+	// 缓存(尤其 cache write)往往是大头,漏算会把"已节省"严重低估。
 	inP, outP := priceFor(family)
-	rec.SavedMoneyUSD += float64(input)/1_000_000.0*inP + float64(output)/1_000_000.0*outP
+	cacheReadP, cacheWriteP := cachePriceFor(family)
+	rec.SavedMoneyUSD += float64(input)/1_000_000.0*inP +
+		float64(output)/1_000_000.0*outP +
+		float64(cacheRead)/1_000_000.0*cacheReadP +
+		float64(cacheWrite)/1_000_000.0*cacheWriteP
 	// 小时记录
 	hr := s.getHour()
 	hr.InputTokens += input
 	hr.OutputTokens += output
+	hr.CachedTokens += cacheRead
+	hr.CacheWriteTokens += cacheWrite
 	s.dirty = true
 }
 

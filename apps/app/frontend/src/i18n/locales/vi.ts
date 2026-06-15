@@ -142,6 +142,8 @@ export const vi: DeepPartialDict = {
     titleMonth: '30 ngày qua',
     input: 'Đầu vào',
     output: 'Đầu ra',
+    cacheRead: 'Đọc cache',
+    cacheWrite: 'Ghi cache',
     noData: 'Gần đây không có lượng dùng',
   },
 
@@ -186,7 +188,7 @@ export const vi: DeepPartialDict = {
     caFailedTitle: 'Đã tiếp quản suy luận · Max chờ kích hoạt',
     caRetakeBtn: 'Tiếp quản lại · cài chứng chỉ',
     storeClaudeTitle: '⚠ Bản cài từ Store không thể tiếp quản',
-    storeClaudeBtn: 'Cài đặt bản độc lập một chạm',
+    storeClaudeBtn: 'Tải bản độc lập',
     permissionTitle: 'Cần quyền hệ thống',
     permissionBody: '{message}\n\nHãy bật quyền cho BingchaAI trong “Cài đặt hệ thống → Quyền riêng tư & Bảo mật → Quản lý ứng dụng”, rồi thử lại.',
     opFailed: 'Thao tác thất bại',

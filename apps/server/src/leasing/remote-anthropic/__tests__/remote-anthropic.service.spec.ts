@@ -4,6 +4,7 @@ import * as path from "path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { weeklyBucketKey } from "../../token-server/fair-share-tracker";
 import { RemoteAnthropicService } from "../service/remote-anthropic.service";
 import { sessionReqFor, withSessionResolver } from "../../token-server/__tests__/session-test-util";
 
@@ -140,6 +141,140 @@ describe("RemoteAnthropicService", () => {
     const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
     expect(stored.keys[0].totalTokensUsed).toBe(160);
     expect(stored.keys[0].totalRequests).toBe(1);
+  });
+
+  it("feeds 5h and weekly fair-share windows from their own Claude quota fields", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    const service = makeService();
+    const lease = await service.leaseToken(
+      sessionReqFor("claude-card-1"),
+      { clientId: "client-a", modelKey: MODEL },
+    );
+
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+    await service.reportResult(
+      sessionReqFor("claude-card-1"),
+      {
+        leaseId: lease.leaseId,
+        reportId: "quota-windows-1",
+        status: 200,
+        modelKey: MODEL,
+        inputTokens: 100,
+        outputTokens: 0,
+        totalTokens: 100,
+        accountQuota: {
+          planType: "max",
+          claudeQuota: {
+            hourlyPercent: 90,
+            weeklyPercent: 50,
+            hourlyResetTime: hourlyReset,
+            weeklyResetTime: weeklyReset,
+          },
+        },
+      },
+    );
+
+    const bucket = "anthropic-claude";
+    const short = service.fairShareTracker?.getBucketStateForTesting(21, bucket);
+    const weekly = service.fairShareTracker?.getBucketStateForTesting(21, weeklyBucketKey(bucket));
+
+    expect(short?.lastFraction).toBeCloseTo(0.9, 5);
+    expect(short && short.windowStart + 5 * 60 * 60 * 1000).toBe(Date.parse(hourlyReset));
+    expect(weekly?.lastFraction).toBeCloseTo(0.5, 5);
+    expect(weekly && weekly.windowStart + 7 * 24 * 60 * 60 * 1000).toBe(Date.parse(weeklyReset));
+  });
+
+  it("learns weekly exhaustion samples from the weekly fair-share window", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    const service = makeService();
+    const lease = await service.leaseToken(
+      sessionReqFor("claude-card-1"),
+      { clientId: "client-a", modelKey: MODEL },
+    );
+
+    const hourlyReset = new Date(currentTime + 4 * 60 * 60 * 1000).toISOString();
+    const weeklyReset = new Date(currentTime + 4 * 24 * 60 * 60 * 1000).toISOString();
+    await service.reportResult(
+      sessionReqFor("claude-card-1"),
+      {
+        leaseId: lease.leaseId,
+        reportId: "weekly-sample-usage",
+        status: 200,
+        modelKey: MODEL,
+        inputTokens: 20_000,
+        outputTokens: 0,
+        totalTokens: 20_000,
+        accountQuota: {
+          planType: "max",
+          claudeQuota: {
+            hourlyPercent: 90,
+            weeklyPercent: 50,
+            hourlyResetTime: hourlyReset,
+            weeklyResetTime: weeklyReset,
+          },
+        },
+      },
+    );
+
+    const bucket = "anthropic-claude";
+    const weeklyState = service.fairShareTracker?.getTrackerState(21, weeklyBucketKey(bucket));
+    expect(weeklyState?.lastFraction).toBeCloseTo(0.5, 5);
+
+    await service.reportResult(
+      sessionReqFor("claude-card-1"),
+      {
+        leaseId: lease.leaseId,
+        reportId: "weekly-sample-429",
+        status: 429,
+        modelKey: MODEL,
+        retryAfterMs: 4 * 24 * 60 * 60 * 1000,
+      },
+    );
+
+    const profile = service.quotaProfileTracker?.getProfile("anthropic", "max", "claude");
+    expect(profile?.samplesWeekly).toBe(1);
+    expect(profile?.samples5h).toBe(0);
+    expect(profile?.weekly).toBeCloseTo(weeklyState!.totalUsed / 0.5, 5);
+  });
+
+  it("returns fair-share quota windows on lease-time 429 rejection", async () => {
+    tokenProvider.mockResolvedValue("claude-access-token-alpha");
+    writeJson(accessKeysFilePath, {
+      keys: [
+        {
+          id: "claude-card-1",
+          key: "claude-secret-card",
+          status: "active",
+          durationMs: 60 * 60 * 1000,
+          bindings: { anthropic: 21 },
+        },
+      ],
+    });
+    const service = makeService();
+    const bucket = "anthropic-claude";
+
+    service.fairShareTracker?.recordUsage(21, "claude-card-1", bucket, 1_000_000, 0, 0, MODEL);
+    service.fairShareTracker?.updateBudgetEstimate(21, bucket, 0.5);
+    service.fairShareTracker?.updateWeeklyBudgetEstimate(21, bucket, 0.5);
+
+    await expect(
+      service.leaseToken(
+        sessionReqFor("claude-card-1"),
+        { clientId: "client-a", modelKey: MODEL },
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 429,
+      body: expect.objectContaining({
+        fairShareQuota: expect.objectContaining({
+          [bucket]: expect.objectContaining({ resetAt: expect.any(Number) }),
+        }),
+        weeklyFairShareQuota: expect.objectContaining({
+          [bucket]: expect.objectContaining({ resetAt: expect.any(Number) }),
+        }),
+      }),
+    });
+    expect(tokenProvider).not.toHaveBeenCalled();
   });
 
   it("cools down a Claude account after a 429 quota status report", async () => {

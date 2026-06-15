@@ -13,6 +13,8 @@ coverage
 .idea/
 *.tsbuildinfo
 prisma/*.db
+!prisma/dev.db
+!prisma/dev-migration.db
 prisma/*.db-journal
 prisma/prisma/
 tmp
@@ -45,7 +47,10 @@ scripts/remote-data/
 scripts/active-*.txt
 
 # Local data
-data/
+apps/api/data/
+data/*
+!data/rosetta/
+!data/rosetta/*.json
 
 # Temp scratch files
 prev*.tsx

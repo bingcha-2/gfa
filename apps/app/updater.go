@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +26,12 @@ var (
 	// UpdateCheckURL 可通过环境变量 BCAI_UPDATE_URL 覆盖（本地开发用），构建时通过 ldflags 注入 buildApexBase
 	UpdateCheckURL  = getEnvOrDefault("BCAI_UPDATE_URL", buildApexBase+"/updates/latest-wails.json")
 	UpdateCheckFreq = 30 * time.Minute
+)
+
+const (
+	updaterDownloadDialTimeout           = 30 * time.Second
+	updaterDownloadResponseHeaderTimeout = 60 * time.Second
+	updaterDownloadIdleTimeout           = 2 * time.Minute
 )
 
 // ─── Update Info ─────────────────────────────────────────────────────────
@@ -112,6 +121,113 @@ func GetUpdater() *Updater {
 		}
 	})
 	return updaterInstance
+}
+
+// createUpdaterDownloadClient is dedicated to large update assets.
+// It has no global timeout; the download loop enforces an idle timeout.
+func createUpdaterDownloadClient(useSystemProxy bool) *http.Client {
+	transport := newTransport()
+	transport.Proxy = nil
+	transport.DialContext = (&net.Dialer{
+		Timeout:   updaterDownloadDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.ResponseHeaderTimeout = updaterDownloadResponseHeaderTimeout
+
+	if useSystemProxy {
+		if sysProxy := getSystemProxy(); sysProxy != "" {
+			if proxyURL, err := url.Parse(sysProxy); err == nil {
+				transport.Proxy = http.ProxyURL(proxyURL)
+			}
+		}
+	}
+
+	return &http.Client{Timeout: 0, Transport: transport}
+}
+
+func newUpdaterDownloadContext(parent context.Context, idleTimeout time.Duration) (context.Context, func(), func()) {
+	ctx, cancel := context.WithCancel(parent)
+	if idleTimeout <= 0 {
+		return ctx, cancel, func() {}
+	}
+
+	progressCh := make(chan struct{}, 1)
+	doneCh := make(chan struct{})
+	var stopOnce sync.Once
+
+	go func() {
+		timer := time.NewTimer(idleTimeout)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-progressCh:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idleTimeout)
+			case <-timer.C:
+				cancel()
+				return
+			case <-doneCh:
+				return
+			}
+		}
+	}()
+
+	stop := func() {
+		stopOnce.Do(func() {
+			close(doneCh)
+			cancel()
+		})
+	}
+	markProgress := func() {
+		select {
+		case progressCh <- struct{}{}:
+		default:
+		}
+	}
+	return ctx, stop, markProgress
+}
+
+func updaterDownloadError(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("download idle timeout after %s: %w", updaterDownloadIdleTimeout, err)
+	}
+	return err
+}
+
+// updaterDownloadDo 下载大资产：先直连，失败回退系统代理（传输层回退；
+// 9.5.0 强升后不再有备域名切换）。用专用的无全局超时 client，空闲超时由
+// 下载循环的 context 强制。每次重建 request。
+func updaterDownloadDo(req *http.Request) (*http.Response, error) {
+	rawURL := req.URL.String()
+
+	directReq, err := http.NewRequestWithContext(req.Context(), req.Method, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	directReq.Header = req.Header.Clone()
+	if resp, derr := createUpdaterDownloadClient(false).Do(directReq); derr == nil {
+		return resp, nil
+	} else {
+		Log("[updater] Direct download from %s failed (%v), retrying via proxy...", rawURL, derr)
+	}
+
+	proxyReq, err := http.NewRequestWithContext(req.Context(), req.Method, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	proxyReq.Header = req.Header.Clone()
+	resp, perr := createUpdaterDownloadClient(true).Do(proxyReq)
+	if perr != nil {
+		Log("[updater] Proxy download from %s failed (%v)", rawURL, perr)
+		return nil, updaterDownloadError(req.Context(), perr)
+	}
+	return resp, nil
 }
 
 // updaterHttpDo 执行 HTTP 请求：先直连，失败回退系统代理（传输层回退；
@@ -323,15 +439,19 @@ func (u *Updater) DownloadAndApply() error {
 		}
 	}()
 
-	req, err := http.NewRequest("GET", downloadURL, nil)
+	downloadCtx, stopDownloadWatch, markDownloadProgress := newUpdaterDownloadContext(context.Background(), updaterDownloadIdleTimeout)
+	defer stopDownloadWatch()
+
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", downloadURL, nil)
 	if err != nil {
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("请求创建失败: %v", err)})
 		return err
 	}
 	req.Header.Set("User-Agent", fmt.Sprintf("BingchaAI/%s (%s/%s)", AppVersion, runtime.GOOS, runtime.GOARCH))
 
-	resp, err := updaterHttpDo(req)
+	resp, err := updaterDownloadDo(req)
 	if err != nil {
+		err = updaterDownloadError(downloadCtx, err)
 		u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("下载失败: %v", err)})
 		return err
 	}
@@ -361,6 +481,7 @@ func (u *Updater) DownloadAndApply() error {
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			markDownloadProgress()
 			if _, wErr := f.Write(buf[:n]); wErr != nil {
 				f.Close()
 				u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("写入失败: %v", wErr)})
@@ -384,6 +505,7 @@ func (u *Updater) DownloadAndApply() error {
 			if readErr == io.EOF {
 				break
 			}
+			readErr = updaterDownloadError(downloadCtx, readErr)
 			f.Close()
 			u.setStatus(UpdateStatus{Status: "error", Version: info.Version, Error: fmt.Sprintf("下载中断: %v", readErr)})
 			return readErr

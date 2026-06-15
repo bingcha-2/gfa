@@ -523,7 +523,14 @@ describe("LeaseService (generic core)", () => {
     // Server-side backup enforcement: over-cap usage → 429 (not 401, not a silent lease).
     await expect(
       service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
-    ).rejects.toMatchObject({ statusCode: 429 });
+    ).rejects.toMatchObject({
+      statusCode: 429,
+      body: expect.objectContaining({
+        accessKeyStatus: expect.objectContaining({
+          tokenWindowResetMs: expect.any(Number),
+        }),
+      }),
+    });
   });
 
   it("aligns a bound Claude card's 5h token window to the hourly reset, not the weekly binding reset", async () => {

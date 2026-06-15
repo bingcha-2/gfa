@@ -1,0 +1,363 @@
+{
+  "keys": [
+    {
+      "id": "card_mq3kzlwb_f4bef4ce",
+      "key": "BCAI-FDA0A27FD445-088687197BF4",
+      "name": "",
+      "status": "active",
+      "durationMs": 86400000,
+      "windowLimit": 0,
+      "tokenWindowLimit": 0,
+      "windowMs": 18000000,
+      "weeklyTokenLimit": 0,
+      "weight": 4,
+      "bindings": {
+        "codex": 2,
+        "antigravity": 9,
+        "anthropic": 1
+      },
+      "createdAt": "2026-06-07T09:30:03.035Z",
+      "provider": "",
+      "boundAccountId": 0,
+      "windowStartedAt": 1780902620703,
+      "usageEvents": [
+        {
+          "at": 1780902624380,
+          "status": 0
+        },
+        {
+          "at": 1780902764885,
+          "status": 0
+        },
+        {
+          "at": 1780902836107,
+          "status": 0
+        },
+        {
+          "at": 1780902840002,
+          "status": 0
+        },
+        {
+          "at": 1780902844598,
+          "status": 0
+        },
+        {
+          "at": 1780902944081,
+          "status": 200
+        },
+        {
+          "at": 1780902965472,
+          "status": 0
+        },
+        {
+          "at": 1780903784844,
+          "status": 0
+        },
+        {
+          "at": 1780914830474,
+          "status": 0
+        }
+      ],
+      "tokenUsageEvents": [
+        {
+          "at": 1780902944081,
+          "status": 200,
+          "inputTokens": 44031,
+          "outputTokens": 267,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 44298,
+          "totalTokens": 44298,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        }
+      ],
+      "weeklyWindowStartedAt": 1780838838832,
+      "weeklyTokenUsageEvents": [
+        {
+          "at": 1780839813136,
+          "status": 200,
+          "inputTokens": 42136,
+          "outputTokens": 264,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 42400,
+          "totalTokens": 42400,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780884511458,
+          "status": 200,
+          "inputTokens": 603,
+          "outputTokens": 18,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 621,
+          "totalTokens": 621,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780884513300,
+          "status": 200,
+          "inputTokens": 42132,
+          "outputTokens": 108,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 42240,
+          "totalTokens": 42240,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780884941181,
+          "status": 200,
+          "inputTokens": 42247,
+          "outputTokens": 437,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 42684,
+          "totalTokens": 42684,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780885011062,
+          "status": 200,
+          "inputTokens": 42692,
+          "outputTokens": 2283,
+          "cachedInputTokens": 42245,
+          "rawTotalTokens": 44975,
+          "totalTokens": 6955,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780885015463,
+          "status": 200,
+          "inputTokens": 45477,
+          "outputTokens": 10,
+          "cachedInputTokens": 42690,
+          "rawTotalTokens": 45487,
+          "totalTokens": 7066,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780890028448,
+          "status": 200,
+          "inputTokens": 42618,
+          "outputTokens": 168,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 42786,
+          "totalTokens": 42786,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780902944081,
+          "status": 200,
+          "inputTokens": 44031,
+          "outputTokens": 267,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 44298,
+          "totalTokens": 44298,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        }
+      ],
+      "firstUsedAt": "2026-06-07T13:28:13.849Z",
+      "activeSessionId": "sess_mq52pesx_93334a14841f5de7cec2f969",
+      "sessionStartedAt": "2026-06-08T10:33:46.545Z",
+      "sessionClientId": "f203fe81-dc8f-ed73-a0c3-a1fa693dc72c",
+      "sessionLastSeenAt": "2026-06-08T10:33:51.926Z",
+      "sessionExpiresAt": "2026-06-08T10:43:51.926Z",
+      "sessionTtlMs": 600000,
+      "totalRequests": 26,
+      "totalInputTokens": 301936,
+      "totalOutputTokens": 3555,
+      "totalCachedInputTokens": 84935,
+      "totalRawTokensUsed": 305491,
+      "totalTokensUsed": 229050,
+      "lastUsedAt": "2026-06-08T10:33:50.474Z"
+    },
+    {
+      "id": "card_mq3tg592_576f3b64",
+      "key": "BCAI-7CEEAB5C7C99-D0CAD8F93AB9",
+      "name": "",
+      "status": "active",
+      "durationMs": 2592000000,
+      "windowMs": 18000000,
+      "weeklyTokenLimit": 0,
+      "weight": 1,
+      "createdAt": "2026-06-07T13:26:51.542Z",
+      "firstUsedAt": "2026-06-07T13:27:18.831Z",
+      "windowStartedAt": 1780902620703,
+      "usageEvents": [],
+      "tokenUsageEvents": [],
+      "weeklyWindowStartedAt": 1780838838831,
+      "weeklyTokenUsageEvents": [],
+      "activeSessionId": "sess_mq4x4qey_f734eaf7145ad7fcdb924aac",
+      "sessionStartedAt": "2026-06-08T07:57:43.738Z",
+      "sessionClientId": "f203fe81-dc8f-ed73-a0c3-a1fa693dc72c",
+      "sessionLastSeenAt": "2026-06-08T07:57:43.776Z",
+      "sessionExpiresAt": "2026-06-08T08:07:43.776Z",
+      "sessionTtlMs": 600000
+    },
+    {
+      "id": "card_mq4tzqcc_9c13612e",
+      "key": "BCAI-7AC3E9FA169F-8B3824D72257",
+      "name": "",
+      "status": "active",
+      "durationMs": 2592000000,
+      "windowMs": 18000000,
+      "weeklyTokenLimit": 0,
+      "weight": 1,
+      "createdAt": "2026-06-08T06:29:51.517Z",
+      "bucketLimits": {
+        "antigravity-gemini": 10000,
+        "antigravity-claude": 10000,
+        "codex-gpt": 1000,
+        "anthropic-claude": 100000
+      },
+      "firstUsedAt": "2026-06-08T06:29:58.587Z",
+      "windowStartedAt": 1780900198587,
+      "usageEvents": [
+        {
+          "at": 1780900200788,
+          "status": 0
+        },
+        {
+          "at": 1780900227818,
+          "status": 200
+        },
+        {
+          "at": 1780901611871,
+          "status": 200
+        },
+        {
+          "at": 1780901613638,
+          "status": 502
+        },
+        {
+          "at": 1780901630556,
+          "status": 200
+        },
+        {
+          "at": 1780903801556,
+          "status": 0
+        },
+        {
+          "at": 1780904735878,
+          "status": 0
+        }
+      ],
+      "tokenUsageEvents": [
+        {
+          "at": 1780900227818,
+          "status": 200,
+          "inputTokens": 42794,
+          "outputTokens": 338,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 43132,
+          "totalTokens": 43132,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901611871,
+          "status": 200,
+          "inputTokens": 631,
+          "outputTokens": 15,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 646,
+          "totalTokens": 646,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901613638,
+          "status": 502,
+          "inputTokens": 43167,
+          "outputTokens": 4,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 43171,
+          "totalTokens": 43171,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901630556,
+          "status": 200,
+          "inputTokens": 43167,
+          "outputTokens": 857,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 44024,
+          "totalTokens": 44024,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        }
+      ],
+      "weeklyWindowStartedAt": 1780900198587,
+      "weeklyTokenUsageEvents": [
+        {
+          "at": 1780900227818,
+          "status": 200,
+          "inputTokens": 42794,
+          "outputTokens": 338,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 43132,
+          "totalTokens": 43132,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901611871,
+          "status": 200,
+          "inputTokens": 631,
+          "outputTokens": 15,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 646,
+          "totalTokens": 646,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901613638,
+          "status": 502,
+          "inputTokens": 43167,
+          "outputTokens": 4,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 43171,
+          "totalTokens": 43171,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        },
+        {
+          "at": 1780901630556,
+          "status": 200,
+          "inputTokens": 43167,
+          "outputTokens": 857,
+          "cachedInputTokens": 0,
+          "rawTotalTokens": 44024,
+          "totalTokens": 44024,
+          "modelKey": "claude-opus-4-8",
+          "product": "anthropic"
+        }
+      ],
+      "activeSessionId": "sess_mq4xmxl3_b54e0134f3ab83bb8eadea55",
+      "sessionStartedAt": "2026-06-08T08:11:52.839Z",
+      "sessionClientId": "f203fe81-dc8f-ed73-a0c3-a1fa693dc72c",
+      "sessionLastSeenAt": "2026-06-08T08:21:10.106Z",
+      "sessionExpiresAt": "2026-06-08T08:31:10.106Z",
+      "sessionTtlMs": 600000,
+      "totalRequests": 7,
+      "totalInputTokens": 129759,
+      "totalOutputTokens": 1214,
+      "totalCachedInputTokens": 0,
+      "totalRawTokensUsed": 130973,
+      "totalTokensUsed": 130973,
+      "lastUsedAt": "2026-06-08T07:45:35.878Z",
+      "bindings": {},
+      "provider": "",
+      "boundAccountId": 0
+    }
+  ],
+  "updatedAt": "2026-06-08T10:33:51.926Z"
+}

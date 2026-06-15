@@ -142,6 +142,8 @@ export const ja: DeepPartialDict = {
     titleMonth: '直近 30 日',
     input: '入力',
     output: '出力',
+    cacheRead: 'キャッシュ読取',
+    cacheWrite: 'キャッシュ書込',
     noData: '直近の使用はありません',
   },
 
@@ -186,7 +188,7 @@ export const ja: DeepPartialDict = {
     caFailedTitle: '推論は引き継ぎ済み · Max は有効化待ち',
     caRetakeBtn: '再引き継ぎ · 証明書をインストール',
     storeClaudeTitle: '⚠ ストア版は引き継げません',
-    storeClaudeBtn: 'スタンドアロン版をワンクリック導入',
+    storeClaudeBtn: 'スタンドアロン版をダウンロード',
     permissionTitle: 'システム権限が必要です',
     permissionBody: '{message}\n\n「システム設定 → プライバシーとセキュリティ → アプリ管理」で BingchaAI の権限を有効にしてから、もう一度お試しください。',
     opFailed: '操作に失敗しました',

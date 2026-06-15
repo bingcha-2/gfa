@@ -142,6 +142,8 @@ export const es: DeepPartialDict = {
     titleMonth: 'Últimos 30 días',
     input: 'Entrada',
     output: 'Salida',
+    cacheRead: 'Lectura caché',
+    cacheWrite: 'Escritura caché',
     noData: 'Sin uso reciente',
   },
 
@@ -186,7 +188,7 @@ export const es: DeepPartialDict = {
     caFailedTitle: 'Inferencia bajo control · Max pendiente',
     caRetakeBtn: 'Retomar · instalar certificado',
     storeClaudeTitle: '⚠ La versión de la tienda no admite la toma de control',
-    storeClaudeBtn: 'Instalar versión independiente',
+    storeClaudeBtn: 'Descargar versión independiente',
     permissionTitle: 'Se requiere permiso del sistema',
     permissionBody: '{message}\n\nActiva el permiso de BingchaAI en “Configuración del Sistema → Privacidad y seguridad → Gestión de apps” y reintenta.',
     opFailed: 'Operación fallida',

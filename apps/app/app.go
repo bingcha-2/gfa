@@ -97,6 +97,7 @@ func (a *App) SaveConfig(cfg Config) error {
 		Log("[app] Save config failed: %v", err)
 		return err
 	}
+	invalidateIDEDetectCacheForInstallPathChange(oldCfg, cfg)
 	Log("[app] Config saved successfully")
 
 	// 应用 Codex 中转(API 卡密)模式配置:只改请求处理、不动监听,无需重启代理。
@@ -128,6 +129,15 @@ func (a *App) SaveConfig(cfg Config) error {
 	GetMitmManager().UpdateConfig(cfg.UserToken, cfg.DeviceId, "")
 
 	return nil
+}
+
+func invalidateIDEDetectCacheForInstallPathChange(oldCfg, newCfg Config) {
+	if oldCfg.IDEPath != newCfg.IDEPath ||
+		oldCfg.HubPath != newCfg.HubPath ||
+		oldCfg.CodexAppPath != newCfg.CodexAppPath ||
+		oldCfg.ClaudeDesktopPath != newCfg.ClaudeDesktopPath {
+		InvalidateIDEDetectCache()
+	}
 }
 
 // clearLocalCardState clears all local session-level state when the session token changes.

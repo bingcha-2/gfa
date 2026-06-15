@@ -123,6 +123,8 @@ func (l *CodexLeaser) LeaseToken(card, deviceId string, force bool, options map[
 
 	body, status, err := postCodexBcai("/lease-token", payload, card, upstreamProxy)
 	if err != nil {
+		recordAccountBuckets(body)
+		recordFairShareQuota(body)
 		// 不熔断、不重试:额度超限如实返回。硬额度(token limit exceeded)→ 结构化
 		// QuotaExhaustedError,让 proxy 转 429 + Retry-After 给 IDE(而非 502 让它狂试)。
 		if status == 429 {

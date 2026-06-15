@@ -142,6 +142,8 @@ export const de: DeepPartialDict = {
     titleMonth: 'Letzte 30 Tage',
     input: 'Input',
     output: 'Output',
+    cacheRead: 'Cache-Lesen',
+    cacheWrite: 'Cache-Schreiben',
     noData: 'Keine Nutzung in letzter Zeit',
   },
 
@@ -186,7 +188,7 @@ export const de: DeepPartialDict = {
     caFailedTitle: 'Inferenz übernommen · Max ausstehend',
     caRetakeBtn: 'Neu übernehmen · Zertifikat installieren',
     storeClaudeTitle: '⚠ Store-Version kann nicht übernommen werden',
-    storeClaudeBtn: 'Standalone per Klick installieren',
+    storeClaudeBtn: 'Standalone herunterladen',
     permissionTitle: 'Systemberechtigung erforderlich',
     permissionBody: '{message}\n\nAktivieren Sie BingchaAI unter „Systemeinstellungen → Datenschutz & Sicherheit → App-Verwaltung“ und versuchen Sie es erneut.',
     opFailed: 'Aktion fehlgeschlagen',

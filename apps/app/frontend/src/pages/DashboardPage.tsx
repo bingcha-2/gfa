@@ -52,7 +52,8 @@ export function DashboardPage() {
   // 绝不把陈旧的「充足 100%」当真。lastError 在成功租号时会被清空,所以它=当前确有问题。
   // 仅对开通了 antigravity 的卡(opus/gemini 血条可见)成立 —— codex-only 卡不跑 antigravity,
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
-  const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude')
+  const isQuotaLikeError = /quota|limit|公平|额度|恢复|retry-after|token limit/i.test(leaserError)
+  const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude') && !isQuotaLikeError
 
   // 「我的卡」条:这张卡自己的剩余额度(独立于整个号)。
   //  • static 卡:本地 bucketLimits 剩余(localQuota 家族字段),可展开看 token 数。

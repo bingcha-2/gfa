@@ -103,20 +103,20 @@ describe("FairShareTracker SQL persistence", () => {
     expect(t2.getBucketStateForTesting(1, "codex-gpt")?.perCard.c1).toBe(2880);
   });
 
-  it("on load past the 5h boundary: discards usage but keeps the learned budget", async () => {
+  it("on load past the 5h boundary: discards usage; budget comes from the learned profile/default", async () => {
     const { prisma } = makeFsPrisma();
     const T = 1_700_000_000_000;
     const t1 = track(makeTracker(() => T, prisma));
     t1.recordUsage(1, "c1", "codex-gpt", 100100, 0, 0); // cost 100100
-    t1.confirmBudget(1, "codex-gpt"); // estimatedBudget = totalUsed, confidence 'confirmed'
     await t1.flush();
 
     const t2 = track(makeTracker(() => T + WINDOW_MS + 1, prisma)); // window expired
     await t2.load();
     const state = t2.getBucketStateForTesting(1, "codex-gpt");
     expect(state?.totalUsed).toBe(0); // stale per-card usage discarded
-    expect(state?.estimatedBudget).toBe(100100); // budget retained
-    expect(state?.confidence).toBe("estimated"); // confirmed downgraded
+    // Budget is no longer per-account ratcheted/persisted — it's read from the
+    // learned profile (none wired here) → DEFAULT_BUDGETS.pro.gpt.
+    expect(state?.resolvedBudget).toBe(100000);
     expect(state?.lastFraction).toBe(1); // upstream window reset → full
   });
 
@@ -287,12 +287,25 @@ describe("周窗口公平份额(trackWeekly)", () => {
 
   it("周份额用完即拦,即便 5h 窗口仍宽松(reason 标注本周)", () => {
     const t = makeClaudeTracker(() => T, true);
-    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // cost 500 → 5h & 周
-    // 上游周剩余 50%:周预算反推 = 500/0.5 = 1000;每卡 = 1000 × 1/8 = 125;已用 500 ≥ 125 → 拦
+    t.recordUsage(1, "c1", "anthropic-claude", 1_500_000, 0, 0, "claude-opus-4-8");
     t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5);
     const r = t.checkFairShare(1, "c1", "anthropic-claude");
     expect(r.allowed).toBe(false);
     expect(r.reason).toContain("本周");
+    expect(r.window).toBe("7d");
+    expect(r.bucket).toBe("anthropic-claude");
+    expect(r.resetAt).toBe(T + 7 * 24 * 60 * 60 * 1000);
+    expect(r.retryAfterMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("weekly budget floors at default5h × R while weekly is unlearned", () => {
+    const t = makeClaudeTracker(() => T, true);
+    t.recordUsage(1, "c1", "anthropic-claude", 20_000, 0, 0, "claude-opus-4-8"); // creates 5h + weekly trackers
+    const shortBudget = t.getBucketStateForTesting(1, "anthropic-claude")!.resolvedBudget;
+    const weekly = t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))!;
+    // No learned weekly → weekly budget = max(default5h, learned5h) × clamp(R) ≥ short × 4.235.
+    expect(weekly.resolvedBudget).toBeGreaterThanOrEqual(shortBudget * 4.235);
+    expect(t.checkFairShare(1, "c1", "anthropic-claude").allowed).toBe(true);
   });
 });
 
@@ -301,8 +314,8 @@ describe("getCardWeeklyQuotaFractions(周血条)", () => {
 
   it("返回周窗口 fraction,键为基础桶名;5h 接口仍不含周键", () => {
     const t = makeClaudeTracker(() => T, true);
-    t.recordUsage(1, "c1", "anthropic-claude", 0, 100, 0, "claude-opus-4-8"); // 500 CU → 5h & 周
-    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // 周预算=500/0.5=1000;每卡=125;已用500 → fraction 0
+    t.recordUsage(1, "c1", "anthropic-claude", 1_500_000, 0, 0, "claude-opus-4-8");
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5);
     const wk = t.getCardWeeklyQuotaFractions(1, "c1");
     expect(wk["anthropic-claude"]).toBeDefined();
     expect(wk["anthropic-claude"].fraction).toBeCloseTo(0, 5);
@@ -335,8 +348,7 @@ describe("trackWeekly 默认关闭:行为与历史一致(antigravity)", () => {
     t.recordUsage(1, "c1", "anthropic-claude", 100, 10, 0, "claude-opus-4-8");
     expect(t.getBucketStateForTesting(1, "anthropic-claude")?.perCard.c1).toBeCloseTo(150, 5);
     expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
-    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // no-op
-    t.confirmWeeklyBudget(1, "anthropic-claude"); // no-op
+    t.updateWeeklyBudgetEstimate(1, "anthropic-claude", 0.5); // no-op (trackWeekly off)
     expect(t.getBucketStateForTesting(1, weeklyBucketKey("anthropic-claude"))).toBeNull();
   });
 });
@@ -349,26 +361,5 @@ describe("QUOTA_WEIGHTS 派生自定价源", () => {
     expect(SHARED_WEIGHTS.gemini.cache).toBeCloseTo(0.25, 5);
     expect(SHARED_WEIGHTS.gpt.output).toBe(8);
     expect(SHARED_WEIGHTS.gpt.cache).toBeCloseTo(0.1, 5);
-  });
-});
-
-describe("公平份额按固定 capacity 分摊(非动态 1/N)", () => {
-  it("每卡份额 = 预算 × weight/capacity,与同账号其他卡数量无关", () => {
-    // 份额分母是固定的 accountShareCapacity(此处 8),不是「当前绑定卡数 N」—— 固定 vs 动态
-    // 分摊的分界;改成 1/N 会让本断言失败,守护这个语义。
-    const t = new FairShareTracker({
-      getAccountPlanType: () => "pro",
-      getCardWeight: () => 1,
-      accountShareCapacity: 8,
-      now: () => 1_700_000_000_000,
-    });
-    // 同一账号两张卡各记 1000 加权;若按动态 1/N(N=2)分摊,分母会是 2 而非固定的 8。
-    t.recordUsage(1, "a", "codex-gpt", 1000, 0, 0);
-    t.recordUsage(1, "b", "codex-gpt", 1000, 0, 0);
-    t.updateBudgetEstimate(1, "codex-gpt", 0.5); // 预算反推 = 2000/0.5 = 4000;lastFraction 0.5(<0.9 才走份额判定)
-    // 每卡预算 = 4000 × 1/8 = 500;a 已用 1000 ≥ 500 → fraction 0。
-    // (若是动态 1/2 分摊,每卡预算 2000、fraction 0.5,本断言会失败 → 守护「固定 capacity」语义。)
-    expect(t.getCardQuotaFractions(1, "a")["codex-gpt"].fraction).toBe(0);
-    expect(t.checkFairShare(1, "a", "codex-gpt").allowed).toBe(false);
   });
 });

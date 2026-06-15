@@ -31,6 +31,11 @@ const CLAUDE_OAUTH_TOKEN_ENDPOINT = process.env.BCAI_CLAUDE_TOKEN_ENDPOINT || "h
 const CLAUDE_OAUTH_REDIRECT_URI = process.env.BCAI_CLAUDE_REDIRECT_URI || "https://platform.claude.com/oauth/code/callback";
 const CLAUDE_OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
 const CLAUDE_OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_ANTHROPIC_ADSPOWER_PROFILE_ID = "k1bvbavq";
+
+export function resolveAnthropicAdspowerProfileId(requested?: string, stored?: string): string {
+  return requested?.trim() || stored?.trim() || DEFAULT_ANTHROPIC_ADSPOWER_PROFILE_ID;
+}
 
 function extractSetCookies(res: Response): string {
   const raw = res.headers.getSetCookie?.() || [];
@@ -514,7 +519,7 @@ export class ClaudeAccountService {
     const { email, password, proxyUrl } = payload;
     if (!email) return { ok: false, error: "email 必填" };
 
-    let adspowerProfileId = payload.adspowerProfileId;
+    let storedAdspowerProfileId: string | undefined;
     let recoveryEmail = payload.recoveryEmail;
     let totpSecret = payload.totpSecret;
 
@@ -524,9 +529,7 @@ export class ClaudeAccountService {
     const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
 
     if (existing) {
-      if (!adspowerProfileId && existing.adspowerProfileId) {
-        adspowerProfileId = existing.adspowerProfileId;
-      }
+      storedAdspowerProfileId = existing.adspowerProfileId;
       if (!recoveryEmail && existing.recoveryEmail) {
         recoveryEmail = existing.recoveryEmail;
       }
@@ -534,6 +537,8 @@ export class ClaudeAccountService {
         totpSecret = existing.totpSecret;
       }
     }
+
+    const adspowerProfileId = resolveAnthropicAdspowerProfileId(payload.adspowerProfileId, storedAdspowerProfileId);
 
     if (!adspowerProfileId && !proxyUrl) {
       return { ok: false, error: "未使用指纹浏览器时，proxyUrl 必填" };

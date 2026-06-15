@@ -1,0 +1,2 @@
+prisma/dev.db filter=lfs diff=lfs merge=lfs -text
+prisma/dev-migration.db filter=lfs diff=lfs merge=lfs -text

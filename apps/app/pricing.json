@@ -1,5 +1,5 @@
 {
-  "claude": { "inputPerM": 5, "outputPerM": 25, "cacheReadPerM": 0.50 },
-  "gemini": { "inputPerM": 2, "outputPerM": 12, "cacheReadPerM": 0.50 },
-  "gpt": { "inputPerM": 1.25, "outputPerM": 10, "cacheReadPerM": 0.125 }
+  "claude": { "inputPerM": 5, "outputPerM": 25, "cacheReadPerM": 0.50, "cacheWritePerM": 6.25 },
+  "gemini": { "inputPerM": 2, "outputPerM": 12, "cacheReadPerM": 0.50, "cacheWritePerM": 2.50 },
+  "gpt": { "inputPerM": 1.25, "outputPerM": 10, "cacheReadPerM": 0.125, "cacheWritePerM": 1.25 }
 }

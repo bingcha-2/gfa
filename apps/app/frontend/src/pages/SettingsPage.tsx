@@ -186,7 +186,8 @@ export function SettingsPage() {
               <span className={cn('text-[10px] font-semibold', detectedCodex === 'detected' ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{detectedLabel(detectedCodex)}</span>
             </div>
             <div className="flex gap-2">
-              <Input value={codexAppPath} readOnly placeholder={t('common.notDetected')} className="flex-1 text-[12px] font-mono" />
+              <Input value={codexAppPath} onChange={(e) => setCodexAppPath(e.target.value)}
+                placeholder={t('common.notDetected')} className="flex-1 text-[12px] font-mono" />
               <Button variant="secondary" onClick={handleBrowseCodex}>{t('common.browse')}</Button>
             </div>
           </div>
