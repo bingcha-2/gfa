@@ -116,15 +116,26 @@ support-knowledge-admin/
 | `get_my_profile` | 无 | `CustomerAuthService.getProfile(ctx.customerId)` | 资料+余额 |
 | `get_my_subscriptions` | 无 | `BillingService.listSubscriptions` | 脱敏:删 `backingKeyValue` 等密钥 |
 | `get_my_orders` | `{page?,pageSize?}` | `BillingService.listOrders` | 默认首页 |
-| `search_knowledge` | `{query}` | `KnowledgeService.search(query)` | 见检索设计;命中条目 `usageCount++` |
+| `search_knowledge` | `{query}` | `KnowledgeService.searchTitles(query)` | 返回候选**标题清单** `[{id,question}]`;见检索设计 |
+| `get_knowledge_answer` | `{id}` | `KnowledgeService.getAnswer(id)` | 取该条完整解法;同时 `usageCount++` |
 | `create_support_ticket` | `{subject,body}` | `TicketService.create(ctx.customerId,...)` | 升级转人工;回 ticketId;同时把会话 `status=ESCALATED`、`ticketId` 落库 |
 
 返回模型前统一**脱敏 + 体积截断**。
 
-### 知识检索(`retrieval/knowledge-retriever.ts`)—— 接口稳定,实现可换
+### 知识检索(`retrieval/knowledge-retriever.ts`)—— 两步、让模型语义挑、接口稳定可升级
 
-- **v1(零依赖)**:`search(query)` = 用 LLM 给出的关键词对 `KnowledgeEntry.question/category` 做 `LIKE` 预筛 + 简单评分,取 top-K(默认 5)已发布条目返回 `{id,question,answer}`。知识库很小时直接返回全部已发布。中文不依赖分词扩展,够用。
-- **Phase 2(语义升级)**:同一 `search()` 接口内部换成 embedding 余弦检索——把已发布条目 embedding 缓存内存,incoming query embedding 后暴力余弦 top-K。SQLite 下数百~数千条 Node 内算 <10ms,**不引 pgvector**。embedding 走**单独配置**的供应商(`SUPPORT_EMBED_BASE_URL/KEY/MODEL`),因 DeepSeek 无 embedding,可指向千问/豆包/OpenAI。工具接口与前端不变。
+中文按字面 `LIKE` 弱("套餐没生效" vs "订阅未激活"对不上),故 **v1 不靠关键词硬匹配,靠模型自身语义理解**,分两步工具:
+
+1. `search_knowledge(query)` → `searchTitles`:返回已发布知识的**标题清单** `[{id,question}]`。
+   - 知识少时(≤ `KB_INLINE_LIMIT`,默认 150 条)**直接全给**——标题短、省 token。
+   - 超过则用关键词粗筛到前 ~50 条候选。
+2. 模型读清单,凭语义挑出最相关的 id(天然懂同义/改写)。
+3. `get_knowledge_answer(id)` → `getAnswer`:取该条完整解法,`usageCount++`。
+4. 模型基于解法作答。
+
+**为何冷启动期最优**:语义匹配交给模型本身,改写/同义天然命中;标题清单省 token;**零检索基建**,SQLite 即开即用。
+
+**Phase 2 语义升级(接口不变)**:`searchTitles` 内部换成 embedding 余弦检索——已发布条目 embedding 缓存内存,query embedding 后暴力余弦 top-K。SQLite 下数百~数千条 Node 内算 <10ms,**不引 pgvector**。embedding 走**单独配置**供应商(`SUPPORT_EMBED_BASE_URL/KEY/MODEL`,因 DeepSeek 无 embedding,指向千问/豆包/OpenAI)。工具签名、前端、提示均不变。
 
 ### Agent 编排(`support-agent.service.ts`)
 
@@ -144,9 +155,10 @@ POST /api/account/support/chat         # body {conversationId?, message} → SSE
 GET  /api/account/support/conversation # 载当前客户最近会话(重开续聊)
 
 # 后台知识审核 (ConsoleJwtGuard)
-GET    /api/console/support-knowledge          # 列表(按 status 过滤:DRAFT/PUBLISHED)
+GET    /api/console/support-knowledge          # 列表(按 status 过滤:DRAFT/MERGE_SUGGESTED/PUBLISHED)
 PATCH  /api/console/support-knowledge/:id       # 编辑 question/answer/category
-POST   /api/console/support-knowledge/:id/publish   # 草稿→发布
+POST   /api/console/support-knowledge/:id/publish   # 草稿→发布;若为 MERGE_SUGGESTED 则更新 mergeTargetId 指向条目并归档本建议
+POST   /api/console/support-knowledge/merge     # 手动合并 body{primaryId, otherIds[]}→LLM 揉合,其余归档
 DELETE /api/console/support-knowledge/:id       # 删除/归档
 ```
 
@@ -183,7 +195,8 @@ model KnowledgeEntry {
   question       String                       // 归一化问题
   answer         String                       // 通用解法
   category       String?
-  status         String   @default("DRAFT")   // DRAFT | PUBLISHED | ARCHIVED
+  status         String   @default("DRAFT")   // DRAFT | PUBLISHED | ARCHIVED | MERGE_SUGGESTED
+  mergeTargetId  String?                      // MERGE_SUGGESTED 时指向要更新的现有条目
   sourceTicketId String?                      // 来源工单
   usageCount     Int      @default(0)         // 被 bot 引用次数
   createdBy      String   @default("AI")      // AI | <adminId>
@@ -199,14 +212,22 @@ model KnowledgeEntry {
 ### 提炼任务(BullMQ)
 
 - **触发**:工单状态变 `CLOSED`(在 `TicketAdminService` 改状态处入队 `distill` 任务,带 ticketId)。
-- **消费**:`distill.processor` 读工单全文 → LLM 提炼 `{question, answer, category, worthSaving}`(去隐私、泛化、判断是否值得入库)→ `worthSaving` 才建 `KnowledgeEntry(status=DRAFT, sourceTicketId)`。
-- **去重**:入库前与现有 `PUBLISHED` 条目做 question 关键词比对,高度相似则标注"疑似重复"留审核,不直接丢。
+- **消费**:`distill.processor` 读工单全文 → LLM 提炼 `{question, answer, category, worthSaving}`(去隐私、泛化、判断是否值得入库)→ `worthSaving=false` 则丢弃。
+- **去重/合并(就地)**:`worthSaving` 时,先用同一检索找现有 `PUBLISHED`/`DRAFT` 同类条目:
+  - **无同类** → 建新草稿 `KnowledgeEntry(status=DRAFT, sourceTicketId)`。
+  - **有同类** → 不新建重复条目,而是 LLM 把「现有答案 + 本次新案例」合并成更完善答案,生成一条**更新建议**:`status=MERGE_SUGGESTED`、`mergeTargetId=<现有条目>`、存合并后答案。审核页显示为"建议更新知识 #X(并入新案例)"带前后对比;通过则**更新目标条目**(非新增),该建议归档。
+
+### 知识合并(去重)
+
+- **自动**:见上,提炼阶段同类即生成合并建议,保证一个主题一条、随案例打磨。
+- **手动**(审核页):勾选两条 → "合并" → 选主条目 → LLM 揉合答案 → 其余 `ARCHIVED`。
+- **全库去重扫描**(Phase 3):批量找近似条目并批量提合并建议。
 
 ### 系统提示要点(`prompt/system-prompt.ts`)
 
 - 人设:GFA 中文客服,友好简洁。
 - 范围:只答本产品(账号租赁/订阅/付费/接入);无关问题礼貌拒答。
-- **必须先 `search_knowledge` 再答事实;查不到就老实说不确定并转人工,绝不编造。**
+- **答事实前必须先 `search_knowledge` 看标题→`get_knowledge_answer` 取解法;查不到就老实说不确定并转人工,绝不编造。**
 - 涉订阅/订单/余额必须先查对应工具。
 - 升级:查不到 / 退款 / 账号安全 / 客户明确要人工 → `create_support_ticket` 转人工并告知工单号。
 - 数据隔离:只谈当前客户自己的数据。
@@ -241,8 +262,9 @@ model KnowledgeEntry {
 
 - 工具单测:数据隔离(他人 id 无效)、脱敏字段被删。
 - agent 循环:mock LLM,覆盖 直接答 / 查一次知识再答 / 升级建工单 / 超轮兜底 / 工具解析失败降级。
-- 提炼任务:mock LLM,覆盖 worthSaving 真假、去隐私、疑似重复标注。
-- 检索:关键词命中、空库返回全部、usageCount 自增。
+- 提炼任务:mock LLM,覆盖 worthSaving 真假、去隐私、无同类→新草稿、有同类→生成 MERGE_SUGGESTED。
+- 合并:发布 MERGE_SUGGESTED 更新目标条目+归档建议;手动 merge 揉合答案+其余归档。
+- 检索:`searchTitles` 小库全给/大库粗筛、`getAnswer` 取答+usageCount 自增。
 - SSE 端点集成:事件序列、归属 403。
 - 知识审核端点:草稿→发布、删除、权限。
 - 前端:流式渲染、工具状态、升级卡片、断流兜底;审核页增删改。
