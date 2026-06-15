@@ -21,19 +21,6 @@ export class RemoteAnthropicController {
     return response.status(404).json({ ok: false, error: "Not found" });
   }
 
-  @Post("api/activate")
-  async activate(@Req() request: any, @Body() body: any, @Res() response: any) {
-    try {
-      return response.status(200).json(await this.remoteAnthropic.activateAccessKey(request, body));
-    } catch (error) {
-      return response.status(500).json({
-        success: false,
-        code: "ACCOUNT_CARD_NOT_FOUND",
-        message: error instanceof Error ? error.message : "Activation failed",
-      });
-    }
-  }
-
   @Post(":path")
   async post(@Param("path") pathName: string, @Req() request: any, @Body() body: any, @Res() response: any) {
     try {

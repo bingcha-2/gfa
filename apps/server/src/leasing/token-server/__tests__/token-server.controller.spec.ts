@@ -52,31 +52,8 @@ describe("TokenServerController", () => {
     expect(response.body).toEqual({ ok: false, error: "Invalid access key" });
   });
 
-  it("maps Wails api/activate to TokenServerService.activateAccessKey", async () => {
-    const service = {
-      activateAccessKey: vi.fn().mockReturnValue({ success: true, code: "OK", data: {} }),
-      leaseToken: vi.fn(),
-      reportResult: vi.fn(),
-      shadowReport: vi.fn(),
-      getStatus: vi.fn(),
-      reloadAccessKeys: vi.fn(),
-    };
-    const controller = new TokenServerController(service as any);
-    const response = makeResponse();
-
-    await controller.activate({ headers: {} }, { accountCard: "card", deviceId: "device" }, response);
-
-    expect(service.activateAccessKey).toHaveBeenCalledWith(
-      { headers: {} },
-      { accountCard: "card", deviceId: "device" },
-    );
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toEqual({ success: true, code: "OK", data: {} });
-  });
-
   it("maps shadow report to TokenServerService.shadowReport", async () => {
     const service = {
-      activateAccessKey: vi.fn(),
       leaseToken: vi.fn(),
       reportResult: vi.fn(),
       shadowReport: vi.fn().mockResolvedValue({ ok: true }),

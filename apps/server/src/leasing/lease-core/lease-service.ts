@@ -1308,43 +1308,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     }
   }
 
-  /**
-   * Fail-closed stub: card activation was removed with the card-string runtime
-   * credential (force-upgrade). The 9.5.0 client still POSTs api/activate
-   * non-blockingly at startup (its session JWT rides in payload.accountCard
-   * with NO Authorization header) and has always tolerated a failure here —
-   * session leases need no activation. Card redemption lives at
-   * /api/account/bind-card (card-migration.service), which converts a legacy
-   * card into a Subscription.
-   */
-  async activateAccessKey(_req: any, payload: any) {
-    const accountCard = String(
-      payload?.accountCard || payload?.accessKey || payload?.cardKey || payload?.key || "",
-    ).trim();
-    const clientId = String(payload?.deviceId || payload?.clientId || payload?.client || "").trim();
-
-    if (!accountCard) {
-      return {
-        success: false,
-        code: "ACCOUNT_CARD_REQUIRED",
-        message: "Account card is required",
-      };
-    }
-    if (!clientId) {
-      return {
-        success: false,
-        code: "ACCOUNT_CARD_AND_DEVICE_REQUIRED",
-        message: "Account card and device id are required",
-      };
-    }
-
-    return {
-      success: false,
-      code: "ACCOUNT_CARD_NOT_FOUND",
-      message: "卡密激活已下线，请在用户中心绑定卡密后登录客户端使用",
-    };
-  }
-
   async shadowReport(req: any, payload: any) {
     await this.accessKeyStore.resolveFromRequest(req, payload);
     return { ok: true };

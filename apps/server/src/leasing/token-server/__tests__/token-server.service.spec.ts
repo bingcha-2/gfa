@@ -237,35 +237,6 @@ describe("TokenServerService", () => {
     expect(account.modelQuotaRefreshedAt).toBeGreaterThan(0);
   });
 
-  it("api/activate fails closed: card activation was removed with the force-upgrade", async () => {
-    const service = makeService();
-
-    const result = await service.activateAccessKey(
-      { headers: {} },
-      { accountCard: "secret-card", deviceId: "device-a" },
-    );
-
-    // Same shape/code the (non-blocking) client already tolerates; the record
-    // is untouched — redemption happens via /api/account/bind-card instead.
-    expect(result.success).toBe(false);
-    expect(result.code).toBe("ACCOUNT_CARD_NOT_FOUND");
-
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].firstUsedAt).toBeUndefined();
-    expect(stored.keys[0].sessionClientId).toBeUndefined();
-  });
-
-  it("rejects activation when accountCard is missing", async () => {
-    const service = makeService();
-
-    const result = await service.activateAccessKey({ headers: {} }, { deviceId: "device-a" });
-
-    expect(result).toMatchObject({
-      success: false,
-      code: "ACCOUNT_CARD_REQUIRED",
-    });
-  });
-
   it("accepts shadow metric reports without mutating billing counters", async () => {
     const service = makeService();
 
