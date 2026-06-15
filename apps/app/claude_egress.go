@@ -95,9 +95,20 @@ func dialRawThroughProxy(ctx context.Context, addr string, proxyURL string) (net
 // transport 按 HTTP/1.1 解析 → "malformed HTTP response"。所以必须把 ALPN 扩展改成只剩
 // http/1.1,逼服务器走 1.1。指纹其余部分保持 Firefox。
 func newClaudeUpstreamTransport(proxyURL string) *http.Transport {
+	return newClaudeUpstreamTransportFn(func() string { return proxyURL })
+}
+
+// newClaudeUpstreamTransportFn 同 newClaudeUpstreamTransport,但出口代理【每次拨号时】由
+// proxyFn 实时求值。供 claude.ai 借号场景:同一 transport 跟随当前租到的白号静态出口动态切换,
+// 无需在租约变化时重建 handler。proxyFn 为 nil 或返回 "" → 直连。
+func newClaudeUpstreamTransportFn(proxyFn func() string) *http.Transport {
 	return &http.Transport{
 		Proxy: nil, // 代理在 DialTLSContext 内处理,不走 Transport.Proxy。
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			proxyURL := ""
+			if proxyFn != nil {
+				proxyURL = proxyFn()
+			}
 			raw, err := dialRawThroughProxy(ctx, addr, proxyURL)
 			if err != nil {
 				return nil, err

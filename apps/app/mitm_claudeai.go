@@ -31,7 +31,11 @@ func mitmIsClaudeAiHost(host string) bool {
 
 // mitmClaudeAiHandler 经 utls 把 claude.ai 请求转发到真实 claude.ai(绕 Cloudflare),
 // 读响应、打印、并把订阅字段改写成已订阅。
-func mitmClaudeAiHandler(transport http.RoundTripper) http.Handler {
+//
+// sessionKeyFn:借号注入。返回非空时,把请求 Cookie 里的 sessionKey 顶替成租到的白号 ——
+// 让所有 claude.ai 流量都以白号身份发出(借号)。返回 "" 则不改 Cookie(透传用户自己的登录态,
+// 保持原有行为)。其余 cookie(CF clearance 等)一律保留,只换 sessionKey。
+func mitmClaudeAiHandler(transport http.RoundTripper, sessionKeyFn func() string) http.Handler {
 	target, _ := url.Parse(claudeAiBase)
 	if transport == nil {
 		transport = newClaudeUpstreamTransport("") // utls 指纹绕 Cloudflare
@@ -42,10 +46,95 @@ func mitmClaudeAiHandler(transport http.RoundTripper) http.Handler {
 			req.URL.Host = target.Host
 			req.Host = target.Host
 			req.Header.Del("Accept-Encoding") // 要明文才好改写
+			if sessionKeyFn != nil {
+				if sk := sessionKeyFn(); sk != "" {
+					mitmInjectSessionKeyCookie(req, sk)
+				}
+			}
 		},
 		Transport:      transport,
 		ModifyResponse: mitmModifyClaudeAiResponse,
 	}
+}
+
+// mitmIsCloudflareChallenge 判断响应是不是 Cloudflare 的挑战/拦截(而非 claude.ai 业务响应)。
+// 命中则整段原样透传,交给真 Chromium 自己解。靠 CF 专有响应头判定,不用读 body:
+//   - cf-mitigated:CF 明确标注「已拦截/挑战」
+//   - server-timing: chlray;… :挑战页特征(我们实测 403 时就带这个)
+//   - 403/503 + Server: cloudflare + text/html:CF 托管挑战页(claude.ai 自身错误是 JSON,不会命中)
+func mitmIsCloudflareChallenge(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+	if resp.Header.Get("Cf-Mitigated") != "" {
+		return true
+	}
+	if st := strings.ToLower(resp.Header.Get("Server-Timing")); strings.Contains(st, "chlray") {
+		return true
+	}
+	switch resp.StatusCode {
+	case http.StatusForbidden, http.StatusServiceUnavailable, http.StatusTooManyRequests:
+		if strings.EqualFold(resp.Header.Get("Server"), "cloudflare") &&
+			strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
+			return true
+		}
+	}
+	return false
+}
+
+// mitmStripSessionKeySetCookie 只从 Set-Cookie 里剔掉 claude.ai 的 sessionKey(借号身份不落
+// 用户浏览器,保护用户自己的号),其余 cookie(尤其 CF 的 cf_clearance/__cf_bm/cf_chl_*)全保留。
+func mitmStripSessionKeySetCookie(h http.Header) {
+	vals := h.Values("Set-Cookie")
+	if len(vals) == 0 {
+		return
+	}
+	var kept []string
+	for _, v := range vals {
+		name := v
+		if i := strings.IndexByte(v, '='); i >= 0 {
+			name = v[:i]
+		}
+		if strings.EqualFold(strings.TrimSpace(name), "sessionKey") {
+			continue // 丢掉白号 sessionKey 的 Set-Cookie
+		}
+		kept = append(kept, v)
+	}
+	h.Del("Set-Cookie")
+	for _, v := range kept {
+		h.Add("Set-Cookie", v)
+	}
+}
+
+// mitmInjectSessionKeyCookie 重建请求 Cookie 头:【只留 Cloudflare 的 cookie】+ 注入白号 sessionKey。
+// 用户自己账号的 claude.ai cookie(sessionKey/org/device/活动会话等)一律丢掉 —— 否则白号的
+// sessionKey 与用户自己账号的其它 cookie 混在一起,claude.ai 判会话不一致、直接 account_session_invalid。
+// (实测:只发 sessionKey 一个 cookie → 200;带上别的账号 cookie → 失效。)
+// CF 的 __cf_bm/cf_clearance 等与账号无关、是过 CF 必需的,保留。
+func mitmInjectSessionKeyCookie(req *http.Request, sk string) {
+	existing := req.Header.Get("Cookie")
+	var kept []string
+	for _, part := range strings.Split(existing, ";") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		name := p
+		if i := strings.IndexByte(p, '='); i >= 0 {
+			name = p[:i]
+		}
+		if isCloudflareCookie(name) {
+			kept = append(kept, p) // 只保留 CF cookie
+		}
+	}
+	kept = append(kept, "sessionKey="+sk)
+	req.Header.Set("Cookie", strings.Join(kept, "; "))
+}
+
+// isCloudflareCookie 判断 cookie 名是否属于 Cloudflare(过 CF/bot 管理用,与 claude.ai 账号身份无关)。
+func isCloudflareCookie(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(n, "__cf") || strings.HasPrefix(n, "cf_") || strings.HasPrefix(n, "__cflb")
 }
 
 // patchUserAccessFeatures 把 current_user_access 里 code/cowork 相关 feature 的 status 放成 available。
@@ -181,9 +270,25 @@ func mitmModifyClaudeAiResponse(resp *http.Response) error {
 		path = resp.Request.URL.Path
 	}
 
-	// ★ 顶层 HTML 文档:注入「隐藏 chat」守卫脚本(chat/code UI 都来自 claude.ai 网页)。
-	//   只认 text/html,不碰 JSON/API;文档不是资格端点,故放在资格判定之前。见 mitm_claudeai_inject.go。
-	if mitmIsClaudeAiHTMLDocument(resp) {
+	// ★ Cloudflare 挑战/拦截响应:整段【原样透传】,绝不注入脚本、删 CSP 或删 Cookie。
+	//   CF 的 JS 挑战要靠它自己的脚本 + CSP + cf_clearance/__cf_bm/cf_chl_* cookie 才能在
+	//   Chromium 里解开;一旦我们改写,真 Chromium 也会永远卡在「Just a moment」进不去。
+	//   (借号走数据中心代理 IP 时 claude.ai 常发 CF 挑战 —— 让浏览器自己解。)
+	if mitmIsCloudflareChallenge(resp) {
+		return nil
+	}
+
+	// ★ 借号期:只删 claude.ai 的 sessionKey Set-Cookie —— 防白号 sessionKey 被 Chromium 存进
+	//   用户 profile、覆盖用户自己的(否则取消接管回不去)。CF 的 cf_clearance/__cf_bm 等必须保留,
+	//   否则 Chromium 解完挑战存不下、反复被挑战。借号身份本身活在 in-flight 注入的请求头里。
+	//   未借号时不动 Set-Cookie,用户自己的会话照常刷新。
+	if GetClaudeSessionLeaser().CurrentSessionKey() != "" {
+		mitmStripSessionKeySetCookie(resp.Header)
+	}
+
+	// ★ 顶层 HTML 文档(仅 2xx 正常页):注入「隐藏 chat」守卫脚本(chat/code UI 都来自 claude.ai 网页)。
+	//   只认 text/html、且只对 2xx —— 错误页/CF 挑战页(403/503)绝不注入。见 mitm_claudeai_inject.go。
+	if resp.StatusCode == http.StatusOK && mitmIsClaudeAiHTMLDocument(resp) {
 		return mitmInjectHideChat(resp)
 	}
 

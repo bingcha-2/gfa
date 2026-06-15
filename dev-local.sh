@@ -175,6 +175,8 @@ setup_client_env() {
   export BCAI_API_BASE="http://127.0.0.1:3001/api/app/lease/antigravity"
   export BCAI_CODEX_API_BASE="http://127.0.0.1:3001/api/app/lease/codex"
   export BCAI_ANTHROPIC_REMOTE_BASE="http://127.0.0.1:3001/api/app/lease/anthropic"
+  # 白号登录号池（claude.ai sessionKey 借号）租约/回报 → 本地服务端
+  export BCAI_ANTHROPIC_WEB_REMOTE_BASE="http://127.0.0.1:3001/api/app/lease/anthropic-web"
   # 账户登录/心跳/登出（/app/login 等）→ 本地服务端，否则默认打生产域 api.bcai.lol
   export BCAI_AUTH_BASE="http://127.0.0.1:3001/api"
   export BCAI_UPDATE_URL="http://127.0.0.1:3000/updates/latest-wails.json"
@@ -184,6 +186,7 @@ setup_client_env() {
   echo -e "  ${GREEN}✓${NC} BCAI_API_BASE  → ${CYAN}$BCAI_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_CODEX_API_BASE → ${CYAN}$BCAI_CODEX_API_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_ANTHROPIC_REMOTE_BASE → ${CYAN}$BCAI_ANTHROPIC_REMOTE_BASE${NC}"
+  echo -e "  ${GREEN}✓${NC} BCAI_ANTHROPIC_WEB_REMOTE_BASE → ${CYAN}$BCAI_ANTHROPIC_WEB_REMOTE_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_AUTH_BASE → ${CYAN}$BCAI_AUTH_BASE${NC}"
   echo -e "  ${GREEN}✓${NC} BCAI_UPDATE_URL → ${CYAN}$BCAI_UPDATE_URL${NC}"
   echo -e "  ${GREEN}✓${NC} VITE_PORTAL_BASE → ${CYAN}$VITE_PORTAL_BASE${NC}"

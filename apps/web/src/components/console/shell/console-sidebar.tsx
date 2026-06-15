@@ -168,6 +168,7 @@ export function ConsoleSidebar({
       label: "Anthropic",
       items: [
         { id: "anthropic-accounts", title: "账号池", url: `/${prefix}/anthropic-accounts`, icon: <DatabaseIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
+        { id: "anthropic-web-accounts", title: "白号池", url: `/${prefix}/anthropic-web-accounts`, icon: <DatabaseIcon />, permKey: "agent_service", roleGuard: () => isAdminOrOps },
       ],
     },
     {

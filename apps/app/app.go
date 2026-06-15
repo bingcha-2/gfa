@@ -211,6 +211,14 @@ func (a *App) GetStats() map[string]interface{} {
 		})
 	}
 
+	// 白号借号失败:一次性提示用户自行登录 claude.ai(接管已照常进行,只是没借到号)。
+	if n := GetClaudeSessionLeaser().TakeNotice(); n != "" {
+		notifications = append(notifications, Notification{
+			Level: "transient", Category: "takeover", Recoverable: true,
+			Message: n, DedupKey: "claude-web-lease-failed", Source: "claude",
+		})
+	}
+
 	// 判断图表模式：只有1天有数据时显示小时，否则显示日
 	chartMode := "daily"
 	if !usageStats.HasMultipleDays() {

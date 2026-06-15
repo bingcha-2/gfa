@@ -185,5 +185,40 @@ func mitmRelaunchClaudeWithProxy(proxyAddr, caCertPath string, chromiumProxy boo
 
 func mitmRelaunchClaudePlain() error {
 	mitmQuitClaude()
+	// 取消接管(方案 B):Claude 已退出、文件解锁,直接清掉它的 cookie 仓 —— 借号期间落进
+	// 浏览器的白号登录态随之清空,重启后是未登录状态,用户自行登录自己的账号。Claude Desktop
+	// 实际只用 claude.ai,删整份 cookie 仓即等于登出 claude.ai,确保借号干净结束、不残留白号。
+	clearClaudeCookiesForRestore()
 	return exec.Command("open", "-a", mitmClaudeAppPath).Run()
+}
+
+// ─── 取消接管时清掉借号 cookie(方案 B)──────────────────────────────────────
+// claude.ai 借号在 in-flight 注入白号 sessionKey,但借号期间出错/边路的响应可能把白号
+// Set-Cookie 漏进 Claude Desktop 的 Chromium cookie 仓。取消接管时(杀进程窗口)直接删 cookie 仓。
+
+func claudeDesktopDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "Claude")
+}
+
+// Chromium cookie 仓:主库 + 可能的 WAL/journal 边车。
+var claudeCookieFileNames = []string{"Cookies", "Cookies-journal", "Cookies-wal", "Cookies-shm"}
+
+func clearClaudeCookiesForRestore() {
+	dir := claudeDesktopDir()
+	if dir == "" {
+		return
+	}
+	removed := false
+	for _, name := range claudeCookieFileNames {
+		if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			removed = true
+		}
+	}
+	if removed {
+		Log("[mitm] 已清空 Claude cookie(取消接管:登出借号,重启后请登录自己的账号)")
+	}
 }

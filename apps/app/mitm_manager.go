@@ -102,11 +102,17 @@ func (m *mitmManager) buildHandler() http.Handler {
 	// 按 host 分流：claude.ai → utls 解密+订阅改写(掀 UI 付费墙)；其余(api.anthropic.com)→ apiRouter。
 	// 必须把出口代理传给 claude.ai handler，否则本机需要系统代理时直连会超时/失败、context canceled。
 	// 优先用用户配置的 upstream；没有则取系统代理(Clash/Mihomo 等)；都没有则直连。
-	claudeAiProxy := m.upstream
-	if claudeAiProxy == "" {
-		claudeAiProxy = getSystemProxy()
+	// claude.ai 出口 + 借号身份(每请求实时求值,跟随白号租约):
+	//   有白号租约 → 走该白号的【静态出口 IP】+ 注入它的 sessionKey(借号,以白号身份请求)。
+	//   无租约     → 走用户网络(upstream/系统代理),透传用户自己的 claude.ai 登录态(原行为)。
+	claudeAiProxyFn := func() string {
+		if p := GetClaudeSessionLeaser().CurrentProxyURL(); p != "" {
+			return p
+		}
+		return m.userProxy()
 	}
-	claudeAi := mitmClaudeAiHandler(newClaudeUpstreamTransport(claudeAiProxy))
+	sessionKeyFn := func() string { return GetClaudeSessionLeaser().CurrentSessionKey() }
+	claudeAi := mitmClaudeAiHandler(newClaudeUpstreamTransportFn(claudeAiProxyFn), sessionKeyFn)
 	// 伪造 Code OAuth(authorize/token):把免费号的 Code 授权换成号池 Pro token(方案 B)。
 	oauthFake := mitmOAuthFakeHandler(func() (string, error) {
 		m.mu.Lock()
@@ -178,6 +184,24 @@ func (m *mitmManager) UpdateConfig(card, deviceId, upstream string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.card, m.deviceId, m.upstream = card, deviceId, upstream
+}
+
+// LeaseWhiteSession 接管 claude.ai 时拉一个白号(sessionKey + 绑定的静态出口),客户端经 utls
+// 实测能用与否并回报服务端,usable 才设为 current 注入。用 manager 当前持有的卡密/网络出口。
+// 失败只记日志、不阻塞接管(claude.ai 退回透传用户自己的登录态)。
+func (m *mitmManager) LeaseWhiteSession() {
+	m.mu.Lock()
+	card, deviceId, upstream := m.card, m.deviceId, m.upstream
+	m.mu.Unlock()
+	if card == "" {
+		Log("[mitm] 无卡密,跳过白号租约(claude.ai 透传用户自己登录态)")
+		return
+	}
+	if err := GetClaudeSessionLeaser().LeaseAndVerify(card, deviceId, upstream); err != nil {
+		Log("[mitm] 白号租约失败(不阻塞接管,claude.ai 退回透传用户登录态): %v", err)
+		// 选「继续接管+提示自登」:接管照常,但前端 toast 告知用户自行登录 claude.ai。
+		GetClaudeSessionLeaser().setNotice("claude.ai 自动借号失败,已退回你自己的登录态 —— 可直接用自己的账号登录 claude.ai 使用。")
+	}
 }
 
 // sessionCard returns the session token the manager currently holds.

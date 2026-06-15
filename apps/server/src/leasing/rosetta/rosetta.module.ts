@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { ClaudeSessionLeaseController } from "./claude-session-lease.controller";
 import { RosettaController } from "./rosetta.controller";
 import { RosettaService } from "./rosetta.service";
 import { TokenUsageStatsService } from "./token-usage-stats.service";
@@ -10,7 +11,7 @@ import { AutomationModule } from "../../google-family/automation/automation.modu
 
 @Module({
   imports: [TokenServerModule, RemoteCodexModule, RemoteAnthropicModule, AutomationModule],
-  controllers: [RosettaController],
+  controllers: [RosettaController, ClaudeSessionLeaseController],
   providers: [RosettaService, TokenUsageStatsService],
   exports: [RosettaService, TokenUsageStatsService],
 })

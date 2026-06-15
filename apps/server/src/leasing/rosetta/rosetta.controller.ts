@@ -305,6 +305,42 @@ export class RosettaController {
     return result;
   }
 
+  // ── Claude Session Pool / 白号登录号池 ─────────────────────────────────
+  @Get("claude-session-accounts")
+  listClaudeSessionAccounts() {
+    return this.rosetta.listClaudeSessionAccounts();
+  }
+
+  @Post("claude-session-add-account")
+  addClaudeSessionAccount(@Body() body: any) {
+    return this.rosetta.addClaudeSessionAccount(body);
+  }
+
+  @Post("claude-session-batch-import")
+  batchImportClaudeSessionAccounts(@Body() body: any) {
+    return this.rosetta.batchImportClaudeSessionAccounts(body);
+  }
+
+  @Post("claude-session-delete-account")
+  deleteClaudeSessionAccount(@Body() body: any) {
+    return this.rosetta.deleteClaudeSessionAccount(body);
+  }
+
+  @Post("claude-session-toggle-account")
+  toggleClaudeSessionAccount(@Body() body: any) {
+    return this.rosetta.toggleClaudeSessionAccount(body);
+  }
+
+  @Post("claude-session-set-proxy")
+  setClaudeSessionProxy(@Body() body: any) {
+    return this.rosetta.setClaudeSessionProxy(body);
+  }
+
+  @Post("claude-session-update-key")
+  updateClaudeSessionKey(@Body() body: any) {
+    return this.rosetta.updateClaudeSessionKey(body);
+  }
+
   @Post("access-key")
   createAccessKey() {
     return this.cardAdminDisabled();

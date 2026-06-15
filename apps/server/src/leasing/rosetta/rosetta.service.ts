@@ -14,6 +14,7 @@ import { AdspowerService } from "./adspower.service";
 import { AntigravityAccountService } from "./antigravity-account.service";
 import { CaptchaService } from "./captcha.service";
 import { ClaudeAccountService } from "./claude-account.service";
+import { ClaudeSessionPoolService } from "./claude-session-pool.service";
 import { CodexService } from "./codex.service";
 import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
@@ -66,6 +67,7 @@ export class RosettaService {
   private readonly claudeSvc: ClaudeAccountService;
   private readonly googleSvc: GoogleOAuthService;
   private readonly creditsSvc: CreditsQuotaService;
+  private readonly sessionPoolSvc: ClaudeSessionPoolService;
   private readonly adspowerSvc: AdspowerService;
 
   constructor(
@@ -104,6 +106,7 @@ export class RosettaService {
     this.codexSvc = new CodexService(this.ctx, this.accessKeySvc);
     this.claudeSvc = new ClaudeAccountService(this.ctx, this.accessKeySvc);
     this.googleSvc = new GoogleOAuthService(this.ctx, (p: any) => this.antigravitySvc.addAccountChecked(p));
+    this.sessionPoolSvc = new ClaudeSessionPoolService(this.ctx);
     this.creditsSvc = new CreditsQuotaService(this.ctx);
     this.adspowerSvc = new AdspowerService(this.ctx);
   }
@@ -215,6 +218,18 @@ export class RosettaService {
   setClaudeAccountMailPassword(payload: any) { return this.claudeSvc.setClaudeAccountMailPassword(payload); }
   setClaudeAccountAdspowerProfile(payload: any) { return this.claudeSvc.setClaudeAccountAdspowerProfile(payload); }
   deleteClaudeAccount(payload: any) { return this.claudeSvc.deleteClaudeAccount(payload); }
+
+  // ── Claude Session Pool / 白号登录号池 (→ ClaudeSessionPoolService) ────
+  listClaudeSessionAccounts() { return this.sessionPoolSvc.listAccounts(); }
+  addClaudeSessionAccount(payload: any) { return this.sessionPoolSvc.addAccount(payload); }
+  batchImportClaudeSessionAccounts(payload: any) { return this.sessionPoolSvc.batchImport(payload); }
+  deleteClaudeSessionAccount(payload: any) { return this.sessionPoolSvc.deleteAccount(payload); }
+  toggleClaudeSessionAccount(payload: any) { return this.sessionPoolSvc.toggleAccount(payload); }
+  setClaudeSessionProxy(payload: any) { return this.sessionPoolSvc.setProxy(payload); }
+  updateClaudeSessionKey(payload: any) { return this.sessionPoolSvc.updateSessionKey(payload); }
+  // 客户端接管时租白号 / 注入后回报能用与否(状态由回报驱动,服务端不验证)。
+  leaseClaudeSession(payload: any) { return this.sessionPoolSvc.leaseSession(payload); }
+  reportClaudeSession(payload: any) { return this.sessionPoolSvc.reportSession(payload); }
 
   // ── 通用出口代理(御三家共用) ───────────────────────────────────────────
   // 给任意 provider 的某个号设/清粘性出口代理。客户端租到该号时随 lease 下发
