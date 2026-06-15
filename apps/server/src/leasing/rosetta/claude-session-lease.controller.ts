@@ -26,7 +26,8 @@ export class ClaudeSessionLeaseController {
     if (!sub.ok) {
       return { ok: false, code: sub.error, error: sub.message };
     }
-    return this.rosetta.leaseClaudeSession({ ...body, subscriptionId: sub.cardId });
+    // 订阅校验(sub.ok)已是放行闸;白号选号不依赖订阅 id,故不下传。
+    return this.rosetta.leaseClaudeSession(body);
   }
 
   @Post("report-session")

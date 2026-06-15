@@ -134,23 +134,12 @@ CODEXEOF
     echo -e "  ${GREEN}✓${NC} codex-accounts.json ($codex_count 个账号)"
   fi
 
+  # access-keys.json 只存「文件卡」(遗留),运行时鉴权已是订阅 only(session JWT → DB 订阅),
+  # dev 客户端靠客户账号登录(email/密码 → JWT → dev.db 里的订阅),不再用文件卡。故只建空壳,
+  # 不再播 local-dev 文件卡(避免误导以为 dev 走文件卡)。
   if [ ! -f "$DATA_DIR/access-keys.json" ]; then
-    cat > "$DATA_DIR/access-keys.json" << 'KEYSEOF'
-{
-  "keys": [
-    {
-      "id": "local-dev",
-      "name": "本地开发卡密",
-      "status": "active",
-      "durationMs": 0,
-      "windowMs": 18000000,
-      "windowLimit": 0,
-      "createdAt": ""
-    }
-  ]
-}
-KEYSEOF
-    echo -e "  ${GREEN}✓${NC} 创建 access-keys.json (本地开发 key: ${CYAN}local-dev${NC})"
+    echo '{ "keys": [] }' > "$DATA_DIR/access-keys.json"
+    echo -e "  ${GREEN}✓${NC} 创建空 access-keys.json (运行时走订阅,dev 用客户账号登录)"
   else
     echo -e "  ${DIM}✓ access-keys.json 已存在${NC}"
   fi
@@ -361,7 +350,7 @@ print_banner() {
 
   echo -e "${GREEN}├──────────────────────────────────────────────────────────┤${NC}"
   if [ "$target" != "remote" ]; then
-    echo -e "${GREEN}│${NC}  ${DIM}卡密 (access key)${NC}     ${YELLOW}local-dev${NC}"
+    echo -e "${GREEN}│${NC}  ${DIM}客户端登录${NC}            ${YELLOW}用客户账号(email/密码)登录,运行时走订阅${NC}"
   fi
   echo -e "${GREEN}│${NC}  ${DIM}数据目录${NC}              ${DIM}$DATA_DIR${NC}"
   echo -e "${GREEN}│${NC}  ${DIM}Ctrl+C${NC}                ${DIM}停止所有服务${NC}"
