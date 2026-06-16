@@ -105,6 +105,15 @@ async function handler(
     forwardHeaders.set("content-type", contentType);
   }
 
+  // Forward the real client IP so the backend's RealIpThrottlerGuard buckets
+  // rate limits per actual user. Without this, every request reaches the
+  // backend from the Next server's localhost connection, so all users share a
+  // single throttle bucket (e.g. bind-card's 5/60s) and trip 429 on each other.
+  const xff = request.headers.get("x-forwarded-for");
+  if (xff) forwardHeaders.set("x-forwarded-for", xff);
+  const xRealIp = request.headers.get("x-real-ip");
+  if (xRealIp) forwardHeaders.set("x-real-ip", xRealIp);
+
   // Forward request body for POST/PATCH/DELETE (GET stays body-less)
   let body: BodyInit | undefined;
   if (method !== "GET") {
