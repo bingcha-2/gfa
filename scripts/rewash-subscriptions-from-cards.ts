@@ -17,8 +17,11 @@
  *   · config              用 legacyColumnsToConfig 按上面重算(→ line=bind, products=收敛后)
  * 真正的混绑卡(如 {codex,anthropic})两者都保留 —— 它俩都真绑了号。
  *
- * 不碰:号池卡(快照里无真实绑定的卡,静态 bucketLimits 额度)、catalog 订阅(无对应卡 id)、
- *       weight / 用量。幂等:已是目标态的订阅自动跳过。
+ * 第二趟(号池卡):无真实 bindings、有 bucketLimits 的「卡迁移」订阅,把 productEntitlements
+ *   收敛成「bucketLimits 里 cap>1 的产品」(占位 1=封死,不算);bucketLimits / bindings 不动。
+ *   无 bucketLimits 的纯通配卡(全家桶不限量)= 全三个,不碰;catalog 订阅、全封死(全1)只报不写。
+ *
+ * 不碰:bucketLimits / weight / 用量。幂等:已是目标态的订阅自动跳过。
  *
  * 安全:默认 dry-run,逐条打印「前 → 后」;--apply 才写。写后重启服务(pnpm start:stop &&
  *       start:daemon)让内存订阅按新 config 重载。结尾有覆盖检查:列出「库里有绑定但不在本表」
@@ -131,6 +134,19 @@ function parseArr(json: string | null): string[] {
   }
 }
 
+/** 号池卡:从 bucketLimits 推「真额度产品」—— 桶前缀 cap>1 才算卖(占位 1=封死)。 */
+function productsFromCaps(bl: Record<string, any>): string[] {
+  const VALID = ["antigravity", "codex", "anthropic"];
+  const set = new Set<string>();
+  for (const [bucket, cap] of Object.entries(bl)) {
+    const idx = bucket.indexOf("-");
+    if (idx <= 0) continue;
+    const product = bucket.slice(0, idx);
+    if (Number(cap) > 1 && VALID.includes(product)) set.add(product);
+  }
+  return VALID.filter((p) => set.has(p));
+}
+
 async function main() {
   console.log(`[rewash] ${APPLY ? "APPLY" : "DRY-RUN"} —— ${Object.keys(CARD_BINDINGS).length} 张绑定卡(写死快照)`);
 
@@ -204,6 +220,52 @@ async function main() {
     }
   }
 
+  // ── 第二趟:号池订阅(无真实 bindings、有 bucketLimits)收敛 productEntitlements ──
+  // 只洗卡迁移订阅(deriveProducts pool-bug 的受害者);productEntitlements = bucketLimits 里
+  // cap>1 的产品;bucketLimits / bindings 一律不动。无 bucketLimits 的纯通配卡(全家桶不限量)
+  // = 全三个,不碰;catalog 订阅、全封死(全1)只报不写。
+  const poolRows = await prisma.subscription.findMany({
+    select: {
+      id: true, customerId: true, status: true, migratedFromKey: true, config: true,
+      productEntitlements: true, bucketLimits: true, bindings: true, levels: true,
+      weight: true, deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+    },
+  });
+  let poolChanged = 0;
+  const poolSkipCatalog: string[] = [];
+  const poolAllBlocked: string[] = [];
+  for (const row of poolRows) {
+    if (String(row.status) !== "ACTIVE") continue;
+    if (Object.keys(realBindings(parseObj(row.bindings))).length > 0) continue; // 绑定卡 → 第一趟管
+    const bl = parseObj(row.bucketLimits);
+    if (Object.keys(bl).length === 0) continue; // 无 bucketLimits → 全家桶不限量,不碰
+    const fromCaps = productsFromCaps(bl);
+    const desiredProductsJson = sortedArr(fromCaps);
+    const haveProductsJson = sortedArr(parseArr(row.productEntitlements));
+    if (haveProductsJson === desiredProductsJson) continue;
+    const tag = `${row.id}  customer=${row.customerId}  bucketLimits=${JSON.stringify(bl)}  products=${haveProductsJson}`;
+    if (fromCaps.length === 0) { poolAllBlocked.push(tag); continue; } // 全封死 → 只报不写
+    if (!row.migratedFromKey) { poolSkipCatalog.push(tag); continue; } // catalog → 不自动碰
+    const oldLevels = parseObj(row.levels);
+    const newLevels: Record<string, string> = {};
+    for (const p of fromCaps) if (oldLevels[p] != null) newLevels[p] = oldLevels[p];
+    const config = legacyColumnsToConfig({
+      ...(row as any),
+      productEntitlements: desiredProductsJson,
+      levels: JSON.stringify(newLevels),
+    });
+    const desiredConfigJson = JSON.stringify(config);
+    poolChanged++;
+    console.log(`  [pool] ${row.id}  customer=${row.customerId}`);
+    console.log(`    productEntitlements ${haveProductsJson} → ${desiredProductsJson}  (line=${config.line})`);
+    if (APPLY) {
+      await prisma.subscription.update({
+        where: { id: row.id },
+        data: { productEntitlements: desiredProductsJson, levels: JSON.stringify(newLevels), config: desiredConfigJson },
+      });
+    }
+  }
+
   // 覆盖检查:库里「有真实 bindings 但不在硬编码表」的订阅 —— 可能是抄漏 / 新卡,需人工确认。
   const all = await prisma.subscription.findMany({
     select: { id: true, customerId: true, bindings: true, productEntitlements: true, status: true },
@@ -212,20 +274,28 @@ async function main() {
     (s) => Object.keys(realBindings(parseObj(s.bindings))).length > 0 && !(s.id in CARD_BINDINGS),
   );
 
-  console.log(`\n[rewash] 命中订阅 ${matched} 条(${missing} 张卡无对应订阅,跳过);需修正 ${changed} 条。`);
+  console.log(
+    `\n[rewash] 绑定卡:命中 ${matched} 条(${missing} 张无对应订阅),需修正 ${changed} 条;号池卡:需收敛 ${poolChanged} 条。`,
+  );
   if (gaps.length) {
-    console.log(`\n⚠ 以下 ${gaps.length} 条订阅库里有绑定、但不在硬编码表中(需人工确认,本次未处理):`);
+    console.log(`\n⚠ 有绑定但不在硬编码表的订阅 ${gaps.length} 条(需人工确认,未处理):`);
     for (const g of gaps) {
       console.log(
         `    ${g.id}  customer=${g.customerId ?? "?"}  bindings=${sortedObj(realBindings(parseObj(g.bindings)))}  products=${sortedArr(parseArr(g.productEntitlements))}`,
       );
     }
-  } else {
-    console.log("  覆盖检查:无遗漏(库里所有带绑定的订阅都在本表内)。");
+  }
+  if (poolSkipCatalog.length) {
+    console.log(`\n⚠ catalog 号池订阅 ${poolSkipCatalog.length} 条 products≠真额度(非卡迁移,未自动洗,人工核对):`);
+    for (const t of poolSkipCatalog) console.log(`    ${t}`);
+  }
+  if (poolAllBlocked.length) {
+    console.log(`\n⚠ 号池订阅 ${poolAllBlocked.length} 条 bucketLimits 全是占位 1(全封死,未自动洗,人工核对):`);
+    for (const t of poolAllBlocked) console.log(`    ${t}`);
   }
   console.log(
     APPLY
-      ? "\n  → 已写入。⚠ 重启服务(pnpm start:stop && start:daemon)让内存订阅重载生效。"
+      ? "\n  → 已写入(绑定卡:bindings+products;号池卡:仅 products,bucketLimits 不动)。⚠ 重启服务(pnpm start:stop && start:daemon)生效。"
       : "\n  → DRY-RUN,未写入。确认无误后加 --apply。",
   );
 }

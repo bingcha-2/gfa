@@ -348,8 +348,12 @@ function summarize(sub: Subscription) {
  *     making the failover `serves` gate match a product the card has no account
  *     for → spurious 409/429. A genuine "bind X + metered-sell Y" card is modeled
  *     as a POOL card (no binding, real bucketLimits), which takes the else branch.
- *   • pure pool card (no binding at all): its explicit `products` restriction
- *     when present, else all three products (legacy universal card).
+ *   • pure pool card (no binding at all): explicit `products` restriction wins;
+ *     else derive from bucketLimits — a bucket with a REAL cap (>1) means the
+ *     product is sold (cap of 1 is the "blocked" placeholder, same convention as
+ *     bound cards). bucketLimits present but every cap a placeholder → [] (sells
+ *     nothing). ONLY a card with no bucketLimits at all is the legacy universal
+ *     card → all three.
  */
 function deriveProducts(record: AccessKeyRecord, store: AccessKeyStore): string[] {
   const valid = new Set<string>(ALL_PRODUCTS);
@@ -369,9 +373,26 @@ function deriveProducts(record: AccessKeyRecord, store: AccessKeyStore): string[
     return ALL_PRODUCTS.filter((p) => set.has(p));
   }
 
-  // Pool card — explicit product restriction, else all three.
+  // Pool card. Explicit `products` restriction wins.
   const restricted = Array.isArray((record as any).products)
     ? (record as any).products.map((p: unknown) => String(p)).filter((p: string) => valid.has(p))
     : [];
-  return restricted.length > 0 ? restricted : [...ALL_PRODUCTS];
+  if (restricted.length > 0) return restricted;
+
+  // Else derive from bucketLimits: a bucket with a REAL cap (>1) means the product
+  // is sold; cap of 1 is the "blocked" placeholder (don't count it). If buckets are
+  // present but all placeholders, the card sells nothing → []. No buckets at all =
+  // legacy universal card → all three.
+  const bucketLimits = record.bucketLimits && typeof record.bucketLimits === "object" ? record.bucketLimits : {};
+  const bucketKeys = Object.keys(bucketLimits);
+  if (bucketKeys.length > 0) {
+    for (const bucket of bucketKeys) {
+      const idx = bucket.indexOf("-");
+      if (idx <= 0) continue;
+      const product = bucket.slice(0, idx);
+      if (Number((bucketLimits as Record<string, number>)[bucket]) > 1 && valid.has(product)) set.add(product);
+    }
+    return ALL_PRODUCTS.filter((p) => set.has(p)); // may be [] when every cap is a placeholder
+  }
+  return [...ALL_PRODUCTS];
 }

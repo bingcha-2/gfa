@@ -206,12 +206,46 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(result.subscription.products).toEqual(["codex"]);
   });
 
-  it("a pool card (no bindings at all) gets all three products", async () => {
+  it("a pool card with no bucketLimits at all gets all three products (全家桶不限量)", async () => {
     writeKeys([usedCard({ bindings: undefined, bucketLimits: undefined })]);
     store.reload();
     const customer = await createTestCustomer();
     const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
     expect(result.subscription.products).toEqual(["antigravity", "codex", "anthropic"]);
+  });
+
+  it("a pool card sells only the products with a REAL bucketLimits cap (>1); placeholder 1 = blocked", async () => {
+    // 只 anthropic 给了真额度,codex/antigravity 是占位 1(封死)→ products 只剩 anthropic。
+    writeKeys([usedCard({
+      bindings: undefined,
+      bucketLimits: { "anthropic-claude": 8_000_000, "codex-gpt": 1, "antigravity-gemini": 1 },
+    })]);
+    store.reload();
+    const customer = await createTestCustomer();
+    const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+    expect(result.subscription.products).toEqual(["anthropic"]);
+  });
+
+  it("a pool card with real caps on multiple products sells all of them", async () => {
+    writeKeys([usedCard({
+      bindings: undefined,
+      bucketLimits: { "antigravity-gemini": 10_000_000, "anthropic-claude": 3_000_000, "codex-gpt": 1 },
+    })]);
+    store.reload();
+    const customer = await createTestCustomer();
+    const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+    expect(result.subscription.products).toEqual(["antigravity", "anthropic"]);
+  });
+
+  it("a pool card whose bucketLimits are all placeholder 1s sells nothing (全封死)", async () => {
+    writeKeys([usedCard({
+      bindings: undefined,
+      bucketLimits: { "anthropic-claude": 1, "codex-gpt": 1, "antigravity-gemini": 1 },
+    })]);
+    store.reload();
+    const customer = await createTestCustomer();
+    const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+    expect(result.subscription.products).toEqual([]);
   });
 
   it("a pool card with an explicit products restriction keeps it", async () => {
