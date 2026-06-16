@@ -196,24 +196,6 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(result.subscription.products).toEqual(["antigravity", "anthropic"]);
   });
 
-  it("混合卡(绑 anthropic + 按量卖 antigravity/codex)→ 迁移为号池卡(清空绑定,避免对未绑产品 409)", async () => {
-    writeKeys([usedCard({
-      bindings: { anthropic: 12 },
-      bucketLimits: { "antigravity-gemini": 1, "codex-gpt": 1 }, // 只绑 anthropic,却按量卖 antigravity/codex
-    })]);
-    store.reload();
-    const customer = await createTestCustomer();
-    const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
-    expect(result.ok).toBe(true);
-    // 产品仍是全 3 个(开通不变),但绑定被清空 → 号池卡。
-    expect(result.subscription.products).toEqual(["antigravity", "codex", "anthropic"]);
-    const sub = await prisma.subscription.findUnique({ where: { id: "card-legacy-1" } });
-    expect(sub!.bindings === null || sub!.bindings === "{}").toBe(true);
-    // 内存 record 为号池(不需要绑定)→ 三产品都走号池按量,不再 409。
-    const rec = store.findById("card-legacy-1") as any;
-    expect(rec.requiresBinding).toBeFalsy();
-  });
-
   it("a legacy provider/boundAccountId hint counts as a binding", async () => {
     writeKeys([usedCard({ bindings: undefined, bucketLimits: undefined, provider: "codex", boundAccountId: 9 })]);
     store.reload();

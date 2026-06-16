@@ -58,7 +58,7 @@ import { RemoteCodexService } from "../../remote-codex/service/remote-codex.serv
 import { RemoteAnthropicService } from "../../remote-anthropic/service/remote-anthropic.service";
 import { keyExpiresAt } from "../../token-server/token-billing";
 import { newBackingKeyValue } from "../../subscription/subscription.service";
-import { isMeteredHybrid, legacyColumnsToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
+import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
 
 const ALL_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -145,19 +145,6 @@ export class CardMigrationService {
     }
 
     const products = deriveProducts(record, this.accessKeyStore);
-    const bucketLimitsJson = record.bucketLimits ? JSON.stringify(record.bucketLimits) : null;
-    const rawBindingsJson = record.bindings ? JSON.stringify(record.bindings) : null;
-    // 「绑 X + 按量卖 Y/Z」的混合卡:按绑定卡规则会对 Y/Z 报 409(此卡未开通该服务)。
-    // 这类卡本质是按量卖,迁移成号池卡(清空 bindings → line=pool),让所有已开通产品都能用。
-    const hybrid = isMeteredHybrid({
-      productEntitlements: JSON.stringify(products),
-      bindings: rawBindingsJson,
-      bucketLimits: bucketLimitsJson,
-    });
-    const bindingsJson = hybrid ? null : rawBindingsJson;
-    if (hybrid) {
-      this.logger.log(`bind-card: ${record.id} 是「绑定+按量卖其它产品」混合卡 → 迁移为号池卡(清空绑定)`);
-    }
     const expiresAt = expiresIso ? new Date(expiresIso) : null; // never-used card → null (no expiry until first use)
     const deviceLimit = migratedCardDeviceLimit();
     const backingKeyValue = newBackingKeyValue();
@@ -188,8 +175,8 @@ export class CardMigrationService {
             startsAt: new Date(),
             expiresAt,
             productEntitlements: JSON.stringify(products),
-            bucketLimits: bucketLimitsJson,
-            bindings: bindingsJson, // 混合卡已清空 → 号池卡(line=pool)
+            bucketLimits: record!.bucketLimits ? JSON.stringify(record!.bucketLimits) : null,
+            bindings: record!.bindings ? JSON.stringify(record!.bindings) : null,
             weight,
             deviceLimit,
             weeklyTokenLimit,

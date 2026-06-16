@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isMeteredHybrid, legacyColumnsToConfig, planColumnsToInitialConfig, rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
+import { legacyColumnsToConfig, planColumnsToInitialConfig, rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 import { occupiedSharesByAccount } from "./seat";
 
 describe("planColumnsToInitialConfig — 下单时按 plan 意图建初始 config(座位未分配前定 line)", () => {
@@ -238,39 +238,5 @@ describe("rowToConfig — config 列优先,空则回退 legacy 列(卡迁移订�
     const out = rowToConfig({ config: "{not json", ...legacyBound } as any);
     expect(out.line).toBe("bind");
     expect((out.bindings as any).anthropic).toBe(11);
-  });
-});
-
-describe("isMeteredHybrid — 「绑定+按量卖其它产品」混合卡判定", () => {
-  it("绑 anthropic 但 bucketLimits 含 antigravity/codex → true(会 409)", () => {
-    expect(isMeteredHybrid({
-      productEntitlements: '["antigravity","codex","anthropic"]',
-      bindings: '{"anthropic":12}',
-      bucketLimits: '{"antigravity-gemini":1,"antigravity-claude":1,"codex-gpt":1}',
-    })).toBe(true);
-  });
-
-  it("纯绑定卡(只绑 anthropic、无其它产品计费桶)→ false", () => {
-    expect(isMeteredHybrid({
-      productEntitlements: '["anthropic"]',
-      bindings: '{"anthropic":12}',
-      bucketLimits: null,
-    })).toBe(false);
-  });
-
-  it("纯号池卡(无绑定)→ false", () => {
-    expect(isMeteredHybrid({
-      productEntitlements: '["antigravity","codex","anthropic"]',
-      bindings: "{}",
-      bucketLimits: '{"antigravity-gemini":1,"codex-gpt":1}',
-    })).toBe(false);
-  });
-
-  it("绑定产品恰好覆盖所有计费桶产品 → false(绑定卡,不混合)", () => {
-    expect(isMeteredHybrid({
-      productEntitlements: '["anthropic"]',
-      bindings: '{"anthropic":12}',
-      bucketLimits: '{"anthropic-claude":1000000}',
-    })).toBe(false);
   });
 });
