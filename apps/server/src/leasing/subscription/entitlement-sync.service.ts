@@ -22,6 +22,7 @@ import { TokenServerService } from "../token-server/token-server.service";
 import { RemoteCodexService } from "../remote-codex/service/remote-codex.service";
 import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthropic.service";
 import { AccessKeyStore } from "../token-server/access-key-store";
+import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { boundSeatsByAccount, occupiedSharesByAccount } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
@@ -114,6 +115,69 @@ export class EntitlementSyncService {
 
     config.bindings = existingBindings;
     this.registerRecord(sub, config);
+  }
+
+  /**
+   * 管理后台「换绑/加绑」:把某订阅在某产品上的绑定切到指定上游号。
+   * 用途:修「已开通某产品却没绑它」(409 此卡未开通该服务),或迁移后挪座位。
+   * 卡迁移订阅 config 空 → rowToConfig 回退识别其线路/已有绑定。
+   * force=true 跳过容量/停用校验(管理员强制),但号必须真实存在(避免绑到空号把订阅打死)。
+   */
+  async rebindProduct(
+    subscriptionId: string,
+    product: string,
+    accountId: number,
+    opts: { force?: boolean } = {},
+  ): Promise<{ ok: true; product: string; accountId: number } | { ok: false; error: string }> {
+    const sub = await this.prisma.subscription.findUnique({ where: { id: subscriptionId } });
+    if (!sub) return { ok: false, error: "订阅不存在" };
+    if (product !== "antigravity" && product !== "codex" && product !== "anthropic") {
+      return { ok: false, error: "未知产品" };
+    }
+    const acctId = Number(accountId);
+    if (!(acctId > 0)) return { ok: false, error: "accountId 非法" };
+    const force = opts.force === true;
+
+    return withAccessKeysWriteLock(async () => {
+      const config = rowToConfig(sub as any);
+      const products: string[] = Array.isArray(config.products) ? config.products.map(String) : [];
+      if (!products.includes(product)) {
+        return { ok: false, error: `该订阅未开通产品「${product}」,不能绑定` };
+      }
+      const weight = Math.max(1, Math.floor(Number(config.weight) || 1));
+
+      // 目标号必须真实存在(force 也校验,绑到不存在的号 = 把订阅打死)。
+      const acc = this.rosetta.poolAccountById(product, acctId);
+      if (!acc) return { ok: false, error: `「${product}」池中不存在账号 #${acctId}` };
+      if (!force && acc.enabled === false) return { ok: false, error: `账号 #${acctId} 已停用(可加 force 强制)` };
+
+      // 容量校验(排除本订阅自身);不足且非 force → 拒,避免超分。
+      if (!force) {
+        const { shares } = await this.seatOccupancyFromDb(product, subscriptionId);
+        const free = ACCOUNT_SHARE_CAPACITY - (shares.get(acctId) || 0);
+        if (free < weight) {
+          return { ok: false, error: `账号 #${acctId} 在「${product}」剩余份额 ${free} < 需要 ${weight}(可加 force 强制)` };
+        }
+      }
+
+      const bindings: Record<string, number> =
+        config.bindings && typeof config.bindings === "object" ? { ...config.bindings } : {};
+      bindings[product] = acctId;
+      config.bindings = bindings;
+      config.line = "bind";
+      // config + 镜像 legacy bindings 列一起写(两边一致;读取侧 config 优先)。
+      await this.prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: { config: JSON.stringify(config), bindings: JSON.stringify(bindings) },
+      });
+      // 重新注册内存 record + reload 各池 → 运行时立刻按新绑定路由。
+      this.registerRecord(sub, config);
+      this.tokenServer.reloadAccessKeys();
+      this.remoteCodex.reloadAccessKeys();
+      this.remoteAnthropic.reloadAccessKeys();
+      this.logger.log(`[rebind] sub ${subscriptionId} product ${product} → account #${acctId}${force ? " (force)" : ""}`);
+      return { ok: true, product, accountId: acctId };
+    });
   }
 
   /** Build the limit record from config and register it in the in-memory store (no file). */

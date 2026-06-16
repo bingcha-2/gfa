@@ -257,6 +257,7 @@ export class RosettaService {
   bindAccessKey(payload: any) { return this.accessKeySvc.bindAccessKey(payload); }
   unbindAccessKey(payload: any) { return this.accessKeySvc.unbindAccessKey(payload); }
   setAccessKeyBindings(payload: any) { return this.accessKeySvc.setAccessKeyBindings(payload); }
+  poolAccountById(product: string, accountId: number) { return this.accessKeySvc.poolAccountById(product, accountId); }
   async cleanupExpiredKeys() {
     const subscriptionIds = await this.loadSubscriptionIds();
     return this.accessKeySvc.cleanupExpiredKeys(subscriptionIds);

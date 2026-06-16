@@ -24,7 +24,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Search, Ban } from "lucide-react";
+import { Search, Ban, Link2 } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
@@ -48,6 +48,62 @@ function subStatusBadge(status: string) {
   if (status === "ACTIVE") return <Badge className="bg-emerald-500 text-white">{SUB_STATUS_LABEL[status]}</Badge>;
   if (status === "CANCELLED") return <Badge variant="destructive">{SUB_STATUS_LABEL[status]}</Badge>;
   return <Badge variant="outline">{SUB_STATUS_LABEL[status] ?? status}</Badge>;
+}
+
+/** 换绑/加绑:把订阅某产品的绑定切到指定上游号。账号 ID 见对应产品的账号页。 */
+function RebindDialog({ sub, onDone }: { sub: ConsoleSubscription; onDone: () => void | Promise<void> }) {
+  const products = parseProducts(sub.productEntitlements);
+  const [product, setProduct] = useState(products[0] ?? "");
+  const [accountId, setAccountId] = useState("");
+  const [force, setForce] = useState(false);
+
+  async function submit() {
+    const id = Number(accountId);
+    if (!product || !(id > 0)) { toast.error("请选择产品并填写有效的账号 ID"); return; }
+    try {
+      await apiRequest(`subscriptions/${sub.id}/rebind`, {
+        method: "POST",
+        body: { product, accountId: id, force },
+      });
+      toast.success(`已将「${product}」绑定切到账号 #${id}`);
+      await onDone();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger render={<Button variant="ghost" size="sm" />}>
+        <Link2 className="h-3.5 w-3.5 mr-1" />换绑
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>换绑账号</AlertDialogTitle>
+          <AlertDialogDescription>
+            把订阅「{sub.id}」某产品的绑定切到指定上游号。账号 ID 见对应产品的账号管理页。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="flex flex-col gap-3 py-2">
+          <Select value={product} onValueChange={setProduct} items={products.map((p) => ({ label: p, value: p }))} />
+          <Input
+            type="number"
+            placeholder="目标账号 ID"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          />
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} className="size-3.5" />
+            强制(跳过容量 / 停用校验)
+          </label>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void submit()}>确认换绑</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export default function SubscriptionsPage() {
@@ -160,6 +216,8 @@ export default function SubscriptionsPage() {
                     <TableCell className="text-center">{s.deviceLimit}</TableCell>
                     <TableCell className="text-right">
                       {s.status === "ACTIVE" && (
+                        <div className="flex items-center justify-end gap-1">
+                        {s.line === "bind" && <RebindDialog sub={s} onDone={load} />}
                         <AlertDialog>
                           <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>
                             <Ban className="h-3.5 w-3.5 mr-1" />撤销
@@ -175,6 +233,7 @@ export default function SubscriptionsPage() {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>

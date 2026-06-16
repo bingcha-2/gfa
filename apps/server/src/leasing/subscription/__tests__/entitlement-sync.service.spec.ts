@@ -104,6 +104,7 @@ describe("EntitlementSyncService(去影子)", () => {
       subscription: {
         // The seat-share count reads ALL ACTIVE subs' configs from here.
         findMany: vi.fn(async () => [...subs.values()].filter((s) => s.status === "ACTIVE")),
+        findUnique: vi.fn(async ({ where }: any) => subs.get(where.id) ?? null),
         update: vi.fn(async ({ where, data }: any) => {
           const row = subs.get(where.id);
           if (row) Object.assign(row, data);
@@ -150,6 +151,36 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(JSON.parse(fs.readFileSync(accessKeysPath, "utf8")).keys).toEqual([]);
     // findById 也能取到(运行时限额读它)。
     expect(store.findById(sub.id)?.id).toBe(sub.id);
+  });
+
+  // ── rebindProduct: 管理后台换绑/加绑 ──────────────────────────────────────
+
+  it("rebindProduct 把某产品绑定切到指定号:写回 config.bindings + 内存 record 立即生效", async () => {
+    seed(makeSub({ id: "sub-rebind" })); // antigravity bind, level ultra, weight 2
+    const res = await service.rebindProduct("sub-rebind", "antigravity", 7);
+
+    expect(res).toMatchObject({ ok: true, product: "antigravity", accountId: 7 });
+    // 写回 config.bindings + 镜像 legacy bindings 列。
+    const row = subs.get("sub-rebind");
+    expect(JSON.parse(row.config).bindings).toEqual({ antigravity: 7 });
+    expect(JSON.parse(row.bindings)).toEqual({ antigravity: 7 });
+    // 内存 record 立即按新绑定路由。
+    expect(store.findById("sub-rebind")?.bindings).toEqual({ antigravity: 7 });
+    expect(reloads.tokenServer.reloadAccessKeys).toHaveBeenCalled();
+  });
+
+  it("rebindProduct 拒绝:目标号不存在", async () => {
+    seed(makeSub({ id: "sub-rebind-2" }));
+    const res = await service.rebindProduct("sub-rebind-2", "antigravity", 999);
+    expect(res).toMatchObject({ ok: false });
+    expect((res as any).error).toContain("不存在");
+  });
+
+  it("rebindProduct 拒绝:订阅未开通该产品", async () => {
+    seed(makeSub({ id: "sub-rebind-3" })); // 只开通 antigravity
+    const res = await service.rebindProduct("sub-rebind-3", "codex", 7);
+    expect(res).toMatchObject({ ok: false });
+    expect((res as any).error).toContain("未开通");
   });
 
   // ── bind line: seat assignment, requiresBinding ───────────────────────────

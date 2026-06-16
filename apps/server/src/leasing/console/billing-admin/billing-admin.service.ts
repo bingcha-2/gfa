@@ -25,6 +25,7 @@ import type { PlanOrder, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
+import { EntitlementSyncService } from "../../subscription/entitlement-sync.service";
 import { rowToConfig } from "../../subscription/subscription-config";
 import { BillingService } from "../../account/billing/billing.service";
 
@@ -49,7 +50,15 @@ export class BillingAdminService {
     private readonly prisma: PrismaService,
     private readonly subscriptionService: SubscriptionService,
     private readonly billing: BillingService,
+    private readonly entitlementSync: EntitlementSyncService,
   ) {}
+
+  /** 换绑/加绑:把某订阅在某产品上的绑定切到指定上游号。失败抛 400(供前端展示文案)。 */
+  async rebindSubscription(id: string, product: string, accountId: number, force: boolean) {
+    const result = await this.entitlementSync.rebindProduct(id, String(product), Number(accountId), { force });
+    if (!result.ok) throw new ConflictException({ error: "REBIND_FAILED", message: result.error });
+    return result;
+  }
 
   /**
    * Admin plan-order list: paginated, filterable by status/payChannel and

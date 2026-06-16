@@ -660,6 +660,15 @@ export class AccessKeyService {
     return path.join(this.ctx.dataDir, fileName);
   }
 
+  /** 某产品池里按 id 找账号(供换绑校验:号必须真实存在)。找不到返回 null。 */
+  poolAccountById(product: string, accountId: number): { id: number; email?: string; enabled?: boolean; planType?: string } | null {
+    if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
+    const pool = readJson(this.poolFileFor(product), { accounts: [] });
+    const accounts = Array.isArray(pool.accounts) ? pool.accounts : [];
+    const acc = accounts.find((a: any) => Number(a.id) === Number(accountId));
+    return acc ? { id: Number(acc.id), email: acc.email, enabled: acc.enabled !== false, planType: acc.planType } : null;
+  }
+
   /**
    * Shares consumed per account in a pool (sum of LIVE bound cards' weights).
    * Non-active records don't count (see isLiveKey) — this is what frees a

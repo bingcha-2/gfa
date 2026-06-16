@@ -9,6 +9,7 @@
  * mutation audit-logged with the operator id.
  */
 import {
+  Body,
   Controller,
   DefaultValuePipe,
   Get,
@@ -82,6 +83,28 @@ export class BillingAdminController {
       },
     });
 
+    return result;
+  }
+
+  @Post("subscriptions/:id/rebind")
+  async rebindSubscription(
+    @Param("id") id: string,
+    @Body() body: { product?: string; accountId?: number; force?: boolean },
+    @Request() req: any,
+  ) {
+    const result = await this.billingAdmin.rebindSubscription(
+      id,
+      String(body?.product || ""),
+      Number(body?.accountId || 0),
+      body?.force === true,
+    );
+    await this.auditLog.log({
+      operatorId: req.user?.id,
+      action: "REBIND_SUBSCRIPTION",
+      targetType: "Subscription",
+      targetId: id,
+      detail: { product: result.product, accountId: result.accountId, force: body?.force === true },
+    });
     return result;
   }
 
