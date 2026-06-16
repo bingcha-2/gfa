@@ -94,6 +94,9 @@ const CARD_BINDINGS: Record<string, Record<string, number>> = {
   card_mqeyvt1h_e962558f: { anthropic: 10 },
   card_mqf20mse_274e854d: { anthropic: 8 },
   card_mqfcvkr2_d2df34cb: { anthropic: 13 },
+  // 覆盖检查发现的:快照里它是号池卡,但 DB 已绑 anthropic:15、products 却还有 3 个(脏)。
+  // 按其 DB 当前绑定收敛成 [anthropic]。
+  card_mq43a422_58496926: { anthropic: 15 },
   // —— 混绑卡(两个产品都绑了号,收敛后两者都保留)——
   card_mq23mk0w_ab85c294: { codex: 2, antigravity: 531 },
   card_mqc1u7ji_12c867e6: { codex: 8, anthropic: 12 },
