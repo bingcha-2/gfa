@@ -23,6 +23,7 @@ function makePrisma(opts: {
   notificationCount?: number;
   usageRecords?: any[];
   usageCount?: number;
+  hourlyRecords?: any[];
 } = {}) {
   const customer = opts.customer ?? {
     id: "cust-1",
@@ -50,9 +51,8 @@ function makePrisma(opts: {
     notification: {
       count: vi.fn(async () => opts.notificationCount ?? 0),
     },
-    cardTokenUsage: {
-      findMany: vi.fn(async () => opts.usageRecords ?? []),
-      count: vi.fn(async () => opts.usageCount ?? 0),
+    cardUsageHourly: {
+      findMany: vi.fn(async () => opts.hourlyRecords ?? []),
     },
   };
 }
@@ -400,197 +400,25 @@ describe("PortalService.setSubscriptionPriority", () => {
   });
 });
 
-// ── 3. getUsage ───────────────────────────────────────────────────────────────
-
-describe("PortalService.getUsage", () => {
-  it("scopes usage directly to the customer's customerId", async () => {
-    const prisma = makePrisma({
-      usageRecords: [
-        {
-          id: "rec-1",
-          timestamp: new Date("2026-06-10T10:00:00Z"),
-          modelKey: "claude-3-5-sonnet",
-          bucket: "antigravity-claude",
-          status: 0,
-          inputTokens: 100,
-          outputTokens: 50,
-          totalTokens: 150,
-        },
-      ],
-      usageCount: 1,
-    });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const result = await service.getUsage("cust-1", { days: 7 });
-
-    expect(result.records).toHaveLength(1);
-    expect(result.records[0].id).toBe("rec-1");
-    expect(result.total).toBe(1);
-
-    // Verify the cardTokenUsage query uses customerId directly (not accessKeyId)
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.where).toEqual(
-      expect.objectContaining({ customerId: "cust-1" }),
-    );
-    expect(callArgs.where.accessKeyId).toBeUndefined();
-  });
-
-  it("excludes another customer's usage rows by querying with customerId", async () => {
-    // Direct customerId filter ensures only cust-1's rows are returned
-    const prisma = makePrisma({
-      usageRecords: [], // DB returns empty for cust-1
-      usageCount: 0,
-    });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const result = await service.getUsage("cust-1", { days: 7 });
-
-    expect(result.records).toHaveLength(0);
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    // customerId filter ensures cust-OTHER rows are never returned
-    expect(callArgs.where).toEqual(
-      expect.objectContaining({ customerId: "cust-1" }),
-    );
-    expect(callArgs.where.accessKeyId).toBeUndefined();
-  });
-
-  it("returns empty result when no usage records exist for the customer", async () => {
-    const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const result = await service.getUsage("cust-1", {});
-
-    expect(result.records).toHaveLength(0);
-    expect(result.total).toBe(0);
-    // customerId query always runs; empty result comes naturally from DB
-    expect(prisma.cardTokenUsage.findMany).toHaveBeenCalled();
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.where).toEqual(
-      expect.objectContaining({ customerId: "cust-1" }),
-    );
-  });
-
-  it("applies days filter: timestamp >= now - days*24h", async () => {
-    const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const before = Date.now();
-    await service.getUsage("cust-1", { days: 1 });
-    const after = Date.now();
-
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    const since: Date = callArgs.where.timestamp.gte;
-    const sinceMs = since.getTime();
-
-    // since should be ~1 day ago
-    const expectedMin = before - 1 * 24 * 60 * 60 * 1000 - 100;
-    const expectedMax = after - 1 * 24 * 60 * 60 * 1000 + 100;
-    expect(sinceMs).toBeGreaterThan(expectedMin);
-    expect(sinceMs).toBeLessThan(expectedMax);
-  });
-
-  it("pagination: skip and take are calculated correctly", async () => {
-    const prisma = makePrisma({ usageRecords: [], usageCount: 100 });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    await service.getUsage("cust-1", { page: 3, pageSize: 20, days: 7 });
-
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.skip).toBe(40); // (3-1) * 20
-    expect(callArgs.take).toBe(20);
-  });
-
-  it("pageSize is capped at 100", async () => {
-    const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const result = await service.getUsage("cust-1", { pageSize: 999, days: 7 });
-
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    expect(callArgs.take).toBe(100);
-    expect(result.pageSize).toBe(100);
-  });
-
-  it("invalid days falls back to 7", async () => {
-    const prisma = makePrisma({ usageRecords: [], usageCount: 0 });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const before = Date.now();
-    await service.getUsage("cust-1", { days: 99 }); // not in {1,7,30}
-    const after = Date.now();
-
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
-    const since: Date = callArgs.where.timestamp.gte;
-    const sinceMs = since.getTime();
-
-    // Should be ~7 days ago
-    const expectedMin = before - 7 * 24 * 60 * 60 * 1000 - 100;
-    const expectedMax = after - 7 * 24 * 60 * 60 * 1000 + 100;
-    expect(sinceMs).toBeGreaterThan(expectedMin);
-    expect(sinceMs).toBeLessThan(expectedMax);
-  });
-
-  it("record shape includes id, timestamp (ISO), modelKey, bucket, status, inputTokens, outputTokens, totalTokens", async () => {
-    const ts = new Date("2026-06-10T12:00:00Z");
-    const prisma = makePrisma({
-      usageRecords: [
-        {
-          id: "rec-1",
-          timestamp: ts,
-          modelKey: "gpt-4o",
-          bucket: "codex-gpt",
-          status: 200,
-          inputTokens: 300,
-          outputTokens: 120,
-          totalTokens: 420,
-        },
-      ],
-      usageCount: 1,
-    });
-
-    const store = makeStore();
-    const service = new PortalService(prisma as any, store as any);
-
-    const result = await service.getUsage("cust-1", { days: 7 });
-
-    expect(result.records[0]).toEqual({
-      id: "rec-1",
-      timestamp: ts.toISOString(),
-      modelKey: "gpt-4o",
-      bucket: "codex-gpt",
-      status: 200,
-      inputTokens: 300,
-      outputTokens: 120,
-      totalTokens: 420,
-    });
-  });
-});
-
 // ── 4. getUsageStats ──────────────────────────────────────────────────────────
 
 describe("PortalService.getUsageStats", () => {
+  // getUsageStats reads the hourly aggregate: each row carries requests +
+  // failedRequests + summed tokens, keyed by hourStart. `status` here is sugar —
+  // a non-2xx status maps to failedRequests:1 (one failed call in that hour row).
   function recentRow(over: Record<string, any> = {}) {
+    const status = over.status ?? 200;
+    const requests = over.requests ?? 1;
+    const failedRequests = over.failedRequests ?? (status >= 200 && status < 300 ? 0 : requests);
     return {
-      timestamp: new Date(Date.now() - 60 * 1000), // ~1 min ago → lands in last bucket
+      hourStart: over.hourStart ?? new Date(Date.now() - 60 * 1000), // ~1 min ago → lands in last bucket
       modelKey: "claude-sonnet-4",
       bucket: "antigravity-claude",
-      status: 200,
+      requests,
+      failedRequests,
       inputTokens: 100,
       outputTokens: 50,
+      cachedInputTokens: 0,
       totalTokens: 150,
       ...over,
     };
@@ -617,25 +445,25 @@ describe("PortalService.getUsageStats", () => {
     expect(r.points).toHaveLength(7);
   });
 
-  it("scopes the query to the customer and the window (timestamp gte)", async () => {
-    const prisma = makePrisma({ usageRecords: [] });
+  it("scopes the query to the customer and the window (hourStart gte)", async () => {
+    const prisma = makePrisma({ hourlyRecords: [] });
     const service = new PortalService(prisma as any, makeStore() as any);
 
     const before = Date.now();
     await service.getUsageStats("cust-1", { days: 7 });
 
-    const callArgs = (prisma.cardTokenUsage.findMany as any).mock.calls[0][0];
+    const callArgs = (prisma.cardUsageHourly.findMany as any).mock.calls[0][0];
     expect(callArgs.where.customerId).toBe("cust-1");
-    expect(callArgs.where.timestamp.gte).toBeInstanceOf(Date);
+    expect(callArgs.where.hourStart.gte).toBeInstanceOf(Date);
     // since ≈ 6 full days before today's local midnight → at least 5 days ago.
-    expect((callArgs.where.timestamp.gte as Date).getTime()).toBeLessThan(
+    expect((callArgs.where.hourStart.gte as Date).getTime()).toBeLessThan(
       before - 5 * 24 * 60 * 60 * 1000,
     );
   });
 
   it("aggregates totals, byModel (desc), and status; points sum equals totals", async () => {
     const prisma = makePrisma({
-      usageRecords: [
+      hourlyRecords: [
         recentRow({ modelKey: "claude-sonnet-4", status: 200, inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
         recentRow({ modelKey: "claude-sonnet-4", status: 429, inputTokens: 10, outputTokens: 0, totalTokens: 10 }),
         recentRow({ modelKey: "gpt-4o", status: 200, inputTokens: 300, outputTokens: 200, totalTokens: 500 }),
@@ -692,7 +520,7 @@ describe("PortalService.getUsageStats", () => {
 
   it("savedUSD uses the client per-family pricing (claude 5/25, gemini 2/12, gpt 1.25/10), family from bucket suffix", async () => {
     const prisma = makePrisma({
-      usageRecords: [
+      hourlyRecords: [
         // claude 1M in + 0.2M out → 1*5 + 0.2*25 = $10 (mirrors apps/app usage_stats_test)
         recentRow({ bucket: "antigravity-claude", inputTokens: 1_000_000, outputTokens: 200_000, totalTokens: 1_200_000 }),
         // gpt 1M in + 0 out → 1*1.25 = $1.25
@@ -711,7 +539,7 @@ describe("PortalService.getUsageStats", () => {
 
   it("savedUSD falls back to gemini pricing for an unknown/empty bucket family (matches client priceFor)", async () => {
     const prisma = makePrisma({
-      usageRecords: [
+      hourlyRecords: [
         // no family suffix → gemini fallback: 1M in * 2 = $2
         recentRow({ bucket: "weirdbucket", inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 }),
       ],

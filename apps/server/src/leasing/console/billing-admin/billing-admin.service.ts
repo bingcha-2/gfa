@@ -207,14 +207,15 @@ export class BillingAdminService {
     }
 
     // 使用检测：订单支付后如果该客户产生过 token 用量，不允许退款。
-    const usageCount = await this.prisma.cardTokenUsage.count({
-      where: {
-        customerId: order.customerId,
-        timestamp: { gte: order.paidAt ?? order.createdAt },
-      },
+    // 查小时聚合表(保留 ~60 天，覆盖任意订阅期)；原始流水只留 2 天、不能判老订单。
+    // 下界按 paidAt 所在整点向下取整(保守：含该小时全部用量)。
+    const since = order.paidAt ?? order.createdAt;
+    const hourFloor = new Date(Math.floor(since.getTime() / 3_600_000) * 3_600_000);
+    const usedHours = await this.prisma.cardUsageHourly.count({
+      where: { customerId: order.customerId, hourStart: { gte: hourFloor } },
     });
-    if (usageCount > 0) {
-      throw new ConflictException(`该客户在订单支付后已产生 ${usageCount} 条使用记录，不可退款`);
+    if (usedHours > 0) {
+      throw new ConflictException(`该客户在订单支付后已产生使用记录，不可退款`);
     }
 
     // 实际打款:先调网关退款 API 把钱退回客户,成功(code=0)后才往下翻状态 —— 钱→状态,绝不反过来,

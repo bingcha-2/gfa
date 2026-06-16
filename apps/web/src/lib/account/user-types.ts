@@ -159,24 +159,6 @@ export type AccountOverview = {
 
 export type UsageDays = 1 | 7 | 30;
 
-export type UsageRecord = {
-  id: string;
-  timestamp: string;
-  modelKey: string;
-  bucket: string;
-  status: number; // HTTP 状态码(200/429/…),由 token 用量事件透传(Number)
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-};
-
-export type UsagePage = {
-  records: UsageRecord[];
-  total: number;
-  page: number;
-  pageSize: number;
-};
-
 // ─── Usage stats (aggregated — drives the history charts) ─────────────────────
 
 export type UsageStatPoint = {

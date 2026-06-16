@@ -70,30 +70,57 @@ describe("TokenServerService", () => {
     }));
   }
 
-  it("onModuleInit replays per-card windows from the CardTokenUsage log (restart-safe)", async () => {
-    const now = Date.now();
-    const findMany = vi.fn().mockResolvedValue([
-      {
-        accessKeyId: "card-1", accessKeyName: "", accountId: 1,
-        modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", status: 200,
-        inputTokens: 100, outputTokens: 20, cachedInputTokens: 0,
-        rawTotalTokens: 120, totalTokens: 120, timestamp: new Date(now - 1000),
-      },
-    ]);
+  // 服务层 windowState 持久化 ↔ 恢复编排(重启限流连续性的真正机制)。
+  it("onModuleInit 从 Subscription.windowState 精准恢复订阅 5h/周窗口", async () => {
+    const at = Date.now() - 60 * 60 * 1000;
+    const windowState = JSON.stringify({
+      windowStartedAt: at, weeklyWindowStartedAt: at,
+      tokenUsageEvents: [{ at, totalTokens: 500, modelKey: "claude-opus-4", product: "anthropic" }],
+      weeklyTokenUsageEvents: [{ at, totalTokens: 500, modelKey: "claude-opus-4", product: "anthropic" }],
+    });
+    const sub = {
+      id: "sub-1", customerId: "c1", priority: 0, backingKeyValue: "BK-1", status: "ACTIVE", expiresAt: null,
+      productEntitlements: JSON.stringify(["anthropic"]), bucketLimits: JSON.stringify({ "anthropic-claude": 1_000_000 }),
+      bindings: null, levels: null, weight: 1, deviceLimit: 1, weeklyTokenLimit: 0, windowMs: 18_000_000, windowState,
+    };
+    const prisma = { subscription: { findMany: vi.fn(async () => [sub]), update: vi.fn(async () => ({})) } };
     const service = withSessionResolver(new TokenServerService({
       accountsFilePath, accessKeysFilePath, tokenProvider,
-      now: () => now, randomId: () => "lease-fixed", minClientVersion: "",
-      prisma: { cardTokenUsage: { findMany } },
+      now: () => Date.now(), randomId: () => "x", minClientVersion: "", prisma,
     }));
-
-    const store = (service as any).accessKeyStore;
-    // Cold start: window empty before replay.
-    expect(store.publicStatus(store.findById("card-1")).recentWindowTokens).toBe(0);
 
     await service.onModuleInit();
 
-    expect(findMany).toHaveBeenCalledTimes(1);
-    expect(store.publicStatus(store.findById("card-1")).recentWindowTokens).toBe(120);
+    const rec = (service as any).accessKeyStore.findById("sub-1");
+    expect(rec).toBeTruthy();
+    expect(rec.windowStartedAt).toBe(at);
+    expect(rec.weeklyWindowStartedAt).toBe(at);
+    expect(rec.tokenUsageEvents).toHaveLength(1);
+
+    await service.onModuleDestroy(); // 清掉持久化定时器
+  });
+
+  it("persistSubscriptionWindows 把订阅窗口写回 Subscription.windowState", async () => {
+    const prisma = { subscription: { findMany: vi.fn(async () => []), update: vi.fn(async () => ({})) } };
+    const service = withSessionResolver(new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "x", minClientVersion: "", prisma,
+    }));
+    const store = (service as any).accessKeyStore;
+    store.loadSubscriptionRecords([{ id: "sub-9", status: "active", windowMs: 18_000_000 }]);
+    const rec = store.findById("sub-9");
+    rec.windowStartedAt = 1000;
+    rec.weeklyWindowStartedAt = 500;
+    rec.tokenUsageEvents = [{ at: 1000, totalTokens: 50 }];
+    rec.weeklyTokenUsageEvents = [{ at: 1000, totalTokens: 50 }];
+
+    await service.persistSubscriptionWindows();
+
+    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
+    const arg = (prisma.subscription.update as any).mock.calls[0][0];
+    expect(arg.where).toEqual({ id: "sub-9" });
+    expect(JSON.parse(arg.data.windowState).windowStartedAt).toBe(1000);
+    expect(JSON.parse(arg.data.windowState).tokenUsageEvents).toHaveLength(1);
   });
 
   it("returns status with access-key and account summaries", () => {
@@ -179,14 +206,10 @@ describe("TokenServerService", () => {
     );
 
     expect(report.ok).toBe(true);
-    expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
+    // 累计计数已下线;用量进入限流窗口(内存)+ CardUsageHourly(DB,本测试未接)。
+    expect(report.accessKeyStatus.recentWindowTokens).toBe(150);
     expect(service.getStatus().activeLeases).toBe(1);
-
-    // Persistence is debounced now — force a flush before reading the file.
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalTokensUsed).toBe(150);
-    expect(stored.keys[0].totalRequests).toBe(1);
+    expect((service as any).accessKeyStore.findById("card-1").tokenUsageEvents.length).toBe(1);
   });
 
   it("persists modelQuotaFractions and modelQuotaResetTimes from accountQuota in report-result", async () => {
@@ -800,9 +823,8 @@ describe("TokenServerService — account cooling and retry", () => {
     });
     expect(late.ok).toBe(true);
     expect(late.ignored).toBeUndefined(); // counted, not ignored
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalRequests).toBe(1); // the late report counted
+    // 计入限流窗口(内存):该卡窗口里多了一条用量事件。
+    expect((service as any).accessKeyStore.findById("card-1").tokenUsageEvents.length).toBe(1);
   });
 
   // ── report-result response shape (client contract) ──────────────────────
@@ -1618,10 +1640,10 @@ describe("TokenServerService — session and key lifecycle", () => {
     expect(r2.ok).toBe(true);
     expect(r2.ignored).toBeUndefined();
 
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalTokensUsed).toBe(300);
-    expect(stored.keys[0].totalRequests).toBe(2);
+    const rec = (service as any).accessKeyStore.findById("card-1");
+    // 两条独立成功上报 → 限流窗口累计 300、窗口里两条事件。
+    expect((service as any).accessKeyStore.publicStatus(rec).recentWindowTokens).toBe(300);
+    expect(rec.tokenUsageEvents.length).toBe(2);
   });
 
   it("deduplicates successful report-result with the same reportId", async () => {
@@ -1645,10 +1667,9 @@ describe("TokenServerService — session and key lifecycle", () => {
     expect(r2.ignored).toBe(true);
     expect(r2.reason).toBe("already_reported");
 
-    // Tokens should only be counted once
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalTokensUsed).toBe(100); // not 200
+    // Tokens should only be counted once — 限流窗口仍是 100(去重未叠加)。
+    const rec = (service as any).accessKeyStore.findById("card-1");
+    expect((service as any).accessKeyStore.publicStatus(rec).recentWindowTokens).toBe(100); // not 200
   });
 
   it("deduplicates error report-result with the same reportId", async () => {
@@ -1671,10 +1692,7 @@ describe("TokenServerService — session and key lifecycle", () => {
     expect(r2.reason).toBe("already_reported");
 
     const status = service.getStatus();
-    expect(status.totalReports).toBe(1);
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalRequests).toBe(1);
+    expect(status.totalReports).toBe(1); // 去重:第二次 429 未计(error 上报无 token,无窗口事件)
   });
 
   it("allows error report after successful report (different status)", async () => {

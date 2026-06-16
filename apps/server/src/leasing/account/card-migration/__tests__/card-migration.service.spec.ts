@@ -15,8 +15,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CardMigrationService } from "../card-migration.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../../token-server/access-key-store";
-import { recentBucketUsage } from "../../../token-server/token-billing";
-import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../../../subscription/subscription-config";
 import {
   cleanCustomerTables,
   createTestCustomer,
@@ -74,7 +72,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await cleanCustomerTables();
-  await prisma.cardTokenUsage.deleteMany();
+  await prisma.cardUsageHourly.deleteMany();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "card-migration-"));
   accessKeysPath = path.join(tmpDir, "access-keys.json");
   writeKeys([]);
@@ -98,7 +96,7 @@ afterEach(() => {
 
 afterAll(async () => {
   await cleanCustomerTables();
-  await prisma.cardTokenUsage.deleteMany();
+  await prisma.cardUsageHourly.deleteMany();
   await disconnectCustomerDb();
 });
 
@@ -135,8 +133,7 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect(rec).toBeTruthy();
     expect(rec.customerId).toBe(customer.id);
     expect(rec.key).toBe(sub!.backingKeyValue);
-    expect(rec.totalTokensUsed).toBe(card.totalTokensUsed);
-    expect(rec.totalRequests).toBe(card.totalRequests);
+    // 累计计数已下线;限流窗口随迁移平移见专测「限流窗口随迁移平移…」。这里验 firstUsedAt 连续。
     expect(rec.firstUsedAt).toBe(card.firstUsedAt);
   });
 
@@ -276,53 +273,89 @@ describe("CardMigrationService.bindCard — migration", () => {
     store.reload();
     const customer = await createTestCustomer();
 
-    // 预先插 2 条 CardTokenUsage,customerId=null(绑卡前的历史用量)
-    await prisma.cardTokenUsage.create({
+    // 预先插 2 条 CardUsageHourly,customerId=""(绑卡前的历史用量,未绑定)
+    const hour = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
+    await prisma.cardUsageHourly.create({
       data: {
-        accessKeyId: "card-legacy-1",
-        customerId: null,
-        modelKey: "gpt-5-codex",
-        bucket: "codex-gpt",
-        totalTokens: 100,
-        timestamp: new Date(),
+        hourStart: hour, accessKeyId: "card-legacy-1", customerId: "",
+        modelKey: "gpt-5-codex", bucket: "codex-gpt", requests: 1, totalTokens: 100,
       },
     });
-    await prisma.cardTokenUsage.create({
+    await prisma.cardUsageHourly.create({
       data: {
-        accessKeyId: "card-legacy-1",
-        customerId: null,
-        modelKey: "gpt-5-codex",
-        bucket: "codex-gpt",
-        totalTokens: 200,
-        timestamp: new Date(),
+        hourStart: new Date(hour.getTime() - 3_600_000), accessKeyId: "card-legacy-1", customerId: "",
+        modelKey: "gpt-5-codex", bucket: "codex-gpt", requests: 1, totalTokens: 200,
       },
     });
 
     await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
 
     // bind-card 后,这 2 条的 customerId 应被回填为绑定的 customerId
-    const rows = await prisma.cardTokenUsage.findMany({ where: { accessKeyId: "card-legacy-1" } });
+    const rows = await prisma.cardUsageHourly.findMany({ where: { accessKeyId: "card-legacy-1" } });
     expect(rows.length).toBe(2);
     expect(rows.every((r) => r.customerId === customer.id)).toBe(true);
   });
 
-  it("usage continuity: a CardTokenUsage row inserted pre-bind stays associated (same id)", async () => {
+  it("usage continuity: a CardUsageHourly row inserted pre-bind stays associated (same id)", async () => {
     writeKeys([usedCard()]);
     store.reload();
     const customer = await createTestCustomer();
-    await prisma.cardTokenUsage.create({
+    await prisma.cardUsageHourly.create({
       data: {
-        accessKeyId: "card-legacy-1", modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
-        status: 200, inputTokens: 100, outputTokens: 50, totalTokens: 150,
+        hourStart: new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000),
+        accessKeyId: "card-legacy-1", customerId: "",
+        modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
+        requests: 1, inputTokens: 100, outputTokens: 50, totalTokens: 150,
       },
     });
 
     await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
 
     const sub = await prisma.subscription.findUnique({ where: { id: "card-legacy-1" } });
-    const rows = await prisma.cardTokenUsage.findMany({ where: { accessKeyId: sub!.id } });
+    const rows = await prisma.cardUsageHourly.findMany({ where: { accessKeyId: sub!.id } });
     expect(rows).toHaveLength(1);
     expect(rows[0].totalTokens).toBe(150);
+    expect(rows[0].customerId).toBe(customer.id);
+  });
+
+  it("限流窗口随迁移平移到订阅,并经 windowState 跨重启精准恢复", async () => {
+    writeKeys([usedCard({ bindings: undefined, bucketLimits: { "antigravity-gemini": 1_000_000 } })]);
+    store.reload();
+    const customer = await createTestCustomer();
+
+    // 绑卡前:文件卡内存里已有当前窗内的满额窗口(模拟已用量)。
+    const at = Date.now() - 60 * 60 * 1000;
+    const ev = {
+      at, status: 200, modelKey: "gemini-2.5-pro", product: "antigravity",
+      inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, rawTotalTokens: 800_000, totalTokens: 800_000,
+    };
+    const fileRec = store.findById("card-legacy-1") as any;
+    fileRec.windowStartedAt = at;
+    fileRec.weeklyWindowStartedAt = at;
+    fileRec.tokenUsageEvents = [ev];
+    fileRec.weeklyTokenUsageEvents = [ev];
+
+    await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
+
+    // 迁移后:订阅 record 继承了窗口起点 + 事件(额度连续,不穿透)。
+    const subRec = store.findById("card-legacy-1") as any;
+    expect(subRec.windowStartedAt).toBe(at);
+    expect(subRec.tokenUsageEvents).toHaveLength(1);
+    expect(subRec.weeklyTokenUsageEvents).toHaveLength(1);
+
+    // 模拟重启:序列化窗口 → 全新 store 注册订阅 + 从 windowState 快照恢复。
+    const snap = store.serializeSubscriptionWindows().find((s) => s.id === "card-legacy-1");
+    expect(snap).toBeTruthy();
+    const reboot = new AccessKeyStore(accessKeysPath);
+    reboot.loadSubscriptionRecords([{
+      id: "card-legacy-1", status: "active",
+      bucketLimits: { "antigravity-gemini": 1_000_000 }, windowMs: 18_000_000,
+    } as any]);
+    reboot.restoreSubscriptionWindow("card-legacy-1", snap!.windowState);
+    const rec2 = reboot.findById("card-legacy-1") as any;
+    expect(rec2.windowStartedAt).toBe(at);
+    expect(rec2.tokenUsageEvents).toHaveLength(1);
+    expect(rec2.weeklyTokenUsageEvents).toHaveLength(1);
   });
 });
 
@@ -499,9 +532,9 @@ describe("CardMigrationService.bindCard — idempotency and errors", () => {
     const sub = await prisma.subscription.findUnique({ where: { id: "card-legacy-1" } });
     expect(store.findByKey(sub!.backingKeyValue!)?.id).toBe("card-legacy-1");
 
-    // 提交期间那笔 interim 用量(42 base + 1)被平移到订阅 record,没丢。
+    // 提交期间那笔 interim 用量(一条窗口事件)被平移到订阅 record,没丢。
     const rec = store.findById("card-legacy-1") as any;
-    expect(rec.totalRequests).toBe(43);
+    expect((rec.tokenUsageEvents || []).length).toBe(1);
   });
 
   it("a failing file write rolls back the Subscription + Notification rows (no orphans)", async () => {
@@ -517,56 +550,5 @@ describe("CardMigrationService.bindCard — idempotency and errors", () => {
 
     expect(await prisma.subscription.count()).toBe(0);
     expect(await prisma.notification.count()).toBe(0);
-  });
-});
-
-describe("CardMigrationService.bindCard — 重启限流连续性(删影子的硬前提)", () => {
-  it("号池迁移卡删影子后,重启(fresh store + loadActiveSubscriptions + hydrate)仍从 CardTokenUsage 重建 5h 窗口,不穿透", async () => {
-    const now = Date.now();
-    // 号池卡(无 bindings → 5h 走 windowStartedAt,正是删影子后最怕丢的那条)。
-    const card = usedCard({ bindings: undefined, bucketLimits: { "antigravity-gemini": 1_000_000 } });
-    writeKeys([card]);
-    store.reload();
-    const customer = await createTestCustomer();
-
-    // 当前 5h 窗内(1h 前)的历史用量行 —— 重启重建的唯一真相源。
-    await prisma.cardTokenUsage.create({
-      data: {
-        accessKeyId: "card-legacy-1", customerId: null,
-        modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
-        status: 200, inputTokens: 300_000, outputTokens: 200_000,
-        rawTotalTokens: 500_000, totalTokens: 500_000,
-        timestamp: new Date(now - 60 * 60 * 1000),
-      },
-    });
-
-    await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
-    expect(readKeys()).toHaveLength(0); // 影子已物理删除
-
-    // 模拟重启:全新 store(读到的是空文件)+ 像 boot 的 loadActiveSubscriptions 一样注册订阅
-    // + 像 onModuleInit 一样 hydrate 真实 CardTokenUsage 行。
-    const rebootStore = new AccessKeyStore(accessKeysPath);
-    const sub = await prisma.subscription.findUnique({ where: { id: "card-legacy-1" } });
-    rebootStore.loadSubscriptionRecords([subscriptionToLimitRecord({
-      id: sub!.id, customerId: sub!.customerId, priority: sub!.priority,
-      backingKeyValue: sub!.backingKeyValue ?? undefined, status: sub!.status,
-      expiresAt: sub!.expiresAt, config: legacyColumnsToConfig(sub as any),
-    }) as any]);
-    const rows = await prisma.cardTokenUsage.findMany({ where: { accessKeyId: "card-legacy-1" } });
-    rebootStore.hydrateWindowsFromUsageLog(
-      rows.map((r) => ({
-        accessKeyId: r.accessKeyId, at: new Date(r.timestamp).getTime(), status: r.status ?? 0,
-        modelKey: r.modelKey ?? "", bucket: r.bucket ?? "",
-        inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0,
-        rawTotalTokens: r.rawTotalTokens ?? 0, totalTokens: r.totalTokens ?? 0,
-      })) as any,
-    );
-
-    // 重启后:5h 窗口起点被回放重建(非 0)、用量回来了 → 额度连续、未穿透。
-    const rec = rebootStore.findById("card-legacy-1") as any;
-    expect(rec).toBeTruthy();
-    expect(Number(rec.windowStartedAt || 0)).toBeGreaterThan(0);
-    const used = [...recentBucketUsage(rec, now).values()].reduce((a, b) => a + b, 0);
-    expect(used).toBeGreaterThan(0);
   });
 });

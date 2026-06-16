@@ -431,22 +431,7 @@ export class RosettaController {
     return this.rosetta.adspowerImportHistory();
   }
 
-  // ── Per-card token usage log ────────────────────────────────────────────
-
-  @Get("card-token-usage")
-  getCardTokenUsage(
-    @Query("cardId") cardId: string,
-    @Query("page") page?: string,
-    @Query("pageSize") pageSize?: string,
-    @Query("days") days?: string,
-  ) {
-    return this.tokenUsageStats.getCardUsageRecords({
-      accessKeyId: cardId,
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 30,
-      days: Number(days) || 30,
-    });
-  }
+  // ── Per-card token usage (aggregated) ───────────────────────────────────
 
   @Get("card-token-usage-summary")
   getCardTokenUsageSummary(@Query("cardId") cardId: string, @Query("days") days?: string) {

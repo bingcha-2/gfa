@@ -228,17 +228,16 @@ describe("EntitlementSyncService(去影子)", () => {
     const sub = seed(makeSub());
     await service.syncSubscription(sub);
 
-    // 通过内存 record 记真实用量。
+    // 通过内存 record 记真实用量(进入限流窗口事件;累计计数已下线)。
     expect(store.recordUsage(sub.id, 200, { totalTokens: 500 }, "gemini-2.5-pro", "r1", "antigravity")).toBe(true);
-    const usedBefore = store.findById(sub.id)!.totalTokensUsed;
-    expect(usedBefore).toBeGreaterThan(0);
+    expect(store.findById(sub.id)!.tokenUsageEvents?.length).toBe(1);
 
     const newExpiry = new Date(Date.now() + 60 * DAY_MS);
     await service.syncSubscription(makeSub({ id: sub.id, expiresAt: newExpiry, config: JSON.parse(subs.get(sub.id).config) }));
 
     const after = store.findById(sub.id)!;
     expect(after.keyExpiresAt).toBe(newExpiry.toISOString());
-    expect(after.totalTokensUsed).toBe(usedBefore);
+    // resync 不动限流窗口:那条用量事件还在。
     expect(after.tokenUsageEvents?.length).toBe(1);
   });
 
@@ -266,13 +265,13 @@ describe("EntitlementSyncService(去影子)", () => {
     const sub = seed(makeSub());
     await service.syncSubscription(sub);
     store.recordUsage(sub.id, 200, { totalTokens: 500 }, "gemini-2.5-pro", "r1", "antigravity");
-    const usedBefore = store.findById(sub.id)!.totalTokensUsed;
+    const eventsBefore = store.findById(sub.id)!.tokenUsageEvents?.length ?? 0;
 
     service.expireShadowRecord(sub.id);
 
     const record = store.findById(sub.id)!;
     expect(record.status).toBe("expired");
-    expect(record.totalTokensUsed).toBe(usedBefore); // 用量保留
+    expect(record.tokenUsageEvents?.length ?? 0).toBe(eventsBefore); // 限流窗口用量保留
 
     const resolved = await store.resolveFromRequest(sessionReqFor(sub.id), {});
     expect(resolved.record).toBeNull();

@@ -184,8 +184,8 @@ export class CardMigrationService {
             backingKeyValue,
           },
         });
-        // 把这张卡的历史用量回填到账户(ID continuity:CardTokenUsage.accessKeyId == recordId == 订阅 id)。
-        await tx.cardTokenUsage.updateMany({
+        // 把这张卡的历史用量(小时聚合)归属到账户(ID continuity:accessKeyId == recordId == 订阅 id)。
+        await tx.cardUsageHourly.updateMany({
           where: { accessKeyId: recordId },
           data: { customerId },
         });

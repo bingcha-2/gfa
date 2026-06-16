@@ -41,25 +41,6 @@ export class UsageController {
   constructor(private readonly portalService: PortalService) {}
 
   /**
-   * GET /api/account/usage?page=&pageSize=&days=
-   * days ∈ {1,7,30}, default 7; pageSize default 20 cap 100
-   * → { records, total, page, pageSize }
-   */
-  @Get()
-  usage(
-    @CurrentCustomer() customer: CustomerUser,
-    @Query("page") page?: string,
-    @Query("pageSize") pageSize?: string,
-    @Query("days") days?: string,
-  ) {
-    return this.portalService.getUsage(customer.customerId, {
-      page: page ? parseInt(page, 10) : undefined,
-      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
-      days: days ? parseInt(days, 10) : undefined,
-    });
-  }
-
-  /**
    * GET /api/account/usage/stats?days=
    * days ∈ {1,7,30}, default 7
    * → { granularity, points, byModel, status, totals } — 历史记录页统计图

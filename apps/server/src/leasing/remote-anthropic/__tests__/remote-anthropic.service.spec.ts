@@ -136,11 +136,9 @@ describe("RemoteAnthropicService", () => {
     );
 
     expect(report.ok).toBe(true);
-    expect(report.accessKeyStatus.totalTokensUsed).toBe(160);
-    service.flushAccessKeys();
-    const stored = JSON.parse(fs.readFileSync(accessKeysFilePath, "utf8"));
-    expect(stored.keys[0].totalTokensUsed).toBe(160);
-    expect(stored.keys[0].totalRequests).toBe(1);
+    // 累计计数已下线;用量进入限流窗口(内存)+ CardUsageHourly(DB,本测试未接)。
+    expect(report.accessKeyStatus.recentWindowTokens).toBe(160);
+    expect((service as any).accessKeyStore.findById("claude-card-1").tokenUsageEvents.length).toBe(1);
   });
 
   it("feeds 5h and weekly fair-share windows from their own Claude quota fields", async () => {

@@ -40,6 +40,9 @@ export class TokenServerHttpError extends LeaseServiceHttpError {}
 export class TokenServerService extends LeaseService<TokenAccount> implements OnModuleDestroy, OnModuleInit {
   /** Prisma handle kept for the boot-time window replay (see onModuleInit). */
   private readonly bootPrisma: any;
+  /** Periodic persister for subscription 5h/weekly window snapshots → Subscription.windowState. */
+  private windowPersistTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly WINDOW_PERSIST_INTERVAL_MS = 60_000;
 
   constructor(@Optional() options: ServiceOptions = {}) {
     const provider = new AntigravityProvider({
@@ -105,39 +108,63 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
   }
 
   /**
-   * On boot, rebuild each card's in-memory rate-limit window from the durable
-   * CardTokenUsage log. Window events are not persisted to access-keys.json
-   * (they live in memory only), so without this a restart would reset every
-   * card's usage window and hand out fresh quota. Runs once: this service owns
-   * the shared AccessKeyStore; the codex/anthropic pools reuse the same instance
-   * and must NOT replay again (hydrate appends — a second pass would double-count).
-   * Best-effort: a failure just means cold windows, it never blocks startup.
+   * On boot, load ACTIVE subscriptions into memory and restore each one's 5h/weekly
+   * rate-limit window from its persisted snapshot (Subscription.windowState) — done
+   * inside loadActiveSubscriptions. No per-call replay: windows are durable now, so
+   * a restart resumes the exact windows instead of handing out fresh quota.
+   * Runs once: this service owns the shared AccessKeyStore (codex/anthropic pools
+   * reuse the same instance). Best-effort: never blocks startup.
    */
   async onModuleInit(): Promise<void> {
     const prisma = this.bootPrisma;
     if (!prisma) return;
-    // 去影子:先把所有 ACTIVE 订阅从 DB 加载进内存(subscriptionById),再 hydrate 用量。
-    // 顺序关键 —— 用量只会挂到已存在的 record 上(见 hydrateWindowsFromUsageLog)。
     await this.loadActiveSubscriptions(prisma);
-    if (!prisma?.cardTokenUsage?.findMany) return;
-    try {
-      // The weekly window is the widest (≤7d); 5h windows are a subset. Pull the
-      // last 7 days once; each card's window read filters to its own period.
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const rows = await prisma.cardTokenUsage.findMany({
-        where: { timestamp: { gte: since } },
-        select: {
-          accessKeyId: true, modelKey: true, bucket: true, status: true,
-          inputTokens: true, outputTokens: true, cachedInputTokens: true,
-          rawTotalTokens: true, totalTokens: true, timestamp: true,
-        },
-      });
-      this.accessKeyStore.hydrateWindowsFromUsageLog(
-        rows.map((r: any) => ({ ...r, at: new Date(r.timestamp).getTime() })),
+
+    // Start periodic persistence of subscription window snapshots so a restart
+    // restores the exact 5h/weekly windows (no replay, no quota over-handout).
+    if (prisma?.subscription?.update && !this.windowPersistTimer) {
+      this.windowPersistTimer = setInterval(
+        () => { void this.persistSubscriptionWindows(); },
+        TokenServerService.WINDOW_PERSIST_INTERVAL_MS,
       );
-    } catch (err: any) {
-      console.error(`[token-server] window replay from CardTokenUsage failed: ${err?.message || err}`);
+      // Don't keep the event loop alive for this background timer.
+      (this.windowPersistTimer as any)?.unref?.();
     }
+  }
+
+  /**
+   * Persist every subscription's live 5h/weekly window snapshot to
+   * Subscription.windowState. Runs on an interval + once on shutdown. Best-effort:
+   * a failed write just means that sub falls back to a cold(er) window next boot.
+   */
+  async persistSubscriptionWindows(): Promise<void> {
+    const prisma = this.bootPrisma;
+    if (!prisma?.subscription?.update) return;
+    let snapshots: Array<{ id: string; windowState: string }>;
+    try {
+      snapshots = this.accessKeyStore.serializeSubscriptionWindows();
+    } catch (err: any) {
+      console.error(`[token-server] serialize subscription windows failed: ${err?.message || err}`);
+      return;
+    }
+    for (const { id, windowState } of snapshots) {
+      try {
+        await prisma.subscription.update({ where: { id }, data: { windowState } });
+      } catch {
+        // Sub may have been deleted/expired between snapshot and write — ignore.
+      }
+    }
+  }
+
+  /** Persist windows + stop the timer on shutdown, then run the base teardown. */
+  async onModuleDestroy(): Promise<void> {
+    if (this.windowPersistTimer) {
+      clearInterval(this.windowPersistTimer);
+      this.windowPersistTimer = null;
+    }
+    try { await this.persistSubscriptionWindows(); }
+    catch (err: any) { console.error(`[token-server] window persist on shutdown failed: ${err?.message || err}`); }
+    await super.onModuleDestroy();
   }
 
   /**
@@ -154,13 +181,17 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         select: {
           id: true, customerId: true, priority: true, backingKeyValue: true, status: true, expiresAt: true, productEntitlements: true,
           bucketLimits: true, bindings: true, levels: true, weight: true,
-          deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+          deviceLimit: true, weeklyTokenLimit: true, windowMs: true, windowState: true,
         },
       });
       const records = subs.map((s: any) =>
         subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, backingKeyValue: s.backingKeyValue, status: s.status, expiresAt: s.expiresAt, config: legacyColumnsToConfig(s) }),
       );
       this.accessKeyStore.loadSubscriptionRecords(records as any);
+      // 精准恢复 5h/周窗口快照(优先于从 CardTokenUsage 回放;恢复过的订阅 hydrate 会跳过)。
+      for (const s of subs) {
+        if (s.windowState) this.accessKeyStore.restoreSubscriptionWindow(s.id, s.windowState);
+      }
     } catch (err: any) {
       console.error(`[token-server] subscription load failed: ${err?.message || err}`);
     }

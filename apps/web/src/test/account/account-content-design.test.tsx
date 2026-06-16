@@ -5,7 +5,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 import { NotificationsList } from "@/components/account/notifications-list";
 import { TicketsList } from "@/components/account/tickets-list";
-import { UsageTable } from "@/components/account/usage-table";
 
 const root = path.resolve(__dirname, "../..");
 
@@ -38,42 +37,6 @@ describe("account content design contracts", () => {
     expect(css).toContain(".account-workflow-grid");
     expect(css).toContain(".account-summary-strip");
     expect(css).toContain(".account-support-panel");
-  });
-
-  it("usage history renders with account table controls instead of shadcn table/toggle slots", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        jsonResponse({
-          records: [
-            {
-              id: "u1",
-              timestamp: "2026-06-10T00:00:00.000Z",
-              modelKey: "claude-sonnet-4",
-              bucket: "claude",
-              status: "success",
-              inputTokens: 1000,
-              outputTokens: 2000,
-              totalTokens: 3000,
-            },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 20,
-        })
-      )
-    );
-
-    const { container } = render(<UsageTable />);
-
-    await waitFor(() => {
-      expect(screen.getByText("claude-sonnet-4")).toBeInTheDocument();
-    });
-
-    expect(container.querySelector(".account-usage")).toBeInTheDocument();
-    expect(container.querySelector(".account-data-table")).toBeInTheDocument();
-    expect(container.querySelector("[data-slot='table']")).not.toBeInTheDocument();
-    expect(container.querySelector("[data-slot='toggle-group']")).not.toBeInTheDocument();
   });
 
   it("notifications render as an account message center without shadcn buttons or empty slots", async () => {

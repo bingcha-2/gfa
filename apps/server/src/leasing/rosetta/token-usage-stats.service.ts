@@ -17,6 +17,16 @@ function bucketProduct(bucket: string): "antigravity" | "codex" | "anthropic" {
 }
 
 /**
+ * CardUsageHourly account-scope WHERE fragment. The hourly table is keyed by the
+ * stable accountEmail (no volatile accountId column, no legacy null rows), so
+ * scoping a card to one provider-binding is just an accountEmail match when given.
+ */
+function hourlyAccountScope(opts: { accountEmail?: string }): Record<string, unknown> {
+  const email = (opts.accountEmail || "").trim();
+  return email ? { accountEmail: email } : {};
+}
+
+/**
  * Query + maintenance side of the per-card token usage log (CardTokenUsage).
  * The write side lives in token-server/token-usage-tracker.ts. Mirrors
  * CreditStatsService: paginated records, day/model aggregation, retention cron.
@@ -27,61 +37,9 @@ export class TokenUsageStatsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // ── Paginated per-call records for one card ─────────────────────────────
-
-  async getCardUsageRecords(opts: {
-    accessKeyId: string;
-    page?: number;
-    pageSize?: number;
-    days?: number;
-  }) {
-    const accessKeyId = String(opts.accessKeyId || "").trim();
-    if (!accessKeyId) {
-      return { records: [], total: 0, page: 1, pageSize: 0, totalPages: 0 };
-    }
-
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(200, Math.max(1, opts.pageSize || 30));
-    const days = Math.max(1, opts.days || 30);
-
-    const since = beijingDayStart(days);
-
-    const where = { accessKeyId, timestamp: { gte: since } };
-
-    const [records, total] = await Promise.all([
-      this.prisma.cardTokenUsage.findMany({
-        where,
-        orderBy: { timestamp: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.prisma.cardTokenUsage.count({ where }),
-    ]);
-
-    return {
-      records: records.map((r: any) => ({
-        id: r.id,
-        accountId: r.accountId,
-        modelKey: r.modelKey,
-        bucket: r.bucket,
-        status: r.status,
-        inputTokens: r.inputTokens,
-        outputTokens: r.outputTokens,
-        cachedInputTokens: r.cachedInputTokens,
-        rawTotalTokens: r.rawTotalTokens,
-        totalTokens: r.totalTokens,
-        timestamp: r.timestamp.toISOString(),
-      })),
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
-    };
-  }
-
   // ── Aggregated view for one card: by day + by model ─────────────────────
 
-  async getCardUsageSummary(opts: { accessKeyId: string; accountId?: number; days?: number }) {
+  async getCardUsageSummary(opts: { accessKeyId: string; accountId?: number; accountEmail?: string; days?: number }) {
     const accessKeyId = String(opts.accessKeyId || "").trim();
     const days = Math.max(1, opts.days || 30);
     if (!accessKeyId) {
@@ -90,22 +48,22 @@ export class TokenUsageStatsService {
 
     const since = beijingDayStart(days);
 
-    // accountId scopes to one provider-binding: a card bound across 御三家 has one
-    // account per provider, so usage must be split by account or every provider's
-    // view shows the card's global total (identical-looking charts).
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { accessKeyId, ...(opts.accountId ? { accountId: opts.accountId } : {}), timestamp: { gte: since } },
+    // Read the hourly aggregate (rows already carry summed tokens + requests).
+    // Scope to one provider-binding via the stable accountEmail when provided.
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: { accessKeyId, ...hourlyAccountScope(opts), hourStart: { gte: since } },
       select: {
         modelKey: true,
         bucket: true,
+        requests: true,
         inputTokens: true,
         outputTokens: true,
         cachedInputTokens: true,
         rawTotalTokens: true,
         totalTokens: true,
-        timestamp: true,
+        hourStart: true,
       },
-      orderBy: { timestamp: "asc" },
+      orderBy: { hourStart: "asc" },
     });
 
     const totals = emptyTotals();
@@ -116,17 +74,17 @@ export class TokenUsageStatsService {
     >();
 
     for (const r of rows) {
-      totals.requests += 1;
+      totals.requests += r.requests;
       totals.inputTokens += r.inputTokens;
       totals.outputTokens += r.outputTokens;
       totals.cachedInputTokens += r.cachedInputTokens;
       totals.rawTotalTokens += r.rawTotalTokens;
       totals.totalTokens += r.totalTokens;
 
-      const dateKey = beijingDayKey(r.timestamp);
+      const dateKey = beijingDayKey(r.hourStart);
       const d = dailyMap.get(dateKey) || { totalTokens: 0, requests: 0 };
       d.totalTokens += r.totalTokens;
-      d.requests += 1;
+      d.requests += r.requests;
       dailyMap.set(dateKey, d);
 
       const m = modelMap.get(r.modelKey) || {
@@ -140,7 +98,7 @@ export class TokenUsageStatsService {
       m.totalTokens += r.totalTokens;
       m.inputTokens += r.inputTokens;
       m.outputTokens += r.outputTokens;
-      m.requests += 1;
+      m.requests += r.requests;
       modelMap.set(r.modelKey, m);
     }
 
@@ -165,10 +123,11 @@ export class TokenUsageStatsService {
    */
   async getTodayUsage() {
     const start = beijingDayStart(0);
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { timestamp: { gte: start } },
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: { hourStart: { gte: start } },
       select: {
         bucket: true,
+        requests: true,
         inputTokens: true,
         outputTokens: true,
         cachedInputTokens: true,
@@ -198,7 +157,7 @@ export class TokenUsageStatsService {
       const cacheWrite = Math.max(0, r.rawTotalTokens - r.inputTokens - r.outputTokens - r.cachedInputTokens);
       for (const t of [totals, byProvider[bucketProduct(r.bucket)]]) {
         t.tokens += r.totalTokens;
-        t.requests += 1;
+        t.requests += r.requests;
         t.inputTokens += r.inputTokens;
         t.outputTokens += r.outputTokens;
         t.cacheWriteTokens += cacheWrite;
@@ -229,9 +188,9 @@ export class TokenUsageStatsService {
     const days = Math.max(1, Math.min(90, opts.days || 7));
     const since = beijingDayStart(days);
 
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { timestamp: { gte: since } },
-      select: { bucket: true, totalTokens: true, timestamp: true },
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: { hourStart: { gte: since } },
+      select: { bucket: true, totalTokens: true, requests: true, hourStart: true },
     });
 
     const map = new Map<
@@ -239,10 +198,10 @@ export class TokenUsageStatsService {
       { antigravity: number; codex: number; anthropic: number; totalTokens: number; requests: number }
     >();
     for (const r of rows) {
-      const key = beijingDayKey(r.timestamp);
+      const key = beijingDayKey(r.hourStart);
       const d = map.get(key) || { antigravity: 0, codex: 0, anthropic: 0, totalTokens: 0, requests: 0 };
       d.totalTokens += r.totalTokens;
-      d.requests += 1;
+      d.requests += r.requests;
       d[bucketProduct(r.bucket)] += r.totalTokens;
       map.set(key, d);
     }
@@ -267,104 +226,50 @@ export class TokenUsageStatsService {
    * last N days. Powers a per-card "调用频率" mini-histogram on the dashboard.
    * Always returns 24 buckets (zero-filled) so the chart axis is stable.
    */
-  async getHourlyFrequency(opts: { accessKeyId: string; accountId?: number; days?: number }) {
+  async getHourlyFrequency(opts: { accessKeyId: string; accountId?: number; accountEmail?: string; days?: number }) {
     const accessKeyId = String(opts.accessKeyId || "").trim();
     if (!accessKeyId) return { days: 0, byHour: [], totalRequests: 0 };
 
     const days = Math.max(1, Math.min(90, opts.days || 7));
     const since = beijingDayStart(days);
 
-    // accountId scopes to one provider-binding (see getCardUsageSummary).
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { accessKeyId, ...(opts.accountId ? { accountId: opts.accountId } : {}), timestamp: { gte: since } },
-      select: { totalTokens: true, timestamp: true },
+    // Scope to one provider-binding (see getCardUsageSummary).
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: { accessKeyId, ...hourlyAccountScope(opts), hourStart: { gte: since } },
+      select: { requests: true, totalTokens: true, hourStart: true },
     });
 
     const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, requests: 0, totalTokens: 0 }));
+    let totalRequests = 0;
     for (const r of rows) {
-      const h = beijingHourOfDay(r.timestamp);
-      byHour[h].requests += 1;
+      const h = beijingHourOfDay(r.hourStart);
+      byHour[h].requests += r.requests;
       byHour[h].totalTokens += r.totalTokens;
+      totalRequests += r.requests;
     }
 
-    return { days, byHour, totalRequests: rows.length };
+    return { days, byHour, totalRequests };
   }
 
-  // ── Per-account daily token trend (all of an account's cards) ───────────
+  // ── Cleanup ─────────────────────────────────────────────────────────────
 
-  /**
-   * Daily billable-token trend for a single upstream account over the last N
-   * Beijing days. Reuses the [accountId, timestamp] index. Powers per-account
-   * sparklines on the usage dashboard. Continuous (zero days filled).
-   */
-  async getAccountUsageTrend(opts: { accountId: number; days?: number }) {
-    const accountId = Number(opts.accountId);
-    if (!Number.isFinite(accountId) || accountId <= 0) {
-      return { accountId: 0, days: 0, daily: [], totals: { totalTokens: 0, requests: 0 } };
-    }
+  /** Hourly aggregate retention — covers the 30-day dashboards + refund "used since
+   *  paid" checks (subscriptions ≤30d) with buffer. Tiny (rows track cards×hours). */
+  static readonly HOURLY_RETENTION_DAYS = 60;
 
-    const days = Math.max(1, Math.min(90, opts.days || 7));
-    const since = beijingDayStart(days);
-
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { accountId, timestamp: { gte: since } },
-      select: { totalTokens: true, timestamp: true },
-    });
-
-    const map = new Map<string, { totalTokens: number; requests: number }>();
-    for (const r of rows) {
-      const key = beijingDayKey(r.timestamp);
-      const d = map.get(key) || { totalTokens: 0, requests: 0 };
-      d.totalTokens += r.totalTokens;
-      d.requests += 1;
-      map.set(key, d);
-    }
-
-    const daily = beijingDayKeysSince(days).map((date) => {
-      const d = map.get(date) || { totalTokens: 0, requests: 0 };
-      return { date, totalTokens: d.totalTokens, requests: d.requests };
-    });
-
-    const totals = daily.reduce(
-      (a, d) => ({ totalTokens: a.totalTokens + d.totalTokens, requests: a.requests + d.requests }),
-      { totalTokens: 0, requests: 0 },
-    );
-
-    return { accountId, days, daily, totals };
-  }
-
-  // ── Delete all usage rows for a card (called on card deletion) ──────────
-
-  async deleteCardUsage(accessKeyId: string): Promise<number> {
-    const id = String(accessKeyId || "").trim();
-    if (!id) return 0;
+  @Cron("25 3 * * *") // 3:25 AM daily — prune hourly aggregate
+  async cleanupHourly() {
+    const cutoff = beijingDayStart(TokenUsageStatsService.HOURLY_RETENTION_DAYS);
     try {
-      const result = await this.prisma.cardTokenUsage.deleteMany({ where: { accessKeyId: id } });
-      return result.count;
-    } catch (err) {
-      this.logger.error(
-        `deleteCardUsage failed for ${id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return 0;
-    }
-  }
-
-  // ── Cleanup: retain only 90 days of data ────────────────────────────────
-
-  @Cron("15 3 * * *") // 3:15 AM daily (offset from credit-stats cleanup)
-  async cleanupOldData() {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 90);
-    try {
-      const deleted = await this.prisma.cardTokenUsage.deleteMany({
-        where: { timestamp: { lt: cutoff } },
+      const deleted = await this.prisma.cardUsageHourly.deleteMany({
+        where: { hourStart: { lt: cutoff } },
       });
       if (deleted.count > 0) {
-        this.logger.log(`Cleaned up ${deleted.count} card token usage records older than 90 days`);
+        this.logger.log(`Pruned ${deleted.count} hourly usage rows older than ${TokenUsageStatsService.HOURLY_RETENTION_DAYS} days`);
       }
     } catch (err) {
       this.logger.error(
-        `Card token usage cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Hourly usage cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

@@ -9,10 +9,6 @@
 import * as crypto from 'crypto';
 import { readJsonFile, writeJsonFile } from './data-store';
 import {
-  readTokenCount,
-  billableTokenUsageTotal,
-  eventUsageForLimit,
-  normalizeUsageToGross,
   resetWindowIfExpired,
   resetWeeklyWindowIfExpired,
   tokenWindowMs,
@@ -24,8 +20,6 @@ import {
   recentWeeklyBucketUsage,
   tokenWindowResetMs,
   formatWindowLabel,
-  bucketWindowStart,
-  reconstructUseAnchoredWindow,
   UNIVERSAL_BILLING,
   ProviderBilling,
   keyExpiresAt,
@@ -33,8 +27,6 @@ import {
   ACCOUNT_SHARE_CAPACITY,
 } from './token-billing';
 import {
-  bucketKey,
-  modelFamily,
   bucketFamily,
   bucketsForProducts,
   productOfBucket,
@@ -51,11 +43,12 @@ import {
 
 export type { SessionResolverLike } from './session-credential';
 
-/** Bucket key for the model a request is asking for, scoped to the product
- *  serving it. Falls back to bare family when product is unknown (legacy path). */
-function requestBucket(product: string | undefined, modelKey: string): string {
-  return product ? bucketKey(product, modelKey) : modelFamily(modelKey);
-}
+import {
+  requestBucket,
+  computeUsageDetail as computeUsageDetailPure,
+  bucketUsageInWindow,
+  bucketUsageInWindowReadonly,
+} from './access-key-limit';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,12 +104,6 @@ export interface AccessKeyRecord {
   /** Old card key kept for idempotent re-bind lookups ONLY — the byKey auth
    * index is built from `key`, so this value can no longer authenticate. */
   migratedFromKey?: string;
-  totalRequests?: number;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
-  totalCachedInputTokens?: number;
-  totalRawTokensUsed?: number;
-  totalTokensUsed?: number;
   lastUsedAt?: string;
   activeSessionId?: string;
   sessionClientId?: string;
@@ -153,7 +140,6 @@ export interface ResolveResult {
 
 // ── AccessKeyStore ───────────────────────────────────────────────────────────
 
-const SAVE_DEBOUNCE_MS = 10_000;
 // Hard cap on the per-card reportId dedup ring (bounds access-keys.json size on
 // very busy cards; the ring is also cleared on window reset / pruned in flush).
 const MAX_RECENT_REPORT_IDS = 5000;
@@ -161,7 +147,6 @@ const MAX_RECENT_REPORT_IDS = 5000;
 export class AccessKeyStore {
   private cache: AccessKeysData | null = null;
   private dirty = false;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
   // In-memory reportId dedup: cardId → (reportId → seenAt). NOT persisted — keeps
   // access-keys.json from growing with every request. Bounded per card by
   // MAX_RECENT_REPORT_IDS (oldest evicted). A server restart clears it, so the
@@ -281,6 +266,52 @@ export class AccessKeyStore {
   }
 
   /**
+   * 从持久化快照(Subscription.windowState)精准恢复某订阅 record 的 5h/周窗口
+   * (起点 + 窗口内事件)。重启直接恢复,替代旧的从用量日志回放。
+   * stateJson 解析失败/无 record → 安静跳过(冷启动兜底)。
+   */
+  restoreSubscriptionWindow(id: string, stateJson: string | null | undefined): void {
+    if (!id || !stateJson) return;
+    const rec = this.subscriptionById.get(id);
+    if (!rec) return;
+    let s: any;
+    try { s = JSON.parse(stateJson); } catch { return; }
+    if (!s || typeof s !== "object") return;
+    rec.windowStartedAt = Number(s.windowStartedAt || 0) || undefined;
+    rec.weeklyWindowStartedAt = Number(s.weeklyWindowStartedAt || 0) || undefined;
+    rec.tokenUsageEvents = Array.isArray(s.tokenUsageEvents) ? s.tokenUsageEvents : [];
+    rec.weeklyTokenUsageEvents = Array.isArray(s.weeklyTokenUsageEvents) ? s.weeklyTokenUsageEvents : [];
+  }
+
+  /**
+   * 快照所有订阅 record 的实时 5h/周窗口,供 token-server 定时 + 关机持久化到
+   * Subscription.windowState。只输出有窗口活动的订阅(无活动的不写,省 DB)。
+   * 行数据小:事件数组本就裁剪在周窗(≤7 天)内。
+   */
+  serializeSubscriptionWindows(): Array<{ id: string; windowState: string }> {
+    const out: Array<{ id: string; windowState: string }> = [];
+    for (const rec of this.subscriptionById.values()) {
+      if (!rec?.id) continue;
+      const hasActivity =
+        Number(rec.windowStartedAt || 0) > 0 ||
+        Number(rec.weeklyWindowStartedAt || 0) > 0 ||
+        (rec.tokenUsageEvents?.length || 0) > 0 ||
+        (rec.weeklyTokenUsageEvents?.length || 0) > 0;
+      if (!hasActivity) continue;
+      out.push({
+        id: rec.id,
+        windowState: JSON.stringify({
+          windowStartedAt: rec.windowStartedAt || 0,
+          weeklyWindowStartedAt: rec.weeklyWindowStartedAt || 0,
+          tokenUsageEvents: rec.tokenUsageEvents || [],
+          weeklyTokenUsageEvents: rec.weeklyTokenUsageEvents || [],
+        }),
+      });
+    }
+    return out;
+  }
+
+  /**
    * 卡迁移「转化即删」去影子:把刚迁移出来的 DB 订阅配置 record 注册进 subscriptionById,
    * 并把同 id 文件影子卡的实时限流窗口(events + 窗口起点 + firstUsedAt + 累计计数器)平移到
    * 订阅 record 上,然后把文件影子卡从 cache/byId/byKey 物理删除并落盘。
@@ -289,8 +320,8 @@ export class AccessKeyStore {
    * 本方法全程同步、无 await —— 与并发 flush/recordUsage 互斥(JS 单线程,debounce flush 的
    * setTimeout 回调不会打断同步段)。平移在删除之前完成 → 删除后 findById 落到订阅 record 时
    * 限流额度连续(不被重置/穿透);老卡 key 在内存(byKey)与文件里同时消失。重启后该订阅由
-   * boot 的 loadActiveSubscriptions + hydrate + reconstructSubscriptionWindows(从 CardTokenUsage
-   * 回放重建窗口起点)接管,口径与此刻平移一致。
+   * boot 的 loadActiveSubscriptions + restoreSubscriptionWindow(从 Subscription.windowState
+   * 精准恢复窗口)接管,口径与此刻平移一致 —— 平移后的窗口由定时持久化写入 windowState。
    */
   migrateCardRecordToSubscription(subRecord: Partial<AccessKeyRecord> & { id: string }): void {
     const id = subRecord.id;
@@ -306,12 +337,6 @@ export class AccessKeyStore {
       sub.windowStartedAt = file.windowStartedAt;
       sub.weeklyWindowStartedAt = file.weeklyWindowStartedAt;
       sub.firstUsedAt = file.firstUsedAt;
-      sub.totalRequests = file.totalRequests;
-      sub.totalInputTokens = file.totalInputTokens;
-      sub.totalOutputTokens = file.totalOutputTokens;
-      sub.totalCachedInputTokens = file.totalCachedInputTokens;
-      sub.totalRawTokensUsed = file.totalRawTokensUsed;
-      sub.totalTokensUsed = file.totalTokensUsed;
       sub.lastUsedAt = file.lastUsedAt;
     }
     // 3) 物理删除文件影子卡(cache + 两个索引)并落盘。
@@ -360,117 +385,12 @@ export class AccessKeyStore {
     return out.sort((a, b) => (Number(a.priority ?? 0)) - (Number(b.priority ?? 0)));
   }
 
-  /**
-   * Rebuild in-memory rate-limit windows from the durable CardTokenUsage log.
-   * Called ONCE on boot: window events are not persisted to access-keys.json
-   * (see serializable()), so without this a restart would reset every card's
-   * usage window and hand out fresh quota. Rows should be pre-scoped to the
-   * relevant window by the caller; over-supplied rows are harmless since the
-   * window reads filter by timestamp anyway. Only cards present in the cache are
-   * hydrated. The reconstructed events carry `product` (derived from the row's
-   * bucket when absent) and `modelKey` so the bucket read re-derives the same
-   * billing bucket the row was recorded under.
-   */
-  hydrateWindowsFromUsageLog(
-    rows: Array<{
-      accessKeyId: string;
-      at: number;
-      status?: number;
-      modelKey?: string;
-      bucket?: string;
-      product?: string;
-      inputTokens?: number;
-      outputTokens?: number;
-      cachedInputTokens?: number;
-      rawTotalTokens?: number;
-      totalTokens?: number;
-    }>,
-  ): void {
-    this.readAll();
-    for (const row of rows) {
-      if (!row?.accessKeyId) continue;
-      const record = this.byId.get(row.accessKeyId) || this.subscriptionById.get(row.accessKeyId);
-      if (!record) continue;
-      const bucket = String(row.bucket || '');
-      const product = row.product != null
-        ? String(row.product)
-        : (bucket.includes('-') ? bucket.slice(0, bucket.indexOf('-')) : '');
-      const ev = {
-        at: Number(row.at || 0),
-        status: Number(row.status || 0),
-        inputTokens: Number(row.inputTokens || 0),
-        outputTokens: Number(row.outputTokens || 0),
-        cachedInputTokens: Number(row.cachedInputTokens || 0),
-        rawTotalTokens: Number(row.rawTotalTokens || 0),
-        totalTokens: Number(row.totalTokens || 0),
-        modelKey: row.modelKey || '',
-        product,
-      };
-      if (!record.tokenUsageEvents) record.tokenUsageEvents = [];
-      record.tokenUsageEvents.push(ev);
-      if (!record.weeklyTokenUsageEvents) record.weeklyTokenUsageEvents = [];
-      record.weeklyTokenUsageEvents.push(ev);
-    }
-    // 灌完事件后,为订阅 record 从回放重建窗口起点(文件卡起点持久化在文件里,天然不在此列)。
-    this.reconstructSubscriptionWindows();
-  }
 
-  /**
-   * 去影子:订阅 record 的 5h/周窗口起点无持久化 —— boot 时 loadActiveSubscriptions 不设、
-   * hydrate 只灌事件,起点为未设。首次访问会被 reset*WindowIfExpired 当作过期清零(= 重启穿透)。
-   * 本方法在 hydrate 之后,对 subscriptionById 里"起点未设"的订阅 record,从已灌入的事件回放
-   * 重建当前窗口起点并裁剪事件,使限流额度跨重启连续。
-   *  - 5h:仅号池订阅(!requiresBinding)。绑定订阅的 5h 走 alignedResetAt + bucketUsageInWindow,
-   *    不读 windowStartedAt、且按上游窗自行过滤事件 —— 在此重建/裁剪反而会错削它的事件。
-   *  - 周:号池 + 绑定都用 weeklyWindowStartedAt + recentWeeklyBucketUsage(直接求和),故都重建。
-   * 文件卡(byId,起点已从文件读回)天然跳过。重复调用幂等(起点设好后不再重建)。
-   */
-  reconstructSubscriptionWindows(now = Date.now()): void {
-    for (const rec of this.subscriptionById.values()) {
-      if (!rec) continue;
-      if (!rec.requiresBinding && !Number(rec.windowStartedAt || 0)) {
-        const r = reconstructUseAnchoredWindow(rec.tokenUsageEvents || [], tokenWindowMs(rec), now);
-        if (r.startedAt > 0) {
-          rec.windowStartedAt = r.startedAt;
-          rec.tokenUsageEvents = r.events;
-        } else {
-          rec.tokenUsageEvents = [];
-        }
-      }
-      if (!Number(rec.weeklyWindowStartedAt || 0)) {
-        const r = reconstructUseAnchoredWindow(rec.weeklyTokenUsageEvents || [], weeklyWindowMsFn(rec), now);
-        if (r.startedAt > 0) {
-          rec.weeklyWindowStartedAt = r.startedAt;
-          rec.weeklyTokenUsageEvents = r.events;
-        } else {
-          rec.weeklyTokenUsageEvents = [];
-        }
-      }
-    }
-  }
-
-  private markDirty(): void {
-    this.dirty = true;
-    if (!this.saveTimer) {
-      this.saveTimer = setTimeout(() => {
-        this.saveTimer = null;
-        this.flush();
-      }, SAVE_DEBOUNCE_MS);
-    }
-  }
-
-  private writeCache(): void {
-    if (!this.cache) return;
-    this.cache.updatedAt = new Date().toISOString();
-    this.markDirty();
-  }
-
-  /** Immediately flush dirty cache to disk. */
+  /** Immediately flush dirty cache to disk. Only the file-card config store
+   *  (cache.keys) is persisted here; runtime usage no longer writes the file —
+   *  file cards are retired (don't serve), subscriptions persist via
+   *  Subscription.windowState. Used by the migration shadow-delete + admin edits. */
   flush(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
     if (!this.dirty || !this.cache) return;
     this.dirty = false;
     try {
@@ -567,20 +487,11 @@ export class AccessKeyStore {
     return Number(record?.boundAccountId || 0) > 0;
   }
 
-  /** Find all active card IDs bound to the same upstream account in a given pool. */
-  cardsBoundToAccount(accountId: number, providerId: string): string[] {
-    if (accountId <= 0) return [];
-    const data = this.readAll();
-    return data.keys
-      .filter((k) => (!k.status || k.status === 'active') && this.boundAccountIdFor(k, providerId) === accountId)
-      .map((k) => k.id);
-  }
-
   /**
-   * 去影子:绑定到某上游号的「订阅」id(subscriptionById,不写文件)。与 cardsBoundToAccount
-   * 同口径(boundAccountIdFor 读 record.bindings[providerId])。account-system 下用量看板
-   * (getBoundCardsForAccount)只列订阅 —— 文件卡已退役、不再混取;本方法与 cardsBoundToAccount
-   * 分属两套数据源(订阅 vs 文件卡)。号池订阅无 bindings,自然不被纳入。
+   * 去影子:绑定到某上游号的「订阅」id(subscriptionById,不写文件)。
+   * boundAccountIdFor 读 record.bindings[providerId]。account-system 下用量看板
+   * (getBoundCardsForAccount)只列订阅 —— 文件卡已退役、不再混取。号池订阅无
+   * bindings,自然不被纳入。
    */
   subscriptionsBoundToAccount(accountId: number, providerId: string): string[] {
     if (accountId <= 0) return [];
@@ -678,10 +589,7 @@ export class AccessKeyStore {
     }
     const expiresAt = keyExpiresAt(record);
     if (expiresAt && Date.parse(expiresAt) <= now) {
-      if (!options.dryRun) {
-        record.status = 'expired';
-        this.writeCache();
-      }
+      if (!options.dryRun) record.status = 'expired';
       return { key: keyValue, record: null, error: 'Access key expired' };
     }
 
@@ -708,10 +616,9 @@ export class AccessKeyStore {
         // Bound (aligned) cards count usage within the account-aligned window;
         // pool cards use the global fixed-period window.
         const used = aligned > 0
-          ? this.bucketUsageInWindow(record, bucket, now, aligned)
+          ? bucketUsageInWindow(record, bucket, now, aligned)
           : (recentBucketUsage(record, now).get(bucket) || 0);
         if (limit > 0 && used >= limit) {
-          if (!options.dryRun) this.writeCache();
           const windowLabel = aligned > 0 ? '账号窗口' : formatWindowLabel(record.windowMs);
           const resetMs = aligned > 0 ? Math.max(0, aligned - now) : tokenWindowResetMs(record, now);
           return {
@@ -755,7 +662,6 @@ export class AccessKeyStore {
         if (weeklyCap > 0) {
           const used = recentWeeklyBucketUsage(record, now).get(bucket) || 0;
           if (used >= weeklyCap) {
-            if (!options.dryRun) this.writeCache();
             return {
               key: keyValue, record: null,
               limitExceeded: true, resetMs: weeklyWindowResetMs(record, now),
@@ -766,7 +672,6 @@ export class AccessKeyStore {
       }
     }
 
-    if (options.activate && !options.dryRun) this.writeCache();
     return { key: keyValue, record, data };
   }
 
@@ -796,24 +701,7 @@ export class AccessKeyStore {
    * token-usage tracker) record EXACTLY the same numbers as the card counters.
    */
   computeUsageDetail(usage: any = {}, modelKey = '', product = '') {
-    // 单点收口:先按模型家族把上报归一成 gross input 口径,计费与拼车两条链共享同一份。
-    const norm = normalizeUsageToGross(usage, modelKey);
-    const inputTokens = readTokenCount(norm.inputTokens);
-    const outputTokens = readTokenCount(norm.outputTokens);
-    const cachedInputTokens = readTokenCount(norm.cachedInputTokens);
-    const rawTotalTokens = readTokenCount(norm.rawTotalTokens) || inputTokens + outputTokens;
-    const totalTokens = billableTokenUsageTotal(
-      { ...norm, inputTokens, outputTokens, cachedInputTokens, rawTotalTokens },
-      modelKey,
-    );
-    return {
-      inputTokens,
-      outputTokens,
-      cachedInputTokens,
-      rawTotalTokens,
-      totalTokens,
-      bucket: requestBucket(product, modelKey || ''),
-    };
+    return computeUsageDetailPure(usage, modelKey, product);
   }
 
   /**
@@ -827,30 +715,6 @@ export class AccessKeyStore {
    * (legacy clients) cannot be deduped here; the caller handles their
    * once-per-success semantics via lease.successfulReportSeen.
    */
-  /** Token usage for ONE bucket within its current window. Bound cards align the
-   *  window to the account's upstream reset (alignedResetAt); alignedResetAt<=0 →
-   *  fixed-period (pool). Sums the bucket's events with `at >= window start`. */
-  private bucketUsageInWindow(record: any, bucket: string, now: number, alignedResetAt: number): number {
-    const windowStart = bucketWindowStart(record, bucket, now, alignedResetAt, Number(record.windowMs) || undefined);
-    return this.bucketUsageSince(record, bucket, windowStart);
-  }
-
-  private bucketUsageInWindowReadonly(record: any, bucket: string, now: number, alignedResetAt: number): number {
-    const windowStart = bucketWindowStart(record, bucket, now, alignedResetAt, Number(record.windowMs) || undefined, false);
-    return this.bucketUsageSince(record, bucket, windowStart);
-  }
-
-  private bucketUsageSince(record: any, bucket: string, windowStart: number): number {
-    let used = 0;
-    for (const item of record.tokenUsageEvents || []) {
-      if (Number(item?.at || 0) < windowStart) continue;
-      if (requestBucket(String(item?.product || ''), String(item?.modelKey || '')) !== bucket) continue;
-      // anthropic/codex → CU(加权);antigravity → 原始。与 recentBucketUsage 口径一致。
-      used += eventUsageForLimit(item);
-    }
-    return used;
-  }
-
   recordUsage(cardId: string, status: number, usage: any = {}, modelKey = '', reportId = '', product = ''): boolean {
     if (!cardId) return false;
     const record = this.findById(cardId);
@@ -875,12 +739,8 @@ export class AccessKeyStore {
     const { inputTokens, outputTokens, cachedInputTokens, rawTotalTokens, totalTokens } =
       this.computeUsageDetail(usage, modelKey, product);
 
-    record.totalRequests = Number(record.totalRequests || 0) + 1;
-    record.totalInputTokens = Number(record.totalInputTokens || 0) + inputTokens;
-    record.totalOutputTokens = Number(record.totalOutputTokens || 0) + outputTokens;
-    record.totalCachedInputTokens = Number(record.totalCachedInputTokens || 0) + cachedInputTokens;
-    record.totalRawTokensUsed = Number(record.totalRawTokensUsed || 0) + rawTotalTokens;
-    record.totalTokensUsed = Number(record.totalTokensUsed || 0) + totalTokens;
+    // 累计用量计数已下线:权威用量在 CardUsageHourly(DB)。这里只更新限流窗口事件
+    // (下方)+ lastUsedAt;后台单卡「总Token/请求数」改读 CardUsageHourly。
     record.lastUsedAt = new Date(now).toISOString();
 
     if (!record.usageEvents) record.usageEvents = [];
@@ -904,11 +764,11 @@ export class AccessKeyStore {
       });
     }
 
-    // 用量上报【一律不落 access-keys.json】(不管文件卡还是订阅):
-    // 用量记账已全量走 DB(CardTokenUsage,见 token-usage-tracker),限额窗口开机从该日志重建;
-    // access-keys.json 里的累计计数只是历史快照、无人据此判限额。文件仅作静态卡的【配置】存储,
-    // 只在 admin 增删改卡时写(markDirty 的其它调用点)。所以上报路径这里不 markDirty。
-    // record 的内存计数已就地更新,供本进程 publicStatus 展示;重启由 DB 重建,不依赖文件。
+    // 用量上报【一律不落 access-keys.json】(运行时不写文件):
+    // 用量明细走 DB(CardUsageHourly,见 token-usage-tracker);订阅卡的 5h/周窗口走
+    // Subscription.windowState(重启精准恢复);文件卡已退役、不再发号也不再持久化用量。
+    // access-keys.json 仅作【卡密配置】存储,只在 admin 增删改卡 + 卡密转订阅删影子时写。
+    // 此处只就地更新 record 内存计数,供本进程 publicStatus 展示。
     return true;
   }
 
@@ -971,7 +831,7 @@ export class AccessKeyStore {
     // the legacy flat fields below (kept until clients consume `buckets` directly).
     const enumBuckets = bucketsForProducts(products);
     const bucketUsage = aligned
-      ? new Map(enumBuckets.map((bucket) => [bucket, this.bucketUsageInWindowReadonly(record, bucket, now, alignedResetAt)]))
+      ? new Map(enumBuckets.map((bucket) => [bucket, bucketUsageInWindowReadonly(record, bucket, now, alignedResetAt)]))
       : recentBucketUsage(record, now);
     const recentTotalTokens = [...bucketUsage.values()].reduce((sum, v) => sum + v, 0);
     const familyUsed = (family: string): number => {
@@ -1008,12 +868,8 @@ export class AccessKeyStore {
       firstUsedAt: record.firstUsedAt || '',
       expiresAt,
       remainingMs: expiresAt ? Math.max(0, Date.parse(expiresAt) - now) : 0,
-      totalRequests: Number(record.totalRequests || 0),
-      totalInputTokens: Number(record.totalInputTokens || 0),
-      totalOutputTokens: Number(record.totalOutputTokens || 0),
-      totalCachedInputTokens: Number(record.totalCachedInputTokens || 0),
-      totalRawTokensUsed: Number(record.totalRawTokensUsed || 0),
-      totalTokensUsed: Number(record.totalTokensUsed || 0),
+      // 累计计数已下线(权威用量在 CardUsageHourly)。recentWindowTokens 仍是限流窗口
+      // 的当前用量(内存),客户端额度展示与限流判断都靠它,保留。
       recentWindowTokens: aligned ? recentTotalTokens : recentTokens!.totalTokens,
       // Legacy flat fields (older client contract). Each is the sum across the
       // composite buckets of that family — kept until clients read `buckets`

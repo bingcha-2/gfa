@@ -160,9 +160,10 @@ describe("LeaseService — session-JWT leases", () => {
 
     expect(report.ok).toBe(true);
     // Usage attributed to the shadow record (record.id == lease.accessKeyId == sub id).
+    // 累计计数已下线;用量进入限流窗口事件(权威用量在 CardUsageHourly)。
     const record = store.findById("sub-1")!;
-    expect(record.totalTokensUsed).toBe(150);
-    expect(record.totalRequests).toBe(1);
+    expect(store.publicStatus(record).recentWindowTokens).toBe(150);
+    expect(record.tokenUsageEvents?.length).toBe(1);
     // refreshSession skipped — no per-card session state was created.
     expect(record.activeSessionId).toBeUndefined();
     expect(record.sessionExpiresAt).toBeUndefined();

@@ -259,7 +259,7 @@ describe("BillingService.refundOwnOrder", () => {
         findUnique: vi.fn().mockResolvedValue(order),
         updateMany: vi.fn().mockResolvedValue({ count: opts.casCount ?? 1 }),
       },
-      cardTokenUsage: { count: vi.fn().mockResolvedValue(opts.usage ?? 0) },
+      cardUsageHourly: { count: vi.fn().mockResolvedValue(opts.usage ?? 0) },
       subscription: {
         findUnique: vi.fn().mockResolvedValue(opts.sub ?? null),
         findFirst: vi.fn().mockResolvedValue(null),

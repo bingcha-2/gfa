@@ -196,27 +196,51 @@ describe("漏洞复现(PRE-D2 / HEAD):重启后纯订阅卡首次请求把满额
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// ② POST-D2(当前 working tree):真实 hydrate 末尾回放重建起点 → 同一满额用量被正确拦截。
+// ② POST-FIX(当前 working tree):重启从持久化窗口快照(Subscription.windowState)
+//    精准恢复起点 → 同一满额用量被正确拦截。模拟重启 = 全新 store + restoreSubscriptionWindow。
 // ───────────────────────────────────────────────────────────────────────────
-describe("修复后(POST-D2 / working tree):真实 hydrateWindowsFromUsageLog 重建起点 → 满额请求 429", () => {
-  it("5h 桶:windowStartedAt 从用量回放重建 → 满桶请求被拦(429,limitExceeded)", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-5h", key: "BK-5H", customerId: "c1", status: "active",
-      products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP },
-      windowMs: FIVE_H,
-    } as any]);
-    // 真实 boot hydrate(含 reconstructSubscriptionWindows)。
-    store.hydrateWindowsFromUsageLog([fullUsageRow("pool-5h")]);
 
+/** hydrate 当年存进事件数组的形状(product 由 bucket 前缀反推)。 */
+function storedEvent(row: any) {
+  const bucket = String(row.bucket || "");
+  const product = bucket.includes("-") ? bucket.slice(0, bucket.indexOf("-")) : "";
+  return {
+    at: row.at, status: row.status ?? 200,
+    inputTokens: row.inputTokens ?? 0, outputTokens: row.outputTokens ?? 0,
+    cachedInputTokens: row.cachedInputTokens ?? 0,
+    rawTotalTokens: row.rawTotalTokens ?? 0, totalTokens: row.totalTokens ?? 0,
+    modelKey: row.modelKey ?? "", product,
+  };
+}
+
+/** 模拟重启:全新 store 注册订阅配置 + 从 windowState 快照恢复窗口(起点 + 窗口内事件)。 */
+function bootRestore(cfg: any, snapshot: {
+  windowStartedAt?: number; weeklyWindowStartedAt?: number;
+  tokenUsageEvents?: any[]; weeklyTokenUsageEvents?: any[];
+}): AccessKeyStore {
+  const store = makeStore();
+  store.loadSubscriptionRecords([cfg]);
+  store.restoreSubscriptionWindow(cfg.id, JSON.stringify({
+    windowStartedAt: snapshot.windowStartedAt ?? 0,
+    weeklyWindowStartedAt: snapshot.weeklyWindowStartedAt ?? 0,
+    tokenUsageEvents: snapshot.tokenUsageEvents ?? [],
+    weeklyTokenUsageEvents: snapshot.weeklyTokenUsageEvents ?? [],
+  }));
+  return store;
+}
+
+describe("修复后(POST-FIX / working tree):重启从 windowState 精准恢复起点 → 满额请求 429", () => {
+  it("5h 桶:windowStartedAt 从快照恢复 → 满桶请求被拦(429,limitExceeded)", async () => {
+    const ev = storedEvent(fullUsageRow("pool-5h"));
+    const store = bootRestore(
+      { id: "pool-5h", key: "BK-5H", customerId: "c1", status: "active", products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP }, windowMs: FIVE_H },
+      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - HOUR, tokenUsageEvents: [ev], weeklyTokenUsageEvents: [ev] },
+    );
     const rec = store.findById("pool-5h") as any;
-    // 起点被重建为事件时刻(而非 0)、事件保留。
     expect(rec.windowStartedAt).toBe(nowVal - HOUR);
     expect(rec.tokenUsageEvents).toHaveLength(1);
 
     const res = await resolve(store, "pool-5h");
-
-    // 修复:满桶请求被拦截。
     expect(res.limitExceeded).toBe(true);
     expect(res.record).toBeNull();
     expect(res.error).toMatch(/token limit exceeded/);
@@ -224,38 +248,29 @@ describe("修复后(POST-D2 / working tree):真实 hydrateWindowsFromUsageLog �
     expect(Number(res.resetMs || 0)).toBeGreaterThan(0);
   });
 
-  it("周窗:weeklyWindowStartedAt 从用量回放重建 → 满额周请求被拦(429,weekly)", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-wk", key: "BK-WK", customerId: "c1", status: "active",
-      products: ["anthropic"], weeklyTokenLimit: CAP, windowMs: FIVE_H,
-    } as any]);
-    store.hydrateWindowsFromUsageLog([fullUsageRow("pool-wk")]);
-
+  it("周窗:weeklyWindowStartedAt 从快照恢复 → 满额周请求被拦(429,weekly)", async () => {
+    const ev = storedEvent(fullUsageRow("pool-wk"));
+    const store = bootRestore(
+      { id: "pool-wk", key: "BK-WK", customerId: "c1", status: "active", products: ["anthropic"], weeklyTokenLimit: CAP, windowMs: FIVE_H },
+      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - HOUR, tokenUsageEvents: [ev], weeklyTokenUsageEvents: [ev] },
+    );
     const rec = store.findById("pool-wk") as any;
     expect(rec.weeklyWindowStartedAt).toBe(nowVal - HOUR);
     expect(rec.weeklyTokenUsageEvents).toHaveLength(1);
 
     const res = await resolve(store, "pool-wk");
-
     expect(res.limitExceeded).toBe(true);
     expect(res.record).toBeNull();
     expect(res.error).toMatch(/weekly token limit exceeded/);
     expect(Number(res.resetMs || 0)).toBeGreaterThan(0);
   });
 
-  it("5h 桶 · antigravity-gemini(原始计量,非 CU):hydrate 重建起点 → 满桶 429", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-gem", key: "BK-GEM", customerId: "c1", status: "active",
-      products: ["antigravity"], bucketLimits: { "antigravity-gemini": CAP }, windowMs: FIVE_H,
-    } as any]);
-    // gemini 计量走原始 token(billableTokenUsageTotal):rawTotalTokens=2000 ≥ 1000。
-    store.hydrateWindowsFromUsageLog([{
-      accessKeyId: "pool-gem", at: nowVal - HOUR, status: 200,
-      modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
-      inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, rawTotalTokens: 2000, totalTokens: 2000,
-    }]);
+  it("5h 桶 · antigravity-gemini(原始计量,非 CU):快照恢复起点 → 满桶 429", async () => {
+    const ev = storedEvent({ at: nowVal - HOUR, modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", rawTotalTokens: 2000, totalTokens: 2000 });
+    const store = bootRestore(
+      { id: "pool-gem", key: "BK-GEM", customerId: "c1", status: "active", products: ["antigravity"], bucketLimits: { "antigravity-gemini": CAP }, windowMs: FIVE_H },
+      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - HOUR, tokenUsageEvents: [ev], weeklyTokenUsageEvents: [ev] },
+    );
     const rec = store.findById("pool-gem") as any;
     expect(rec.windowStartedAt).toBe(nowVal - HOUR);
     expect(rec.tokenUsageEvents).toHaveLength(1);
@@ -267,18 +282,12 @@ describe("修复后(POST-D2 / working tree):真实 hydrateWindowsFromUsageLog �
     expect(res.error).toContain("/5h");
   });
 
-  it("5h 桶 · codex-gpt(CU 计量):hydrate 重建起点 → 满桶 429", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-cdx", key: "BK-CDX", customerId: "c1", status: "active",
-      products: ["codex"], bucketLimits: { "codex-gpt": CAP }, windowMs: FIVE_H,
-    } as any]);
-    // codex 桶按 CU 计量;input/output 皆 0 时退回 totalTokens=2000 ≥ 1000。
-    store.hydrateWindowsFromUsageLog([{
-      accessKeyId: "pool-cdx", at: nowVal - HOUR, status: 200,
-      modelKey: "gpt-5-codex", bucket: "codex-gpt",
-      inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, rawTotalTokens: 0, totalTokens: 2000,
-    }]);
+  it("5h 桶 · codex-gpt(CU 计量):快照恢复起点 → 满桶 429", async () => {
+    const ev = storedEvent({ at: nowVal - HOUR, modelKey: "gpt-5-codex", bucket: "codex-gpt", totalTokens: 2000 });
+    const store = bootRestore(
+      { id: "pool-cdx", key: "BK-CDX", customerId: "c1", status: "active", products: ["codex"], bucketLimits: { "codex-gpt": CAP }, windowMs: FIVE_H },
+      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - HOUR, tokenUsageEvents: [ev], weeklyTokenUsageEvents: [ev] },
+    );
     const rec = store.findById("pool-cdx") as any;
     expect(rec.windowStartedAt).toBe(nowVal - HOUR);
     expect(rec.tokenUsageEvents).toHaveLength(1);
@@ -290,20 +299,15 @@ describe("修复后(POST-D2 / working tree):真实 hydrateWindowsFromUsageLog �
     expect(res.error).toContain("/5h");
   });
 
-  it("周窗 · 派生 5h×R(池子卡无显式 weeklyTokenLimit):hydrate 重建周起点 → 周超 429(5h 未超)", async () => {
-    const store = makeStore();
-    store.loadSubscriptionRecords([{
-      id: "pool-der", key: "BK-DER", customerId: "c1", status: "active",
-      products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP }, windowMs: FIVE_H,
-    } as any]);
-    // 7h 前 3700 CU(已出当前 5h 窗)+ 1h 前 600 CU(窗内)。周共 4300 ≥ 1000×4.235(R=2 经
-    // clampWeeklyRatio 下限到 MIN_WEEKLY_RATIO=4.235);当前 5h 仅 600 < 1000。
-    store.hydrateWindowsFromUsageLog([
-      { accessKeyId: "pool-der", at: nowVal - 7 * HOUR, status: 200, modelKey: "claude-opus-4", bucket: "anthropic-claude", inputTokens: 0, outputTokens: 740, cachedInputTokens: 0, rawTotalTokens: 3700, totalTokens: 3700 },
-      { accessKeyId: "pool-der", at: nowVal - HOUR, status: 200, modelKey: "claude-opus-4", bucket: "anthropic-claude", inputTokens: 0, outputTokens: 120, cachedInputTokens: 0, rawTotalTokens: 600, totalTokens: 600 },
-    ]);
+  it("周窗 · 派生 5h×R(池子卡无显式 weeklyTokenLimit):快照恢复周起点 → 周超 429(5h 未超)", async () => {
+    // 5h 当前窗只留 1h 前 600 CU(7h 前那条已出窗);周窗保留两条(7 天内),共 4300。
+    const inWindow = storedEvent({ at: nowVal - HOUR, modelKey: "claude-opus-4", bucket: "anthropic-claude", outputTokens: 120, rawTotalTokens: 600, totalTokens: 600 });
+    const older = storedEvent({ at: nowVal - 7 * HOUR, modelKey: "claude-opus-4", bucket: "anthropic-claude", outputTokens: 740, rawTotalTokens: 3700, totalTokens: 3700 });
+    const store = bootRestore(
+      { id: "pool-der", key: "BK-DER", customerId: "c1", status: "active", products: ["anthropic"], bucketLimits: { "anthropic-claude": CAP }, windowMs: FIVE_H },
+      { windowStartedAt: nowVal - HOUR, weeklyWindowStartedAt: nowVal - 7 * HOUR, tokenUsageEvents: [inWindow], weeklyTokenUsageEvents: [older, inWindow] },
+    );
     const rec = store.findById("pool-der") as any;
-    // 5h 回放:跨窗只留当前窗(1h 前 600 CU);周回放:7 天内两条全留。
     expect(rec.windowStartedAt).toBe(nowVal - HOUR);
     expect(rec.tokenUsageEvents).toHaveLength(1);
     expect(rec.weeklyWindowStartedAt).toBe(nowVal - 7 * HOUR);

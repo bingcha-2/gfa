@@ -27,7 +27,6 @@ import type {
   TicketSummary,
   TicketUrgentResult,
   UsageDays,
-  UsagePage,
   UsageStats,
 } from "./user-types";
 import type { Selection } from "./catalog-pricing";
@@ -314,10 +313,6 @@ export interface SupportConversationResponse {
 
 export async function getSupportConversation() {
   return userApi<SupportConversationResponse>("support/conversation");
-}
-
-export async function getUsage(page: number, pageSize: number, days: UsageDays) {
-  return userApi<UsagePage>("usage", { search: { page, pageSize, days } });
 }
 
 /** 历史记录页统计图聚合数据(按 1/7/30 天窗口)。 */

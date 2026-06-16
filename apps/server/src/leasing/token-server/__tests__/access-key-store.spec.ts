@@ -171,16 +171,17 @@ describe('AccessKeyStore', () => {
   // ── Usage recording ──────────────────────────────────────────────────────
 
   describe('recordUsage', () => {
-    it('should increment totalRequests', async () => {
+    it('records a usage event into the rate-limit window', async () => {
       const store = makeStore([{
         id: 'k1', key: 'secret1', status: 'active',
-        totalRequests: 0, usageEvents: [], tokenUsageEvents: [],
+        usageEvents: [], tokenUsageEvents: [],
         windowStartedAt: Date.now(),
       }]);
       store.recordUsage('k1', 200, { inputTokens: 100, outputTokens: 50 }, '');
       const record = store.findById('k1');
-      expect(record?.totalRequests).toBe(1);
-      expect(record?.totalInputTokens).toBe(100);
+      // 累计计数已下线;用量进入限流窗口事件(权威用量在 CardUsageHourly)。
+      expect(record?.tokenUsageEvents?.length).toBe(1);
+      expect(record?.tokenUsageEvents?.[0].inputTokens).toBe(100);
     });
 
     it('should not throw for unknown cardId', async () => {
@@ -204,8 +205,8 @@ describe('AccessKeyStore', () => {
       // 上报路径不再标脏 → flush 不写盘:磁盘计数维持初始 0。
       const raw = JSON.parse(fs.readFileSync(accessKeysPath, 'utf8'));
       expect(raw.keys[0].totalRequests).toBe(0);
-      // 但内存计数已就地更新(供本进程 publicStatus 展示;重启由 DB 重建)。
-      expect(store.findById('k1')!.totalRequests).toBe(1);
+      // 内存:用量进入限流窗口事件(累计计数已下线;权威用量在 CardUsageHourly)。
+      expect(store.findById('k1')!.tokenUsageEvents!.length).toBe(1);
     });
 
     it('recordUsage keeps event arrays + counters in memory only — nothing reaches disk', async () => {
@@ -224,9 +225,8 @@ describe('AccessKeyStore', () => {
       expect(raw.keys[0].tokenUsageEvents).toBeUndefined();
       expect(raw.keys[0].weeklyTokenUsageEvents).toBeUndefined();
 
-      // 内存:计数 + 事件都在 —— 限额窗口的权威来源。
+      // 内存:窗口事件在 —— 限额窗口的权威来源(累计计数已下线)。
       const inMem = store.findById('k1')!;
-      expect(inMem.totalRequests).toBe(1);
       expect((inMem.tokenUsageEvents || []).length).toBeGreaterThan(0);
     });
 
@@ -266,45 +266,6 @@ describe('AccessKeyStore', () => {
 
       const after = store.publicStatus(store.findById('k1')!).recentWindowTokens;
       expect(after).toBe(before);
-    });
-  });
-
-  describe('hydrateWindowsFromUsageLog (boot replay)', () => {
-    it('rebuilds the in-memory window from persisted usage rows after a cold start', async () => {
-      const now = Date.now();
-      const store = makeStore([{
-        id: 'k1', key: 'secret1', status: 'active',
-        windowStartedAt: now - 1000, weeklyWindowStartedAt: now - 1000,
-        bucketLimits: { 'anthropic-claude': 500_000 },
-      }]);
-      // Cold start: cache from disk has no events.
-      expect(store.publicStatus(store.findById('k1')!).recentWindowTokens).toBe(0);
-
-      // Replay the durable CardTokenUsage log (rows already scoped to the window).
-      store.hydrateWindowsFromUsageLog([
-        {
-          accessKeyId: 'k1', at: now - 500, status: 200,
-          modelKey: 'claude-opus-4', bucket: 'anthropic-claude',
-          inputTokens: 100, outputTokens: 50, cachedInputTokens: 0,
-          rawTotalTokens: 150, totalTokens: 150,
-        },
-      ]);
-
-      const status = store.publicStatus(store.findById('k1')!);
-      expect(status.recentWindowTokens).toBe(150); // 原始 Token 计数(展示用)不变
-      const bucket = status.buckets.find((b: any) => b.bucket === 'anthropic-claude');
-      // anthropic 桶额度口径改为 CU(加权):claude-opus 100×1 + 50×5 = 350(原始为 150)。
-      expect(bucket.used).toBe(350);
-    });
-
-    it('ignores rows for cards not present in the cache', async () => {
-      const store = makeStore([{ id: 'k1', key: 'secret1', status: 'active', windowStartedAt: Date.now() }]);
-      expect(() =>
-        store.hydrateWindowsFromUsageLog([
-          { accessKeyId: 'ghost', at: Date.now(), modelKey: 'claude-opus-4', bucket: 'anthropic-claude', totalTokens: 99, rawTotalTokens: 99 },
-        ]),
-      ).not.toThrow();
-      expect(store.findById('k1')!.tokenUsageEvents || []).toHaveLength(0);
     });
   });
 
@@ -692,8 +653,9 @@ describe('AccessKeyStore', () => {
       expect(status.id).toBe('k1');
       expect(status.name).toBe('Test Key');
       expect(status.status).toBe('active');
-      expect(status.totalRequests).toBe(5);
-      expect(status.totalTokensUsed).toBe(1234);
+      // 累计计数已从 publicStatus 下线(权威用量在 CardUsageHourly)。
+      expect(status.totalRequests).toBeUndefined();
+      expect(status.totalTokensUsed).toBeUndefined();
       expect(status.quotaMode).toBe('static');
       expect(status.opusTokenLimit).toBe(100_000);
       expect(status.tokenWindowMs).toBe(5 * 60 * 60 * 1000);

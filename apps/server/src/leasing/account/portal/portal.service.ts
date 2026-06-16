@@ -15,17 +15,6 @@ const UNLIMITED_QUOTA = {
   totalTokensUsed: 0,
 };
 
-/**
- * 与前端 usage 表 isSuccessStatus 同义:status 是 HTTP 码(200/429…),
- * 旧数据可能是字符串。2xx → 成功,其余(含 0/未知)→ 失败。
- */
-function isSuccessStatus(status: number | string): boolean {
-  const n = Number(status);
-  if (Number.isFinite(n) && n > 0) return n >= 200 && n < 300;
-  const s = String(status).toLowerCase();
-  return s === "success" || s === "ok";
-}
-
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
@@ -217,59 +206,6 @@ export class PortalService {
     return { ok: true, subscriptions: overview.subscriptions };
   }
 
-  // ── Usage history (paginated) ───────────────────────────────────────────────
-
-  async getUsage(
-    customerId: string,
-    opts: { page?: number; pageSize?: number; days?: number },
-  ) {
-    const page = Math.max(1, opts.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
-    const days = [1, 7, 30].includes(opts.days ?? 0) ? (opts.days ?? 7) : 7;
-
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const where = {
-      customerId,
-      timestamp: { gte: since },
-    };
-
-    const [records, total] = await Promise.all([
-      this.prisma.cardTokenUsage.findMany({
-        where,
-        orderBy: { timestamp: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          timestamp: true,
-          modelKey: true,
-          bucket: true,
-          status: true,
-          inputTokens: true,
-          outputTokens: true,
-          totalTokens: true,
-        },
-      }),
-      this.prisma.cardTokenUsage.count({ where }),
-    ]);
-
-    return {
-      records: records.map((r) => ({
-        id: r.id,
-        timestamp: r.timestamp.toISOString(),
-        modelKey: r.modelKey,
-        bucket: r.bucket,
-        status: r.status,
-        inputTokens: r.inputTokens,
-        outputTokens: r.outputTokens,
-        totalTokens: r.totalTokens,
-      })),
-      total,
-      page,
-      pageSize,
-    };
-  }
-
   // ── Usage stats (aggregated for charts) ─────────────────────────────────────
 
   /**
@@ -291,15 +227,18 @@ export class PortalService {
     else anchor.setHours(0, 0, 0, 0);
     const since = new Date(anchor.getTime() - (bucketCount - 1) * stepMs);
 
-    const rows = await this.prisma.cardTokenUsage.findMany({
-      where: { customerId, timestamp: { gte: since } },
-      orderBy: { timestamp: "asc" },
+    // 读小时聚合(行数与请求次数脱钩);每行已是某小时的合计 + requests/failedRequests。
+    // hour 粒度(days=1)每行恰好落一个桶;day 粒度按 hourStart 所属本地日归桶。
+    const rows = await this.prisma.cardUsageHourly.findMany({
+      where: { customerId, hourStart: { gte: since } },
+      orderBy: { hourStart: "asc" },
       take: 100_000,
       select: {
-        timestamp: true,
+        hourStart: true,
         modelKey: true,
         bucket: true,
-        status: true,
+        requests: true,
+        failedRequests: true,
         inputTokens: true,
         outputTokens: true,
         cachedInputTokens: true,
@@ -327,21 +266,23 @@ export class PortalService {
       const input = Number(r.inputTokens) || 0;
       const output = Number(r.outputTokens) || 0;
       const total = Number(r.totalTokens) || 0;
+      const reqs = Number(r.requests) || 0;
+      const fails = Number(r.failedRequests) || 0;
 
       const idx = Math.min(
         bucketCount - 1,
-        Math.max(0, Math.floor((r.timestamp.getTime() - since.getTime()) / stepMs)),
+        Math.max(0, Math.floor((r.hourStart.getTime() - since.getTime()) / stepMs)),
       );
       const b = buckets[idx];
       b.inputTokens += input;
       b.outputTokens += output;
       b.totalTokens += total;
-      b.requests += 1;
+      b.requests += reqs;
 
       const cached = Number(r.cachedInputTokens) || 0;
       const m = byModel.get(r.modelKey) ?? { totalTokens: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, savedUSD: 0 };
       m.totalTokens += total;
-      m.requests += 1;
+      m.requests += reqs;
       m.inputTokens += input;
       m.outputTokens += output;
       m.cachedTokens += cached;
@@ -349,13 +290,13 @@ export class PortalService {
       m.savedUSD += officialCostFor(r.bucket, input, output, cached, 0);
       byModel.set(r.modelKey, m);
 
-      if (isSuccessStatus(r.status)) success += 1;
-      else failed += 1;
+      success += reqs - fails;
+      failed += fails;
 
       totals.inputTokens += input;
       totals.outputTokens += output;
       totals.totalTokens += total;
-      totals.requests += 1;
+      totals.requests += reqs;
       totals.savedUSD += savedUSDFor(r.bucket, input, output);
     }
 

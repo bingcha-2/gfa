@@ -39,6 +39,7 @@ export type TokenUsageTracker = {
     customerId?: string;
     accessKeyName?: string;
     accountId?: number;
+    accountEmail?: string;
     modelKey: string;
     bucket: string;
     status: number;
@@ -1165,11 +1166,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     if (this.tokenUsageTracker) {
       const detail = this.accessKeyStore.computeUsageDetail(usage, modelKey, this.provider.id);
       if (detail.totalTokens > 0) {
+        // Stamp the STABLE account identity (email) alongside the volatile positional
+        // accountId, so per-account usage survives pool reloads / cross-machine moves.
+        const servingAccount = accountId ? this.readAccounts().find((a) => a.id === accountId) : undefined;
+        const accountEmail = (servingAccount as { email?: string } | undefined)?.email || undefined;
         this.tokenUsageTracker.record({
           accessKeyId: cardId,
           customerId: (auth.record?.customerId as string | undefined),
           accessKeyName: auth.record?.name || undefined,
           accountId: accountId || undefined,
+          accountEmail,
           modelKey: modelKey || "",
           bucket: detail.bucket,
           status,

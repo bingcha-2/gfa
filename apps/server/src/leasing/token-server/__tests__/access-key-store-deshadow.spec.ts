@@ -4,10 +4,7 @@ import * as path from "path";
 import * as os from "os";
 
 import { AccessKeyStore } from "../access-key-store";
-import { recentBucketUsage, recentWeeklyBucketUsage } from "../token-billing";
 import { cardIdSessionResolver, sessionReqFor } from "./session-test-util";
-
-const sumUsage = (m: Map<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
 
 let lastStorePath = "";
 
@@ -132,84 +129,6 @@ describe("AccessKeyStore.reload 与订阅 record 协同(去影子 reload 陷阱)
   });
 });
 
-describe("D2 去影子:订阅 record 窗口起点跨重启重建(hydrate 后回放,防穿透)", () => {
-  const FIVE_H = 18_000_000;
-  const HOUR = 60 * 60 * 1000;
-
-  it("号池订阅 boot 后:5h + 周窗口起点从用量回放重建,额度不被清零", () => {
-    const now = Date.now();
-    const store = makeStore([]);
-    store.loadSubscriptionRecords([{
-      id: "pool-1", key: "BK-POOL", customerId: "c1", status: "active",
-      products: ["antigravity"], bucketLimits: { "antigravity-gemini": 1_000_000 },
-      windowMs: FIVE_H,
-    } as any]);
-    // 模拟 boot:hydrate 灌入窗口内(1h 前)的一条用量。
-    store.hydrateWindowsFromUsageLog([{
-      accessKeyId: "pool-1", at: now - HOUR, status: 200,
-      modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
-      inputTokens: 3000, outputTokens: 2000, rawTotalTokens: 5000, totalTokens: 5000,
-    }]);
-
-    const rec = store.findById("pool-1") as any;
-    // 起点被重建为事件时刻(而非 0)→ 不会被 resetWindowIfExpired 当过期清空。
-    expect(rec.windowStartedAt).toBe(now - HOUR);
-    expect(rec.weeklyWindowStartedAt).toBe(now - HOUR);
-    expect(rec.tokenUsageEvents).toHaveLength(1);
-    // recentBucketUsage 内部会 resetWindowIfExpired;若起点没重建会清零 → 这里证明额度连续。
-    expect(sumUsage(recentBucketUsage(rec, now))).toBeGreaterThan(0);
-    expect(sumUsage(recentWeeklyBucketUsage(rec, now))).toBeGreaterThan(0);
-  });
-
-  it("5h 已过期但仍在周窗内:5h 重置为空、周窗口保留(各按自己窗长回放)", () => {
-    const now = Date.now();
-    const store = makeStore([]);
-    store.loadSubscriptionRecords([{
-      id: "pool-2", key: "BK-POOL2", customerId: "c1", status: "active",
-      products: ["antigravity"], bucketLimits: { "antigravity-gemini": 1_000_000 },
-      windowMs: FIVE_H,
-    } as any]);
-    // 6h 前的用量:超出 5h 窗,但在 7 天周窗内。
-    store.hydrateWindowsFromUsageLog([{
-      accessKeyId: "pool-2", at: now - 6 * HOUR, status: 200,
-      modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini",
-      rawTotalTokens: 5000, totalTokens: 5000,
-    }]);
-
-    const rec = store.findById("pool-2") as any;
-    // 5h 窗已过期 → 起点未设、事件清空(下次使用才开新窗)。
-    expect(Number(rec.windowStartedAt || 0)).toBe(0);
-    expect(rec.tokenUsageEvents).toHaveLength(0);
-    // 周窗仍活 → 起点 = 事件时刻、事件保留。
-    expect(rec.weeklyWindowStartedAt).toBe(now - 6 * HOUR);
-    expect(rec.weeklyTokenUsageEvents).toHaveLength(1);
-    expect(sumUsage(recentWeeklyBucketUsage(rec, now))).toBeGreaterThan(0);
-  });
-
-  it("绑定订阅:5h 不重建/不裁剪(走 alignedResetAt,事件保留),周窗口照常重建", () => {
-    const now = Date.now();
-    const store = makeStore([]);
-    store.loadSubscriptionRecords([{
-      id: "bind-1", key: "BK-BIND", customerId: "c1", status: "active",
-      products: ["antigravity"], bindings: { antigravity: 7 }, weight: 1,
-      requiresBinding: true, windowMs: FIVE_H,
-    } as any]);
-    // 两条:1h 前 + 6h 前。绑定卡 5h 靠 alignedResetAt 按上游窗过滤,故 tokenUsageEvents 不应被本逻辑裁剪。
-    store.hydrateWindowsFromUsageLog([
-      { accessKeyId: "bind-1", at: now - HOUR, status: 200, modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", rawTotalTokens: 1000, totalTokens: 1000 },
-      { accessKeyId: "bind-1", at: now - 6 * HOUR, status: 200, modelKey: "gemini-2.5-pro", bucket: "antigravity-gemini", rawTotalTokens: 2000, totalTokens: 2000 },
-    ]);
-
-    const rec = store.findById("bind-1") as any;
-    // 5h:绑定卡不读 windowStartedAt、不在此重建;两条事件全保留(交给 alignedResetAt 过滤)。
-    expect(Number(rec.windowStartedAt || 0)).toBe(0);
-    expect(rec.tokenUsageEvents).toHaveLength(2);
-    // 周:两条都在 7 天内 → 起点 = 最早事件、两条都保留。
-    expect(rec.weeklyWindowStartedAt).toBe(now - 6 * HOUR);
-    expect(rec.weeklyTokenUsageEvents).toHaveLength(2);
-  });
-});
-
 describe("AccessKeyStore.subscriptionsBoundToAccount(用量看板把订阅列为绑定项;限流路径不变)", () => {
   it("只认绑定到该号的 active 订阅;expired / 号池(无 bindings)/ 别的号 / 别的产品都排除", () => {
     // 文件里一张绑到号 1 的老卡,DB 侧若干订阅。
@@ -225,15 +144,87 @@ describe("AccessKeyStore.subscriptionsBoundToAccount(用量看板把订阅列为
     ]);
 
     // 看板路径:号 1 / antigravity 只命中 sub-bound(active + bindings 命中)。
+    // (文件卡发号已退役,cardsBoundToAccount 死函数已删 —— 看板只列订阅。)
     expect(store.subscriptionsBoundToAccount(1, "antigravity")).toEqual(["sub-bound"]);
-    // cardsBoundToAccount 仍只认文件卡、绝不含订阅 —— 两套数据源分离(文件卡 vs 订阅),
-    // 由看板(getBoundCardsForAccount)按需合并,底层方法本身不被污染。
-    expect(store.cardsBoundToAccount(1, "antigravity")).toEqual(["file-card"]);
   });
 
   it("accountId <= 0 → 空", () => {
     const store = makeStore([]);
     store.loadSubscriptionRecords([{ id: "s", status: "active", bindings: { antigravity: 1 } } as any]);
     expect(store.subscriptionsBoundToAccount(0, "antigravity")).toEqual([]);
+  });
+});
+
+describe("AccessKeyStore 订阅窗口持久化(serialize / restore;重启精准恢复,回放跳过)", () => {
+  it("serialize → restore 往返:5h/周 起点 + 窗口内事件原样恢复", () => {
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{ id: "sub-1", status: "active", windowMs: 18000000 } as any]);
+    const rec = store.findById("sub-1") as any;
+    rec.windowStartedAt = 1000;
+    rec.weeklyWindowStartedAt = 500;
+    rec.tokenUsageEvents = [{ at: 1000, totalTokens: 50, bucket: "anthropic-claude" }];
+    rec.weeklyTokenUsageEvents = [{ at: 600, totalTokens: 30 }, { at: 1000, totalTokens: 50 }];
+
+    const snaps = store.serializeSubscriptionWindows();
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0].id).toBe("sub-1");
+
+    // 新进程:冷注册同一订阅后,从快照恢复。
+    const store2 = makeStore([]);
+    store2.loadSubscriptionRecords([{ id: "sub-1", status: "active", windowMs: 18000000 } as any]);
+    store2.restoreSubscriptionWindow("sub-1", snaps[0].windowState);
+    const rec2 = store2.findById("sub-1") as any;
+    expect(rec2.windowStartedAt).toBe(1000);
+    expect(rec2.weeklyWindowStartedAt).toBe(500);
+    expect(rec2.tokenUsageEvents).toHaveLength(1);
+    expect(rec2.weeklyTokenUsageEvents).toHaveLength(2);
+  });
+
+  it("无窗口活动的订阅 → serialize 不输出(省 DB 写)", () => {
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{ id: "sub-idle", status: "active" } as any]);
+    expect(store.serializeSubscriptionWindows()).toEqual([]);
+  });
+
+  it("restore 容错:坏 JSON / 未知 id → 安静跳过,不抛", () => {
+    const store = makeStore([]);
+    store.loadSubscriptionRecords([{ id: "sub-1", status: "active" } as any]);
+    expect(() => store.restoreSubscriptionWindow("sub-1", "{bad json")).not.toThrow();
+    expect(() => store.restoreSubscriptionWindow("nope", JSON.stringify({ windowStartedAt: 1 }))).not.toThrow();
+    const rec = store.findById("sub-1") as any;
+    expect(Number(rec.windowStartedAt || 0)).toBe(0);
+  });
+});
+
+describe("AccessKeyStore 运行时不落 access-keys.json(文件卡已退役,用量不再持久化到文件)", () => {
+  it("订阅卡经 resolveFromRequest 激活 → 文件不被写脏(订阅走 windowState,不进文件)", async () => {
+    const store = makeStore([]); // 文件初始 { keys: [], updatedAt: "" }
+    store.setSessionResolver(cardIdSessionResolver);
+    store.loadSubscriptionRecords([{
+      id: "sub-1", key: "BK-1", customerId: "c1", status: "active",
+      products: ["anthropic"], bucketLimits: { "anthropic-claude": 1_000_000 }, windowMs: 18_000_000,
+    } as any]);
+
+    const res = await store.resolveFromRequest(sessionReqFor("sub-1"), {}, {
+      activate: true, enforceLimit: true, modelKey: "claude-opus-4", product: "anthropic",
+    });
+    expect(res.record?.id).toBe("sub-1"); // 命中订阅
+
+    store.flush();
+    const onDisk = JSON.parse(fs.readFileSync(lastStorePath, "utf8"));
+    expect(onDisk.keys).toEqual([]);
+    expect(onDisk.updatedAt).toBe(""); // 未发生过写盘
+  });
+
+  it("文件卡经 resolveFromRequest 激活 → 同样不再写盘(运行时持久化已移除)", async () => {
+    const store = makeStore([{ id: "file-1", key: "FK-1", status: "active", windowMs: 18_000_000 }]);
+    store.setSessionResolver(cardIdSessionResolver);
+
+    await store.resolveFromRequest(sessionReqFor("file-1"), {}, { activate: true });
+
+    store.flush();
+    const onDisk = JSON.parse(fs.readFileSync(lastStorePath, "utf8"));
+    // 运行时不再 writeCache → updatedAt 仍是初始空串(没发生过写盘)。
+    expect(onDisk.updatedAt).toBe("");
   });
 });

@@ -9,7 +9,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
-import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -18,27 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from "@/components/ui/empty";
 import { formatTokens } from "@/lib/format";
-
-type UsageRecord = {
-  id: string;
-  accountId: number | null;
-  modelKey: string;
-  bucket: string;
-  status: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  rawTotalTokens: number;
-  totalTokens: number;
-  timestamp: string;
-};
 
 type Totals = {
   requests: number;
@@ -66,21 +45,8 @@ const DAYS_OPTIONS: [number, string][] = [
   [90, "90天"],
 ];
 
-const PAGE_SIZE = 30;
-
 function fmt(n: number | null | undefined): string {
   return Number(n || 0).toLocaleString();
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 }
 
 export function CardUsageDialog({
@@ -93,14 +59,10 @@ export function CardUsageDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [days, setDays] = useState(30);
-  const [page, setPage] = useState(1);
 
   const [totals, setTotals] = useState<Totals | null>(null);
   const [byModel, setByModel] = useState<ModelRow[]>([]);
   const [daily, setDaily] = useState<DailyRow[]>([]);
-  const [records, setRecords] = useState<UsageRecord[]>([]);
-  const [totalRecords, setTotalRecords] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
 
   const cardId = card?.id || "";
@@ -109,39 +71,26 @@ export function CardUsageDialog({
     if (!cardId) return;
     setLoading(true);
     try {
-      const [summaryRes, recordsRes] = await Promise.all([
-        fetch(`/api/console/rosetta/card-token-usage-summary?cardId=${encodeURIComponent(cardId)}&days=${days}`),
-        fetch(
-          `/api/console/rosetta/card-token-usage?cardId=${encodeURIComponent(cardId)}&days=${days}&page=${page}&pageSize=${PAGE_SIZE}`,
-        ),
-      ]);
+      const summaryRes = await fetch(
+        `/api/console/rosetta/card-token-usage-summary?cardId=${encodeURIComponent(cardId)}&days=${days}`,
+      );
       const summary = await summaryRes.json();
-      const recs = await recordsRes.json();
       setTotals(summary.totals || null);
       setByModel(summary.byModel || []);
       setDaily(summary.daily || []);
-      setRecords(recs.records || []);
-      setTotalRecords(recs.total || 0);
-      setTotalPages(recs.totalPages || 1);
     } catch {
       setTotals(null);
       setByModel([]);
       setDaily([]);
-      setRecords([]);
     } finally {
       setLoading(false);
     }
-  }, [cardId, days, page]);
-
-  // Reset paging when the card or window changes.
-  useEffect(() => {
-    setPage(1);
   }, [cardId, days]);
 
   useEffect(() => {
     if (open && cardId) fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, cardId, days, page]);
+  }, [open, cardId, days]);
 
   const maxDaily = Math.max(1, ...daily.map((d) => d.totalTokens));
 
@@ -248,93 +197,6 @@ export function CardUsageDialog({
                 </div>
               </div>
             )}
-
-            <Separator />
-
-            {/* Per-call records */}
-            <div>
-              <p className="mb-2 text-xs font-medium">
-                逐次调用流水
-                <span className="ml-1 text-muted-foreground">
-                  ({totalRecords.toLocaleString()} 条)
-                </span>
-              </p>
-              {records.length === 0 ? (
-                <Empty className="py-8">
-                  <EmptyHeader>
-                    <EmptyTitle>暂无使用记录</EmptyTitle>
-                    <EmptyDescription>该卡在所选时间范围内没有 token 使用记录</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <>
-                  <div className="overflow-x-auto rounded-lg border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>时间</TableHead>
-                          <TableHead>模型</TableHead>
-                          <TableHead className="text-right">输入</TableHead>
-                          <TableHead className="text-right">输出</TableHead>
-                          <TableHead className="text-right">缓存</TableHead>
-                          <TableHead className="text-right">计费</TableHead>
-                          <TableHead className="text-right">状态</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {records.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell className="whitespace-nowrap text-xs">
-                              {formatDateTime(r.timestamp)}
-                            </TableCell>
-                            <TableCell className="max-w-[160px] truncate font-mono text-xs">
-                              {r.modelKey || "-"}
-                            </TableCell>
-                            <TableCell className="text-right text-sm">{formatTokens(r.inputTokens)}</TableCell>
-                            <TableCell className="text-right text-sm">{formatTokens(r.outputTokens)}</TableCell>
-                            <TableCell className="text-right text-sm text-muted-foreground">
-                              {formatTokens(r.cachedInputTokens)}
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-medium">
-                              {formatTokens(r.totalTokens)}
-                            </TableCell>
-                            <TableCell className="text-right text-xs">
-                              <span className={r.status >= 200 && r.status < 400 ? "text-muted-foreground" : "text-destructive"}>
-                                {r.status}
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  {totalPages > 1 && (
-                    <div className="mt-3 flex items-center justify-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={page <= 1 || loading}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      >
-                        上一页
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        {page} / {totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={page >= totalPages || loading}
-                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                      >
-                        下一页
-                      </Button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
           </>
         )}
       </DialogContent>

@@ -484,8 +484,12 @@ export class BillingService {
     }
 
     // 使用检测:订单支付后产生过 token 用量 → 不允许退款(防「买了用完再退」)。
-    const usageCount = await this.prisma.cardTokenUsage.count({
-      where: { customerId: order.customerId, timestamp: { gte: order.paidAt ?? order.createdAt } },
+    // 查小时聚合表(CardUsageHourly,保留 ~60 天,覆盖任意订阅期);原始流水只留 2 天、
+    // 不能用来判老订单。下界按 paidAt 所在整点向下取整(保守:含该小时全部用量 → 宁可拦)。
+    const since = order.paidAt ?? order.createdAt;
+    const hourFloor = new Date(Math.floor(since.getTime() / 3_600_000) * 3_600_000);
+    const usageCount = await this.prisma.cardUsageHourly.count({
+      where: { customerId: order.customerId, hourStart: { gte: hourFloor } },
     });
     if (usageCount > 0) {
       throw new ConflictException("订单支付后已产生使用记录,不可退款");

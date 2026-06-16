@@ -482,16 +482,6 @@ function RowFragment({
                     每 {formatDuration(item.windowMs)}
                   </span>
                 </MetaItem>
-                <MetaItem label="累计请求">
-                  <span className="tabular-nums text-muted-foreground">
-                    {Number(item.totalRequests || 0).toLocaleString()}
-                  </span>
-                </MetaItem>
-                <MetaItem label="累计 Token">
-                  <span className="tabular-nums text-muted-foreground">
-                    {formatTokens(Number(item.totalTokensUsed || 0))}
-                  </span>
-                </MetaItem>
                 <MetaItem label="本窗口 Token">
                   <span className="tabular-nums text-muted-foreground">
                     {formatTokens(Number(item.recentWindowTokens || 0))}

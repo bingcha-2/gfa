@@ -305,7 +305,7 @@ export class RemoteStatsService {
 
     const accounts = await Promise.all(
       candidates.map(async ({ acc, snap, boundBase }) => {
-        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days, acc.id, emailMap)));
+        const boundCards = await Promise.all(boundBase.map((card) => this.decorateCard(card, days, acc.id, emailMap, acc.email)));
         const quota = accountQuotaSummary(acc, snap, families, now);
         return {
           id: acc.id,
@@ -356,13 +356,15 @@ export class RemoteStatsService {
     days: number,
     accountId: number,
     emailMap: Map<string, string>,
+    accountEmail?: string,
   ) {
     // Scope usage to this account: a card bound across 御三家 has one account per
-    // provider, so without accountId every provider's view shows the card's global
-    // total → identical-looking trend/frequency charts across products.
+    // provider, so without scoping every provider's view shows the card's global
+    // total → identical-looking trend/frequency charts across products. Prefer the
+    // stable accountEmail (reload-proof); accountId stays as the legacy fallback.
     const [summary, freq] = await Promise.all([
-      this.tokenUsageStats.getCardUsageSummary({ accessKeyId: card.id, accountId, days }),
-      this.tokenUsageStats.getHourlyFrequency({ accessKeyId: card.id, accountId, days }),
+      this.tokenUsageStats.getCardUsageSummary({ accessKeyId: card.id, accountId, accountEmail, days }),
+      this.tokenUsageStats.getHourlyFrequency({ accessKeyId: card.id, accountId, accountEmail, days }),
     ]);
     return {
       ...card,

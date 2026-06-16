@@ -4,7 +4,6 @@ import { useState } from "react";
 
 import { UsageCharts } from "@/components/account/usage-charts";
 import { UsageModelTable } from "@/components/account/usage-model-table";
-import { UsageTable } from "@/components/account/usage-table";
 import type { UsageDays } from "@/lib/account/user-types";
 import { useDict } from "@/lib/i18n/client";
 
@@ -42,9 +41,6 @@ export function UsageView() {
 
       {/* 按模型汇总表(请求数/输入·输出·缓存/合计/官方API价/占比) */}
       <UsageModelTable key={`m-${days}`} days={days} />
-
-      {/* key={days} 让切换窗口时明细表重挂以重置分页 */}
-      <UsageTable key={days} days={days} />
     </div>
   );
 }

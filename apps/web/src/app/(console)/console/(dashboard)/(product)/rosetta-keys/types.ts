@@ -84,9 +84,7 @@ export interface AccessKeyListItem {
   boundAccountId: number;
 
   // ── 用量 / 有效期 ──
-  totalRequests: number;
-  totalTokensUsed: number;
-  /** 当前窗口总用量(整卡)。 */
+  /** 当前窗口总用量(整卡)。累计用量已下线 —— 单卡明细看「Token 使用记录」弹窗(CardUsageHourly)。 */
   recentWindowTokens: number;
   windowMs: number;
   weeklyTokenLimit: number;

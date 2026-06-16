@@ -49,8 +49,6 @@ export type StatusFilter = "all" | "active" | "disabled" | "expired";
 export type SortField =
   | "createdAt"
   | "recentWindowTokens"
-  | "totalTokensUsed"
-  | "totalRequests"
   | "expiresAt";
 export type SortDir = "asc" | "desc";
 
@@ -81,8 +79,6 @@ const STATUS_ITEMS: { label: string; value: StatusFilter }[] = [
 const SORT_ITEMS: { label: string; value: SortField }[] = [
   { label: "创建时间", value: "createdAt" },
   { label: "窗口 Token", value: "recentWindowTokens" },
-  { label: "总 Token", value: "totalTokensUsed" },
-  { label: "请求数", value: "totalRequests" },
   { label: "到期时间", value: "expiresAt" },
 ];
 

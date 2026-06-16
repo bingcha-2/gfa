@@ -254,12 +254,11 @@ describe("M7 — antigravity session lease (full engine path)", () => {
     );
 
     expect(report.ok).toBe(true);
-    // Usage attributed to the shadow record whose id == sub.id
+    // Usage attributed to the shadow record whose id == sub.id (累计计数已下线 → 看窗口事件)。
     const record = (service as any).accessKeyStore.findById(sub.id);
-    expect(record.totalTokensUsed).toBe(150);
-    expect(record.totalRequests).toBe(1);
+    expect(record.tokenUsageEvents?.length).toBe(1);
     expect(report.accessKeyStatus).toBeDefined();
-    expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
+    expect(report.accessKeyStatus.recentWindowTokens).toBe(150);
   });
 
   // ── (c) Multi-device: two clientIds, same shadow record, no 409 ────────

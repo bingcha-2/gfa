@@ -186,7 +186,7 @@ describe("LeaseService (generic core)", () => {
     });
 
     expect(report.ok).toBe(true);
-    expect(report.accessKeyStatus.totalTokensUsed).toBe(150);
+    expect(report.accessKeyStatus.recentWindowTokens).toBe(150);
   });
 
   it("不再用请求体大小估算:0-token 生成上报记 0,绝不把整段请求体当一次用量", async () => {
@@ -202,7 +202,7 @@ describe("LeaseService (generic core)", () => {
     });
 
     expect(report.ok).toBe(true);
-    expect(report.accessKeyStatus.totalTokensUsed).toBe(0);
+    expect(report.accessKeyStatus.recentWindowTokens).toBe(0);
   });
 
   // ── Static account binding (no fallback) ─────────────────────────────────

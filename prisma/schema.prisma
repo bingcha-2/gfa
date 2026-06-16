@@ -453,29 +453,33 @@ model SiteSetting {
   updatedAt DateTime @updatedAt
 }
 
-/// Per-event token usage: recorded in reportResult() for each billed usage report.
-/// One row per successful (deduped, exactly-once) report from a card (access key).
-model CardTokenUsage {
+/// 小时用量聚合:写入时按(小时 × 卡 × 上游号 × 客户 × 模型 × bucket)就地累加,
+/// 行数只跟「卡×模型×小时」走、与请求次数脱钩(客户狂刷不会撑大此表)。
+/// 趋势/今日/按模型/24h分布/成本 都读这张;单条明细仍读 CardTokenUsage(只留最近)。
+/// hourStart = 该请求时刻向下取整到整点(UTC 起点;北京为整数时差,小时/日分桶天然对齐)。
+/// 唯一键里 accountEmail/customerId 用空串("")代替 null,避免 SQLite NULL 不参与唯一约束。
+model CardUsageHourly {
   id                String   @id @default(cuid())
-  accessKeyId       String                     // Card (access key) ID that consumed the tokens
-  accessKeyName     String?                    // Card display name (snapshot at record time)
-  accountId         Int?                       // Rosetta account that served the request
-  customerId        String?                    // Owning account (Customer.id); null for legacy file/pool cards not yet account-bound
-  modelKey          String                     // Model identifier (e.g. gemini-..., gpt-..., claude-...)
-  bucket            String                     // Billing bucket: gemini / codex / opus
-  status            Int      @default(0)        // Reported HTTP status
+  hourStart         DateTime                     // 整点起始(UTC 瞬时)
+  accessKeyId       String
+  accountEmail      String   @default("")         // 上游号稳定身份("" = 未知/legacy)
+  customerId        String   @default("")         // 客户 id("" = 未绑定)
+  modelKey          String
+  bucket            String
+  requests          Int      @default(0)
+  failedRequests    Int      @default(0)          // 非 2xx 请求数(成功 = requests − failedRequests)
   inputTokens       Int      @default(0)
   outputTokens      Int      @default(0)
   cachedInputTokens Int      @default(0)
-  rawTotalTokens    Int      @default(0)        // Raw total before cache discount
-  totalTokens       Int      @default(0)        // Billable total (after cache discount)
-  timestamp         DateTime @default(now())
+  rawTotalTokens    Int      @default(0)
+  totalTokens       Int      @default(0)          // 计费 token(扣缓存折扣后)
+  updatedAt         DateTime @updatedAt
 
-  @@index([timestamp])
-  @@index([accessKeyId, timestamp])
-  @@index([accessKeyId, modelKey])
-  @@index([accountId, timestamp])
-  @@index([customerId, timestamp])
+  @@unique([hourStart, accessKeyId, accountEmail, customerId, modelKey, bucket])
+  @@index([hourStart])
+  @@index([accessKeyId, hourStart])
+  @@index([customerId, hourStart])
+  @@index([accountEmail, hourStart])
 }
 
 /// 账号 5h/周额度水位时序:on-change 去重后由 AccountQuotaSnapshotTracker 批量写入。
@@ -660,6 +664,9 @@ model Subscription {
   weeklyTokenLimit    Int?
   windowMs            Int                @default(18000000)
   backingKeyValue     String             @unique  // opaque key value written into access-keys.json
+  // 限流窗口快照(JSON 字符串):{ windowStartedAt, weeklyWindowStartedAt, tokenUsageEvents, weeklyTokenUsageEvents }。
+  // 由 token-server 定时 + 关机持久化;重启时直接恢复 5h/周窗口(精准,不再从 CardTokenUsage 回放)。
+  windowState         String?
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 

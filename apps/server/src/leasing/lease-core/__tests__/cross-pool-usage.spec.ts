@@ -88,6 +88,6 @@ describe("shared AccessKeyStore accumulates usage across product pools", () => {
     });
 
     // Shared store → 150 (codex) + 150 (anthropic) = 300. Separate stores → 150.
-    expect(r2.accessKeyStatus.totalTokensUsed).toBe(300);
+    expect(r2.accessKeyStatus.recentWindowTokens).toBe(300);
   });
 });
