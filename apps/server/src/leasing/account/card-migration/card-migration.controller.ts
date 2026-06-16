@@ -1,5 +1,5 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { Throttle } from "@nestjs/throttler";
+import { SkipThrottle } from "@nestjs/throttler";
 
 import { Public } from "../../../shared/auth/public.decorator";
 import { CustomerJwtGuard } from "../customer-auth/customer-jwt.guard";
@@ -13,7 +13,9 @@ import { BindCardDto } from "./dto/bind-card.dto";
  * customer as a planless Subscription (id continuity with the old record).
  *
  * @Public() skips the global admin JwtAuthGuard; CustomerJwtGuard enforces a
- * customer session. Rate limited: 5 requests per 60 seconds per IP.
+ * customer session. @SkipThrottle(): binding is idempotent and self-serializes
+ * under the access-keys write lock, so no rate limit — a logged-in customer
+ * retrying a bind must never be blocked by the global throttler.
  */
 @Controller("account")
 export class CardMigrationController {
@@ -21,7 +23,7 @@ export class CardMigrationController {
 
   @Public()
   @UseGuards(CustomerJwtGuard)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @SkipThrottle()
   @Post("bind-card")
   bindCard(@CurrentCustomer() customer: CustomerUser, @Body() dto: BindCardDto) {
     return this.cardMigration.bindCard(customer.customerId, dto.cardKey);
