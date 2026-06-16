@@ -795,6 +795,30 @@ describe("LeaseService (generic core)", () => {
       .rejects.toMatchObject({ statusCode: 429 });
   });
 
+  it("接力切到「绑到别的号」的订阅时,从被选中订阅的号取 token(不是认证卡的旧号)", async () => {
+    const { AccessKeyStore } = await import("../../token-server/access-key-store");
+    const store = new AccessKeyStore(accessKeysFilePath);
+    // s1: 绑号 1,桶 fake-gpt limit=1、已用 5 → 超额,接力跳过。
+    // s2: 绑号 2,无桶上限 → 有额度,接力选中。认证用 s1。
+    store.loadSubscriptionRecords([
+      { id: "s1", key: "s1-key", customerId: "cust-1", priority: 1, status: "active", products: ["fake"],
+        bindings: { fake: 1 }, requiresBinding: true, weight: 1,
+        bucketLimits: { "fake-gpt": 1 }, windowMs: 18_000_000, windowStartedAt: Date.now(),
+        tokenUsageEvents: [{ at: Date.now(), status: 200, modelKey: "gpt-5-codex", product: "fake", totalTokens: 5 }] },
+      { id: "s2", key: "s2-key", customerId: "cust-1", priority: 2, status: "active", products: ["fake"],
+        bindings: { fake: 2 }, requiresBinding: true, weight: 1, windowMs: 18_000_000 },
+    ]);
+    const service = withSessionResolver(new LeaseService(
+      makeFakeProvider(accountsFilePath, refreshToken),
+      { accessKeysFilePath, accessKeyStore: store, now: () => Date.now(), randomId: () => "lease-fixed", minClientVersion: "" },
+    ));
+    refreshToken.mockResolvedValue("tok");
+    const lease: any = await service.leaseToken(sessionReqFor("s1"), { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(lease.ok).toBe(true);
+    expect(lease.activeSubscriptionId).toBe("s2"); // 接力确实切到了 s2
+    expect(lease.accountId).toBe(2); // 关键:token 来自 s2 绑的 2 号,而非认证卡 s1 的 1 号
+  });
+
   it("写入点把订阅 record 的 customerId 带进用量事件", async () => {
     const { AccessKeyStore } = await import("../../token-server/access-key-store");
     const recordSpy = vi.fn();

@@ -455,7 +455,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
     }
     if (!auth.record) throw this.fail(401, auth.error || "Unauthorized");
-    const boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
+    // `let`: 账户级接力可能把 auth.record 换成「绑到别的号」的订阅,换后必须重算 boundAccountId,
+    // 否则后续公平份额 / 取号会落在认证卡的旧号上,而非接力真正选中的那个号。
+    let boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
 
     // ── 账户级订阅优先级接力 ──────────────────────────────────────────────
     // 订阅卡(有 customerId):按 priority 在该账户的订阅间选第一个该 bucket 有额度的,
@@ -477,6 +479,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       });
       if (relay.picked) {
         auth.record = relay.picked;
+        // 接力可能选中绑到不同上游号的订阅 → 用选中 record 重算,后续闸门/取号都对齐它的号。
+        boundAccountId = this.accessKeyStore.boundAccountIdFor(auth.record, this.provider.id);
       } else {
         const resetMs = Number(relay.resetMs || 0);
         throw this.fail(429, "账户所有订阅额度已用尽，请稍后再试", {
