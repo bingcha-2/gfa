@@ -1,89 +1,89 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# GFA Caddy config — split-domain deploy on bcai.space: one subdomain per audience.
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+# GFA Caddy config 鈥?split-domain deploy on bcai.lol: one subdomain per audience.
 #
 # Four sites:
-#   1) bcai.space          MARKETING → Next.js :3000   官网 + /updates 升级源
-#   2) my.bcai.space       ACCOUNT   → Next.js :3000   toC 用户中心
-#   3) console.bcai.space  CONSOLE   → Next.js :3000   toB 管理后台
-#   4) api.bcai.space      API       → NestJS  :3001   machine clients — NO Next.js
+#   1) bcai.lol          MARKETING 鈫?Next.js :3000   瀹樼綉 + /updates 鍗囩骇婧?
+#   2) my.bcai.lol       ACCOUNT   鈫?Next.js :3000   toC 鐢ㄦ埛涓績
+#   3) console.bcai.lol  CONSOLE   鈫?Next.js :3000   toB 绠＄悊鍚庡彴
+#   4) api.bcai.lol      API       鈫?NestJS  :3001   machine clients 鈥?NO Next.js
 #
-# Path prefixes are KEPT (no root-strip): the portal is my.bcai.space/account/*,
-# the console is console.bcai.space/console/*. URLs stay 1:1 with the code.
+# Path prefixes are KEPT (no root-strip): the portal is my.bcai.lol/account/*,
+# the console is console.bcai.lol/console/*. URLs stay 1:1 with the code.
 #
-# ── What the operator MUST configure before applying ──────────────────────────
-#   • DNS ............ one A/AAAA record per subdomain (apex/@, my, console,
-#     api) → this server. Prefer a plain (non-CDN-proxied) record for the
+# 鈹€鈹€ What the operator MUST configure before applying 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+#   鈥?DNS ............ one A/AAAA record per subdomain (apex/@, my, console,
+#     api) 鈫?this server. Prefer a plain (non-CDN-proxied) record for the
 #     console subdomain so the remote_ip allowlist hook sees real client IPs.
-#   • TLS ............ Caddy auto-provisions an ACME cert PER site address once
+#   鈥?TLS ............ Caddy auto-provisions an ACME cert PER site address once
 #     its DNS record resolves and ports 80/443 are reachable (4 certs, auto).
-#   • Next.js env .... ONE Next process (:3000) serves sites 1–3; the middleware
+#   鈥?Next.js env .... ONE Next process (:3000) serves sites 1鈥?; the middleware
 #     (apps/web/src/middleware.ts) tells the surfaces apart by Host header.
-#     OPTIONAL second layer — set on that process then restart it:
-#         MARKETING_HOST=bcai.space
-#         ACCOUNT_HOST=my.bcai.space
-#         CONSOLE_HOST=console.bcai.space    # legacy alias: ADMIN_HOST
-#         ACCOUNT_COOKIE_DOMAIN=my.bcai.space
-#         CONSOLE_COOKIE_DOMAIN=console.bcai.space
-#         ADMIN_IP_ALLOWLIST=…               # optional, unchanged semantics
+#     OPTIONAL second layer 鈥?set on that process then restart it:
+#         MARKETING_HOST=bcai.lol
+#         ACCOUNT_HOST=my.bcai.lol
+#         CONSOLE_HOST=console.bcai.lol    # legacy alias: ADMIN_HOST
+#         ACCOUNT_COOKIE_DOMAIN=my.bcai.lol
+#         CONSOLE_COOKIE_DOMAIN=console.bcai.lol
+#         ADMIN_IP_ALLOWLIST=鈥?              # optional, unchanged semantics
 #     With ALL host envs unset the middleware is a no-op (single-domain dev
-#     behavior) — Caddy below ALREADY enforces the per-host isolation, so this
+#     behavior) 鈥?Caddy below ALREADY enforces the per-host isolation, so this
 #     env layer is defense-in-depth, not required. NEVER set the cookie-domain
-#     envs to the parent domain (".bcai.space") — that shares cookies across
+#     envs to the parent domain (".bcai.lol") 鈥?that shares cookies across
 #     subdomains and defeats the isolation.
-#   • NestJS env ..... payment URLs must point at the new hosts (.env):
-#         EPAY_NOTIFY_URL=https://api.bcai.space/api/epay/notify
-#         EPAY_RETURN_URL=https://my.bcai.space/account/billing
-#   • Validate ....... run `caddy validate --config Caddyfile` BEFORE reload.
+#   鈥?NestJS env ..... payment URLs must point at the new hosts (.env):
+#         EPAY_NOTIFY_URL=https://api.bcai.lol/api/epay/notify
+#         EPAY_RETURN_URL=https://my.bcai.lol/account/billing
+#   鈥?Validate ....... run `caddy validate --config Caddyfile` BEFORE reload.
 #
 # Traffic map:
-#   visitors  → bcai.space          marketing pages, /updates/*, /api/faq-images/*
-#   customers → my.bcai.space       /account/*, /api/account/*, /api/account-session/*
-#   admins    → console.bcai.space  /console/*, /login, /api/console/*, /api/console-session/*
-#   clients   → api.bcai.space      /api/app/*
-#   epay      → api.bcai.space      /api/epay/*
-#   uptime    → api.bcai.space      /api/health
-# ══════════════════════════════════════════════════════════════════════════════
+#   visitors  鈫?bcai.lol          marketing pages, /updates/*, /api/faq-images/*
+#   customers 鈫?my.bcai.lol       /account/*, /api/account/*, /api/account-session/*
+#   admins    鈫?console.bcai.lol  /console/*, /login, /api/console/*, /api/console-session/*
+#   clients   鈫?api.bcai.lol      /api/app/*
+#   epay      鈫?api.bcai.lol      /api/epay/*
+#   uptime    鈫?api.bcai.lol      /api/health
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) MARKETING — apex domain.
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 1) MARKETING 鈥?apex domain.
 #
-# Serves the public 官网 only. /updates/* is served straight from disk so
+# Serves the public 瀹樼綉 only. /updates/* is served straight from disk so
 # publishing a client release needs no Next.js rebuild. Keep the update feed on
-# the APEX forever — deployed desktop clients poll
-# https://bcai.space/updates/latest-wails.json (apps/app/updater.go).
-# ──────────────────────────────────────────────────────────────────────────────
-bcai.space {
+# the APEX forever 鈥?deployed desktop clients poll
+# https://bcai.lol/updates/latest-wails.json (apps/app/updater.go).
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+bcai.lol {
 	handle /updates/* {
 		root * D:/gfa/apps/web/public/updates
 		uri strip_prefix /updates
 		file_server
 	}
 
-	# FAQ 配图 — the ONLY /api/* namespace on the marketing host (browser-loaded
-	# images embedded in FAQ answers, rewritten through Next → NestJS).
+	# FAQ 閰嶅浘 鈥?the ONLY /api/* namespace on the marketing host (browser-loaded
+	# images embedded in FAQ answers, rewritten through Next 鈫?NestJS).
 	handle /api/faq-images/* {
 		reverse_proxy localhost:3000
 	}
 
-	# Surfaces that do NOT exist on the apex → 404 (reveals nothing):
+	# Surfaces that do NOT exist on the apex 鈫?404 (reveals nothing):
 	@notMarketing path /account /account/* /console /console/* /login /login/* /api/*
 	handle @notMarketing {
 		respond 404
 	}
 
-	# Everything else → Next.js: marketing pages, /_next/*, public assets.
+	# Everything else 鈫?Next.js: marketing pages, /_next/*, public assets.
 	handle {
 		reverse_proxy localhost:3000
 	}
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2) ACCOUNT — toC 用户中心 subdomain.
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 2) ACCOUNT 鈥?toC 鐢ㄦ埛涓績 subdomain.
 #
-# Single upstream by design: ONLY Next.js. /api/account/* is the cookie→Bearer
-# proxy (a Next route handler) — it must NOT shortcut to :3001.
-# ──────────────────────────────────────────────────────────────────────────────
-my.bcai.space {
+# Single upstream by design: ONLY Next.js. /api/account/* is the cookie鈫払earer
+# proxy (a Next route handler) 鈥?it must NOT shortcut to :3001.
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+my.bcai.lol {
 	header X-Robots-Tag "noindex, nofollow"
 
 	# The ONLY paths that exist on this host (positive allowlist).
@@ -100,16 +100,16 @@ my.bcai.space {
 	}
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3) CONSOLE — toB 管理后台 subdomain.
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 3) CONSOLE 鈥?toB 绠＄悊鍚庡彴 subdomain.
 #
 # Single upstream by design: ONLY Next.js. Admin Bearer APIs (/api/console/*)
 # reach NestJS through Next's rewrites, never directly from here.
-# ──────────────────────────────────────────────────────────────────────────────
-console.bcai.space {
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+console.bcai.lol {
 	header X-Robots-Tag "noindex, nofollow"
 
-	# ── OPTIONAL: proxy-level IP allowlist (recommended). Keep FIRST so it wins.
+	# 鈹€鈹€ OPTIONAL: proxy-level IP allowlist (recommended). Keep FIRST so it wins.
 	# @blockedConsoleIp not remote_ip 203.0.113.10 198.51.100.0/24
 	# handle @blockedConsoleIp {
 	#     respond 404
@@ -127,11 +127,11 @@ console.bcai.space {
 	}
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4) API — machine subdomain. Proxied DIRECTLY to NestJS (:3001). No Next.js.
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 4) API 鈥?machine subdomain. Proxied DIRECTLY to NestJS (:3001). No Next.js.
 # Auth is Bearer JWT (desktop clients) / signature (epay) inside NestJS.
-# ──────────────────────────────────────────────────────────────────────────────
-api.bcai.space {
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+api.bcai.lol {
 	@machineSurface path /api/app /api/app/* /api/epay /api/epay/* /api/health /api/remote-stats /api/remote-stats/*
 	handle @machineSurface {
 		reverse_proxy localhost:3001
@@ -142,9 +142,10 @@ api.bcai.space {
 	}
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# OPTIONAL: www → apex (uncomment after adding a DNS record for www).
-# ──────────────────────────────────────────────────────────────────────────────
-# www.bcai.space {
-#	redir https://bcai.space{uri} 301
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# OPTIONAL: www 鈫?apex (uncomment after adding a DNS record for www).
+# 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# www.bcai.lol {
+#	redir https://bcai.lol{uri} 301
 # }
+
