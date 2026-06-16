@@ -730,7 +730,7 @@ func (p *CodexProxy) reportUsageSafe(card, deviceId string, details ReportDetail
 	}
 	// 再计入仪表盘统计(输入/输出 Token + 累计已节省)。与 antigravity 路径
 	// (proxy_tokens.go)共用 UsageStatsStore;节省金额在 AddTokens 内按 in/out 价格算。
-	GetUsageStats().AddTokens("gpt", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+	GetUsageStats().AddModelTokens("gpt", details.ModelKey, details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
 	GetUsageStats().AddGeneration()
 }
 

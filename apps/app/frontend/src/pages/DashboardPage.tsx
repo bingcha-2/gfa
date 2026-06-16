@@ -10,6 +10,7 @@ import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
 import { cardScopeFiveHour, cardScopeWeekly, shouldUseExclusiveDisplay } from '@/lib/quotaDisplay'
+import { buildModelUsageRows, buildUsageOverview, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as api from '@/services/wails'
@@ -17,8 +18,20 @@ import { cn, formatTokens } from '@/lib/utils'
 import { useT } from '@/i18n'
 import { BarChart3 } from 'lucide-react'
 
+function formatUSD(value: number): string {
+  const n = Math.max(0, Number(value) || 0)
+  if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`
+  return `$${n.toFixed(2)}`
+}
+
+function formatRatio(value: number): string {
+  const n = Math.max(0, Number(value) || 0)
+  if (n > 0 && n < 0.001) return '<0.1%'
+  return `${(n * 100).toFixed(1)}%`
+}
+
 /** 顶部「今日概览」里的一格统计。数字大、标签小,克制单色,只有关键项点琥珀。 */
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'primary' | 'danger' }) {
+function Stat({ label, value, caption, tone }: { label: string; value: string; caption?: string; tone?: 'primary' | 'danger' }) {
   return (
     <div className="px-4 py-3">
       <div
@@ -32,6 +45,63 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'pr
         {value}
       </div>
       <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{label}</div>
+      {caption && <div className="text-[10px] text-[var(--text-muted)] mt-0.5 leading-snug">{caption}</div>}
+    </div>
+  )
+}
+
+function ModelUsageTable({ rows }: { rows: ModelUsageRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="flex h-[118px] items-center justify-center px-4 text-[12px] text-[var(--text-muted)]">
+        暂无模型明细,有请求后会显示
+      </div>
+    )
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[820px] border-collapse text-[11px]">
+        <thead className="bg-[var(--bg-tertiary)]/60 text-[var(--text-muted)]">
+          <tr className="[&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
+            <th className="text-left">模型</th>
+            <th className="text-right">请求数</th>
+            <th className="text-right">输入 Token</th>
+            <th className="text-right">输出 Token</th>
+            <th className="text-right">缓存读</th>
+            <th className="text-right">缓存写</th>
+            <th className="text-right">合计 Token</th>
+            <th className="text-right">官方 API 价估算</th>
+            <th className="text-right">占今日成本比例</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border-light)]">
+          {rows.map((row) => (
+            <tr key={row.modelKey} className="text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
+              <td className="max-w-[190px] px-3 py-2.5">
+                <div className="truncate text-[12px] font-semibold text-[var(--text-primary)]" title={row.displayName}>{row.displayName}</div>
+                {row.modelKey !== row.displayName && (
+                  <div className="truncate font-mono-data text-[10px] text-[var(--text-muted)]" title={row.modelKey}>{row.modelKey}</div>
+                )}
+              </td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{row.requests.toLocaleString()}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.inputTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.outputTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cachedTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums">{formatTokens(row.cacheWriteTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatTokens(row.totalTokens)}</td>
+              <td className="px-3 py-2.5 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatUSD(row.estimatedCostUSD)}</td>
+              <td className="px-3 py-2.5">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="w-11 text-right font-mono-data tabular-nums text-[var(--text-primary)]">{formatRatio(row.costShare)}</span>
+                  <span className="h-1.5 w-14 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
+                    <span className="block h-full rounded-full bg-[var(--primary)]" style={{ width: `${Math.min(100, row.costShare * 100)}%` }} />
+                  </span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -44,7 +114,7 @@ export function DashboardPage() {
     cardBuckets, cardWeeklyBuckets, cardWeight, cardShareCapacity,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
-    todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
+    todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
   } = useAppStore()
 
   // 绑定卡只显示它绑了的产品的用量条;池子卡(无 products)三条都显示。
@@ -120,6 +190,20 @@ export function DashboardPage() {
     )]
   }
 
+  const overview = buildUsageOverview({
+    today: {
+      inputTokens: todayInputTokens,
+      outputTokens: todayOutputTokens,
+      cachedTokens: todayCachedTokens,
+      cacheWriteTokens: todayCacheWriteTokens,
+      savedMoneyUSD: todayApiValueUSD,
+    },
+    successfulCalls: todayRequests,
+    errors: todayErrors,
+    cumulativeApiValueUSD: cumulativeSaving,
+  })
+  const modelUsageRows = buildModelUsageRows(todayByModel, overview.apiValueUSD)
+
   return (
     <div className="max-w-[960px] flex flex-col gap-4">
       {/* ── 状态 ── */}
@@ -147,26 +231,35 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* ── 今日概览:分段统计条 ── */}
+      {/* ── 今日概览:总Token / API价值 / 成功·错误 / 累计价值 ── */}
       <Card className="overflow-hidden p-0">
-        <div className="grid grid-cols-4 divide-x divide-[var(--border-light)]">
-          <Stat label={t('dashboard.statToday')} value={todayRequests.toLocaleString()} tone="primary" />
-          <Stat label={t('dashboard.statErrors')} value={todayErrors.toLocaleString()} tone={todayErrors > 0 ? 'danger' : undefined} />
-          <Stat label={t('dashboard.statInput')} value={formatTokens(todayInputTokens)} />
-          <Stat label={t('dashboard.statOutput')} value={formatTokens(todayOutputTokens)} />
+        <div className="grid grid-cols-2 divide-x divide-y divide-[var(--border-light)] md:grid-cols-4 md:divide-y-0">
+          <Stat
+            label="今日总 Token"
+            value={formatTokens(overview.totalTokens)}
+            caption={`缓存读 ${formatTokens(todayCachedTokens)} / 写 ${formatTokens(todayCacheWriteTokens)}`}
+            tone="primary"
+          />
+          <Stat label="官方 API 价估算" value={formatUSD(overview.apiValueUSD)} caption="按模型真实价格折算" />
+          <Stat
+            label="成功调用 / 错误"
+            value={`${overview.successfulCalls.toLocaleString()} / ${overview.errors.toLocaleString()}`}
+            caption={`错误率 ${formatRatio(overview.errorRate)}`}
+            tone={overview.errors > 0 ? 'danger' : undefined}
+          />
+          <Stat label="累计 API 价值" value={formatUSD(overview.cumulativeApiValueUSD)} caption="按官方 API 价累计约" />
         </div>
-        <div className="grid grid-cols-2 divide-x divide-[var(--border-light)] border-t border-[var(--border-light)] bg-[var(--bg-tertiary)]/40">
-          <div className="px-4 py-2.5">
-            <div className="text-[14px] font-bold font-mono-data text-[var(--text-primary)]">{formatTokens(todayBillableTokens)}</div>
-            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
-              {t('dashboard.statBillable', { write: formatTokens(todayCacheWriteTokens), read: formatTokens(todayCachedTokens) })}
-            </div>
-          </div>
-          <div className="px-4 py-2.5">
-            <div className="text-[14px] font-bold font-mono-data text-[var(--text-primary)]">${cumulativeSaving.toFixed(2)}</div>
-            <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{t('dashboard.statSaving')}</div>
-          </div>
-        </div>
+      </Card>
+
+      {/* ── 今日模型明细 ── */}
+      <Card className="overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
+          <CardTitle><BarChart3 size={15} /> 今日模型明细</CardTitle>
+          <div className="text-[11px] text-[var(--text-muted)]">按官方 API 价估算</div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <ModelUsageTable rows={modelUsageRows} />
+        </CardContent>
       </Card>
 
       {/* ── 入口:两个广告,常驻显眼 ── */}

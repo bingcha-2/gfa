@@ -14,6 +14,64 @@ func TestAddTokensSavedMoneyPerFamily(t *testing.T) {
 	}
 }
 
+func TestAddModelTokensRecordsModelBreakdown(t *testing.T) {
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+
+	s.AddModelTokens("claude", "claude-sonnet-4-20250514", 100, 260, 3000, 42360)
+
+	rec := s.GetTodayRecord()
+	row := rec.ByModel["claude-sonnet-4-20250514"]
+	if row == nil {
+		t.Fatalf("missing model breakdown: %+v", rec.ByModel)
+	}
+	if row.ModelKey != "claude-sonnet-4-20250514" || row.Family != "claude" || row.DisplayName != "Claude Sonnet" {
+		t.Fatalf("model identity = %+v", row)
+	}
+	if row.Requests != 1 {
+		t.Fatalf("requests = %d, want 1", row.Requests)
+	}
+	if row.InputTokens != 100 || row.OutputTokens != 260 || row.CachedTokens != 3000 || row.CacheWriteTokens != 39000 {
+		t.Fatalf("token breakdown = %+v", row)
+	}
+	if row.TotalTokens != 42360 {
+		t.Fatalf("total = %d, want 42360", row.TotalTokens)
+	}
+	wantCost := 0.25225
+	if got := row.EstimatedCostUSD; got < wantCost-1e-9 || got > wantCost+1e-9 {
+		t.Fatalf("estimated cost = %v, want %v", got, wantCost)
+	}
+
+	days := s.GetDailyRecords(1)
+	if got := days[0].ByModel["claude-sonnet-4-20250514"]; got == nil || got.TotalTokens != 42360 {
+		t.Fatalf("daily history did not include model breakdown: %+v", days[0].ByModel)
+	}
+	hour := s.HourlyRecords[hourKey()]
+	if hour == nil {
+		t.Fatalf("missing current hourly record")
+	}
+	hourlyRow := hour.ByModel["claude-sonnet-4-20250514"]
+	if hourlyRow == nil || hourlyRow.TotalTokens != 42360 {
+		t.Fatalf("hourly model breakdown = %+v", hour.ByModel)
+	}
+}
+
+func TestAddModelTokensFallsBackToFamilyWhenModelKeyMissing(t *testing.T) {
+	s := &UsageStatsStore{Records: map[string]*DailyRecord{}, HourlyRecords: map[string]*HourlyRecord{}}
+
+	s.AddModelTokens("gpt", "", 1_000_000, 0, 0, 1_000_000)
+
+	row := s.GetTodayRecord().ByModel["gpt"]
+	if row == nil {
+		t.Fatalf("missing fallback family row")
+	}
+	if row.ModelKey != "gpt" || row.DisplayName != "GPT" || row.Family != "gpt" {
+		t.Fatalf("fallback identity = %+v", row)
+	}
+	if row.TotalTokens != 1_000_000 || row.EstimatedCostUSD != 1.25 {
+		t.Fatalf("fallback usage = %+v", row)
+	}
+}
+
 // claude 带缓存:billable(缓存读 1/10 折)与 cacheWrite(=rawTotal-净入-出-缓存读)拆分,
 // 与服务端 billableTokenUsageTotal 同口径。
 func TestAddTokensBillableAndCacheWrite(t *testing.T) {

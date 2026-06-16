@@ -4,6 +4,7 @@
  */
 
 import { create } from 'zustand'
+import type { ModelUsageStats } from '@/lib/usageSummary'
 import * as api from '@/services/wails'
 import type { Config, IDEProduct, UpdateStatus, BoundAccountInfo, AccountState } from '@/types'
 
@@ -63,10 +64,12 @@ interface AppState {
   todayCacheWriteTokens: number
   todayBillableTokens: number
   cumulativeSaving: number
+  todayApiValueUSD: number
+  todayByModel: Record<string, ModelUsageStats>
 
   // Usage trend (history)
-  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
-  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
+  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; savedMoneyUSD?: number; byModel?: Record<string, ModelUsageStats> }[]
+  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; byModel?: Record<string, ModelUsageStats> }[]
   chartMode: string
 
   // Usage
@@ -145,6 +148,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   todayCacheWriteTokens: 0,
   todayBillableTokens: 0,
   cumulativeSaving: 0,
+  todayApiValueUSD: 0,
+  todayByModel: {},
   dailyHistory: [],
   hourlyHistory: [],
   chartMode: 'daily',
@@ -165,7 +170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchStats: async () => {
     try {
       const data = await api.getStats()
-      const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0 }
+      const today = data.today || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, billableTokens: 0, generations: 0, retries: 0, savedMoneyUSD: 0, byModel: {} }
       const lq = data.leaser?.localQuota
 
       set({
@@ -217,6 +222,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         todayCacheWriteTokens: today.cacheWriteTokens || 0,
         todayBillableTokens: today.billableTokens || 0,
         cumulativeSaving: data.cumulativeSaving || 0,
+        todayApiValueUSD: (today as { savedMoneyUSD?: number }).savedMoneyUSD || 0,
+        todayByModel: (today as { byModel?: Record<string, ModelUsageStats> }).byModel || {},
         dailyHistory: data.dailyHistory || [],
         hourlyHistory: data.hourlyHistory || [],
         chartMode: data.chartMode || 'daily',

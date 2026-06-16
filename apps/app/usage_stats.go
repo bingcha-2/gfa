@@ -5,32 +5,49 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
-// DailyRecord 单日用量记录
-type DailyRecord struct {
-	Date             string  `json:"date"` // "2026-05-22"
+// ModelUsageRecord records token usage and official API value by model.
+type ModelUsageRecord struct {
+	ModelKey         string  `json:"modelKey"`
+	DisplayName      string  `json:"displayName"`
+	Family           string  `json:"family"`
+	Requests         int64   `json:"requests"`
 	InputTokens      int64   `json:"inputTokens"`
 	OutputTokens     int64   `json:"outputTokens"`
-	CachedTokens     int64   `json:"cachedTokens"`     // 缓存读 cache_read
-	CacheWriteTokens int64   `json:"cacheWriteTokens"` // 缓存写 cache_creation(全价计费)
-	BillableTokens   int64   `json:"billableTokens"`   // 计费口径,与服务端 billableTokenUsageTotal 同(缓存读 1/10 折)
-	Requests         int64   `json:"requests"`
-	Errors           int64   `json:"errors"`
-	Retries          int64   `json:"retries"`
-	Generations      int64   `json:"generations"`
-	SavedMoneyUSD    float64 `json:"savedMoneyUSD"`
+	CachedTokens     int64   `json:"cachedTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	TotalTokens      int64   `json:"totalTokens"`
+	EstimatedCostUSD float64 `json:"estimatedCostUSD"`
+}
+
+// DailyRecord 单日用量记录
+type DailyRecord struct {
+	Date             string                       `json:"date"` // "2026-05-22"
+	InputTokens      int64                        `json:"inputTokens"`
+	OutputTokens     int64                        `json:"outputTokens"`
+	CachedTokens     int64                        `json:"cachedTokens"`     // 缓存读 cache_read
+	CacheWriteTokens int64                        `json:"cacheWriteTokens"` // 缓存写 cache_creation(全价计费)
+	BillableTokens   int64                        `json:"billableTokens"`   // 计费口径,与服务端 billableTokenUsageTotal 同(缓存读 1/10 折)
+	Requests         int64                        `json:"requests"`
+	Errors           int64                        `json:"errors"`
+	Retries          int64                        `json:"retries"`
+	Generations      int64                        `json:"generations"`
+	SavedMoneyUSD    float64                      `json:"savedMoneyUSD"`
+	ByModel          map[string]*ModelUsageRecord `json:"byModel,omitempty"`
 }
 
 // HourlyRecord 每小时用量记录
 type HourlyRecord struct {
-	Hour             string `json:"hour"` // "15" (0-23)
-	InputTokens      int64  `json:"inputTokens"`
-	OutputTokens     int64  `json:"outputTokens"`
-	CachedTokens     int64  `json:"cachedTokens"`     // 缓存读 cache_read
-	CacheWriteTokens int64  `json:"cacheWriteTokens"` // 缓存写 cache_creation
+	ByModel          map[string]*ModelUsageRecord `json:"byModel,omitempty"`
+	Hour             string                       `json:"hour"` // "15" (0-23)
+	InputTokens      int64                        `json:"inputTokens"`
+	OutputTokens     int64                        `json:"outputTokens"`
+	CachedTokens     int64                        `json:"cachedTokens"`     // 缓存读 cache_read
+	CacheWriteTokens int64                        `json:"cacheWriteTokens"` // 缓存写 cache_creation
 }
 
 // UsageStatsStore 用量统计持久化
@@ -56,6 +73,128 @@ func todayKey() string {
 
 func hourKey() string {
 	return time.Now().Format("2006-01-02T15")
+}
+
+func normalizeUsageFamily(family, modelKey string) string {
+	family = strings.ToLower(strings.TrimSpace(family))
+	if family == "" || family == "other" {
+		if inferred := modelFamily(strings.TrimSpace(modelKey)); inferred != "" && inferred != "other" {
+			family = inferred
+		}
+	}
+	if family == "" {
+		return "other"
+	}
+	return family
+}
+
+func modelUsageKey(family, modelKey string) string {
+	key := strings.TrimSpace(modelKey)
+	if key != "" {
+		return key
+	}
+	if family != "" {
+		return family
+	}
+	return "other"
+}
+
+func modelUsageDisplayName(family, modelKey string) string {
+	lower := strings.ToLower(strings.TrimSpace(modelKey))
+	switch {
+	case lower == "":
+		return familyDisplayName(family)
+	case strings.Contains(lower, "sonnet"):
+		return "Claude Sonnet"
+	case strings.Contains(lower, "opus"):
+		return "Claude Opus"
+	case strings.Contains(lower, "haiku"):
+		return "Claude Haiku"
+	case strings.Contains(lower, "gemini") && strings.Contains(lower, "flash"):
+		return "Gemini Flash"
+	case strings.Contains(lower, "gemini") && strings.Contains(lower, "pro"):
+		return "Gemini Pro"
+	case strings.Contains(lower, "gemini"):
+		return "Gemini"
+	case strings.Contains(lower, "codex"):
+		return "GPT Codex"
+	case strings.Contains(lower, "gpt"):
+		return "GPT"
+	default:
+		return strings.TrimSpace(modelKey)
+	}
+}
+
+func familyDisplayName(family string) string {
+	switch family {
+	case "claude":
+		return "Claude"
+	case "gemini":
+		return "Gemini"
+	case "gpt":
+		return "GPT"
+	default:
+		if family == "" {
+			return "Other"
+		}
+		return family
+	}
+}
+
+func estimateOfficialCostUSD(family string, input, output, cacheRead, cacheWrite int64) float64 {
+	inP, outP := priceFor(family)
+	cacheReadP, cacheWriteP := cachePriceFor(family)
+	return float64(input)/1_000_000.0*inP +
+		float64(output)/1_000_000.0*outP +
+		float64(cacheRead)/1_000_000.0*cacheReadP +
+		float64(cacheWrite)/1_000_000.0*cacheWriteP
+}
+
+func addModelUsage(byModel map[string]*ModelUsageRecord, family, modelKey string, input, output, cacheRead, cacheWrite int64, cost float64) {
+	key := modelUsageKey(family, modelKey)
+	row, ok := byModel[key]
+	if !ok {
+		row = &ModelUsageRecord{
+			ModelKey:    key,
+			DisplayName: modelUsageDisplayName(family, modelKey),
+			Family:      family,
+		}
+		byModel[key] = row
+	}
+	row.Requests++
+	row.InputTokens += input
+	row.OutputTokens += output
+	row.CachedTokens += cacheRead
+	row.CacheWriteTokens += cacheWrite
+	row.TotalTokens += input + output + cacheRead + cacheWrite
+	row.EstimatedCostUSD += cost
+}
+
+func cloneModelUsageMap(in map[string]*ModelUsageRecord) map[string]*ModelUsageRecord {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]*ModelUsageRecord, len(in))
+	for k, v := range in {
+		if v == nil {
+			continue
+		}
+		cp := *v
+		out[k] = &cp
+	}
+	return out
+}
+
+func cloneDailyRecord(rec *DailyRecord) DailyRecord {
+	cp := *rec
+	cp.ByModel = cloneModelUsageMap(rec.ByModel)
+	return cp
+}
+
+func cloneHourlyRecord(rec *HourlyRecord) HourlyRecord {
+	cp := *rec
+	cp.ByModel = cloneModelUsageMap(rec.ByModel)
+	return cp
 }
 
 // Load 从磁盘加载
@@ -138,14 +277,17 @@ func (s *UsageStatsStore) getHour() *HourlyRecord {
 	return rec
 }
 
-// AddTokens 添加 token 用量。family(claude/gemini/gpt)决定省钱折算价,
-// 省钱金额按本次增量 in/out * 家族单价累加(不再整段重算单一价)。
-// cacheRead=缓存读(cache_read);rawTotal=本次 gross 总量(净输入+输出+缓存写+缓存读)。
-// billable 与服务端 billableTokenUsageTotal 同口径(缓存读 1/10 折);
-// 缓存写(cache_creation)= rawTotal − 净输入 − 输出 − 缓存读,gemini/gpt 无此项→0。
+// AddTokens preserves the legacy aggregate-only call path.
 func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, rawTotal int64) {
+	s.AddModelTokens(family, "", input, output, cacheRead, rawTotal)
+}
+
+// AddModelTokens adds token usage and records the model-level API value estimate.
+func (s *UsageStatsStore) AddModelTokens(family, modelKey string, input, output, cacheRead, rawTotal int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	family = normalizeUsageFamily(family, modelKey)
 	billable := rawTotal
 	if cacheRead > 0 {
 		billable = rawTotal - cacheRead + discountedCachedTokens(cacheRead)
@@ -157,30 +299,32 @@ func (s *UsageStatsStore) AddTokens(family string, input, output, cacheRead, raw
 	if cacheWrite < 0 {
 		cacheWrite = 0
 	}
+	cost := estimateOfficialCostUSD(family, input, output, cacheRead, cacheWrite)
+
 	rec := s.getToday()
 	rec.InputTokens += input
 	rec.OutputTokens += output
 	rec.CachedTokens += cacheRead
 	rec.CacheWriteTokens += cacheWrite
 	rec.BillableTokens += billable
-	// 真实节省 = 官方 API 全口径成本:net 输入 + 输出 + 缓存读(折扣) + 缓存写(溢价)。
-	// 缓存(尤其 cache write)往往是大头,漏算会把"已节省"严重低估。
-	inP, outP := priceFor(family)
-	cacheReadP, cacheWriteP := cachePriceFor(family)
-	rec.SavedMoneyUSD += float64(input)/1_000_000.0*inP +
-		float64(output)/1_000_000.0*outP +
-		float64(cacheRead)/1_000_000.0*cacheReadP +
-		float64(cacheWrite)/1_000_000.0*cacheWriteP
-	// 小时记录
+	rec.SavedMoneyUSD += cost
+	if rec.ByModel == nil {
+		rec.ByModel = make(map[string]*ModelUsageRecord)
+	}
+	addModelUsage(rec.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost)
+
 	hr := s.getHour()
 	hr.InputTokens += input
 	hr.OutputTokens += output
 	hr.CachedTokens += cacheRead
 	hr.CacheWriteTokens += cacheWrite
+	if hr.ByModel == nil {
+		hr.ByModel = make(map[string]*ModelUsageRecord)
+	}
+	addModelUsage(hr.ByModel, family, modelKey, input, output, cacheRead, cacheWrite, cost)
 	s.dirty = true
 }
 
-// AddRequest 添加请求计数
 func (s *UsageStatsStore) AddRequest() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,7 +360,7 @@ func (s *UsageStatsStore) AddGeneration() {
 func (s *UsageStatsStore) GetTodayRecord() DailyRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return *s.getToday()
+	return cloneDailyRecord(s.getToday())
 }
 
 // GetDailyRecords 获取最近 N 天的记录（按日期倒序）
@@ -229,7 +373,7 @@ func (s *UsageStatsStore) GetDailyRecords(days int) []DailyRecord {
 	for i := 0; i < days; i++ {
 		key := now.AddDate(0, 0, -i).Format("2006-01-02")
 		if rec, ok := s.Records[key]; ok {
-			result = append(result, *rec)
+			result = append(result, cloneDailyRecord(rec))
 		} else {
 			result = append(result, DailyRecord{Date: key})
 		}
@@ -247,7 +391,7 @@ func (s *UsageStatsStore) GetTodayHourlyRecords() []HourlyRecord {
 	for h := 0; h < 24; h++ {
 		key := fmt.Sprintf("%sT%02d", today, h)
 		if rec, ok := s.HourlyRecords[key]; ok {
-			result[h] = *rec
+			result[h] = cloneHourlyRecord(rec)
 		}
 		result[h].Hour = fmt.Sprintf("%02d:00", h)
 	}

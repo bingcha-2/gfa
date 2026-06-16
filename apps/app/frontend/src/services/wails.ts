@@ -3,6 +3,8 @@
  * 前端所有 Wails 调用统一从这里导出，不直接使用 window.go.*
  */
 
+import type { ModelUsageStats } from '@/lib/usageSummary'
+
 import {
   GetConfig,
   SaveConfig as _SaveConfig,
@@ -162,9 +164,11 @@ export interface StatsResponse {
     billableTokens: number
     generations: number
     retries: number
+    savedMoneyUSD?: number
+    byModel?: Record<string, ModelUsageStats>
   }
-  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
-  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number }[]
+  dailyHistory: { date: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; savedMoneyUSD?: number; byModel?: Record<string, ModelUsageStats> }[]
+  hourlyHistory: { hour: string; inputTokens: number; outputTokens: number; cachedTokens?: number; cacheWriteTokens?: number; byModel?: Record<string, ModelUsageStats> }[]
   chartMode: string
   cumulativeSaving: number
   appVersion: string

@@ -312,7 +312,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		audit.billableTokens = claudeDisplayBillable(details.RawTotalTokens, details.CachedInputTokens)
 		// 喂本地 dashboard 统计(今日输入/输出 Token + 成功请求数);对齐 codex_proxy。
 		// 此前漏了 AddGeneration → claude 成功不计入"今日请求(成功)",面板恒显 0。
-		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+		GetUsageStats().AddModelTokens("claude", modelKey, details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
 		GetUsageStats().AddGeneration()
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 		return
@@ -336,7 +336,7 @@ func (p *ClaudeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request, card, de
 		audit.inTokens, audit.outTokens = details.InputTokens, details.OutputTokens
 		audit.cachedTokens = details.CachedInputTokens
 		audit.billableTokens = claudeDisplayBillable(details.RawTotalTokens, details.CachedInputTokens)
-		GetUsageStats().AddTokens("claude", details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
+		GetUsageStats().AddModelTokens("claude", modelKey, details.InputTokens, details.OutputTokens, details.CachedInputTokens, details.RawTotalTokens)
 		GetUsageStats().AddGeneration() // 计入"今日请求(成功)",对齐流式分支
 		p.doReportUsage(card, deviceId, details, upstreamProxy, lease)
 	} else {
