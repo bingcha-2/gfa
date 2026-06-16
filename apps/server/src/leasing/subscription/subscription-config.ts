@@ -61,6 +61,33 @@ export function rowToConfig(row: { config?: string | null } & LegacyColumns): Re
 }
 
 /**
+ * 「绑定 + 按量卖其它产品」的混合卡判定:已绑某产品(bindings 有真实 accountId),却又对
+ * 【没绑的】产品配了计费桶(bucketLimits 前缀)。这种卡按「绑定卡只服务绑定产品」会对未绑
+ * 产品 409(此卡未开通该服务)。迁移 / 修复时应转成号池卡(清空 bindings → line=pool),
+ * 让所有已开通产品都走按量。纯绑定卡(只绑、无其它产品计费桶)与纯号池卡都返回 false。
+ */
+export function isMeteredHybrid(sub: {
+  productEntitlements: string | null;
+  bindings: string | null;
+  bucketLimits: string | null;
+}): boolean {
+  const products = parseArray(sub.productEntitlements);
+  const bindings = parseObject(sub.bindings);
+  const bucketLimits = parseObject(sub.bucketLimits);
+  const bound = new Set(
+    Object.entries(bindings).filter(([, v]) => Number(v) > 0).map(([k]) => k),
+  );
+  if (bound.size === 0) return false; // 纯号池卡,不是混合
+  const metered = new Set<string>();
+  for (const bucket of Object.keys(bucketLimits)) {
+    const i = bucket.indexOf("-");
+    if (i > 0) metered.add(bucket.slice(0, i));
+  }
+  // 存在「已开通 + 有计费桶 + 但没绑定」的产品 → 会 409 的混合卡。
+  return products.some((p) => metered.has(p) && !bound.has(p));
+}
+
+/**
  * 下单时按 plan 意图建「初始 config」(座位尚未分配,bindings 还空)。line 由 plan 意图定:
  * 配了 levels(非空)→ 绑定线(bindings 空待分配);否则号池线(卖用量)。与 legacyColumnsToConfig
  * 的区别:后者据已分配的 bindings 反推 line(boot/迁移用),前者据 levels 正推 line(下单用,
