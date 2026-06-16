@@ -284,6 +284,7 @@ export class PortalService {
         status: true,
         inputTokens: true,
         outputTokens: true,
+        cachedInputTokens: true,
         totalTokens: true,
       },
     });
@@ -296,7 +297,10 @@ export class PortalService {
       requests: 0,
     }));
 
-    const byModel = new Map<string, { totalTokens: number; requests: number }>();
+    const byModel = new Map<
+      string,
+      { totalTokens: number; requests: number; inputTokens: number; outputTokens: number; cachedTokens: number; savedUSD: number }
+    >();
     const totals = { inputTokens: 0, outputTokens: 0, totalTokens: 0, requests: 0, savedUSD: 0 };
     let success = 0;
     let failed = 0;
@@ -316,9 +320,14 @@ export class PortalService {
       b.totalTokens += total;
       b.requests += 1;
 
-      const m = byModel.get(r.modelKey) ?? { totalTokens: 0, requests: 0 };
+      const cached = Number(r.cachedInputTokens) || 0;
+      const m = byModel.get(r.modelKey) ?? { totalTokens: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, savedUSD: 0 };
       m.totalTokens += total;
       m.requests += 1;
+      m.inputTokens += input;
+      m.outputTokens += output;
+      m.cachedTokens += cached;
+      m.savedUSD += savedUSDFor(r.bucket, input, output);
       byModel.set(r.modelKey, m);
 
       if (isSuccessStatus(r.status)) success += 1;
@@ -344,7 +353,15 @@ export class PortalService {
         requests: b.requests,
       })),
       byModel: [...byModel.entries()]
-        .map(([modelKey, v]) => ({ modelKey, totalTokens: v.totalTokens, requests: v.requests }))
+        .map(([modelKey, v]) => ({
+          modelKey,
+          totalTokens: v.totalTokens,
+          requests: v.requests,
+          inputTokens: v.inputTokens,
+          outputTokens: v.outputTokens,
+          cachedTokens: v.cachedTokens,
+          estimatedUSD: Math.round(v.savedUSD * 10_000) / 10_000,
+        }))
         .sort((a, b) => b.totalTokens - a.totalTokens),
       status: { success, failed },
       totals,

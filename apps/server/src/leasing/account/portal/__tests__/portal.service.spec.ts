@@ -654,7 +654,9 @@ describe("PortalService.getUsageStats", () => {
 
     // byModel sorted by totalTokens desc: gpt-4o (500) before claude-sonnet-4 (160)
     expect(r.byModel.map((m) => m.modelKey)).toEqual(["gpt-4o", "claude-sonnet-4"]);
-    expect(r.byModel[1]).toEqual({ modelKey: "claude-sonnet-4", totalTokens: 160, requests: 2 });
+    // byModel 现含 input/output/cached/estimatedUSD,断言关键字段即可。
+    expect(r.byModel[1]).toMatchObject({ modelKey: "claude-sonnet-4", totalTokens: 160, requests: 2 });
+    expect(typeof r.byModel[1].estimatedUSD).toBe("number");
 
     // status: 200/200 success, 429 failed
     expect(r.status).toEqual({ success: 2, failed: 1 });

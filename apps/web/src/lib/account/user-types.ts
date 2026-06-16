@@ -192,6 +192,10 @@ export type UsageStatModel = {
   modelKey: string;
   totalTokens: number;
   requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  estimatedUSD: number;
 };
 
 export type UsageStats = {
