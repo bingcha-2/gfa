@@ -62,7 +62,13 @@ export class SubscriptionScheduler {
       const boundId = this.store.boundAccountIdFor(cand, q.providerId);
       if (boundId > 0 && this.fairShareTracker) {
         const fs = this.fairShareTracker.checkFairShare(boundId, cand.id, q.bucket);
-        if (!fs.allowed) continue;
+        if (!fs.allowed) {
+          // 闸③ 也要累加恢复时间,否则纯 fair-share 触发的 429 不带 retryAfterMs,
+          // 客户端拿不到恢复时间(与闸①② 对齐)。
+          const r = Number((fs as any).resetMs || 0);
+          if (r > 0 && (earliestReset === 0 || r < earliestReset)) earliestReset = r;
+          continue;
+        }
       }
       return { picked: cand };
     }

@@ -48,6 +48,17 @@ describe("SubscriptionScheduler — 优先级接力", () => {
     expect(sched.selectForFailover(opts).picked?.id).toBe("s2");
   });
 
+  it("纯 fair-share 拦截 → picked=null 且带上 fair-share 的 resetMs(此前漏报)", () => {
+    const store = makeStore(
+      [{ id: "s1", customerId: "c1", boundAccountId: 10, products: ["codex"] }],
+      () => ({ allowed: true }), // 闸①② 通过,只有闸③ 拦
+    );
+    const tracker = { checkFairShare: () => ({ allowed: false, resetMs: 7000 }) } as any;
+    const r = new SubscriptionScheduler(store, tracker).selectForFailover(opts);
+    expect(r.picked).toBeNull();
+    expect(r.resetMs).toBe(7000); // 修复前:undefined(闸③ continue 丢了 resetMs)
+  });
+
   it("跳过不服务该 provider 的订阅(产品过滤)", () => {
     const store = makeStore(
       [{ id: "s-codex", customerId: "c1", boundAccountId: 0, products: ["codex"] },
