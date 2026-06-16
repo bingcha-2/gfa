@@ -24,7 +24,7 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { boundSeatsByAccount, occupiedSharesByAccount } from "./seat";
-import { subscriptionToLimitRecord } from "./subscription-config";
+import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -49,7 +49,10 @@ export class EntitlementSyncService {
    * in-memory windows are preserved across resync (loadSubscriptionRecords).
    */
   async syncSubscription(sub: Subscription, _opts: { customerEmail?: string } = {}): Promise<void> {
-    const config = parseConfig(sub.config);
+    // rowToConfig(非 parseConfig):卡迁移订阅的 config 列为空、绑定在 legacy `bindings` 列。
+    // 只读 config 会把它当 line="" → 落进号池分支、丢掉对原账号的绑定;回退 legacy 后它
+    // 正确呈现为 line=bind + 原 bindings,syncBind 见其已绑 → 不重新分配 → 保住原账号。
+    const config = rowToConfig(sub as any);
     const line = String(config.line || "");
 
     if (line === "bind") {
@@ -137,9 +140,14 @@ export class EntitlementSyncService {
   ): Promise<{ shares: Map<number, number>; counts: Map<number, number> }> {
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, config: true },
+      // config 空(卡迁移订阅)时要从 legacy 列回退,否则漏数其占用 → 选号超分。
+      select: {
+        id: true, config: true,
+        productEntitlements: true, bucketLimits: true, bindings: true, levels: true,
+        weight: true, deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+      },
     });
-    const configs = rows.map((r: { id: string; config: string | null }) => ({ id: r.id, ...parseConfig(r.config) }));
+    const configs = rows.map((r: any) => ({ id: r.id, ...rowToConfig(r) }));
     return {
       shares: occupiedSharesByAccount(configs, product, excludeId),
       counts: boundSeatsByAccount(configs, product, excludeId),
@@ -165,14 +173,5 @@ export class EntitlementSyncService {
    */
   expireShadowRecord(subscriptionId: string): void {
     this.accessKeyStore.loadSubscriptionRecords([{ id: subscriptionId, status: "expired" } as any]);
-  }
-}
-
-function parseConfig(json: string | null): Record<string, any> {
-  try {
-    const parsed = JSON.parse(String(json || "{}"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
   }
 }

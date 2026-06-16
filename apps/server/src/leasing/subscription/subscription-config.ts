@@ -41,6 +41,26 @@ export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknow
 }
 
 /**
+ * 把一行 DB 订阅解析成 config 对象,用于座位会计 / 选号 / 后台展示。
+ * 有显式 config(catalog 下单写入)→ 用它;config 为空 → 从 legacy 列回退
+ * (legacyColumnsToConfig)。卡迁移订阅(bind-card)只写 legacy `bindings` 列、config 空,
+ * 若只读 config 会把它当「无 line/无 bindings」漏数 —— 份额显示 0/N + 选号超分。
+ * 运行时(loadActiveSubscriptions)早已用 legacyColumnsToConfig,这里对齐同一口径。
+ */
+export function rowToConfig(row: { config?: string | null } & LegacyColumns): Record<string, unknown> {
+  const raw = String(row.config || "").trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      /* config 损坏 → 回退 legacy 列 */
+    }
+  }
+  return legacyColumnsToConfig(row);
+}
+
+/**
  * 下单时按 plan 意图建「初始 config」(座位尚未分配,bindings 还空)。line 由 plan 意图定:
  * 配了 levels(非空)→ 绑定线(bindings 空待分配);否则号池线(卖用量)。与 legacyColumnsToConfig
  * 的区别:后者据已分配的 bindings 反推 line(boot/迁移用),前者据 levels 正推 line(下单用,

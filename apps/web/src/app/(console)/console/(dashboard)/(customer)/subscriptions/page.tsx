@@ -129,6 +129,7 @@ export default function SubscriptionsPage() {
                   <TableHead>客户</TableHead>
                   <TableHead>套餐</TableHead>
                   <TableHead>状态</TableHead>
+                  <TableHead>模式</TableHead>
                   <TableHead>产品</TableHead>
                   <TableHead>到期</TableHead>
                   <TableHead className="text-center">权重</TableHead>
@@ -142,6 +143,11 @@ export default function SubscriptionsPage() {
                     <TableCell>{s.customer?.email ?? "—"}</TableCell>
                     <TableCell className="font-medium">{s.plan?.name ?? "—"}</TableCell>
                     <TableCell>{subStatusBadge(s.status)}</TableCell>
+                    <TableCell>
+                      {s.line === "bind"
+                        ? <Badge variant="outline" className="text-xs border-blue-300 text-blue-600 dark:border-blue-700 dark:text-blue-400">绑定</Badge>
+                        : <Badge variant="outline" className="text-xs text-muted-foreground">号池</Badge>}
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {parseProducts(s.productEntitlements).map((p) => (

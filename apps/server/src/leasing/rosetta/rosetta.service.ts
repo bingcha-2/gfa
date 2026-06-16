@@ -8,6 +8,7 @@ import { proxyAwareFetch } from "../lease-core/egress";
 import type { CachedToken } from "./google-api";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { occupiedSharesByAccount } from "../subscription/seat";
+import { rowToConfig } from "../subscription/subscription-config";
 
 import { AccessKeyService } from "./access-key.service";
 import { AdspowerService } from "./adspower.service";
@@ -153,19 +154,16 @@ export class RosettaService {
    */
   async occupiedSharesFromSubscriptions(product: string): Promise<Map<number, number>> {
     if (!this.prisma) return new Map<number, number>();
-    const parse = (json: string | null): Record<string, any> => {
-      try {
-        const p = JSON.parse(String(json || "{}"));
-        return p && typeof p === "object" && !Array.isArray(p) ? p : {};
-      } catch {
-        return {};
-      }
-    };
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, config: true },
+      // config 空(卡迁移订阅只写 legacy 列)时回退 legacy,否则份额显示 0/N。
+      select: {
+        id: true, config: true,
+        productEntitlements: true, bucketLimits: true, bindings: true, levels: true,
+        weight: true, deviceLimit: true, weeklyTokenLimit: true, windowMs: true,
+      },
     });
-    const configs = rows.map((r: { id: string; config: string | null }) => ({ id: r.id, ...parse(r.config) }));
+    const configs = rows.map((r: any) => ({ id: r.id, ...rowToConfig(r) }));
     return occupiedSharesByAccount(configs, product);
   }
 

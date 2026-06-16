@@ -25,6 +25,7 @@ import type { PlanOrder, Subscription } from "@prisma/client";
 
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
+import { rowToConfig } from "../../subscription/subscription-config";
 import { BillingService } from "../../account/billing/billing.service";
 
 export interface RefundResult {
@@ -132,7 +133,14 @@ export class BillingAdminService {
       this.prisma.subscription.count({ where }),
     ]);
 
-    return { subscriptions, total, page, pageSize };
+    // 附带「线路」标识(号池 / 绑定),供后台区分订阅模式。config 空(卡迁移订阅)时
+    // rowToConfig 回退 legacy 列推断,所以卡订阅也能正确显示为绑定模式。
+    const withLine = subscriptions.map((s) => ({
+      ...s,
+      line: String(rowToConfig(s as any).line || "pool") === "bind" ? "bind" : "pool",
+    }));
+
+    return { subscriptions: withLine, total, page, pageSize };
   }
 
   /**

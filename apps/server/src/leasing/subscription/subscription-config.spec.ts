@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyColumnsToConfig, planColumnsToInitialConfig, subscriptionToLimitRecord } from "./subscription-config";
+import { legacyColumnsToConfig, planColumnsToInitialConfig, rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
+import { occupiedSharesByAccount } from "./seat";
 
 describe("planColumnsToInitialConfig — 下单时按 plan 意图建初始 config(座位未分配前定 line)", () => {
   it("plan 配了 levels → 绑定线 line=bind,bindings 空(待座位分配),含 levels/weight", () => {
@@ -197,5 +198,45 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
     });
 
     expect(record.status).not.toBe("active");
+  });
+});
+
+describe("rowToConfig — config 列优先,空则回退 legacy 列(卡迁移订阅修复)", () => {
+  const legacyBound = {
+    productEntitlements: '["anthropic"]',
+    bucketLimits: null,
+    bindings: '{"anthropic":11}',
+    levels: null,
+    weight: 2,
+    deviceLimit: 3,
+    weeklyTokenLimit: null,
+    windowMs: 18000000,
+  };
+
+  it("有显式 config → 直接用它", () => {
+    const explicit = { line: "bind", products: ["codex"], bindings: { codex: 7 }, weight: 1 };
+    const out = rowToConfig({ config: JSON.stringify(explicit), ...legacyBound } as any);
+    expect(out.line).toBe("bind");
+    expect((out.bindings as any).codex).toBe(7); // 用了 config,不是 legacy 的 anthropic:11
+  });
+
+  it("config 空(卡迁移订阅)→ 回退 legacy:line=bind + 原 bindings", () => {
+    const out = rowToConfig({ config: null, ...legacyBound } as any);
+    expect(out.line).toBe("bind");
+    expect((out.bindings as any).anthropic).toBe(11); // 保住原账号绑定
+    expect(out.weight).toBe(2);
+  });
+
+  it("回归:config 空的卡订阅,其份额被 occupiedSharesByAccount 正确计入(不再 0/N)", () => {
+    // 模拟一张「config 空、legacy 绑 anthropic 号 11、weight 2」的迁移卡订阅。
+    const cardSub = { id: "card_x", ...rowToConfig({ config: null, ...legacyBound } as any) };
+    const shares = occupiedSharesByAccount([cardSub], "anthropic");
+    expect(shares.get(11)).toBe(2); // 此前读空 config → 0;修复后 = weight 2
+  });
+
+  it("config 损坏(非法 JSON)→ 也回退 legacy,不抛", () => {
+    const out = rowToConfig({ config: "{not json", ...legacyBound } as any);
+    expect(out.line).toBe("bind");
+    expect((out.bindings as any).anthropic).toBe(11);
   });
 });
