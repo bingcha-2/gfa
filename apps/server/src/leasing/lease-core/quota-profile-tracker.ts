@@ -57,9 +57,10 @@ const MIN_SAMPLE_THRESHOLD = 10_000;
 export const DECAY_TAU_5H_MS = Math.max(3_600_000, Number(process.env.BCAI_QUOTA_DECAY_TAU_MS) || 1.5 * 24 * 60 * 60 * 1000);
 /** Time-decay constant τ for weekly budget (env, default 8 days — weekly samples are sparse). */
 export const DECAY_TAU_WEEKLY_MS = Math.max(3_600_000, Number(process.env.BCAI_QUOTA_DECAY_TAU_WEEKLY_MS) || 8 * 24 * 60 * 60 * 1000);
-/** Admission gate: consumed = 1 - fraction must be ≥ this to sample (avoid the
- *  10–20× amplification of used/consumed when fraction→1). env, default 0.2. */
-export const MIN_CONSUMED_TO_SAMPLE = Math.min(0.9, Math.max(0.01, Number(process.env.BCAI_QUOTA_MIN_CONSUMED) || 0.2));
+/** Admission gate: consumed = 1 - fraction must be ≥ this to sample. 与 10% 采样步长
+ *  (SAMPLE_DROP_STEP)对齐 —— 允许「第一段 10% 跌幅」就采;仅保留这道最小地板防止
+ *  consumed→0 时 used/consumed 除零/放大成 Infinity。env, default 0.10。 */
+export const MIN_CONSUMED_TO_SAMPLE = Math.min(0.9, Math.max(0.01, Number(process.env.BCAI_QUOTA_MIN_CONSUMED) || 0.10));
 /** Continuous-sampling trigger: sample once per ~10% drop in remaining fraction. */
 export const SAMPLE_DROP_STEP = Math.min(0.5, Math.max(0.02, Number(process.env.BCAI_QUOTA_SAMPLE_DROP) || 0.10));
 /** Trust learned weekly R/budget only once we have at least this many weekly samples. */

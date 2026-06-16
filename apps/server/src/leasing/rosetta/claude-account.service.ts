@@ -455,8 +455,11 @@ export class ClaudeAccountService {
     const waitMs = payload?.waitMs ? Math.min(Number(payload.waitMs) || 0, maxWait) : undefined;
 
     const domain = email.split("@")[1]?.toLowerCase() || "";
-    const isMailComLike = ["mail.com", "programmer.net", "email.com", "post.com", "techie.com", "myself.com", "writeme.com"].includes(domain);
-    const resolvedMethod = isMailComLike ? method : "imap";
+    // mail.com aliases such as reincarnate.com / brew-meister.com share the
+    // same lightmailer web flow. Gmail is handled in-browser before this step;
+    // every other mailbox should try web by default instead of guessing IMAP.
+    const isWebMailbox = domain !== "gmail.com";
+    const resolvedMethod = isWebMailbox ? method : "imap";
     const resolvedHost = host || (domain === "gmail.com" ? "imap.gmail.com" : `imap.${domain}`);
     const resolvedPort = port || 993;
 
