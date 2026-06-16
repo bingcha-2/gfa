@@ -9,6 +9,7 @@ import { BoundAccountsCard } from '@/components/BoundAccountsCard'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
 import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
+import { cardScopeFiveHour, cardScopeWeekly, shouldUseExclusiveDisplay } from '@/lib/quotaDisplay'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import * as api from '@/services/wails'
@@ -40,7 +41,7 @@ export function DashboardPage() {
   const {
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
     accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode,
-    cardBuckets, cardWeeklyBuckets,
+    cardBuckets, cardWeeklyBuckets, cardWeight, cardShareCapacity,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayBillableTokens, todayCacheWriteTokens, todayCachedTokens, cumulativeSaving,
@@ -54,6 +55,13 @@ export function DashboardPage() {
   // 不该弹 antigravity 的账号异常提示。与后端"按 products 决定是否租号"是同一套逻辑。
   const isQuotaLikeError = /quota|limit|公平|额度|恢复|retry-after|token limit/i.test(leaserError)
   const accountProblem = !!leaserError && !cardUnusable && visibleBars.some((b) => b.family === 'claude') && !isQuotaLikeError
+
+  // 独享订阅(weight≥号总份数,即就你一个人用整个号):此时「号余量」就是「你的卡额度」,
+  // 把号余量条映射成卡额度真实数值/窗口,而不是只给一个 fair-share 百分比。
+  const useExclusiveDisplay = shouldUseExclusiveDisplay({ cardWeight, cardShareCapacity, accountProblem })
+  const cardScopeInput = {
+    cardBuckets, cardWeeklyBuckets, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs,
+  }
 
   // 「我的卡」条:这张卡自己的剩余额度(独立于整个号)。
   //  • static 卡:本地 bucketLimits 剩余(localQuota 家族字段),可展开看 token 数。
@@ -184,20 +192,39 @@ export function DashboardPage() {
             // 不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。
             const modelRows = (bar: BarSpec) => {
               const myBars = renderMyCardBar(bar)
-              // codex / anthropic-claude 是账号级 5h + 周 双窗口;antigravity 的 Claude 单条号余量。
-              const split =
-                bar.family === 'gpt' && codexQuota && !accountProblem ? codexQuota :
-                bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem ? claudeQuota : null
-              const accountBars = split ? [
-                <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
-                  fraction={split.hourlyFraction} resetMs={split.hourlyResetMs} />,
-                <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
-                  fraction={split.weeklyFraction} resetMs={split.weeklyResetMs} />,
-              ] : [
-                <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
-                  fraction={accountProblem ? -1 : (accountFractions?.[bar.bucket] ?? -1)}
-                  resetMs={accountResetMs?.[bar.bucket]} />,
-              ]
+              const accountBars = (() => {
+                // 独享订阅:号余量条直接映射成卡额度(真实数值/窗口),而非 fair-share %。
+                if (useExclusiveDisplay) {
+                  const fiveHour = cardScopeFiveHour(bar.bucket, cardScopeInput)
+                  if (bar.family === 'gpt' || bar.bucket === 'anthropic-claude') {
+                    const weekly = cardScopeWeekly(bar.bucket, cardScopeInput)
+                    return [
+                      <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
+                        fraction={fiveHour.fraction} resetMs={fiveHour.resetMs} />,
+                      <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
+                        fraction={weekly.fraction} resetMs={weekly.resetMs} />,
+                    ]
+                  }
+                  return [
+                    <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
+                      fraction={fiveHour.fraction} resetMs={fiveHour.resetMs} />,
+                  ]
+                }
+                // codex / anthropic-claude 是账号级 5h + 周 双窗口;antigravity 的 Claude 单条号余量。
+                const split =
+                  bar.family === 'gpt' && codexQuota && !accountProblem ? codexQuota :
+                  bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem ? claudeQuota : null
+                return split ? [
+                  <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
+                    fraction={split.hourlyFraction} resetMs={split.hourlyResetMs} />,
+                  <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
+                    fraction={split.weeklyFraction} resetMs={split.weeklyResetMs} />,
+                ] : [
+                  <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
+                    fraction={accountProblem ? -1 : (accountFractions?.[bar.bucket] ?? -1)}
+                    resetMs={accountResetMs?.[bar.bucket]} />,
+                ]
+              })()
               return [...accountBars, ...myBars].filter(Boolean)
             }
 
