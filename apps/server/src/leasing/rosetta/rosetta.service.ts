@@ -15,6 +15,7 @@ import { AntigravityAccountService } from "./antigravity-account.service";
 import { CaptchaService } from "./captcha.service";
 import { ClaudeAccountService } from "./claude-account.service";
 import { ClaudeSessionPoolService } from "./claude-session-pool.service";
+import { CliProxySyncService } from "./cliproxy-sync.service";
 import { CodexService } from "./codex.service";
 import { CreditsQuotaService } from "./credits-quota.service";
 import { GoogleOAuthService } from "./google-oauth.service";
@@ -65,6 +66,7 @@ export class RosettaService {
   private readonly antigravitySvc: AntigravityAccountService;
   private readonly codexSvc: CodexService;
   private readonly claudeSvc: ClaudeAccountService;
+  private readonly cliproxySyncSvc: CliProxySyncService;
   private readonly googleSvc: GoogleOAuthService;
   private readonly creditsSvc: CreditsQuotaService;
   private readonly sessionPoolSvc: ClaudeSessionPoolService;
@@ -105,6 +107,7 @@ export class RosettaService {
     this.antigravitySvc = new AntigravityAccountService(this.ctx, this.accessKeySvc);
     this.codexSvc = new CodexService(this.ctx, this.accessKeySvc);
     this.claudeSvc = new ClaudeAccountService(this.ctx, this.accessKeySvc);
+    this.cliproxySyncSvc = new CliProxySyncService(this.ctx);
     this.googleSvc = new GoogleOAuthService(this.ctx, (p: any) => this.antigravitySvc.addAccountChecked(p));
     this.sessionPoolSvc = new ClaudeSessionPoolService(this.ctx);
     this.creditsSvc = new CreditsQuotaService(this.ctx);
@@ -196,7 +199,7 @@ export class RosettaService {
   deleteCodexAccount(payload: any) { return this.codexSvc.deleteCodexAccount(payload); }
 
   // ── Google OAuth (→ GoogleOAuthService) ─────────────────────────────────
-  startGoogleOAuthLogin() { return this.googleSvc.startGoogleOAuthLogin(); }
+  startGoogleOAuthLogin(options: { targetAccountId?: number } = {}) { return this.googleSvc.startGoogleOAuthLogin(options); }
   getGoogleOAuthLoginStatus(loginId: string) { return this.googleSvc.getGoogleOAuthLoginStatus(loginId); }
   cancelGoogleOAuthLogin(loginId: string) { return this.googleSvc.cancelGoogleOAuthLogin(loginId); }
   submitGoogleOAuthCallback(loginId: string, rawInput: string) { return this.googleSvc.submitGoogleOAuthCallback(loginId, rawInput); }
@@ -318,42 +321,21 @@ export class RosettaService {
 
   // ── CLIProxy management ──
 
-  async getCliProxyStatus() {
-    const baseUrl = process.env.CLIPROXY_BASE_URL;
-    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
-    if (!baseUrl || !managementKey) {
-      throw new BadRequestException(
-        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
-      );
-    }
+  getCliProxyStatus() { return this.cliproxySyncSvc.getStatus(); }
 
-    try {
-      const resp = await fetch(`${baseUrl}/v0/management/auth-files`, {
-        headers: {
-          "Authorization": `Bearer ${managementKey}`,
-        },
-        signal: AbortSignal.timeout(10000),
-      });
+  resyncCliProxyAccount(body: any) {
+    return this.cliproxySyncSvc.syncAccount(
+      Number(body?.accountId),
+      body?.provider === "gemini" ? "gemini" : "antigravity",
+    );
+  }
 
-      if (!resp.ok) {
-        const errorText = await resp.text().catch(() => "");
-        throw new Error(`HTTP ${resp.status}: ${errorText.substring(0, 200)}`);
-      }
+  handleCliProxyReport(body: any, leaseService: { applyExternalAccountFailure: (payload: any) => any }) {
+    return this.cliproxySyncSvc.handleReport(body, leaseService);
+  }
 
-      const data = await resp.json();
-      return {
-        connected: true,
-        baseUrl,
-        files: Array.isArray(data) ? data : (data?.files || []),
-      };
-    } catch (err: any) {
-      return {
-        connected: false,
-        baseUrl,
-        error: err.message,
-        files: [],
-      };
-    }
+  reconcileCliProxy(body: any = {}) {
+    return this.cliproxySyncSvc.reconcile(body?.provider === "gemini" ? "gemini" : "antigravity");
   }
 
   async uploadToCliProxy(
@@ -363,138 +345,36 @@ export class RosettaService {
     provider: "gemini" | "antigravity" = "gemini",
   ) {
     if (!ids.length) throw new BadRequestException("ids is required");
+    await this.prepareCliProxyUploadAccounts(ids, customClientId, customClientSecret);
+    return this.cliproxySyncSvc.syncMany(ids.map((id) => Number(id)), provider);
+  }
 
-    const baseUrl = process.env.CLIPROXY_BASE_URL;
-    const managementKey = process.env.CLIPROXY_MANAGEMENT_KEY;
-    if (!baseUrl || !managementKey) {
-      throw new BadRequestException(
-        "CLIProxyAPI 未配置。请在 .env 中设置 CLIPROXY_BASE_URL 和 CLIPROXY_MANAGEMENT_KEY",
-      );
-    }
-
-    const numericIds = ids.map(id => Number(id));
+  /** 上传前:为选中号补 projectId + accessToken(走 discoverProjectId),写回 accounts.json。
+   *  移植自 main(cliproxy 同步:prepareCliProxyUploadAccounts)。 */
+  private async prepareCliProxyUploadAccounts(
+    ids: number[],
+    customClientId?: string,
+    customClientSecret?: string,
+  ) {
+    const numericIds = ids.map((id) => Number(id));
     const data = this.accountsFile.read();
     const allAccounts = Array.isArray(data.accounts) ? data.accounts : [];
     const accounts = allAccounts.filter((acc: any) => numericIds.includes(Number(acc.id)));
-
-    const OAUTH_CLIENT_ID =
+    const clientId =
       customClientId || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-    const OAUTH_CLIENT_SECRET = customClientSecret || "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";
-
-    const added: Array<{ id: number; email: string; projectId: string }> = [];
-    const updated: Array<{ id: number; email: string; projectId: string }> = [];
-    const errors: Array<{ id: number; email: string; error: string }> = [];
-
+    const clientSecret = customClientSecret || "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";
     let hasUpdates = false;
 
     for (const acc of accounts) {
-      if (!acc.refreshToken) {
-        errors.push({ id: Number(acc.id), email: acc.email, error: "没有 Token" });
-        continue;
-      }
-
-      // 1. Discover projectId
-      let projectId = "";
-      let accessToken = "";
+      if (!acc.refreshToken) continue;
       try {
-        const discovery = await this.discoverProjectId(acc.refreshToken, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, acc.proxyUrl);
-        projectId = discovery.projectId;
-        accessToken = discovery.accessToken;
-
-        if (projectId) {
-          this.logger.log(`[uploadToCliProxy] ${acc.email} projectId=${projectId}`);
-          if (acc.projectId !== projectId) {
-            acc.projectId = projectId;
-            hasUpdates = true;
-          }
-        } else {
-          this.logger.warn(`[uploadToCliProxy] ${acc.email} 未拿到 projectId`);
-          errors.push({ id: Number(acc.id), email: acc.email, error: "无法获取 projectId" });
-          continue;
+        const discovery = await this.discoverProjectId(acc.refreshToken, clientId, clientSecret, acc.proxyUrl);
+        if (discovery.projectId) {
+          if (acc.projectId !== discovery.projectId) { acc.projectId = discovery.projectId; hasUpdates = true; }
+          if (acc.accessToken !== discovery.accessToken) { acc.accessToken = discovery.accessToken; hasUpdates = true; }
         }
       } catch (err: any) {
-        this.logger.warn(
-          `[uploadToCliProxy] ${acc.email} projectId discovery failed: ${err.message}`,
-        );
-        errors.push({ id: Number(acc.id), email: acc.email, error: `projectId 获取失败: ${err.message}` });
-        continue;
-      }
-
-      // 2. Build CLIProxyAPI credential JSON (matching existing format on server)
-      let credentialJson: any;
-      let fileName = "";
-
-      if (provider === "antigravity") {
-        credentialJson = {
-          type: "antigravity",
-          email: acc.email,
-          project_id: projectId,
-          access_token: accessToken,
-          refresh_token: acc.refreshToken,
-        };
-        fileName = `antigravity-${acc.email}.json`;
-      } else {
-        credentialJson = {
-          auto: false,
-          checked: true,
-          disabled: false,
-          email: acc.email,
-          project_id: projectId,
-          token: {
-            client_id: OAUTH_CLIENT_ID,
-            client_secret: OAUTH_CLIENT_SECRET,
-            refresh_token: acc.refreshToken,
-            token_uri: "https://oauth2.googleapis.com/token",
-            token_type: "Bearer",
-            scopes: [
-              "https://www.googleapis.com/auth/cloud-platform",
-              "https://www.googleapis.com/auth/userinfo.email",
-              "https://www.googleapis.com/auth/userinfo.profile",
-            ],
-            universe_domain: "googleapis.com",
-          },
-          type: "gemini",
-        };
-        fileName = `gemini-${acc.email}-${projectId}.json`;
-      }
-
-      // 3. Upload via management API
-      try {
-        const resp = await fetch(
-          `${baseUrl}/v0/management/auth-files?name=${encodeURIComponent(fileName)}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${managementKey}`,
-            },
-            body: JSON.stringify(credentialJson),
-            signal: AbortSignal.timeout(15000),
-          },
-        );
-
-        if (resp.ok) {
-          this.logger.log(`[uploadToCliProxy] ${acc.email} uploaded as ${fileName}`);
-          added.push({ id: Number(acc.id), email: acc.email, projectId });
-        } else {
-          const errorText = await resp.text().catch(() => "");
-          this.logger.warn(
-            `[uploadToCliProxy] ${acc.email} upload failed: ${resp.status} ${errorText}`,
-          );
-          // If 409 or similar, treat as update
-          if (resp.status === 409) {
-            updated.push({ id: Number(acc.id), email: acc.email, projectId });
-          } else {
-            errors.push({
-              id: Number(acc.id),
-              email: acc.email,
-              error: `上传失败 (HTTP ${resp.status}): ${errorText.substring(0, 100)}`,
-            });
-          }
-        }
-      } catch (err: any) {
-        this.logger.error(`[uploadToCliProxy] ${acc.email} upload error: ${err.message}`);
-        errors.push({ id: Number(acc.id), email: acc.email, error: `网络错误: ${err.message}` });
+        this.logger.warn(`[uploadToCliProxy] ${acc.email} projectId discovery failed: ${err.message}`);
       }
     }
 
@@ -502,28 +382,6 @@ export class RosettaService {
       writeJson(path.join(this.dataDir, "accounts.json"), data);
       this.accountsFile.invalidate();
     }
-
-    // Check for IDs not found in DB/JSON
-    const foundIds = new Set(accounts.map((a: any) => Number(a.id)));
-    for (const id of ids) {
-      if (!foundIds.has(Number(id))) {
-        errors.push({ id: Number(id), email: "", error: "未找到该账号" });
-      }
-    }
-
-    this.logger.log(
-      `uploadToCliProxy: added=${added.length}, updated=${updated.length}, errors=${errors.length}`,
-    );
-
-    return {
-      total: ids.length,
-      added: added.length,
-      updated: updated.length,
-      failed: errors.length,
-      addedAccounts: added,
-      updatedAccounts: updated,
-      errors,
-    };
   }
 
   private async discoverProjectId(

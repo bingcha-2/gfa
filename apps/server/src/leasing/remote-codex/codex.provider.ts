@@ -32,6 +32,8 @@ export class CodexProvider implements Provider<CodexAccount> {
   readonly id = "codex";
   // 绑定代理则用,没绑定就本地直连(fail-open);代理传输失败先降级本地再切号。
   readonly egressPolicy = "optional" as const;
+  // codex 瞬时限速(too_many_requests)同 anthropic:账号健康、几秒恢复 → 零冷却。
+  readonly rateLimitZeroCooldown = true;
   readonly accountsFilePath: string;
   readonly models = new CodexModelCatalog();
   private readonly tokenProvider: (account: CodexAccount) => Promise<string>;

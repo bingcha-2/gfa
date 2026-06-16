@@ -11,6 +11,7 @@ import {
   CANONICAL_MODELS, resolveCanonicalModel, quotaBarColor,
 } from "../rosetta-load/constants";
 import { QuotaProfilesCard } from "@/components/console/leasing/quota-profiles-card";
+import { AccountStatusCell } from "@/components/console/leasing/account-status-cell";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,19 @@ type RosettaAccount = {
   modelQuotaFractions?: Record<string, number>;
   modelQuotaResetTimes?: Record<string, string>;
   modelQuotaRefreshedAt?: number;
+  quotaStatus?: string;
+  quotaStatusReason?: string;
+  blockedUntil?: number;
+  blockedModels?: Array<{ modelKey: string; reason: string; blockedUntil: number }>;
+  cliproxySync?: {
+    desired?: "enabled" | "disabled" | "deleted";
+    remoteProvider?: "antigravity" | "gemini";
+    remoteName?: string;
+    revision?: number;
+    lastSyncedAt?: number;
+    lastSeenAt?: number;
+    lastError?: string;
+  } | null;
 };
 
 // ── Model quota helpers ──
@@ -166,6 +180,7 @@ export default function RosettaAccountsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   // 手动「刷新」(刷 token + 拉额度,一个动作)进行中的账号 id。
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [syncingCliProxyId, setSyncingCliProxyId] = useState<string | null>(null);
   // 出口代理行内编辑:正在编辑的账号 id、输入值、保存中。
   const [proxyEditId, setProxyEditId] = useState<string | null>(null);
   const [proxyEditVal, setProxyEditVal] = useState("");
@@ -178,6 +193,7 @@ export default function RosettaAccountsPage() {
   // Google OAuth state
   const [oauthStarting, setOauthStarting] = useState(false);
   const [oauthLoginId, setOauthLoginId] = useState("");
+  const [oauthTargetAccountId, setOauthTargetAccountId] = useState("");
   const [oauthStatusText, setOauthStatusText] = useState("");
   const [oauthAuthUrl, setOauthAuthUrl] = useState("");
   const [oauthCallbackInput, setOauthCallbackInput] = useState("");
@@ -193,25 +209,29 @@ export default function RosettaAccountsPage() {
       const data = await accountsRes.json();
       if (!data.ok) throw new Error(data.error || "加载失败");
 
-      // Merge model quota data from token-server status
-      let quotaMap = new Map<number, { fractions?: Record<string, number>; resetTimes?: Record<string, string>; refreshedAt?: number }>();
+      // Merge runtime health and quota data from token-server status.
+      const runtimeMap = new Map<number, Partial<RosettaAccount>>();
       if (statusRes?.ok) {
         try {
           const statusData = await statusRes.json();
           for (const qa of statusData?.quota?.accounts || []) {
-            quotaMap.set(Number(qa.id), {
-              fractions: qa.modelQuotaFractions,
-              resetTimes: qa.modelQuotaResetTimes,
-              refreshedAt: qa.modelQuotaRefreshedAt,
+            runtimeMap.set(Number(qa.id), {
+              quotaStatus: qa.quotaStatus || "ok",
+              quotaStatusReason: qa.quotaStatusReason || "",
+              blockedUntil: Number(qa.blockedUntil || 0),
+              blockedModels: qa.blockedModels || [],
+              modelQuotaFractions: qa.modelQuotaFractions,
+              modelQuotaResetTimes: qa.modelQuotaResetTimes,
+              modelQuotaRefreshedAt: qa.modelQuotaRefreshedAt,
             });
           }
         } catch { /* ignore status parse error */ }
       }
 
-      const merged = (data.accounts || []).map((a: RosettaAccount) => {
-        const q = quotaMap.get(Number(a.id));
-        return q ? { ...a, modelQuotaFractions: q.fractions, modelQuotaResetTimes: q.resetTimes, modelQuotaRefreshedAt: q.refreshedAt } : a;
-      });
+      const merged = (data.accounts || []).map((a: RosettaAccount) => ({
+        ...a,
+        ...(runtimeMap.get(Number(a.id)) || {}),
+      }));
 
       // Sort: plan tier priority → Claude quota desc → no quota last
       const PLAN_ORDER: Record<string, number> = { ultra: 0, premium: 1, antigravity: 2, free: 3 };
@@ -320,13 +340,14 @@ export default function RosettaAccountsPage() {
     }
   }
 
-  async function handleOAuthStart() {
+  async function handleOAuthStart(targetAccountId?: string) {
     setOauthStarting(true);
+    setOauthTargetAccountId(targetAccountId || "");
     try {
       const res = await fetch("/api/console/rosetta/google-oauth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(targetAccountId ? { targetAccountId } : {}),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Google OAuth start failed");
@@ -338,11 +359,16 @@ export default function RosettaAccountsPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Google OAuth start failed");
       setOauthLoginId("");
+      setOauthTargetAccountId("");
       setOauthAuthUrl("");
       setOauthStatusText("");
     } finally {
       setOauthStarting(false);
     }
+  }
+
+  async function handleReauthorize(accountId: string) {
+    await handleOAuthStart(accountId);
   }
 
   async function handleOAuthSubmit() {
@@ -361,8 +387,10 @@ export default function RosettaAccountsPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "完成授权失败");
-      toast.success(data.isUpdate ? `OAuth 已更新 ${data.email}` : `OAuth 已添加 ${data.email}`);
+      const targetLabel = oauthTargetAccountId ? `账号 #${oauthTargetAccountId}` : data.email;
+      toast.success(data.isUpdate ? `OAuth 已更新 ${targetLabel}` : `OAuth 已添加 ${data.email}`);
       setOauthLoginId("");
+      setOauthTargetAccountId("");
       setOauthAuthUrl("");
       setOauthCallbackInput("");
       setOauthStatusText("");
@@ -379,6 +407,7 @@ export default function RosettaAccountsPage() {
   async function handleOAuthCancel() {
     const loginId = oauthLoginId;
     setOauthLoginId("");
+    setOauthTargetAccountId("");
     setOauthStatusText("");
     setOauthAuthUrl("");
     setOauthCallbackInput("");
@@ -473,6 +502,25 @@ export default function RosettaAccountsPage() {
       toast.error(err instanceof Error ? err.message : "恢复失败");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function handleCliProxyResync(accountId: string) {
+    setSyncingCliProxyId(accountId);
+    try {
+      const res = await fetch("/api/console/rosetta/cliproxy-resync-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, provider: "antigravity" }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "同步失败");
+      toast.success(`#${accountId} 已同步到 CLIProxy`);
+      loadAccounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "同步到 CLIProxy 失败");
+    } finally {
+      setSyncingCliProxyId(null);
     }
   }
 
@@ -611,11 +659,7 @@ export default function RosettaAccountsPage() {
         );
       }
       case "status":
-        return (
-          <Badge variant={account.enabled ? "default" : "secondary"}>
-            {account.enabled ? "启用" : "禁用"}
-          </Badge>
-        );
+        return <AccountStatusCell account={account} />;
       case "proxy":
         return proxyEditId === account.id ? (
           <div className="flex items-center gap-1">
@@ -825,7 +869,7 @@ export default function RosettaAccountsPage() {
 
             {/* Right group: refresh + add */}
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleOAuthStart} disabled={oauthStarting || Boolean(oauthLoginId)}>
+              <Button variant="outline" size="sm" onClick={() => void handleOAuthStart()} disabled={oauthStarting || Boolean(oauthLoginId)}>
                 {oauthStarting ? <Spinner size={14} /> : <ExternalLinkIcon className="size-4" />}
                 OAuth 登录
               </Button>
@@ -866,7 +910,9 @@ export default function RosettaAccountsPage() {
         {oauthLoginId ? (
           <div className="mx-6 mb-4 flex flex-col gap-3 rounded-lg border bg-card p-4 text-sm">
             <div className="space-y-1">
-              <p className="font-medium">完成 Google OAuth 登录</p>
+              <p className="font-medium">
+                {oauthTargetAccountId ? `重新授权账号 #${oauthTargetAccountId}` : "完成 Google OAuth 登录"}
+              </p>
               <p className="text-muted-foreground">
                 1. 在新打开的页面完成 Google 授权（没弹出的话，
                 {oauthAuthUrl ? (
@@ -996,6 +1042,38 @@ export default function RosettaAccountsPage() {
                                   : <Gauge className="size-3.5" />}
                               </TooltipTrigger>
                               <TooltipContent>刷新 token + 获取额度</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={busyId === account.id || Boolean(oauthLoginId) || oauthStarting}
+                                    onClick={() => void handleReauthorize(account.id)}
+                                  />
+                                }
+                              >
+                                <KeyRound className="size-3.5 text-primary" />
+                              </TooltipTrigger>
+                              <TooltipContent>重新授权</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    disabled={syncingCliProxyId === account.id}
+                                    onClick={() => void handleCliProxyResync(account.id)}
+                                  />
+                                }
+                              >
+                                {syncingCliProxyId === account.id
+                                  ? <Spinner className="size-3.5" />
+                                  : <RefreshCw className="size-3.5 text-sky-500" />}
+                              </TooltipTrigger>
+                              <TooltipContent>重新同步到 CLIProxy</TooltipContent>
                             </Tooltip>
                             <Tooltip>
                               <TooltipTrigger

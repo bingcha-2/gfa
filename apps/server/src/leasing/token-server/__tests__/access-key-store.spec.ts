@@ -715,6 +715,33 @@ describe("listByCustomerSorted — 账户订阅按 priority 升序", () => {
   });
 });
 
+describe("setSubscriptionPriority — 写后即时刷新内存接力顺序", () => {
+  it("更新已驻留 record 的 priority,listByCustomerSorted 立即反映新顺序", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-prio-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    store.loadSubscriptionRecords([
+      { id: "s-a", customerId: "c1", priority: 1, status: "active", products: ["codex"] },
+      { id: "s-b", customerId: "c1", priority: 5, status: "active", products: ["codex"] },
+    ]);
+    expect(store.listByCustomerSorted("c1").map((r) => r.id)).toEqual(["s-a", "s-b"]);
+
+    // 把 s-b 提到最前(priority 0)→ 接力顺序立即翻转,无需重启/resync。
+    expect(store.setSubscriptionPriority("s-b", 0)).toBe(true);
+    expect(store.listByCustomerSorted("c1").map((r) => r.id)).toEqual(["s-b", "s-a"]);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("订阅未驻留内存时返回 false,绝不往 Map 里塞半截 stub", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-prio-miss-"));
+    const store = new AccessKeyStore(path.join(tmp, "access-keys.json"));
+    expect(store.setSubscriptionPriority("not-loaded", 0)).toBe(false);
+    // 没命中 → 该 customer 名下依旧空,没被污染出一个无 key/无限额的残record。
+    expect(store.listByCustomerSorted("c1")).toEqual([]);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
 describe("findByKey 支持订阅卡(去文件化)", () => {
   it("订阅 record 带 backingKeyValue → findByKey(backingKeyValue) 查得到", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gfa-aks-fbk-"));

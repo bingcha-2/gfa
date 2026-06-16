@@ -294,6 +294,11 @@ func (p *ProxyServer) handleGenerationRequest(w http.ResponseWriter, r *http.Req
 
 		// P0: Parse retryAfterMs from 429 error body
 		retryAfterMs := extractQuotaResetDelayMs(errorBody)
+		// 上游瞬时限速 429(如 Anthropic rate_limit_error)把恢复时间放在 HTTP Retry-After 头里,
+		// 不在 body 里 → body 解析不到时回退读头,据此上报精确短冷却(否则服务端会当额度耗尽冷却数小时)。
+		if retryAfterMs == 0 && resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterMs = parseRetryAfterHeaderMs(resp.Header.Get("Retry-After"))
+		}
 		// P0: Extract model from error response (503 capacity errors contain model name)
 		errorModelKey := extractCapacityModelKey(errorBody)
 		if errorModelKey == "" {
@@ -727,6 +732,10 @@ func (p *ProxyServer) handleGeminiGenerationRequest(w http.ResponseWriter, r *ht
 		}
 
 		retryAfterMs := extractQuotaResetDelayMs(errorBody)
+		// 同上:上游瞬时限速 429 的恢复时间在 HTTP Retry-After 头里,body 解析不到时回退读头。
+		if retryAfterMs == 0 && resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterMs = parseRetryAfterHeaderMs(resp.Header.Get("Retry-After"))
+		}
 		errorModelKey := extractCapacityModelKey(errorBody)
 		if errorModelKey == "" {
 			errorModelKey = requestModelKey

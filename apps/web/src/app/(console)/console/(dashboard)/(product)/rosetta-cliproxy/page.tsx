@@ -39,6 +39,14 @@ interface RosettaAccount {
   projectId: string;
   planType: string;
   hasToken: boolean;
+  cliproxySync?: {
+    desired?: string;
+    remoteProvider?: string;
+    remoteName?: string;
+    revision?: number;
+    lastSyncedAt?: number;
+    lastError?: string;
+  } | null;
 }
 
 interface CLIProxyStatus {
@@ -89,6 +97,7 @@ export default function RosettaCliProxyPage() {
 
   // Actions
   const [uploading, setUploading] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
 
   // Load status of the CLIProxy server
   const loadProxyStatus = useCallback(async () => {
@@ -260,11 +269,28 @@ export default function RosettaCliProxyPage() {
     }
   };
 
+  const handleReconcile = async () => {
+    setReconciling(true);
+    try {
+      const result = await apiRequest<{ ok: boolean; uploaded: number[]; unmanaged: string[] }>("rosetta/cliproxy-reconcile", {
+        method: "POST",
+        body: { provider: uploadProvider },
+      });
+      toast.success(`对账完成：补同步 ${result.uploaded.length} 个，未托管 ${result.unmanaged.length} 个`);
+      loadAccounts();
+      loadProxyStatus();
+    } catch (err) {
+      toast.error(`对账失败: ${getErrorMessage(err)}`);
+    } finally {
+      setReconciling(false);
+    }
+  };
+
   const getStatusBadge = (acc: RosettaAccount) => {
     if (!acc.enabled) {
       return <Badge variant="secondary">已停用</Badge>;
     }
-    
+
     const geminiUp = isUploaded(acc.email, "gemini");
     const antiUp = isUploaded(acc.email, "antigravity");
 
@@ -278,6 +304,20 @@ export default function RosettaCliProxyPage() {
         </Badge>
       </div>
     );
+  };
+
+  const getSyncBadge = (acc: RosettaAccount) => {
+    const sync = acc.cliproxySync;
+    if (sync?.lastError) {
+      return <Badge variant="destructive">同步失败</Badge>;
+    }
+    if (sync?.desired === "disabled") {
+      return <Badge variant="secondary">已禁用</Badge>;
+    }
+    if (sync?.lastSyncedAt) {
+      return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white border-none">已同步</Badge>;
+    }
+    return <Badge variant="outline">未同步</Badge>;
   };
 
   return (
@@ -521,6 +561,15 @@ export default function RosettaCliProxyPage() {
               className="w-56 h-9 text-xs"
             />
             <Button
+              variant="outline"
+              onClick={handleReconcile}
+              disabled={reconciling}
+              className="h-9 gap-1 text-xs px-3"
+            >
+              <RefreshCwIcon className={`size-3.5 ${reconciling ? "animate-spin" : ""}`} />
+              对账
+            </Button>
+            <Button
               onClick={handleBatchUpload}
               disabled={selectedIds.size === 0 || uploading}
               className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium h-9 gap-1 text-xs px-3"
@@ -589,6 +638,7 @@ export default function RosettaCliProxyPage() {
                     <TableHead>子号邮箱</TableHead>
                     <TableHead>别名</TableHead>
                     <TableHead>状态</TableHead>
+                    <TableHead>同步</TableHead>
                     <TableHead>凭证状态</TableHead>
                     <TableHead>Project ID</TableHead>
                     <TableHead>套餐</TableHead>
@@ -620,6 +670,7 @@ export default function RosettaCliProxyPage() {
                           {acc.alias || "-"}
                         </TableCell>
                         <TableCell>{getStatusBadge(acc)}</TableCell>
+                        <TableCell>{getSyncBadge(acc)}</TableCell>
                         <TableCell>
                           {acc.hasToken ? (
                             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/20 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-900/30">

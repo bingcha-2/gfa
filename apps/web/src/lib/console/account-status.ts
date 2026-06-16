@@ -35,17 +35,28 @@ export function accountHealthSummary(
 }
 
 /** Map a persisted quotaStatus to a colored badge for the account tables. */
+const ERROR_REASON_LABELS: Record<string, string> = {
+  invalid_grant: "鉴权失效",
+  verification_required: "需要验证",
+  consecutive_errors: "连续报错",
+};
+
+const COOLING_REASON_LABELS: Record<string, string> = {
+  capacity: "容量冷却中",
+  quota: "额度恢复中",
+};
+
 export function accountStatusLabel(
   quotaStatus?: string,
   quotaStatusReason?: string,
 ): AccountStatusBadge {
   const status = quotaStatus || "ok";
+  const reason = quotaStatusReason || "";
   if (status === "error") {
-    const reason = quotaStatusReason === "invalid_grant" ? "鉴权失效" : "连续报错";
-    return { tone: "red", label: `已失效·${reason}` };
+    return { tone: "red", label: `已失效·${ERROR_REASON_LABELS[reason] || "连续报错"}` };
   }
   if (status === "exhausted" || status === "cooling") {
-    return { tone: "yellow", label: "额度恢复中" };
+    return { tone: "yellow", label: COOLING_REASON_LABELS[reason] || "额度恢复中" };
   }
   return { tone: "green", label: "正常" };
 }

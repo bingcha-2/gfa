@@ -36,6 +36,7 @@ type CodexOAuthPending = {
   email?: string;
   error?: string;
   isUpdate?: boolean;
+  targetAccountId?: number;
 };
 
 /** Pending Google OAuth login (Antigravity account pool). Same shape as Codex. */
@@ -56,7 +57,7 @@ export class GoogleOAuthService {
     private readonly addAccountChecked: AddAccountChecked,
   ) {}
 
-  async startGoogleOAuthLogin() {
+  async startGoogleOAuthLogin(options: { targetAccountId?: number } = {}) {
     const existing = this.googleOAuthPending;
     if (existing && existing.status === "pending" && existing.expiresAt > Date.now()) {
       return {
@@ -68,6 +69,7 @@ export class GoogleOAuthService {
       };
     }
     this.closeGoogleOAuthPending();
+    const targetAccountId = Number(options.targetAccountId || 0);
 
     const oauth = resolveOAuthCredentials();
     const codeVerifier = base64Url(crypto.randomBytes(32));
@@ -94,6 +96,7 @@ export class GoogleOAuthService {
       authUrl: `${GOOGLE_OAUTH_AUTH_ENDPOINT}?${params.toString()}`,
       expiresAt: Date.now() + GOOGLE_OAUTH_TIMEOUT_MS,
       status: "pending",
+      targetAccountId: targetAccountId > 0 ? targetAccountId : undefined,
     };
 
     (pending as any).clientId = oauth.clientId;
@@ -217,6 +220,7 @@ export class GoogleOAuthService {
 
     // Save account via addAccountChecked (writes to accounts.json + probes token)
     const result = await this.addAccountChecked({
+      targetAccountId: pending.targetAccountId,
       email,
       refreshToken,
       alias: profile.name || "",
@@ -225,8 +229,12 @@ export class GoogleOAuthService {
 
     pending.status = "completed";
     pending.email = email;
-    pending.isUpdate = Boolean(result.isUpdate);
-    return { email, isUpdate: Boolean(result.isUpdate), accountId: result.id };
+    pending.isUpdate = Boolean(result.isUpdate || pending.targetAccountId);
+    return {
+      email,
+      isUpdate: Boolean(result.isUpdate || pending.targetAccountId),
+      accountId: pending.targetAccountId || result.id,
+    };
   }
 
   private closeGoogleOAuthPending(clearCompleted = true) {

@@ -141,6 +141,10 @@ const QUOTA_RESET_MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // 403 冷却的封顶(也是无 retry-after 时的默认)。短 —— 403 多为瞬时验证挑战/反滥用,
 // 绑定卡无备号,长冷却=该模型几小时不可用。瞬时挑战 ~60s 内自愈。
 const FORBIDDEN_COOLDOWN_MS = 60 * 1000;
+// reason 模糊时区分瞬时限速 / 配额耗尽的 retry-after 分界线:瞬时限速恢复以秒~分钟计,
+// 配额窗口(5h/周)恢复以小时~天计。上游给的 retry-after 远超此值 = 配额耗尽,绝非瞬时限速
+// —— 此时信上游明说的 retry-after,胜过信本地可能过时的额度余量快照。
+const RATE_LIMIT_MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 // 验证挑战(需人工去验证)自动复检间隔:300 分钟。号主/管理员验证好后,一次成功即提前解封;
 // 否则到点自动复检一次。也可由后台手动恢复立即清除(reactivateAccount)。
 const VERIFICATION_RECHECK_COOLDOWN_MS = 300 * 60 * 1000;
@@ -1233,28 +1237,41 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
           this.markAccountVerificationRequired(accountId);
         } else if (status === 429 || status === 503) {
           const reason = String(payload?.reason || (status === 429 ? "quota" : "capacity"));
-          const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
-          this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
-          // Fair-share: 429 backstop quota-profile sample (density safety net for
-          // sparse windows). NOT a special per-account SET — just one more sample
-          // into the same decayed-median pool. The consumed≥0.2 gate inside
-          // recordSample naturally drops rate-limit 429s (account still has quota).
-          if (this.fairShareTracker && status === 429 && this.quotaProfileTracker) {
-            const bucket = bucketKey(this.provider.id, modelKey);
-            const account = this.readAccounts().find((a) => a.id === accountId);
-            const resetAt = account ? getModelQuotaResetAt(account as any, modelKey) : 0;
-            const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-            const isWeekly = this.fairShareTracker.isWeeklyTracked()
-              && (retryAfterMs > FIVE_HOURS_MS || resetAt > this.now() + FIVE_HOURS_MS);
+          // 瞬时限速 429(账号额度未耗尽)与额度耗尽 429 必须分开处理:前者账号是健康的,
+          // 几秒即恢复 —— 一点不冷却、不踢出轮换,下个请求立刻还能用它(本次由客户端轮换到别的号)。
+          // 也不拿它当 quota-profile 样本(账号仍有额度,会污染学到的预算)。
+          // 只有真·额度耗尽 / 503 容量才进入下面的「冷却到配额窗口 + 采样」路径。
+          // 零冷却仅限 opt-in 的 provider(anthropic/codex);antigravity 不 opt-in → 其 429
+          // 一律走下面的冷却路径(this.provider.rateLimitZeroCooldown falsy)。
+          if (
+            status === 429
+            && this.provider.rateLimitZeroCooldown
+            && this.isRateLimit429(reason, accountId, modelKey, retryAfterMs)
+          ) {
+            // no-op:健康号不动它(零冷却)。
+          } else {
+            const cooldownMs = this.cooldownForExhaustion(status, reason, retryAfterMs, accountId, modelKey);
+            this.markAccountExhausted(accountId, modelKey, reason, cooldownMs);
+            // Fair-share: 429 backstop quota-profile sample (density safety net for
+            // sparse windows). NOT a special per-account SET — just one more sample
+            // into the same decayed-median pool.
+            if (this.fairShareTracker && status === 429 && this.quotaProfileTracker) {
+              const bucket = bucketKey(this.provider.id, modelKey);
+              const account = this.readAccounts().find((a) => a.id === accountId);
+              const resetAt = account ? getModelQuotaResetAt(account as any, modelKey) : 0;
+              const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+              const isWeekly = this.fairShareTracker.isWeeklyTracked()
+                && (retryAfterMs > FIVE_HOURS_MS || resetAt > this.now() + FIVE_HOURS_MS);
 
-            const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
-            if (state && state.totalUsed > 0) {
-              const planType = String((account as any)?.planType || "free");
-              const family = familyOfBucket(bucket);
-              this.quotaProfileTracker.recordSample(
-                this.provider.id, planType, family,
-                state.totalUsed, state.lastFraction, isWeekly,
-              );
+              const state = this.fairShareTracker.getTrackerState(accountId, isWeekly ? weeklyBucketKey(bucket) : bucket);
+              if (state && state.totalUsed > 0) {
+                const planType = String((account as any)?.planType || "free");
+                const family = familyOfBucket(bucket);
+                this.quotaProfileTracker.recordSample(
+                  this.provider.id, planType, family,
+                  state.totalUsed, state.lastFraction, isWeekly,
+                );
+              }
             }
           }
         } else if (status === 403) {
@@ -1822,14 +1839,34 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     return QUOTA_EXHAUSTION_COOLDOWN_DEFAULT_MS;
   }
 
+  /**
+   * 区分「上游瞬时限速 429」与「额度/信用耗尽 429」。前者(rate_limit_error /
+   * too_many_requests)账号额度并未耗尽,几秒~一分钟即恢复,绝不能按额度耗尽冷却到
+   * 配额窗口 reset(可达数小时)——否则绑定卡(无备号)会因一次瞬时限速被打死数小时。
+   * 判据按可信度:reason 的明确限速/耗尽标志 > 账号 5h 额度余量(仍有明确余量 = 必是限速)。
+   */
+  private isRateLimit429(reason: string, accountId: number, modelKey: string, retryAfterMs = 0): boolean {
+    const r = (reason || "").toLowerCase();
+    if (/rate.?limit|too_many_requests/.test(r)) return true;
+    if (/credit|exhaust|token limit|insufficient/.test(r)) return false;
+    // reason 模糊:先信上游给的 retry-after 时长 —— 远超瞬时量级(>5min)= 配额窗口耗尽,
+    // 绝非瞬时限速(瞬时限速以秒~分钟计)。比下面那份可能过时的额度快照可信得多。
+    if (retryAfterMs > RATE_LIMIT_MAX_RETRY_AFTER_MS) return false;
+    // 仍无强信号 → 退用账号 5h 额度余量快照兜底:仍有明确余量(fraction>0)= 瞬时限速。
+    const account = this.readAccounts().find((a) => a.id === accountId);
+    const fraction = account ? getModelQuotaFraction(account, modelKey, this.now()) : null;
+    return fraction !== null && fraction > 0;
+  }
+
   private markAccountExhausted(accountId: number, modelKey: string, reason: string, cooldownMs: number) {
     const state = this.ensureRuntime(accountId);
     const now = this.now();
     const normalized = normalizeModelKey(modelKey);
-    const isCapacity = reason.includes("capacity") || reason.includes("503");
+    // capacity(503)与瞬时限速(rate_limit)都是【可恢复的瞬时冷却】→ 标 cooling 而非 exhausted。
+    const transient = reason.includes("capacity") || reason.includes("503") || reason.includes("rate_limit");
     const blockedUntil = now + cooldownMs;
 
-    state.quotaStatus = isCapacity ? "cooling" : "exhausted";
+    state.quotaStatus = transient ? "cooling" : "exhausted";
     state.quotaStatusReason = reason;
     state.exhaustedAt = now;
 
@@ -1842,6 +1879,53 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       blockedUntil,
       ...Array.from(state.blockedModels.values()).map((b) => b.blockedUntil),
     );
+  }
+
+  /** 外部(cliproxy)上报某上游号的失败 → 套用与内部一致的标号逻辑(死号/限额/容量/瞬时)。
+   *  移植自 main b998931「accept cliproxy account failure reports」。 */
+  applyExternalAccountFailure(payload: {
+    accountId: number;
+    modelKey?: string;
+    status: number;
+    reason?: string;
+    retryAfterMs?: number;
+  }) {
+    const accountId = Number(payload.accountId);
+    const modelKey = String(payload.modelKey || "");
+    const status = Number(payload.status || 0);
+    const reason = String(payload.reason || "");
+    const retryAfterMs = Number(payload.retryAfterMs || 0);
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      return { ok: false, error: "invalid accountId" };
+    }
+
+    if ((status === 400 || status === 401) && reason.includes("invalid_grant")) {
+      const state = this.ensureRuntime(accountId);
+      state.tokenDeathStrikes = Math.max(state.tokenDeathStrikes, TOKEN_DEATH_STRIKE_THRESHOLD - 1);
+      this.markAccountTokenError(accountId, reason);
+      this.flushAccounts();
+      return { ok: true, action: "auth_dead" };
+    }
+
+    if (status === 429 || status === 503) {
+      const classifiedReason = reason || (status === 429 ? "quota" : "capacity");
+      const cooldownMs = this.cooldownForExhaustion(status, classifiedReason, retryAfterMs, accountId, modelKey);
+      this.markAccountExhausted(accountId, modelKey, classifiedReason, cooldownMs);
+      return { ok: true, action: status === 429 ? "model_quota" : "model_capacity" };
+    }
+
+    if (status === 401) {
+      this.mutateAccount(accountId, (account) => ({
+        ...(account as any),
+        accessToken: "",
+        accessTokenExpiresAt: 0,
+      }) as TAccount);
+      this.flushAccounts();
+      return { ok: true, action: "token_cache_cleared" };
+    }
+
+    this.markAccountTransientError(accountId, modelKey, reason || `http_${status}`);
+    return { ok: true, action: "transient_error" };
   }
 
   private markAccountTransientError(accountId: number, modelKey: string, reason: string) {

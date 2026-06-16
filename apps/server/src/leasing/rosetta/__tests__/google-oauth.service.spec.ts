@@ -77,6 +77,24 @@ describe("submitGoogleOAuthCallback", () => {
     expect(addAccountChecked).toHaveBeenCalledWith(expect.objectContaining({ email: "g@x.com", refreshToken: "grt", alias: "G" }));
   });
 
+  it("reauthorizes a target account instead of creating a new account", async () => {
+    const r = await svc.startGoogleOAuthLogin({ targetAccountId: 12 } as any);
+    vi.stubGlobal("fetch", okTokenFetch({
+      refresh_token: "new-refresh",
+      id_token: jwtWith({ email: "target@example.com", name: "Target" }),
+    }));
+
+    const out = await svc.submitGoogleOAuthCallback(r.loginId, "auth-code-123");
+
+    expect(out).toMatchObject({ ok: true, status: "completed", email: "target@example.com", accountId: 12, isUpdate: true });
+    expect(addAccountChecked).toHaveBeenCalledWith(expect.objectContaining({
+      targetAccountId: 12,
+      email: "target@example.com",
+      refreshToken: "new-refresh",
+      alias: "Target",
+    }));
+  });
+
   it("fails when the token response has no refresh_token", async () => {
     const r = await svc.startGoogleOAuthLogin();
     vi.stubGlobal("fetch", okTokenFetch({ id_token: jwtWith({ email: "g@x.com" }) }));

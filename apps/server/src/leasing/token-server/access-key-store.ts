@@ -385,6 +385,19 @@ export class AccessKeyStore {
     return out.sort((a, b) => (Number(a.priority ?? 0)) - (Number(b.priority ?? 0)));
   }
 
+  /**
+   * 即时更新某订阅 record 的接力优先级(账户中心拖动排序后调用)。
+   * 只在 record 已驻留内存时更新 —— 否则该订阅下次从 DB 装载时自带新 priority,
+   * 绝不能凭 {id,priority} 往 Map 里塞半截 stub(会污染调度/findByKey)。
+   * 返回是否命中,便于调用方判断是否需要 DB 兜底。
+   */
+  setSubscriptionPriority(id: string, priority: number): boolean {
+    const rec = this.subscriptionById.get(id);
+    if (!rec) return false;
+    rec.priority = Math.max(0, Math.floor(Number(priority) || 0));
+    return true;
+  }
+
 
   /** Immediately flush dirty cache to disk. Only the file-card config store
    *  (cache.keys) is persisted here; runtime usage no longer writes the file —

@@ -198,10 +198,14 @@ export class PortalService {
     if (!sub || sub.customerId !== customerId) {
       throw new NotFoundException({ error: "SUBSCRIPTION_NOT_FOUND", message: "订阅不存在或不属于当前账户" });
     }
+    const normalized = Math.max(0, Math.floor(Number(priority) || 0));
     await this.prisma.subscription.update({
       where: { id: subscriptionId },
-      data: { priority: Math.max(0, Math.floor(Number(priority) || 0)) },
+      data: { priority: normalized },
     });
+    // 写 DB(真相源)后立即刷新内存 subscriptionById —— 否则 SubscriptionScheduler 的
+    // 账户内接力仍按旧 priority 走,直到重启/下次 resync(读后写陈旧)。
+    this.store.setSubscriptionPriority(subscriptionId, normalized);
     const overview = await this.getOverview(customerId);
     return { ok: true, subscriptions: overview.subscriptions };
   }

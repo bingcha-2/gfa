@@ -382,6 +382,91 @@ describe("TokenServerService — account cooling and retry", () => {
     }
   });
 
+  it("external invalid_grant report marks the account auth-dead", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "claude-opus-4-6-thinking",
+      status: 400,
+      reason: "invalid_grant",
+    })).toEqual({ ok: true, action: "auth_dead" });
+
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === r.accountId);
+    expect(acct.quotaStatus).toBe("error");
+    expect(acct.quotaStatusReason).toBe("invalid_grant");
+  });
+
+  it("external 429 report marks the account exhausted (model_quota)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "claude-opus-4-6-thinking",
+      status: 429,
+    })).toEqual({ ok: true, action: "model_quota" });
+
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === r.accountId);
+    expect(acct.quotaStatus).toBe("exhausted");
+  });
+
+  it("external 503 report cools the account down (model_capacity)", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "claude-opus-4-6-thinking",
+      status: 503,
+    })).toEqual({ ok: true, action: "model_capacity" });
+
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === r.accountId);
+    expect(acct.quotaStatus).toBe("cooling"); // 容量是瞬时冷却,非额度耗尽
+  });
+
+  it("external bare 401 report clears the token cache without killing the account", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "claude-opus-4-6-thinking",
+      status: 401, // 无 invalid_grant → 只清缓存,不标死号
+    })).toEqual({ ok: true, action: "token_cache_cleared" });
+
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === r.accountId);
+    expect(acct.quotaStatus).toBe("ok"); // 既没 error 也没 exhausted
+  });
+
+  it("external unrecognized status falls back to a transient error", async () => {
+    tokenProvider.mockResolvedValue("access-token-ok");
+    const service = makeService();
+    const r = await service.leaseToken(REQ, leasePayload());
+
+    expect((service as any).applyExternalAccountFailure({
+      accountId: r.accountId,
+      modelKey: "claude-opus-4-6-thinking",
+      status: 500,
+    })).toEqual({ ok: true, action: "transient_error" });
+
+    const acct: any = service.getStatus().quota.accounts.find((a: any) => a.id === r.accountId);
+    expect(acct.quotaStatus).toBe("ok"); // 瞬时错误不改额度状态
+  });
+
+  it("rejects an external report with an invalid accountId", () => {
+    const service = makeService();
+    expect((service as any).applyExternalAccountFailure({
+      accountId: 0,
+      status: 429,
+    })).toEqual({ ok: false, error: "invalid accountId" });
+  });
+
   // ── 429 report marks account exhausted ──────────────────────────────────
 
   it("marks account exhausted after 429 report and skips it in next lease", async () => {

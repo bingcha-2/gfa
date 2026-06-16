@@ -107,8 +107,8 @@ export class RosettaController {
 
   // ── Google OAuth (Antigravity account pool) ──────────────────────────
   @Post("google-oauth-start")
-  startGoogleOAuthLogin() {
-    return this.rosetta.startGoogleOAuthLogin();
+  startGoogleOAuthLogin(@Body() body: any) {
+    return this.rosetta.startGoogleOAuthLogin({ targetAccountId: Number(body?.targetAccountId || 0) });
   }
 
   @Get("google-oauth-status")
@@ -122,8 +122,14 @@ export class RosettaController {
   }
 
   @Post("google-oauth-submit")
-  submitGoogleOAuthCallback(@Body() body: any) {
-    return this.rosetta.submitGoogleOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
+  async submitGoogleOAuthCallback(@Body() body: any) {
+    const result = await this.rosetta.submitGoogleOAuthCallback(String(body?.loginId || ""), String(body?.input || ""));
+    // 重授权完成:若该号是 auth-dead,刷新成功 → 解封放回候选池。
+    if (result?.ok && (result as any).accountId) {
+      const { reactivated } = this.tokenServer.reactivateIfAuthDead(Number((result as any).accountId));
+      return { ...result, reactivated };
+    }
+    return result;
   }
 
   // ── Codex account pool ──────────────────────────────────────────────
@@ -458,6 +464,24 @@ export class RosettaController {
   @Get("cliproxy-status")
   getCliProxyStatus() {
     return this.rosetta.getCliProxyStatus();
+  }
+
+  @Post("cliproxy-resync-account")
+  resyncCliProxyAccount(@Body() body: any) {
+    return this.rosetta.resyncCliProxyAccount(body);
+  }
+
+  @Post("cliproxy-report")
+  reportCliProxyFailure(@Headers("x-cliproxy-report-secret") secret: string, @Body() body: any) {
+    if (!process.env.CLIPROXY_REPORT_SECRET || secret !== process.env.CLIPROXY_REPORT_SECRET) {
+      throw new UnauthorizedException("Invalid CLIProxy report secret");
+    }
+    return this.rosetta.handleCliProxyReport(body, this.tokenServer);
+  }
+
+  @Post("cliproxy-reconcile")
+  reconcileCliProxy(@Body() body: any) {
+    return this.rosetta.reconcileCliProxy(body);
   }
 
   @Post("upload-cliproxy")

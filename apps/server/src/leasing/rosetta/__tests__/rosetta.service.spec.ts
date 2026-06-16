@@ -1586,6 +1586,33 @@ describe("RosettaService", () => {
       });
     });
 
+    it("resyncs a single account through the sync service and stores metadata", async () => {
+      writeJson(path.join(tempDir, "accounts.json"), {
+        accounts: [
+          {
+            id: 3,
+            email: "resync@example.com",
+            refreshToken: "rt-resync",
+            enabled: true,
+            projectId: "proj-resync",
+          },
+        ],
+      });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+      process.env.CLIPROXY_BASE_URL = "http://127.0.0.1:8317";
+      process.env.CLIPROXY_MANAGEMENT_KEY = "mock-key";
+
+      const service = new RosettaService({ dataDir: tempDir });
+      const result = await (service as any).resyncCliProxyAccount({ accountId: 3, provider: "antigravity" });
+
+      expect(result).toMatchObject({ ok: true, remoteName: "antigravity-gfa-3-resync@example.com.json" });
+      const stored = readJson(path.join(tempDir, "accounts.json"), { accounts: [] });
+      expect(stored.accounts[0].cliproxySync).toMatchObject({
+        desired: "enabled",
+        remoteName: "antigravity-gfa-3-resync@example.com.json",
+      });
+    });
+
     it("should upload Rosetta accounts to CLIProxy", async () => {
       writeJson(path.join(tempDir, "accounts.json"), {
         accounts: [
@@ -1672,7 +1699,7 @@ describe("RosettaService", () => {
         updated: 0,
         failed: 0,
       });
-      expect(uploadedFileName).toBe("antigravity-upload@example.com.json");
+      expect(uploadedFileName).toBe("antigravity-gfa-1-upload@example.com.json");
       expect(uploadedBody).toMatchObject({
         type: "antigravity",
         email: "upload@example.com",

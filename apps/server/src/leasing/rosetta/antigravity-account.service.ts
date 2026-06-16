@@ -44,6 +44,10 @@ export class AntigravityAccountService {
       familyStatus: String(account.familyStatus || ""),
       motherId: String(account.motherId || ""),
       seatId: String(account.seatId || ""),
+      quotaStatus: String(account.quotaStatus || "ok"),
+      quotaStatusReason: String(account.quotaStatusReason || ""),
+      blockedUntil: Number(account.blockedUntil || 0),
+      cliproxySync: account.cliproxySync || null,
     }));
     return { ok: true, accounts, dataDir: this.ctx.dataDir };
   }
@@ -57,14 +61,24 @@ export class AntigravityAccountService {
     const filePath = path.join(this.ctx.dataDir, "accounts.json");
     const data = readJson(filePath, { accounts: [] });
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
-    const existing = accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    // targetAccountId>0:重授权指定号(按 id 命中),否则按 email 命中/新增。
+    const targetAccountId = Number(payload?.targetAccountId || 0);
+    const existing = targetAccountId > 0
+      ? accounts.find((account: any) => Number(account.id) === targetAccountId)
+      : accounts.find((account: any) => String(account.email || "").toLowerCase() === email.toLowerCase());
+    if (targetAccountId > 0 && !existing) return { ok: false, error: "目标账号不存在" };
     let accountId: number;
     if (existing) {
+      existing.email = email || existing.email;
       existing.refreshToken = refreshToken;
       existing.enabled = payload.enabled !== undefined ? payload.enabled !== false : true;
       existing.alias = String(payload.alias ?? existing.alias ?? "");
       if (payload.projectId !== undefined) existing.projectId = String(payload.projectId || "");
       if (payload.planType !== undefined) existing.planType = String(payload.planType || "");
+      // 重授权:清掉 cliproxy 健康标记(号刚换新 token,旧的限额/死号状态作废)。
+      delete existing.quotaStatus;
+      delete existing.quotaStatusReason;
+      delete existing.blockedUntil;
       accountId = Number(existing.id);
     } else {
       const maxId = accounts.reduce((max: number, account: any) => Math.max(max, Number(account.id || 0)), 0);

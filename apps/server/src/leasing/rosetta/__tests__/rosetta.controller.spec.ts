@@ -13,6 +13,8 @@ function makeController() {
     deleteAccessKey: vi.fn(() => ({ ok: true })),
     cleanupExpiredKeys: vi.fn(async () => ({ ok: true })),
     cleanupUnboundKeys: vi.fn(async () => ({ ok: true })),
+    handleCliProxyReport: vi.fn(() => ({ ok: true, action: "auth_dead" })),
+    reconcileCliProxy: vi.fn(() => ({ ok: true, uploaded: [1], unmanaged: [] })),
   };
   const tokenServer = { reloadAccessKeys: vi.fn() };
   const remoteCodex = { reloadAccessKeys: vi.fn() };
@@ -100,4 +102,39 @@ describe("RosettaController — 账号列表 usedShares 改用 DB 订阅口径",
       expect(res.accounts.find((a: any) => a.id === 2).usedShares).toBe(0);
     },
   );
+});
+
+describe("RosettaController CLIProxy report", () => {
+  it("rejects reports with an invalid shared secret", () => {
+    process.env.CLIPROXY_REPORT_SECRET = "report-secret";
+    const { controller } = makeController();
+
+    expect(() => controller.reportCliProxyFailure("bad-secret", { accountId: 1 })).toThrow("Invalid CLIProxy report secret");
+
+    delete process.env.CLIPROXY_REPORT_SECRET;
+  });
+
+  it("passes valid reports to RosettaService with the token server", () => {
+    process.env.CLIPROXY_REPORT_SECRET = "report-secret";
+    const { controller, rosetta, tokenServer } = makeController();
+    const body = { gfaAccountId: 1, status: 400, reason: "invalid_grant" };
+
+    const result = controller.reportCliProxyFailure("report-secret", body);
+
+    expect(rosetta.handleCliProxyReport).toHaveBeenCalledWith(body, tokenServer);
+    expect(result).toEqual({ ok: true, action: "auth_dead" });
+    delete process.env.CLIPROXY_REPORT_SECRET;
+  });
+});
+
+describe("RosettaController CLIProxy reconcile", () => {
+  it("delegates reconcile requests to RosettaService", () => {
+    const { controller, rosetta } = makeController();
+    const body = { provider: "antigravity" };
+
+    const result = controller.reconcileCliProxy(body);
+
+    expect(rosetta.reconcileCliProxy).toHaveBeenCalledWith(body);
+    expect(result).toEqual({ ok: true, uploaded: [1], unmanaged: [] });
+  });
 });

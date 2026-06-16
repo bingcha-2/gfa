@@ -276,6 +276,30 @@ func extractQuotaResetDelayMs(errorText string) int64 {
 	return 0
 }
 
+// parseRetryAfterHeaderMs 解析 HTTP `Retry-After` 头 → 毫秒。支持两种标准格式:
+//   - 秒数:        "60"
+//   - HTTP-date:   "Wed, 21 Oct 2026 07:28:00 GMT"
+// Anthropic 的 rate_limit_error 429 把恢复时间放在【这个响应头】里(body 里没有,
+// extractQuotaResetDelayMs 解析不到),body 取不到 retryAfterMs 时回退读它。解析不到返回 0。
+func parseRetryAfterHeaderMs(v string) int64 {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return int64(secs) * 1000
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if ms := t.UnixMilli() - time.Now().UnixMilli(); ms > 0 {
+			return ms
+		}
+	}
+	return 0
+}
+
 // parseDurationToMs parses human-readable durations like "5h30m10s" → milliseconds.
 // Mirrors the extension's parseDurationToMs (token-proxy.js L752-779).
 func parseDurationToMs(text string) int64 {

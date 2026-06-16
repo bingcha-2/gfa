@@ -61,6 +61,7 @@ function makeStore(recordById: Record<string, any> = {}) {
   return {
     findById: vi.fn((id: string) => recordById[id] ?? null),
     publicStatus: vi.fn((record: any) => record._publicStatus ?? null),
+    setSubscriptionPriority: vi.fn(() => true),
   };
 }
 
@@ -370,6 +371,8 @@ describe("PortalService.setSubscriptionPriority", () => {
         data: { priority: 1 },
       }),
     );
+    // 写 DB 后必须刷新内存 subscriptionById,否则调度仍按旧 priority 接力。
+    expect(store.setSubscriptionPriority).toHaveBeenCalledWith("s1", 1);
   });
 
   it("改不属于自己的订阅 → 抛错,不 update", async () => {

@@ -35,6 +35,8 @@ export class ClaudeProvider implements Provider<ClaudeAccount> {
   readonly id = "anthropic";
   // 反封核心:绝不从用户本机 IP 直连官方,必须经账号绑定的住宅出口(fail-closed)。
   readonly egressPolicy = "required" as const;
+  // Anthropic rate_limit_error 是账号健康的瞬时限速(几秒恢复)→ 零冷却,不踢出轮换。
+  readonly rateLimitZeroCooldown = true;
   readonly accountsFilePath: string;
   readonly models = new ClaudeModelCatalog();
   private readonly tokenProvider: (account: ClaudeAccount, opts?: RefreshOptions) => Promise<string>;
