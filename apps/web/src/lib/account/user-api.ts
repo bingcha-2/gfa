@@ -301,6 +301,21 @@ export async function getPortalOverview() {
   return userApi<AccountOverview>("portal/overview");
 }
 
+/** AI 客服:载最近一段对话 + 是否启用。 */
+export interface SupportConversationResponse {
+  enabled: boolean;
+  conversation: {
+    id: string;
+    status: string;
+    ticketId: string | null;
+    messages: { role: "USER" | "ASSISTANT"; content: string; createdAt: string }[];
+  } | null;
+}
+
+export async function getSupportConversation() {
+  return userApi<SupportConversationResponse>("support/conversation");
+}
+
 export async function getUsage(page: number, pageSize: number, days: UsageDays) {
   return userApi<UsagePage>("usage", { search: { page, pageSize, days } });
 }
@@ -358,6 +373,14 @@ export async function setTicketUrgent(id: string, urgent: boolean) {
     method: "PATCH",
     body: { urgent },
   });
+}
+
+/** 用户自助关闭自己的工单(closedBy=CUSTOMER)。 */
+export async function closeTicket(id: string) {
+  return userApi<{ ticket: { id: string; status: string; closedBy: string | null } }>(
+    `tickets/${id}/close`,
+    { method: "POST" },
+  );
 }
 
 export async function getReferral() {

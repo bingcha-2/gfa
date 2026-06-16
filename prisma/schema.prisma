@@ -615,6 +615,7 @@ model Customer {
   devices       Device[]
   notifications Notification[]
   tickets       Ticket[]
+  supportConversations SupportConversation[]
 
   @@index([invitedById])
 }
@@ -752,6 +753,7 @@ model Ticket {
   customerId String
   subject    String
   status     TicketStatus @default(OPEN)
+  closedBy   String?                      // 关闭来源:"CUSTOMER"(用户自助关) | "ADMIN"(客服关);仅 status=CLOSED 时有意义
   urgent     Boolean      @default(false) // 加急处理:客户或管理员可置;关闭工单时自动清
   urgentAt   DateTime?                    // 置加急的时间(取消/关闭时归 null)
   createdAt  DateTime     @default(now())
@@ -775,6 +777,54 @@ model TicketMessage {
   ticket     Ticket   @relation(fields: [ticketId], references: [id])
 
   @@index([ticketId])
+}
+
+/// AI 客服对话会话(客户端悬浮气泡)。一个客户可有多段对话。
+model SupportConversation {
+  id         String           @id @default(cuid())
+  customerId String
+  status     String           @default("OPEN") // 会话生命周期:OPEN(进行中) | CLOSED(已结束,空闲>30min)
+  ticketId   String?                           // 转人工建的工单 id;非空=已转人工(与 status 正交)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  customer   Customer         @relation(fields: [customerId], references: [id])
+  messages   SupportMessage[]
+
+  @@index([customerId, updatedAt])
+}
+
+/// 客服对话内的单条消息。
+model SupportMessage {
+  id             String              @id @default(cuid())
+  conversationId String
+  role           String              // USER | ASSISTANT | TOOL
+  content        String
+  name           String?             // TOOL 消息:工具名(审计用)
+  toolCalls      String?             // assistant 发起的 tool_calls(JSON 字符串)
+  createdAt      DateTime            @default(now())
+
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId, createdAt])
+}
+
+/// 由工单提炼的客服知识条目(知识飞轮)。bot 检索已发布条目作答。
+model KnowledgeEntry {
+  id             String   @id @default(cuid())
+  question       String                       // 归一化问题
+  answer         String                       // 通用解法
+  category       String?
+  status         String   @default("DRAFT")   // DRAFT | PUBLISHED | ARCHIVED | MERGE_SUGGESTED
+  mergeTargetId  String?                      // MERGE_SUGGESTED 时指向要更新的现有条目
+  sourceTicketId String?                      // 来源工单 id
+  usageCount     Int      @default(0)         // 被 bot 引用次数
+  createdBy      String   @default("AI")      // "AI" | <adminId>
+  embedding      String?                      // 预留:Phase2 存 float[] JSON
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status])
 }
 
 /// Referral reward record — one per qualifying order, replay-safe.

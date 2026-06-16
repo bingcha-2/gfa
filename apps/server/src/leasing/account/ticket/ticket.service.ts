@@ -20,6 +20,7 @@ export class TicketService {
         id: true,
         subject: true,
         status: true,
+        closedBy: true,
         urgent: true,
         urgentAt: true,
         createdAt: true,
@@ -32,6 +33,7 @@ export class TicketService {
         id: t.id,
         subject: t.subject,
         status: t.status as string,
+        closedBy: t.closedBy,
         urgent: t.urgent,
         urgentAt: t.urgentAt ? t.urgentAt.toISOString() : null,
         createdAt: t.createdAt.toISOString(),
@@ -88,6 +90,7 @@ export class TicketService {
         customerId: true,
         subject: true,
         status: true,
+        closedBy: true,
         urgent: true,
         urgentAt: true,
         createdAt: true,
@@ -112,6 +115,7 @@ export class TicketService {
         id: ticket.id,
         subject: ticket.subject,
         status: ticket.status as string,
+        closedBy: ticket.closedBy,
         urgent: ticket.urgent,
         urgentAt: ticket.urgentAt ? ticket.urgentAt.toISOString() : null,
         createdAt: ticket.createdAt.toISOString(),
@@ -207,6 +211,41 @@ export class TicketService {
         id: updated.id,
         urgent: updated.urgent,
         urgentAt: updated.urgentAt ? updated.urgentAt.toISOString() : null,
+      },
+    };
+  }
+
+  // ── Close ticket (customer self-service) ───────────────────────────────────
+
+  /**
+   * 用户自助关闭自己的工单:status→CLOSED、closedBy=CUSTOMER、清加急。
+   * 归属校验 → 404;已是 CLOSED → 幂等返回。
+   */
+  async close(customerId: string, id: string) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: { id: true, customerId: true, status: true, closedBy: true },
+    });
+
+    if (!ticket || ticket.customerId !== customerId) {
+      throw new NotFoundException({ error: "TICKET_NOT_FOUND", message: "Ticket not found" });
+    }
+
+    if (ticket.status === "CLOSED") {
+      return { ticket: { id: ticket.id, status: "CLOSED", closedBy: ticket.closedBy } };
+    }
+
+    const updated = await this.prisma.ticket.update({
+      where: { id },
+      data: { status: "CLOSED", closedBy: "CUSTOMER", urgent: false, urgentAt: null },
+      select: { id: true, status: true, closedBy: true },
+    });
+
+    return {
+      ticket: {
+        id: updated.id,
+        status: updated.status as string,
+        closedBy: updated.closedBy,
       },
     };
   }

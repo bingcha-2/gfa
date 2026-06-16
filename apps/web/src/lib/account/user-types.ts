@@ -242,6 +242,7 @@ export type TicketSummary = {
   id: string;
   subject: string;
   status: TicketStatus;
+  closedBy?: "CUSTOMER" | "ADMIN" | null;
   urgent: boolean;
   urgentAt: string | null;
   createdAt: string;
@@ -260,6 +261,7 @@ export type TicketDetail = {
     id: string;
     subject: string;
     status: TicketStatus;
+    closedBy?: "CUSTOMER" | "ADMIN" | null;
     urgent: boolean;
     urgentAt: string | null;
     createdAt: string;

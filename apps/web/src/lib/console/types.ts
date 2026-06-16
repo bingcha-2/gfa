@@ -301,6 +301,7 @@ export type ConsoleTicketListItem = {
   id: string;
   subject: string;
   status: string;
+  closedBy?: "CUSTOMER" | "ADMIN" | null;
   urgent: boolean;
   urgentAt: string | null;
   createdAt: string;
@@ -325,6 +326,7 @@ export type ConsoleTicketDetail = {
   customerId: string;
   subject: string;
   status: string;
+  closedBy?: "CUSTOMER" | "ADMIN" | null;
   urgent: boolean;
   urgentAt: string | null;
   createdAt: string;

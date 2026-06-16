@@ -8,6 +8,7 @@ import { Toaster } from "sonner";
 import { AccountProvider } from "./account-provider";
 import { AccountTopNav } from "./account-topnav";
 import { AccountThemeScript } from "./account-theme";
+import { SupportChatWidget } from "./support-chat-widget";
 import type { Customer } from "@/lib/account/user-types";
 
 export function AccountShell({
@@ -25,6 +26,7 @@ export function AccountShell({
         <main className="account-main">
           <div className="account-wrap">{children}</div>
         </main>
+        <SupportChatWidget />
       </div>
       <Toaster richColors />
     </AccountProvider>

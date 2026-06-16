@@ -413,3 +413,41 @@ describe("TicketService.setUrgent", () => {
     await expect(service.setUrgent("cust-1", "nonexistent", true)).rejects.toThrow(NotFoundException);
   });
 });
+
+// ── 6. close (用户自助关闭) ─────────────────────────────────────────────────────
+
+describe("TicketService.close", () => {
+  it("置 CLOSED + closedBy=CUSTOMER 并清加急", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-1", status: "OPEN", urgent: true });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    const res = await service.close("cust-1", "t1");
+    expect(res.ticket.status).toBe("CLOSED");
+    expect(res.ticket.closedBy).toBe("CUSTOMER");
+    const updateCall = (prisma.ticket.update as any).mock.calls[0][0];
+    expect(updateCall.data).toMatchObject({
+      status: "CLOSED", closedBy: "CUSTOMER", urgent: false, urgentAt: null,
+    });
+  });
+
+  it("已是 CLOSED → 幂等返回,不再 update", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-1", status: "CLOSED" });
+    (t as any).closedBy = "ADMIN";
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    const res = await service.close("cust-1", "t1");
+    expect(res.ticket.status).toBe("CLOSED");
+    expect(res.ticket.closedBy).toBe("ADMIN");
+    expect((prisma.ticket.update as any)).not.toHaveBeenCalled();
+  });
+
+  it("他人工单 → 404", async () => {
+    const t = makeTicket({ id: "t1", customerId: "cust-OTHER", status: "OPEN" });
+    const prisma = makePrisma({ tickets: [t] });
+    const service = new TicketService(prisma as any);
+
+    await expect(service.close("cust-1", "t1")).rejects.toThrow(NotFoundException);
+  });
+});

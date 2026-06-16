@@ -46,6 +46,7 @@ export class TicketAdminService {
           id: true,
           subject: true,
           status: true,
+          closedBy: true,
           urgent: true,
           urgentAt: true,
           createdAt: true,
@@ -72,6 +73,7 @@ export class TicketAdminService {
         customerId: true,
         subject: true,
         status: true,
+        closedBy: true,
         urgent: true,
         urgentAt: true,
         createdAt: true,
@@ -126,11 +128,13 @@ export class TicketAdminService {
     // Closing a ticket auto-clears its urgent flag (a closed ticket no longer
     // needs expediting). Other transitions leave urgent untouched.
     const data: Prisma.TicketUpdateInput =
-      status === "CLOSED" ? { status, urgent: false, urgentAt: null } : { status };
+      status === "CLOSED"
+        ? { status, closedBy: "ADMIN", urgent: false, urgentAt: null }
+        : { status, closedBy: null }; // 重开则清掉关闭来源
     return this.prisma.ticket.update({
       where: { id },
       data,
-      select: { id: true, status: true, urgent: true },
+      select: { id: true, status: true, urgent: true, closedBy: true },
     });
   }
 

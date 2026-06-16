@@ -108,7 +108,11 @@ export default function TicketDetailPage() {
                   <Badge className="bg-red-500 text-white"><Flame className="h-3 w-3 mr-0.5" />加急</Badge>
                 )}
               </CardTitle>
-              <div className="text-sm text-muted-foreground">{t.customer?.email ?? "—"} · 创建于 {fmtDateTime(t.createdAt)}</div>
+              <div className="text-sm text-muted-foreground">
+                {t.customer?.email ?? "—"} · 创建于 {fmtDateTime(t.createdAt)}
+                {closed && t.closedBy === "CUSTOMER" && " · 由用户关闭"}
+                {closed && t.closedBy === "ADMIN" && " · 由客服关闭"}
+              </div>
             </div>
             <div className="shrink-0 flex items-center gap-2">
               {!closed && (

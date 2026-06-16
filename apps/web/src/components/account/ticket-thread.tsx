@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { FlameIcon, LockIcon, SendIcon } from "lucide-react";
+import { FlameIcon, LockIcon, SendIcon, XCircleIcon } from "lucide-react";
 
 import { AccountButton, AccountSkeleton } from "@/components/account/account-ui";
 import { TicketUrgentBadge } from "@/components/account/ticket-urgent-badge";
-import { getTicket, replyTicket, setTicketUrgent, UserApiError } from "@/lib/account/user-api";
+import { closeTicket, getTicket, replyTicket, setTicketUrgent, UserApiError } from "@/lib/account/user-api";
 import type { TicketDetail } from "@/lib/account/user-types";
 import { formatDateTime } from "@/lib/format";
 import { useDict } from "@/lib/i18n/client";
@@ -23,6 +23,7 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [togglingUrgent, setTogglingUrgent] = useState(false);
+  const [closing, setClosing] = useState(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -107,6 +108,34 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
     }
   }
 
+  async function handleClose() {
+    if (!detail || closing) return;
+    if (!window.confirm(t.closeConfirm)) return;
+    setClosing(true);
+    try {
+      const { ticket } = await closeTicket(ticketId);
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              ticket: {
+                ...prev.ticket,
+                status: "CLOSED",
+                closedBy: (ticket.closedBy as "CUSTOMER" | "ADMIN" | null) ?? "CUSTOMER",
+                urgent: false,
+                urgentAt: null,
+              },
+            }
+          : prev
+      );
+      toast.success(t.closeToast);
+    } catch {
+      toast.error(t.closeFailed);
+    } finally {
+      setClosing(false);
+    }
+  }
+
   if (loadState === "notFound") {
     return (
       <div className="account-state-panel">
@@ -155,6 +184,14 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
             <FlameIcon data-icon="inline-start" />
             {detail.ticket.urgent ? t.cancelUrgent : t.urgent}
           </AccountButton>
+          <AccountButton
+            variant="secondary"
+            onClick={() => void handleClose()}
+            disabled={closing}
+          >
+            <XCircleIcon data-icon="inline-start" />
+            {t.closeTicket}
+          </AccountButton>
         </div>
       )}
 
@@ -185,7 +222,11 @@ export function TicketThread({ ticketId }: { ticketId: string }) {
       {closed ? (
         <div className="account-closed-notice">
           <LockIcon />
-          {t.closedNotice}
+          {detail.ticket.closedBy === "CUSTOMER"
+            ? t.closedByYou
+            : detail.ticket.closedBy === "ADMIN"
+              ? t.closedByAdmin
+              : t.closedNotice}
         </div>
       ) : (
         <form onSubmit={handleSend} className="account-reply-form">

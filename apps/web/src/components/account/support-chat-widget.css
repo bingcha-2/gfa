@@ -1,0 +1,125 @@
+/* AI 客服悬浮气泡 —— 复用 account 主题令牌(--surface/--line/--primary…),自动深浅色。 */
+
+.sc-bubble {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  color: var(--primary-ink);
+  background: var(--primary);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.18);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.sc-bubble:hover { transform: translateY(-2px); background: var(--primary-strong); }
+
+.sc-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 100px));
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px oklch(0 0 0 / 0.22);
+  overflow: hidden;
+}
+
+.sc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.sc-header-title { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.sc-header-sub { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+.sc-header-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+.sc-header-close:hover { background: var(--surface); color: var(--ink); }
+
+.sc-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sc-msg { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.sc-msg--user { align-self: flex-end; background: var(--primary); color: var(--primary-ink); border-bottom-right-radius: 4px; }
+.sc-msg--assistant { align-self: flex-start; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+
+.sc-tool { align-self: flex-start; font-size: 12px; color: var(--ink-muted); display: inline-flex; align-items: center; gap: 6px; }
+.sc-tool .sc-spin { width: 12px; height: 12px; }
+
+.sc-escalate {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--primary-soft);
+  font-size: 12px;
+  color: var(--ink);
+  max-width: 85%;
+}
+.sc-escalate-title { font-weight: 600; margin-bottom: 2px; }
+.sc-escalate-link { display: inline-block; margin-top: 6px; color: var(--primary-text); font-weight: 600; text-decoration: none; }
+.sc-escalate-link:hover { text-decoration: underline; }
+
+.sc-footer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); background: var(--surface); }
+.sc-input {
+  flex: 1;
+  resize: none;
+  height: 38px;
+  max-height: 96px;
+  padding: 9px 11px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  outline: none;
+}
+.sc-input:focus { border-color: var(--primary); }
+.sc-send {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--primary-ink);
+  background: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sc-spin { animation: sc-spin 0.9s linear infinite; }
+@keyframes sc-spin { to { transform: rotate(360deg); } }

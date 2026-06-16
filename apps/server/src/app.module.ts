@@ -42,12 +42,15 @@ import { CustomerAdminModule } from "./leasing/console/customer-admin/customer-a
 import { AccountLevelsModule } from "./leasing/console/account-levels/account-levels.module";
 import { TicketAdminModule } from "./leasing/console/ticket-admin/ticket-admin.module";
 import { ReferralAdminModule } from "./leasing/console/referral-admin/referral-admin.module";
+import { SupportKnowledgeAdminModule } from "./leasing/console/support-knowledge-admin/support-knowledge-admin.module";
+import { SupportInsightsModule } from "./leasing/console/support-insights/support-insights.module";
 import { CardMigrationModule } from "./leasing/account/card-migration/card-migration.module";
 import { BillingModule } from "./leasing/account/billing/billing.module";
 import { PortalModule } from "./leasing/account/portal/portal.module";
 import { NotificationModule } from "./leasing/account/notification/notification.module";
 import { TicketModule } from "./leasing/account/ticket/ticket.module";
 import { ReferralModule } from "./leasing/account/referral/referral.module";
+import { SupportAgentModule } from "./leasing/account/support-agent/support-agent.module";
 
 @Module({
   imports: [
@@ -106,12 +109,15 @@ import { ReferralModule } from "./leasing/account/referral/referral.module";
     AccountLevelsModule,
     TicketAdminModule,
     ReferralAdminModule,
+    SupportKnowledgeAdminModule,
+    SupportInsightsModule,
     CardMigrationModule,
     BillingModule,
     PortalModule,
     NotificationModule,
     TicketModule,
     ReferralModule,
+    SupportAgentModule,
   ],
   controllers: [HealthController, StatsController],
   providers: [

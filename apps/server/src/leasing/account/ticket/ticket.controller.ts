@@ -100,4 +100,14 @@ export class TicketController {
   ) {
     return this.ticketService.setUrgent(customer.customerId, id, dto.urgent);
   }
+
+  /**
+   * POST /api/account/tickets/:id/close
+   * 用户自助关闭工单(closedBy=CUSTOMER)。归属 → 404;已关闭幂等返回。
+   */
+  @Post(":id/close")
+  @HttpCode(200)
+  close(@CurrentCustomer() customer: CustomerUser, @Param("id") id: string) {
+    return this.ticketService.close(customer.customerId, id);
+  }
 }

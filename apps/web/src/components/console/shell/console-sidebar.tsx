@@ -195,6 +195,8 @@ export function ConsoleSidebar({
     { id: "users", title: "后台管理员", url: `/${prefix}/users`, icon: <ShieldIcon />, roleGuard: () => isSuperAdmin },
     { id: "announcement", title: "公告管理", url: `/${prefix}/announcement`, icon: <MegaphoneIcon />, permKey: "announcement", roleGuard: () => isAdminOrOps },
     { id: "faq", title: "常见问题", url: `/${prefix}/faq`, icon: <HelpCircleIcon />, permKey: "faq", roleGuard: () => isAdminOrOps },
+    { id: "support-knowledge", title: "客服知识", url: `/${prefix}/support-knowledge`, icon: <BotIcon />, permKey: "tickets", roleGuard: () => isAdminOrOps },
+    { id: "support-insights", title: "客服分析", url: `/${prefix}/support-insights`, icon: <BarChart3Icon />, permKey: "tickets", roleGuard: () => isAdminOrOps },
     { id: "settings", title: "修改密码", url: `/${prefix}/settings`, icon: <Settings2Icon /> },
   ];
 

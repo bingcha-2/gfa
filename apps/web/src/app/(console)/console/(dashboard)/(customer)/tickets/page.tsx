@@ -14,13 +14,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Search, MessageSquare, Flame } from "lucide-react";
+import { Search, MessageSquare, Flame, Bot } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
@@ -45,6 +46,8 @@ export default function TicketsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [distilling, setDistilling] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -59,12 +62,42 @@ export default function TicketsPage() {
         },
       });
       setData(res);
+      setSelected(new Set());
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   }, [page, status, search, urgentOnly]);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function distillSelected() {
+    const ticketIds = [...selected].slice(0, 20);
+    if (ticketIds.length === 0) return;
+    setDistilling(true);
+    try {
+      const res = await apiRequest<{ processed: number; results: { outcome: string }[] }>(
+        "support-knowledge/distill",
+        { method: "POST", body: { ticketIds } },
+      );
+      const made = res.results.filter(
+        (r) => r.outcome === "draft" || r.outcome === "merge_suggested",
+      ).length;
+      toast.success(`已处理 ${res.processed} 个工单,生成 ${made} 条草稿/合并建议,请到「客服知识」审核`);
+      setSelected(new Set());
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setDistilling(false);
+    }
+  }
 
   useEffect(() => { void load(); }, [load]);
 
@@ -101,6 +134,15 @@ export default function TicketsPage() {
           >
             <Flame className="h-4 w-4 mr-1" />仅看加急
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selected.size === 0 || distilling}
+            onClick={distillSelected}
+          >
+            <Bot className="h-4 w-4 mr-1" />
+            {distilling ? "提炼中…" : `提炼知识${selected.size ? `(${selected.size})` : ""}`}
+          </Button>
         </div>
       </CardHeader>
       <CardContent>
@@ -113,6 +155,7 @@ export default function TicketsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8" />
                   <TableHead>客户</TableHead>
                   <TableHead>主题</TableHead>
                   <TableHead>状态</TableHead>
@@ -124,6 +167,12 @@ export default function TicketsPage() {
               <TableBody>
                 {data.tickets.map((t) => (
                   <TableRow key={t.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(t.id)}
+                        onCheckedChange={() => toggle(t.id)}
+                      />
+                    </TableCell>
                     <TableCell>{t.customer?.email ?? "—"}</TableCell>
                     <TableCell className="font-medium max-w-xs truncate">
                       {t.urgent && (
