@@ -177,15 +177,17 @@ describe("CardMigrationService.bindCard — migration", () => {
     expect((await prisma.subscription.findUnique({ where: { id: "card-fresh" } }))!.expiresAt).toBeNull();
   });
 
-  it("derives products from bindings + bucket prefixes for a bound card", async () => {
-    writeKeys([usedCard()]); // bindings antigravity+codex, buckets antigravity+codex
+  it("derives products from bindings only for a bound card", async () => {
+    writeKeys([usedCard()]); // bindings antigravity+codex
     store.reload();
     const customer = await createTestCustomer();
     const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
     expect(result.subscription.products).toEqual(["antigravity", "codex"]);
   });
 
-  it("a bucketLimits prefix for an unbound product still counts into the union", async () => {
+  it("a bound card does NOT gain entitlement from a bucketLimits prefix of an unbound product", async () => {
+    // 绑定卡上非绑定产品的 bucketLimits 是占位 1(封死),绝不能被算成「开通」——否则
+    // 接力 serves 会误命中没绑号的产品 → 409/429。anthropic 桶(无论 cap)都不应进 products。
     writeKeys([usedCard({
       bindings: { antigravity: 7 },
       bucketLimits: { "antigravity-gemini": 1, "anthropic-claude": 2 },
@@ -193,7 +195,7 @@ describe("CardMigrationService.bindCard — migration", () => {
     store.reload();
     const customer = await createTestCustomer();
     const result = await service.bindCard(customer.id, "BCAI-AAAA-BBBB");
-    expect(result.subscription.products).toEqual(["antigravity", "anthropic"]);
+    expect(result.subscription.products).toEqual(["antigravity"]);
   });
 
   it("a legacy provider/boundAccountId hint counts as a binding", async () => {

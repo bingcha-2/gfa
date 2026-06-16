@@ -341,8 +341,13 @@ function summarize(sub: Subscription) {
 /**
  * Products the migrated subscription is entitled to:
  *   • bound card (any binding, incl. the legacy provider/boundAccountId pair):
- *     union of bindings keys + bucketLimits bucket prefixes (`<product>-<family>`)
- *     + the legacy provider hint;
+ *     ONLY the products it actually binds a real account for (bindings keys with
+ *     value>0, plus the legacy provider hint). bucketLimits are NOT consulted —
+ *     on a bound card the non-bound buckets are placeholder caps of 1 (a "blocked"
+ *     marker), and unioning their prefixes would mis-read those as entitlements,
+ *     making the failover `serves` gate match a product the card has no account
+ *     for → spurious 409/429. A genuine "bind X + metered-sell Y" card is modeled
+ *     as a POOL card (no binding, real bucketLimits), which takes the else branch.
  *   • pure pool card (no binding at all): its explicit `products` restriction
  *     when present, else all three products (legacy universal card).
  */
@@ -359,13 +364,8 @@ function deriveProducts(record: AccessKeyRecord, store: AccessKeyStore): string[
   }
 
   if (store.hasAnyBinding(record)) {
-    const bucketLimits = record.bucketLimits && typeof record.bucketLimits === "object" ? record.bucketLimits : {};
-    for (const bucket of Object.keys(bucketLimits)) {
-      const idx = bucket.indexOf("-");
-      if (idx <= 0) continue;
-      const product = bucket.slice(0, idx);
-      if (valid.has(product)) set.add(product);
-    }
+    // 绑定卡只服务实际绑了号的产品(bindings/provider)。不并入 bucketLimits 桶前缀:
+    // 绑定卡上非绑定产品的 bucketLimits 都是占位 1(封死),并入会把它们误判成「开通」。
     return ALL_PRODUCTS.filter((p) => set.has(p));
   }
 
