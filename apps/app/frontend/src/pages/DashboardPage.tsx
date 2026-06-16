@@ -255,7 +255,7 @@ export function DashboardPage() {
       <Card className="overflow-hidden">
         <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle><BarChart3 size={15} /> 今日模型明细</CardTitle>
-          <div className="text-[11px] text-[var(--text-muted)]">按官方 API 价估算</div>
+          <div className="text-[11px] text-[var(--text-muted)]">本机实时 · 官方 API 价估算(含缓存)</div>
         </CardHeader>
         <CardContent className="p-0">
           <ModelUsageTable rows={modelUsageRows} />

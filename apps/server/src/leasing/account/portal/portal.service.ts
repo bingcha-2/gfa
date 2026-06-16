@@ -43,10 +43,11 @@ function formatBucketLabel(start: Date, granularity: "hour" | "day"): string {
  * family 取自 bucket 后缀(`<product>-<family>`,如 antigravity-claude);
  * 未知/缺失家族回退 gemini(与客户端 priceFor 一致)。
  */
-const FAMILY_PRICING: Record<string, { inPerM: number; outPerM: number }> = {
-  claude: { inPerM: 5, outPerM: 25 },
-  gemini: { inPerM: 2, outPerM: 12 },
-  gpt: { inPerM: 1.25, outPerM: 10 },
+// 与客户端 apps/app/pricing.json 同一份表(含缓存读/写单价)。
+const FAMILY_PRICING: Record<string, { inPerM: number; outPerM: number; cacheReadPerM: number; cacheWritePerM: number }> = {
+  claude: { inPerM: 5, outPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  gemini: { inPerM: 2, outPerM: 12, cacheReadPerM: 0.5, cacheWritePerM: 2.5 },
+  gpt: { inPerM: 1.25, outPerM: 10, cacheReadPerM: 0.125, cacheWritePerM: 1.25 },
 };
 
 function familyOfBucket(bucket: string): string {
@@ -54,9 +55,26 @@ function familyOfBucket(bucket: string): string {
   return i < 0 ? "" : bucket.slice(i + 1);
 }
 
+/** 累计节省(不含缓存)—— 与客户端 UsageStatsStore.AddTokens 的 SavedMoneyUSD 同口径。勿动。 */
 function savedUSDFor(bucket: string, input: number, output: number): number {
   const p = FAMILY_PRICING[familyOfBucket(bucket)] ?? FAMILY_PRICING.gemini;
   return (input / 1_000_000) * p.inPerM + (output / 1_000_000) * p.outPerM;
+}
+
+/**
+ * 按模型「官方 API 价估算」—— 与客户端 estimateOfficialCostUSD 同一算法(含缓存读/写)。
+ * 注:服务端 CardTokenUsage 未单独记录缓存写,故 cacheWrite 入参恒为 0;其余口径一致。
+ */
+function officialCostFor(
+  bucket: string, input: number, output: number, cacheRead: number, cacheWrite: number,
+): number {
+  const p = FAMILY_PRICING[familyOfBucket(bucket)] ?? FAMILY_PRICING.gemini;
+  return (
+    (input / 1_000_000) * p.inPerM +
+    (output / 1_000_000) * p.outPerM +
+    (cacheRead / 1_000_000) * p.cacheReadPerM +
+    (cacheWrite / 1_000_000) * p.cacheWritePerM
+  );
 }
 
 function mapQuota(status: any): typeof UNLIMITED_QUOTA {
@@ -327,7 +345,8 @@ export class PortalService {
       m.inputTokens += input;
       m.outputTokens += output;
       m.cachedTokens += cached;
-      m.savedUSD += savedUSDFor(r.bucket, input, output);
+      // per-model 成本对齐客户端 estimateOfficialCostUSD(含缓存读;服务端无缓存写→0)。
+      m.savedUSD += officialCostFor(r.bucket, input, output, cached, 0);
       byModel.set(r.modelKey, m);
 
       if (isSuccessStatus(r.status)) success += 1;

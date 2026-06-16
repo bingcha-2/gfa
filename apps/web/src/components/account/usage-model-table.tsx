@@ -58,6 +58,9 @@ export function UsageModelTable({ days = 7 }: { days?: UsageDays }) {
 
   return (
     <div className="account-data-section">
+      <p style={{ fontSize: "12px", color: "var(--ink-muted)", margin: "0 0 8px" }}>
+        服务端账单口径(含你全部设备);成本按官方 API 价估算(含缓存读)。
+      </p>
       <div className="account-data-table">
         <table>
           <thead>
