@@ -3,6 +3,7 @@ import { Module } from "@nestjs/common";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { PlanCatalogPublicController } from "./plan-catalog-public.controller";
 import { PlanCatalogAdminController } from "./plan-catalog-admin.controller";
+import { QuotaBaselineService } from "./quota-baseline.service";
 
 /**
  * PlanCatalogModule — versioned plan catalog (spec §4.1 / §7).
@@ -14,7 +15,7 @@ import { PlanCatalogAdminController } from "./plan-catalog-admin.controller";
  */
 @Module({
   controllers: [PlanCatalogPublicController, PlanCatalogAdminController],
-  providers: [PlanCatalogService],
-  exports: [PlanCatalogService],
+  providers: [PlanCatalogService, QuotaBaselineService],
+  exports: [PlanCatalogService, QuotaBaselineService],
 })
 export class PlanCatalogModule {}

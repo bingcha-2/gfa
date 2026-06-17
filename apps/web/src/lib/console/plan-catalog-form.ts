@@ -75,6 +75,8 @@ export interface PlanCatalogForm {
   durationDays: string;
   /** 限额窗口(毫秒,字符串)。锁死 5h,但仍存表单里以便组装回 config。 */
   windowMs: string;
+  /** Read-only JSON policy payload passed through until the console grows editors for it. */
+  supplyPolicies?: CatalogConfig["supplyPolicies"];
 }
 
 // ── 数值转换(元 ↔ 分 / 字符串 ↔ 数字)──────────────────────────────────────────
@@ -186,6 +188,7 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     pricing: { pool, bind },
     durationDays: intToStr(Number(config.durationDays ?? 0)),
     windowMs: intToStr(Number(config.windowMs ?? 0)),
+    ...(config.supplyPolicies === undefined ? {} : { supplyPolicies: config.supplyPolicies }),
   };
 }
 
@@ -264,6 +267,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
     },
     durationDays: toInt(form.durationDays),
     windowMs: toInt(form.windowMs),
+    ...(form.supplyPolicies === undefined ? {} : { supplyPolicies: form.supplyPolicies }),
   };
 }
 

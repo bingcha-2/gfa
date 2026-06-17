@@ -113,6 +113,32 @@ describe("formToConfig — 组装 + ×100", () => {
     expect(back).toEqual(CATALOG);
   });
 
+  it("round-trip preserves supplyPolicies without interpreting nested policy JSON", () => {
+    const supplyPolicies = {
+      anthropic: {
+        defaultLevel: "max-20x",
+        salesSeatsPerAccount: { "max-20x": 10 },
+        buckets: {
+          "anthropic-claude": {
+            source: "learned",
+            provider: "anthropic",
+            planType: "max-20x",
+            family: "claude",
+            samplePolicy: { trust: "operator" },
+          },
+        },
+      },
+    };
+    const form = configToForm({
+      ...CATALOG,
+      supplyPolicies,
+    } as any);
+    const back = formToConfig(form as any);
+
+    expect(form.supplyPolicies).toEqual(supplyPolicies);
+    expect(back.supplyPolicies).toEqual(supplyPolicies);
+  });
+
   it("组装产物可直接喂 computePurchase,价格与原 catalog 一致", () => {
     const back = formToConfig(configToForm(CATALOG));
 

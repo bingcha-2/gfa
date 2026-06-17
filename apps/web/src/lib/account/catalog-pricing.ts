@@ -17,6 +17,12 @@ export interface CatalogUsageTier {
   weeklyTokenLimit: number;
 }
 
+export interface CatalogSupplyPolicy {
+  defaultLevel: string;
+  salesSeatsPerAccount: Record<string, number>;
+  buckets: Record<string, unknown>;
+}
+
 /** The PUBLISHED PlanCatalog.config, as returned by GET /api/plan-catalog. */
 export interface CatalogConfig {
   products: string[];
@@ -36,6 +42,7 @@ export interface CatalogConfig {
   };
   durationDays: number;
   windowMs: number;
+  supplyPolicies?: Record<string, CatalogSupplyPolicy>;
   /**
    * Seats one upstream account is sliced into (= server runtime
    * ACCOUNT_SHARE_CAPACITY, injected when the catalog is read server-side and
