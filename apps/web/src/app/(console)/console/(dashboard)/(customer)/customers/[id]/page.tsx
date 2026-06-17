@@ -6,12 +6,15 @@ import { useParams } from "next/navigation";
 import { apiRequest, getErrorMessage } from "@/lib/console/client-api";
 import { toast } from "sonner";
 import type {
-  ConsoleCustomerDetail, ConsoleSubscriptionLite,
+  ConsoleCustomerDetail, ConsoleSubscriptionLite, ConsoleSubscription,
 } from "@/lib/console/types";
 import {
   fmtYuan, fmtDateTime, ORDER_STATUS_LABEL, SUB_STATUS_LABEL, PAY_CHANNEL_LABEL,
 } from "@/lib/console/format";
+import { buildSubscriptionView } from "@/lib/console/subscription-view";
+import { orderAction } from "@/lib/console/order-action";
 import { GrantSubscriptionDialog } from "./grant-subscription-dialog";
+import { SubscriptionDetailDrawer } from "../../subscriptions/subscription-detail-drawer";
 
 import {
   Card, CardContent, CardHeader, CardTitle,
@@ -70,6 +73,7 @@ export default function CustomerDetailPage() {
   const [editForm, setEditForm] = useState({ displayName: "", creditYuan: "" });
 
   const [grantOpen, setGrantOpen] = useState(false);
+  const [detail, setDetail] = useState<ConsoleSubscription | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -230,7 +234,16 @@ export default function CustomerDetailPage() {
                   <TableBody>
                     {c.subscriptions.map((s) => (
                       <TableRow key={s.id}>
-                        <TableCell className="font-medium">{selectionName(s.config)}</TableCell>
+                        <TableCell className="font-medium">
+                          <button className="text-blue-600 hover:underline" onClick={() => setDetail({ ...s, customerId: c.id, customer: { email: c.email }, bindings: null, levels: null, line: undefined, plan: null } as ConsoleSubscription)}>
+                            {selectionName(s.config)}
+                          </button>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {buildSubscriptionView({ config: s.config }).rows.map((r) =>
+                              r.bound ? `${r.product}→#${r.accountId}` : r.level ? `${r.product}→未绑定` : r.product
+                            ).join(" · ")}
+                          </div>
+                        </TableCell>
                         <TableCell>{subStatusBadge(s.status)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(s.startsAt)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(s.expiresAt)}</TableCell>
@@ -285,12 +298,43 @@ export default function CustomerDetailPage() {
                         <TableCell>{PAY_CHANNEL_LABEL[o.payChannel] ?? o.payChannel}</TableCell>
                         <TableCell>{orderStatusBadge(o.status)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDateTime(o.paidAt)}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right flex items-center justify-end gap-1">
                           {(o.status === "PENDING" || o.status === "EXPIRED") && (
                             <Button variant="ghost" size="sm" onClick={() => void syncOrder(o.id)}>
                               <RefreshCw className="h-3.5 w-3.5 mr-1" />查询支付
                             </Button>
                           )}
+                          {(() => {
+                            const act = orderAction({ payChannel: o.payChannel, status: o.status });
+                            if (act.kind === "none") return null;
+                            const onConfirm = async () => {
+                              try {
+                                if (act.kind === "revoke" && o.subscriptionId) await apiRequest(`subscriptions/${o.subscriptionId}/revoke`, { method: "POST" });
+                                else await apiRequest(`plan-orders/${o.id}/refund`, { method: "POST" });
+                                toast.success(`已${act.label}`);
+                                await load();
+                              } catch (err) { toast.error(getErrorMessage(err)); }
+                            };
+                            return (
+                              <AlertDialog>
+                                <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>{act.label}</AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>{act.label}？</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {act.kind === "revoke"
+                                        ? `订单 ${o.outTradeNo} 为管理员发放(¥0),将撤销授权并取消对应订阅、释放席位,不涉及退款。`
+                                        : `确认对订单 ${o.outTradeNo}(${fmtYuan(o.amountCents)})退款?仅未使用的订单可退,原路退回并取消订阅。`}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>取消</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => void onConfirm()}>确认{act.label}</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            );
+                          })()}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -359,6 +403,8 @@ export default function CustomerDetailPage() {
         customerId={c.id}
         onGranted={load}
       />
+
+      <SubscriptionDetailDrawer sub={detail} open={!!detail} onOpenChange={(o) => !o && setDetail(null)} onChanged={load} />
     </div>
   );
 }

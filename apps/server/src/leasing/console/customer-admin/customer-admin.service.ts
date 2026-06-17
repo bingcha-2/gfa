@@ -159,6 +159,7 @@ export class CustomerAdminService {
         planOrders: {
           select: {
             id: true,
+            subscriptionId: true,
             outTradeNo: true,
             amountCents: true,
             payChannel: true,

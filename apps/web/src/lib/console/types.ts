@@ -217,6 +217,7 @@ export type ConsoleSubscriptionLite = {
 };
 export type ConsoleOrderLite = {
   id: string;
+  subscriptionId: string | null;
   outTradeNo: string;
   amountCents: number;
   payChannel: string;
