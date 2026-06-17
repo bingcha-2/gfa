@@ -398,7 +398,10 @@ export function BoundCardAccordion({ accounts, shareCapacity = 8 }: { accounts: 
                           <TableRow key={c.id}>
                             <TableCell className="max-w-[160px] font-medium">
                               <div className="flex items-center gap-1.5">
-                                <span className="truncate">{c.email || c.id}</span>
+                                <a className="truncate text-blue-600 hover:underline" href={`/console/customers?search=${encodeURIComponent(c.email ?? "")}`}>
+                                  {c.email || c.id} ↗
+                                </a>
+                                <a className="text-blue-600 hover:underline ml-2 shrink-0 text-[11px]" href={`/console/subscriptions?sub=${c.id}`}>订阅 ↗</a>
                                 {plan && <Badge variant="outline" className="shrink-0 text-[9px]">{plan}</Badge>}
                               </div>
                             </TableCell>
