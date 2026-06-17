@@ -169,7 +169,13 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
         products: ["anthropic"],
         levels: { anthropic: "max-20x" },
         bindings: { anthropic: 1234 },
+        displayBindings: { anthropic: "team-seat-a" },
+        assignmentPolicy: "balanced",
+        shareSeats: 6,
+        shareCapacity: 12,
         weight: 8,
+        bucketLimits: { "anthropic-claude": 50000 },
+        weeklyBucketLimits: { "anthropic-claude": 250000 },
         deviceLimit: 1,
         windowMs: 18000000,
       },
@@ -182,10 +188,45 @@ describe("subscriptionToLimitRecord — config → 限额引擎 record(去影子
       status: "active",
       products: ["anthropic"],
       bindings: { anthropic: 1234 },
+      displayBindings: { anthropic: "team-seat-a" },
+      assignmentPolicy: "balanced",
+      levels: { anthropic: "max-20x" },
+      shareSeats: 6,
+      shareCapacity: 12,
       weight: 8,
+      bucketLimits: { "anthropic-claude": 50000 },
+      weeklyBucketLimits: { "anthropic-claude": 250000 },
       requiresBinding: true,
       windowMs: 18000000,
       keyExpiresAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
+
+  it("bind record falls back to legacy bindings and weight defaults when new fields are absent", () => {
+    const record = subscriptionToLimitRecord({
+      id: "sub-legacy",
+      status: "ACTIVE",
+      expiresAt,
+      config: {
+        line: "bind",
+        products: ["anthropic"],
+        bindings: { anthropic: 1234 },
+        weight: 8,
+        windowMs: 18000000,
+      },
+    });
+
+    expect(record).toMatchObject({
+      bindings: { anthropic: 1234 },
+      displayBindings: { anthropic: 1234 },
+      assignmentPolicy: "pinned",
+      levels: {},
+      shareSeats: 8,
+      shareCapacity: 8,
+      weight: 8,
+      bucketLimits: {},
+      weeklyBucketLimits: {},
+      requiresBinding: true,
     });
   });
 

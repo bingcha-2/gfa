@@ -1,11 +1,13 @@
 // Pure catalog pricing and purchase config generation. No IO.
 
+import type { SupplyPolicyCatalog } from "./unified-entitlement";
+
 export interface UsageTier {
   bucketLimits: Record<string, number>;
   weeklyTokenLimit: number;
 }
 
-export interface CatalogConfig {
+export interface CatalogConfig extends SupplyPolicyCatalog {
   usageTiers: Record<string, UsageTier>;
   pricing: {
     pool: { product: Record<string, number>; usage: Record<string, number>; devicePerExtra: number };

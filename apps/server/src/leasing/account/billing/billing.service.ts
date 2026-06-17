@@ -20,6 +20,7 @@ import {
 import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
+import { QuotaBaselineService } from "../../plan-catalog/quota-baseline.service";
 import { RosettaService } from "../../rosetta/rosetta.service";
 import { occupiedSharesByAccount, type SubConfig } from "../../subscription/seat";
 import { signParams } from "./epay.sign";
@@ -130,6 +131,7 @@ export class BillingService {
     private readonly rosetta: RosettaService,
     private readonly epayCallback: EpayCallbackService,
     private readonly subscriptions: SubscriptionService,
+    private readonly quotaBaselines: QuotaBaselineService,
   ) {}
 
   /**
@@ -171,6 +173,7 @@ export class BillingService {
     } catch (err: any) {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
+    config = await this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
 
     // 座位预检(spec §10):绑定线下单前确认每个 product+level 有可用座位,无 → 拒绝下单
     // (避免用户付钱拿不到号)。号池线不预检(运行时动态调度,无座位概念)。
@@ -222,6 +225,7 @@ export class BillingService {
     } catch (err: any) {
       throw new BadRequestException(`Invalid selection: ${err?.message || err}`);
     }
+    config = await this.enrichUnifiedBindConfig(published.config as CatalogConfig, config);
 
     // 与付费下单同口径:绑定线座位预检(避免授予了拿不到号);号池线不预检。
     await this.assertBindSeatsAvailable(config);
@@ -244,6 +248,26 @@ export class BillingService {
         config: JSON.stringify(config),
       } as any,
     });
+  }
+
+  private async enrichUnifiedBindConfig(
+    catalog: CatalogConfig,
+    config: Record<string, any>,
+  ): Promise<Record<string, any>> {
+    if (config.line !== "bind") return config;
+
+    const entitlements = await this.quotaBaselines.buildEntitlements(catalog, {
+      products: Array.isArray(config.products) ? config.products : [],
+      levels: config.levels || {},
+      shareSeats: Number(config.shareSeats || config.weight || 1),
+      shareCapacity: Number(config.shareCapacity || 8),
+    });
+
+    return {
+      ...config,
+      ...entitlements,
+      assignmentPolicy: "preferred-dynamic",
+    };
   }
 
   /**

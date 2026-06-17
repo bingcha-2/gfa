@@ -40,6 +40,7 @@ import { SubscriptionService } from "../../../subscription/subscription.service"
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
 import { PlanCatalogPublicController } from "../../../plan-catalog/plan-catalog-public.controller";
+import { QuotaBaselineService } from "../../../plan-catalog/quota-baseline.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import { AccessKeyStore } from "../../../token-server/access-key-store";
 import { SessionTokenResolver } from "../../../token-server/session-token-resolver";
@@ -218,7 +219,14 @@ beforeEach(async () => {
   );
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService, subscriptionService);
+  billingService = new BillingService(
+    prisma as any,
+    planCatalog,
+    rosetta,
+    callbackService,
+    subscriptionService,
+    new QuotaBaselineService(prisma as any),
+  );
 
   // Three lease lines sharing the SAME store + injecting the real engine.
   const common = {

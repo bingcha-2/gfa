@@ -68,6 +68,8 @@ export interface AccessKeyRecord {
   /** Weekly (long) window fields — independent second tier of rate limiting. */
   weeklyWindowMs?: number;
   weeklyTokenLimit?: number;
+  /** Per-composite-bucket weekly token caps. Takes precedence over weeklyTokenLimit. */
+  weeklyBucketLimits?: Record<string, number>;
   weeklyWindowStartedAt?: number;
   weeklyTokenUsageEvents?: any[];
   /** Per-product static binding: { codex?: accountId, antigravity?: accountId }.
@@ -187,6 +189,26 @@ export class AccessKeyStore {
   /** sha256 hex of a key value — the byKey index key (see field comment). */
   private keyHash(value: string): string {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+  }
+
+  private weeklyBucketCap(record: AccessKeyRecord, bucket: string, ratioValue: () => number): number {
+    const weeklyBucketLimits = record.weeklyBucketLimits && typeof record.weeklyBucketLimits === 'object'
+      ? record.weeklyBucketLimits as Record<string, number>
+      : {};
+    const explicitBucketWeekly = Number(weeklyBucketLimits[bucket] || 0);
+    if (explicitBucketWeekly > 0) return explicitBucketWeekly;
+
+    const explicitWeekly = weeklyTokenLimit(record);
+    if (explicitWeekly > 0) return this.billing.bucketLimit(explicitWeekly, bucket);
+
+    const cap5h = this.billing.bucketLimit(0, bucket, record);
+    const product = productOfBucket(bucket);
+    if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) {
+      const rawR = ratioValue();
+      const ratio = clampWeeklyRatio(Number.isFinite(rawR) && rawR > 0 ? rawR : DEFAULT_WEEKLY_RATIO);
+      return cap5h * ratio;
+    }
+    return 0;
   }
 
   /** Rebuild byId/byKey from the current cache. Called after every (re)load. */
@@ -657,10 +679,14 @@ export class AccessKeyStore {
       // 无 modelKey(预热/探活)不消费具体桶 → 不拦截(理由同 5h 窗口)。
       if (modelKeyStr) {
         const bucket = requestBucket(options.product, modelKeyStr);
-        const explicitWeekly = weeklyTokenLimit(record);
+        const explicitWeekly = this.weeklyBucketCap(record, bucket, () => (
+          typeof options.weeklyRatio === 'function'
+            ? Number(options.weeklyRatio(record))
+            : Number(options.weeklyRatio)
+        ));
         let weeklyCap = 0;
         if (explicitWeekly > 0) {
-          weeklyCap = this.billing.bucketLimit(explicitWeekly, bucket, record);
+          weeklyCap = explicitWeekly;
         } else {
           const cap5h = this.billing.bucketLimit(0, bucket, record); // = bucketLimits[bucket] 或 0
           const product = productOfBucket(bucket);
@@ -815,11 +841,7 @@ export class AccessKeyStore {
       return clampWeeklyRatio(Number.isFinite(r) && r > 0 ? r : DEFAULT_WEEKLY_RATIO);
     };
     const weeklyCapFor = (bucket: string): number => {
-      if (wkLimit > 0) return this.billing.bucketLimit(wkLimit, bucket, record);
-      const cap5h = this.billing.bucketLimit(0, bucket, record);
-      const product = productOfBucket(bucket);
-      if (cap5h > 0 && (product === 'anthropic' || product === 'codex')) return cap5h * ratioForBucket(bucket);
-      return 0;
+      return this.weeklyBucketCap(record, bucket, () => ratioForBucket(bucket));
     };
 
     // 是否设了每模型上限(bucketLimits 中有任何 >0 的桶)。

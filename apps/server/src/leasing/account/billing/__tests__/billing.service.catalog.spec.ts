@@ -64,6 +64,15 @@ function makeRosetta(hasSeat = true) {
   return { hasAvailableSeatFromShares: vi.fn().mockReturnValue(hasSeat) } as any;
 }
 
+function makeQuotaBaselines() {
+  return {
+    buildEntitlements: vi.fn().mockResolvedValue({
+      bucketLimits: { "anthropic-claude": 20_000_000 },
+      weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+    }),
+  } as any;
+}
+
 const EPAY_CASHIER_URL = "https://gw.test/pay/cashier";
 
 /**
@@ -86,6 +95,7 @@ describe("BillingService.createCatalogOrder", () => {
   let prisma: ReturnType<typeof makeMockPrisma>;
   let catalog: any;
   let rosetta: any;
+  let quotaBaselines: any;
   let service: BillingService;
   let fetchMock: ReturnType<typeof stubEpayGateway>;
 
@@ -97,7 +107,8 @@ describe("BillingService.createCatalogOrder", () => {
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
+    quotaBaselines = makeQuotaBaselines();
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any, quotaBaselines);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -144,6 +155,7 @@ describe("BillingService.createCatalogOrder", () => {
     });
 
     // 返回 epay V2 支付信息:payUrl 是网关返回的收银台地址,二维码由它生成。
+    expect(quotaBaselines.buildEntitlements).not.toHaveBeenCalled();
     expect(result.amountCents).toBe(10800);
     expect(result.payUrl).toBe(EPAY_CASHIER_URL);
     expect(result.qrDataUri).toMatch(/^data:image\/png;base64,/);
@@ -178,6 +190,32 @@ describe("BillingService.createCatalogOrder", () => {
       levels: { anthropic: "max-20x" },
       weight: 4, // capacity 8 / 2 人
       deviceLimit: 1,
+    });
+  });
+
+  it("enriches bind catalog orders with quota baseline entitlements before persisting", async () => {
+    const selection = {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    };
+
+    await service.createCatalogOrder("cust-1", selection as any, "WXPAY");
+
+    expect(quotaBaselines.buildEntitlements).toHaveBeenCalledWith(CATALOG_CONFIG, {
+      products: ["anthropic"],
+      levels: { anthropic: "max-20x" },
+      shareSeats: 2,
+      shareCapacity: 8,
+    });
+    const data = prisma.planOrder.create.mock.calls[0][0].data;
+    expect(JSON.parse(data.config)).toMatchObject({
+      line: "bind",
+      shareSeats: 2,
+      bucketLimits: { "anthropic-claude": 20_000_000 },
+      weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+      assignmentPolicy: "preferred-dynamic",
     });
   });
 
@@ -223,6 +261,7 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
   let prisma: ReturnType<typeof makeMockPrisma>;
   let catalog: any;
   let rosetta: any;
+  let quotaBaselines: any;
   let service: BillingService;
 
   beforeEach(() => {
@@ -233,7 +272,8 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
+    quotaBaselines = makeQuotaBaselines();
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any, quotaBaselines);
 
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
@@ -334,13 +374,15 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
   let prisma: ReturnType<typeof makeMockPrisma>;
   let catalog: any;
   let rosetta: any;
+  let quotaBaselines: any;
   let service: BillingService;
 
   beforeEach(() => {
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
+    quotaBaselines = makeQuotaBaselines();
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any, quotaBaselines);
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({ id: "grant-order-1", ...data }));
   });
@@ -361,8 +403,35 @@ describe("BillingService.createGrantOrder(目录版手动授予)", () => {
     expect(data.referrerId).toBe("referrer-1");
     expect(JSON.parse(data.selection)).toEqual(selection);
     expect(JSON.parse(data.config)).toMatchObject({ line: "pool", products: ["anthropic"] });
+    expect(quotaBaselines.buildEntitlements).not.toHaveBeenCalled();
     expect(rosetta.hasAvailableSeatFromShares).not.toHaveBeenCalled(); // 号池线不预检
     expect(order.id).toBe("grant-order-1");
+  });
+
+  it("enriches bind grant orders with quota baseline entitlements before persisting", async () => {
+    const selection = {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    };
+
+    await service.createGrantOrder("cust-1", selection as any);
+
+    expect(quotaBaselines.buildEntitlements).toHaveBeenCalledWith(CATALOG_CONFIG, {
+      products: ["anthropic"],
+      levels: { anthropic: "max-20x" },
+      shareSeats: 2,
+      shareCapacity: 8,
+    });
+    const data = prisma.planOrder.create.mock.calls[0][0].data;
+    expect(JSON.parse(data.config)).toMatchObject({
+      line: "bind",
+      shareSeats: 2,
+      bucketLimits: { "anthropic-claude": 20_000_000 },
+      weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+      assignmentPolicy: "preferred-dynamic",
+    });
   });
 
   it("绑定授予 → 走座位预检(与付费同口径);无座位 → BadRequest,不建订单", async () => {
@@ -399,7 +468,7 @@ describe("BillingService.createCatalogOrder — 作废旧单(不复用)", () => 
     prisma = makeMockPrisma();
     catalog = makeCatalog();
     rosetta = makeRosetta();
-    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any);
+    service = new BillingService(prisma, catalog, rosetta, {} as any, {} as any, makeQuotaBaselines());
     prisma.customer.findUnique.mockResolvedValue(fixedCustomer);
     prisma.planOrder.create.mockImplementation(async ({ data }: any) => ({
       id: "new-order",
@@ -494,7 +563,7 @@ describe("BillingService.cancelOrder", () => {
 
   beforeEach(() => {
     prisma = makeMockPrisma();
-    service = new BillingService(prisma, makeCatalog(), makeRosetta(), {} as any, {} as any);
+    service = new BillingService(prisma, makeCatalog(), makeRosetta(), {} as any, {} as any, makeQuotaBaselines());
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -561,7 +630,7 @@ describe("BillingService.refundEpayOrder", () => {
   beforeEach(() => {
     vi.stubEnv("EPAY_PID", "1001");
     vi.stubEnv("EPAY_MERCHANT_PRIVATE_KEY", TEST_PRIV_B64);
-    service = new BillingService(makeMockPrisma(), makeCatalog(), makeRosetta(), {} as any, {} as any);
+    service = new BillingService(makeMockPrisma(), makeCatalog(), makeRosetta(), {} as any, {} as any, makeQuotaBaselines());
   });
 
   afterEach(() => {

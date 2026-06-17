@@ -58,7 +58,7 @@ import { RemoteCodexService } from "../../remote-codex/service/remote-codex.serv
 import { RemoteAnthropicService } from "../../remote-anthropic/service/remote-anthropic.service";
 import { keyExpiresAt } from "../../token-server/token-billing";
 import { newBackingKeyValue } from "../../subscription/subscription.service";
-import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
+import { rowToConfig, subscriptionToLimitRecord } from "../../subscription/subscription-config";
 
 const ALL_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
 
@@ -213,7 +213,7 @@ export class CardMigrationService {
     }
 
     // 转化即删去影子(替代原"提交后重新断言影子"屏障):先 flush 结算提交期间可能产生的增量
-    // (单写者纪律),再把迁移出来的订阅按「与 boot 完全一致」的方式(legacyColumnsToConfig +
+    // (单写者纪律),再把迁移出来的订阅按「与 boot 完全一致」的方式(rowToConfig +
     // subscriptionToLimitRecord)注册进内存订阅索引,同时把文件影子卡的实时限流窗口平移到订阅
     // record,然后物理删除影子卡。migrate... 内部全程同步、与并发 flush 互斥;删除以最终 flush
     // 落盘,reloadPools 让各池重读到"无影子"的文件。重启后由 boot 的 hydrate + 窗口重建接管。
@@ -227,7 +227,7 @@ export class CardMigrationService {
         backingKeyValue: subRow.backingKeyValue ?? undefined,
         status: subRow.status,
         expiresAt: subRow.expiresAt,
-        config: legacyColumnsToConfig(subRow as any),
+        config: rowToConfig(subRow as any),
       });
       this.accessKeyStore.migrateCardRecordToSubscription(limitRecord as any);
     } else {
