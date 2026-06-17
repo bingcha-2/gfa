@@ -98,3 +98,7 @@ apps/app/bcai-wails
 
 # agent worktrees
 .worktrees/
+
+# Codex/local scratch and copied Wails build trees
+.codex_tmp/
+apps/bcai-wails/

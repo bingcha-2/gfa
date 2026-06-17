@@ -85,7 +85,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
   const bind = catalog.pricing.bind;
   const shareCapacity = catalog.shareCapacity ?? 8;
   const share = resolveShareSelection(selection, shareCapacity);
-  let priceCents = 0;
+  let fullPriceCents = 0;
   const products: string[] = [];
   const levels: Record<string, string> = {};
   for (const { product, level } of selection.items) {
@@ -93,11 +93,12 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
     if (price === undefined) {
       throw new Error(`unknown level "${level}" for product "${product}"`);
     }
-    priceCents += price;
+    fullPriceCents += price;
     products.push(product);
     levels[product] = level;
   }
-  priceCents += bind.share[String(share.priceShareUsers)] ?? 0;
+  let priceCents = Math.floor((fullPriceCents * share.shareSeats) / shareCapacity);
+  priceCents += bind.share[String(share.shareSeats)] ?? 0;
   priceCents += extraDeviceCost(selection.deviceLimit, bind.devicePerExtra);
 
   return {
@@ -121,14 +122,11 @@ const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 function resolveShareSelection(
   selection: BindSelection,
   shareCapacity: number,
-): { shareSeats: number; priceShareUsers: number } {
+): { shareSeats: number } {
   if (selection.shareSeats !== undefined) {
     const explicit = Number(selection.shareSeats);
     if (isSeatOption(explicit) && explicit <= shareCapacity) {
-      return {
-        shareSeats: explicit,
-        priceShareUsers: Math.max(1, Math.floor(shareCapacity / explicit)),
-      };
+      return { shareSeats: explicit };
     }
     throw new Error("shareSeats must be one of 1, 2, 4, 8");
   }
@@ -138,7 +136,7 @@ function resolveShareSelection(
     if (isSeatOption(legacyUsers)) {
       const converted = Math.max(1, Math.floor(shareCapacity / legacyUsers));
       if (isSeatOption(converted)) {
-        return { shareSeats: converted, priceShareUsers: legacyUsers };
+        return { shareSeats: converted };
       }
     }
   }

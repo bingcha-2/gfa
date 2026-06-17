@@ -131,6 +131,34 @@ describe("SubscriptionService.createFromCatalog / activateForOrder (catalog 下�
     expect(record.bucketLimits).toEqual(poolConfig.bucketLimits);
   });
 
+  it("admin durationDaysOverride controls new subscription expiry and same-config renewal length", async () => {
+    const customer = await createTestCustomer();
+    await publishCatalog(30, 1);
+    const poolConfig = {
+      line: "pool",
+      products: ["anthropic"],
+      bucketLimits: { "anthropic-claude": 150000 },
+      weeklyTokenLimit: 750000,
+      deviceLimit: 2,
+      windowMs: 18_000_000,
+    };
+    const mkOrder = (id: string) => ({
+      id,
+      customerId: customer.id,
+      config: JSON.stringify(poolConfig),
+      catalogVersion: 1,
+    });
+
+    const first = await service.activateForOrder(mkOrder("catalog-admin-override-1"), { durationDaysOverride: 7 });
+    const expectedFirstExpiry = Date.now() + 7 * DAY_MS;
+    expect(Math.abs(first.expiresAt!.getTime() - expectedFirstExpiry)).toBeLessThan(60_000);
+
+    const second = await service.activateForOrder(mkOrder("catalog-admin-override-2"), { durationDaysOverride: 3 });
+    expect(second.id).toBe(first.id);
+    expect(second.expiresAt!.getTime() - first.expiresAt!.getTime()).toBe(3 * DAY_MS);
+    expect(readKeys()[0].keyExpiresAt).toBe(second.expiresAt!.toISOString());
+  });
+
   it("绑定线 catalog 订单 → sync 分配座位写回 config.bindings,record 带 bindings", async () => {
     const customer = await createTestCustomer();
     await publishCatalog(30, 2);

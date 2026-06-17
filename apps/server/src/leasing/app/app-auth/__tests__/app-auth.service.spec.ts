@@ -371,6 +371,29 @@ describe("AppAuthService.login", () => {
     expect(result.subscriptions[0].id).toBeTruthy();
     expect(result.subscription).toEqual(result.subscriptions[0]); // 兼容字段=首个
   });
+
+  it("subscriptions include purchased per-product levels for app display", async () => {
+    const { appAuthService, prisma } = await makeAppAuthService();
+
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: "sub-codex-pro",
+      status: "ACTIVE",
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+      deviceLimit: 3,
+      priority: 1,
+      productEntitlements: JSON.stringify(["codex", "anthropic"]),
+      levels: JSON.stringify({ codex: "pro", anthropic: "max-20x" })
+    }]);
+
+    const result = await appAuthService.login({
+      email: "user@example.com",
+      password: "password123",
+      deviceId: "device-abc"
+    });
+
+    expect(result.subscriptions[0].levels).toEqual({ codex: "pro", anthropic: "max-20x" });
+    expect(result.subscription.levels).toEqual({ codex: "pro", anthropic: "max-20x" });
+  });
 });
 
 // ── heartbeat ─────────────────────────────────────────────────────────────────

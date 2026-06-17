@@ -4,7 +4,9 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
 } from "class-validator";
 
 import type { Selection } from "../../../plan-catalog/pricing";
@@ -34,4 +36,10 @@ export class UpdateCustomerDto {
 export class GrantCatalogSubscriptionDto {
   @IsObject()
   selection!: Selection;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  durationDays?: number;
 }

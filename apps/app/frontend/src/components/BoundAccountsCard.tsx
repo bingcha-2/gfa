@@ -4,9 +4,9 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { t as tr, useLocaleStore } from '@/i18n'
+import { t as tr } from '@/i18n'
 import { Users, Copy, Check, Mail, Crown } from 'lucide-react'
-import type { BoundAccountInfo } from '@/types'
+import type { AccountSubscription, BoundAccountInfo } from '@/types'
 
 // 产品展示元信息(顺序即展示顺序)。后端 product 用 antigravity/codex/anthropic,
 // 与卡 products 轴一致;旧卡可能仍带 'claude',归一到 anthropic。
@@ -38,14 +38,6 @@ function planTone(plan: string): 'success' | 'muted' | 'default' {
   return 'success'
 }
 
-/** token 过期时间 → "有效至 HH:MM:SS",无法解析则空。 */
-function formatExpiry(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const d = new Date(ms)
-  if (isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString(useLocaleStore.getState().locale, { hour12: false })
-}
-
 function CopyButton({ value, title }: { value: string; title: string }) {
   const [copied, setCopied] = useState(false)
   const onCopy = async () => {
@@ -64,10 +56,9 @@ function CopyButton({ value, title }: { value: string; title: string }) {
   )
 }
 
-function AccountRow({ acc }: { acc: BoundAccountInfo }) {
+function AccountRow({ acc, displayPlanType }: { acc: BoundAccountInfo; displayPlanType: string }) {
   const product = normalizeProduct(acc.product)
   const meta = PRODUCT_META[product] || { label: product, dot: 'bg-[var(--primary)]' }
-  const expiry = formatExpiry(acc.expiresAt)
 
   return (
     <div className="rounded-[10px] border border-[var(--border-light)] bg-[var(--bg-tertiary)] p-3 flex flex-col gap-2">
@@ -98,29 +89,28 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
         <span className="flex items-center gap-1 text-[var(--text-muted)]">
           <Crown size={12} /> {tr('bound.planLevel')}
         </span>
-        {acc.planType ? (
-          <Badge variant={planTone(acc.planType)}>{planLabel(acc.planType)}</Badge>
+        {displayPlanType ? (
+          <Badge variant={planTone(displayPlanType)}>{planLabel(displayPlanType)}</Badge>
         ) : (
           <span className="font-mono-data text-[var(--text-muted)]">—</span>
         )}
       </div>
-
-      {/* 令牌状态 —— 出于安全,绝不展示/复制真实 token,仅显示是否已下发 + 脱敏串 */}
-      <div className="flex items-center justify-between text-[12px]">
-        <span className="text-[var(--text-muted)]">Access Token</span>
-        <span className="flex items-center gap-1.5 min-w-0">
-          {acc.accessToken ? (
-            <code className="text-[11px] font-mono-data text-[var(--text-muted)] truncate max-w-[150px] select-none">
-              {acc.accessToken}
-            </code>
-          ) : (
-            <span className="text-[var(--text-muted)]">{tr('bound.fetchingDots')}</span>
-          )}
-          {expiry && <span className="text-[10px] text-[var(--text-muted)] font-mono-data shrink-0">{tr('bound.validUntil', { time: expiry })}</span>}
-        </span>
-      </div>
     </div>
   )
+}
+
+function purchasedLevelsByProduct(subscriptions: AccountSubscription[] | undefined): Map<string, string> {
+  const out = new Map<string, string>()
+  const sorted = [...(subscriptions ?? [])].sort((a, b) => a.priority - b.priority)
+  for (const sub of sorted) {
+    for (const [rawProduct, level] of Object.entries(sub.levels ?? {})) {
+      const product = normalizeProduct(rawProduct)
+      if (!out.has(product) && level.trim()) {
+        out.set(product, level)
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -130,6 +120,8 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
 export function BoundAccountsCard() {
   const boundAccounts = useAppStore((s) => s.boundAccounts)
   const cardProducts = useAppStore((s) => s.cardProducts)
+  const account = useAppStore((s) => s.account)
+  const purchasedLevels = purchasedLevelsByProduct(account?.subscriptions)
 
   const products = (cardProducts && cardProducts.length > 0)
     ? cardProducts.map(normalizeProduct)
@@ -155,7 +147,11 @@ export function BoundAccountsCard() {
           style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}
         >
           {rows.map((acc) => (
-            <AccountRow key={normalizeProduct(acc.product)} acc={acc} />
+            <AccountRow
+              key={normalizeProduct(acc.product)}
+              acc={acc}
+              displayPlanType={purchasedLevels.get(normalizeProduct(acc.product)) || acc.planType}
+            />
           ))}
         </div>
       </CardContent>

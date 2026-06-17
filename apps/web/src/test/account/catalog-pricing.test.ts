@@ -35,7 +35,7 @@ const CATALOG: CatalogConfig = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
-      share: { "1": 0, "2": -4000, "4": -7000, "8": -9000 },
+      share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },
@@ -118,8 +118,8 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       deviceLimit: 1,
     });
 
-    // 9900 + (-7000) = 2900
-    expect(result.priceCents).toBe(9900 - 7000);
+    // floor(9900 * 2 / 8) + (-2000) = 475
+    expect(result.priceCents).toBe(Math.floor((9900 * 2) / 8) - 2000);
     expect(result.config).toEqual({
       line: "bind",
       products: ["anthropic"],
@@ -141,7 +141,7 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       deviceLimit: 1,
     });
 
-    expect(result.priceCents).toBe(9900 - 7000);
+    expect(result.priceCents).toBe(Math.floor((9900 * 2) / 8) - 2000);
     expect(result.config.shareSeats).toBe(2);
     expect(result.config.weight).toBe(2);
   });
@@ -154,7 +154,7 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       deviceLimit: 1,
     });
 
-    expect(result.priceCents).toBe(29900 - 9000);
+    expect(result.priceCents).toBe(Math.floor(29900 / 4));
     expect(result.config.shareSeats).toBe(1);
     expect(result.config.shareCapacity).toBe(4);
     expect(result.config.weight).toBe(1);
@@ -171,8 +171,8 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       deviceLimit: 2,
     });
 
-    // 15900 + 19900 + (-9000) + 900 = 27700
-    expect(result.priceCents).toBe(15900 + 19900 - 9000 + 900);
+    // floor((15900 + 19900) * 1 / 8) + share[1] + 900 = 5375
+    expect(result.priceCents).toBe(Math.floor(((15900 + 19900) * 1) / 8) + 900);
     expect(result.config.products).toEqual(["anthropic", "codex"]);
     expect(result.config.levels).toEqual({ anthropic: "max-5x", codex: "pro" });
     expect(result.config.weight).toBe(1);

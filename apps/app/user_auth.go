@@ -47,13 +47,14 @@ type loginResponse struct {
 	} `json:"subscription"`
 	// Subscriptions 是全部生效订阅(服务端按 priority 升序),驱动客户端多订阅展示。
 	Subscriptions []struct {
-		Id             string   `json:"id"`
-		Status         string   `json:"status"`
-		ExpiresAt      string   `json:"expiresAt"`
-		DeviceLimit    int      `json:"deviceLimit"`
-		Priority       int      `json:"priority"`
-		Products       []string `json:"products"`
-		RemainFraction *float64 `json:"remainFraction"`
+		Id             string            `json:"id"`
+		Status         string            `json:"status"`
+		ExpiresAt      string            `json:"expiresAt"`
+		DeviceLimit    int               `json:"deviceLimit"`
+		Priority       int               `json:"priority"`
+		Products       []string          `json:"products"`
+		Levels         map[string]string `json:"levels"`
+		RemainFraction *float64          `json:"remainFraction"`
 	} `json:"subscriptions"`
 }
 
@@ -68,6 +69,7 @@ func (r loginResponse) snapshots() []SubscriptionSnapshot {
 			DeviceLimit:    s.DeviceLimit,
 			Priority:       s.Priority,
 			Products:       s.Products,
+			Levels:         s.Levels,
 			RemainFraction: s.RemainFraction,
 		})
 	}
@@ -209,6 +211,20 @@ func clearUserSession(cfg *Config) {
 	cfg.Subscriptions = nil
 }
 
+func ensureConfigDeviceId(cfg *Config) (bool, error) {
+	if strings.TrimSpace(cfg.DeviceId) != "" {
+		return false, nil
+	}
+	cfg.DeviceId = generateUUID()
+	if strings.TrimSpace(cfg.DeviceId) == "" {
+		return false, fmt.Errorf("failed to generate device id")
+	}
+	if err := SaveConfig(*cfg); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UserLogin authenticates with email+password, persists session data to config,
 // and starts leaser/proxy services.
 func (a *App) UserLogin(email, password string) (map[string]interface{}, error) {
@@ -219,6 +235,11 @@ func (a *App) UserLogin(email, password string) (map[string]interface{}, error) 
 	defer a.lock.Unlock()
 
 	cfg := LoadConfig()
+	if changed, err := ensureConfigDeviceId(&cfg); err != nil {
+		return nil, fmt.Errorf("ensure device id: %w", err)
+	} else if changed {
+		Log("[auth] Generated deviceId before login: %s", cfg.DeviceId)
+	}
 
 	deviceName := cfg.DeviceName
 	if deviceName == "" {
@@ -442,6 +463,14 @@ func parseHeartbeatSubscriptions(result map[string]interface{}) ([]SubscriptionS
 				}
 			}
 		}
+		if v, ok := m["levels"].(map[string]interface{}); ok {
+			snap.Levels = map[string]string{}
+			for product, level := range v {
+				if ls, ok := level.(string); ok && strings.TrimSpace(ls) != "" {
+					snap.Levels[product] = ls
+				}
+			}
+		}
 		if v, ok := m["remainFraction"].(float64); ok {
 			f := v
 			snap.RemainFraction = &f
@@ -471,6 +500,11 @@ func (a *App) HeartbeatCheck() (map[string]interface{}, error) {
 	cfg := LoadConfig()
 	if cfg.UserToken == "" {
 		return nil, fmt.Errorf("not logged in")
+	}
+	if changed, err := ensureConfigDeviceId(&cfg); err != nil {
+		return nil, fmt.Errorf("ensure device id: %w", err)
+	} else if changed {
+		Log("[auth] Generated deviceId before heartbeat: %s", cfg.DeviceId)
 	}
 
 	payload := map[string]interface{}{

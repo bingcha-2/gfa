@@ -192,4 +192,18 @@ describe("CustomerAdminService.grantCatalogSubscription", () => {
     expect(subscriptions.activateForOrder).toHaveBeenCalledWith(order);
     expect(result).toBe(sub);
   });
+
+  it("passes admin durationDays override into subscription activation", async () => {
+    const order = { id: "ord-grant-override" };
+    const sub = { id: "sub-grant-override" };
+    billing.createGrantOrder.mockResolvedValue(order);
+    subscriptions.activateForOrder.mockResolvedValue(sub);
+    const selection = { line: "bind", items: [{ product: "codex", level: "pro" }], shareSeats: 1, deviceLimit: 1 };
+
+    const result = await service.grantCatalogSubscription("cust-grant", selection as any, { durationDays: 7 });
+
+    expect(billing.createGrantOrder).toHaveBeenCalledWith("cust-grant", selection);
+    expect(subscriptions.activateForOrder).toHaveBeenCalledWith(order, { durationDaysOverride: 7 });
+    expect(result).toBe(sub);
+  });
 });

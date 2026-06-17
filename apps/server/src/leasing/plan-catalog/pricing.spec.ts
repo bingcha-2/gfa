@@ -25,7 +25,7 @@ const CATALOG = {
         codex: { plus: 13900, pro: 19900 },
         antigravity: { pro: 11900, ultra: 19900 },
       },
-      share: { "1": 0, "2": -4000, "4": -7000, "8": -9000 },
+      share: { "1": 0, "2": -2000, "4": -4000, "8": 0 },
       devicePerExtra: 900,
     },
   },
@@ -55,7 +55,7 @@ describe("computePurchase pool line", () => {
 });
 
 describe("computePurchase bind line", () => {
-  it("uses shareSeats=8 as full-account seats without a shared-user discount", () => {
+  it("uses shareSeats=8 as full-account seats without a seat discount", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
@@ -77,7 +77,7 @@ describe("computePurchase bind line", () => {
     });
   });
 
-  it("uses shareSeats=2 as the bind seat count and equivalent 4-user price key", () => {
+  it("prices shareSeats=2 as two eighths of the full level price plus the 2-seat discount", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
@@ -85,7 +85,7 @@ describe("computePurchase bind line", () => {
       deviceLimit: 1,
     } as any);
 
-    expect(result.priceCents).toBe(22900);
+    expect(result.priceCents).toBe(Math.floor((29900 * 2) / 8) - 2000);
     expect(result.config).toEqual({
       line: "bind",
       products: ["anthropic"],
@@ -113,6 +113,7 @@ describe("computePurchase bind line", () => {
       weight: 2,
       assignmentPolicy: "preferred-dynamic",
     });
+    expect(result.priceCents).toBe(Math.floor((29900 * 2) / 8) - 2000);
   });
 
   it("keeps legacy shareUsers=8 compatible when shareCapacity=4", () => {
@@ -123,7 +124,7 @@ describe("computePurchase bind line", () => {
       deviceLimit: 1,
     });
 
-    expect(result.priceCents).toBe(20900);
+    expect(result.priceCents).toBe(Math.floor(29900 / 4));
     expect(result.config).toMatchObject({
       shareSeats: 1,
       shareCapacity: 4,

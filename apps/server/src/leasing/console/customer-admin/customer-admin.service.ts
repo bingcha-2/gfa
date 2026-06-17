@@ -235,9 +235,15 @@ export class CustomerAdminService {
    * 落 ¥0 PAID GRANT 订单(算价 + 绑定线座位预检),再走与付费同一的 activateForOrder 激活。
    * 返回新建或同配置续期的订阅。
    */
-  async grantCatalogSubscription(id: string, selection: Selection) {
+  async grantCatalogSubscription(
+    id: string,
+    selection: Selection,
+    options: { durationDays?: number } = {},
+  ) {
     const order = await this.billing.createGrantOrder(id, selection);
-    const sub = await this.subscriptions.activateForOrder(order);
+    const sub = options.durationDays
+      ? await this.subscriptions.activateForOrder(order, { durationDaysOverride: options.durationDays })
+      : await this.subscriptions.activateForOrder(order);
     this.logger.log(
       `[customer-admin] granted catalog subscription ${sub.id} to customer ${id} (order ${order.id})`,
     );

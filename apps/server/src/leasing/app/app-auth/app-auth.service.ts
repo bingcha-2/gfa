@@ -19,6 +19,7 @@ function buildSubscriptionSummary(
     deviceLimit: number;
     priority: number;
     productEntitlements: string;
+    levels?: string | null;
   } | null,
   remainFraction: number | null = null
 ) {
@@ -41,10 +42,26 @@ function buildSubscriptionSummary(
     deviceLimit: subscription.deviceLimit,
     priority: subscription.priority,
     products,
+    levels: parseLevels(subscription.levels),
     // 每订阅「最紧复合桶」的剩余额度比例(0-1);null=无限额/无额度数据。客户端据此画余量条,
     // 用来区分同产品同到期的多个订阅(谁在消耗、谁备用满额)。
     remainFraction
   };
+}
+
+function parseLevels(json: string | null | undefined): Record<string, string> {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([, value]) => typeof value === "string" && value.trim() !== "")
+        .map(([key, value]) => [key, String(value)])
+    );
+  } catch {
+    return {};
+  }
 }
 
 @Injectable()
@@ -93,7 +110,7 @@ export class AppAuthService {
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }]
       },
       orderBy: { priority: "asc" },
-      select: { id: true, status: true, expiresAt: true, deviceLimit: true, priority: true, productEntitlements: true }
+      select: { id: true, status: true, expiresAt: true, deviceLimit: true, priority: true, productEntitlements: true, levels: true }
     });
     // Secondary JS sort ensures stable order even in test mocks that ignore orderBy
     return rows.slice().sort((a, b) => a.priority - b.priority);
