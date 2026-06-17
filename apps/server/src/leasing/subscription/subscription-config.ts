@@ -12,6 +12,17 @@ export interface LegacyColumns {
   windowMs: number;
 }
 
+export function legacySeatFromBucketLimits(bucketLimits: Record<string, unknown> | null | undefined): number {
+  const values = Object.values(bucketLimits || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 1);
+  const max = values.length ? Math.max(...values) : 0;
+  if (max <= 8_000_000) return 1;
+  if (max <= 16_000_000) return 2;
+  if (max <= 32_000_000) return 4;
+  return 8;
+}
+
 export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknown> {
   const products = parseArray(sub.productEntitlements);
   const bindings = parseObject(sub.bindings);
@@ -45,7 +56,7 @@ export function legacyColumnsToConfig(sub: LegacyColumns): Record<string, unknow
  * 有显式 config(catalog 下单写入)→ 用它;config 为空 → 从 legacy 列回退
  * (legacyColumnsToConfig)。卡迁移订阅(bind-card)只写 legacy `bindings` 列、config 空,
  * 若只读 config 会把它当「无 line/无 bindings」漏数 —— 份额显示 0/N + 选号超分。
- * 运行时(loadActiveSubscriptions)早已用 legacyColumnsToConfig,这里对齐同一口径。
+ * 运行时(loadActiveSubscriptions)使用 rowToConfig,这里对齐同一口径。
  */
 export function rowToConfig(row: { config?: string | null } & LegacyColumns): Record<string, unknown> {
   const raw = String(row.config || "").trim();
@@ -120,7 +131,20 @@ export function subscriptionToLimitRecord(sub: SubscriptionRow): Record<string, 
     keyExpiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : undefined,
   };
   if (config.line === "bind") {
-    return { ...base, bindings: config.bindings, weight: config.weight, requiresBinding: true };
+    return {
+      ...base,
+      bindings: config.bindings || {},
+      displayBindings: config.displayBindings || config.bindings || {},
+      assignmentPolicy: config.assignmentPolicy || "pinned",
+      levels: config.levels || {},
+      shareSeats: config.shareSeats ?? config.weight,
+      shareCapacity: config.shareCapacity ?? 8,
+      weight: config.weight ?? config.shareSeats ?? 1,
+      bucketLimits: config.bucketLimits || {},
+      weeklyBucketLimits: config.weeklyBucketLimits || {},
+      ...(config.weeklyTokenLimit == null ? {} : { weeklyTokenLimit: config.weeklyTokenLimit }),
+      requiresBinding: true,
+    };
   }
   return { ...base, bucketLimits: config.bucketLimits, weeklyTokenLimit: config.weeklyTokenLimit };
 }

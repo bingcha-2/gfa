@@ -495,6 +495,92 @@ describe('AccessKeyStore', () => {
       expect(status.opusTokenLimit).toBe(500_000);
     });
 
+    it('enforces weeklyBucketLimits as an explicit per-bucket weekly cap', async () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        weeklyBucketLimits: { 'anthropic-claude': 1_000 },
+        weeklyWindowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: [
+          { at: Date.now(), totalTokens: 1_000, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+        ],
+      });
+      const result = await store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).toBeNull();
+      expect(result.limitExceeded).toBe(true);
+      expect(result.error).toContain('weekly');
+    });
+
+    it('weeklyBucketLimits take precedence over weeklyTokenLimit and derived weekly caps', async () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        weeklyTokenLimit: 10_000_000,
+        weeklyBucketLimits: { 'anthropic-claude': 1_000 },
+        weeklyWindowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: [
+          { at: Date.now(), totalTokens: 1_000, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+        ],
+      });
+      const result = await store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).toBeNull();
+      expect(result.error).toContain('1000');
+    });
+
+    it('enforces precise weeklyBucketLimits for Antigravity buckets that have no legacy derived weekly cap', async () => {
+      const store = makeCard({
+        bucketLimits: { 'antigravity-gemini': 25_000_000 },
+        weeklyTokenLimit: 500_000_000,
+        weeklyBucketLimits: { 'antigravity-gemini': 100_000_000 },
+        weeklyWindowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: [
+          { at: Date.now(), totalTokens: 100_000_000, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
+        ],
+      });
+
+      const result = await store.resolveFromRequest(
+        claudeReq,
+        {},
+        { enforceLimit: true, modelKey: 'gemini-2.5-pro', product: 'antigravity' },
+      );
+      const status = store.publicStatus(store.findById('k1')!, 0, () => 10);
+      const weekly = status.weeklyBuckets.find((b: any) => b.bucket === 'antigravity-gemini');
+
+      expect(result.record).toBeNull();
+      expect(result.limitExceeded).toBe(true);
+      expect(result.error).toContain('100000000');
+      expect(weekly).toMatchObject({ bucket: 'antigravity-gemini', used: 100_000_000, limit: 100_000_000 });
+    });
+
+    it('weeklyTokenLimit takes precedence over derived weekly caps from bucketLimits', async () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        weeklyTokenLimit: 10_000_000,
+        weeklyWindowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: [
+          { at: Date.now(), totalTokens: 500_000, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+        ],
+      });
+      const result = await store.resolveFromRequest(claudeReq, {}, opts);
+      expect(result.record).not.toBeNull();
+
+      const status = store.publicStatus(store.findById('k1')!, 0, () => 2);
+      const weekly = status.weeklyBuckets.find((b: any) => b.bucket === 'anthropic-claude');
+      expect(weekly).toMatchObject({ bucket: 'anthropic-claude', used: 500_000, limit: 10_000_000 });
+    });
+
+    it('publicStatus weeklyBuckets uses weeklyBucketLimits before derived caps', async () => {
+      const store = makeCard({
+        bucketLimits: { 'anthropic-claude': 500_000 },
+        weeklyBucketLimits: { 'anthropic-claude': 1_000 },
+        weeklyWindowStartedAt: Date.now(),
+        weeklyTokenUsageEvents: [
+          { at: Date.now(), totalTokens: 250, modelKey: 'claude-sonnet-4-6', product: 'anthropic' },
+        ],
+      });
+      const status = store.publicStatus(store.findById('k1')!, 0, () => 10);
+      const weekly = status.weeklyBuckets.find((b: any) => b.bucket === 'anthropic-claude');
+      expect(weekly).toMatchObject({ bucket: 'anthropic-claude', used: 250, limit: 1_000 });
+    });
+
     it('publicStatus quotaMode=unlimited when no caps and no binding', async () => {
       const store = makeCard({});
       expect(store.publicStatus(store.findById('k1')!).quotaMode).toBe('unlimited');

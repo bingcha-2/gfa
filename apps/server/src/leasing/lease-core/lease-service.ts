@@ -518,7 +518,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     //    only from it, no dynamic-pool fallback.
     //  • Pool   (no binding at all): legacy dynamic pool with failover.
     // A card bound for a DIFFERENT pool only is not sold for this one → rejected.
-    if (boundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
+    const displayBoundAccountId = this.displayBoundAccountIdFor(auth.record);
+    const isPreferredDynamic = this.isPreferredDynamic(auth.record);
+    const hardPinnedAccountId = isPreferredDynamic ? 0 : displayBoundAccountId;
+
+    if (displayBoundAccountId === 0 && this.accessKeyStore.hasAnyBinding(auth.record)) {
       throw this.fail(409, "此卡未开通该服务，请联系客服");
     }
     // M13b: plan-backed shadow records (requiresBinding, set by entitlement-sync)
@@ -528,16 +532,16 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // sold. Distinct wording from the wrong-product 409 above so ops can tell
     // seat-exhaustion from not-sold-for-this-pool. Cards and legacy pool
     // records never carry the flag → their paths are byte-identical.
-    if (boundAccountId === 0 && auth.record.requiresBinding) {
+    if (displayBoundAccountId === 0 && auth.record.requiresBinding) {
       throw this.fail(409, "服务开通中，请稍后重试或联系客服");
     }
 
     // Fair-share check: bound cards with multiple co-tenants get dynamic quotas.
-    if (boundAccountId > 0 && this.fairShareTracker) {
+    if (hardPinnedAccountId > 0 && this.fairShareTracker) {
       const bucket = bucketKey(this.provider.id, modelKey);
-      const check = this.fairShareTracker.checkFairShare(boundAccountId, auth.record.id, bucket);
+      const check = this.fairShareTracker.checkFairShare(hardPinnedAccountId, auth.record.id, bucket);
       if (!check.allowed) {
-        const quota = this.buildLeaseQuotaPayload(auth.record, boundAccountId, modelKey);
+        const quota = this.buildLeaseQuotaPayload(auth.record, hardPinnedAccountId, modelKey);
         throw this.fail(429, check.reason || "公平限额已用完，请等待额度恢复", {
           ok: false,
           error: check.reason || "公平限额已用完，请等待额度恢复",
@@ -577,10 +581,12 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.cleanupExpiredLeases();
     const leaseIndex = this.buildActiveLeaseIndex();
 
-    const candidatePool = this.availableAccounts(payload, modelKey, boundAccountId);
+    const candidatePool = isPreferredDynamic
+      ? this.preferredDynamicAccounts(payload, modelKey, displayBoundAccountId, leaseIndex, clientId)
+      : this.availableAccounts(payload, modelKey, hardPinnedAccountId);
     // A bound card has at most one candidate (its account), so there is nothing to
     // scan past — one attempt, then the busy error. No fallback to other accounts.
-    const maxAttempts = boundAccountId
+    const maxAttempts = hardPinnedAccountId
       ? 1
       : Math.min(
           MAX_TOKEN_CANDIDATE_SCAN_CAP,
@@ -592,7 +598,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
         const existing = Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [];
         extendedPayload.excludeAccountIds = [...existing, ...tokenFailedIds];
       }
-      account = this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, boundAccountId);
+      account = isPreferredDynamic
+        ? this.preferredDynamicAccounts(extendedPayload, modelKey, displayBoundAccountId, leaseIndex, clientId)[0] || null
+        : this.selectAccount(modelKey, clientId, extendedPayload, leaseIndex, hardPinnedAccountId);
       if (!account) break;
 
       try {
@@ -616,7 +624,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // Bound cards never borrow another account. Distinguish WHY the bound
       // account is unavailable so the user isn't told "额度恢复中" forever when
       // the account is actually gone / disabled / auth-broken.
-      if (boundAccountId) throw this.fail(503, this.boundUnavailableMessage(boundAccountId));
+      if (hardPinnedAccountId) throw this.fail(503, this.boundUnavailableMessage(hardPinnedAccountId));
       // 没有候选号(整池都被冷却/耗尽)→ 若主因是 503 容量冷却,明说官方上游抽风,
       // 而不是笼统的"额度恢复中"。lastError(token 刷新真错误)优先透出。
       throw this.fail(503, lastError?.message || this.poolUnavailableMessage(modelKey));
@@ -629,7 +637,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     // A successful lease means the account is alive again — clear any persisted
     // dead verdict so it doesn't get re-marked on the next restart.
     this.clearPersistedAccountError(account.id);
-    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, boundAccountId, accessToken);
+    const lease = this.createLease(account, accessKeySessionId, auth.record.id, clientId, modelKey, payload, hardPinnedAccountId, accessToken);
     this.leases.set(lease.leaseId, lease);
     this.rememberAffinity(clientId, modelKey, account.id);
     this.totalLeases++;
@@ -641,15 +649,15 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     // Pre-compute account-level and per-card fair-share quota fractions.
     const accountBucketsData = this.accountBucketQuotas(account);
-    const rawFairShare = (boundAccountId > 0 && this.fairShareTracker)
-      ? this.fairShareTracker.getCardQuotaFractions(boundAccountId, auth.record.id)
+    const rawFairShare = (hardPinnedAccountId > 0 && this.fairShareTracker)
+      ? this.fairShareTracker.getCardQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
     // When fair-share tracker has no data for this card yet (first activation /
     // server restart), default to 100% for all known buckets so the card doesn't
     // inherit the shared account-level fraction from accountBuckets. Once the card
     // has real usage, getCardQuotaFractions() returns actual data and this fallback
     // is bypassed.
-    const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && boundAccountId > 0)
+    const fairShareQuota = (rawFairShare && Object.keys(rawFairShare).length === 0 && hardPinnedAccountId > 0)
       ? Object.fromEntries(
           Object.keys(accountBucketsData).map(k => [k, { fraction: 1, resetAt: Date.now() + 5 * 60 * 60 * 1000 }]),
         )
@@ -657,9 +665,9 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
 
     // 周血条:仅启用周窗口的线(codex/anthropic)下发,结构与 fairShareQuota 平行(同 bucket 键)。
     // 旧客户端忽略该字段、不受影响。空数据(首次激活/重启)同样回落 100% 满条。
-    const weeklyTracked = boundAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
+    const weeklyTracked = hardPinnedAccountId > 0 && this.fairShareTracker?.isWeeklyTracked() === true;
     const rawWeeklyFairShare = weeklyTracked
-      ? this.fairShareTracker!.getCardWeeklyQuotaFractions(boundAccountId, auth.record.id)
+      ? this.fairShareTracker!.getCardWeeklyQuotaFractions(hardPinnedAccountId, auth.record.id)
       : undefined;
     const weeklyFairShareQuota = !weeklyTracked
       ? undefined
@@ -680,6 +688,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       accessKeyStatus: this.publicAccessKeyStatus(auth.record, modelKey),
       accountId: account.id,
       emailHint: maskEmail(account.email),
+      serviceAccount: {
+        accountId: account.id,
+        emailHint: maskEmail(account.email),
+        planType: (account as any).planType || "",
+      },
       // 绑定账号的会员等级(antigravity: ultra/premium/...; codex: plus/pro; anthropic: max/pro),
       // 供客户端「绑定账号信息」面板展示。账号尚无快照时为空串。
       planType: (account as any).planType || "",
@@ -704,7 +717,8 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // Bound cards have no OTHER account to rotate to. The client proxy uses this
       // to skip the futile "exclude account + re-lease" rotation on 429/503, while
       // STILL allowing wait-and-retry on the SAME account for transient capacity.
-      bound: boundAccountId > 0,
+      bound: hardPinnedAccountId > 0,
+      displayBound: isPreferredDynamic || displayBoundAccountId > 0,
       // Per-card fair-share quota fractions for blood bar display.
       // Only populated for bound cards with co-tenants.
       fairShareQuota,
@@ -864,7 +878,7 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     let exhausted = 0;
     for (const account of this.readAccounts()) {
       const a = account as any;
-      if (a.enabled === false || a.poolEnabled === false) continue;
+      if (a.enabled === false) continue;
       if (!this.provider.isAccountEligible(account)) continue;
       if (!(account.refreshToken || a.accessToken)) continue;
       const state = this.accountRuntime.get(account.id);
@@ -1494,7 +1508,11 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.accessKeyStore.flush();
   }
 
-  private availableAccounts(payload: any, modelKey?: string, boundAccountId = 0) {
+  private availableAccounts(
+    payload: any,
+    modelKey?: string,
+    boundAccountId = 0,
+  ) {
     const excluded = new Set(
       (Array.isArray(payload?.excludeAccountIds) ? payload.excludeAccountIds : [])
         .map((value: unknown) => Number(value))
@@ -1504,10 +1522,6 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
     this.modelGates.cleanupExpiredGates(now);
     return this.readAccounts().filter((account) =>
       (boundAccountId ? account.id === boundAccountId : true) &&
-      // 出池号(poolEnabled===false)只服务"绑定它的卡":绑定卡(boundAccountId>0)钉号
-      // 不受限;池子卡(boundAccountId===0)的动态池则跳过出池号。与 UI「已出池(仅绑定卡
-      // 可用)」一致。建卡自动分配另有 isAccountBindable 把关,这里补的是运行时这一层。
-      (boundAccountId ? true : (account as any).poolEnabled !== false) &&
       (account as any).enabled !== false &&
       this.provider.isAccountEligible(account) &&
       Boolean(account.refreshToken || (account as any).accessToken) &&
@@ -1515,6 +1529,96 @@ export class LeaseService<TAccount extends { id: number; email: string; refreshT
       // 绑定卡(boundAccountId>0):忽略可恢复冷却,无号可换时冷却只会害卡不可用。
       !this.isAccountBlocked(account.id, modelKey || "", now, boundAccountId > 0),
     );
+  }
+
+  private isPreferredDynamic(record: any): boolean {
+    return String(record?.assignmentPolicy || "").toLowerCase() === "preferred-dynamic";
+  }
+
+  private displayBoundAccountIdFor(record: any): number {
+    const display = record?.displayBindings;
+    if (display && typeof display === "object") {
+      const id = Number(display[this.provider.id] || 0);
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+    return this.accessKeyStore.boundAccountIdFor(record, this.provider.id);
+  }
+
+  private preferredDynamicAccounts(
+    payload: any,
+    modelKey: string,
+    displayBoundAccountId: number,
+    leaseIndex: ActiveLeaseIndex,
+    clientId: string,
+  ): TAccount[] {
+    const candidates = this.availableAccounts(payload, modelKey, 0);
+    if (!candidates.length) return [];
+
+    const displayAccount = displayBoundAccountId > 0
+      ? candidates.find((account) => account.id === displayBoundAccountId) || null
+      : null;
+    const displayPlanType = String((displayAccount as any)?.planType || "").toLowerCase();
+    const preferredAccountId = this.preferredAccountId(clientId, modelKey);
+    const now = this.now();
+
+    const ranked = candidates
+      .filter((account) => account.id !== displayBoundAccountId)
+      .map((account) => ({
+        account,
+        sameLevel: displayPlanType
+          ? String((account as any).planType || "").toLowerCase() === displayPlanType
+          : false,
+        remaining: this.tighterRemainingFraction(account, modelKey),
+        score: scoreAccount(account, {
+          now,
+          preferredAccountId,
+          modelKey,
+          activeLeaseCount: (accountId, targetModel) => this.activeLeaseCountFrom(leaseIndex, accountId, targetModel),
+          accountStats: { lastUsedAt: 0 },
+          accountWeight: accountWeight(account, this.enterpriseProbe),
+          modelQuotaFraction: this.provider.quotaFractionFor
+            ? this.provider.quotaFractionFor(account, modelKey)
+            : undefined,
+        }),
+      }))
+      .sort((a, b) => {
+        if (a.sameLevel !== b.sameLevel) return a.sameLevel ? -1 : 1;
+        return b.remaining - a.remaining || a.score - b.score || a.account.id - b.account.id;
+      })
+      .map((entry) => entry.account);
+
+    return displayAccount ? [displayAccount, ...ranked] : ranked;
+  }
+
+  private tighterRemainingFraction(account: TAccount, modelKey: string): number {
+    const hourly = this.accountHourlyFraction(account, modelKey);
+    const weekly = this.accountWeeklyFraction(account);
+    const known = [hourly, weekly].filter((value): value is number => value !== null);
+    if (!known.length) return 1;
+    return Math.max(0, Math.min(1, Math.min(...known)));
+  }
+
+  private accountHourlyFraction(account: TAccount, modelKey: string): number | null {
+    const providerValue = this.provider.quotaFractionFor
+      ? this.provider.quotaFractionFor(account, modelKey)
+      : undefined;
+    const fraction = providerValue !== undefined
+      ? providerValue
+      : getModelQuotaFraction(account, modelKey, this.now());
+    if (fraction === null || fraction < 0) return null;
+    return Math.max(0, Math.min(1, fraction));
+  }
+
+  private accountWeeklyFraction(account: TAccount): number | null {
+    const field = this.provider.id === "codex"
+      ? "codexWeeklyPercent"
+      : this.provider.id === "anthropic"
+        ? "claudeWeeklyPercent"
+        : "";
+    if (!field) return null;
+    const raw = Number((account as any)[field]);
+    if (!Number.isFinite(raw) || raw < 0) return null;
+    return Math.max(0, Math.min(1, raw > 1 ? raw / 100 : raw));
   }
 
   private selectAccount(

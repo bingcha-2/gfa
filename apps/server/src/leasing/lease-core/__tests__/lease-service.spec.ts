@@ -439,6 +439,143 @@ describe("LeaseService (generic core)", () => {
     expect((r as any).bound).toBe(false);
   });
 
+  it("preferred-dynamic uses display binding first, then falls back to a same-level account", async () => {
+    refreshToken
+      .mockRejectedValueOnce(new Error("bound token is unavailable"))
+      .mockResolvedValueOnce("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, planType: "pro" },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true, planType: "pro" },
+        { id: 3, email: "three@example.com", refreshToken: "rt-3", enabled: true, planType: "plus" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        bindings: { fake: 1 },
+        displayBindings: { fake: 1 },
+        assignmentPolicy: "preferred-dynamic",
+        bucketLimits: { "fake-gpt": 100_000 },
+      }],
+    });
+
+    const r = await makeBoundService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(r.accountId).toBe(2);
+    expect(refreshToken).toHaveBeenCalledTimes(2);
+    expect(refreshToken).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: 1 }));
+    expect(refreshToken).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 2 }));
+    expect((r as any).bound).toBe(false);
+    expect((r as any).displayBound).toBe(true);
+    expect((r as any).serviceAccount).toEqual({
+      accountId: 2,
+      emailHint: "tw***@example.com",
+      planType: "pro",
+    });
+  });
+
+  it("preferred-dynamic can fall back to a legacy pool-disabled account when it is enabled", async () => {
+    refreshToken
+      .mockRejectedValueOnce(new Error("bound token is unavailable"))
+      .mockResolvedValueOnce("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, poolEnabled: true, planType: "pro" },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true, poolEnabled: false, planType: "pro" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        bindings: { fake: 1 },
+        displayBindings: { fake: 1 },
+        assignmentPolicy: "preferred-dynamic",
+        bucketLimits: { "fake-gpt": 100_000 },
+      }],
+    });
+
+    const r = await makeBoundService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(r.accountId).toBe(2);
+    expect(refreshToken).toHaveBeenCalledTimes(2);
+    expect(refreshToken).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: 1 }));
+    expect(refreshToken).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 2 }));
+    expect((r as any).bound).toBe(false);
+    expect((r as any).displayBound).toBe(true);
+  });
+
+  it("preferred-dynamic can fall back across levels when same-level accounts are unavailable", async () => {
+    refreshToken
+      .mockRejectedValueOnce(new Error("bound token is unavailable"))
+      .mockRejectedValueOnce(new Error("same level unavailable"))
+      .mockResolvedValueOnce("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, planType: "pro" },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true, planType: "pro" },
+        { id: 3, email: "three@example.com", refreshToken: "rt-3", enabled: true, planType: "plus" },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        bindings: { fake: 1 },
+        displayBindings: { fake: 1 },
+        assignmentPolicy: "preferred-dynamic",
+        bucketLimits: { "fake-gpt": 100_000 },
+      }],
+    });
+
+    const r = await makeBoundService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(r.accountId).toBe(3);
+    expect(refreshToken).toHaveBeenCalledTimes(3);
+    expect(refreshToken).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: 1 }));
+    expect(refreshToken).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 2 }));
+    expect(refreshToken).toHaveBeenNthCalledWith(3, expect.objectContaining({ id: 3 }));
+  });
+
+  it("preferred-dynamic sorts fallback candidates by the tighter remaining 5h fraction", async () => {
+    refreshToken
+      .mockRejectedValueOnce(new Error("bound token is unavailable"))
+      .mockResolvedValueOnce("tok");
+    writeJson(accountsFilePath, {
+      accounts: [
+        { id: 1, email: "one@example.com", refreshToken: "rt-1", enabled: true, planType: "pro", modelQuotaFractions: { "gpt-5-codex": 0.1 } },
+        { id: 2, email: "two@example.com", refreshToken: "rt-2", enabled: true, planType: "pro", modelQuotaFractions: { "gpt-5-codex": 0.4 } },
+        { id: 3, email: "three@example.com", refreshToken: "rt-3", enabled: true, planType: "pro", modelQuotaFractions: { "gpt-5-codex": 0.8 } },
+      ],
+    });
+    writeJson(accessKeysFilePath, {
+      keys: [{
+        id: "card-1",
+        key: "secret-card",
+        status: "active",
+        durationMs: 60 * 60 * 1000,
+        bindings: { fake: 1 },
+        displayBindings: { fake: 1 },
+        assignmentPolicy: "preferred-dynamic",
+        bucketLimits: { "fake-gpt": 100_000 },
+      }],
+    });
+
+    const r = await makeBoundService().leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+
+    expect(r.accountId).toBe(3);
+    expect(refreshToken).toHaveBeenCalledTimes(2);
+    expect(refreshToken).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 3 }));
+  });
+
   it("returns the leased account's per-bucket quotas so every bar has real data on activation", async () => {
     refreshToken.mockResolvedValue("tok");
     // Account 1 has known per-model quotas (claude→opus, gemini→gemini), as if
@@ -702,10 +839,9 @@ describe("LeaseService (generic core)", () => {
     expect(other.ok).toBe(true);
   });
 
-  // ── poolEnabled (出池) 运行时门槛 ─────────────────────────────────────────
-  // 出池号(poolEnabled:false)只服务"绑定它的卡",不进动态池;绑定卡钉号不受影响。
+  // poolEnabled is legacy state only; runtime supply is gated by enabled + health.
 
-  it("pool card fails when the only account is out of pool (poolEnabled:false)", async () => {
+  it("pool card leases from an enabled legacy pool-disabled account", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {
       accounts: [
@@ -714,14 +850,12 @@ describe("LeaseService (generic core)", () => {
     });
     // default beforeEach 写的是 pool 卡(无绑定)。
     const service = makeService();
-    await expect(
-      service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" }),
-    ).rejects.toThrow();
-    // 出池号根本不该被尝试刷新 token。
-    expect(refreshToken).not.toHaveBeenCalled();
+    const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(r.accountId).toBe(1);
+    expect(refreshToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
   });
 
-  it("pool card only draws from in-pool accounts, skipping the out-of-pool one", async () => {
+  it("pool card treats poolEnabled=false accounts as dynamic supply candidates", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {
       accounts: [
@@ -730,13 +864,12 @@ describe("LeaseService (generic core)", () => {
       ],
     });
     const service = makeService();
-    for (let i = 0; i < 5; i++) {
-      const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
-      expect(r.accountId).toBe(2);
-    }
+    const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
+    expect(r.accountId).toBe(1);
+    expect(refreshToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
   });
 
-  it("bound card STILL leases from its account even if it is out of pool", async () => {
+  it("bound card still leases from its account when legacy poolEnabled is false", async () => {
     refreshToken.mockResolvedValue("tok");
     writeJson(accountsFilePath, {
       accounts: [
@@ -752,7 +885,6 @@ describe("LeaseService (generic core)", () => {
     });
     const service = makeService();
     const r = await service.leaseToken(REQ, { clientId: "c1", modelKey: "gpt-5-codex" });
-    // 出池,但是绑定卡 → 仍然用 1 号(仅绑定卡可用)。
     expect(r.accountId).toBe(1);
   });
 

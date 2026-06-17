@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { useAppStore } from '@/stores/useAppStore'
 import { StatusPill } from '@/components/StatusPill'
 import { NotificationBanner } from '@/components/NotificationBanner'
@@ -8,8 +7,8 @@ import { TokenSourceControl } from '@/components/TokenSourceControl'
 import { BoundAccountsCard } from '@/components/BoundAccountsCard'
 import { UsageTrendChart } from '@/components/UsageTrendChart'
 import { ProviderLogo } from '@/components/ProviderLogo'
-import { usageBarsForProducts, type BarSpec } from '@/lib/usageBars'
-import { cardScopeFiveHour, cardScopeWeekly, shouldUseExclusiveDisplay } from '@/lib/quotaDisplay'
+import { usageBarsForProducts } from '@/lib/usageBars'
+import { buildQuotaSections, type QuotaDisplayBar } from '@/lib/quotaDisplay'
 import { buildModelUsageRows, buildUsageOverview, type ModelUsageRow } from '@/lib/usageSummary'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -110,8 +109,8 @@ export function DashboardPage() {
   const t = useT()
   const {
     leaserError, hasToken, autoLeaseRunning, accountId, cardUnusable, cardProducts,
-    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs, quotaMode,
-    cardBuckets, cardWeeklyBuckets, cardWeight, cardShareCapacity,
+    accountFractions, accountResetMs, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs,
+    cardBuckets, cardWeeklyBuckets, cardShareSeats, cardShareCapacity,
     codexQuota, claudeQuota,
     todayRequests, todayErrors, todayInputTokens, todayOutputTokens,
     todayCacheWriteTokens, todayCachedTokens, todayApiValueUSD, todayByModel, cumulativeSaving,
@@ -128,67 +127,34 @@ export function DashboardPage() {
 
   // 独享订阅(weight≥号总份数,即就你一个人用整个号):此时「号余量」就是「你的卡额度」,
   // 把号余量条映射成卡额度真实数值/窗口,而不是只给一个 fair-share 百分比。
-  const useExclusiveDisplay = shouldUseExclusiveDisplay({ cardWeight, cardShareCapacity, accountProblem })
-  const cardScopeInput = {
-    cardBuckets, cardWeeklyBuckets, myFractions, myResetMs, myWeeklyFractions, myWeeklyResetMs,
-  }
+  const quotaSections = buildQuotaSections({
+    bars: visibleBars.map((bar) => ({
+      ...bar,
+      seatLabel: `${bar.label} · ${cardShareSeats}/${cardShareCapacity || 8} 席`,
+    })),
+    cardBuckets,
+    cardWeeklyBuckets,
+    myFractions,
+    myResetMs,
+    myWeeklyFractions,
+    myWeeklyResetMs,
+    accountFractions,
+    accountResetMs,
+    codexQuota,
+    claudeQuota,
+    accountProblem,
+  })
 
-  // 「我的卡」条:这张卡自己的剩余额度(独立于整个号)。
-  //  • static 卡:本地 bucketLimits 剩余(localQuota 家族字段),可展开看 token 数。
-  //  • 绑定卡:fair-share 份额(myFractions),只给 %。
-  //  • 无独立额度(无限号池卡)→ null,降级单条。
-  // 返回「我的卡」条数组(0~2 条):static 卡单条;绑定卡的 fair-share 份额在有周数据时
-  // 出 5h + 周 双条(与账号侧 5h/周 双条对称),否则单条。
-  const renderMyCardBar = (bar: BarSpec): ReactNode[] => {
-    if (quotaMode === 'static') {
-      // 用服务端 buckets 真相(复合桶精确),不用本地 localQuota——后者不含 claude/codex
-      // 走独立 leaser 的用量,会假报「已用 0 · 充足」。
-      const b = cardBuckets?.[bar.bucket]
-      const limit = b?.limit ?? 0
-      if (!limit || limit <= 0) return []
-      const used = b?.used ?? 0
-      const frac = Math.max(0, Math.min(1, (limit - used) / limit))
-      // 5h 条用该卡 5h 窗口自身的 reset(cardBuckets.resetMs),不再借 recoveryRemainingMs —— 后者是
-      // 账号级「更紧窗口」的恢复时间,周窗口更空时会变成 7d 的 reset,导致 5h 条显示成 7d。
-      const fiveHReset = b?.resetMs && b.resetMs > 0 ? b.resetMs : undefined
-      // static 卡封顶条:有周上限(显式或派生 5h×R)时 → 5h + 周 双条,否则单条。
-      const staticBar = (key: string, suffix: string, u: number, lim: number, resetMs?: number) => (
-        <UsageBar key={key} label={`${t('dashboard.myCard')} · ${suffix}`} used={u} limit={lim}
-          fraction={accountProblem ? -1 : Math.max(0, Math.min(1, (lim - u) / lim))}
-          resetMs={resetMs} />
-      )
-      const wk = cardWeeklyBuckets?.[bar.bucket]
-      if (wk && wk.limit > 0) {
-        return [staticBar('mine-5h', '5h', used, limit, fiveHReset),
-                staticBar('mine-7d', '7d', wk.used ?? 0, wk.limit, wk.resetMs)]
-      }
-      return [(
-        <UsageBar key="mine" label={t('dashboard.myCard')} used={used} limit={limit}
-          fraction={accountProblem ? -1 : frac}
-          resetMs={fiveHReset} />
-      )]
-    }
-    const myFrac = myFractions?.[bar.bucket]
-    if (myFrac == null) return []
-    // 份额条:label 复用 myCardShare,加语言中性窗口后缀(5h / 7d)区分两条。
-    const shareBar = (key: string, suffix: string, frac: number, resetMs?: number) => {
-      return (
-        <UsageBar key={key} label={`${t('dashboard.myCardShare')} · ${suffix}`} used={null} limit={null}
-          fraction={accountProblem ? -1 : frac} resetMs={resetMs} />
-      )
-    }
-    const wk = myWeeklyFractions?.[bar.bucket]
-    if (wk != null) {
-      // 5h + 周 双条。
-      return [shareBar('mine-5h', '5h', myFrac, myResetMs?.[bar.bucket]),
-              shareBar('mine-7d', '7d', wk, myWeeklyResetMs?.[bar.bucket])]
-    }
-    // 无周数据(antigravity 或旧服务端)→ 保持原单条,标签不变。
-    return [(
-      <UsageBar key="mine" label={t('dashboard.myCardShare')} used={null} limit={null}
-        fraction={accountProblem ? -1 : myFrac} resetMs={myResetMs?.[bar.bucket]} />
-    )]
-  }
+  const renderQuotaBar = (bar: QuotaDisplayBar) => (
+    <UsageBar
+      key={`${bar.window}-${bar.label}`}
+      label={bar.label}
+      used={bar.hideValues ? null : (bar.used ?? null)}
+      limit={bar.hideValues ? null : (bar.limit ?? null)}
+      fraction={bar.fraction}
+      resetMs={bar.resetMs}
+    />
+  )
 
   const overview = buildUsageOverview({
     today: {
@@ -280,88 +246,53 @@ export function DashboardPage() {
             </div>
           )}
           {(() => {
-            // 一个模型家族的余量行:号余量(单条 / 5h+周 双条)+「我的卡」。
-            // 远程/绑定模式无 bucket 数据 / 账号异常 → fraction=-1 显示「未知」,
-            // 不回退本地 used/limit(本地不限额恒为「充足 100%」,会假报满血)。
-            const modelRows = (bar: BarSpec) => {
-              const myBars = renderMyCardBar(bar)
-              const accountBars = (() => {
-                // 独享订阅:号余量条直接映射成卡额度(真实数值/窗口),而非 fair-share %。
-                if (useExclusiveDisplay) {
-                  const fiveHour = cardScopeFiveHour(bar.bucket, cardScopeInput)
-                  if (bar.family === 'gpt' || bar.bucket === 'anthropic-claude') {
-                    const weekly = cardScopeWeekly(bar.bucket, cardScopeInput)
-                    return [
-                      <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
-                        fraction={fiveHour.fraction} resetMs={fiveHour.resetMs} />,
-                      <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
-                        fraction={weekly.fraction} resetMs={weekly.resetMs} />,
-                    ]
-                  }
-                  return [
-                    <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
-                      fraction={fiveHour.fraction} resetMs={fiveHour.resetMs} />,
-                  ]
-                }
-                // codex / anthropic-claude 是账号级 5h + 周 双窗口;antigravity 的 Claude 单条号余量。
-                const split =
-                  bar.family === 'gpt' && codexQuota && !accountProblem ? codexQuota :
-                  bar.bucket === 'anthropic-claude' && claudeQuota && !accountProblem ? claudeQuota : null
-                return split ? [
-                  <UsageBar key="acct-5h" label={t('dashboard.acct5h')} used={null} limit={null}
-                    fraction={split.hourlyFraction} resetMs={split.hourlyResetMs} />,
-                  <UsageBar key="acct-week" label={t('dashboard.acctWeek')} used={null} limit={null}
-                    fraction={split.weeklyFraction} resetMs={split.weeklyResetMs} />,
-                ] : [
-                  <UsageBar key="acct" label={t('dashboard.acctRemaining')} used={null} limit={null}
-                    fraction={accountProblem ? -1 : (accountFractions?.[bar.bucket] ?? -1)}
-                    resetMs={accountResetMs?.[bar.bucket]} />,
-                ]
-              })()
-              return [...accountBars, ...myBars].filter(Boolean)
-            }
-
-            // 按服务商分栏:Antigravity / Codex / Anthropic,各自一个带品牌标识的描边面板;
-            // 只渲染有数据的服务商,顶部对齐。
             const PROVIDERS = [
               { id: 'antigravity', name: 'Antigravity' },
               { id: 'codex', name: 'Codex' },
               { id: 'anthropic', name: 'Anthropic' },
             ]
             const columns = PROVIDERS
-              .map((p) => ({ ...p, bars: visibleBars.filter((b) => b.bucket.startsWith(p.id)) }))
-              .filter((p) => p.bars.length > 0)
+              .map((p) => ({ ...p, sections: quotaSections.filter((section) => section.bucket.startsWith(p.id)) }))
+              .filter((p) => p.sections.length > 0)
 
             if (columns.length === 0) {
               return <div className="text-[12px] text-[var(--text-muted)] py-1">{t('dashboard.noUsageData')}</div>
             }
             return (
               <div className="grid gap-3 items-start" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-                {columns.map((p) => {
-                  const multiModel = p.bars.length > 1
-                  return (
-                    <div key={p.id} className="rounded-[12px] border border-[var(--border-light)] p-3.5">
-                      <div className="flex items-center gap-2 mb-2.5">
-                        <ProviderLogo provider={p.id} />
-                        <span className="text-[13px] font-semibold text-[var(--text-primary)]">{p.name}</span>
-                      </div>
-                      <div className="flex flex-col gap-3">
-                        {p.bars.map((bar) => (
-                          <div key={bar.bucket}>
-                            {multiModel && (
-                              <div className="text-[11px] font-medium text-[var(--text-muted)] mb-0.5">{bar.label.split(' · ')[1] || bar.label}</div>
-                            )}
+                {columns.map((p) => (
+                  <div key={p.id} className="rounded-[12px] border border-[var(--border-light)] p-3.5">
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <ProviderLogo provider={p.id} />
+                      <span className="text-[13px] font-semibold text-[var(--text-primary)]">{p.name}</span>
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      {p.sections.map((section) => (
+                        <div key={section.bucket} className="flex flex-col gap-2.5">
+                          <div className="text-[12px] font-semibold text-[var(--text-primary)]">{section.title}</div>
+                          {section.mine.length > 0 && (
+                            <div className="flex flex-col gap-1.5">
+                              <div className="text-[11px] font-medium text-[var(--text-muted)]">我的席位</div>
+                              <div className="flex flex-col divide-y divide-[var(--border-light)]">
+                                {section.mine.map((bar) => (
+                                  <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex flex-col gap-1.5">
+                            <div className="text-[11px] font-medium text-[var(--text-muted)]">当前服务账号</div>
                             <div className="flex flex-col divide-y divide-[var(--border-light)]">
-                              {modelRows(bar).map((row, i) => (
-                                <div key={i} className="py-2 first:pt-0.5 last:pb-0.5">{row}</div>
+                              {section.serviceAccount.map((bar) => (
+                                <div key={bar.window} className="py-2 first:pt-0.5 last:pb-0.5">{renderQuotaBar(bar)}</div>
                               ))}
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      ))}
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             )
           })()}

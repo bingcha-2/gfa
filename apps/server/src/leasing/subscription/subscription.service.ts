@@ -25,6 +25,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { EntitlementSyncService } from "./entitlement-sync.service";
 import { PlanCatalogService } from "../plan-catalog/plan-catalog.service";
 import { sameConfigFingerprint } from "./config-fingerprint";
+import { rowToConfig } from "./subscription-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,11 +95,20 @@ export class SubscriptionService {
     const same = actives.find((s) => sameConfigFingerprint(parseConfig(s.config), config));
     if (same) {
       const base = Math.max(now.getTime(), same.expiresAt ? same.expiresAt.getTime() : now.getTime());
+      const renewalConfig = mergeRenewalConfig(rowToConfig(same as any) as Record<string, any>, config);
       const extended = await this.prisma.subscription.update({
         where: { id: same.id },
         data: {
           expiresAt: new Date(base + durationMs),
           catalogVersion: order.catalogVersion,
+          config: JSON.stringify(renewalConfig),
+          productEntitlements: JSON.stringify(Array.isArray(renewalConfig.products) ? renewalConfig.products : []),
+          bucketLimits: renewalConfig.bucketLimits ? JSON.stringify(renewalConfig.bucketLimits) : null,
+          levels: renewalConfig.levels ? JSON.stringify(renewalConfig.levels) : null,
+          weight: Number.isFinite(renewalConfig.shareSeats) ? Number(renewalConfig.shareSeats) : Number(renewalConfig.weight || 1),
+          deviceLimit: Number.isFinite(renewalConfig.deviceLimit) ? Number(renewalConfig.deviceLimit) : 1,
+          weeklyTokenLimit: Number.isFinite(renewalConfig.weeklyTokenLimit) ? Number(renewalConfig.weeklyTokenLimit) : null,
+          windowMs: Number.isFinite(renewalConfig.windowMs) ? Number(renewalConfig.windowMs) : 18_000_000,
           // 订单链移到最新一单(对账/退款)。
           activatedFromOrderId: order.id,
         },
@@ -120,7 +130,7 @@ export class SubscriptionService {
         productEntitlements: JSON.stringify(Array.isArray(config.products) ? config.products : []),
         bucketLimits: config.bucketLimits ? JSON.stringify(config.bucketLimits) : null,
         levels: config.levels ? JSON.stringify(config.levels) : null,
-        weight: Number.isFinite(config.weight) ? Number(config.weight) : 1,
+        weight: Number.isFinite(config.shareSeats) ? Number(config.shareSeats) : Number(config.weight || 1),
         deviceLimit: Number.isFinite(config.deviceLimit) ? Number(config.deviceLimit) : 1,
         weeklyTokenLimit: Number.isFinite(config.weeklyTokenLimit) ? Number(config.weeklyTokenLimit) : null,
         windowMs: Number.isFinite(config.windowMs) ? Number(config.windowMs) : 18_000_000,
@@ -199,4 +209,19 @@ function parseConfig(json: string | null): Record<string, any> {
   } catch {
     return {};
   }
+}
+
+function mergeRenewalConfig(existing: Record<string, any>, next: Record<string, any>): Record<string, any> {
+  const merged = { ...next };
+  if (existing.bindings && typeof existing.bindings === "object" && !Array.isArray(existing.bindings)) {
+    merged.bindings = existing.bindings;
+  }
+  if (
+    existing.displayBindings &&
+    typeof existing.displayBindings === "object" &&
+    !Array.isArray(existing.displayBindings)
+  ) {
+    merged.displayBindings = existing.displayBindings;
+  }
+  return merged;
 }

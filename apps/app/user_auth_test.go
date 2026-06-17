@@ -18,11 +18,19 @@ import (
 func newLoginServer(t *testing.T, resp interface{}, statusCode int, onRequest func(body map[string]interface{})) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/app/login" {
-			t.Errorf("unexpected path %s", r.URL.Path)
-		}
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("expected JSON content-type, got %s", r.Header.Get("Content-Type"))
+		}
+		if r.URL.Path == "/app/heartbeat" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":            true,
+				"subscriptions": []interface{}{map[string]interface{}{"products": []interface{}{"codex"}}},
+			})
+			return
+		}
+		if r.URL.Path != "/app/login" {
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		if onRequest != nil {
 			var body map[string]interface{}
@@ -74,6 +82,13 @@ func TestUserLogin_Success(t *testing.T) {
 	origAuthBase := authBaseURL
 	authBaseURL = srv.URL
 	defer func() { authBaseURL = origAuthBase }()
+	t.Cleanup(func() {
+		GetLeaser().StopAutoLease()
+		GetLeaser().ResetEntitlements()
+		GetHTTPProxy().Stop()
+		GetMitmManager().StopProxy()
+		GetMitmManager().UpdateConfig("", "", "")
+	})
 
 	app := &App{}
 	result, err := app.UserLogin("user@example.com", "secret-pass")

@@ -295,12 +295,13 @@ export class RosettaService {
     level: string,
     occupiedShares: Map<number, number>,
     boundCounts?: Map<number, number>,
+    salesCapacity?: number,
   ) {
-    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts);
+    return this.accessKeySvc.assignSeatForProductFromShares(product, weight, level, occupiedShares, boundCounts, salesCapacity);
   }
   /** 下单前座位预检:该 product+level 有无剩 ≥ weight 份的号(占用份额按 DB 订阅 config 传入)。 */
-  hasAvailableSeatFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>) {
-    return this.accessKeySvc.hasAvailableSeatFromShares(product, weight, level, occupiedShares);
+  hasAvailableSeatFromShares(product: string, weight: number, level: string, occupiedShares: Map<number, number>, salesCapacity?: number) {
+    return this.accessKeySvc.hasAvailableSeatFromShares(product, weight, level, occupiedShares, salesCapacity);
   }
 
   // ── Captcha / location unblock (→ CaptchaService) ───────────────────────

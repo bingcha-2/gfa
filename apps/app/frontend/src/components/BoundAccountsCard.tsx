@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { useT, t as tr, useLocaleStore } from '@/i18n'
+import { t as tr, useLocaleStore } from '@/i18n'
 import { Users, Copy, Check, Mail, Crown } from 'lucide-react'
 import type { BoundAccountInfo } from '@/types'
 
@@ -77,7 +77,7 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
           <span className={cn('w-2 h-2 rounded-full', meta.dot)} />
           {meta.label}
         </span>
-        <Badge variant={acc.accessToken ? 'success' : 'muted'}>{acc.accessToken ? tr('bound.bound') : tr('bound.fetching')}</Badge>
+        <Badge variant={acc.accessToken ? 'success' : 'muted'}>{acc.accessToken ? '当前' : tr('bound.fetching')}</Badge>
       </div>
 
       {/* 账号邮箱 */}
@@ -124,18 +124,16 @@ function AccountRow({ acc }: { acc: BoundAccountInfo }) {
 }
 
 /**
- * 绑定卡每个产品当前租到的账号信息 + token。仅对绑定卡(有 products)显示。
- * 池子卡每次请求轮换账号,展示「绑定账号」无意义,故隐藏。
+ * 最新 lease 实际服务账号。preferred-dynamic 可能换号,
+ * 所以这里不承诺固定绑定账号。
  */
 export function BoundAccountsCard() {
-  const t = useT()
   const boundAccounts = useAppStore((s) => s.boundAccounts)
   const cardProducts = useAppStore((s) => s.cardProducts)
 
-  // 池子卡(无 products)→ 不展示绑定账号面板。
-  if (!cardProducts || cardProducts.length === 0) return null
-
-  const products = cardProducts.map(normalizeProduct)
+  const products = (cardProducts && cardProducts.length > 0)
+    ? cardProducts.map(normalizeProduct)
+    : boundAccounts.map((a) => normalizeProduct(a.product))
   const byProduct = new Map(boundAccounts.map((a) => [normalizeProduct(a.product), a]))
 
   // 按卡绑定的产品顺序展示;未租到的产品给一个占位(获取中)。
@@ -150,7 +148,7 @@ export function BoundAccountsCard() {
 
   return (
     <Card>
-      <CardHeader><CardTitle><Users size={15} /> {t('bound.title')}</CardTitle></CardHeader>
+      <CardHeader><CardTitle><Users size={15} /> 当前服务账号</CardTitle></CardHeader>
       <CardContent>
         <div
           className="grid gap-2.5 items-start"

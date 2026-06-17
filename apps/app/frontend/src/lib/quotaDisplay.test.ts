@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildQuotaSections,
   cardScopeFiveHour,
   cardScopeWeekly,
   isExclusiveCard,
@@ -102,6 +103,45 @@ describe('cardScopeWeekly', () => {
     const got = cardScopeWeekly('codex-gpt', {})
 
     expect(got).toEqual({ fraction: -1, resetMs: undefined })
+  })
+})
+
+describe('buildQuotaSections', () => {
+  it('builds separate seat and service-account bars for one bucket', () => {
+    const got = buildQuotaSections({
+      bucket: 'anthropic-claude',
+      seatLabel: 'Claude · 2/8 席',
+      cardBuckets: { 'anthropic-claude': { used: 5, limit: 20, resetMs: 1000 } },
+      cardWeeklyBuckets: { 'anthropic-claude': { used: 10, limit: 100, resetMs: 7000 } },
+      accountFractions: { 'anthropic-claude': 0.5 },
+      accountResetMs: { 'anthropic-claude': 2000 },
+    })
+
+    expect(got).toMatchObject([
+      {
+        title: 'Claude · 2/8 席',
+        mine: [{ window: '5h', hideValues: true }, { window: '7d', hideValues: true }],
+        serviceAccount: [{ window: '5h', fraction: 0.5, resetMs: 2000 }],
+      },
+    ])
+  })
+
+  it('prefers split Codex service-account windows over account fractions', () => {
+    const got = buildQuotaSections({
+      bucket: 'codex-gpt',
+      seatLabel: 'Codex · 1/8 席',
+      myFractions: { 'codex-gpt': 0.8 },
+      myResetMs: { 'codex-gpt': 1000 },
+      accountFractions: { 'codex-gpt': 0.2 },
+      accountResetMs: { 'codex-gpt': 2000 },
+      codexQuota: { hourlyFraction: 0.7, weeklyFraction: 0.4, hourlyResetMs: 3000, weeklyResetMs: 9000 },
+    })
+
+    expect(got[0].mine).toMatchObject([{ window: '5h', fraction: 0.8, resetMs: 1000 }])
+    expect(got[0].serviceAccount).toMatchObject([
+      { window: '5h', fraction: 0.7, resetMs: 3000 },
+      { window: '7d', fraction: 0.4, resetMs: 9000 },
+    ])
   })
 })
 

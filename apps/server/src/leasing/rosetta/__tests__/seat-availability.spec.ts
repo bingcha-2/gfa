@@ -58,6 +58,12 @@ describe("RosettaService.hasAvailableSeatFromShares", () => {
     expect(svc.hasAvailableSeatFromShares("anthropic", 1, "pro", new Map([[1, CAP - 1]]))).toBe(true);
   });
 
+  it("uses explicit sales capacity instead of ACCOUNT_SHARE_CAPACITY when provided", () => {
+    const occupied = new Map([[1, 8]]);
+    expect(svc.hasAvailableSeatFromShares("anthropic", 2, "pro", occupied, 10)).toBe(true);
+    expect(svc.assignSeatForProductFromShares("anthropic", 2, "pro", occupied, new Map(), 10)).toBe(1);
+  });
+
   it("满员号被排除,但同等级另有空号 → true", () => {
     // 号 1(pro)满,新增号 4(pro)空 → 仍 true。
     writePool("anthropic-accounts.json", [

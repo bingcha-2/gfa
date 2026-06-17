@@ -17,6 +17,12 @@ export interface CatalogUsageTier {
   weeklyTokenLimit: number;
 }
 
+export interface CatalogSupplyPolicy {
+  defaultLevel: string;
+  salesSeatsPerAccount: Record<string, number>;
+  buckets: Record<string, unknown>;
+}
+
 /** The PUBLISHED PlanCatalog.config, as returned by GET /api/plan-catalog. */
 export interface CatalogConfig {
   products: string[];
@@ -36,11 +42,11 @@ export interface CatalogConfig {
   };
   durationDays: number;
   windowMs: number;
+  supplyPolicies?: Record<string, CatalogSupplyPolicy>;
   /**
-   * Shares one upstream account is sliced into (= server runtime
+   * Seats one upstream account is sliced into (= server runtime
    * ACCOUNT_SHARE_CAPACITY, injected when the catalog is read server-side and
-   * returned by GET /api/plan-catalog). Bind weight = shareCapacity / shareUsers,
-   * same source as runtime seating. Optional: non-authoritative callers (the
+   * returned by GET /api/plan-catalog). Optional: non-authoritative callers (the
    * console price preview, built from an unsaved form) fall back to 8 (prod default).
    */
   shareCapacity?: number;
@@ -61,7 +67,9 @@ export interface BindItem {
 export interface BindSelection {
   line: "bind";
   items: BindItem[];
-  shareUsers: number;
+  shareSeats?: number;
+  /** Legacy pending orders used shareUsers; convert to seats when present. */
+  shareUsers?: number;
   deviceLimit: number;
 }
 
@@ -77,6 +85,8 @@ export function computePurchase(catalog: CatalogConfig, selection: Selection): P
     ? computeBind(catalog, selection)
     : computePool(catalog, selection);
 }
+
+const SEAT_OPTIONS = [1, 2, 4, 8] as const;
 
 function computePool(catalog: CatalogConfig, selection: PoolSelection): PurchaseResult {
   const pool = catalog.pricing.pool;
@@ -104,6 +114,8 @@ function computePool(catalog: CatalogConfig, selection: PoolSelection): Purchase
 
 function computeBind(catalog: CatalogConfig, selection: BindSelection): PurchaseResult {
   const bind = catalog.pricing.bind;
+  const shareCapacity = catalog.shareCapacity ?? 8;
+  const share = normalizeShareSelection(selection, shareCapacity);
   let priceCents = 0;
   const products: string[] = [];
   const levels: Record<string, string> = {};
@@ -116,7 +128,7 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
     products.push(product);
     levels[product] = level;
   }
-  priceCents += bind.share[String(selection.shareUsers)] ?? 0;
+  priceCents += bind.share[String(share.priceShareUsers)] ?? 0;
   priceCents += extraDeviceCost(selection.deviceLimit, bind.devicePerExtra);
 
   return {
@@ -125,11 +137,46 @@ function computeBind(catalog: CatalogConfig, selection: BindSelection): Purchase
       line: "bind",
       products,
       levels,
-      weight: (catalog.shareCapacity ?? 8) / selection.shareUsers,
+      shareSeats: share.shareSeats,
+      shareCapacity,
+      weight: share.shareSeats,
+      assignmentPolicy: "preferred-dynamic",
       deviceLimit: selection.deviceLimit,
       windowMs: catalog.windowMs,
     },
   };
+}
+
+function normalizeShareSelection(
+  selection: BindSelection,
+  shareCapacity: number,
+): { shareSeats: number; priceShareUsers: number } {
+  if (selection.shareSeats !== undefined) {
+    const explicit = Number(selection.shareSeats);
+    if (isSeatOption(explicit) && explicit <= shareCapacity) {
+      return {
+        shareSeats: explicit,
+        priceShareUsers: Math.max(1, Math.floor(shareCapacity / explicit)),
+      };
+    }
+    throw new Error("shareSeats must be one of 1, 2, 4, 8");
+  }
+
+  if (selection.shareUsers !== undefined) {
+    const legacyUsers = Number(selection.shareUsers);
+    if (isSeatOption(legacyUsers)) {
+      const converted = Math.max(1, Math.floor(shareCapacity / legacyUsers));
+      if (isSeatOption(converted)) {
+        return { shareSeats: converted, priceShareUsers: legacyUsers };
+      }
+    }
+  }
+
+  throw new Error("shareSeats must be one of 1, 2, 4, 8");
+}
+
+function isSeatOption(value: number): value is (typeof SEAT_OPTIONS)[number] {
+  return Number.isInteger(value) && SEAT_OPTIONS.includes(value as (typeof SEAT_OPTIONS)[number]);
 }
 
 function extraDeviceCost(deviceLimit: number, perExtra: number): number {

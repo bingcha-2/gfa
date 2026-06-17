@@ -7,7 +7,7 @@
  * plan — the single worst failure for a portal whose job is "3 秒看清状态".
  */
 
-import type { Subscription } from "./user-types";
+import type { QuotaBucket, Subscription } from "./user-types";
 
 export type MembershipState = "active" | "expiring_soon" | "expired" | "none";
 
@@ -56,12 +56,29 @@ export function pickRepresentativeSubscription<T extends SubLike>(
  * authorized products (matching the billing center's `products.join("+")`).
  */
 export function subscriptionPlanLabel(
-  sub: Pick<Subscription, "planName" | "migratedFromCard" | "products">
+  sub: Pick<Subscription, "planName" | "migratedFromCard" | "products"> & { seatsLabel?: string | null }
 ): string {
+  const seatsLabel = sub.seatsLabel?.trim();
+  if (seatsLabel && sub.products.length > 0) return `${sub.products.join("+")} · ${seatsLabel}`;
   if (sub.planName && sub.planName.trim()) return sub.planName;
   if (sub.migratedFromCard) return "迁移卡密订阅";
   if (sub.products.length > 0) return sub.products.join("+");
   return "会员订阅";
+}
+
+export function quotaMeterPercent(
+  bucket: Pick<QuotaBucket, "used" | "limit"> | null | undefined
+): number | null {
+  if (!bucket || Number(bucket.limit) <= 0) return null;
+  const used = Number(bucket.used ?? 0);
+  return Math.max(0, Math.min(100, Math.round(((bucket.limit - used) / bucket.limit) * 100)));
+}
+
+export function quotaMeterValueLabel(
+  bucket: Pick<QuotaBucket, "used" | "limit"> | null | undefined
+): string | null {
+  const pct = quotaMeterPercent(bucket);
+  return pct == null ? null : `${pct}%`;
 }
 
 /**

@@ -219,6 +219,92 @@ describe("PortalService.getOverview", () => {
     expect(quota.weeklyWindowTokens).not.toBe(99999);
   });
 
+  it("returns bind-line seats label and configured 5h/weekly bucket limits even without a shadow record", async () => {
+    const prisma = makePrisma({
+      subscriptions: [
+        {
+          id: "sub-bind",
+          migratedFromKey: null,
+          status: "ACTIVE",
+          productEntitlements: '["anthropic"]',
+          expiresAt: null,
+          deviceLimit: 2,
+          weight: 2,
+          priority: 0,
+          config: JSON.stringify({
+            line: "bind",
+            products: ["anthropic"],
+            shareSeats: 2,
+            shareCapacity: 8,
+            bucketLimits: { "anthropic-claude": 20_000_000 },
+            weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+          }),
+        },
+      ],
+    });
+    const store = makeStore();
+    const service = new PortalService(prisma as any, store as any);
+
+    const result = await service.getOverview("cust-1");
+    const subscription = result.subscriptions[0];
+
+    expect(subscription).toMatchObject({
+      shareSeats: 2,
+      shareCapacity: 8,
+      seatsLabel: "2/8 席",
+      quota: {
+        buckets: [{ bucket: "anthropic-claude", limit: 20_000_000 }],
+        weeklyBuckets: [{ bucket: "anthropic-claude", limit: 100_000_000 }],
+      },
+    });
+  });
+
+  it("merges publicStatus usage/reset into configured buckets while keeping configured limits", async () => {
+    const publicStatus = {
+      quotaMode: "static",
+      buckets: [{ bucket: "anthropic-claude", used: 5_000_000, limit: 1, resetMs: 1234 }],
+      tokenWindowResetMs: 1234,
+      weeklyBuckets: [{ bucket: "anthropic-claude", used: 25_000_000, limit: 1, resetMs: 5678 }],
+      weeklyWindowResetMs: 5678,
+      totalTokensUsed: 30_000_000,
+    };
+    const prisma = makePrisma({
+      subscriptions: [
+        {
+          id: "sub-bind",
+          migratedFromKey: null,
+          status: "ACTIVE",
+          productEntitlements: '["anthropic"]',
+          expiresAt: null,
+          deviceLimit: 2,
+          weight: 2,
+          priority: 0,
+          config: JSON.stringify({
+            line: "bind",
+            products: ["anthropic"],
+            shareSeats: 2,
+            shareCapacity: 8,
+            bucketLimits: { "anthropic-claude": 20_000_000 },
+            weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+          }),
+        },
+      ],
+    });
+    const store = makeStore({ "sub-bind": { _publicStatus: publicStatus } });
+    const service = new PortalService(prisma as any, store as any);
+
+    const result = await service.getOverview("cust-1");
+    const quota = result.subscriptions[0].quota;
+
+    expect(quota.buckets).toEqual([
+      { bucket: "anthropic-claude", used: 5_000_000, limit: 20_000_000, resetMs: 1234 },
+    ]);
+    expect(quota.weeklyBuckets).toEqual([
+      { bucket: "anthropic-claude", used: 25_000_000, limit: 100_000_000, resetMs: 5678 },
+    ]);
+    expect(quota.weeklyWindowTokens).toBe(25_000_000);
+  });
+
   it("falls back to unlimited quota when store has no shadow record for sub", async () => {
     const prisma = makePrisma({
       subscriptions: [

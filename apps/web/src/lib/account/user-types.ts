@@ -128,13 +128,15 @@ export type QuotaMode = "static" | "dynamic" | "unlimited";
 
 export type QuotaBucket = {
   bucket: string;
-  used: number;
+  used?: number;
   limit: number;
+  resetMs?: number;
 };
 
 export type SubscriptionQuota = {
   quotaMode: QuotaMode;
   buckets: QuotaBucket[];
+  weeklyBuckets?: QuotaBucket[];
   recentWindowTokens: number;
   tokenWindowResetMs: number | null;
   weeklyTokenLimit: number | null;
@@ -145,6 +147,9 @@ export type SubscriptionQuota = {
 };
 
 export type OverviewSubscription = Subscription & {
+  shareSeats?: number;
+  shareCapacity?: number;
+  seatsLabel?: string;
   quota: SubscriptionQuota;
 };
 

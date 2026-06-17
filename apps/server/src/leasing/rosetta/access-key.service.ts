@@ -49,8 +49,18 @@ export function withAccessKeysWriteLock<T>(fn: () => T | Promise<T>): Promise<T>
   return run;
 }
 
+function normalizeSalesCapacity(value: unknown): number {
+  const capacity = Math.floor(Number(value));
+  return Number.isFinite(capacity) && capacity > 0 ? capacity : ACCOUNT_SHARE_CAPACITY;
+}
+
 export class AccessKeyService {
   constructor(private readonly ctx: RosettaContext) {}
+
+  private writeAccessKeys(filePath: string, value: unknown): void {
+    writeJson(filePath, value);
+    this.ctx.accessKeysFile?.invalidate?.();
+  }
 
   listAccessKeys(query: { search?: string }) {
     const data = this.ctx.accessKeysFile.read();
@@ -265,7 +275,7 @@ export class AccessKeyService {
       keys.push(record);
       created.push(record);
     }
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     const publicKeys = created.map((record) => this.publicAccessKey(record));
     return { ok: true, key: publicKeys[0], keys: publicKeys, totalKeys: keys.length };
   }
@@ -311,7 +321,7 @@ export class AccessKeyService {
       }
       record.bucketLimits = Object.keys(existing).length > 0 ? existing : undefined;
     }
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
   }
 
@@ -394,7 +404,7 @@ export class AccessKeyService {
       if (value === null) delete record[field];
       else record[field] = value;
     }
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, created };
   }
 
@@ -430,11 +440,13 @@ export class AccessKeyService {
     level: string,
     occupiedShares: Map<number, number>,
     boundCounts: Map<number, number> = new Map(),
+    salesCapacity = ACCOUNT_SHARE_CAPACITY,
   ): number | null {
     if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
     const lvl = String(level || "").trim();
     if (!lvl) return null;
     const need = cardWeight({ weight });
+    const capacity = normalizeSalesCapacity(salesCapacity);
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
     const fit = (Array.isArray(pool.accounts) ? pool.accounts : [])
       .filter((a: any) => this.isAccountBindable(product, a, lvl))
@@ -443,7 +455,7 @@ export class AccessKeyService {
         const q = this.bindQuotaInfo(product, a);
         return {
           id,
-          free: ACCOUNT_SHARE_CAPACITY - (occupiedShares.get(id) || 0),
+          free: capacity - (occupiedShares.get(id) || 0),
           count: boundCounts.get(id) || 0,
           usableNow: q.usableNow,
           soonestReset: q.soonestReset,
@@ -471,8 +483,9 @@ export class AccessKeyService {
     weight: number,
     level: string,
     occupiedShares: Map<number, number>,
+    salesCapacity = ACCOUNT_SHARE_CAPACITY,
   ): boolean {
-    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares) !== null;
+    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares, new Map(), salesCapacity) !== null;
   }
 
   deleteAccessKey(payload: any) {
@@ -482,7 +495,7 @@ export class AccessKeyService {
     const keys = Array.isArray(data.keys) ? data.keys : [];
     const filtered = keys.filter((key: any) => String(key.id) !== id);
     if (filtered.length === keys.length) return { ok: false, error: "卡密不存在" };
-    writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
     return { ok: true, totalKeys: filtered.length };
   }
 
@@ -566,7 +579,7 @@ export class AccessKeyService {
     }
 
     record.bindings = { ...(record.bindings || {}), [provider]: accountId };
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
   }
 
@@ -589,7 +602,7 @@ export class AccessKeyService {
       record.provider = "";
       record.boundAccountId = 0;
     }
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
   }
 
@@ -630,7 +643,7 @@ export class AccessKeyService {
     // 清掉历史单绑字段,避免与 bindings 冲突。
     record.provider = "";
     record.boundAccountId = 0;
-    writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
     return { ok: true, key: this.publicAccessKey(record) };
   }
 
@@ -650,7 +663,7 @@ export class AccessKeyService {
         changed = true;
       }
     }
-    if (changed) writeJson(filePath, { ...data, keys, updatedAt: nowIso() });
+    if (changed) this.writeAccessKeys(filePath, { ...data, keys, updatedAt: nowIso() });
   }
 
   /** Account-pool file for a provider. */
@@ -824,7 +837,7 @@ export class AccessKeyService {
     });
     const deleted = keys.length - filtered.length;
     if (deleted > 0) {
-      writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
+      this.writeAccessKeys(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
     }
     return { ok: true, deleted };
   }
@@ -868,7 +881,7 @@ export class AccessKeyService {
     });
     const deleted = keys.length - filtered.length;
     if (deleted > 0) {
-      writeJson(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
+      this.writeAccessKeys(filePath, { ...data, keys: filtered, updatedAt: nowIso() });
     }
     return { ok: true, deleted };
   }

@@ -48,8 +48,8 @@ import { usePlanCatalog } from "./use-plan-catalog";
 import { useAccountLevels } from "./use-account-levels";
 import { DEFAULT_CONFIG } from "./catalog-defaults";
 import { ProductsSection } from "./products-section";
-import { PricingSection, type PricingLine } from "./pricing-section";
-import { UsageSection } from "./usage-section";
+import { PricingSection } from "./pricing-section";
+import { SupplyPoliciesSection } from "./usage-section";
 import { PricePreview } from "./price-preview";
 import { NumberInput } from "./form-bits";
 
@@ -66,8 +66,6 @@ export default function PlanCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
-  // 「定价」当前选中的线。绑定线不读用量档 → 选中时把用量档卡片置灰。
-  const [pricingLine, setPricingLine] = useState<PricingLine>("pool");
 
   // 后端加载完成后,用发布版(或占位)初始化表单一次。
   useEffect(() => {
@@ -80,11 +78,6 @@ export default function PlanCatalogPage() {
     setForm((prev) => (prev ? { ...prev, ...patch } : prev));
     setDirty(true);
   }, []);
-
-  const enabledProducts = useMemo(
-    () => (form ? form.products.filter((p) => p.enabled).map((p) => p.product) : []),
-    [form],
-  );
 
   // 全部产品(含停用)的等级候选:从各产品账号池实际 planType 拉(绑定线等级从这里选,
   // 账号池里没有的等级选不了)。停用产品也拉,便于重新启用时仍能选档。
@@ -255,51 +248,34 @@ export default function PlanCatalogPage() {
             <CardHeader>
               <CardTitle>定价</CardTitle>
               <CardDescription>
-                号池线 = 产品价 + 用量加价 + 设备;绑定线 = 等级矩阵 + 共享折扣 + 设备。元为单位。
+                统一绑定线定价:等级矩阵 + 席位折扣 + 设备。元为单位。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <PricingSection
                 products={form.products}
-                usageTiers={form.usageTiers}
-                pool={form.pricing.pool}
                 bind={form.pricing.bind}
-                onPoolChange={(poolNext) =>
-                  patchForm({ pricing: { ...form.pricing, pool: poolNext } })
-                }
                 onBindChange={(bindNext) =>
                   patchForm({ pricing: { ...form.pricing, bind: bindNext } })
                 }
-                line={pricingLine}
-                onLineChange={setPricingLine}
                 disabled={busy}
               />
             </CardContent>
           </Card>
 
-          {/* 用量档只对号池线生效;选中绑定线时置灰禁用,避免误以为绑定线也读它。 */}
-          <Card
-            aria-disabled={pricingLine === "bind"}
-            className={
-              pricingLine === "bind"
-                ? "pointer-events-none opacity-50 transition-opacity"
-                : "transition-opacity"
-            }
-          >
+          <Card>
             <CardHeader>
-              <CardTitle>用量档(号池线)</CardTitle>
+              <CardTitle>供给策略</CardTitle>
               <CardDescription>
-                {pricingLine === "bind"
-                  ? "仅号池线生效。绑定线按等级矩阵计价、用量随绑定账号的上游配额(公平分摊),不读用量档。"
-                  : "每档逐模型 token 上限 + 周限额。桶随启用产品自动列出。"}
+                统一绑定线的动态供给配置。可编辑每个产品等级在单个服务账号上的可售席位；额度来源随策略透传。
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <UsageSection
-                value={form.usageTiers}
-                onChange={(usageTiers) => patchForm({ usageTiers })}
-                enabledProducts={enabledProducts}
-                disabled={busy || pricingLine === "bind"}
+              <SupplyPoliciesSection
+                value={form.supplyPolicies}
+                products={form.products}
+                onChange={(supplyPolicies) => patchForm({ supplyPolicies })}
+                disabled={busy}
               />
             </CardContent>
           </Card>

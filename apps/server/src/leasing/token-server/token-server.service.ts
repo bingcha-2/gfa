@@ -8,7 +8,7 @@ import { AntigravityProvider } from "./antigravity.provider";
 import { TokenAccount } from "./account-token-provider";
 import { ACCOUNT_SHARE_CAPACITY } from "./token-billing";
 import type { AccessKeyStore } from "./access-key-store";
-import { legacyColumnsToConfig, subscriptionToLimitRecord } from "../subscription/subscription-config";
+import { rowToConfig, subscriptionToLimitRecord } from "../subscription/subscription-config";
 
 type ServiceOptions = {
   accountsFilePath?: string;
@@ -181,11 +181,11 @@ export class TokenServerService extends LeaseService<TokenAccount> implements On
         select: {
           id: true, customerId: true, priority: true, backingKeyValue: true, status: true, expiresAt: true, productEntitlements: true,
           bucketLimits: true, bindings: true, levels: true, weight: true,
-          deviceLimit: true, weeklyTokenLimit: true, windowMs: true, windowState: true,
+          deviceLimit: true, weeklyTokenLimit: true, windowMs: true, windowState: true, config: true,
         },
       });
       const records = subs.map((s: any) =>
-        subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, backingKeyValue: s.backingKeyValue, status: s.status, expiresAt: s.expiresAt, config: legacyColumnsToConfig(s) }),
+        subscriptionToLimitRecord({ id: s.id, customerId: s.customerId, priority: s.priority, backingKeyValue: s.backingKeyValue, status: s.status, expiresAt: s.expiresAt, config: rowToConfig(s) }),
       );
       this.accessKeyStore.loadSubscriptionRecords(records as any);
       // 精准恢复 5h/周窗口快照(优先于从 CardTokenUsage 回放;恢复过的订阅 hydrate 会跳过)。

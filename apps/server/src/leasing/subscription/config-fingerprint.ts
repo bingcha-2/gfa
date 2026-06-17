@@ -35,8 +35,8 @@ export function configFingerprint(config: Record<string, any>): string {
   if (line === "bind") {
     // 绑定线:等级(per-product)+ 份额(共享人数);bindings 不进(分配结果)。
     const levels = canonicalObject(config?.levels);
-    const weight = Number(config?.weight) || 0;
-    return `bind|${products}|dev=${deviceLimit}|levels=${levels}|w=${weight}`;
+    const seats = Number(config?.shareSeats ?? config?.weight) || 0;
+    return `bind|${products}|dev=${deviceLimit}|levels=${levels}|seats=${seats}`;
   }
 
   // 号池(及任何非 bind):用量上限决定档位。

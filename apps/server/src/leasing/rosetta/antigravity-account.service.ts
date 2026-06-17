@@ -150,9 +150,10 @@ export class AntigravityAccountService {
     const accounts = Array.isArray(data.accounts) ? data.accounts : [];
     const account = accounts.find((item: any) => Number(item.id) === accountId);
     if (!account) return { ok: false, error: "账号不存在" };
+    // Legacy state only: runtime supply now uses enabled + health, not poolEnabled.
     account.poolEnabled = account.poolEnabled === false ? true : false;
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email: account.email, poolEnabled: account.poolEnabled };
+    return { ok: true, email: account.email, poolEnabled: account.poolEnabled, legacy: true, runtimeSupplyEffect: false };
   }
 
   deleteAccount(payload: any) {

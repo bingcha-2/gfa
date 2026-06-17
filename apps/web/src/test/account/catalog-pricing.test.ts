@@ -92,7 +92,7 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "max-20x" }],
-      shareUsers: 1,
+      shareSeats: 8,
       deviceLimit: 1,
     });
 
@@ -101,13 +101,39 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       line: "bind",
       products: ["anthropic"],
       levels: { anthropic: "max-20x" },
+      shareSeats: 8,
+      shareCapacity: 8,
       weight: 8,
+      assignmentPolicy: "preferred-dynamic",
       deviceLimit: 1,
       windowMs: 18000000,
     });
   });
 
-  it("共享人数折扣:Claude pro + 4 人 → 价格含负向 share 加价,weight=2", () => {
+  it("shareSeats=2 生成 bind config: shareSeats=2, capacity=8, weight=2, preferred-dynamic", () => {
+    const result = computePurchase(CATALOG, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "pro" }],
+      shareSeats: 2,
+      deviceLimit: 1,
+    });
+
+    // 9900 + (-7000) = 2900
+    expect(result.priceCents).toBe(9900 - 7000);
+    expect(result.config).toEqual({
+      line: "bind",
+      products: ["anthropic"],
+      levels: { anthropic: "pro" },
+      shareSeats: 2,
+      shareCapacity: 8,
+      weight: 2,
+      assignmentPolicy: "preferred-dynamic",
+      deviceLimit: 1,
+      windowMs: 18000000,
+    });
+  });
+
+  it("legacy shareUsers=4 转换为 shareSeats=2, weight=2", () => {
     const result = computePurchase(CATALOG, {
       line: "bind",
       items: [{ product: "anthropic", level: "pro" }],
@@ -115,9 +141,23 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
       deviceLimit: 1,
     });
 
-    // 9900 + (-7000) = 2900
     expect(result.priceCents).toBe(9900 - 7000);
-    expect(result.config.weight).toBe(2); // capacity 8 / 4 人
+    expect(result.config.shareSeats).toBe(2);
+    expect(result.config.weight).toBe(2);
+  });
+
+  it("legacy shareUsers=8 鍦?shareCapacity=4 涓嬩粛杞垚鏈€灏?1 席", () => {
+    const result = computePurchase({ ...CATALOG, shareCapacity: 4 }, {
+      line: "bind",
+      items: [{ product: "anthropic", level: "max-20x" }],
+      shareUsers: 8,
+      deviceLimit: 1,
+    });
+
+    expect(result.priceCents).toBe(29900 - 9000);
+    expect(result.config.shareSeats).toBe(1);
+    expect(result.config.shareCapacity).toBe(4);
+    expect(result.config.weight).toBe(1);
   });
 
   it("多产品各挑等级 + 8 人 + 2 设备 → Σ等级价 + share 折扣 + 额外设备,weight=1", () => {
@@ -127,7 +167,7 @@ describe("computePurchase — 绑定线(与服务端口径一致)", () => {
         { product: "anthropic", level: "max-5x" },
         { product: "codex", level: "pro" },
       ],
-      shareUsers: 8,
+      shareSeats: 1,
       deviceLimit: 2,
     });
 
@@ -145,10 +185,55 @@ describe("computePurchase — 校验(非法选择抛错,绝不默默算 0)", () 
       computePurchase(CATALOG, {
         line: "bind",
         items: [{ product: "anthropic", level: "nonexistent" }],
-        shareUsers: 1,
+        shareSeats: 8,
         deviceLimit: 1,
       }),
     ).toThrow(/level|等级|nonexistent/i);
+  });
+
+  it("非法 shareSeats=3 → 抛错", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "pro" }],
+        shareSeats: 3,
+        deviceLimit: 1,
+      }),
+    ).toThrow(/shareSeats|seat/i);
+  });
+
+  it("小数 shareSeats=2.9 → 抛错", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "pro" }],
+        shareSeats: 2.9,
+        deviceLimit: 1,
+      }),
+    ).toThrow(/shareSeats|seat/i);
+  });
+
+  it("显式非法 shareSeats 不被 legacy shareUsers 掩盖", () => {
+    expect(() =>
+      computePurchase(CATALOG, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "pro" }],
+        shareSeats: 3,
+        shareUsers: 4,
+        deviceLimit: 1,
+      }),
+    ).toThrow(/shareSeats|seat/i);
+  });
+
+  it("显式 shareSeats 超过 shareCapacity → 抛错", () => {
+    expect(() =>
+      computePurchase({ ...CATALOG, shareCapacity: 4 }, {
+        line: "bind",
+        items: [{ product: "anthropic", level: "pro" }],
+        shareSeats: 8,
+        deviceLimit: 1,
+      }),
+    ).toThrow(/shareSeats|seat/i);
   });
 
   it("号池线选了不存在的用量档 → 抛错", () => {

@@ -70,6 +70,7 @@ describe("sameConfigFingerprint — 绑定线", () => {
     products: ["anthropic"],
     levels: { anthropic: "max-20x" },
     bindings: { anthropic: 1234 },
+    shareSeats: 8,
     weight: 8,
     deviceLimit: 1,
     windowMs: 18_000_000,
@@ -87,12 +88,34 @@ describe("sameConfigFingerprint — 绑定线", () => {
     expect(sameConfigFingerprint({ ...base, bindings: {} }, base)).toBe(true);
   });
 
+  it("bucket/display learning fields differ but bind purchase intent is equivalent", () => {
+    const learnedA = {
+      ...base,
+      bucketLimits: { "anthropic-claude": 50000 },
+      weeklyBucketLimits: { "anthropic-claude": 250000 },
+      displayBindings: { anthropic: "seat-a" },
+      bindings: { anthropic: 1111 },
+    };
+    const learnedB = {
+      ...base,
+      bucketLimits: { "anthropic-claude": 90000 },
+      weeklyBucketLimits: { "anthropic-claude": 450000 },
+      displayBindings: { anthropic: "seat-b" },
+      bindings: { anthropic: 2222 },
+    };
+    expect(sameConfigFingerprint(learnedA, learnedB)).toBe(true);
+  });
+
   it("levels 不同(等级不同)→ 不等价", () => {
     expect(sameConfigFingerprint(base, { ...base, levels: { anthropic: "pro" } })).toBe(false);
   });
 
   it("weight 不同(共享人数不同)→ 不等价", () => {
-    expect(sameConfigFingerprint(base, { ...base, weight: 4 })).toBe(false);
+    expect(sameConfigFingerprint(base, { ...base, shareSeats: 4, weight: 8 })).toBe(false);
+  });
+
+  it("legacy weight fallback remains equivalent to shareSeats", () => {
+    expect(sameConfigFingerprint(base, { ...base, shareSeats: undefined, weight: 8 })).toBe(true);
   });
 
   it("deviceLimit 不同 → 不等价", () => {

@@ -705,8 +705,7 @@ export class ClaudeAccountService {
     return { ok: true, email: account.email, enabled: account.enabled };
   }
 
-  // 出池/入池:poolEnabled===false 的号退出动态池(只服务绑定它的卡),
-  // 与 codex/antigravity 同义。运行时过滤在 lease-service 用 poolEnabled!==false 把关。
+  // Legacy pool state only. Runtime supply now uses enabled + health, not poolEnabled.
   toggleClaudeAccountPool(payload: any) {
     const accountId = Number(payload?.accountId);
     const filePath = path.join(this.ctx.dataDir, "anthropic-accounts.json");
@@ -716,7 +715,7 @@ export class ClaudeAccountService {
     if (!account) return { ok: false, error: "账号不存在" };
     account.poolEnabled = account.poolEnabled === false ? true : false;
     writeJson(filePath, { ...data, accounts, updatedAt: nowIso() });
-    return { ok: true, email: account.email, poolEnabled: account.poolEnabled };
+    return { ok: true, email: account.email, poolEnabled: account.poolEnabled, legacy: true, runtimeSupplyEffect: false };
   }
 
   // 设置/清除某 anthropic 账号的出口代理(粘性住宅代理 URL)。空=清除。

@@ -123,6 +123,64 @@ describe("TokenServerService", () => {
     expect(JSON.parse(arg.data.windowState).tokenUsageEvents).toHaveLength(1);
   });
 
+  it("onModuleInit prefers Subscription.config so bind quota snapshots survive restart", async () => {
+    const sub = {
+      id: "sub-bind",
+      customerId: "c1",
+      priority: 0,
+      backingKeyValue: "BK-BIND",
+      status: "ACTIVE",
+      expiresAt: null,
+      productEntitlements: JSON.stringify(["anthropic"]),
+      bucketLimits: null,
+      bindings: JSON.stringify({ anthropic: 1 }),
+      levels: JSON.stringify({ anthropic: "max-20x" }),
+      weight: 2,
+      deviceLimit: 1,
+      weeklyTokenLimit: null,
+      windowMs: 18_000_000,
+      windowState: null,
+      config: JSON.stringify({
+        line: "bind",
+        products: ["anthropic"],
+        levels: { anthropic: "max-20x" },
+        bindings: { anthropic: 1 },
+        displayBindings: { anthropic: "claude-seat-a" },
+        shareSeats: 2,
+        shareCapacity: 8,
+        weight: 2,
+        assignmentPolicy: "preferred-dynamic",
+        bucketLimits: { "anthropic-claude": 20_000_000 },
+        weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+        deviceLimit: 1,
+        windowMs: 18_000_000,
+      }),
+    };
+    const prisma = { subscription: { findMany: vi.fn(async () => [sub]), update: vi.fn(async () => ({})) } };
+    const service = withSessionResolver(new TokenServerService({
+      accountsFilePath, accessKeysFilePath, tokenProvider,
+      now: () => Date.now(), randomId: () => "x", minClientVersion: "", prisma,
+    }));
+
+    await service.onModuleInit();
+
+    const rec = (service as any).accessKeyStore.findById("sub-bind");
+    expect(rec).toMatchObject({
+      id: "sub-bind",
+      bindings: { anthropic: 1 },
+      displayBindings: { anthropic: "claude-seat-a" },
+      levels: { anthropic: "max-20x" },
+      shareSeats: 2,
+      shareCapacity: 8,
+      assignmentPolicy: "preferred-dynamic",
+      bucketLimits: { "anthropic-claude": 20_000_000 },
+      weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
+      requiresBinding: true,
+    });
+
+    await service.onModuleDestroy();
+  });
+
   it("returns status with access-key and account summaries", () => {
     const status = makeService().getStatus();
 

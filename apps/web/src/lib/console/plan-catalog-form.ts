@@ -19,8 +19,8 @@
 
 import type { CatalogConfig } from "@/lib/account/catalog-pricing";
 
-// ── 共享人数档(绑定线 share 折扣的键)。与购买页 SHARE_OPTIONS 对齐。 ──
-export const SHARE_USERS = [1, 2, 4, 8] as const;
+// ── 席位档(绑定线 share 折扣的键)。与购买页 SHARE_OPTIONS 对齐。 ──
+export const SHARE_SEATS = [1, 2, 4, 8] as const;
 
 // ── 表单状态类型 ───────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ export interface ProductRow {
   levels: string[];
 }
 
-/** 一个用量档(号池线 small/large)在表单里:每桶 token 上限(字符串)+ 周限额。 */
+/** 旧版用量档兼容数据:每桶 token 上限(字符串)+ 周限额。 */
 export interface UsageTierRow {
   /** 档 key,如 "small"。 */
   key: string;
@@ -44,7 +44,7 @@ export interface UsageTierRow {
   weeklyTokenLimit: string;
 }
 
-/** 号池线定价(元)。 */
+/** 旧版用量定价兼容数据(元)。 */
 export interface PoolPricingForm {
   /** 每产品基础价(元),产品 key → 元字符串。 */
   product: Record<string, string>;
@@ -58,23 +58,31 @@ export interface PoolPricingForm {
 export interface BindPricingForm {
   /** 等级价矩阵(元),产品 → 等级 → 元字符串。 */
   levelPrice: Record<string, Record<string, string>>;
-  /** 共享人数折扣(元,通常为负),"1"|"2"|"4"|"8" → 元字符串。 */
+  /** 席位折扣(元,通常为负),"1"|"2"|"4"|"8" → 元字符串。 */
   share: Record<string, string>;
   /** 每多一台设备加价(元)。 */
   devicePerExtra: string;
+}
+
+export interface SupplyPolicyForm {
+  defaultLevel: string;
+  salesSeatsPerAccount: Record<string, string>;
+  buckets: Record<string, unknown>;
 }
 
 /** 完整表单状态(展示态)。 */
 export interface PlanCatalogForm {
   /** 产品与等级(有序)。products 与 levels 都从这里派生。 */
   products: ProductRow[];
-  /** 用量档(有序,如 small / large)。 */
+  /** 旧版用量档兼容数据(有序,如 small / large)。 */
   usageTiers: UsageTierRow[];
   pricing: { pool: PoolPricingForm; bind: BindPricingForm };
   /** 有效期(天,字符串)。 */
   durationDays: string;
   /** 限额窗口(毫秒,字符串)。锁死 5h,但仍存表单里以便组装回 config。 */
   windowMs: string;
+  /** 统一绑定线动态供给策略;数字字段在表单里以字符串编辑。 */
+  supplyPolicies?: Record<string, SupplyPolicyForm>;
 }
 
 // ── 数值转换(元 ↔ 分 / 字符串 ↔ 数字)──────────────────────────────────────────
@@ -152,7 +160,7 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     };
   });
 
-  // 号池定价(分 → 元)。
+  // 旧版用量定价(分 → 元)。
   const pool: PoolPricingForm = {
     product: mapValuesToYuan(poolPricing.product ?? {}, productOrder),
     usage: mapValuesToYuan(poolPricing.usage ?? {}, tierKeys),
@@ -171,7 +179,7 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     levelPrice[product] = out;
   }
   const share: Record<string, string> = {};
-  for (const n of SHARE_USERS) {
+  for (const n of SHARE_SEATS) {
     share[String(n)] = centsToYuan(Number(bindPricing.share?.[String(n)] ?? 0));
   }
   const bind: BindPricingForm = {
@@ -186,6 +194,9 @@ export function configToForm(config: CatalogConfig): PlanCatalogForm {
     pricing: { pool, bind },
     durationDays: intToStr(Number(config.durationDays ?? 0)),
     windowMs: intToStr(Number(config.windowMs ?? 0)),
+    ...(config.supplyPolicies === undefined
+      ? {}
+      : { supplyPolicies: supplyPoliciesToForm(config.supplyPolicies) }),
   };
 }
 
@@ -222,7 +233,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
     };
   }
 
-  // pool 定价(元 → 分)。
+  // 旧版用量定价(元 → 分)。
   const poolProduct: Record<string, number> = {};
   for (const row of form.products) {
     poolProduct[row.product] = yuanToCents(form.pricing.pool.product[row.product] ?? "");
@@ -242,7 +253,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
     levelPrice[row.product] = out;
   }
   const share: Record<string, number> = {};
-  for (const n of SHARE_USERS) {
+  for (const n of SHARE_SEATS) {
     share[String(n)] = yuanToCents(form.pricing.bind.share[String(n)] ?? "");
   }
 
@@ -264,6 +275,9 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
     },
     durationDays: toInt(form.durationDays),
     windowMs: toInt(form.windowMs),
+    ...(form.supplyPolicies === undefined
+      ? {}
+      : { supplyPolicies: supplyPoliciesToConfig(form.supplyPolicies) }),
   };
 }
 
@@ -272,7 +286,7 @@ export function formToConfig(form: PlanCatalogForm): CatalogConfig {
 /**
  * 发布前的轻校验:返回错误消息数组(空 = 通过)。只拦「会让购买页 / 计价崩」的硬错,
  * 不做风格挑剔。具体:至少一个启用产品、有效期 ≥ 1、窗口 ≥ 1 分钟、
- * 启用产品在绑定线至少有一个等级、用量档非空。
+ * 启用产品在绑定线至少有一个等级。
  */
 export function validateForm(form: PlanCatalogForm): string[] {
   const errors: string[] = [];
@@ -286,9 +300,6 @@ export function validateForm(form: PlanCatalogForm): string[] {
   }
   if (toInt(form.windowMs) < 60_000) {
     errors.push("限额窗口需 ≥ 60000 毫秒(1 分钟)。");
-  }
-  if (form.usageTiers.length === 0) {
-    errors.push("至少配置一个用量档(号池线需要)。");
   }
   for (const row of enabled) {
     const levels = row.levels.map((l) => l.trim()).filter(Boolean);
@@ -319,6 +330,42 @@ function mapValuesToYuan(source: Record<string, number>, keys: string[]): Record
   const out: Record<string, string> = {};
   for (const key of uniqueInOrder([...keys, ...Object.keys(source)])) {
     out[key] = centsToYuan(Number(source[key] ?? 0));
+  }
+  return out;
+}
+
+function supplyPoliciesToForm(
+  policies: CatalogConfig["supplyPolicies"],
+): Record<string, SupplyPolicyForm> {
+  const out: Record<string, SupplyPolicyForm> = {};
+  for (const [product, policy] of Object.entries(policies ?? {})) {
+    const salesSeatsPerAccount: Record<string, string> = {};
+    for (const [level, seats] of Object.entries(policy.salesSeatsPerAccount ?? {})) {
+      salesSeatsPerAccount[level] = intToStr(Number(seats));
+    }
+    out[product] = {
+      defaultLevel: policy.defaultLevel ?? "",
+      salesSeatsPerAccount,
+      buckets: { ...(policy.buckets ?? {}) },
+    };
+  }
+  return out;
+}
+
+function supplyPoliciesToConfig(
+  policies: Record<string, SupplyPolicyForm>,
+): NonNullable<CatalogConfig["supplyPolicies"]> {
+  const out: NonNullable<CatalogConfig["supplyPolicies"]> = {};
+  for (const [product, policy] of Object.entries(policies ?? {})) {
+    const salesSeatsPerAccount: Record<string, number> = {};
+    for (const [level, seats] of Object.entries(policy.salesSeatsPerAccount ?? {})) {
+      salesSeatsPerAccount[level] = toInt(String(seats));
+    }
+    out[product] = {
+      defaultLevel: policy.defaultLevel ?? "",
+      salesSeatsPerAccount,
+      buckets: { ...(policy.buckets ?? {}) },
+    };
   }
   return out;
 }

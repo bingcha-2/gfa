@@ -21,6 +21,7 @@ import { EpayCallbackService } from "../epay-callback.service";
 import { SubscriptionService } from "../../../subscription/subscription.service";
 import { EntitlementSyncService } from "../../../subscription/entitlement-sync.service";
 import { PlanCatalogService } from "../../../plan-catalog/plan-catalog.service";
+import { QuotaBaselineService } from "../../../plan-catalog/quota-baseline.service";
 import { RosettaService } from "../../../rosetta/rosetta.service";
 import * as crypto from "crypto";
 
@@ -158,7 +159,14 @@ beforeEach(async () => {
   planCatalog = new PlanCatalogService(prisma as any);
   subscriptionService = new SubscriptionService(prisma as any, entitlementSync, planCatalog);
   callbackService = new EpayCallbackService(prisma as any, subscriptionService, entitlementSync);
-  billingService = new BillingService(prisma as any, planCatalog, rosetta, callbackService, subscriptionService);
+  billingService = new BillingService(
+    prisma as any,
+    planCatalog,
+    rosetta,
+    callbackService,
+    subscriptionService,
+    new QuotaBaselineService(prisma as any),
+  );
 
   await publishCatalog();
 });

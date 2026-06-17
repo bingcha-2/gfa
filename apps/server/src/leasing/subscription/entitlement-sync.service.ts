@@ -24,7 +24,7 @@ import { RemoteAnthropicService } from "../remote-anthropic/service/remote-anthr
 import { AccessKeyStore } from "../token-server/access-key-store";
 import { ACCOUNT_SHARE_CAPACITY } from "../token-server/token-billing";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { boundSeatsByAccount, occupiedSharesByAccount } from "./seat";
+import { boundSeatsByAccount, occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight } from "./seat";
 import { rowToConfig, subscriptionToLimitRecord } from "./subscription-config";
 
 export const VALID_ENTITLEMENT_PRODUCTS = ["antigravity", "codex", "anthropic"] as const;
@@ -71,7 +71,7 @@ export class EntitlementSyncService {
    */
   private async syncBind(sub: Subscription, config: Record<string, any>): Promise<void> {
     const products: string[] = Array.isArray(config.products) ? config.products : [];
-    const weight = Math.max(1, Math.floor(Number(config.weight) || 1));
+    const weight = seatWeight(config);
     const levels: Record<string, string> = (config.levels && typeof config.levels === "object") ? config.levels : {};
     // 绑定线 config 必带 bindings 键(单一真相源恒含显式占座位结果,缺则视为「待分配」)。
     const hadBindingsKey = config.bindings && typeof config.bindings === "object";
@@ -94,7 +94,8 @@ export class EntitlementSyncService {
             continue;
           }
           const { shares, counts } = await this.seatOccupancyFromDb(product, sub.id);
-          const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, shares, counts);
+          const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
+          const accountId = this.rosetta.assignSeatForProductFromShares(product, weight, level, shares, counts, salesCapacity);
           if (!accountId) {
             this.logger.error(
               `[entitlement-sync] subscription ${sub.id}: seat assignment FAILED for product "${product}" level "${level}" weight ${weight} — no account with ${weight} free shares; leaving it UNBOUND`,
@@ -144,7 +145,7 @@ export class EntitlementSyncService {
       if (!products.includes(product)) {
         return { ok: false, error: `该订阅未开通产品「${product}」,不能绑定` };
       }
-      const weight = Math.max(1, Math.floor(Number(config.weight) || 1));
+      const weight = seatWeight(config);
 
       // 目标号必须真实存在(force 也校验,绑到不存在的号 = 把订阅打死)。
       const acc = this.rosetta.poolAccountById(product, acctId);
@@ -154,7 +155,8 @@ export class EntitlementSyncService {
       // 容量校验(排除本订阅自身);不足且非 force → 拒,避免超分。
       if (!force) {
         const { shares } = await this.seatOccupancyFromDb(product, subscriptionId);
-        const free = ACCOUNT_SHARE_CAPACITY - (shares.get(acctId) || 0);
+        const salesCapacity = salesSeatCapacityForProduct(config, product, ACCOUNT_SHARE_CAPACITY);
+        const free = salesCapacity - (shares.get(acctId) || 0);
         if (free < weight) {
           return { ok: false, error: `账号 #${acctId} 在「${product}」剩余份额 ${free} < 需要 ${weight}(可加 force 强制)` };
         }

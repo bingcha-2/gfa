@@ -217,6 +217,26 @@ describe("EntitlementSyncService(去影子)", () => {
     expect(JSON.parse(subs.get("sub-starved").config).bindings).toEqual({});
   });
 
+  it("绑定线按 config.salesSeatCapacity 快照判断容量,允许同号售出超过默认容量", async () => {
+    const config = {
+      line: "bind",
+      products: ["antigravity"],
+      levels: { antigravity: "ultra" },
+      weight: 4,
+      salesSeatCapacity: { antigravity: 10 },
+      deviceLimit: 1,
+      windowMs: 18_000_000,
+    };
+    const subA = seed(makeSub({ id: "sub-sold-a", config, backingKeyValue: "sub_" + "1".repeat(48) }));
+    await service.syncSubscription(subA);
+    const subB = seed(makeSub({ id: "sub-sold-b", config, backingKeyValue: "sub_" + "2".repeat(48) }));
+    await service.syncSubscription(subB);
+
+    expect(store.findById("sub-sold-a")!.bindings).toEqual({ antigravity: 7 });
+    expect(store.findById("sub-sold-b")!.bindings).toEqual({ antigravity: 7 });
+    expect(JSON.parse(subs.get("sub-sold-b").config).bindings).toEqual({ antigravity: 7 });
+  });
+
   it("绑定线等级无空闲号(等级不存在)→ 该产品 UNBOUND、sync 仍成功", async () => {
     const sub = seed(makeSub({ config: { line: "bind", products: ["antigravity"], levels: { antigravity: "premium" }, weight: 1, deviceLimit: 1, windowMs: 18_000_000 } }));
     await expect(service.syncSubscription(sub)).resolves.toBeUndefined();
