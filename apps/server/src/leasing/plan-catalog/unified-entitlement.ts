@@ -113,6 +113,22 @@ export function mergeSupplyPolicies(catalog: SupplyPolicyCatalog): Record<string
   return merged;
 }
 
+export function salesSeatCapacityFor(
+  catalog: SupplyPolicyCatalog,
+  product: string,
+  level: string,
+  fallback: number,
+): number {
+  const policies = mergeSupplyPolicies(catalog);
+  const policy = policies[product];
+  const capacity = positiveInteger(policy?.salesSeatsPerAccount?.[level]);
+  if (capacity) return capacity;
+  const defaultCapacity = positiveInteger(policy?.salesSeatsPerAccount?.[policy.defaultLevel]);
+  if (defaultCapacity) return defaultCapacity;
+  const fallbackCapacity = Math.floor(Number(fallback));
+  return Number.isFinite(fallbackCapacity) && fallbackCapacity > 0 ? fallbackCapacity : 8;
+}
+
 export function entitlementRatio(input: Pick<EntitlementInput, "shareSeats" | "shareCapacity">): number {
   const shareSeats = Number(input.shareSeats);
   const shareCapacity = Number(input.shareCapacity);
@@ -124,4 +140,9 @@ export function writePositive(target: Record<string, number>, bucket: string, li
   if (Number.isFinite(limit) && limit > 0) {
     target[bucket] = limit;
   }
+}
+
+function positiveInteger(value: unknown): number | null {
+  const normalized = Math.floor(Number(value));
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : null;
 }

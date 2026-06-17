@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildFixedEntitlements, defaultSupplyPolicies } from "./unified-entitlement";
+import { buildFixedEntitlements, defaultSupplyPolicies, salesSeatCapacityFor } from "./unified-entitlement";
 
 describe("defaultSupplyPolicies", () => {
   it("defines learned Claude and Codex defaults plus fixed Antigravity buckets", () => {
@@ -46,6 +46,24 @@ describe("defaultSupplyPolicies", () => {
         },
       },
     });
+  });
+});
+
+describe("salesSeatCapacityFor", () => {
+  it("reads per-product membership sales capacity and falls back through the product default level", () => {
+    expect(salesSeatCapacityFor({}, "anthropic", "max-20x", 8)).toBe(10);
+    expect(salesSeatCapacityFor({}, "codex", "pro", 8)).toBe(10);
+    expect(salesSeatCapacityFor({}, "antigravity", "ultra", 8)).toBe(10);
+    expect(salesSeatCapacityFor({}, "anthropic", "pro", 8)).toBe(10);
+    expect(salesSeatCapacityFor({
+      supplyPolicies: {
+        anthropic: {
+          defaultLevel: "pro",
+          salesSeatsPerAccount: { pro: 12 },
+        },
+      },
+    }, "anthropic", "max-5x", 8)).toBe(12);
+    expect(salesSeatCapacityFor({}, "unknown", "pro", 6)).toBe(6);
   });
 });
 

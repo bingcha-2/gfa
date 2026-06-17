@@ -5,6 +5,8 @@
 export interface SubConfig {
   line?: string;
   bindings?: Record<string, number>;
+  salesSeatCapacity?: Record<string, number>;
+  shareSeats?: number;
   /** 该订阅占的份数(独享=8 … 拼车=1)。缺省按 1 计。 */
   weight?: number;
 }
@@ -35,10 +37,25 @@ export function occupiedSharesByAccount(
     if (excludeId && c.id === excludeId) continue;
     const accountId = Number(c.bindings?.[product]);
     if (!(accountId > 0)) continue;
-    const weight = Math.max(1, Math.floor(Number(c.weight) || 1));
+    const weight = seatWeight(c);
     m.set(accountId, (m.get(accountId) || 0) + weight);
   }
   return m;
+}
+
+export function seatWeight(config: Pick<SubConfig, "shareSeats" | "weight">): number {
+  return Math.max(1, Math.floor(Number(config.shareSeats ?? config.weight) || 1));
+}
+
+export function salesSeatCapacityForProduct(
+  config: Pick<SubConfig, "salesSeatCapacity">,
+  product: string,
+  fallback: number,
+): number {
+  const raw = Number(config.salesSeatCapacity?.[product]);
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  const fallbackCapacity = Math.floor(Number(fallback));
+  return Number.isFinite(fallbackCapacity) && fallbackCapacity > 0 ? fallbackCapacity : 8;
 }
 
 /**

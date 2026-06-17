@@ -213,6 +213,7 @@ describe("BillingService.createCatalogOrder", () => {
     expect(JSON.parse(data.config)).toMatchObject({
       line: "bind",
       shareSeats: 2,
+      salesSeatCapacity: { anthropic: 10 },
       bucketLimits: { "anthropic-claude": 20_000_000 },
       weeklyBucketLimits: { "anthropic-claude": 100_000_000 },
       assignmentPolicy: "preferred-dynamic",
@@ -305,11 +306,12 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     await service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY");
 
     expect(rosetta.hasAvailableSeatFromShares).toHaveBeenCalledOnce();
-    const [product, weight, level, occupied] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
+    const [product, weight, level, occupied, salesCapacity] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
     expect(product).toBe("anthropic");
     expect(weight).toBe(4); // capacity 8 / 2 人,与 config.weight 一致
     expect(level).toBe("max-20x");
     expect(occupied).toBeInstanceOf(Map);
+    expect(salesCapacity).toBe(10);
     expect(prisma.planOrder.create).toHaveBeenCalledOnce();
   });
 
@@ -364,6 +366,39 @@ describe("BillingService.createCatalogOrder — 绑定线座位预检(spec §10)
     // 只查 ACTIVE 订阅。
     expect(prisma.subscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { status: "ACTIVE" } }),
+    );
+  });
+
+  it("座位预检用 rowToConfig 回退 legacy 绑定列,避免坏 config 漏算占用", async () => {
+    prisma.subscription.findMany.mockResolvedValue([
+      {
+        id: "sub-legacy",
+        config: "{bad-json",
+        productEntitlements: JSON.stringify(["anthropic"]),
+        bindings: JSON.stringify({ anthropic: 7 }),
+        levels: JSON.stringify({ anthropic: "max-20x" }),
+        weight: 4,
+        deviceLimit: 1,
+        weeklyTokenLimit: null,
+        bucketLimits: null,
+        windowMs: 18_000_000,
+      },
+    ]);
+
+    await service.createCatalogOrder("cust-1", bindSelection as any, "WXPAY");
+
+    const [, , , occupied] = rosetta.hasAvailableSeatFromShares.mock.calls[0];
+    expect(occupied.get(7)).toBe(4);
+    expect(prisma.subscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          config: true,
+          productEntitlements: true,
+          bindings: true,
+          levels: true,
+          weight: true,
+        }),
+      }),
     );
   });
 });

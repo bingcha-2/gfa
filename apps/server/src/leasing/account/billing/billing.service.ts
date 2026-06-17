@@ -21,8 +21,10 @@ import { PrismaService } from "../../../shared/prisma/prisma.service";
 import { PlanCatalogService } from "../../plan-catalog/plan-catalog.service";
 import { computePurchase, type CatalogConfig, type Selection } from "../../plan-catalog/pricing";
 import { QuotaBaselineService } from "../../plan-catalog/quota-baseline.service";
+import { salesSeatCapacityFor } from "../../plan-catalog/unified-entitlement";
 import { RosettaService } from "../../rosetta/rosetta.service";
-import { occupiedSharesByAccount, type SubConfig } from "../../subscription/seat";
+import { occupiedSharesByAccount, salesSeatCapacityForProduct, seatWeight, type SubConfig } from "../../subscription/seat";
+import { rowToConfig } from "../../subscription/subscription-config";
 import { signParams } from "./epay.sign";
 import { EpayCallbackService } from "./epay-callback.service";
 import { SubscriptionService } from "../../subscription/subscription.service";
@@ -99,16 +101,6 @@ export function generateOutTradeNo(): string {
   const ts = Date.now().toString();
   const rand = crypto.randomBytes(6).toString("hex");
   return `gfa${ts}${rand}`;
-}
-
-/** Parse a subscription's config JSON into an object (empty on malformed). */
-function parseConfig(json: string | null): Record<string, any> {
-  try {
-    const parsed = JSON.parse(String(json || "{}"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 /** Human-ish epay order name for a catalog selection (shown on the pay page). */
@@ -256,15 +248,25 @@ export class BillingService {
   ): Promise<Record<string, any>> {
     if (config.line !== "bind") return config;
 
+    const products = Array.isArray(config.products) ? config.products : [];
+    const levels = config.levels || {};
+    const shareCapacity = Number(config.shareCapacity || 8);
     const entitlements = await this.quotaBaselines.buildEntitlements(catalog, {
-      products: Array.isArray(config.products) ? config.products : [],
-      levels: config.levels || {},
+      products,
+      levels,
       shareSeats: Number(config.shareSeats || config.weight || 1),
-      shareCapacity: Number(config.shareCapacity || 8),
+      shareCapacity,
     });
+    const salesSeatCapacity = Object.fromEntries(
+      products.map((product: string) => [
+        product,
+        salesSeatCapacityFor(catalog, product, String(levels[product] || ""), shareCapacity),
+      ]),
+    );
 
     return {
       ...config,
+      salesSeatCapacity,
       ...entitlements,
       assignmentPolicy: "preferred-dynamic",
     };
@@ -282,16 +284,27 @@ export class BillingService {
 
     const products: string[] = Array.isArray(config.products) ? (config.products as string[]) : [];
     if (products.length === 0) return;
-    const weight = Math.max(1, Math.floor(Number(config.weight) || 1));
+    const weight = seatWeight(config as SubConfig);
     const levels = (config.levels && typeof config.levels === "object" ? config.levels : {}) as Record<string, string>;
 
     // 一次读全部 ACTIVE 订阅的 config(座位真相源),逐 product 复算占用份额。
     const rows = await this.prisma.subscription.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, config: true },
+      select: {
+        id: true,
+        config: true,
+        productEntitlements: true,
+        bucketLimits: true,
+        bindings: true,
+        levels: true,
+        weight: true,
+        deviceLimit: true,
+        weeklyTokenLimit: true,
+        windowMs: true,
+      },
     });
     const configs: Array<SubConfig & { id: string }> = rows.map(
-      (r: { id: string; config: string | null }) => ({ id: r.id, ...parseConfig(r.config) }),
+      (r: any) => ({ id: r.id, ...rowToConfig(r) }),
     );
 
     for (const product of products) {
@@ -300,7 +313,8 @@ export class BillingService {
         throw new BadRequestException(`绑定线缺少 ${product} 的会员等级,无法下单`);
       }
       const occupied = occupiedSharesByAccount(configs, product);
-      if (!this.rosetta.hasAvailableSeatFromShares(product, weight, level, occupied)) {
+      const salesCapacity = salesSeatCapacityForProduct(config as SubConfig, product, Number(config.shareCapacity || 8));
+      if (!this.rosetta.hasAvailableSeatFromShares(product, weight, level, occupied, salesCapacity)) {
         throw new BadRequestException(
           `${product}(${level})暂无可用座位(无配额充足且份额足够的号),请稍后重试或联系客服`,
         );

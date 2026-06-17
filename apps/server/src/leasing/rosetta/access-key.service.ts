@@ -49,6 +49,11 @@ export function withAccessKeysWriteLock<T>(fn: () => T | Promise<T>): Promise<T>
   return run;
 }
 
+function normalizeSalesCapacity(value: unknown): number {
+  const capacity = Math.floor(Number(value));
+  return Number.isFinite(capacity) && capacity > 0 ? capacity : ACCOUNT_SHARE_CAPACITY;
+}
+
 export class AccessKeyService {
   constructor(private readonly ctx: RosettaContext) {}
 
@@ -430,11 +435,13 @@ export class AccessKeyService {
     level: string,
     occupiedShares: Map<number, number>,
     boundCounts: Map<number, number> = new Map(),
+    salesCapacity = ACCOUNT_SHARE_CAPACITY,
   ): number | null {
     if (product !== "codex" && product !== "antigravity" && product !== "anthropic") return null;
     const lvl = String(level || "").trim();
     if (!lvl) return null;
     const need = cardWeight({ weight });
+    const capacity = normalizeSalesCapacity(salesCapacity);
     const pool = readJson(this.poolFileFor(product), { accounts: [] });
     const fit = (Array.isArray(pool.accounts) ? pool.accounts : [])
       .filter((a: any) => this.isAccountBindable(product, a, lvl))
@@ -443,7 +450,7 @@ export class AccessKeyService {
         const q = this.bindQuotaInfo(product, a);
         return {
           id,
-          free: ACCOUNT_SHARE_CAPACITY - (occupiedShares.get(id) || 0),
+          free: capacity - (occupiedShares.get(id) || 0),
           count: boundCounts.get(id) || 0,
           usableNow: q.usableNow,
           soonestReset: q.soonestReset,
@@ -471,8 +478,9 @@ export class AccessKeyService {
     weight: number,
     level: string,
     occupiedShares: Map<number, number>,
+    salesCapacity = ACCOUNT_SHARE_CAPACITY,
   ): boolean {
-    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares) !== null;
+    return this.assignSeatForProductFromShares(product, weight, level, occupiedShares, new Map(), salesCapacity) !== null;
   }
 
   deleteAccessKey(payload: any) {
