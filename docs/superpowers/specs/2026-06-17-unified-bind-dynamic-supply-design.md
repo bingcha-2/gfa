@@ -1,72 +1,73 @@
-# Unified Bind Line With Dynamic Supply Design
+# 统一绑定线动态供给设计
 
-Date: 2026-06-17
-Scope: customer subscriptions, plan catalog, admin capacity controls, lease scheduling, quota display, and legacy card migration.
+日期：2026-06-17
 
-## Background
+范围：客户订阅、套餐目录、后台容量控制、租约调度、额度展示、老卡迁移。
 
-The system currently exposes two customer-facing lines:
+## 背景
 
-- Pool line: static card quota through `bucketLimits` / `weeklyTokenLimit`, no account seat binding, runtime leases from the dynamic pool.
-- Bind line: product membership level + `bindings` + `weight`, consumes account shares and pins lease traffic to the bound upstream account.
+当前系统对客户暴露两条线：
 
-This split creates two product problems:
+- 号池线：通过 `bucketLimits` / `weeklyTokenLimit` 给静态卡额度，不占账号座位，运行时从动态池租号。
+- 绑定线：通过产品会员等级、`bindings`、`weight` 占用账号份额，并把运行时租约钉到绑定账号。
 
-- Pool line has better utilization because unused upstream quota can be absorbed by other customers, but it weakens the "bound car" product story.
-- Bind line has a clear customer story, but the current implementation treats the bound account as the only runtime account. When that account runs out while the customer's subscription quota remains, the customer is blocked.
+这会带来两个产品问题：
 
-The target product direction is to remove the customer-visible pool line and keep a unified bind-line buying experience, while preserving utilization through dynamic backend supply.
+- 号池线利用率更高，因为上游账号里别人没用完的额度可以被其他客户吸收，但客户心智不像“绑定拼车”。
+- 绑定线客户心智清晰，但当前实现把绑定账号当作唯一可用账号。只要该账号没额度，即使客户订阅自己的额度还没用完，也会被阻塞。
 
-## Goals
+目标方向是砍掉客户可见的“号池线”，统一成“绑定线套餐”，同时在后台保留动态供给和超卖能力。
 
-- Customers buy a stable quota entitlement by product and seat count.
-- Customers only see product type, seats, price, and blood-bar style quota. They do not see backend account assignment, overbooking, or fallback.
-- The backend can overbook accounts by a configurable seat count.
-- The preferred initial account is tried first, but runtime leasing may switch accounts when the preferred account has no quota or is unhealthy.
-- Client quota display feels stable and accurate: the customer's own quota only moves when that customer uses it.
-- The current service account display reflects the actual account used by the latest lease, so account blood bars do not contradict runtime switching.
-- Existing cards migrate without changing purchased quota.
+## 目标
 
-## Non-Goals
+- 客户按产品和席位购买稳定额度权益。
+- 客户只看到产品类型、席位、价格和血条式额度，不看到后台账号分配、超卖数量或换号过程。
+- 后台可以按配置对账号进行席位制超卖。
+- 首绑账号优先使用，但首绑账号没额度或不健康时，运行时可以自动换其它账号。
+- 客户端展示必须让客户感觉额度稳定准确：自己的额度只因自己使用而下降。
+- 客户端展示的账号额度对应最新租约实际账号，避免“账号没额度但还能继续用”的矛盾。
+- 老卡迁移不能改变客户已经购买的实际额度。
 
-- Do not expose overbooking, account seat availability, or fallback routing to customers.
-- Do not make the learned quota profile directly visible to customers.
-- Do not reset old card usage windows during migration.
-- Do not keep `poolEnabled` as a product concept. Account supply is controlled by `enabled` and runtime health.
+## 非目标
 
-## Product Model
+- 不向客户暴露超卖、账号剩余席位或运行时 fallback。
+- 不把学习额度的实时波动直接展示给客户。
+- 不在迁移老卡时重置已有用量窗口。
+- 不继续保留 `poolEnabled` 作为产品概念。账号是否供给只看 `enabled` 和运行时健康状态。
 
-The customer-visible product becomes:
+## 产品模型
 
-- Product/type: Claude, Codex, Antigravity, or supported combinations.
-- Seats: `1`, `2`, `4`, or `8`.
-- A seat is one eighth of the account share model. `1` means `1/8`; `2` means `2/8`; `8` means `8/8`.
-- Customers never see the assigned upstream account during purchase.
+客户侧统一为绑定线购买体验：
 
-The backend treats a purchase as:
+- 产品/类型：Claude、Codex、Antigravity，或支持的组合。
+- 席位：`1`、`2`、`4`、`8`。
+- 一个席位等于 `1/8`。`1` 表示 `1/8`，`2` 表示 `2/8`，`8` 表示 `8/8`。
+- 客户购买时不展示实际分配到哪个上游账号。
 
-- A fixed customer quota entitlement.
-- A preferred initial account for each product.
-- A dynamic runtime assignment policy.
+后台把一次购买理解为：
 
-## Quota Baselines
+- 一份固定客户额度权益。
+- 每个产品一个首选/展示账号。
+- 一套运行时动态供给策略。
 
-New subscriptions store concrete limits at purchase/grant time.
+## 额度基准
 
-Default baselines:
+新订阅在购买或后台授予时直接保存具体额度。
 
-- Claude: learned `anthropic:max-20x:claude` budget multiplied by `shareSeats / 8`.
-- Codex: learned `codex:pro:gpt` budget multiplied by `shareSeats / 8`.
-- Antigravity Gemini: fixed Ultra baseline, 5h `100M`, weekly `400M`, multiplied by `shareSeats / 8`.
-- Antigravity Claude/Opus: fixed Ultra baseline, 5h `12M`, weekly `40M`, multiplied by `shareSeats / 8`.
+默认基准：
 
-Learning remains an internal recommendation source. It must not make an active customer's displayed quota float up and down. A purchased subscription stores the computed token limits and remains stable for that subscription period.
+- Claude：读取学习出的 `anthropic:max-20x:claude` 预算，再乘以 `shareSeats / 8`。
+- Codex：读取学习出的 `codex:pro:gpt` 预算，再乘以 `shareSeats / 8`。
+- Antigravity Gemini：固定 Ultra 基准，5h `100M`，周 `400M`，再乘以 `shareSeats / 8`。
+- Antigravity Claude/Opus：固定 Ultra 基准，5h `12M`，周 `40M`，再乘以 `shareSeats / 8`。
 
-Antigravity is fixed because current Ultra learning data is not reliable enough for customer-facing quota generation.
+学习系统只作为后台生成新套餐额度的建议来源。它不能让已生效客户的展示额度上下浮动。客户购买后，订阅保存的是当时算出的 token 上限，在该订阅周期内保持稳定。
 
-## Subscription Config
+Antigravity 使用固定基准，因为当前 Ultra 学习数据不够可靠，不适合直接作为客户可见额度来源。
 
-New unified bind subscriptions should use a config shape like:
+## 订阅 Config
+
+新统一绑定线订阅建议使用下面的结构：
 
 ```json
 {
@@ -92,99 +93,99 @@ New unified bind subscriptions should use a config shape like:
 }
 ```
 
-Field semantics:
+字段语义：
 
-- `products`: customer entitlement.
-- `levels`: purchase baseline and same-level scheduling preference.
-- `shareSeats`: customer purchased seats, one seat equals `1/8`.
-- `shareCapacity`: denominator for display and quota calculation, default `8`.
-- `bucketLimits`: fixed customer 5h limits per composite bucket.
-- `weeklyBucketLimits`: fixed customer weekly limits per composite bucket.
-- `displayBindings`: preferred initial account per product.
-- `assignmentPolicy: "preferred-dynamic"`: try the preferred account first, then dynamically fallback.
+- `products`：客户开通的产品权益。
+- `levels`：购买时使用的额度基准，也是运行时“同等级优先”的排序依据。
+- `shareSeats`：客户购买的席位数，一个席位等于 `1/8`。
+- `shareCapacity`：份额分母，默认 `8`，用于展示和额度折算。
+- `bucketLimits`：客户自己的 5h 固定额度，按复合桶存储。
+- `weeklyBucketLimits`：客户自己的周固定额度，按复合桶存储。
+- `displayBindings`：每个产品的首绑/展示账号，也是运行时首选账号。
+- `assignmentPolicy: "preferred-dynamic"`：首绑优先，但允许动态换号。
 
-`bindings` remains a legacy mirror during migration, but new logic must not treat it as "pin this subscription to one account" when `assignmentPolicy` is `preferred-dynamic`.
+`bindings` 在迁移期保留为 legacy 镜像，但当 `assignmentPolicy` 是 `preferred-dynamic` 时，新逻辑不能再把它理解为“必须钉死到这个账号”。
 
-`weeklyTokenLimit` remains only for compatibility with old cards and old code paths. New catalog purchases and grants use `weeklyBucketLimits`.
+`weeklyTokenLimit` 只保留旧卡和旧路径兼容。新套餐购买和后台授予统一使用 `weeklyBucketLimits`。
 
-## Admin Capacity Rules
+## 后台容量规则
 
-`poolEnabled` is retired. All `enabled=true` accounts are part of dynamic supply. Old `poolEnabled=false` data is ignored after migration. To remove an account from supply, an operator sets `enabled=false`.
+`poolEnabled` 退役。以后所有 `enabled=true` 的账号都天然进入动态供给池。旧数据里的 `poolEnabled=false` 在迁移后忽略。如果运营要把某个账号移出供给，只设置 `enabled=false`。
 
-Admin capacity should be configured in one unified entry point, with rows or sections for product/baseline combinations:
+后台需要一个统一配置入口，按产品/基准配置：
 
-- Product.
-- Baseline level, for example Claude `max-20x`, Codex `pro`, Antigravity `ultra`.
-- Quota source: `learned` or `fixed`.
-- Fixed 5h and weekly bucket values where applicable.
-- Per-account sellable seats.
-- Allowed customer seats: fixed to `1`, `2`, `4`, `8`.
-- Dynamic supply enabled by default.
+- 产品。
+- 基准等级，例如 Claude `max-20x`、Codex `pro`、Antigravity `ultra`。
+- 额度来源：`learned` 或 `fixed`。
+- 固定 5h 和周额度。
+- 每账号可售席位数。
+- 客户可选席位：固定为 `1`、`2`、`4`、`8`。
+- 动态供给默认开启。
 
-Sellable seat capacity is counted in `1/8` units:
+可售席位按 `1/8` 单位统计：
 
-- Config value `10` means the account can be the preferred/display account for up to ten `1/8` seats.
-- A `2/8` subscription consumes `2` seats.
-- An `8/8` subscription consumes `8` seats.
+- 配置值 `10` 表示该账号最多可作为首绑/展示账号卖出 10 个 `1/8` 席位。
+- `2/8` 订阅消耗 `2` 席。
+- `8/8` 订阅消耗 `8` 席。
 
-During purchase/grant, the selected preferred account must have:
+购买或后台授予时，被选为首绑展示账号必须满足：
 
-- `enabled !== false`.
-- Basic provider eligibility, such as token presence and project id where required.
-- Remaining sellable seats greater than or equal to the purchased `shareSeats`.
-- Preferably current quota health.
+- `enabled !== false`。
+- 满足产品基础条件，例如有 token，Antigravity 有 project id。
+- 剩余可售席位大于等于本次购买的 `shareSeats`。
+- 尽量选择当前额度健康的账号。
 
-Seat accounting for sales uses ACTIVE subscriptions and their `displayBindings`. Runtime fallback is not constrained by sellable seats; it only cares about current account health and quota.
+销售席位统计只看 ACTIVE 订阅的 `displayBindings`。运行时兜底不受“销售席位已满”限制，只看账号当前健康和额度。
 
-## Purchase And Grant Flow
+## 购买与后台授予流程
 
-Customer purchase:
+客户购买流程：
 
-1. Customer selects product/type and `1`, `2`, `4`, or `8` seats.
-2. Server computes concrete `bucketLimits` and `weeklyBucketLimits`.
-3. Server chooses a preferred/display account per product.
-4. Preferred selection first looks for the baseline level, then may cross levels if needed.
-5. Account must have remaining sellable seats `>= shareSeats`.
-6. Among candidates, prefer healthier quota and lower operational risk.
-7. Server writes the subscription config and mirrors legacy columns as needed.
+1. 客户选择产品/类型和 `1`、`2`、`4`、`8` 席。
+2. 服务端计算具体 `bucketLimits` 和 `weeklyBucketLimits`。
+3. 服务端为每个产品选择首绑/展示账号。
+4. 首绑选择先看购买基准等级，同等级不够时可跨等级。
+5. 账号剩余可售席位必须 `>= shareSeats`。
+6. 多个候选满足时，优先选择额度更健康、风险更低的账号。
+7. 写入订阅 config，并按需要同步 legacy 镜像字段。
 
-If no preferred account can be assigned for a product before payment, the purchase should be blocked rather than creating an unbound subscription. Admin grant should use the same precheck, with an explicit force/manual path only if operators accept the risk.
+如果付款前没有任何账号能作为某产品的首绑展示账号，应阻止购买，而不是创建一个未分配的订阅。后台手动授予也应走同样预检；只有明确的强制/人工路径可以绕过，并由运营承担风险。
 
-## Lease Scheduling
+## 租约调度
 
-For every lease request:
+每次 lease 请求按下面顺序执行：
 
-1. Resolve the subscription and verify it covers the requested product.
-2. Enforce customer-level `bucketLimits` for the request bucket.
-3. Enforce customer-level `weeklyBucketLimits` for the request bucket.
-4. Read `displayBindings[product]` as the preferred account.
-5. If the preferred account is enabled, eligible, healthy, and has quota for the request bucket, use it.
-6. If not, search same-level accounts for the product.
-7. If none are available, search all enabled accounts for the same product, regardless of level.
-8. Sort candidates by the current request bucket's remaining quota.
-9. If no account can serve, return a supply unavailable or retry response.
+1. 解析订阅，确认订阅覆盖当前请求产品。
+2. 检查客户级 `bucketLimits`，确认当前请求 bucket 未超 5h 额度。
+3. 检查客户级 `weeklyBucketLimits`，确认当前请求 bucket 未超周额度。
+4. 读取 `displayBindings[product]` 作为首选账号。
+5. 如果首选账号 enabled、可用、健康，并且当前请求 bucket 有额度，就使用首选账号。
+6. 如果首选账号不可用，就搜索同产品同等级账号。
+7. 如果同等级账号都不可用，就搜索同产品所有 enabled 账号，不限制等级。
+8. 候选账号按当前请求 bucket 的剩余额度排序。
+9. 没有任何账号能服务时，返回供给不足或可重试错误。
 
-Candidate ranking:
+候选排序：
 
 ```text
 score = min(remaining5hFraction, remainingWeeklyFraction)
 ```
 
-Use the current bucket only. For example, a Claude request ranks on `anthropic-claude`, a Codex request ranks on `codex-gpt`, and Antigravity model requests rank on their corresponding `antigravity-*` bucket.
+只按当前请求 bucket 排序。例如 Claude 请求看 `anthropic-claude`，Codex 请求看 `codex-gpt`，Antigravity 请求看对应的 `antigravity-*` bucket。
 
-When reliable weekly account data is missing, rank by 5h only. Do not invent account-level weekly data for ranking. Customer weekly entitlement is still enforced by `weeklyBucketLimits`.
+如果账号级周窗口没有可靠数据，就只按 5h 排序。不要为了排序伪造账号级周数据。客户自己的周额度仍由 `weeklyBucketLimits` 强制拦截。
 
-Cross-level fallback is allowed. Level only affects preference order; it is not a hard runtime gate once the customer entitlement is already fixed.
+允许跨等级兜底。等级只影响优先级，不是运行时硬限制，因为客户权益已经在订阅里固化。
 
-## Server Response Semantics
+## 服务端响应语义
 
-The response should keep backward compatibility where possible, but the meaning for dynamic bind subscriptions changes:
+响应应尽量兼容旧客户端，但动态绑定订阅的语义要调整：
 
-- The runtime account is the actual current service account.
-- The preferred/display account is not necessarily the runtime account.
-- The client should be allowed to rotate/re-lease on runtime failures.
+- runtime account 是本次实际服务账号。
+- preferred/display account 不一定等于 runtime account。
+- 客户端遇到运行时失败应允许重新租约和换号。
 
-Recommended response shape:
+建议响应结构：
 
 ```json
 {
@@ -208,90 +209,90 @@ Recommended response shape:
 }
 ```
 
-For `preferred-dynamic`, `bound` should not mean "no other account can be used." Existing client retry logic uses `bound` to disable rotation, so dynamic bind responses should not set `bound=true` for that purpose.
+对于 `preferred-dynamic`，`bound` 不能再表示“没有其它账号可换”。现有客户端会用 `bound=true` 禁用轮换，所以动态绑定响应不应把这个字段设成旧含义的 `true`。
 
-## Client Display
+## 客户端展示
 
-The desktop client should show two blood-bar perspectives:
-
-```text
-Claude · 2/8 seats
-
-My seats
-5h  [blood bar]
-Week [blood bar]
-
-Current service account
-5h  [blood bar]
-Week [blood bar when available]
-```
-
-Rules:
-
-- Do not show exact token counts in the main quota bars.
-- "My seats" uses only the subscription's fixed customer quota and this card's usage.
-- "My seats" is stable. Other customers, learning changes, preferred account depletion, and fallback account changes do not move it.
-- "Current service account" uses the actual account returned by the latest lease.
-- If runtime fallback changes accounts, the current service account identity and account blood bars may change together.
-- Rename the old "bound account info" panel to "Current service account" or equivalent wording.
-- Do not show the implementation detail that this account is a fallback.
-- Do not expose the preferred/display account as a promise that the account never changes.
-
-This is intentionally more direct than a virtual account blood bar. A virtual bar would hide switching but creates contradictions when a real account is empty while the customer can still use another account. Showing the current lease account avoids that contradiction.
-
-The customer still sees a bound-line product through the seat label and stable purchased quota:
+桌面客户端展示两组血条：
 
 ```text
-Claude · 2/8 seats
+Claude · 2/8 席
+
+我的席位
+5h  [血条]
+周   [血条]
+
+当前服务账号
+5h  [血条]
+周   [有数据时显示血条]
 ```
 
-The client must also fix status synchronization:
+展示规则：
 
-- Codex-only and Claude-only paths must propagate `accessKeyStatus` into the unified local state.
-- Static quota display must work even when the main Antigravity leaser does not run.
-- `accountFractions` / `accountBuckets` are current service account data, not customer entitlement data.
+- 主血条不显示具体 token 数。
+- “我的席位”只使用订阅固定额度和本卡用量。
+- “我的席位”必须稳定。其他客户使用、学习值变化、首绑账号没额度、运行时换号，都不能影响它。
+- “当前服务账号”显示最新 lease 实际使用的账号。
+- 如果运行时 fallback 换了账号，当前服务账号信息和账号血条一起变化。
+- 原“绑定账号信息”面板改名为“当前服务账号”或同义文案。
+- 不向客户提示该账号是否 fallback，也不展示换号过程。
+- 不把首绑账号包装成永远不变的承诺。
 
-## Customer Portal
+这里刻意不使用“虚拟账号血条”。虚拟血条能隐藏换号，但会制造另一个矛盾：真实账号没额度时，客户仍能通过其它账号继续使用。展示当前 lease 的真实账号，可以避免这个矛盾。
 
-The web portal should align with the client:
+客户仍然通过稳定的席位标签和固定额度感知到这是绑定线产品：
 
-- Show products and seats.
-- Show quota bars from `bucketLimits` and `weeklyBucketLimits`.
-- Do not expose backend overbooking or fallback assignment.
-- Do not show raw account ids as a customer entitlement.
-- Historical subscriptions may show "legacy package" and an approximate seat label.
+```text
+Claude · 2/8 席
+```
 
-## Legacy Card Migration
+客户端还必须修复状态同步：
 
-Legacy card entitlements are preserved. Migration must not recalculate old quotas from the new baseline.
+- Codex-only 和 Claude-only 路径必须把 `accessKeyStatus` 同步到统一本地状态。
+- 即使主 Antigravity leaser 不运行，静态卡额度也必须正常展示。
+- `accountFractions` / `accountBuckets` 是当前服务账号数据，不是客户权益数据。
 
-Pool/static legacy cards:
+## 客户门户
 
-- Preserve existing `bucketLimits`.
-- Populate `weeklyBucketLimits` only when an equivalent old weekly limit is known or can be mapped without changing entitlement.
-- Keep old `weeklyTokenLimit` for compatibility.
-- Convert to unified bind semantics with `assignmentPolicy: "preferred-dynamic"` when possible.
-- Assign a preferred/display account for the supported products when seat capacity permits.
+Web 客户门户与客户端口径一致：
 
-Legacy bind cards:
+- 展示产品和席位。
+- 额度血条来自 `bucketLimits` 和 `weeklyBucketLimits`。
+- 不展示后台超卖和 fallback 分配。
+- 不把真实 account id 展示成客户权益。
+- 历史订阅可以展示“历史套餐”和约等于的席位标签。
 
-- Preserve existing bound account as `displayBindings`.
-- Preserve existing quota and usage state.
-- Move runtime behavior to preferred-dynamic if the card is eligible for unified behavior.
+## 老卡迁移
 
-Legacy display seat label:
+老卡权益必须保留。迁移不能按新基准重算老卡额度。
 
-- Use real 5h quota, ignoring placeholder caps such as `1`.
-- `<= 8M` displays as `1` seat.
-- `> 8M && <= 16M` displays as `2` seats.
-- `> 16M && <= 32M` displays as `4` seats.
-- `> 32M` displays as `8` seats.
+号池/静态老卡：
 
-For multi-product cards, preserve per-product limits and show a legacy package label rather than pretending the old package exactly matches a new catalog SKU.
+- 保留原有 `bucketLimits`。
+- 只有当旧周额度能等价映射且不改变权益时，才填充 `weeklyBucketLimits`。
+- 保留旧 `weeklyTokenLimit` 用于兼容。
+- 可行时迁移为统一绑定语义，并设置 `assignmentPolicy: "preferred-dynamic"`。
+- 在席位容量允许时，为已开通产品分配首绑/展示账号。
 
-## Important Code Areas
+绑定老卡：
 
-Likely affected modules:
+- 原绑定账号保留为 `displayBindings`。
+- 保留原额度和用量窗口。
+- 符合条件的卡切换为 preferred-dynamic 运行时行为。
+
+老卡展示席位标签：
+
+- 按真实 5h 额度换算，忽略 `1` 这类占位封禁值。
+- `<= 8M` 展示为 `1` 席。
+- `> 8M && <= 16M` 展示为 `2` 席。
+- `> 16M && <= 32M` 展示为 `4` 席。
+- `> 32M` 展示为 `8` 席。
+
+多产品老卡保留各产品原额度，展示为历史套餐，不假装它完全等于新的目录 SKU。
+
+## 重点影响代码
+
+预计影响模块：
 
 - `apps/server/src/leasing/plan-catalog/pricing.ts`
 - `apps/server/src/leasing/subscription/subscription-config.ts`
@@ -313,85 +314,85 @@ Likely affected modules:
 - `apps/app/claude_leaser.go`
 - `apps/app/leaser_status.go`
 
-## Error Handling
+## 错误处理
 
-Customer quota exhausted:
+客户卡级额度耗尽：
 
-- Return a quota exhausted response tied to the customer's card quota.
-- Include reset information from the card-level 5h or weekly window.
+- 返回客户额度耗尽错误。
+- reset 信息来自本卡 5h 或周窗口。
 
-Preferred account exhausted:
+首绑账号耗尽：
 
-- Do not expose this as a customer quota error.
-- Try dynamic fallback.
+- 不作为客户额度问题暴露。
+- 继续尝试动态 fallback。
 
-All supply exhausted:
+所有供给账号都不可用：
 
-- Return a supply unavailable or retryable account capacity response.
-- The client should message this as service recovery, not as "your card is out of quota."
+- 返回供给不足或可重试账号容量错误。
+- 客户端文案应表达为服务恢复中，而不是“你的卡没额度”。
 
-Account auth or permanent account failure:
+账号鉴权或永久异常：
 
-- Mark account unhealthy according to existing runtime health logic.
-- Dynamic bind subscriptions should seek another account before surfacing the problem.
+- 按现有运行时健康逻辑标记账号不健康。
+- 动态绑定订阅应先尝试其它账号，再把问题暴露给客户。
 
-Missing weekly account data:
+账号周数据缺失：
 
-- Do not rank by a fabricated weekly account value.
-- Continue enforcing the customer's `weeklyBucketLimits`.
+- 不伪造周数据参与排序。
+- 继续强制客户级 `weeklyBucketLimits`。
 
-## Migration And Rollout
+## 迁移与上线顺序
 
-Suggested rollout:
+建议上线步骤：
 
-1. Add `weeklyBucketLimits` support to record validation and public status.
-2. Add config parsing for `shareSeats`, `shareCapacity`, `displayBindings`, and `assignmentPolicy`.
-3. Add admin capacity configuration and sales-seat accounting.
-4. Change catalog purchase/grant generation to create unified bind configs with concrete limits.
-5. Change lease scheduling to preferred-dynamic.
-6. Update client display to "My seats" and "Current service account."
-7. Migrate legacy cards and subscriptions.
-8. Retire `poolEnabled` UI and runtime filtering.
+1. 支持 `weeklyBucketLimits` 的校验和 public status。
+2. 支持解析 `shareSeats`、`shareCapacity`、`displayBindings`、`assignmentPolicy`。
+3. 新增后台容量配置和销售席位统计。
+4. 修改目录购买/后台授予，生成带固定额度的统一绑定 config。
+5. 修改 lease 调度为 preferred-dynamic。
+6. 客户端改为“我的席位”和“当前服务账号”展示。
+7. 迁移老卡和历史订阅。
+8. 移除 `poolEnabled` UI 和运行时过滤。
 
-The rollout should keep old subscriptions working while new subscriptions use the new config shape. Once migration is complete and validated, old pool-line purchase UI can be removed.
+上线期间旧订阅必须继续可用；新订阅使用新 config 结构。迁移确认完成后，再移除旧号池线购买入口。
 
-## Testing
+## 测试计划
 
-Server tests:
+服务端测试：
 
-- Pricing computes concrete `bucketLimits` and `weeklyBucketLimits` for `1`, `2`, `4`, and `8` seats.
-- Antigravity fixed baselines generate the expected 5h and weekly limits.
-- Learned Claude/Codex baselines are snapshotted into config and do not change existing subscriptions when profiles later change.
-- Purchase blocks when no account has remaining sellable seats `>= shareSeats`.
-- Sales-seat accounting counts ACTIVE subscriptions by `displayBindings`.
-- Runtime first tries the preferred account.
-- Runtime falls back to same-level accounts when preferred account has no quota.
-- Runtime falls back cross-level when same-level accounts are unavailable.
-- Candidate ranking uses `min(5h, weekly)` when both are known.
-- `weeklyBucketLimits` enforce per-bucket weekly limits.
-- `weeklyTokenLimit` compatibility remains for legacy records.
-- `poolEnabled=false` no longer excludes an otherwise enabled account.
+- 购买 `1`、`2`、`4`、`8` 席时正确生成 `bucketLimits` 和 `weeklyBucketLimits`。
+- Antigravity 固定基准生成预期 5h 和周额度。
+- Claude/Codex 学习基准在购买时被固化，之后学习值变化不影响已有订阅。
+- 没有账号剩余可售席位 `>= shareSeats` 时阻止购买。
+- 销售席位统计只统计 ACTIVE 订阅的 `displayBindings`。
+- 运行时优先尝试首绑账号。
+- 首绑账号没额度时 fallback 到同等级账号。
+- 同等级不可用时跨等级 fallback。
+- 候选排序在 5h 和周都已知时使用 `min(5h, weekly)`。
+- `weeklyBucketLimits` 能按 bucket 强制拦截周额度。
+- `weeklyTokenLimit` 兼容旧记录。
+- `poolEnabled=false` 不再排除 otherwise enabled 的账号。
 
-Client tests:
+客户端测试：
 
-- Static "My seats" bars render from card buckets and weekly buckets without exact token text in the main display.
-- Current service account bars update when the lease account changes.
-- Codex-only and Claude-only subscriptions update unified `accessKeyStatus`.
-- The old bound-account panel wording is removed or renamed.
-- The footer does not expose confusing raw account identity as an entitlement.
+- “我的席位”血条从本卡 5h/周 bucket 渲染，并且主展示不显示具体 token 数。
+- 最新租约账号变化时，“当前服务账号”信息和账号血条一起更新。
+- Codex-only 和 Claude-only 订阅能同步统一 `accessKeyStatus`。
+- 旧“绑定账号信息”文案被移除或改名。
+- 页脚不把容易误解的真实账号 id 展示成客户权益。
 
-Migration tests:
+迁移测试：
 
-- Old static cards preserve `bucketLimits`.
-- Old weekly settings are not lost.
-- Old seat labels map by 8M thresholds.
-- Existing usage windows are preserved.
-- Existing bound cards keep the original account as preferred/display binding.
+- 老静态卡保留原 `bucketLimits`。
+- 老周额度不丢失。
+- 老卡席位标签按 8M 阈值映射。
+- 现有用量窗口保留。
+- 老绑定卡保留原账号作为首绑/展示账号。
 
-## Open Decisions Already Resolved
+## 已确认决策
 
-- Cross-level fallback is allowed.
-- Customer purchase seats are only `1`, `2`, `4`, `8`.
-- Overbooking configuration is in seat units, not "cars."
-- `poolEnabled` is retired; `enabled` is authoritative.
-- Client displays the current lease's real service account, not a virtual account and not necessarily the first preferred account.
+- 允许跨等级 fallback。
+- 客户可购买席位只有 `1`、`2`、`4`、`8`。
+- 超卖配置单位是席位，不是“车”。
+- `poolEnabled` 退役，`enabled` 才是账号是否参与供给的权威字段。
+- 客户端展示当前 lease 的真实服务账号，不展示虚拟账号，也不强行展示第一个首绑账号。
